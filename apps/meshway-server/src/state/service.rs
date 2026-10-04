@@ -5,7 +5,7 @@ use crate::{observations::Observations, resources::GeoIp, store::Handle};
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{Digest, NetworkId, NodeId};
 use meshway_protocol::{
-    events::{ResetReason, StreamEvent},
+    events::{ClosedReason, ResetReason, StreamEvent},
     state::{StateAccepted, StateReport, StateView},
 };
 use rusqlite::Transaction;
@@ -70,6 +70,15 @@ pub trait StateProvider: Send + Sync + 'static {
     /// Managers may replay prior non-secret network views in order before the
     /// next notice. Restricted readers must recheck target-dependent queues.
     fn can_drain_configuration_changes(&self, _view: &ProviderView<Self>) -> bool {
+        false
+    }
+    /// A restricted settings view has no management GET refresh. Replace its
+    /// complete batch when the authorized settings themselves change.
+    fn configuration_refresh_required(
+        &self,
+        _previous: &ProviderView<Self>,
+        _current: &ProviderView<Self>,
+    ) -> bool {
         false
     }
     /// Identity/role loss closes the connection. A still-authorized view change
@@ -170,9 +179,6 @@ impl<P: StateProvider> StateService<P> {
     pub fn close(&self) {
         if let Ok(mut runtime) = self.runtime.lock() {
             runtime.close();
-            if let Ok(mut subscriptions) = self.subscriptions.lock() {
-                subscriptions.clear();
-            }
         }
     }
     pub fn publisher(&self) -> CommitPublisher {
@@ -329,6 +335,15 @@ impl<P: StateProvider> StateService<P> {
                         .then(|| id.clone())
                     });
                     if let Some(previous) = previous {
+                        if subscriptions
+                            .values()
+                            .filter(|sub| sub.owner == owner && sub.disconnected_at.is_none())
+                            .count()
+                            >= 4
+                            && subscriptions[&previous].disconnected_at.is_some()
+                        {
+                            return Err(StateError::Budget);
+                        }
                         let mut sub = subscriptions.remove(&previous).ok_or(StateError::Cursor)?;
                         let mut pending: VecDeque<_> = sub.replay.after(cursor)?.into();
                         let replayed: std::collections::BTreeSet<_> = pending
@@ -355,10 +370,21 @@ impl<P: StateProvider> StateService<P> {
                         // current snapshot rather than dropping a delta silently.
                     }
                 }
+                // Disconnected replay is bounded storage, not an active stream
+                // quota. Evict it before denying a new live connection.
+                if subscriptions.len() >= 256
+                    && let Some(oldest) = subscriptions
+                        .iter()
+                        .filter_map(|(id, sub)| sub.disconnected_at.map(|at| (id.clone(), at)))
+                        .min_by_key(|(_, at)| *at)
+                        .map(|(id, _)| id)
+                {
+                    subscriptions.remove(&oldest);
+                }
                 if subscriptions.len() >= 256
                     || subscriptions
                         .values()
-                        .filter(|sub| sub.owner == owner)
+                        .filter(|sub| sub.owner == owner && sub.disconnected_at.is_none())
                         .count()
                         >= 4
                 {
@@ -413,14 +439,34 @@ impl<P: StateProvider> StateService<P> {
                 };
                 // Remove-first ensures all failure paths discard pending old-scope
                 // frames. There is no send queue outside this guarded poll.
+                if runtime.closed {
+                    return closed::<P>(ClosedReason::ServerShutdown);
+                }
                 let view = match provider.view(&tx, &sub.identity, now) {
                     Ok(view) => view,
+                    Err(StateError::Unauthorized) => {
+                        return closed::<P>(ClosedReason::SessionExpired);
+                    }
+                    Err(StateError::NotFound | StateError::Forbidden)
+                        if matches!(sub.identity, ReadIdentity::UserSession { .. }) =>
+                    {
+                        return closed::<P>(ClosedReason::MembershipRevoked);
+                    }
+                    Err(StateError::Conflict)
+                        if matches!(sub.identity, ReadIdentity::Node { .. }) =>
+                    {
+                        return closed::<P>(ClosedReason::NodeLeaseExpired);
+                    }
                     Err(_) => return Ok(StreamPoll::Closed),
                 };
                 let authorization = provider.replay_scope(&view)?;
-                if view.scope.expires_at <= now
-                    || runtime.closed
-                    || sub.created_at + Duration::minutes(15) <= now
+                if view.scope.expires_at <= now {
+                    return closed::<P>(match sub.identity {
+                        ReadIdentity::UserSession { .. } => ClosedReason::SessionExpired,
+                        ReadIdentity::Node { .. } => ClosedReason::NodeLeaseExpired,
+                    });
+                }
+                if sub.created_at + Duration::minutes(15) <= now
                     || !provider.same_authority(&sub.last, &view)
                 {
                     return Ok(StreamPoll::Closed);
@@ -441,6 +487,7 @@ impl<P: StateProvider> StateService<P> {
                     .after(sub.journal_sequence, view.scope.network_id);
                 let journal_sequence = hub.events.sequence();
                 if sub.authorization != authorization
+                    || provider.configuration_refresh_required(&sub.last, &view)
                     || journal.is_err()
                     || observation_scope_changed
                         && (!sub.pending.is_empty() || !sub.replay.is_empty())
@@ -622,6 +669,8 @@ impl<P: StateProvider> StateService<P> {
                     if state.nodes != sub.state.nodes
                         || state.links != sub.state.links
                         || state.paths != sub.state.paths
+                        || state.sequence != sub.state.sequence
+                        || state.configuration_revision != sub.state.configuration_revision
                     {
                         let updated = state
                             .nodes
@@ -639,6 +688,9 @@ impl<P: StateProvider> StateService<P> {
                         let next = random_id()?;
                         let event = ProviderEvent::<P>::StateDelta {
                             state_epoch: state.state_epoch,
+                            as_of: Some(state.as_of),
+                            sequence: Some(state.sequence),
+                            configuration_revision: Some(state.configuration_revision),
                             base_cursor: sub.cursor.clone(),
                             cursor: next.clone(),
                             updated,
@@ -758,6 +810,12 @@ fn random_id() -> Result<String, StateError> {
         .map_err(|_| StateError::Unavailable)?
         .to_string())
 }
+fn closed<P: StateProvider>(reason: ClosedReason) -> Result<StreamPoll, StateError> {
+    Ok(StreamPoll::Frame(SseFrame::encode(
+        None,
+        &ProviderEvent::<P>::Closed { reason },
+    )?))
+}
 fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result<(), StateError> {
     sub.initial_batch = Some(batch.clone());
     sub.pending.push_back(SseFrame::encode(
@@ -845,10 +903,22 @@ impl<P: StateProvider> StreamSource for StateService<P> {
         })
     }
     fn cancel(&self, subscription: &str) {
-        if let Ok(mut subscriptions) = self.subscriptions.lock()
-            && let Some(sub) = subscriptions.get_mut(subscription)
-        {
+        if let Ok(mut subscriptions) = self.subscriptions.lock() {
+            let Some(sub) = subscriptions.get_mut(subscription) else {
+                return;
+            };
             sub.disconnected_at = Some(Utc::now());
+            let owner = sub.owner;
+            let mut retained: Vec<_> = subscriptions
+                .iter()
+                .filter(|(_, sub)| sub.owner == owner)
+                .filter_map(|(id, sub)| sub.disconnected_at.map(|at| (id.clone(), at)))
+                .collect();
+            retained.sort_by_key(|(_, at)| *at);
+            let excess = retained.len().saturating_sub(4);
+            for (id, _) in retained.into_iter().take(excess) {
+                subscriptions.remove(&id);
+            }
         }
     }
 }

@@ -15,7 +15,9 @@ use std::collections::BTreeMap;
 
 fn error(e: NodeError) -> StateError {
     match e {
-        NodeError::Unauthorized => StateError::Unauthorized,
+        // This adapter runs after the actual user session was checked. A Node
+        // credential/dependency failure must never invalidate that user session.
+        NodeError::Unauthorized => StateError::Forbidden,
         NodeError::Forbidden => StateError::Forbidden,
         NodeError::Invalid | NodeError::InvalidSettings(_) => StateError::Invalid,
         NodeError::Conflict | NodeError::VersionConflict | NodeError::StateConflict => {
@@ -124,7 +126,9 @@ impl Execution {
             }
             return self.diagnostic_admission(tx, identity, request, now);
         }
-        let report = self.node_admission(tx, scope.network_id, request.source_node_id, now)?;
+        let report = self
+            .node_admission(tx, scope.network_id, request.source_node_id, now)
+            .map_err(observation_node_error)?;
         let instance_lease =
             store::lease_for_node(tx, &self.sealer, scope.network_id, request.source_node_id)
                 .map_err(error)?;
@@ -198,7 +202,9 @@ impl Execution {
         let (user, scope, _) = self.diagnostic_user(tx, identity, request, now)?;
         let id:Vec<u8>=tx.query_row("SELECT t.id FROM diagnostic_subscriptions s JOIN diagnostic_tasks t ON t.id=s.task_id WHERE s.id=?1 AND s.session_id=?2 AND s.cancelled=0 AND s.expires_at>?3 AND t.network_id=?4 AND t.revision=?5 AND t.boot_id=?6",params![request.subscription_id.as_uuid().as_bytes().as_slice(),user.session_id.as_uuid().as_bytes().as_slice(),now.timestamp_millis(),scope.network_id.as_uuid().as_bytes().as_slice(),scope.configuration_revision.get() as i64,self.boot.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(StateError::NotFound)?;
         let id: ObservationId = store::id(id).map_err(error)?;
-        let report = self.node_admission(tx, scope.network_id, request.source_node_id, now)?;
+        let report = self
+            .node_admission(tx, scope.network_id, request.source_node_id, now)
+            .map_err(observation_node_error)?;
         let (_, target) =
             store::target_for_node(tx, &self.sealer, scope.network_id, request.source_node_id)
                 .map_err(error)?
@@ -316,5 +322,12 @@ impl Execution {
         )?;
         tx.execute("DELETE FROM diagnostic_tasks WHERE NOT EXISTS(SELECT 1 FROM diagnostic_subscriptions WHERE task_id=diagnostic_tasks.id)",[])?;
         Ok(())
+    }
+}
+
+fn observation_node_error(error: StateError) -> StateError {
+    match error {
+        StateError::Unauthorized => StateError::Forbidden,
+        other => other,
     }
 }

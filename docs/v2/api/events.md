@@ -33,6 +33,8 @@ config.snapshot → entities.snapshot → state.snapshot → sync.ready
 
 Owner/Admin 获得本网络非秘密管理视图，成员获得其本人节点设置及获准 State，Node 获得自身设置和必要执行依赖。完整 source／私钥／协议凭据不广播，历史按需查询，订阅不会创建探测任务。
 
+用户实体库存与 `GET /nodes` 使用相同的本人／管理员范围；获准 peer 的窄 State 视图不授予库存或设置读取权。成员的已授权设置变化时，服务端通过 `sync.reset` 与新的完整批次替换设置，客户端无需自行断线刷新。
+
 服务端在一致读取截点建立事件捕获，缓冲截点之后的变化。超出帧／批次预算明确失败，不截断内容后发送 ready。
 
 ## 事件结构
@@ -40,7 +42,7 @@ Owner/Admin 获得本网络非秘密管理视图，成员获得其本人节点�
 | type | 用途 |
 | --- | --- |
 | entities.delta | baseCursor／cursor、configurationRevision、类型化 updated 和 removed |
-| state.delta | stateEpoch、baseCursor／cursor、完整节点更新、删除项、links／paths |
+| state.delta | stateEpoch、baseCursor／cursor、完整节点更新、删除项、links／paths，以及投影的 asOf／sequence／configurationRevision |
 | configuration.changed | 已提交 revision、previousRevision、cause、允许披露的 actor／requestId、changedPointers、changesComplete、sourceChanged |
 | configuration.progress | 与按 revision GET 相同的 ConfigurationApplyProgress |
 | resources.changed | networkId／revision，通知有权管理者重读资源视图 |
@@ -56,6 +58,8 @@ Owner/Admin 获得本网络非秘密管理视图，成员获得其本人节点�
 updated 复用 UserEntitiesView／NodeEntitiesView，removed 按 nodes／members 列出 ID。项更新整体替换，删除明确执行；字段结构和必填项由各自 schema 决定。角色、身份或配置变化会重新计算 actions，即使没有 Node 新报告。
 
 实体元数据、配置与运行报告分别维护，实体更新不覆盖更新的 NodeState。baseCursor 对齐上一条已应用的流事件，包括配置／资源通知，不是单独的实体计数。
+
+当前 Server 的 `state.delta` 带与该次 StateView 相同的 `asOf`、`sequence` 和 `configurationRevision`。生成类型允许保留的旧增量缺少这些元数据；客户端在字段存在时替换缓存对应值。`asOf` 是投影读取时间，`sequence` 是网络已提交变化的序号（含配置、回执、资源和观察事件），`configurationRevision` 是投影使用的当前配置版本，均不是测量的新时间或执行 applied 证明。仅时钟推进不会发送增量；报告／到期／配置变化可触发投影更新，原报告时间与期限保持原值。
 
 ### 配置与草稿
 
@@ -74,6 +78,8 @@ updated 复用 UserEntitiesView／NodeEntitiesView，removed 按 nodes／members
 - 重放有界。断档、范围改变或背压触发 reset，不能跳过缺口继续更新。
 - 每次输出重检权限；缩小范围先丢弃旧队列再重建视图，完全失权关闭。
 - 保活注释不刷新 Node 报告、测量或执行 lease。代理须支持流式 flush 并禁用响应缓冲／缓存。
+- 断线立即释放活动流名额，每个身份保留至多四份、至多一分钟的断线重放缓存。缓存淘汰后携带旧 cursor 会重新同步。
+- 会话失效、成员被移除、Node lease 失效和正常服务关闭发送相应 `stream.closed` 后 EOF；角色变化及流的最长生命周期以 EOF 要求重新鉴权连接，不把仍有效的用户会话标成失效。连接已断开或进程异常终止时可能只能观察到 EOF。
 
 ## 生成声明 {#openapi}
 

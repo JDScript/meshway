@@ -44,6 +44,12 @@ wire_object! {pub struct ConfigurationPreviewResponse {
     #[serde(deserialize_with="meshway_serde::unique_map")]
     pub prepared_rule_sets: std::collections::BTreeMap<String,crate::resources::PreparedRuleSet>,
     pub unavailable_dependencies: Vec<meshway_configuration::ConfigurationIssue>,
+    /// Pending material completion/verification; preview is never executable.
+    #[serde(default)]
+    pub requirements: Vec<meshway_configuration::PreparationRequirement>,
+    /// Values that apply will generate, after rechecking authorization and CAS.
+    #[serde(default)]
+    pub will_generate: Vec<meshway_configuration::PreparationRequirement>,
     pub request_id:RequestId,pub base_revision:Revision,pub preview:ConfigurationView,
     pub change_count:u32,pub changes:Vec<ConfigurationChange>,pub source_changed:bool,
     pub deleted_node_ids:Vec<NodeId>,pub address_changed_node_ids:Vec<NodeId>,

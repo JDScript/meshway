@@ -78,14 +78,14 @@ fn live_spec_closes_real_event_roots_and_resolves_every_dependency() {
     assert!(serde_json::from_str::<SystemState>(r#"["host","linux","x86","1"]"#).is_err());
 }
 
-async fn json<T: serde::de::DeserializeOwned>(request: reqwest::RequestBuilder) -> T {
+pub(super) async fn json<T: serde::de::DeserializeOwned>(request: reqwest::RequestBuilder) -> T {
     let response = request.send().await.unwrap();
     let status = response.status();
     let body = response.text().await.unwrap();
     assert!(status.is_success(), "{status}: {body}");
     serde_json::from_str(&body).unwrap_or_else(|error| panic!("{error}: {body}"))
 }
-async fn enroll(
+pub(super) async fn enroll(
     c: &Client,
     s: &Server,
     network: NetworkId,
@@ -295,6 +295,477 @@ fn report(lease: &InstanceLease, sequence: u64) -> StateReport {
 }
 
 #[tokio::test]
+async fn member_inventory_excludes_execution_peers_and_settings_refresh_in_stream() {
+    use meshway_configuration::execution::{BusinessProtocol, BusinessTarget};
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("inventory"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "inventory-owner@example.test", "valid password").await;
+    let member = register(&c, &s, "inventory-member@example.test", "valid password").await;
+    let network = create(&c, &s, owner.token.expose(), "inventory")
+        .await
+        .network
+        .id;
+    let membership = join(
+        &c,
+        &s,
+        network,
+        owner.token.expose(),
+        member.token.expose(),
+        MembershipRole::Member,
+    )
+    .await;
+    let (a, at, ai) = enroll(&c, &s, network, member.token.expose(), 31).await;
+    let (b, _, _) = enroll(&c, &s, network, owner.token.expose(), 32).await;
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    let mut input = meshway_configuration::NetworkConfigurationInput::from(&current.configuration);
+    input
+        .tags_owners
+        .insert("tag:peer".into(), vec![owner.user.email.clone()]);
+    input.nodes.get_mut(&b.node_id).unwrap().identity =
+        serde_json::from_str(r#"{"type":"tag","tags":["tag:peer"]}"#).unwrap();
+    for node in input.nodes.values_mut() {
+        node.listeners =
+            serde_json::from_str(r#"{"udp":{"type":"native_udp","listenPort":23456}}"#).unwrap();
+    }
+    let _: ConfigurationAppliedResponse = json(
+        c.post(net(&s, network, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: request(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+            }),
+    )
+    .await;
+    let _: DemandResponse = json(
+        c.post(format!("{}/agent-api/v1/demands", s.url))
+            .bearer_auth(&at)
+            .json(&DemandRequest {
+                instance: InstanceRequest {
+                    instance_id: ai.instance_id,
+                    generation: ai.generation,
+                },
+                request_id: request(),
+                target: BusinessTarget::Mesh { node: b.node_id },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 60,
+            }),
+    )
+    .await;
+    let mut events =
+        Events::open(&c, net(&s, network, "events"), member.token.expose(), None).await;
+    events.user().await;
+    let StreamEvent::EntitiesSnapshot { entities, .. } = events.user().await.1.0 else {
+        panic!("inventory")
+    };
+    let inventory: NodeInventoryResponse = json(
+        c.get(net(&s, network, "nodes"))
+            .bearer_auth(member.token.expose()),
+    )
+    .await;
+    assert_eq!(
+        entities.nodes.values().cloned().collect::<Vec<_>>(),
+        inventory.items
+    );
+    assert_eq!(entities.nodes.len(), 1);
+    assert!(entities.nodes.contains_key(&a.node_id));
+    let StreamEvent::StateSnapshot { state, .. } = events.user().await.1.0 else {
+        panic!("state")
+    };
+    assert!(
+        state.nodes.contains_key(&b.node_id),
+        "authorized narrow peer State remains available"
+    );
+    events.ready().await;
+    let mut node_events =
+        Events::open(&c, format!("{}/agent-api/v1/events", s.url), &at, None).await;
+    node_events
+        .frame::<meshway_protocol::NodeEvent>()
+        .await
+        .unwrap();
+    let StreamEvent::EntitiesSnapshot { entities, .. } = node_events
+        .frame::<meshway_protocol::NodeEvent>()
+        .await
+        .unwrap()
+        .1
+        .0
+    else {
+        panic!("node inventory")
+    };
+    assert_eq!(entities.nodes[&b.node_id].keys.dataplane, b.keys.dataplane);
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    let mut input = meshway_configuration::NetworkConfigurationInput::from(&current.configuration);
+    input.nodes.get_mut(&a.node_id).unwrap().hostname = "updated-member-host".into();
+    let applied: ConfigurationAppliedResponse = json(
+        c.post(net(&s, network, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: request(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+            }),
+    )
+    .await;
+    let mut refreshed = false;
+    loop {
+        match events.user().await.1.0 {
+            StreamEvent::ConfigSnapshot {
+                configuration:
+                    UserConfigurationView::Member {
+                        nodes, revision, ..
+                    },
+                ..
+            } => {
+                assert_eq!(revision, applied.revision);
+                assert_eq!(nodes[&a.node_id].hostname, "updated-member-host");
+                assert_eq!(nodes.len(), 1);
+                refreshed = true;
+            }
+            StreamEvent::Ready { .. } => {
+                assert!(refreshed);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let mut manager =
+        Events::open(&c, net(&s, network, "events"), owner.token.expose(), None).await;
+    manager.user().await;
+    let StreamEvent::EntitiesSnapshot { entities, .. } = manager.user().await.1.0 else {
+        panic!("manager inventory")
+    };
+    assert_eq!(entities.nodes.len(), 2);
+    assert!(entities.nodes.values().all(|node| node.can_delete));
+    drop(events);
+    let mut reconnected =
+        Events::open(&c, net(&s, network, "events"), member.token.expose(), None).await;
+    let StreamEvent::ConfigSnapshot {
+        configuration: UserConfigurationView::Member { nodes, .. },
+        ..
+    } = reconnected.user().await.1.0
+    else {
+        panic!("reconnected settings")
+    };
+    assert_eq!(nodes[&a.node_id].hostname, "updated-member-host");
+    reconnected.ready().await;
+    c.post(format!("{}/agent-api/v1/instances/release", s.url))
+        .bearer_auth(&at)
+        .json(&InstanceRequest {
+            instance_id: ai.instance_id,
+            generation: ai.generation,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    reconnected.ready().await;
+    // An offline node has no changing live execution reference. Its settings
+    // must refresh even when the restricted disclosure digest stays identical.
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    let _: ConfigurationAppliedResponse = json(
+        c.post(net(&s, network, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Operations {
+                expected_revision: current.revision,
+                request_id: request(),
+                ops: vec![
+                    meshway_configuration::ConfigurationOperation::SetNodeSettings {
+                        node_id: a.node_id,
+                        fields: meshway_configuration::NodeSettingsPatch {
+                            remark: meshway_configuration::Input::Value(
+                                "offline settings changed".into(),
+                            ),
+                            ..Default::default()
+                        },
+                    },
+                ],
+            }),
+    )
+    .await;
+    let mut refreshed = false;
+    loop {
+        match reconnected.user().await.1.0 {
+            StreamEvent::ConfigSnapshot {
+                configuration: UserConfigurationView::Member { nodes, .. },
+                ..
+            } => {
+                assert_eq!(nodes[&a.node_id].remark, "offline settings changed");
+                refreshed = true;
+            }
+            StreamEvent::Ready { .. } => {
+                assert!(refreshed);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    c.post(net(&s, network, &format!("members/{membership}/remove")))
+        .bearer_auth(owner.token.expose())
+        .json(&meshway_protocol::RemoveMemberRequest {
+            expected_version: Version::MIN,
+            expected_revision: current.revision,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    loop {
+        match reconnected.user().await.1.0 {
+            StreamEvent::Closed {
+                reason: meshway_protocol::events::ClosedReason::MembershipRevoked,
+            } => break,
+            StreamEvent::EntitiesDelta { .. }
+            | StreamEvent::StateDelta { .. }
+            | StreamEvent::ConfigurationProgress { .. } => {}
+            _ => panic!("membership loss must discard queued private settings"),
+        }
+    }
+    assert!(
+        reconnected
+            .frame::<meshway_protocol::UserEvent>()
+            .await
+            .is_none()
+    );
+    assert_eq!(
+        c.get(net(&s, network, "events"))
+            .bearer_auth(member.token.expose())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    s.close().await;
+}
+
+#[tokio::test]
+async fn reacquired_instance_preserves_exact_target_but_requires_its_own_saved_and_applied() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("reacquire"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "reacquire@example.test", "valid password").await;
+    let network = create(&c, &s, owner.token.expose(), "reacquire")
+        .await
+        .network
+        .id;
+    let (node, token, first) = enroll(&c, &s, network, owner.token.expose(), 41).await;
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    let applied: ConfigurationAppliedResponse = json(
+        c.post(net(&s, network, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Operations {
+                expected_revision: current.revision,
+                request_id: request(),
+                ops: vec![
+                    meshway_configuration::ConfigurationOperation::SetNodeSettings {
+                        node_id: node.node_id,
+                        fields: meshway_configuration::NodeSettingsPatch {
+                            remark: meshway_configuration::Input::Value("fixed target".into()),
+                            ..Default::default()
+                        },
+                    },
+                ],
+            }),
+    )
+    .await;
+    let url = net(
+        &s,
+        network,
+        &format!("configuration/revisions/{}/progress", applied.revision),
+    );
+    let initial: ConfigurationApplyProgress =
+        json(c.get(&url).bearer_auth(owner.token.expose())).await;
+    let target = initial.nodes[&node.node_id].target.clone();
+    let _: InstanceLease = json(
+        c.post(format!("{}/agent-api/v1/instances/renew", s.url))
+            .bearer_auth(&token)
+            .json(&InstanceRequest {
+                instance_id: first.instance_id,
+                generation: first.generation,
+            }),
+    )
+    .await;
+    let receipt = |lease: &InstanceLease, phase, sequence| ReceiptRequest {
+        instance: InstanceRequest {
+            instance_id: lease.instance_id,
+            generation: lease.generation,
+        },
+        target: target.clone(),
+        phase,
+        attempt: Version::MIN,
+        sequence: Sequence::new(sequence).unwrap(),
+        reported_at_ms: chrono::Utc::now().timestamp_millis() as u64,
+        failure: None,
+    };
+    for (phase, sequence) in [(ReceiptPhase::Saved, 0), (ReceiptPhase::Applied, 1)] {
+        c.post(format!("{}/agent-api/v1/configuration/receipts", s.url))
+            .bearer_auth(&token)
+            .json(&receipt(&first, phase, sequence))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    let replacement: InstanceLease = json(
+        c.post(format!("{}/agent-api/v1/instances", s.url))
+            .bearer_auth(&token)
+            .json(&AcquireInstanceRequest {
+                instance_id: InstanceId::new(*request().as_uuid()).unwrap(),
+                capabilities: BTreeMap::from([(
+                    "transport:native_udp".into(),
+                    Capability::Transport {
+                        roles: vec![TransportRole::Dial, TransportRole::Listen],
+                        streams: vec![StreamKind::Udp],
+                    },
+                )]),
+            }),
+    )
+    .await;
+    assert_eq!(replacement.target.as_ref(), Some(&target));
+    let waiting: ConfigurationApplyProgress =
+        json(c.get(&url).bearer_auth(owner.token.expose())).await;
+    assert_eq!(
+        waiting.nodes[&node.node_id].phase,
+        ApplicationPhase::Applied
+    );
+    assert_eq!(
+        waiting.nodes[&node.node_id].instance_id,
+        Some(first.instance_id)
+    );
+    assert_eq!(
+        waiting.nodes[&node.node_id].freshness,
+        ReceiptFreshness::AwaitingInstance
+    );
+    let endpoint = format!("{}/agent-api/v1/configuration/receipts", s.url);
+    assert_eq!(
+        c.post(&endpoint)
+            .bearer_auth(&token)
+            .json(&receipt(&replacement, ReceiptPhase::Applied, 1))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        c.post(&endpoint)
+            .bearer_auth(&token)
+            .json(&receipt(&first, ReceiptPhase::Applied, 1))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    for (phase, sequence, expected) in [
+        (ReceiptPhase::Saved, 0, ApplicationPhase::Saved),
+        (ReceiptPhase::Applied, 1, ApplicationPhase::Applied),
+    ] {
+        c.post(&endpoint)
+            .bearer_auth(&token)
+            .json(&receipt(&replacement, phase, sequence))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let current: ConfigurationApplyProgress =
+            json(c.get(&url).bearer_auth(owner.token.expose())).await;
+        assert_eq!(current.nodes[&node.node_id].target, target);
+        assert_eq!(
+            current.nodes[&node.node_id].instance_id,
+            Some(replacement.instance_id)
+        );
+        assert_eq!(current.nodes[&node.node_id].phase, expected);
+        assert_eq!(
+            current.nodes[&node.node_id].freshness,
+            ReceiptFreshness::Current
+        );
+    }
+    s.close().await;
+}
+
+#[tokio::test]
+async fn disconnected_streams_release_active_quota_and_keep_bounded_replay() {
+    use meshway_server::state::{
+        StateError,
+        service::ReadIdentity,
+        stream::{StreamPoll, StreamSource},
+    };
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(
+        &dir.path().canonicalize().unwrap().join("stream-quota"),
+        true,
+    )
+    .await;
+    let c = client();
+    let owner = register(&c, &s, "stream-quota@example.test", "valid password").await;
+    let network = create(&c, &s, owner.token.expose(), "streams")
+        .await
+        .network
+        .id;
+    let service = s.app.user_state_service().unwrap();
+    let identity = ReadIdentity::user_session(owner.token.expose(), network).unwrap();
+    let mut last_cursor = None;
+    for _ in 0..12 {
+        let id = service.open_stream(identity.clone(), None).await.unwrap();
+        for _ in 0..4 {
+            let StreamPoll::Frame(frame) = service.poll(&id).await.unwrap() else {
+                panic!("initial batch")
+            };
+            if frame.id.is_some() {
+                last_cursor = frame.id;
+            }
+        }
+        service.cancel(&id);
+    }
+    let mut active = vec![];
+    for _ in 0..4 {
+        active.push(service.open_stream(identity.clone(), None).await.unwrap());
+    }
+    assert!(matches!(
+        service.open_stream(identity.clone(), None).await,
+        Err(StateError::Budget)
+    ));
+    assert!(matches!(
+        service
+            .open_stream(identity.clone(), last_cursor.clone())
+            .await,
+        Err(StateError::Budget)
+    ));
+    service.cancel(&active.pop().unwrap());
+    let resumed = service.open_stream(identity, last_cursor).await.unwrap();
+    assert!(matches!(
+        service.poll(&resumed).await.unwrap(),
+        StreamPoll::Pending
+    ));
+    service.cancel(&resumed);
+    for id in active {
+        service.cancel(&id);
+    }
+    // The real response body's Drop must reach cancel, too; refreshes should
+    // not require waiting for the one-minute replay retention deadline.
+    for _ in 0..10 {
+        let mut events =
+            Events::open(&c, net(&s, network, "events"), owner.token.expose(), None).await;
+        events.ready().await;
+        drop(events);
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    s.close().await;
+}
+
+#[tokio::test]
 async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     let _serial = ACCOUNT_FLOW.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -376,7 +847,14 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     .await;
     assert!(!accepted.duplicate);
     let (cursor, delta, _) = events.user().await;
-    let StreamEvent::StateDelta { updated, .. } = delta.0 else {
+    let StreamEvent::StateDelta {
+        updated,
+        as_of,
+        sequence,
+        configuration_revision,
+        ..
+    } = delta.0
+    else {
         panic!("report delta")
     };
     assert_eq!(updated[&node.node_id].report_sequence.unwrap().get(), 1);
@@ -387,6 +865,13 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     )
     .await;
     assert_eq!(view.nodes[&node.node_id].report_sequence.unwrap().get(), 1);
+    assert_eq!(sequence, Some(view.sequence));
+    assert_eq!(configuration_revision, Some(view.configuration_revision));
+    assert!(as_of.unwrap() <= view.as_of);
+    assert_eq!(
+        updated[&node.node_id].observed_at,
+        view.nodes[&node.node_id].observed_at
+    );
     let peers: StateView = json(
         c.post(format!("{}/agent-api/v1/state/query", s.url))
             .bearer_auth(&node_token)
@@ -525,6 +1010,14 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
         .unwrap()
         .error_for_status()
         .unwrap();
+    for stream in [&mut events, &mut unknown] {
+        assert!(matches!(
+            stream.user().await.1.0,
+            StreamEvent::Closed {
+                reason: meshway_protocol::events::ClosedReason::SessionExpired
+            }
+        ));
+    }
     assert!(
         events
             .frame::<meshway_protocol::UserEvent>()
@@ -816,6 +1309,17 @@ async fn production_config_changes_and_scope_changes_do_not_become_identity_loss
         .unwrap()
         .error_for_status()
         .unwrap();
+    let StreamPoll::Frame(frame) = service.poll(&initial).await.unwrap() else {
+        panic!("closed reason")
+    };
+    assert!(matches!(
+        serde_json::from_str::<meshway_protocol::UserEvent>(&frame.data)
+            .unwrap()
+            .0,
+        StreamEvent::Closed {
+            reason: meshway_protocol::events::ClosedReason::SessionExpired
+        }
+    ));
     assert!(matches!(
         service.poll(&initial).await.unwrap(),
         StreamPoll::Closed
@@ -1158,6 +1662,15 @@ async fn production_demand_receipts_peer_expansion_and_node_termination() {
         .status(),
         StatusCode::NO_CONTENT
     );
+    let StreamPoll::Frame(frame) = node_service.poll(&queued).await.unwrap() else {
+        panic!("node credential closed")
+    };
+    assert!(matches!(
+        serde_json::from_str::<meshway_protocol::NodeEvent>(&frame.data)
+            .unwrap()
+            .0,
+        StreamEvent::Closed { .. }
+    ));
     assert!(matches!(
         node_service.poll(&queued).await.unwrap(),
         StreamPoll::Closed

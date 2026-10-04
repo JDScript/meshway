@@ -2,6 +2,7 @@
 //! Preparation is in-memory work, not a two-phase publication protocol.
 pub(crate) mod catalog;
 pub(crate) mod materials;
+mod preview;
 mod resources;
 mod service;
 mod snapshot;
@@ -71,9 +72,7 @@ pub(crate) struct PreparedConfiguration {
     pub(crate) document: ConfigurationDocument,
     pub(crate) bindings: ConfigurationBindings,
     pub(crate) changes: Vec<ConfigurationChange>,
-    pub(crate) unavailable_dependencies: Vec<meshway_configuration::ConfigurationIssue>,
     pub(crate) deleted_node_ids: BTreeSet<NodeId>,
-    pub(crate) address_changed_node_ids: BTreeSet<NodeId>,
     pub(crate) source_changed: bool,
     pub(crate) rollback_from: Option<Revision>,
     pub(crate) email_sync: Option<EmailSync>,
@@ -178,54 +177,14 @@ pub(crate) fn prepare(
         .filter(|id| !configuration.nodes.contains_key(id))
         .copied()
         .collect();
-    let address_changed_node_ids = old
-        .nodes
-        .iter()
-        .filter(|(id, n)| {
-            configuration.nodes.get(id).map(|new| &new.addresses) != Some(&n.addresses)
-        })
-        .map(|(id, _)| *id)
-        .collect();
-    let next = Revision::new(
-        current
-            .revision
-            .get()
-            .checked_add(1)
-            .ok_or(Error::Storage)?,
-    )
-    .map_err(|_| Error::Storage)?;
-    let listeners = configuration
-        .nodes
-        .iter()
-        .map(|(id, node)| {
-            (
-                *id,
-                node.listeners
-                    .keys()
-                    .map(|key| {
-                        (
-                            key.clone(),
-                            if context
-                                .validation
-                                .recreated_listeners
-                                .contains(&(*id, key.clone()))
-                            {
-                                next
-                            } else {
-                                current
-                                    .bindings
-                                    .listeners
-                                    .get(id)
-                                    .and_then(|m| m.get(key))
-                                    .copied()
-                                    .unwrap_or(next)
-                            },
-                        )
-                    })
-                    .collect(),
-            )
-        })
-        .collect();
+    let listeners = listener_bindings(
+        current,
+        configuration
+            .nodes
+            .iter()
+            .map(|(id, node)| (*id, node.listeners.keys().cloned().collect())),
+        &context.validation.recreated_listeners,
+    )?;
     let source_changed = current.document.source_jsonc.expose() != source;
     let mut document = current.document.clone();
     document.set_source(source);
@@ -243,13 +202,50 @@ pub(crate) fn prepare(
         document,
         bindings,
         changes,
-        unavailable_dependencies: normalized.unavailable_dependencies,
         deleted_node_ids,
-        address_changed_node_ids,
         source_changed,
         rollback_from: None,
         email_sync: None,
     })
+}
+
+fn listener_bindings(
+    current: &Snapshot,
+    nodes: impl IntoIterator<Item = (NodeId, Vec<String>)>,
+    recreated: &BTreeSet<(NodeId, String)>,
+) -> Result<BTreeMap<NodeId, BTreeMap<String, Revision>>, Error> {
+    let next = Revision::new(
+        current
+            .revision
+            .get()
+            .checked_add(1)
+            .ok_or(Error::Storage)?,
+    )
+    .map_err(|_| Error::Storage)?;
+    Ok(nodes
+        .into_iter()
+        .map(|(id, keys)| {
+            (
+                id,
+                keys.into_iter()
+                    .map(|key| {
+                        let revision = if recreated.contains(&(id, key.clone())) {
+                            next
+                        } else {
+                            current
+                                .bindings
+                                .listeners
+                                .get(&id)
+                                .and_then(|m| m.get(&key))
+                                .copied()
+                                .unwrap_or(next)
+                        };
+                        (key, revision)
+                    })
+                    .collect(),
+            )
+        })
+        .collect())
 }
 
 fn binding_changes(

@@ -181,6 +181,22 @@ pub fn configuration_changes(
     before: &NetworkConfiguration,
     after: &NetworkConfiguration,
 ) -> Result<Vec<ConfigurationChange>, ConfigurationError> {
+    value_changes(before, after)
+}
+
+/// Compare normalized declaration plans without pretending pending materials
+/// are prepared listeners. Returns paths only, never secret values.
+pub fn planned_configuration_changes(
+    before: &NetworkConfiguration,
+    after: &NetworkConfigurationInput,
+) -> Result<Vec<ConfigurationChange>, ConfigurationError> {
+    value_changes(&NetworkConfigurationInput::from(before), after)
+}
+
+fn value_changes<T: serde::Serialize>(
+    before: &T,
+    after: &T,
+) -> Result<Vec<ConfigurationChange>, ConfigurationError> {
     let a = serde_json::to_value(before).map_err(|_| ConfigurationError::Serialization)?;
     let b = serde_json::to_value(after).map_err(|_| ConfigurationError::Serialization)?;
     let mut changes = Vec::new();

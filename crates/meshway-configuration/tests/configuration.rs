@@ -51,6 +51,46 @@ fn with_nodes() -> NetworkConfigurationInput {
     c
 }
 
+#[test]
+fn declaration_preview_defers_material_only_and_cannot_normalize_as_execution_input() {
+    let mut input = with_nodes();
+    input.nodes.get_mut(&id(1)).unwrap().listeners.insert(
+        "vless".into(),
+        serde_json::from_str(
+            r#"{"type":"vless","listenPort":443,"tls":{"serverName":"node.example.test"}}"#,
+        )
+        .unwrap(),
+    );
+    let plan = plan_configuration(input.clone(), &context()).unwrap();
+    assert_eq!(plan.requirements.len(), 4);
+    assert!(!plan.view.nodes[&id(1)].listeners["vless"].credential_present);
+    assert_eq!(
+        plan.input.nodes[&id(1)].listeners["vless"],
+        input.nodes[&id(1)].listeners["vless"]
+    );
+    assert!(matches!(
+        normalize_with_dependencies(plan.input, &context()),
+        Err(ConfigurationError::PreparationRequired(_))
+    ));
+    let mut no_identity = context();
+    no_identity.approved_identities.clear();
+    assert!(matches!(
+        plan_configuration(input.clone(), &no_identity),
+        Err(ConfigurationError::PreparationRequired(_))
+    ));
+    input.access.push(AccessRule {
+        remark: String::new(),
+        src: vec!["group:missing".into()],
+        dst: vec!["*".into()],
+        ip: vec!["*".into()],
+        bidirectional: false,
+    });
+    assert!(matches!(
+        plan_configuration(input, &context()),
+        Err(ConfigurationError::Invalid(_))
+    ));
+}
+
 fn egress_input(grants: &[&str], destination: &str) -> NetworkConfigurationInput {
     let mut c = with_nodes();
     c.nodes.get_mut(&id(2)).unwrap().exit_enabled = true;

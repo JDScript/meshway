@@ -37,6 +37,18 @@ pub enum StreamEvent<C, E, P> {
     StateDelta {
         #[serde(rename = "stateEpoch")]
         state_epoch: StateEpoch,
+        /// Projection time, not a new measurement timestamp. Current Server
+        /// frames include these metadata fields; optionality permits consumers
+        /// to apply previously retained deltas without inventing values.
+        #[serde(rename = "asOf", skip_serializing_if = "Option::is_none")]
+        as_of: Option<DateTime<Utc>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sequence: Option<meshway_model::Sequence>,
+        #[serde(
+            rename = "configurationRevision",
+            skip_serializing_if = "Option::is_none"
+        )]
+        configuration_revision: Option<Revision>,
         #[serde(rename = "baseCursor")]
         base_cursor: String,
         cursor: String,

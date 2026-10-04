@@ -1162,6 +1162,17 @@ export const zConfigurationView = z.strictObject({
   ["topology"]: z.array(zTopologyRule)
 });
 
+export const zMaterialRequirement = z.enum(["uuid","password","certificate","privateKey","certificateValidation"]);
+
+export const zPreparationKind = z.union([z.enum(["addressPoolV4","addressPoolV6","addressV4","addressV6","identityProof","ruleSetContent"]), z.strictObject({
+  ["material"]: zMaterialRequirement
+})]);
+
+export const zPreparationRequirement = z.strictObject({
+  ["kind"]: zPreparationKind,
+  ["path"]: z.string()
+});
+
 export const zConfigurationPreviewResponse = z.strictObject({
   ["addressChangedNodeIds"]: z.array(zNodeId),
   ["baseRevision"]: zRevision,
@@ -1171,8 +1182,10 @@ export const zConfigurationPreviewResponse = z.strictObject({
   ["preparedRuleSets"]: typedMap(z.string(), zPreparedRuleSet, {}),
   ["preview"]: zConfigurationView,
   ["requestId"]: zRequestId,
+  ["requirements"]: z.array(zPreparationRequirement).exactOptional(),
   ["sourceChanged"]: z.boolean(),
-  ["unavailableDependencies"]: z.array(zConfigurationIssue)
+  ["unavailableDependencies"]: z.array(zConfigurationIssue),
+  ["willGenerate"]: z.array(zPreparationRequirement).exactOptional()
 });
 
 export const zResourceRef = z.union([z.strictObject({
@@ -1305,17 +1318,6 @@ export const zConfigurationState = z.strictObject({
   ["applied"]: zConfigurationRef.nullable().exactOptional(),
   ["progress"]: zConfigurationProgress.nullable().exactOptional(),
   ["saved"]: zConfigurationRef.nullable().exactOptional()
-});
-
-export const zMaterialRequirement = z.enum(["uuid","password","certificate","privateKey","certificateValidation"]);
-
-export const zPreparationKind = z.union([z.enum(["addressPoolV4","addressPoolV6","addressV4","addressV6","identityProof","ruleSetContent"]), z.strictObject({
-  ["material"]: zMaterialRequirement
-})]);
-
-export const zPreparationRequirement = z.strictObject({
-  ["kind"]: zPreparationKind,
-  ["path"]: z.string()
 });
 
 export const zConfigurationValidationParams = z.strictObject({
@@ -2549,11 +2551,14 @@ export const zNodeEvent = z.union([z.strictObject({
   ["heartbeatIntervalMs"]: z.int().gte(0).lte(2147483647),
   ["type"]: z.enum(["sync.ready"])
 }), z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["baseCursor"]: z.string(),
+  ["configurationRevision"]: zRevision.nullable().exactOptional(),
   ["cursor"]: z.string(),
   ["links"]: z.array(zAggregatedLink),
   ["paths"]: z.array(zAggregatedPath),
   ["removed"]: z.array(zNodeId),
+  ["sequence"]: zSequence.nullable().exactOptional(),
   ["stateEpoch"]: zStateEpoch,
   ["type"]: z.enum(["state.delta"]),
   ["updated"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {})
@@ -2920,11 +2925,14 @@ export const zUserEvent = z.union([z.strictObject({
   ["heartbeatIntervalMs"]: z.int().gte(0).lte(2147483647),
   ["type"]: z.enum(["sync.ready"])
 }), z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["baseCursor"]: z.string(),
+  ["configurationRevision"]: zRevision.nullable().exactOptional(),
   ["cursor"]: z.string(),
   ["links"]: z.array(zAggregatedLink),
   ["paths"]: z.array(zAggregatedPath),
   ["removed"]: z.array(zNodeId),
+  ["sequence"]: zSequence.nullable().exactOptional(),
   ["stateEpoch"]: zStateEpoch,
   ["type"]: z.enum(["state.delta"]),
   ["updated"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {})
