@@ -1,12 +1,19 @@
 //! Server-owned material generation, certificate verification and private
 //! irreversible-revocation checks. Declarations never self-attest validation.
-use super::*;
+use crate::accounts::random_uuid;
+use crate::configuration::Snapshot;
+use crate::error::Error;
+use crate::secrets::Sealer;
 use chrono::Datelike;
+use meshway_configuration::{ConfigurationError, NetworkConfigurationInput};
+use meshway_model::{NetworkId, NodeId};
 use meshway_transport_spec::{Listener, ListenerTls, SecretString, TlsMode};
+use rusqlite::{Transaction, params};
 use rustls::{
     client::danger::ServerCertVerifier,
     pki_types::{ServerName, UnixTime},
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::{io::Cursor, sync::Arc};
 
 fn invalid() -> Error {

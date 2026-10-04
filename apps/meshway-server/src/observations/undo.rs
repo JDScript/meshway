@@ -1,6 +1,8 @@
 //! Undo for observation mutations inside the SQLite transaction. Unchanged
 //! tasks never enter this map; retained measurement indexes remain shared.
-use super::*;
+use super::{Observations, StoredTask};
+use meshway_model::{NetworkId, ObservationId};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 pub(super) struct ObservationUndo {

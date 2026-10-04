@@ -1,7 +1,24 @@
-use super::*;
+use super::{VerifiedEnrollmentProof, hash, pkce, requests::pending};
 use crate::enrollment::{EnrollmentCommit, NodeAdmission};
+use crate::error::Error;
+use crate::secrets::Sealer;
+use crate::store::{
+    authorization::current_session,
+    execution::{id, json, now, uuid},
+};
 use meshway_configuration::NodeIdentity;
+use meshway_model::{
+    BoundNodeKey, Digest, EnrollmentKeyId, EnrollmentRequestId, KeyAlgorithm, NetworkId, NodeId,
+    NodePublicKey, UserId, Version,
+};
 use meshway_protocol::node::NodeKeyMetadata;
+use meshway_protocol::{
+    WireSecret,
+    enrollment::{
+        EnrollmentResponse, ExistingNodeBinding, InitialNodeSettings, RedeemEnrollmentRequest,
+    },
+};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 pub(super) fn existing_keys(
     tx: &Transaction<'_>,

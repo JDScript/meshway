@@ -1,6 +1,12 @@
-use super::*;
+use super::{LoginCandidate, login_candidate, now, timestamp, user_id, uuid};
 use crate::accounts::{AccountSession, IssuedReset, ResetInspection, RevokeSessions};
+use crate::accounts::{User, random_uuid};
+use crate::error::Error;
 use crate::state::{service::CommitPublisher, stream::CommittedChange};
+use crate::store::authorization::current_session;
+use meshway_model::{RequestId, SessionId, UserId};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use zeroize::Zeroizing;
 
 pub(super) fn authorization_changes(
     tx: &Transaction<'_>,

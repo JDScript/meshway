@@ -1,9 +1,13 @@
 //! Non-executable declaration planning. No generated credential, prepared
 //! listener attestation or persistent configuration is manufactured here.
-use super::*;
+use super::{Snapshot, TrustedContext, binding_changes, listener_bindings, resources};
+use crate::error::Error;
+use crate::networks::configuration::ConfigurationBindings;
 use meshway_configuration::{
-    ChangeKind, PreparationKind, plan_configuration, planned_configuration_changes,
+    ChangeKind, ConfigurationChange, NetworkConfigurationInput, PreparationKind,
+    plan_configuration, planned_configuration_changes,
 };
+use meshway_model::RequestId;
 use meshway_protocol::configuration::ConfigurationPreviewResponse;
 use meshway_transport_spec::MaterialRequirement;
 

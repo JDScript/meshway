@@ -2,21 +2,13 @@ use crate::error::Error;
 mod keys;
 mod redeem;
 mod requests;
-use crate::{
-    execution::proof,
-    secrets::Sealer,
-    store::{
-        authorization::current_session,
-        execution::{bytes, id, json, now, uuid},
-    },
-};
+use crate::store::{authorization::current_session, execution::id};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-pub(crate) use keys::*;
+pub(crate) use keys::{create_key, list_keys, revoke_key};
 use meshway_model::*;
-use meshway_protocol::{WireSecret, enrollment::*};
-pub(crate) use redeem::*;
-pub(crate) use requests::*;
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+pub(crate) use redeem::{redeem_in_transaction, redeem_key_in_transaction, verify_admission};
+pub(crate) use requests::{approve, cancel, create_request, deny, inspect, poll};
+use rusqlite::{OptionalExtension, Transaction, params};
 use sha2::{Digest as _, Sha256};
 pub(crate) struct VerifiedEnrollmentProof {
     request: EnrollmentRequestId,

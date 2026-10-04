@@ -9,12 +9,19 @@ use crate::{
     execution::NodePrincipal,
     secrets::{Purpose, Sealer},
 };
-pub(crate) use authentication::*;
-pub(crate) use instances::*;
-pub(crate) use inventory::*;
+pub(crate) use authentication::{authorize_node, challenge, insert_keys, rotate, session};
+pub(crate) use instances::{
+    acquire, configuration, current_instance, instance_lease, lease_for_node, receipt, release,
+    renew,
+};
+pub(crate) use inventory::{inventory, inventory_in_transaction, progress, revoke_key, settings};
 use meshway_configuration::{NetworkConfiguration, NodeIdentity};
 use meshway_model::*;
-pub(crate) use publications::*;
+pub(crate) use publications::{
+    apply_configuration_effects, cancel_demand, check_publication, configuration_targets,
+    current_target, demand, publish, publish_with_rule_sets, receipt_history_targets,
+    select_profile, target_for_node,
+};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 fn commit_progress(

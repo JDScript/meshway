@@ -1,10 +1,22 @@
-use super::*;
+use super::{
+    CommitEffects, CommitMetadata, CommitRuntime, EmailSync, Principal, TrustedContext,
+    apply_in_transaction, binding_changes, materials, prepare, preview, resources,
+};
+use crate::configuration::{ChangeCause, Snapshot, SnapshotCache};
+use crate::error::Error;
 use crate::execution::configuration::{Participant, check_inputs, validation_context};
+use crate::secrets::{Purpose, Sealer};
+use crate::store::authorization::{authorize_manager, current_session};
 use crate::{accounts::token_digest, store::Handle};
+use meshway_configuration::{NetworkConfigurationInput, configuration_changes};
 use meshway_configuration::{UserBinding, edit_source, parse_jsonc};
+use meshway_model::{NetworkId, RequestId, Revision, UserId};
 use meshway_protocol::{WireSecret, configuration::*};
 use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{OptionalExtension, Transaction, params};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 // Includes downloaded inputs waiting for the final accepted SQLite job. Its
 // permit moves into that job so cancelling an HTTP waiter cannot free it early.
@@ -698,6 +710,7 @@ pub(crate) fn source_response(snapshot: &Snapshot, id: RequestId) -> Configurati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accounts::random_uuid;
     use crate::{
         App, Settings,
         accounts::{Secret, TEST_KDF_LOCK},

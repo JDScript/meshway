@@ -19,8 +19,8 @@ use crate::{
     store::authorization::{authorize_manager, current_session},
 };
 use meshway_configuration::{
-    ConfigurationChange, ConfigurationDocument, ConfigurationError, NetworkConfigurationInput,
-    ValidationContext, canonical_json, configuration_changes,
+    ConfigurationChange, ConfigurationDocument, NetworkConfigurationInput, ValidationContext,
+    canonical_json, configuration_changes,
 };
 use meshway_model::{ArtifactId, NetworkId, NodeId, PublicationId, RequestId, Revision, UserId};
 use rusqlite::{OptionalExtension, Transaction, params};
