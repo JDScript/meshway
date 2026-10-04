@@ -19,7 +19,7 @@ import { useConnections } from "@/state/live"
 import { sessionStore } from "@/state/session"
 
 import { DataTable } from "./data-table"
-import { milliseconds, shortIds, traceTime } from "./format"
+import { duration, shortIds, traceTime } from "./format"
 
 /**
  * What this tab holds outside the query cache: the sign-in, the drafts
@@ -184,7 +184,7 @@ function leaseText(record: ObservationRecord, now: number) {
   const plan = leasePlan(task, now)
   switch (plan.type) {
     case "renew":
-      return m.debug_observation_renew({ time: milliseconds(plan.inMs) })
+      return m.debug_observation_renew({ time: duration(plan.inMs) })
     case "lapsed":
       return m.debug_observation_lapsed()
     case "none":

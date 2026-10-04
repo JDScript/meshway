@@ -19,15 +19,19 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const token = (key: string | number) =>
   String(key).replaceAll("~", "~0").replaceAll("/", "~1")
 
-/** Where `cached` and `read` differ, as JSON Pointers. */
+/** Where `cached` and `read` differ, as JSON Pointers, leaving out the `ignored` ones. */
 export function differences(
   cached: unknown,
   read: unknown,
-  limit = 50
+  {
+    limit = 50,
+    ignored = [],
+  }: { limit?: number; ignored?: readonly string[] } = {}
 ): Differences {
   const found: Difference[] = []
   let total = 0
   const visit = (a: unknown, b: unknown, path: string) => {
+    if (ignored.includes(path)) return
     if (Array.isArray(a) && Array.isArray(b)) {
       for (let index = 0; index < Math.max(a.length, b.length); index++)
         visit(a[index], b[index], `${path}/${index}`)

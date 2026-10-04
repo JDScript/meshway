@@ -210,13 +210,15 @@ its generated client only, and only what the controller delivers:
   settings, when they change, come in a new batch after the controller's
   `sync.reset`. A `state.delta` replaces the State's `asOf`, `sequence` and
   `configurationRevision` when it carries them. Reconnects back off (1 s
-  doubling to 30 s), resuming from the applied cursor; `sync.reset` and a
+  doubling to 30 s), resuming from the applied cursor: a resumed stream
+  sends no new batch, so the controller accepting the connection
+  (`onOpen`) makes the installed view live again; `sync.reset` and a
   refused frame sync afresh. 401 and `stream.closed` for an expired
   session sign out; 403/404 and a revoked membership stop the stream and
   the network's reads say why. While it
   is not live, the reads it covers poll (`pollUnlessLive`), and leaving
   live reads them again. The toolbar's dot states it (live since,
-  reconnecting since, stopped). Observation events write this sign-in's
+  reconnecting since, paused from the debug panel, stopped). Observation events write this sign-in's
   observation reads (below); a new sync reads them again.
 - A revision's deployment (`getConfigurationProgress`), in every
   revision's history entry: the controller's summary (targets once each,
@@ -587,3 +589,41 @@ above the held screen.
 
 - Alt+G toggles the layout guides (development builds only): every line of
   `layout.ts` and a 4px grid, for checking alignment by eye or in crops.
+
+### Debug mode
+
+For watching what the console does against a real controller, in every
+build. It is turned on in the account page (this browser, every tab);
+Ctrl+` then shows or hides its panel in a tab. The panel's code is loaded
+only when shown.
+
+- The panel is a glass sheet over the bottom of the window, above the
+  surfaces and below dialogs and toasts; it covers what is under it and
+  moves nothing. Its top edge sets its height. Tabs: the open network's
+  stream, the streamed reads against GET, the cache, the requests, local
+  state, time.
+- It records only while the mode is on, in memory and bounded (500 stream
+  entries per network, 500 requests, 64 clock samples); turning the mode
+  on or off and a sign-in change start it afresh. It never records a
+  credential, a header, a request or response body or a draft's text.
+  Stream events (the data the cache holds anyway) are kept, and opened as
+  a tree: the one place besides the JSONC source where data shows as
+  JSON. The diagnostics copy leaves the events' data out.
+- Stream: its connection, cursor and revision, and each connection
+  change, failure, wait, debug action and event with what it wrote or
+  invalidated in the cache. It can drop the connection (it reconnects
+  from its cursor), sync again without the cursor, pause (the reads
+  poll; the toolbar's dot says paused) and resume.
+- Against GET: the network summary, nodes, State (but its `asOf`, which is
+  each read's own time) and each cached deployment progress, read afresh
+  and compared, the read never kept.
+- Cache: each read's state, where its data last came from (GET, the
+  stream, a local write) and, while recording, how often each happened.
+- Requests: method, path and query, status, time to the response headers,
+  problem code.
+- Local state: the session, drafts (kind, base, edits, check), apply
+  flows, attempts whose outcome is unknown, the open network's
+  observation leases, every stream.
+- Time: the controller's clock against the browser's, bounded by each
+  response's `Date` and round trip, and the State's age and the session's
+  expiry by either clock.

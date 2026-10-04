@@ -39,12 +39,13 @@ export type Check = {
 /** `cached` against what `read` returns now, and that read (null when there was none). */
 async function compare<T>(
   cached: T | undefined,
-  read: () => Promise<T>
+  read: () => Promise<T>,
+  ignored: readonly string[] = []
 ): Promise<{ outcome: Outcome; read: T | null }> {
   if (cached === undefined) return { outcome: { type: "uncached" }, read: null }
   try {
     const fresh = await read()
-    const found = differences(cached, fresh)
+    const found = differences(cached, fresh, { ignored })
     return {
       outcome:
         found.total === 0
@@ -93,8 +94,11 @@ export async function checkConsistency(
   const cachedState = queryClient.getQueryData(
     networkStateQuery(networkId).queryKey
   )
-  const state = await compare(cachedState, () =>
-    authed((token) => getNetworkState(client, path, { token }))
+  // `asOf` is when each read was projected: a fresh GET is always later.
+  const state = await compare(
+    cachedState,
+    () => authed((token) => getNetworkState(client, path, { token })),
+    ["/asOf"]
   )
   checks.push({
     resource: { type: "state" },

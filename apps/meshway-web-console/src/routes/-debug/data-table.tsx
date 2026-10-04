@@ -2,7 +2,12 @@ import type { ReactNode } from "react"
 
 import { cn } from "@/lib/utils"
 
-export type Column = { label: ReactNode; numeric?: boolean }
+export type Column = {
+  label: ReactNode
+  numeric?: boolean
+  /** A long value: cut at the column's width, whole in its tooltip. */
+  long?: boolean
+}
 
 export type Row = {
   key: string | number
@@ -50,7 +55,16 @@ export function DataTable({
               {row.cells.map((cell, index) => (
                 <td
                   key={index}
-                  className={cn("py-0.5 pr-4 whitespace-nowrap", align(index))}
+                  title={
+                    columns[index]?.long && typeof cell === "string"
+                      ? cell
+                      : undefined
+                  }
+                  className={cn(
+                    "py-0.5 pr-4 whitespace-nowrap",
+                    align(index),
+                    columns[index]?.long && "max-w-md truncate"
+                  )}
                 >
                   {cell}
                 </td>

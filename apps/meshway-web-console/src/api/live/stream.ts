@@ -393,6 +393,14 @@ export async function runNetworkStream(
             maxReconnects: 0,
             idleTimeoutMs: idleTimeout(disconnectAfterMs),
             resumeCursor: () => model.cursor ?? undefined,
+            // A resumed stream sends no new sync: the controller taking the
+            // cursor is what makes the installed view current again (what
+            // was missed follows at once, or a reset if it cannot).
+            onOpen: () => {
+              if (!model.view) return
+              attempt = 0
+              setConnection(networkId, { phase: "live", since: Date.now() })
+            },
           }
         )
         for await (const result of events) {

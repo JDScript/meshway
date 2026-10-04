@@ -40,14 +40,14 @@ export function byteSize(size: number) {
   }).format(value)
 }
 
-/** Milliseconds, as the locale writes them. */
-export const milliseconds = (ms: number) =>
+/** A span of time: milliseconds below a second, else seconds. */
+export const duration = (ms: number) =>
   new Intl.NumberFormat(getLocale(), {
     style: "unit",
-    unit: "millisecond",
+    unit: Math.abs(ms) < 1_000 ? "millisecond" : "second",
     unitDisplay: "short",
-    maximumFractionDigits: 0,
-  }).format(ms)
+    maximumFractionDigits: Math.abs(ms) < 1_000 ? 0 : 1,
+  }).format(Math.abs(ms) < 1_000 ? ms : ms / 1_000)
 
 /** A value on one line, cut at `max` characters. */
 export function brief(value: unknown, max = 80) {

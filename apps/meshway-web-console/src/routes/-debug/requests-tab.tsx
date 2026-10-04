@@ -6,7 +6,7 @@ import { m } from "@/paraglide/messages.js"
 import { useRequestTrace, type RequestEntry } from "@/state/debug-trace"
 
 import { DataTable } from "./data-table"
-import { milliseconds, shortIds, traceTime } from "./format"
+import { duration, shortIds, traceTime } from "./format"
 
 type Filter = "all" | "failed"
 
@@ -52,7 +52,7 @@ export function RequestsTab() {
           columns={[
             { label: m.debug_time() },
             { label: m.debug_method() },
-            { label: m.debug_path() },
+            { label: m.debug_path(), long: true },
             { label: m.debug_status() },
             { label: m.debug_duration(), numeric: true },
             { label: m.debug_problem() },
@@ -65,7 +65,7 @@ export function RequestsTab() {
               request.stream ? `${request.method} SSE` : request.method,
               shortIds(request.path),
               outcome(request),
-              milliseconds(request.ms),
+              duration(request.ms),
               request.code ?? "",
             ],
           }))}

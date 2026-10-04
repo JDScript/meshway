@@ -70,7 +70,7 @@ export function CacheTab({ networkId }: { networkId: string | null }) {
       ) : (
         <DataTable
           columns={[
-            { label: m.debug_key() },
+            { label: m.debug_key(), long: true },
             { label: m.debug_status() },
             { label: m.debug_source() },
             { label: m.debug_updated() },

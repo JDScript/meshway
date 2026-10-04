@@ -36,7 +36,7 @@ TanStack Router file routes: the folder tree is the URL tree.
 
 ```
 routes/
-  __root.tsx                 the held first-load screen (-boot/), layout guides
+  __root.tsx                 the held first-load screen (-boot/), layout guides, the debug panel (-debug/)
   login.tsx, register.tsx
   join/, reset-password/     one-time links read from the fragment
   authorize-device/$request.tsx
@@ -51,11 +51,11 @@ routes/
 
 | Folder | Holds |
 | --- | --- |
-| `api/client.ts`, `api/failure.ts` | The one `ControlClient` (same origin); `authed` adds this tab's session and turns a 401 into a rejection; failures worded by problem code. |
+| `api/client.ts`, `api/failure.ts`, `api/traced-fetch.ts` | The one `ControlClient` (same origin, its requests noted while the debug mode is on); `authed` adds this tab's session and turns a 401 into a rejection; failures worded by problem code. |
 | `api/queries/` | Query options and keys per resource. Every reader and the live stream use the same keys. |
-| `api/live/` | The network's SSE stream: a pure reducer (`reducer.ts`) and the runtime that applies its effects to the query cache (`stream.ts`). |
+| `api/live/` | The network's SSE stream: a pure reducer (`reducer.ts`) and the runtime that applies its effects to the query cache (`stream.ts`), telling the debug mode which reads each event touched, and the controls the debug panel uses. |
 | `state/` | Client stores (below). |
-| `lib/` | Pure modules: the configuration model (`lib/configuration/`: draft, typed operations, JSONC, schema checks, form problems), nodes, observation, history series, addresses (`ip.ts`), labels for values the controller sends (`state-labels.ts`, `activity.ts`, `roles.ts`). Message tables may live here; React does not. |
+| `lib/` | Pure modules: the configuration model (`lib/configuration/`: draft, typed operations, JSONC, schema checks, form problems), nodes, observation, history series, addresses (`ip.ts`), labels for values the controller sends (`state-labels.ts`, `activity.ts`, `roles.ts`, `live-labels.ts`), the debug mode's clock offset and differences (`lib/debug/`). Message tables may live here; React does not. |
 | `components/ui/` | shadcn originals, lightly adjusted. |
 | `components/chrome/` | Shared presentational pieces (`decisions.md`, Shared components). |
 | `components/surface/` | The floating surfaces of a network's pages: `PageFrame`, `Surface`, `GlassDrawer`, the commit bar, the geometry (`layout.ts`), the history rules (`history.ts`) and the page list (`pages.ts`). |
@@ -103,13 +103,15 @@ ends or changes; window listeners are started once by `main.tsx`.
 | `session` | This tab's session (a copy of storage); `rejectedAt`, which the router answers by opening the sign-in. Another tab's sign-in reloads this one. |
 | `configuration-draft` | One draft per network, in memory only; its transitions are `lib/configuration/draft-state.ts`. The dock's mark and the close warning read it. |
 | `configuration-apply` | One check → review → apply flow per network, whichever page started it; the unsettled request is sent again after an unknown outcome. |
-| `attempts` | Unsettled requests the controller deduplicates by request ID, per kind and target, past the dialog that sent them. |
-| `live` | Each network's stream connection; liveness (reads poll while not live) is derived from it. |
+| `attempts` | Unsettled requests the controller deduplicates by request ID, per kind and target, past the dialog that sent them (runtime; the debug panel lists them). |
+| `live` | Each network's stream connection (connecting, live, paused, stopped); liveness (reads poll while not live) is derived from it. |
 | `boot` | The first-load sequence. |
 | `globe` | What the globe shows; a click's handler is runtime, not state. |
 | `history-layer` | The overview's chosen history window, per network. |
 | `link-secrets` | The join or reset link's secret, taken from the fragment. |
 | `preferences` | Theme and language; `applyPreferences` keeps them on the document. |
+| `debug` | Whether the debug mode is on (localStorage) and this tab shows its panel (sessionStorage); the panel's tab and height. |
+| `debug-trace` | What the debug mode recorded: each network's stream entries, the requests, each cached read's history, clock samples. Memory only, bounded; afresh when the mode toggles or the sign-in changes. |
 
 ## Tests
 

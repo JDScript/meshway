@@ -12,7 +12,7 @@ import { m } from "@/paraglide/messages.js"
 import { useClockSamples, useStreamTrace } from "@/state/debug-trace"
 import { sessionStore } from "@/state/session"
 
-import { milliseconds } from "./format"
+import { duration } from "./format"
 
 const GRID = "grid grid-cols-2 gap-2 md:grid-cols-4"
 
@@ -37,12 +37,12 @@ export function TimeTab({ networkId }: { networkId: string | null }) {
             {middle === null
               ? m.debug_clock_unmeasured()
               : middle >= 0
-                ? m.debug_clock_ahead({ time: milliseconds(middle) })
-                : m.debug_clock_behind({ time: milliseconds(-middle) })}
+                ? m.debug_clock_ahead({ time: duration(middle) })
+                : m.debug_clock_behind({ time: duration(-middle) })}
           </Tile>
           <Tile label={m.debug_clock_error()}>
             {offset
-              ? `± ${milliseconds(Math.round((offset.high - offset.low) / 2))}`
+              ? `± ${duration(Math.round((offset.high - offset.low) / 2))}`
               : "—"}
           </Tile>
           <Tile label={m.debug_clock_samples()}>

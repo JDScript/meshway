@@ -42,7 +42,18 @@ test("a value of another shape differs as a whole", () => {
 })
 
 test("past the limit, differences are counted, not listed", () => {
-  const found = differences([1, 2, 3], [4, 5, 6], 2)
+  const found = differences([1, 2, 3], [4, 5, 6], { limit: 2 })
   assert.equal(found.found.length, 2)
   assert.equal(found.total, 3)
+})
+
+test("an ignored path is not compared", () => {
+  assert.deepEqual(
+    differences(
+      { asOf: "earlier", sequence: 4 },
+      { asOf: "later", sequence: 5 },
+      { ignored: ["/asOf"] }
+    ).found,
+    [{ path: "/sequence", cached: 4, read: 5 }]
+  )
 })

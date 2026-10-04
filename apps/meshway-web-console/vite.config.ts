@@ -32,7 +32,25 @@ const config = {
   },
   server: {
     proxy: controller
-      ? { "/api": { target: controller, changeOrigin: false } }
+      ? {
+          "/api": {
+            target: controller,
+            changeOrigin: false,
+            // Node sends a response's headers with its first body bytes; a
+            // resumed event stream may send none for a while, and the
+            // console would not know the controller took its cursor. Its
+            // headers go out at once, as the controller sends them.
+            configure: (proxy) =>
+              proxy.on("proxyRes", (upstream, _request, response) => {
+                if (
+                  upstream.headers["content-type"]?.startsWith(
+                    "text/event-stream"
+                  )
+                )
+                  queueMicrotask(() => response.flushHeaders())
+              }),
+          },
+        }
       : undefined,
   },
 } satisfies UserConfig

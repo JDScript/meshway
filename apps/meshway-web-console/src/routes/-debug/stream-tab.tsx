@@ -15,7 +15,7 @@ import {
 } from "@/state/debug-trace"
 import { useConnection } from "@/state/live"
 
-import { byteSize, keyLabel, milliseconds, traceTime } from "./format"
+import { byteSize, duration, keyLabel, traceTime } from "./format"
 import { DataTree } from "./tree"
 
 type Filter = "all" | "events" | "connection"
@@ -74,7 +74,7 @@ function Stream({ networkId }: { networkId: string }) {
         <Tile label={m.debug_idle_bound()}>
           {trace.disconnectAfterMs === null
             ? "—"
-            : milliseconds(trace.disconnectAfterMs)}
+            : duration(trace.disconnectAfterMs)}
         </Tile>
       </div>
       <Section
@@ -221,7 +221,7 @@ function EntryRow({
           {time}
           <span>{m.debug_kind_wait()}</span>
           <span className="truncate">
-            {m.debug_wait({ time: milliseconds(entry.ms) })}
+            {m.debug_wait({ time: duration(entry.ms) })}
           </span>
         </li>
       )

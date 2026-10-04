@@ -85,4 +85,4 @@ updated 复用 UserEntitiesView／NodeEntitiesView，removed 按 nodes／members
 
 成功响应是字符串字节流。OpenAPI 3.1 使用 `x-meshway-sse` 的 `eventSchema` 指向逐帧 JSON 类型；普通错误响应仍是 ErrorResponse。
 
-Rust 客户端提供有界 EventStream，由调用方管理重连；TypeScript 客户端提供 async iterator、逐帧 Zod 校验、空闲超时和有界重连，重连 cursor 由调用者提供。UTF-8、分帧、多行 data、取消和大小限制在公共运行时处理。
+Rust 客户端提供有界 EventStream，由调用方管理重连；TypeScript 客户端提供 async iterator、逐帧 Zod 校验、空闲超时和有界重连，重连 cursor 由调用者提供；每次连接被接受时先调用 `onOpen`，续传不重发初始批次，调用者据此确认服务端接受了 cursor。UTF-8、分帧、多行 data、取消和大小限制在公共运行时处理。
