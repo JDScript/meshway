@@ -40,9 +40,7 @@ loader／导出薄入口是受审 FFI 边界，业务实现保持安全约束。
 
 host services 提供有上下文的 socket、存储、任务、时钟、观测和必要材料接口。底层豁免不能由任意字符串指定用途；control 的 bootstrap 不依赖业务 DNS 已启动，TUN 捕获前先完成保护。
 
-dataplane 保持共同身份／端到端保护；transport 执行协议封装，connectivity 管理实际邻接与 socket 尝试。当前穿透目标限外层 UDP；Native TCP、VLESS TCP/TLS／WS/TLS 和 Trojan TCP/TLS 要求已拨号建立的 TCP stream，不实现 TCP simultaneous-open。接受远端拨入和本机主动拨出都可得到该 stream，建连方向独立于业务方向。
-
-连接获取与协议封装分别表达：显式 listener／dialer 取得的会话，与绑定 UDP socket、发现／交换候选、协调穿透取得的会话，最终复用同一 peer 会话、权限、流表、加密与失效 owner。UDP 同样有接收 socket 和认证握手；两类会话均可双向承载，不能据此推导双向业务授权。QUIC／HTTP/3 的 UDP 外层可复用穿透基础设施，但其连接／HTTP 角色仍须独立处理。MASQUE provider 与新的需求声明字段尚未实现。
+dataplane 保持共同身份／端到端保护；transport 执行协议封装，connectivity 管理实际邻接与 socket 尝试。provider 的底层资源需求、显式建连／协调 UDP 穿透的公共边界及 MASQUE 范围统一见[连接获取](/v2/node/connectivity)。连接的收发方向不能替代业务授权。
 
 ## Config／State 对齐
 

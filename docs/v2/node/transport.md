@@ -29,6 +29,8 @@ VLESS／Trojan 的协议实现参考 mihomo／sing-box 的握手、编解码、T
 
 socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity。适配器使用调用者交付的 socket；字段应用失败会报错。TCP keepalive 在当前平台按整秒校验，不能静默截断亚秒配置。
 
+显式 listener／dialer 与协调 UDP 穿透共用承载接口，provider 的连接需求和双方角色见[连接获取](/v2/node/connectivity)。
+
 ## 邻接管理
 
 `meshway-connectivity::Manager` 持有有界 listener、拨号／重连任务、认证通道和事实快照，通过 `SocketFactory` 使用 underlay 的用途受限 socket。它复用正式 Native TCP、VLESS TCP/TLS／WebSocket/TLS、Trojan TCP/TLS provider；VLESS／Trojan 使用固定专用 Mesh CONNECT 目标，收到任意其他代理目标时拒绝，不提供通用代理。
