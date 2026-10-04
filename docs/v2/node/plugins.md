@@ -2,6 +2,8 @@
 
 ## 交付与装载
 
+首版动态装载 transport providers。control、dataplane、connectivity、underlay、TUN/netstack、DNS 和 diagnostics 保持独立职责的 Rust 库，由 daemon 链接；crate 边界不自动成为动态库边界。
+
 首版发行包携带匹配版本的 daemon、CLI、全部正式 provider 和清单，整体安装／升级。daemon 启动时检查兼容性和依赖并加载；增加兼容 provider 不要求重新编译 daemon 主体，首版仍随完整发行包交付并重启启用。
 
 独立插件更新、Server 分发可执行代码、运行中热卸载留待后续。配置启停 listener、重建连接或代际不等于卸载动态库。
@@ -10,7 +12,7 @@
 
 ## 接口
 
-`meshway-plugin` 定义共同 SDK；plugin host 处理装载／生命周期；transport、包接入、DNS、control 等使用各自领域接口。公共描述建议包含 ID、版本、ABI 范围、平台、依赖、capabilities 和 schema 引用，精确编码待定。
+`meshway-plugin` 定义共同 SDK；plugin host 处理装载／生命周期；首版承载接口由 `meshway-transport` 定义。其余组件使用库内的领域接口，后续增加插件种类时再定义对应 ABI。公共描述建议包含 ID、版本、ABI 范围、平台、依赖、capabilities 和 schema 引用，精确编码待定。
 
 Config／State 类型继续由共享库拥有，不用通用 `execute(name, arbitrary JSON)` 替代合同。依赖环和无选择规则的重复 provider 在启动检查中失败；组件不自行加载任意同名库。
 
