@@ -1,3 +1,4 @@
+import type { PreparedRuleSet } from "@meshway/control-client"
 import { useQuery } from "@tanstack/react-query"
 
 import { GlassDialog } from "@/components/chrome/glass-dialog"
@@ -44,10 +45,42 @@ function NodeIds({
   )
 }
 
+/** The remote rule sets the check downloaded and converted, by key: tentative, nothing saved. */
+function PreparedRuleSets({
+  sets,
+}: {
+  sets: Readonly<Record<string, PreparedRuleSet>>
+}) {
+  return (
+    <ul className="flex flex-col gap-1">
+      {Object.entries(sets).map(([key, set]) => (
+        <li
+          key={key}
+          className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-tile bg-fill-subtle px-3 py-2"
+        >
+          <span className="min-w-0 text-row font-medium break-all">{key}</span>
+          <span className="text-meta text-muted-foreground tabular-nums">
+            {m.configuration_review_rule_set_entries({ entries: set.entries })}
+          </span>
+          <span
+            title={set.digest}
+            className="font-mono text-meta text-muted-foreground"
+          >
+            {m.configuration_review_rule_set_digest({
+              digest: set.digest.slice(0, 12),
+            })}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 /**
  * What applying would do, as the controller computed it: the effective
  * change count, permanent node deletions and address changes on their own,
- * then every change with its value before and after (non-secret views).
+ * the remote rule sets it prepared, then every change with its value before
+ * and after (non-secret views).
  * Nothing is applied until it is confirmed here.
  */
 export function ReviewDialog({
@@ -162,6 +195,17 @@ export function ReviewDialog({
               names={base.data?.configuration.nodes}
             />
           </Section>
+          {Object.keys(preview.preparedRuleSets).length > 0 ? (
+            <Section
+              title={m.configuration_review_rule_sets()}
+              count={Object.keys(preview.preparedRuleSets).length}
+            >
+              <p className="text-row text-muted-foreground">
+                {m.configuration_review_rule_sets_tentative()}
+              </p>
+              <PreparedRuleSets sets={preview.preparedRuleSets} />
+            </Section>
+          ) : null}
           {preview.changes.length > 0 ? (
             <ChangeList
               changes={preview.changes}

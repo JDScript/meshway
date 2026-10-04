@@ -6,7 +6,7 @@ import type {
 
 import { m } from "@/paraglide/messages.js"
 
-import { isSection, type SectionKey } from "./changes"
+import { isSection, type BindingKey, type SectionKey } from "./changes"
 
 export const sectionLabel: Record<SectionKey, () => string> = {
   access: () => m.configuration_section_access(),
@@ -25,9 +25,20 @@ export const sectionLabel: Record<SectionKey, () => string> = {
 export const sectionName = (section: string) =>
   section === ""
     ? m.configuration_section_document()
-    : isSection(section)
-      ? sectionLabel[section]()
-      : section
+    : section === "bindings"
+      ? m.configuration_section_bindings()
+      : isSection(section)
+        ? sectionLabel[section]()
+        : section
+
+/** What a change to a binding means; its value is the controller's own. */
+export const bindingLabel: Record<BindingKey | "other", () => string> = {
+  users: () => m.configuration_binding_users(),
+  nodeUsers: () => m.configuration_binding_nodeUsers(),
+  listeners: () => m.configuration_binding_listeners(),
+  ruleSets: () => m.configuration_binding_ruleSets(),
+  other: () => m.configuration_binding_other(),
+}
 
 export const causeLabel: Record<ConfigurationChangeCause, () => string> = {
   networkCreated: () => m.configuration_cause_networkCreated(),

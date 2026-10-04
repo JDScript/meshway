@@ -169,7 +169,7 @@
   "configuration_history_against_none": "No comparison",
   "configuration_history_compare_failed": "Could not compare",
   "configuration_history_configuration_changed": "Configuration",
-  "configuration_history_bindings_changed": "Identity bindings",
+  "configuration_history_bindings_changed": "Controller bindings",
   "configuration_history_changed": "Changed",
   "configuration_history_same": "Unchanged",
   "configuration_history_view": "Show configuration",
@@ -536,5 +536,27 @@
   "configuration_ruleset_step_new": "New remote set: the controller downloads and converts its source when the draft is checked and when it is applied.",
   "configuration_ruleset_step_replaced": "Its source is changed in this draft: checking and applying download and convert the new source. The status below is the saved source's.",
   "configuration_ruleset_referenced": "Referenced in traffic routing",
+  "configuration_review_rule_sets": "Rule set preparation",
+  "configuration_review_rule_sets_tentative": "The controller downloaded and converted these sources for the check. The result is tentative and nothing is saved; applying prepares them again, and the content may differ.",
+  "configuration_review_rule_set_entries": [
+    {
+      "declarations": [
+        "input entries",
+        "local entriesPlural = entries: plural"
+      ],
+      "selectors": ["entriesPlural"],
+      "match": {
+        "entriesPlural=one": "{entries} entry",
+        "entriesPlural=other": "{entries} entries"
+      }
+    }
+  ],
+  "configuration_review_rule_set_digest": "digest {digest}",
+  "configuration_section_bindings": "Controller bindings",
+  "configuration_binding_users": "The users that emails in the policy are bound to change",
+  "configuration_binding_nodeUsers": "The users that node identities are bound to change",
+  "configuration_binding_listeners": "A listener's generation changes",
+  "configuration_binding_ruleSets": "The content a rule set uses changes (the version the controller pins)",
+  "configuration_binding_other": "A binding the controller keeps beside the configuration changes",
   "configuration_routing_set_note": "Rule set {key}: {message}"
 }

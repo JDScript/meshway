@@ -30,6 +30,18 @@ export function sectionOf(pointer: string): string {
   return pointerSegments(pointer)?.[0] ?? ""
 }
 
+/** What the controller binds beside the configuration (editing.md): changes under `/bindings`, which no configuration view holds. */
+export const BINDINGS = ["users", "nodeUsers", "listeners", "ruleSets"] as const
+
+export type BindingKey = (typeof BINDINGS)[number]
+
+/** The binding a change is to; "other" for one the console does not know, null outside `/bindings`. */
+export function bindingOf(pointer: string): BindingKey | "other" | null {
+  const segments = pointerSegments(pointer)
+  if (segments?.[0] !== "bindings") return null
+  return BINDINGS.find((key) => key === segments[1]) ?? "other"
+}
+
 export type ChangeGroup = {
   section: string
   changes: ConfigurationChange[]

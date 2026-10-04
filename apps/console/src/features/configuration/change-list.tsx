@@ -8,8 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
-import { groupChanges, valueAt, type Found } from "./changes"
-import { changeKindLabel, sectionName } from "./labels"
+import { bindingOf, groupChanges, valueAt, type Found } from "./changes"
+import { bindingLabel, changeKindLabel, sectionName } from "./labels"
 
 /** A value as JSON, two spaces deep, scrolling when long. */
 export function JsonBlock({
@@ -60,7 +60,8 @@ function Side({
 /**
  * The controller's changes by section, each with its value before and
  * after, read from two non-secret views by the change's pointer. A change
- * neither view shows (a secret) says so instead of a value.
+ * neither view shows (a secret) says so instead of a value; a change to a
+ * binding the controller keeps beside the configuration says what it binds.
  */
 export function ChangeList({
   changes,
@@ -91,6 +92,7 @@ export function ChangeList({
               const now = after
                 ? valueAt(after, change.path)
                 : { found: false as const }
+              const binding = bindingOf(change.path)
               const hidden =
                 before !== undefined &&
                 after !== undefined &&
@@ -117,7 +119,9 @@ export function ChangeList({
                       {change.path || "/"}
                     </code>
                   </div>
-                  {hidden ? (
+                  {binding !== null ? (
+                    <EmptyLine size="sm">{bindingLabel[binding]()}</EmptyLine>
+                  ) : hidden ? (
                     <EmptyLine size="sm">
                       {m.configuration_change_hidden()}
                     </EmptyLine>

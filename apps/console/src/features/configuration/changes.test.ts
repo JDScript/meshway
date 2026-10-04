@@ -1,7 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { entryCount, groupChanges, sectionOf, valueAt } from "./changes.ts"
+import {
+  bindingOf,
+  entryCount,
+  groupChanges,
+  sectionOf,
+  valueAt,
+} from "./changes.ts"
 
 test("changes group by section in reading order", () => {
   const groups = groupChanges([
@@ -58,4 +64,12 @@ test("sections count their entries where they are lists or maps", () => {
   assert.equal(entryCount({ a: 1 }), 1)
   assert.equal(entryCount("x"), null)
   assert.equal(entryCount(null), null)
+})
+
+test("a change under /bindings names what the controller binds", () => {
+  assert.equal(bindingOf("/bindings/ruleSets"), "ruleSets")
+  assert.equal(bindingOf("/bindings/nodeUsers"), "nodeUsers")
+  assert.equal(bindingOf("/bindings/somethingNew"), "other")
+  assert.equal(bindingOf("/ruleSets/bindings"), null)
+  assert.equal(bindingOf(""), null)
 })
