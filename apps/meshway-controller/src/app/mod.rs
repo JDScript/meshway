@@ -17,6 +17,7 @@ static DIRECTORY_PREPARATIONS: Semaphore =
 /// and the connection has closed. Use [`Self::shutdown`] to await that boundary.
 pub struct App {
     resource_scheduler: crate::resources::scheduler::Scheduler,
+    observation_maintenance: std::sync::Mutex<crate::observations::service::MaintenanceOwner>,
     downloads: Arc<crate::resources::downloads::Downloads>,
     executor: Executor,
     accounts: Accounts,
@@ -25,7 +26,6 @@ pub struct App {
     boot: meshway_model::InstanceId,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
-    observations_started: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
@@ -170,7 +170,7 @@ impl App {
             configuration_cache,
             state_runtime,
             shutdown_hooks,
-            observations_started: std::sync::atomic::AtomicBool::new(false),
+            observation_maintenance: std::sync::Mutex::default(),
             boot: meshway_model::InstanceId::new(
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
             )
@@ -219,18 +219,12 @@ impl App {
         &self,
     ) -> crate::observations::service::ObservationService<crate::execution::Execution> {
         let service = self.observation_service(self.execution());
-        if !self
-            .observations_started
-            .swap(true, std::sync::atomic::Ordering::AcqRel)
-        {
-            let stop = service.start();
-            self.shutdown_hooks
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(Box::new(move || {
-                    let _ = stop.send(true);
-                }));
+        let mut owner = self
+            .observation_maintenance
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if matches!(*owner, crate::observations::service::MaintenanceOwner::Idle) {
+            *owner = crate::observations::service::MaintenanceOwner::Running(service.start());
         }
         service
     }
@@ -373,8 +367,23 @@ impl App {
     /// Cancelling this future still leaves the process lock with the worker.
     pub async fn shutdown(self) -> Result<(), AppError> {
         self.shutdown_hooks.close();
+        self.downloads.close();
+        let maintenance = std::mem::replace(
+            &mut *self
+                .observation_maintenance
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+            crate::observations::service::MaintenanceOwner::Closed,
+        );
+        let maintenance_result = match maintenance {
+            crate::observations::service::MaintenanceOwner::Running(worker) => {
+                worker.shutdown().await.map_err(|_| AppError::Worker)
+            }
+            _ => Ok(()),
+        };
         self.resource_scheduler.shutdown().await;
         self.executor.shutdown().await?;
+        maintenance_result?;
         Ok(())
     }
 }

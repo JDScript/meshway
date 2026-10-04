@@ -10,6 +10,33 @@ use meshway_protocol::observations::*;
 use rusqlite::Transaction;
 use std::sync::{Arc, Mutex};
 
+/// Owned by App, not by a Router clone. Aborting this async producer cannot
+/// cancel a SQL closure already accepted by the independently owned executor.
+pub(crate) struct ObservationMaintenance {
+    stop: tokio::sync::watch::Sender<bool>,
+    worker: tokio::task::JoinHandle<()>,
+}
+impl ObservationMaintenance {
+    pub(crate) async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
+        let _ = self.stop.send(true);
+        (&mut self.worker).await
+    }
+}
+impl Drop for ObservationMaintenance {
+    fn drop(&mut self) {
+        let _ = self.stop.send(true);
+        self.worker.abort();
+    }
+}
+
+#[derive(Default)]
+pub(crate) enum MaintenanceOwner {
+    #[default]
+    Idle,
+    Running(ObservationMaintenance),
+    Closed,
+}
+
 /// B computes the authorized full path candidates; A checks current session and
 /// source User identity ownership. A network role cannot manufacture a path.
 pub trait ObservationProvider: Send + Sync + 'static {
@@ -65,42 +92,17 @@ pub struct SubscriptionLease {
     pub expires_at: DateTime<Utc>,
 }
 
-/// SQLite rollback also restores the task metadata. Shared immutable window
-/// indexes avoid copying all retained deduplication evidence on each tick.
+/// SQLite rollback restores only observations actually changed by this call.
 struct RuntimeTransaction<'a> {
     runtime: std::sync::MutexGuard<'a, Runtime>,
-    previous: Option<super::Observations>,
 }
 impl<'a> RuntimeTransaction<'a> {
-    fn new(runtime: std::sync::MutexGuard<'a, Runtime>) -> Self {
-        let previous = Some(runtime.observations.clone());
-        Self { runtime, previous }
+    fn new(mut runtime: std::sync::MutexGuard<'a, Runtime>) -> Self {
+        runtime.observations.begin_changes();
+        Self { runtime }
     }
     fn committed(&mut self) {
-        let Some(previous) = self.previous.take() else {
-            return;
-        };
-        let mut changed = std::collections::BTreeSet::new();
-        for (id, stored) in &self.runtime.observations.tasks {
-            if previous.tasks.get(id).is_none_or(|old| {
-                old.task.configuration != stored.task.configuration
-                    || old.task.phase != stored.task.phase
-                    || old.task.expires_at != stored.task.expires_at
-                    || old.subscribers.len() != stored.subscribers.len()
-                    || old.subscribers.iter().any(|(id, old)| {
-                        stored.subscribers.get(id).is_none_or(|s| {
-                            s.expires_at != old.expires_at || s.terminal != old.terminal
-                        })
-                    })
-            }) {
-                changed.insert(stored.network);
-            }
-        }
-        for (id, stored) in previous.tasks {
-            if !self.runtime.observations.tasks.contains_key(&id) {
-                changed.insert(stored.network);
-            }
-        }
+        let changed = self.runtime.observations.commit_changes();
         for network_id in changed {
             self.runtime
                 .hub
@@ -121,9 +123,7 @@ impl std::ops::DerefMut for RuntimeTransaction<'_> {
 }
 impl Drop for RuntimeTransaction<'_> {
     fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            self.runtime.observations = previous;
-        }
+        self.runtime.observations.rollback_changes();
     }
 }
 pub struct ObservationService<P: ObservationProvider> {
@@ -142,20 +142,26 @@ impl<P: ObservationProvider> Clone for ObservationService<P> {
 }
 impl<P: ObservationProvider> ObservationService<P> {
     /// App-owned worker; expiry does not depend on an HTTP request or SSE poll.
-    pub(crate) fn start(&self) -> tokio::sync::watch::Sender<bool> {
+    pub(crate) fn start(&self) -> ObservationMaintenance {
         let (stop, mut stopped) = tokio::sync::watch::channel(false);
         let service = self.clone();
-        tokio::spawn(async move {
+        let worker = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
+                    biased;
                     _=stopped.changed()=>break,
-                    _=interval.tick()=>{ if service.maintain().await.is_err() && *stopped.borrow() { break; } }
+                    _=interval.tick()=>{}
+                }
+                tokio::select! {
+                    biased;
+                    _=stopped.changed()=>break,
+                    _=service.maintain()=>{}
                 }
             }
         });
-        stop
+        ObservationMaintenance { stop, worker }
     }
 
     async fn maintain(&self) -> Result<(), StateError> {
@@ -440,16 +446,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                         ObservationUpdate::Phase { .. } => None,
                     })
                     .is_some_and(|seen| seen.digest == result_digest);
-                let original = runtime
-                    .observations
-                    .tasks
-                    .get(&id)
-                    .ok_or(StateError::NotFound)?
-                    .clone();
-                let mut staged = super::Observations {
-                    tasks: std::collections::BTreeMap::from([(id, original)]),
-                };
-                let task = staged.result(&admission, id, result, now)?;
+                let task = runtime.observations.result(&admission, id, result, now)?;
                 if let Some(probe) = task
                     .latest
                     .as_ref()
@@ -475,18 +472,9 @@ impl<P: ObservationProvider> ObservationService<P> {
                         now,
                     )?;
                 }
-                let mut all_leases = runtime.observations.leases();
-                if !super::active(task.phase) {
-                    let removed: std::collections::BTreeSet<_> =
-                        staged.tasks[&id].subscribers.keys().copied().collect();
-                    all_leases.retain(|s| !removed.contains(&s.id));
-                }
+                let all_leases = runtime.observations.leases();
                 provider.synchronize(&tx, &all_leases, now)?;
                 tx.commit()?;
-                runtime
-                    .observations
-                    .tasks
-                    .insert(id, staged.tasks.remove(&id).ok_or(StateError::Unavailable)?);
                 runtime.committed();
                 if !duplicate {
                     let change = if is_sample {
@@ -545,39 +533,41 @@ fn reauthorize_all<P: ObservationProvider>(
                 .subscribers
                 .iter()
                 .filter(|(_, subscriber)| subscriber.terminal.is_none())
-                .map(|(subscription, subscriber)| {
-                    (
-                        stored.task.id,
-                        *subscription,
-                        subscriber.identity.clone(),
-                        subscriber.authorization_digest,
-                        CreateObservation {
-                            subscription_id: *subscription,
-                            source_node_id: stored.task.source_node_id,
-                            target_node_id: stored.task.target_node_id,
-                            service: stored.task.service.clone(),
-                            selection: stored.task.selection.clone(),
-                            metrics: stored.task.metrics.clone(),
-                            interval_ms: stored.task.interval_ms,
-                        },
-                    )
-                })
+                .map(|(subscription, _)| (stored.task.id, *subscription))
         })
         .collect();
-    for (task, subscription, identity, authorization, request) in checks {
-        let current = provider.observation(tx, &identity, &request, now);
+    for (task, subscription) in checks {
+        let stored = &runtime.observations.tasks[&task];
+        let subscriber = &stored.subscribers[&subscription];
+        let request = CreateObservation {
+            subscription_id: subscription,
+            source_node_id: stored.task.source_node_id,
+            target_node_id: stored.task.target_node_id,
+            service: stored.task.service.clone(),
+            selection: stored.task.selection.clone(),
+            metrics: stored.task.metrics.clone(),
+            interval_ms: stored.task.interval_ms,
+        };
+        let current = provider.observation(tx, &subscriber.identity, &request, now);
         let valid =
             current.as_ref().is_ok_and(|admission| {
-                admission.authorization_digest == authorization
+                admission.authorization_digest == subscriber.authorization_digest
                     && runtime.observations.tasks.get(&task).is_some_and(|stored| {
                         admission.report.instance_id == stored.task.instance_id
                     })
             });
         if valid
-            && let (Ok(admission), Some(stored)) =
-                (current, runtime.observations.tasks.get_mut(&task))
-            && stored.task.configuration != admission.configuration
+            && let Ok(admission) = current
+            && runtime
+                .observations
+                .tasks
+                .get(&task)
+                .is_some_and(|stored| stored.task.configuration != admission.configuration)
         {
+            let stored = runtime
+                .observations
+                .task_mut(task)
+                .expect("authorized observation");
             stored.task.configuration = admission.configuration;
             stored.paths = admission.paths;
             stored.task.phase = ObservationPhase::Preparing;
@@ -585,9 +575,385 @@ fn reauthorize_all<P: ObservationProvider>(
             stored.task.path_segment = None;
             stored.task.latest = None;
         }
-        if !valid && let Some(stored) = runtime.observations.tasks.get_mut(&task) {
+        if !valid && let Some(stored) = runtime.observations.task_mut(task) {
             stored.subscribers.remove(&subscription);
         }
     }
     runtime.observations.expire(now);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observations::{SeenWindow, StoredTask, Subscriber};
+    use meshway_model::*;
+    use std::{
+        collections::BTreeMap,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
+    fn id<T: TryFrom<uuid::Uuid>>(n: u128) -> T
+    where
+        T::Error: std::fmt::Debug,
+    {
+        T::try_from(uuid::Uuid::from_u128(n)).unwrap()
+    }
+    fn task(n: u128, now: DateTime<Utc>, windows: usize) -> StoredTask {
+        let configuration = ConfigurationRef {
+            revision: Revision::MIN,
+            execution_publication: id(100 + n),
+            digest: Digest::from_bytes([7; 32]),
+        };
+        StoredTask {
+            accepted_at: now - chrono::Duration::seconds(1),
+            network: id(1000),
+            task: ObservationTask {
+                id: id(n),
+                source_node_id: id(10 + n),
+                target_node_id: id(20 + n),
+                service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
+                selection: ObservationPath::Auto,
+                path: None,
+                path_segment: None,
+                configuration,
+                instance_id: id(30 + n),
+                metrics: vec![meshway_model::observations::MetricKind::Rtt],
+                interval_ms: 1000,
+                phase: ObservationPhase::Preparing,
+                unsupported_metrics: vec![],
+                expires_at: now + chrono::Duration::seconds(30),
+                renew_after: now + chrono::Duration::seconds(10),
+                latest: None,
+                subscriber_expires_at: None,
+                subscription_id: None,
+            },
+            paths: vec![vec![id(10 + n), id(20 + n)]],
+            subscribers: BTreeMap::from([(
+                id(200 + n),
+                Subscriber {
+                    generation: Digest::from_bytes([1; 32]),
+                    session: id(500),
+                    identity: ReadIdentity::UserSession {
+                        digest: [2; 32],
+                        network: id(1000),
+                    },
+                    authorization_digest: Digest::from_bytes([3; 32]),
+                    expires_at: now + chrono::Duration::seconds(30),
+                    renew_after: now + chrono::Duration::seconds(10),
+                    terminal: None,
+                },
+            )]),
+            seen: Arc::new(
+                (0..windows)
+                    .map(|i| {
+                        (
+                            id(10000 + i as u128),
+                            SeenWindow {
+                                digest: Digest::from_bytes([4; 32]),
+                                version: Version::MIN,
+                                partial: false,
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
+    #[test]
+    fn rollback_journals_only_changed_tasks_and_preserves_large_unrelated_window_index() {
+        let now = Utc::now();
+        let mut runtime = Runtime::new().unwrap();
+        runtime.observations.tasks.insert(id(1), task(1, now, 1));
+        runtime.observations.tasks.insert(id(2), task(2, now, 4096));
+        let runtime = Mutex::new(runtime);
+        let original =
+            serde_json::to_vec(&runtime.lock().unwrap().observations.tasks[&id(1)].task).unwrap();
+        let affected_index = Arc::as_ptr(&runtime.lock().unwrap().observations.tasks[&id(1)].seen);
+        let unrelated_index = Arc::as_ptr(&runtime.lock().unwrap().observations.tasks[&id(2)].seen);
+        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY); CREATE TABLE pending(parent INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);").unwrap();
+        let failure = (|| -> Result<(), StateError> {
+            let tx = db.transaction()?;
+            let mut staged = RuntimeTransaction::new(runtime.lock().unwrap());
+            // Includes repeated whole-network expiry sweeps with no due change.
+            // The old full-cache checkpoint increased BOTH Arc strong counts.
+            for _ in 0..4 {
+                staged.observations.expire(now);
+                assert_eq!(
+                    Arc::strong_count(&staged.observations.tasks[&id(1)].seen),
+                    1
+                );
+                assert_eq!(
+                    Arc::strong_count(&staged.observations.tasks[&id(2)].seen),
+                    1
+                );
+            }
+            let target = &staged.observations.tasks[&id(1)].task;
+            let admission = TaskAdmission {
+                observation_id: Some(id(1)),
+                unsupported_metrics: vec![],
+                report: crate::state::ReportAdmission {
+                    network_id: id(1000),
+                    node_id: target.source_node_id,
+                    instance_id: target.instance_id,
+                    lease_expires_at: now + chrono::Duration::minutes(2),
+                    execution: Some(target.configuration.clone()),
+                    configurations: vec![target.configuration.clone()],
+                    contexts: vec![],
+                    mesh_addresses: Default::default(),
+                },
+                configuration: target.configuration.clone(),
+                paths: vec![],
+                node_expires_at: now + chrono::Duration::minutes(2),
+                session_id: id(500),
+                authorization_digest: Digest::from_bytes([3; 32]),
+                session_expires_at: now + chrono::Duration::minutes(2),
+            };
+            staged.observations.get(&admission, id(1), id(201), now)?;
+            assert_eq!(
+                Arc::strong_count(&staged.observations.tasks[&id(1)].seen),
+                1
+            );
+            assert_eq!(
+                Arc::strong_count(&staged.observations.tasks[&id(2)].seen),
+                1
+            );
+            staged.observations.renew(
+                &admission,
+                id(1),
+                id(201),
+                now + chrono::Duration::seconds(11),
+            )?;
+            staged
+                .observations
+                .cancel(id(500), id(1000), id(1), id(201), now)?;
+            assert_eq!(
+                Arc::strong_count(&staged.observations.tasks[&id(1)].seen),
+                2
+            );
+            assert_eq!(
+                Arc::strong_count(&staged.observations.tasks[&id(2)].seen),
+                1
+            );
+            // A target-only window edit uses COW; rollback must recover the
+            // original index itself, not just its length or the public DTO.
+            Arc::make_mut(&mut staged.observations.task_mut(id(1)).unwrap().seen).clear();
+            tx.execute("INSERT INTO pending VALUES(404)", [])?;
+            tx.commit()?;
+            staged.committed();
+            Ok(())
+        })();
+        assert!(failure.is_err());
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM pending", [], |r| r.get::<_, u32>(0))
+                .unwrap(),
+            0
+        );
+        let runtime = runtime.lock().unwrap();
+        let restored = &runtime.observations.tasks[&id(1)];
+        assert_eq!(serde_json::to_vec(&restored.task).unwrap(), original);
+        assert_eq!(restored.subscribers[&id(201)].terminal, None);
+        assert_eq!(Arc::as_ptr(&restored.seen), affected_index);
+        assert_eq!(restored.seen.len(), 1);
+        let unrelated = &runtime.observations.tasks[&id(2)];
+        assert_eq!(Arc::as_ptr(&unrelated.seen), unrelated_index);
+        assert_eq!(Arc::strong_count(&unrelated.seen), 1);
+        assert_eq!(unrelated.seen.len(), 4096);
+    }
+
+    #[test]
+    fn rollback_restores_expired_removals_and_removes_only_new_insertions() {
+        let now = Utc::now();
+        let mut runtime = Runtime::new().unwrap();
+        runtime
+            .observations
+            .tasks
+            .insert(id(1), task(1, now - chrono::Duration::minutes(2), 1));
+        runtime.observations.tasks.insert(id(2), task(2, now, 4096));
+        let runtime = Mutex::new(runtime);
+        {
+            let mut staged = RuntimeTransaction::new(runtime.lock().unwrap());
+            staged.observations.expire(now);
+            assert!(!staged.observations.tasks.contains_key(&id(1)));
+            staged.observations.insert_task(id(3), task(3, now, 0));
+            assert_eq!(
+                Arc::strong_count(&staged.observations.tasks[&id(2)].seen),
+                1
+            );
+            // Dropping the uncommitted SQL operation restores this write set.
+        }
+        let runtime = runtime.lock().unwrap();
+        assert!(runtime.observations.tasks.contains_key(&id(1)));
+        assert!(!runtime.observations.tasks.contains_key(&id(3)));
+        assert_eq!(
+            runtime.observations.tasks[&id(1)].task.phase,
+            ObservationPhase::Preparing
+        );
+        assert_eq!(
+            Arc::strong_count(&runtime.observations.tasks[&id(2)].seen),
+            1
+        );
+    }
+
+    async fn until(mut condition: impl FnMut() -> bool) {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while !condition() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("lifecycle boundary");
+    }
+
+    #[tokio::test]
+    async fn app_owns_one_lazy_worker_and_shutdown_joins_before_storage_closes() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = crate::App::open(crate::Settings::new(
+            temp.path().canonicalize().unwrap().join("data"),
+        ))
+        .await
+        .unwrap();
+        let service = app.observations();
+        let runtime = Arc::downgrade(&service.runtime);
+        let handle = service.handle.clone();
+        let count = Arc::strong_count(&service.runtime);
+        // No yield: spawned workers cannot finish and hide a duplicate start.
+        for _ in 0..32 {
+            drop(app.observations());
+        }
+        assert_eq!(Arc::strong_count(&service.runtime), count);
+        drop(service);
+        app.shutdown().await.unwrap();
+        assert!(
+            runtime.upgrade().is_none(),
+            "maintenance still owns the runtime after shutdown"
+        );
+        assert!(matches!(
+            handle.execute(|_| ()).await,
+            Err(crate::store::ExecutorError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn maintenance_join_and_cancelled_app_shutdown_preserve_accepted_sql_drain() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().canonicalize().unwrap().join("data");
+        let mut settings = crate::Settings::new(path.clone());
+        settings.database_queue_capacity = 2;
+        let app = crate::App::open(settings).await.unwrap();
+        let service = app.observation_service(app.execution());
+        let handle = service.handle.clone();
+        let blocker_handle = handle.clone();
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let committed = Arc::new(AtomicBool::new(false));
+        let completed = committed.clone();
+        let blocker = tokio::spawn(async move {
+            blocker_handle.execute(move |db| {
+                let tx=db.transaction().unwrap();
+                tx.execute_batch("CREATE TEMP TABLE accepted_observation_work(value INTEGER); INSERT INTO accepted_observation_work VALUES(1)").unwrap();
+                entered.send(()).unwrap();
+                blocked.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+                tx.commit().unwrap();
+                assert_eq!(db.query_row("SELECT value FROM accepted_observation_work",[],|r|r.get::<_,u32>(0)).unwrap(),1);
+                completed.store(true,Ordering::Release);
+            }).await.unwrap();
+        });
+        started.await.unwrap();
+        let before = Arc::strong_count(&service.runtime);
+        let maintenance = service.start();
+        let abort = maintenance.worker.abort_handle();
+        // The worker's service clone and accepted SQL closure each retain the
+        // runtime. One waiting slot is now held by the maintenance job.
+        until(|| Arc::strong_count(&service.runtime) == before + 2).await;
+        let queued_handle = handle.clone();
+        let queued_commit = Arc::new(AtomicBool::new(false));
+        let queued_completed = queued_commit.clone();
+        let (submitting, submitted) = tokio::sync::oneshot::channel();
+        let queued = tokio::spawn(async move {
+            submitting.send(()).unwrap();
+            queued_handle
+                .execute(move |db| {
+                    let tx = db.transaction().unwrap();
+                    tx.execute("INSERT INTO accepted_observation_work VALUES(2)", [])
+                        .unwrap();
+                    tx.commit().unwrap();
+                    queued_completed.store(true, Ordering::Release);
+                })
+                .await
+                .unwrap();
+        });
+        // This current-thread test resumes after the submitter reaches its
+        // reply await: the second slot was available, so its job is accepted.
+        submitted.await.unwrap();
+        maintenance.shutdown().await.unwrap();
+        assert!(abort.is_finished());
+        assert_eq!(Arc::strong_count(&service.runtime), before + 1);
+        assert!(!committed.load(Ordering::Acquire));
+        assert!(!queued_commit.load(Ordering::Acquire));
+        let closing = tokio::spawn(app.shutdown());
+        // Cannot enter the full queue; closing the executor must reject it.
+        assert!(matches!(
+            handle
+                .execute(|_| panic!("new work admitted during close"))
+                .await,
+            Err(crate::store::ExecutorError::Closed)
+        ));
+        closing.abort();
+        assert!(closing.await.unwrap_err().is_cancelled());
+        assert!(matches!(
+            crate::App::open(crate::Settings::new(path.clone())).await,
+            Err(crate::AppError::AlreadyRunning)
+        ));
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        queued.await.unwrap();
+        assert!(committed.load(Ordering::Acquire));
+        assert!(queued_commit.load(Ordering::Acquire));
+        drop(service);
+        let reopened = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                match crate::App::open(crate::Settings::new(path.clone())).await {
+                    Ok(app) => break app,
+                    Err(crate::AppError::AlreadyRunning) => tokio::task::yield_now().await,
+                    Err(error) => panic!("unexpected reopen result: {error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        reopened.check_storage().await.unwrap();
+        reopened.shutdown().await.unwrap();
+        assert!(abort.is_finished());
+    }
+
+    #[tokio::test]
+    async fn cancelling_maintenance_shutdown_aborts_the_owned_async_task() {
+        struct Finished(Arc<AtomicBool>);
+        impl Drop for Finished {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let finished = Arc::new(AtomicBool::new(false));
+        let marker = Finished(finished.clone());
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let worker = tokio::spawn(async move {
+            let _marker = marker;
+            entered.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        let abort = worker.abort_handle();
+        let (stop, _) = tokio::sync::watch::channel(false);
+        let maintenance = ObservationMaintenance { stop, worker };
+        started.await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), maintenance.shutdown())
+                .await
+                .is_err()
+        );
+        until(|| abort.is_finished()).await;
+        assert!(finished.load(Ordering::Acquire));
+    }
 }

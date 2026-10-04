@@ -2,6 +2,7 @@
 //! outside the compiled candidates, or synthesize a successful measurement.
 pub mod history;
 pub mod service;
+mod undo;
 use crate::state::{ReportAdmission, StateError};
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{Digest, NetworkId, ObservationId, ObservationSubscriptionId, SessionId};
@@ -52,9 +53,10 @@ struct SeenWindow {
     version: meshway_model::Version,
     partial: bool,
 }
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct Observations {
     tasks: BTreeMap<ObservationId, StoredTask>,
+    undo: Option<undo::ObservationUndo>,
 }
 impl Observations {
     pub(crate) fn leases(&self) -> Vec<service::SubscriptionLease> {
@@ -226,28 +228,34 @@ impl Observations {
         };
         // Reuse only exact source, authorized publication, mode, metrics and
         // interval. Each subscriber retains its own revocation/lease context.
-        for stored in self.tasks.values_mut() {
-            if stored.network == admission.report.network_id
-                && stored.task.source_node_id == request.source_node_id
-                && stored.task.target_node_id == request.target_node_id
-                && stored.task.service == request.service
-                && stored.task.selection == request.selection
-                && stored.task.metrics == request.metrics
-                && stored.task.interval_ms == request.interval_ms
-                && stored.task.configuration == configuration
-                && stored.task.instance_id == admission.report.instance_id
-                && stored.task.expires_at > now
-                && active(stored.task.phase)
-            {
-                if stored.subscribers.len() >= 64 || session_tasks >= MAX_TASKS_PER_SESSION {
-                    return Err(StateError::ObservationLimit);
-                }
-                stored
-                    .subscribers
-                    .insert(request.subscription_id, subscriber);
-                stored.task.expires_at = stored.task.expires_at.max(expires_at);
-                return subscriber_view(stored, request.subscription_id);
+        let reusable = self
+            .tasks
+            .values()
+            .find(|stored| {
+                stored.network == admission.report.network_id
+                    && stored.task.source_node_id == request.source_node_id
+                    && stored.task.target_node_id == request.target_node_id
+                    && stored.task.service == request.service
+                    && stored.task.selection == request.selection
+                    && stored.task.metrics == request.metrics
+                    && stored.task.interval_ms == request.interval_ms
+                    && stored.task.configuration == configuration
+                    && stored.task.instance_id == admission.report.instance_id
+                    && stored.task.expires_at > now
+                    && active(stored.task.phase)
+            })
+            .map(|stored| stored.task.id);
+        if let Some(id) = reusable {
+            let stored = self.tasks.get(&id).ok_or(StateError::NotFound)?;
+            if stored.subscribers.len() >= 64 || session_tasks >= MAX_TASKS_PER_SESSION {
+                return Err(StateError::ObservationLimit);
             }
+            let stored = self.task_mut(id).ok_or(StateError::NotFound)?;
+            stored
+                .subscribers
+                .insert(request.subscription_id, subscriber);
+            stored.task.expires_at = stored.task.expires_at.max(expires_at);
+            return subscriber_view(stored, request.subscription_id);
         }
         if self
             .tasks
@@ -293,7 +301,7 @@ impl Observations {
             subscriber_expires_at: None,
             subscription_id: None,
         };
-        self.tasks.insert(
+        self.insert_task(
             id,
             StoredTask {
                 accepted_at: now,
@@ -317,8 +325,8 @@ impl Observations {
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, StateError> {
         self.expire(now);
-        let stored = self.tasks.get_mut(&id).ok_or(StateError::NotFound)?;
-        Self::authorize(stored, admission, subscription, now)?;
+        self.authorize(id, admission, subscription, now)?;
+        let stored = self.tasks.get(&id).ok_or(StateError::NotFound)?;
         subscriber_view(stored, subscription)
     }
     pub fn renew(
@@ -328,8 +336,8 @@ impl Observations {
         subscription: ObservationSubscriptionId,
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, StateError> {
-        let stored = self.tasks.get_mut(&id).ok_or(StateError::NotFound)?;
-        Self::authorize(stored, admission, subscription, now)?;
+        self.authorize(id, admission, subscription, now)?;
+        let stored = self.tasks.get(&id).ok_or(StateError::NotFound)?;
         if stored.seen.len() >= 4096
             || stored
                 .subscribers
@@ -346,6 +354,7 @@ impl Observations {
         let expires = (now + Duration::seconds(OBSERVATION_LEASE_SECONDS))
             .min(admission.session_expires_at)
             .min(admission.node_expires_at);
+        let stored = self.task_mut(id).ok_or(StateError::NotFound)?;
         let subscriber = stored
             .subscribers
             .get_mut(&subscription)
@@ -372,18 +381,24 @@ impl Observations {
     ) -> Result<(), StateError> {
         let stored = self
             .tasks
-            .get_mut(&id)
+            .get(&id)
             .filter(|task| task.network == network)
             .ok_or(StateError::NotFound)?;
         let subscriber = stored
             .subscribers
-            .get_mut(&subscription)
+            .get(&subscription)
             .filter(|s| s.session == session)
             .ok_or(StateError::NotFound)?;
-        if subscriber.terminal.is_none() {
-            subscriber.terminal = Some(ObservationPhase::Cancelled);
-            subscriber.expires_at = now;
+        if subscriber.terminal.is_some() {
+            return Ok(());
         }
+        let stored = self.task_mut(id).ok_or(StateError::NotFound)?;
+        let subscriber = stored
+            .subscribers
+            .get_mut(&subscription)
+            .ok_or(StateError::NotFound)?;
+        subscriber.terminal = Some(ObservationPhase::Cancelled);
+        subscriber.expires_at = now;
         if stored.subscribers.values().all(|s| s.terminal.is_some()) {
             if active(stored.task.phase) {
                 stored.task.phase = ObservationPhase::Cancelled;
@@ -401,7 +416,14 @@ impl Observations {
         Ok(())
     }
     pub fn revoke_session(&mut self, session: SessionId) {
-        for task in self.tasks.values_mut() {
+        let affected: Vec<_> = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| task.subscribers.values().any(|s| s.session == session))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in affected {
+            let task = self.task_mut(id).expect("selected observation");
             task.subscribers
                 .retain(|_, subscriber| subscriber.session != session);
         }
@@ -436,7 +458,7 @@ impl Observations {
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, StateError> {
         self.expire(now);
-        let stored = self.tasks.get_mut(&id).ok_or(StateError::NotFound)?;
+        let stored = self.tasks.get(&id).ok_or(StateError::NotFound)?;
         if stored.network != admission.network_id
             || stored.task.source_node_id != admission.node_id
             || stored.task.instance_id != admission.instance_id
@@ -466,6 +488,10 @@ impl Observations {
                 {
                     return Err(StateError::Conflict);
                 }
+                if stored.task.phase == phase && (active(phase) || stored.task.latest.is_none()) {
+                    return Ok(stored.task.clone());
+                }
+                let stored = self.task_mut(id).ok_or(StateError::NotFound)?;
                 stored.task.phase = phase;
                 if !active(phase) {
                     stored.task.latest = None;
@@ -594,6 +620,7 @@ impl Observations {
         }) {
             return Err(StateError::Conflict);
         }
+        let stored = self.task_mut(id).ok_or(StateError::NotFound)?;
         std::sync::Arc::make_mut(&mut stored.seen).insert(
             sample.measurement_id,
             SeenWindow {
@@ -609,7 +636,26 @@ impl Observations {
         Ok(stored.task.clone())
     }
     pub fn expire(&mut self, now: DateTime<Utc>) {
-        for task in self.tasks.values_mut() {
+        let affected: Vec<_> = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| {
+                task.subscribers.values().any(|s| {
+                    s.expires_at <= now && s.terminal.is_none()
+                        || s.expires_at + Duration::minutes(1) <= now
+                }) || active(task.task.phase)
+                    && task
+                        .subscribers
+                        .values()
+                        .filter(|s| s.terminal.is_none())
+                        .map(|s| s.expires_at)
+                        .max()
+                        != Some(task.task.expires_at)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in affected {
+            let task = self.task_mut(id).expect("selected observation");
             for subscriber in task.subscribers.values_mut() {
                 if subscriber.expires_at <= now && subscriber.terminal.is_none() {
                     subscriber.terminal = Some(if active(task.task.phase) {
@@ -635,15 +681,24 @@ impl Observations {
                 task.task.expires_at = expiry;
             }
         }
-        self.tasks
-            .retain(|_, task| task.task.expires_at + Duration::minutes(1) > now);
+        let removed: Vec<_> = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| task.task.expires_at + Duration::minutes(1) <= now)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in removed {
+            self.remove_task(id);
+        }
     }
     fn authorize(
-        task: &mut StoredTask,
+        &mut self,
+        id: ObservationId,
         admission: &TaskAdmission,
         subscription: ObservationSubscriptionId,
         now: DateTime<Utc>,
     ) -> Result<(), StateError> {
+        let task = self.tasks.get(&id).ok_or(StateError::NotFound)?;
         let subscriber = task
             .subscribers
             .get(&subscription)
@@ -659,7 +714,10 @@ impl Observations {
                 .configurations
                 .contains(&task.task.configuration)
         {
-            task.subscribers.remove(&subscription);
+            self.task_mut(id)
+                .ok_or(StateError::NotFound)?
+                .subscribers
+                .remove(&subscription);
             return Err(StateError::Unauthorized);
         }
         Ok(())
