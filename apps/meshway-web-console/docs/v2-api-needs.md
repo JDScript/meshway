@@ -113,8 +113,13 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - 没有活实例的节点被判为 `superseded`，而不是 `expired`，console 里一直显示"刚重启"。
   - 原因：节点没有活实例（`node_execution` 过期或已释放）时，`CurrentNode.instance_id` 为 `None`（`execution/state.rs` 的 `live` 判定）；报告只在永久吊销时删除。freshness 判定（`state/mod.rs`）里 `None != Some(上报的实例)` 先命中 superseded，后面"没有租约判 expired"的分支在存有报告时走不到。
   - 进程退出或断网，不释放实例：最后一次报告后 60 秒（`REPORT_TTL_SECONDS`）变 `expired`，最后一次续租后 120 秒（`INSTANCE_TTL`）变 `superseded`，之后不再变化。已用脚本节点复现。
-  - `meshway down`，释放实例：释放时把 `instance_expires_at` 设为当前时间（`store/execution/instances.rs` 的 `release`），节点立刻是 `superseded`，从不出现 `expired`。按代码推断，未实测。
+  - `meshway down`，释放实例：释放时把 `instance_expires_at` 设为当前时间（`store/execution/instances.rs` 的 `release`），节点立刻是 `superseded`，从不出现 `expired`。已用真实 `meshwayd` 复现。
   - 应改为：没有活实例时判 `expired`；只有存在另一个活实例、且与报告的实例不同时才判 `superseded`。"没有活实例"要排在 `config_mismatch` 之前：没有租约时 `configurations` 为空，报告带 `applied` 的节点会被判成 `config_mismatch`（现在 Node 不报 `applied`，暂时看不到）。
+- 配置连续提交时，节点会停在 `blocked`（`problem: contract`），不再重试，直到手动 `meshway up`。
+  - 现象：约 2 秒内连续 apply 3 个 revision（17、18、19），9 个真实 `meshwayd` 里有 4 个停止上报，服务端 freshness 一直是 `superseded`；查看的两个都是已保存 r17、状态 `blocked`。`meshway up` 后 4 个都恢复到 r19。
+  - Server：报告里的 saved／applied／progress 引用不在当前准入的 configurations 里时返回 400 `invalid_request`（`state/validation.rs`）。节点刚保存 r17、r18 已发布时，它如实报告 r17 就会被拒。此前脚本节点在 revision 变化后报告旧引用也得到同一个 400。
+  - Node：daemon 把 401／403／404／409、429／5xx、网络和时钟以外的错误都归为 `Contract` 且不重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），所以一次 400 就让节点停住。
+  - 应改为：刚被替换的 saved 引用要么按事实接受，要么返回可重试、能让节点重新同步的明确错误；daemon 不把这类服务端拒绝当成永久的契约错误。
 - schema 改动后，旧数据库无法启动（`Server storage startup failed.`，没有更具体的原因）。`activity_events.previous_email` 这次让开发环境只能重置数据库、重新接入节点；至少启动错误应说明是哪张表或哪一列与当前 schema 不符。
 
 ### 需要真实 Node 复核
@@ -157,6 +162,8 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 - 两端都报告自己是发起方时 link 的判定：现在判为 `conflicting`，`inUse` 变成 null。
 - `--listen` 的默认端口：仍是 `127.0.0.1:8420`。
 - 角色变更的影响预览（降级 admin 时哪些链接会被撤销）：现在没有角色变更预览接口。
+- 域名规则集经出口：远程规则集里的每个域名都要在 access 里有 `domain:` 授权（服务端按准备好的内容校验），而 access 不能引用规则集，`autogroup:internet` 也不覆盖域名。把 MetaCubeX 的 `geosite:telegram`、`geosite:twitter` 交给出口，需要在 access 里逐条列出这 45 个域名，规则集更新新增域名后也不会自动获得授权。
+- 规则集转换只接受 `+.` 后缀：MetaCubeX 的 geosite 列表大多含精确域名（google、github、openai、apple、microsoft 等），整份转换失败；`geosite:cn` 约 11 万条，超过 10 万的上限。现在可用的只有 geoip 各列表和 cloudflare、telegram、twitter 等少数 geosite。
 
 ### 其他
 
