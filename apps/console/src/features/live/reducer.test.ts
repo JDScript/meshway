@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type {
   NodeInventoryView,
+  ObservationTask,
   StateView,
   UserConfigurationView,
   UserEntitiesView,
@@ -322,22 +323,46 @@ test("a reset drops the view; the snapshot that follows installs again", () => {
   assert.equal(install?.type, "install")
 })
 
-test("observation events only move the cursor", () => {
+test("observation events carry the task or the removal and move the cursor", () => {
   const ready = run(snapshot("b1")).model
+  const task: ObservationTask = {
+    id: "40000000-0000-4000-8000-000000000001",
+    subscriptionId: "40000000-0000-4000-8000-000000000004",
+    sourceNodeId: NODE_A,
+    targetNodeId: NODE_B,
+    service: { type: "icmpEcho" },
+    selection: { mode: "auto" },
+    configuration: {
+      revision: 3,
+      executionPublication: "40000000-0000-4000-8000-000000000005",
+      digest: "d".repeat(64),
+    },
+    instanceId: "40000000-0000-4000-8000-000000000006",
+    intervalMs: 1000,
+    metrics: ["rtt"],
+    unsupportedMetrics: [],
+    phase: "preparing",
+    expiresAt: "2026-10-03T12:00:30Z",
+    renewAfter: "2026-10-03T12:00:10Z",
+  }
   const { model, effects } = run(
     [
+      [{ type: "observation.status", observation: task }, "c2"],
+      [{ type: "observation.sample", observation: task }, "c3"],
       [
-        {
-          type: "observation.removed",
-          subscriptionId: "40000000-0000-4000-8000-000000000004",
-        },
-        "c2",
+        { type: "observation.removed", subscriptionId: task.subscriptionId! },
+        "c4",
       ],
     ],
     ready
   )
-  assert.deepEqual(effects, [])
-  assert.equal(model.cursor, "c2")
+  assert.deepEqual(effects, [
+    { type: "observation", task },
+    { type: "observation", task },
+    { type: "observation-removed", subscriptionId: task.subscriptionId },
+  ])
+  assert.equal(model.cursor, "c4")
+  assert.equal(model.view, ready.view)
 })
 
 test("nodes are listed in the controller's ID order", () => {

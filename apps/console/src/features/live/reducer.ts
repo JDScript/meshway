@@ -5,6 +5,7 @@ import type {
   ErrorResponse,
   NodeInventoryResponse,
   NodeInventoryView,
+  ObservationTask,
   StateView,
   UserConfigurationView,
   UserEntitiesView,
@@ -59,6 +60,10 @@ export type Effect =
   | { type: "configuration"; revision: number }
   | { type: "progress"; progress: ConfigurationApplyProgress }
   | { type: "resources" }
+  /** This session's observation subscription, as the controller now shows it. */
+  | { type: "observation"; task: ObservationTask }
+  /** The subscription ended or its terminal view was dropped. */
+  | { type: "observation-removed"; subscriptionId: string }
   /** The view is no longer current (a reset); the server syncs it again. */
   | { type: "unsynced" }
   /** The stream broke its own continuity: reconnect without a cursor. */
@@ -258,9 +263,20 @@ export function step(model: Model, event: UserEvent, id?: string): Step {
       return { model: at(view), effects: [{ type: "resources" }] }
     case "observation.status":
     case "observation.sample":
+      return {
+        model: at(view),
+        effects: [{ type: "observation", task: event.observation }],
+      }
     case "observation.removed":
-      // No page creates observation tasks yet; keep the cursor moving.
-      return { model: at(view), effects: [] }
+      return {
+        model: at(view),
+        effects: [
+          {
+            type: "observation-removed",
+            subscriptionId: event.subscriptionId,
+          },
+        ],
+      }
   }
 }
 

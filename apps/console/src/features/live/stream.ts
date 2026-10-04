@@ -14,6 +14,13 @@ import {
   networksQuery,
 } from "@/features/network/queries"
 import { nodesQuery } from "@/features/nodes/queries"
+import {
+  observationListQuery,
+  observationsKey,
+  subscriptionQuery,
+  writeRemoved,
+  writeTask,
+} from "@/features/observation/queries"
 import { networkStateQuery } from "@/features/state/queries"
 import { client, rejectSession } from "@/lib/api"
 import { sameData } from "@/lib/same-data"
@@ -131,6 +138,10 @@ async function apply(
         !sameData(previous.entities.members, view.entities.members)
       )
         membersChanged(queryClient, networkId)
+      // A new sync may follow missed observation events: read them again.
+      void queryClient.invalidateQueries({
+        queryKey: observationsKey(networkId),
+      })
       return
     }
     case "entities": {
@@ -175,6 +186,27 @@ async function apply(
     case "resources":
       void queryClient.invalidateQueries({ queryKey: ruleSetsKey(networkId) })
       return
+    case "observation":
+    case "observation-removed": {
+      const subscriptionId =
+        effect.type === "observation"
+          ? effect.task.subscriptionId
+          : effect.subscriptionId
+      if (!subscriptionId) return
+      await queryClient.cancelQueries({
+        queryKey: subscriptionQuery(queryClient, networkId, subscriptionId)
+          .queryKey,
+        exact: true,
+      })
+      await queryClient.cancelQueries({
+        queryKey: observationListQuery(networkId).queryKey,
+        exact: true,
+      })
+      if (effect.type === "observation")
+        writeTask(queryClient, networkId, effect.task)
+      else writeRemoved(queryClient, networkId, subscriptionId)
+      return
+    }
     case "unsynced":
     case "resync":
     case "closed":
