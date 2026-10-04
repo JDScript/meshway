@@ -123,6 +123,7 @@ function NodeKey({
     onError: (error) => {
       toastFailureWith({
         version_conflict: () => m.nodes_key_changed(),
+        state_conflict: () => m.nodes_key_revoke_moot(),
         permission_denied: () => m.nodes_manage_denied(),
       })(error)
       // A newer key generation: the dialog stays, over the key read again.

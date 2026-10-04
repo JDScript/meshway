@@ -15,7 +15,7 @@ import {
   type ReactNode,
 } from "react"
 
-import { authed, client } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import { toastFailure } from "@/api/failure"
 import { joinLinksQuery } from "@/api/queries/members"
 import { BusyLabel } from "@/components/chrome/busy-label"
@@ -134,9 +134,12 @@ function Issue({
         revokeJoinLink(client, { networkId, linkId: link.id }, { token })
       )
     } catch (error) {
-      toastFailure(error)
-      setReplacing(false)
-      return
+      // Used, expired or revoked already: it admits no one either way.
+      if (codeOf(error) !== "state_conflict") {
+        toastFailure(error)
+        setReplacing(false)
+        return
+      }
     }
     void queryClient.invalidateQueries({
       queryKey: joinLinksQuery(networkId).queryKey,

@@ -54,6 +54,7 @@
   "members_link_revoke": "Revoke join link",
   "members_link_revoke_effect": "This {role} link (expires {at}) can no longer be used to join",
   "members_link_revoke_done": "Join link revoked",
+  "members_link_revoke_moot": "This join link was already used, expired or revoked; nothing was revoked.",
   "members_link_revoke_denied": "Your role cannot revoke join links for this role.",
   "members_done": "Done",
   "members_link_no_roles": "Your role can no longer issue join links."

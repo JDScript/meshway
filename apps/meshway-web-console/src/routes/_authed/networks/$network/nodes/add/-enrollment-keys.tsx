@@ -14,7 +14,7 @@ import { ArrowUpRightIcon, KeyRoundIcon, XIcon } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 
-import { authed, client } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import { failureText, toastFailureWith } from "@/api/failure"
 import { membersQuery } from "@/api/queries/members"
 import { enrollmentKeysQuery } from "@/api/queries/nodes"
@@ -87,27 +87,24 @@ export function EnrollmentKeys({
       authed((token) =>
         revokeEnrollmentKey(client, { networkId, keyId }, { token })
       ),
-    onSuccess: async (_, keyId) => {
+    onSuccess: () => {
       setConfirming(false)
-      // The controller answers alike when the key was used or expired
-      // first; what it holds now says whether it was revoked.
-      const read = await keys.refetch()
-      const key = read.data?.pages
-        .flatMap((page) => page.items)
-        .find((item) => item.id === keyId)
-      if (key && key.revokedAt === null)
-        toast.warning(m.nodes_enrollment_revoke_moot())
-      else toast.success(m.nodes_enrollment_revoke_done())
+      toast.success(m.nodes_enrollment_revoke_done())
     },
     onError: (error) => {
       setConfirming(false)
-      toastFailureWith({ permission_denied: () => m.nodes_manage_denied() })(
-        error
-      )
-      void queryClient.invalidateQueries({
-        queryKey: enrollmentKeysQuery(networkId).queryKey,
-      })
+      // Used, expired or revoked before: the list read again shows which.
+      if (codeOf(error) === "state_conflict")
+        toast.warning(m.nodes_enrollment_revoke_moot())
+      else
+        toastFailureWith({ permission_denied: () => m.nodes_manage_denied() })(
+          error
+        )
     },
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: enrollmentKeysQuery(networkId).queryKey,
+      }),
   })
 
   const pages = keys.data?.pages

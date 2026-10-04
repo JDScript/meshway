@@ -16,7 +16,7 @@ import { LinkIcon, XIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { authed, client } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import { toastFailureWith } from "@/api/failure"
 import { joinLinksQuery } from "@/api/queries/members"
 import { InitialAvatar } from "@/components/chrome/avatar"
@@ -277,9 +277,16 @@ function Links({
       setConfirming(false)
       toast.success(m.members_link_revoke_done())
     },
-    onError: toastFailureWith({
-      permission_denied: () => m.members_link_revoke_denied(),
-    }),
+    onError: (error) => {
+      // Used, expired or revoked before: the list read again shows which.
+      if (codeOf(error) === "state_conflict") {
+        setConfirming(false)
+        toast.warning(m.members_link_revoke_moot())
+      } else
+        toastFailureWith({
+          permission_denied: () => m.members_link_revoke_denied(),
+        })(error)
+    },
     onSettled: () =>
       queryClient.invalidateQueries({
         queryKey: joinLinksQuery(networkId).queryKey,
