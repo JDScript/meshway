@@ -32,6 +32,7 @@ import {
 import { InlineSignIn, type InlineEntry } from "../inline-sign-in"
 import { codeOf, withSession } from "../session-call"
 import { JoinInvalid } from "./join-invalid"
+import { joinRefusal, type JoinRefusal } from "./refusal"
 
 const TOAST = "join"
 
@@ -46,7 +47,8 @@ const SIGN_IN: InlineEntry = {
  * A join link: an existing account accepts it into the network and role it
  * names. Signed out, the card signs in (or registers, only while this
  * controller takes registrations) in place, keeping the link; signed in, it
- * shows what the link is for and the account that would join.
+ * shows what the link is for and the account that would join, and when the
+ * account is already a member, says so and opens the network instead.
  */
 export function JoinCard({
   secret,
@@ -59,7 +61,7 @@ export function JoinCard({
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [signedIn, setSignedIn] = useState(() => currentSession() !== null)
-  const [invalid, setInvalid] = useState(false)
+  const [refused, setRefused] = useState<JoinRefusal | null>(null)
   const [leaving, setLeaving] = useState(false)
 
   const expired = useCallback(() => {
@@ -68,10 +70,14 @@ export function JoinCard({
     toast.warning(m.login_expired(), { id: TOAST })
   }, [queryClient])
 
-  const markInvalid = useCallback(() => {
-    onDrop()
-    setInvalid(true)
-  }, [onDrop])
+  const refuse = useCallback(
+    (refusal: JoinRefusal) => {
+      onDrop()
+      toast.dismiss(TOAST)
+      setRefused(refusal)
+    },
+    [onDrop]
+  )
 
   const open = (networkId: string) => {
     onDrop()
@@ -86,7 +92,7 @@ export function JoinCard({
     )
   }
 
-  if (invalid) return <JoinInvalid />
+  if (refused) return <JoinInvalid refusal={refused} />
 
   return (
     <EntryCard title={m.join_title()} leaving={leaving}>
@@ -95,7 +101,7 @@ export function JoinCard({
           secret={secret}
           leaving={leaving}
           onExpired={expired}
-          onInvalid={markInvalid}
+          onRefused={refuse}
           onJoined={open}
           onSignOut={async () => {
             await signOut()
@@ -116,14 +122,14 @@ function Accept({
   secret,
   leaving,
   onExpired,
-  onInvalid,
+  onRefused,
   onJoined,
   onSignOut,
 }: {
   secret: string
   leaving: boolean
   onExpired: () => void
-  onInvalid: () => void
+  onRefused: (refusal: JoinRefusal) => void
   onJoined: (networkId: string) => void
   onSignOut: () => Promise<void>
 }) {
@@ -140,7 +146,8 @@ function Accept({
     const settle = (error: unknown) => {
       if (!live) return
       if (error instanceof SessionRejected) return onExpired()
-      if (codeOf(error) === "invalid_join_link") return onInvalid()
+      const refusal = joinRefusal(codeOf(error))
+      if (refusal) return onRefused(refusal)
       setFailed(true)
       const text = failureText(error, {
         invalid_request: () => m.problem_invalid_join_link(),
@@ -160,11 +167,16 @@ function Accept({
     return () => {
       live = false
     }
-  }, [secret, attempt, onExpired, onInvalid])
+  }, [secret, attempt, onExpired, onRefused])
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (pending || !inspection) return
+    if (inspection.alreadyMember) {
+      toast.dismiss(TOAST)
+      onJoined(inspection.link.networkId)
+      return
+    }
     setPending(true)
     try {
       const joined = await withSession((token) =>
@@ -184,13 +196,15 @@ function Accept({
         onJoined(inspection.link.networkId)
         return
       }
-      if (code === "invalid_join_link") return onInvalid()
+      const refusal = joinRefusal(code)
+      if (refusal) return onRefused(refusal)
       const text = failureText(error)
       if (text) toast.error(text, { id: TOAST })
     }
   }
 
   const link = inspection?.link
+  const member = inspection?.alreadyMember ?? false
   return (
     <>
       <form
@@ -224,6 +238,11 @@ function Accept({
               unread
             )}
           </Fact>
+          {member ? (
+            <p role="status" className="mt-3 text-row text-muted-foreground">
+              {m.join_already_member()}
+            </p>
+          ) : null}
           {failed ? (
             <Button
               type="button"
@@ -243,7 +262,7 @@ function Accept({
               disabled={!inspection || leaving}
               className="mt-5"
             >
-              {m.join_accept()}
+              {member ? m.join_open_network() : m.join_accept()}
             </EntrySubmit>
           )}
         </FieldGroup>

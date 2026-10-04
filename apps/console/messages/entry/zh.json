@@ -55,5 +55,7 @@
   "device_phase_withdrawn": "批准已撤回",
   "device_phase_cancelled": "设备已取消",
   "device_withdrawn_text": "批准已被撤回，设备不能再用这次请求接入。",
-  "device_cancelled_text": "设备取消了这次请求，不能再用它接入。"
+  "device_cancelled_text": "设备取消了这次请求，不能再用它接入。",
+  "join_unusable": "无法使用这条加入链接",
+  "join_open_network": "打开网络"
 }

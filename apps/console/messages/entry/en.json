@@ -55,5 +55,7 @@
   "device_phase_withdrawn": "Approval withdrawn",
   "device_phase_cancelled": "Cancelled by the device",
   "device_withdrawn_text": "The approval was withdrawn; the device cannot join with this request any more.",
-  "device_cancelled_text": "The device cancelled this request; it cannot be used to join."
+  "device_cancelled_text": "The device cancelled this request; it cannot be used to join.",
+  "join_unusable": "Join link cannot be used",
+  "join_open_network": "Open the network"
 }
