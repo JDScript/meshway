@@ -44,14 +44,17 @@ its generated client only, and only what the controller delivers:
 - Join links: a role and an expiry (1 hour to 7 days); the link
   (`/join#token=…`) is shown once in its dialog, which unmounts on close. A
   repeated request (`secretDelivery: "unavailable"`) says the value cannot
-  be read again and offers revoking it and issuing another. The controller
-  publishes no roles a viewer may issue or links a viewer may revoke, so all
-  roles and every pending link's revoke are offered and a refusal says so.
+  be read again and offers revoking it and issuing another. The roles
+  offered are `NetworkActions.joinLinkRoles` (none: no issuing); revoking is
+  offered where `JoinLinkView.actions.revoke`. The list is the controller's
+  order (newest first) and its count the controller's `total`.
 - `/join` reads the token from the fragment once and replaces the address.
   Signed out, the card signs in (or registers, only while registration is
   open) in place; signed in, it shows the network, role, expiry and account
-  (`inspectJoinLink`), and joining opens the network; `already_member`
-  opens it too. A session the controller rejects there returns to the
+  (`inspectJoinLink`), and joining opens the network. A used, revoked or
+  expired link, or one whose issuer may no longer invite, says which; an
+  unknown token says only that the link is not valid. `alreadyMember` (or
+  `already_member` on joining) offers opening the network instead. A session the controller rejects there returns to the
   card's sign-in, keeping the link. The language switch stays disabled
   while the link is held.
 - Configuration (`/configuration`, every member; the controller reads it
