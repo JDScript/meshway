@@ -91,8 +91,6 @@ pub enum IssueCode {
     /// params `value`
     InvalidDestinationCidr,
     EmptyRouteMatch,
-    /// `unmanaged` is a profile fallback, not a rule action.
-    UnmanagedNotFallback,
     /// params `key`
     UnknownRuleSet,
     InvalidRuleSource,
@@ -185,7 +183,6 @@ impl IssueCode {
             ExitNotEnabled => "exit Node is not enabled as an exit",
             InvalidDestinationCidr => "invalid or noncanonical destination CIDR",
             EmptyRouteMatch => "empty route match",
-            UnmanagedNotFallback => "unmanaged is only valid as a fallback",
             UnknownRuleSet => "unknown rule set",
             InvalidRuleSource => "rule source must be HTTPS without credentials or fragment",
             EmptyRuleSetKey => "empty rule set key",

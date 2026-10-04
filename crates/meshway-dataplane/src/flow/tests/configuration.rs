@@ -125,7 +125,7 @@ impl Scene {
                     ip_cidr: vec!["1.1.1.1/32".into()],
                     ..Default::default()
                 },
-                action: RouteAction::Exit {
+                action: RuleAction::Exit {
                     nodes: vec![format!("node:{}", node(3))],
                     via,
                 },

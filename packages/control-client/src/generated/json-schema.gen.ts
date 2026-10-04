@@ -3180,7 +3180,7 @@ export const schemaDocument = {
         ],
         "properties": {
           "action": {
-            "$ref": "#/components/schemas/RouteAction"
+            "$ref": "#/components/schemas/RuleAction"
           },
           "match": {
             "$ref": "#/components/schemas/RouteMatch"
@@ -4543,7 +4543,6 @@ export const schemaDocument = {
           "exit_not_enabled",
           "invalid_destination_cidr",
           "empty_route_match",
-          "unmanaged_not_fallback",
           "unknown_rule_set",
           "invalid_rule_source",
           "empty_rule_set_key",
@@ -5303,8 +5302,210 @@ export const schemaDocument = {
         "additionalProperties": false
       },
       "ListenerUpdate": {
-        "$ref": "#/components/schemas/Listener",
-        "description": "Same protocol fields as a declaration, with secret omission interpreted as\nkeep only while updating the same resource. New resources have no predecessor."
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_udp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_tcp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "flow": {
+                "type": "string"
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/VlessStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
+                "$ref": "#/components/schemas/ListenerTls"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vless"
+                ]
+              },
+              "uuid": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "websocket": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ListenerWebSocketUpdate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "password": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/TrojanStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
+                "$ref": "#/components/schemas/ListenerTls"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "trojan"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "ListenerView": {
         "type": "object",
@@ -5402,6 +5603,21 @@ export const schemaDocument = {
         "additionalProperties": false
       },
       "ListenerWebSocket": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "path": {
+            "$ref": "#/components/schemas/WebSocketPath"
+          },
+          "responseHeaders": {
+            "$ref": "#/components/schemas/WebSocketHeaders"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ListenerWebSocketUpdate": {
         "type": "object",
         "properties": {
           "host": {
@@ -10799,6 +11015,53 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RuleAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "nodes",
+              "type"
+            ],
+            "properties": {
+              "nodes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit"
+                ]
+              },
+              "via": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "direct"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
       "RuleSet": {
         "oneOf": [
           {
@@ -12509,6 +12772,65 @@ export const schemaDocument = {
           },
           "websocket": {
             "$ref": "#/components/schemas/ListenerWebSocket"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VlessListenerUpdate": {
+        "type": "object",
+        "required": [
+          "listenPort",
+          "tls"
+        ],
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endpoint"
+            }
+          },
+          "flow": {
+            "type": "string"
+          },
+          "listen": {
+            "type": "string"
+          },
+          "listenPort": {
+            "$ref": "#/components/schemas/Port"
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "stream": {
+            "$ref": "#/components/schemas/VlessStream"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/ListenerTls"
+          },
+          "uuid": {
+            "$ref": "#/components/schemas/SecretString"
+          },
+          "websocket": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ListenerWebSocketUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false

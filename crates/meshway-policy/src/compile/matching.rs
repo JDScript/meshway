@@ -182,7 +182,7 @@ pub(super) fn egress_action(
     let e = &input.configuration.routing.egress;
     for r in &e.rules {
         if let Some(expires) = matcher(input, d, &r.matcher)? {
-            return Ok((r.action.clone(), expires));
+            return Ok((r.action.clone().into(), expires));
         }
     }
     let mut profile = d.profile.as_str();
@@ -218,7 +218,7 @@ pub(super) fn egress_action(
         .ok_or(CompileError::UnavailableDependency)?;
     for r in &p.rules {
         if let Some(expires) = matcher(input, d, &r.matcher)? {
-            return Ok((r.action.clone(), expires));
+            return Ok((r.action.clone().into(), expires));
         }
     }
     Ok((p.fallback.clone(), d.expires_at_ms))

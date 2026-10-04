@@ -3517,7 +3517,7 @@ async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_d
                 rule_sets: vec!["destinations".into()],
                 ..Default::default()
             },
-            action: RouteAction::Exit {
+            action: RuleAction::Exit {
                 nodes: vec![format!("node:{b}")],
                 via: vec![],
             },
@@ -3528,7 +3528,7 @@ async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_d
                 ip_cidr: vec!["1.1.1.1/32".into()],
                 ..Default::default()
             },
-            action: RouteAction::Direct,
+            action: RuleAction::Direct,
         },
     ];
     let applied = app

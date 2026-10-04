@@ -86,7 +86,7 @@ fn assign_exit_profile(
             rules: vec![EgressRule {
                 remark: String::new(),
                 matcher,
-                action: RouteAction::Exit {
+                action: RuleAction::Exit {
                     nodes: vec![format!("node:{}", node(4))],
                     via: vec![format!("node:{}", node(3))],
                 },
