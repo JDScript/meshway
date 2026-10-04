@@ -19,11 +19,14 @@ its generated client only, and only what the controller delivers:
   `changeAccountEmail`, `changeAccountPassword`, `listAccountSessions`,
   `revokeAccountSession`, `revokeOtherAccountSessions`,
   `revokeAllAccountSessions`, `listAccountActivity`) and password reset
-  links (`inspectPasswordReset`, `redeemPasswordReset`).
+  links (`inspectPasswordReset`, `redeemPasswordReset`); nodes
+  (`listNodes`, `deleteNode`, `revokeNodeKey`), enrolment keys
+  (`listEnrollmentKeys`, `createEnrollmentKey`, `revokeEnrollmentKey`) and
+  the transport catalog (`getTransportCatalog`).
 - Pages now: `/login`, `/register`; `/` opens the remembered network (kept
   per account) or the first listed, else offers creating the first; a
   network's overview (the empty globe and one line saying this controller
-  provides no nodes), members (for `actions.manageMembers`: the members and
+  reports no node locations or state), nodes, members (for `actions.manageMembers`: the members and
   the join links, a member's workspace), settings `network` (the name,
   editable when `actions.rename`; the ID, creation date and role; leaving)
   and `activity` (for `manageMembers`), and the account (email and ID,
@@ -69,8 +72,39 @@ its generated client only, and only what the controller delivers:
   offers to start over from it or to check the same text against it (a
   new review). A restore takes the same review. The section forms (typed
   `operations` into the same draft) come next.
-- Not delivered: nodes, the configuration's section forms, and the event
-  stream. Their pages below are the target design; they return when their
+- Nodes (`/nodes?q=`, every member: the controller lists owners and admins
+  every node, a member their own User-identity devices). The list searches
+  by hostname and shows each node's identity (its user's email or its
+  tags), first address, and whether it is disabled or has a revoked key. A
+  node's workspace (`/nodes/<id>?tab=overview|transport|manage`): the
+  registration facts and one line that this controller reports no node
+  state; the listeners its configuration holds (`getConfiguration`, read
+  only; owners and admins only, which the tab says to others); its two
+  keys (algorithm, generation, public key, revocation) and, where
+  `canDelete`, revoking a key (`expectedGeneration`) and permanent
+  deletion. Deletion reads the configuration's revision when it is asked
+  and sends it; a `revision_conflict` reads it again and keeps the
+  confirmation open. While the configuration draft holds edits not
+  applied, deletion is refused with a toast saying to apply or discard
+  them first (the draft holds only a JSONC document, so a `deleteNode`
+  cannot join it yet).
+- Adding a node (`/nodes/add`, for `actions.editConfiguration`): an
+  enrolment key for a Tag-identity device: at least one tag among the
+  configuration's `tagsOwners`, an optional hostname (one lowercase DNS
+  label; empty takes the device's), an expiry (1 hour to 30 days), and
+  at most one listener (none, UDP, TCP, VLESS, VLESS · WS among what the
+  transport catalog offers): the port, an optional public address, for
+  VLESS a TLS name (else the public address), and under "advanced" the
+  bind address and a public port of its own. Only what is typed is sent;
+  the controller fills its defaults and generates credentials. The
+  controller checks the listener only when the node enrols, so the form
+  checks the generated `Listener` schema and the host rules first. The
+  key is shown once in a dialog dropped when it closes; this controller
+  provides no Agent install, and the page says so instead of a command.
+  Below, the keys: unused, used, revoked or expired; unused ones can be
+  revoked.
+- Not delivered: node runtime state, the configuration's section forms,
+  and the event stream. Their pages below are the target design; they return when their
   operations exist, and nothing stands in for them. What the console needs
   from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
@@ -182,8 +216,8 @@ controller supports today; the rest of each row is the target design.
 
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
-| Overview `/overview?node=` | the empty globe, one line: no nodes | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
-| Nodes `/nodes?view=nodes\|tags` | absent | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
+| Overview `/overview?node=` | the empty globe, one line: no node locations or state | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
+| Nodes `/nodes?view=nodes\|tags` | `?q=`; a node's facts, configured listeners, keys and deletion; adding one with an enrolment key | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | the sections read only; source (JSONC) and history for owners and admins | the source, the history, the sections with what they hold | `/configuration/<section>` (a form; read only now), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
 | Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity, DNS | leave |
