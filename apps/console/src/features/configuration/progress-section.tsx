@@ -8,6 +8,7 @@ import { useMemo } from "react"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
+import { nodesQuery } from "@/features/nodes/queries"
 import { clockTime, dateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
@@ -20,7 +21,7 @@ import {
   type Freshness,
   type NodePhase,
 } from "./progress"
-import { progressNodesQuery, publicationQuery } from "./progress-queries"
+import { publicationQuery } from "./progress-queries"
 import { isDenied } from "./queries"
 
 const phaseLabel: Record<NodePhase, () => string> = {
@@ -121,7 +122,7 @@ function Publication({
   publicationId: string
 }) {
   const progress = useQuery(publicationQuery(networkId, publicationId))
-  const nodes = useQuery(progressNodesQuery(networkId))
+  const nodes = useQuery(nodesQuery(networkId))
   const names = useMemo(
     () =>
       new Map(

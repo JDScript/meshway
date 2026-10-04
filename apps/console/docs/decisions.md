@@ -103,6 +103,21 @@ its generated client only, and only what the controller delivers:
   provides no Agent install, and the page says so instead of a command.
   Below, the keys: unused, used, revoked or expired; unused ones can be
   revoked.
+- `/authorize-device/<enrollmentRequestId>` approves a device's enrolment
+  request (`getDeviceAuthorization`, `approveDeviceAuthorization`,
+  `denyDeviceAuthorization`). The path is the console's: neither the
+  controller nor docs/v2 defines the browser link a device opens yet. The
+  request ID is not a credential; the page signs in in place as `/join`
+  does (`entry/inline-sign-in.tsx`), shows what the device reported as
+  untrusted text with its control key, approves for one of the account's
+  networks or denies, and follows the request until the device redeems it.
+- A configuration apply's deployment (`getExecutionPublication`): from the
+  applied revision's history entry, each publication on its own with its
+  nodes' saved / applied / failed state and freshness, read again every
+  3 s until it settles. The controller gives no per-revision totals and no
+  publication IDs after the apply response, so nothing is summed across
+  publications and a revision applied elsewhere says its progress is not
+  available here.
 - Not delivered: node runtime state, the configuration's section forms,
   and the event stream. Their pages below are the target design; they return when their
   operations exist, and nothing stands in for them. What the console needs
