@@ -16,7 +16,8 @@
       "./messages/live/{locale}.json",
       "./messages/overview/{locale}.json",
       "./messages/history/{locale}.json",
-      "./messages/observation/{locale}.json"
+      "./messages/observation/{locale}.json",
+      "./messages/debug/{locale}.json"
     ]
   }
 }

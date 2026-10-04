@@ -43,5 +43,7 @@
   "account_target_network": "Network {id}",
   "account_target_membership": "Member {id}",
   "account_target_join_link": "Join link {id}",
-  "account_activity_by": "{at} · {actor}"
+  "account_activity_by": "{at} · {actor}",
+  "account_debug": "Debug",
+  "account_debug_mode": "Debug mode"
 }

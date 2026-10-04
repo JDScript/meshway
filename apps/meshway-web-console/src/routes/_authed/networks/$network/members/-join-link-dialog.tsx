@@ -42,7 +42,7 @@ const UNMOUNT_AFTER_MS = 400
 type Body = Omit<CreateJoinLinkRequest, "requestId">
 
 /** By network. */
-const issues = attempts<Body>()
+const issues = attempts<Body>("join-link")
 
 const expiryLabel: Record<JoinLinkExpiry, () => string> = {
   3_600: () => m.members_link_hour(),

@@ -59,7 +59,7 @@ type Choice = Preset | typeof NONE
 type Body = Omit<CreateEnrollmentKeyRequest, "requestId">
 
 /** By network. */
-const enrollmentKeys = attempts<Body>()
+const enrollmentKeys = attempts<Body>("enrollment-key")
 
 /**
  * Adding a node: an enrolment key for one Tag-identity device, with an

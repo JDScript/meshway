@@ -7,8 +7,16 @@ import {
 
 import { currentSession, rejectSession } from "@/state/session"
 
-/** The controller serves this console, so the API is always same-origin. */
-export const client = new ControlClient({ baseUrl: window.location.origin })
+import { tracedFetch } from "./traced-fetch"
+
+/**
+ * The controller serves this console, so the API is always same-origin.
+ * Its requests are noted while the debug mode is on (`traced-fetch.ts`).
+ */
+export const client = new ControlClient({
+  baseUrl: window.location.origin,
+  fetch: tracedFetch(globalThis.fetch.bind(globalThis)),
+})
 
 export type Failure = ClientFailure<ErrorResponse>
 

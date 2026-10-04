@@ -104,6 +104,9 @@ export function useConfigurationDraft(networkId: string) {
   )
 }
 
+/** Every network's draft (the debug panel says what each holds, never its text). */
+export const useDrafts = (): Drafts => useStore(draftStore, (drafts) => drafts)
+
 /** Whether the network's draft holds edits not applied yet (the dock's mark). */
 export const useDraftHeld = (networkId: string): boolean =>
   useStore(draftStore, (drafts) => isDirty(drafts[networkId] ?? null))

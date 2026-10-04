@@ -20,7 +20,7 @@ const TOAST = "network-rename"
 type RenameBody = Omit<RenameNetworkRequest, "requestId">
 
 /** By network. */
-const renames = attempts<RenameBody>()
+const renames = attempts<RenameBody>("network-rename")
 
 /**
  * Renaming the network: entity metadata, saved on its own (not part of the

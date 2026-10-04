@@ -43,5 +43,7 @@
   "account_target_network": "网络 {id}",
   "account_target_membership": "成员 {id}",
   "account_target_join_link": "加入链接 {id}",
-  "account_activity_by": "{at} · {actor}"
+  "account_activity_by": "{at} · {actor}",
+  "account_debug": "调试",
+  "account_debug_mode": "调试模式"
 }

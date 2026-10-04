@@ -4,34 +4,10 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { clockTime } from "@/lib/format"
+import { connectionWords } from "@/lib/live-labels"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useConnection, type Connection } from "@/state/live"
-
-function words(connection: Connection | null): {
-  title: string
-  detail: string | null
-} {
-  if (!connection) return { title: m.live_off(), detail: null }
-  const time = clockTime(connection.since)
-  switch (connection.phase) {
-    case "live":
-      return { title: m.live_live(), detail: m.live_live_since({ time }) }
-    case "connecting":
-      return connection.dropped
-        ? {
-            title: m.live_reconnecting(),
-            detail: m.live_reconnecting_since({ time }),
-          }
-        : { title: m.live_connecting(), detail: m.live_connecting_detail() }
-    case "stopped":
-      return {
-        title: m.live_stopped(),
-        detail: m.live_stopped_detail({ time }),
-      }
-  }
-}
 
 const dot = (connection: Connection | null) => {
   if (connection?.phase === "live") return "bg-success"
@@ -39,6 +15,7 @@ const dot = (connection: Connection | null) => {
     return connection.dropped
       ? "bg-warning"
       : "border border-muted-foreground motion-safe:animate-pulse"
+  if (connection?.phase === "paused") return "border border-warning"
   return "border border-muted-foreground"
 }
 
@@ -48,7 +25,7 @@ const dot = (connection: Connection | null) => {
  */
 export function LiveIndicator({ networkId }: { networkId: string }) {
   const connection = useConnection(networkId)
-  const { title, detail } = words(connection)
+  const { title, detail } = connectionWords(connection)
   return (
     <Popover>
       <PopoverTrigger

@@ -4,6 +4,7 @@ import { createRootRouteWithContext, Outlet } from "@tanstack/react-router"
 import { useBootPhase } from "@/state/boot"
 
 import { BootScreen } from "./-boot/boot-screen"
+import { DebugHost } from "./-debug/host"
 import { LayoutGuides } from "./-layout-guides"
 
 export type RouterContext = {
@@ -26,6 +27,7 @@ function Root() {
         <Outlet />
       </div>
       <BootScreen />
+      <DebugHost />
       {import.meta.env.DEV ? <LayoutGuides /> : null}
     </>
   )

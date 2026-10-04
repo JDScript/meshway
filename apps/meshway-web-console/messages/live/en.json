@@ -7,6 +7,8 @@
   "live_connecting_detail": "Until the event stream is ready, this page reads again at intervals.",
   "live_reconnecting": "Reconnecting",
   "live_reconnecting_since": "The event stream dropped at {time} and is reconnecting; meanwhile this page reads again at intervals.",
+  "live_paused": "Paused",
+  "live_paused_since": "The event stream was paused from the debug panel at {time}; meanwhile this page reads again at intervals.",
   "live_stopped": "No events",
   "live_stopped_detail": "Since {time} the control plane no longer streams this network's events to this account.",
   "live_off": "Not connected"

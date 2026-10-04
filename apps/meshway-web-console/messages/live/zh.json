@@ -7,6 +7,8 @@
   "live_connecting_detail": "事件流就绪前，页面按间隔重新读取。",
   "live_reconnecting": "正在重连",
   "live_reconnecting_since": "事件流自 {time} 起中断，正在重连；期间页面按间隔重新读取。",
+  "live_paused": "已暂停",
+  "live_paused_since": "事件流自 {time} 起在调试面板中暂停；期间页面按间隔重新读取。",
   "live_stopped": "未接收事件",
   "live_stopped_detail": "控制面自 {time} 起不再向这个账户提供这个网络的事件流。",
   "live_off": "未连接"

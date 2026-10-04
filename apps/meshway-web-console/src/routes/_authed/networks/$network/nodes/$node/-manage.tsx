@@ -212,7 +212,7 @@ function NodeKey({
 type DeleteBody = { expectedRevision: number }
 
 /** By network and node. */
-const deletions = attempts<DeleteBody>()
+const deletions = attempts<DeleteBody>("node-delete")
 
 /** The draft holds edits not applied yet: deleting now would move its base under it. */
 const draftHeld = (networkId: string) => isDirty(draftOf(networkId))

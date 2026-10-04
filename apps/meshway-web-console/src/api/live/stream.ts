@@ -1,5 +1,5 @@
 import { watchNetwork, type NetworkSummary } from "@meshway/control-client"
-import type { QueryClient } from "@tanstack/react-query"
+import type { QueryClient, QueryKey } from "@tanstack/react-query"
 
 import { client } from "@/api/client"
 import {
@@ -26,7 +26,20 @@ import {
 import { ruleSetsKey } from "@/api/queries/rule-sets"
 import { networkStateQuery } from "@/api/queries/state"
 import { sameData } from "@/lib/same-data"
-import { connectionOf, isLive, setConnection } from "@/state/live"
+import {
+  streamTouches,
+  traceStreamControl,
+  traceStreamEvent,
+  traceStreamFailure,
+  traceStreamWait,
+  type Touch,
+} from "@/state/debug-trace"
+import {
+  connectionOf,
+  isLive,
+  setConnection,
+  type Connection,
+} from "@/state/live"
 import { currentSession, rejectSession } from "@/state/session"
 
 import {
@@ -46,7 +59,24 @@ import {
 // the network it has open. Its snapshot and deltas write the reads they
 // carry exactly (`reducer.ts`); paged lists and anything a GET adds
 // (request IDs, cursors) are invalidated instead. While it is not live the
-// reads poll (`pollUnlessLive`), and leaving live reads them again.
+// reads poll (`pollUnlessLive`), and leaving live reads them again. Each
+// change an event makes to the cache goes through `streamTouches`, which
+// tells the debug mode which reads it touched.
+
+/**
+ * Sets the stream's connection; leaving live, the network's reads are read
+ * again (and poll from then on).
+ */
+function changeConnection(
+  queryClient: QueryClient,
+  networkId: string,
+  connection: Connection | null
+) {
+  const wasLive = isLive(networkId)
+  setConnection(networkId, connection)
+  if (wasLive && connection?.phase !== "live")
+    void queryClient.invalidateQueries({ queryKey: networkKey(networkId) })
+}
 
 /** Marks the stream not live; the network's reads are read again and poll. */
 function leaveLive(
@@ -56,141 +86,150 @@ function leaveLive(
 ) {
   const previous = connectionOf(networkId)
   if (previous?.phase !== "connecting" || (dropped && !previous.dropped))
-    setConnection(networkId, {
+    changeConnection(queryClient, networkId, {
       phase: "connecting",
       since: Date.now(),
       dropped,
     })
-  if (previous?.phase === "live")
-    void queryClient.invalidateQueries({ queryKey: networkKey(networkId) })
 }
 
+const invalidate = (queryClient: QueryClient, ...keys: QueryKey[]): Touch[] =>
+  streamTouches(() => {
+    for (const queryKey of keys)
+      void queryClient.invalidateQueries({ queryKey })
+  })
+
 /** The paged reads a membership change can alter. */
-function membersChanged(queryClient: QueryClient, networkId: string) {
-  void queryClient.invalidateQueries({
-    queryKey: membersQuery(networkId).queryKey,
-  })
-  void queryClient.invalidateQueries({
-    queryKey: joinLinksQuery(networkId).queryKey,
-  })
-  void queryClient.invalidateQueries({
-    queryKey: networkActivityQuery(networkId).queryKey,
-  })
-}
+const membersChanged = (queryClient: QueryClient, networkId: string) =>
+  invalidate(
+    queryClient,
+    membersQuery(networkId).queryKey,
+    joinLinksQuery(networkId).queryKey,
+    networkActivityQuery(networkId).queryKey
+  )
 
 /**
  * Writes `data` under `key` after cancelling a read of it in flight, which
  * would otherwise land later with what it read before.
  */
-async function write<T>(
+async function write(
   queryClient: QueryClient,
-  key: readonly unknown[],
-  set: () => T
-) {
+  key: QueryKey,
+  set: () => void
+): Promise<Touch[]> {
   await queryClient.cancelQueries({ queryKey: key, exact: true })
-  set()
+  return streamTouches(set)
 }
 
+/** Applies one effect to the cache; returns the reads it touched. */
 async function apply(
   queryClient: QueryClient,
   networkId: string,
   effect: Effect
-) {
+): Promise<Touch[]> {
   switch (effect.type) {
     case "install": {
       const { view, previous, progress } = effect
-      await writeNetwork(queryClient, networkId, view.entities.network)
+      const touched = await writeNetwork(
+        queryClient,
+        networkId,
+        view.entities.network
+      )
       const nodes = nodesQuery(networkId).queryKey
-      await write(queryClient, nodes, () =>
-        queryClient.setQueryData(nodes, inventoryOf(view.entities.nodes))
+      touched.push(
+        ...(await write(queryClient, nodes, () =>
+          queryClient.setQueryData(nodes, inventoryOf(view.entities.nodes))
+        ))
       )
       const state = networkStateQuery(networkId).queryKey
-      await write(queryClient, state, () =>
-        queryClient.setQueryData(state, view.state)
+      touched.push(
+        ...(await write(queryClient, state, () =>
+          queryClient.setQueryData(state, view.state)
+        ))
       )
       if (progress) {
         const key = configurationProgressQuery(
           networkId,
           progress.revision
         ).queryKey
-        await write(queryClient, key, () =>
-          queryClient.setQueryData(key, progress)
+        touched.push(
+          ...(await write(queryClient, key, () =>
+            queryClient.setQueryData(key, progress)
+          ))
         )
       }
       const configuration = view.configuration
       if (configuration.type === "member") {
         const key = memberConfigurationQuery(networkId).queryKey
-        queryClient.setQueryData(key, configuration)
+        touched.push(
+          ...streamTouches(() => queryClient.setQueryData(key, configuration))
+        )
       } else if (
         queryClient.getQueryData(configurationQuery(networkId).queryKey)
           ?.revision !== configuration.revision
       ) {
-        void queryClient.invalidateQueries({
-          queryKey: configurationReads(networkId),
-        })
+        touched.push(...invalidate(queryClient, configurationReads(networkId)))
       }
       if (
         !previous ||
         !sameData(previous.entities.members, view.entities.members)
       )
-        membersChanged(queryClient, networkId)
+        touched.push(...membersChanged(queryClient, networkId))
       // A new sync may follow missed observation events: read them again.
-      void queryClient.invalidateQueries({
-        queryKey: observationsKey(networkId),
-      })
-      return
+      touched.push(...invalidate(queryClient, observationsKey(networkId)))
+      return touched
     }
     case "entities": {
       const { previous, next } = effect
+      const touched: Touch[] = []
       if (!sameData(previous.network, next.network))
-        await writeNetwork(queryClient, networkId, next.network)
+        touched.push(
+          ...(await writeNetwork(queryClient, networkId, next.network))
+        )
       if (!sameData(previous.nodes, next.nodes)) {
         const key = nodesQuery(networkId).queryKey
-        await write(queryClient, key, () =>
-          queryClient.setQueryData(key, inventoryOf(next.nodes))
+        touched.push(
+          ...(await write(queryClient, key, () =>
+            queryClient.setQueryData(key, inventoryOf(next.nodes))
+          ))
         )
       }
       if (!sameData(previous.members, next.members))
-        membersChanged(queryClient, networkId)
-      return
+        touched.push(...membersChanged(queryClient, networkId))
+      return touched
     }
     case "state": {
       const key = networkStateQuery(networkId).queryKey
-      await write(queryClient, key, () =>
+      return write(queryClient, key, () =>
         queryClient.setQueryData(key, effect.state)
       )
-      return
     }
     case "configuration":
       // The reads only: a draft keeps its text and base revision, and sees
       // the new revision through them.
-      void queryClient.invalidateQueries({
-        queryKey: configurationReads(networkId),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: networkActivityQuery(networkId).queryKey,
-      })
-      return
+      return invalidate(
+        queryClient,
+        configurationReads(networkId),
+        networkActivityQuery(networkId).queryKey
+      )
     case "progress": {
       const key = configurationProgressQuery(
         networkId,
         effect.progress.revision
       ).queryKey
-      await write(queryClient, key, () =>
+      return write(queryClient, key, () =>
         queryClient.setQueryData(key, effect.progress)
       )
-      return
     }
     case "resources":
-      void queryClient.invalidateQueries({ queryKey: ruleSetsKey(networkId) })
-      return
+      return invalidate(queryClient, ruleSetsKey(networkId))
     case "observation":
     case "observation-removed": {
       const subscriptionId =
         effect.type === "observation"
           ? effect.task.subscriptionId
           : effect.subscriptionId
-      if (!subscriptionId) return
+      if (!subscriptionId) return []
       await queryClient.cancelQueries({
         queryKey: subscriptionQuery(queryClient, networkId, subscriptionId)
           .queryKey,
@@ -200,16 +239,17 @@ async function apply(
         queryKey: observationListQuery(networkId).queryKey,
         exact: true,
       })
-      if (effect.type === "observation")
-        writeTask(queryClient, networkId, effect.task)
-      else writeRemoved(queryClient, networkId, subscriptionId)
-      return
+      return streamTouches(() => {
+        if (effect.type === "observation")
+          writeTask(queryClient, networkId, effect.task)
+        else writeRemoved(queryClient, networkId, subscriptionId)
+      })
     }
     case "unsynced":
     case "resync":
     case "closed":
       // The run loop acts on these: they change the connection.
-      return
+      return []
   }
 }
 
@@ -222,15 +262,16 @@ async function writeNetwork(
   queryClient: QueryClient,
   networkId: string,
   network: NetworkSummary
-) {
+): Promise<Touch[]> {
   const key = networkQuery(networkId).queryKey
   const before = queryClient.getQueryData(key)
-  if (!before || sameData(before.network, network)) return
-  await write(queryClient, key, () =>
+  if (!before || sameData(before.network, network)) return []
+  const touched = await write(queryClient, key, () =>
     queryClient.setQueryData(key, (old) => old && { ...old, network })
   )
   if (before.network.name !== network.name)
-    void queryClient.invalidateQueries({ queryKey: networksQuery().queryKey })
+    touched.push(...invalidate(queryClient, networksQuery().queryKey))
+  return touched
 }
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -243,6 +284,23 @@ const sleep = (ms: number, signal: AbortSignal) =>
       resolve()
     }
   })
+
+/** What the debug panel may do to a network's stream while it runs. */
+export type StreamControls = {
+  /** Drops the connection as a network failure would: it reconnects and resumes from its cursor. */
+  drop: () => void
+  /** Drops it and syncs afresh, without the cursor. */
+  resync: () => void
+  /** Drops it and stays away until `resume`; the reads poll meanwhile. */
+  pause: () => void
+  resume: () => void
+}
+
+/** The running stream of each network (runtime: functions, never state). */
+const controls = new Map<string, StreamControls>()
+
+export const streamControls = (networkId: string): StreamControls | null =>
+  controls.get(networkId) ?? null
 
 /**
  * Keeps `networkId`'s reads current until `signal` aborts: connects,
@@ -262,90 +320,158 @@ export async function runNetworkStream(
   let disconnectAfterMs: number | null = null
   /** A sync was ready at least once: a failure since is a drop. */
   let wasLive = false
+  /** What the loop waits on now: a connection or the wait before one. */
+  let waiting: AbortController | null = null
+  /** What the debug panel asked, acted on once that wait ends. */
+  let asked: "drop" | "resync" | "pause" | null = null
+  let resumed: (() => void) | null = null
+  const interrupt = (what: "drop" | "resync" | "pause") => {
+    if (!waiting || asked) return
+    asked = what
+    traceStreamControl(networkId, what)
+    waiting.abort()
+  }
+  const own: StreamControls = {
+    drop: () => interrupt("drop"),
+    resync: () => interrupt("resync"),
+    pause: () => interrupt("pause"),
+    resume: () => resumed?.(),
+  }
+  controls.set(networkId, own)
   setConnection(networkId, {
     phase: "connecting",
     since: Date.now(),
     dropped: false,
   })
 
-  // A mount undone at once (React's strict mode) never connects: the
-  // controller holds each opened stream for a while and limits them per
-  // session.
-  await sleep(0, signal)
-  while (!signal.aborted) {
-    const session = currentSession()
-    if (!session) return
-    const connection = new AbortController()
-    const abort = () => connection.abort()
-    signal.addEventListener("abort", abort, { once: true })
-    let next: FailureAction = "retry"
-    try {
-      const events = watchNetwork(
-        client,
-        { networkId },
-        {
-          token: session.token,
-          signal: connection.signal,
-          // Reconnecting is decided here, per connection.
-          maxReconnects: 0,
-          idleTimeoutMs: idleTimeout(disconnectAfterMs),
-          resumeCursor: () => model.cursor ?? undefined,
-        }
-      )
-      for await (const result of events) {
-        if (signal.aborted) break
-        if (!result.ok) {
-          next = failureAction(result.error)
-          break
-        }
-        const stepped = step(model, result.data.data, result.data.id)
-        model = stepped.model
-        let action: FailureAction | null = null
-        for (const effect of stepped.effects) {
-          await apply(queryClient, networkId, effect)
-          if (signal.aborted) break
-          if (effect.type === "install") {
-            attempt = 0
-            wasLive = true
-            disconnectAfterMs = effect.disconnectAfterMs
-            setConnection(networkId, { phase: "live", since: Date.now() })
-          } else if (effect.type === "unsynced")
-            leaveLive(queryClient, networkId, false)
-          else if (effect.type === "resync") action = "resync"
-          else if (effect.type === "closed")
-            action = closedAction(effect.reason)
-        }
-        if (action) {
-          next = action
-          break
-        }
+  try {
+    // A mount undone at once (React's strict mode) never connects: the
+    // controller holds each opened stream for a while and limits them per
+    // session.
+    await sleep(0, signal)
+    while (!signal.aborted) {
+      if (asked === "pause") {
+        changeConnection(queryClient, networkId, {
+          phase: "paused",
+          since: Date.now(),
+        })
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            signal.removeEventListener("abort", done)
+            resolve()
+          }
+          resumed = done
+          signal.addEventListener("abort", done, { once: true })
+        })
+        resumed = null
+        if (signal.aborted) return
+        traceStreamControl(networkId, "resume")
+        setConnection(networkId, {
+          phase: "connecting",
+          since: Date.now(),
+          dropped: wasLive,
+        })
+        attempt = 0
       }
-    } finally {
-      signal.removeEventListener("abort", abort)
-      connection.abort()
+      if (asked === "resync") model = initialModel
+      asked = null
+      const session = currentSession()
+      if (!session) return
+      const connection = new AbortController()
+      waiting = connection
+      const abort = () => connection.abort()
+      signal.addEventListener("abort", abort, { once: true })
+      let next: FailureAction = "retry"
+      try {
+        const events = watchNetwork(
+          client,
+          { networkId },
+          {
+            token: session.token,
+            signal: connection.signal,
+            // Reconnecting is decided here, per connection.
+            maxReconnects: 0,
+            idleTimeoutMs: idleTimeout(disconnectAfterMs),
+            resumeCursor: () => model.cursor ?? undefined,
+          }
+        )
+        for await (const result of events) {
+          if (signal.aborted || asked) break
+          if (!result.ok) {
+            next = failureAction(result.error)
+            traceStreamFailure(networkId, result.error, next)
+            break
+          }
+          const stepped = step(model, result.data.data, result.data.id)
+          model = stepped.model
+          let action: FailureAction | null = null
+          const touched: Touch[] = []
+          for (const effect of stepped.effects) {
+            touched.push(...(await apply(queryClient, networkId, effect)))
+            if (signal.aborted) break
+            if (effect.type === "install") {
+              attempt = 0
+              wasLive = true
+              disconnectAfterMs = effect.disconnectAfterMs
+              setConnection(networkId, { phase: "live", since: Date.now() })
+            } else if (effect.type === "unsynced")
+              leaveLive(queryClient, networkId, false)
+            else if (effect.type === "resync") action = "resync"
+            else if (effect.type === "closed")
+              action = closedAction(effect.reason)
+          }
+          traceStreamEvent(networkId, {
+            id: result.data.id,
+            event: result.data.data,
+            effects: stepped.effects,
+            touched,
+            model,
+          })
+          if (action) {
+            next = action
+            break
+          }
+        }
+      } finally {
+        signal.removeEventListener("abort", abort)
+        connection.abort()
+        waiting = null
+      }
+      if (signal.aborted) return
+      // The panel's interruption ended this connection, not a failure.
+      if (asked) next = "retry"
+      if (next === "stop") return stopNetworkStream(queryClient, networkId)
+      if (next === "sign-out") {
+        setConnection(networkId, { phase: "stopped", since: Date.now() })
+        rejectSession(session)
+        return
+      }
+      if (next === "lost") {
+        // The network's reads say what the controller now answers.
+        stopNetworkStream(queryClient, networkId)
+        setConnection(networkId, { phase: "stopped", since: Date.now() })
+        return
+      }
+      if (next === "resync") model = initialModel
+      if (asked === "pause") continue
+      leaveLive(queryClient, networkId, wasLive)
+      const delay = reconnectDelay(attempt++, Math.random())
+      traceStreamWait(networkId, delay)
+      const wait = new AbortController()
+      waiting = wait
+      const stop = () => wait.abort()
+      signal.addEventListener("abort", stop, { once: true })
+      await sleep(delay, wait.signal)
+      signal.removeEventListener("abort", stop)
+      waiting = null
     }
-    if (signal.aborted) return
-    if (next === "stop") return stopNetworkStream(queryClient, networkId)
-    if (next === "sign-out") {
-      setConnection(networkId, { phase: "stopped", since: Date.now() })
-      rejectSession(session)
-      return
-    }
-    if (next === "lost") {
-      // The network's reads say what the controller now answers.
-      stopNetworkStream(queryClient, networkId)
-      setConnection(networkId, { phase: "stopped", since: Date.now() })
-      return
-    }
-    if (next === "resync") model = initialModel
-    leaveLive(queryClient, networkId, wasLive)
-    await sleep(reconnectDelay(attempt++, Math.random()), signal)
+  } finally {
+    if (controls.get(networkId) === own) controls.delete(networkId)
   }
 }
 
 /** The stream is gone: the reads poll again, read afresh if it was live. */
-export function stopNetworkStream(queryClient: QueryClient, networkId: string) {
-  if (isLive(networkId))
-    void queryClient.invalidateQueries({ queryKey: networkKey(networkId) })
-  setConnection(networkId, null)
-}
+export const stopNetworkStream = (
+  queryClient: QueryClient,
+  networkId: string
+) => changeConnection(queryClient, networkId, null)

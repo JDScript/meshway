@@ -78,7 +78,7 @@ const IDLE: ApplyState = { busy: null, review: null, refusal: null }
 
 const applyStore = createStore<Readonly<Record<string, ApplyState>>>(() => ({}))
 
-const applies = attempts<Proposal>()
+const applies = attempts<Proposal>("configuration-apply")
 /** The page that asked for each network's last check (a function: runtime, not state). */
 const invalidHandlers = new Map<string, OnInvalid>()
 
@@ -95,6 +95,10 @@ function patch(networkId: string, change: Partial<ApplyState>) {
 
 export const useConfigurationApply = (networkId: string): ApplyState =>
   useStore(applyStore, (all) => all[networkId] ?? IDLE)
+
+/** Every network's flow that has started (the debug panel). */
+export const useApplyStates = (): Readonly<Record<string, ApplyState>> =>
+  useStore(applyStore, (all) => all)
 
 function withRequestId(
   proposal: Proposal,

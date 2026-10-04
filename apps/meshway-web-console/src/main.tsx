@@ -12,6 +12,8 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { GlobeStage } from "@/globe/globe-stage"
 import { startBoot } from "@/state/boot"
 import { anyDraftHeld } from "@/state/configuration-draft"
+import { watchDebugMode } from "@/state/debug"
+import { startDebugTrace } from "@/state/debug-trace"
 import { applyPreferences, useLocale } from "@/state/preferences"
 import {
   onSessionChange,
@@ -76,6 +78,8 @@ window.addEventListener("beforeunload", (event) => {
 
 watchStoredSession()
 applyPreferences()
+watchDebugMode()
+startDebugTrace(queryClient)
 startBoot()
 for (const [name, value] of Object.entries(LAYOUT_VARIABLES))
   document.documentElement.style.setProperty(name, value)

@@ -30,7 +30,8 @@ const METRICS: CreateObservation["metrics"] = ["rtt", "probeLoss"]
  * By network and source node. The subscription ID is the attempt's: an
  * outcome left unknown sends the same subscription again.
  */
-const starts = attempts<Omit<CreateObservation, "subscriptionId">>()
+const starts =
+  attempts<Omit<CreateObservation, "subscriptionId">>("observation-start")
 
 /** What the controller's refusals of a new observation mean here. */
 const createFailureText: FailureText = {

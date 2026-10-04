@@ -21,7 +21,7 @@ import { attempts } from "@/state/attempts"
 const TOAST = "network-create"
 
 /** One scope: a network is created under no other. */
-const creations = attempts<Pick<CreateNetworkRequest, "name">>()
+const creations = attempts<Pick<CreateNetworkRequest, "name">>("network-create")
 
 /** The words for a name the controller refuses (its rules may be newer than the page's). */
 export const NAME_FAILURE = { invalid_request: () => m.network_name_invalid() }
