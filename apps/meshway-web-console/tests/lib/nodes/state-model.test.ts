@@ -81,13 +81,18 @@ const STATE: StateView = {
   networkId: INSTANCE,
   nodes: {
     [A]: {
+      hostname: "a",
       derived: { ipInfo: {} },
       freshness: "current",
       receivedAt: T1,
       observedAt: T0,
       report: { view: "full", report: REPORT },
     },
-    [B]: { derived: { ipInfo: {} }, freshness: "awaiting_report" },
+    [B]: {
+      hostname: "b",
+      derived: { ipInfo: {} },
+      freshness: "awaiting_report",
+    },
   },
   links: [link(B, A, "l2"), link(A, C, "l1"), link(B, C, "l3")],
   paths: [

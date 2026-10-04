@@ -168,7 +168,7 @@ async fn events<P: StateProvider>(
     id: RequestId,
 ) -> Result<Response, HttpError> {
     let subscription = service
-        .open_stream(identity, last_cursor(&headers, id)?)
+        .open_stream(identity, last_cursor(&headers, id)?, id)
         .await
         .map_err(|e| HttpError::domain(id, e))?;
     let mut response =

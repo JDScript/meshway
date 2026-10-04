@@ -81,6 +81,8 @@ pub struct VisibilityScope {
     pub authorization_digest: Digest,
     pub observation_authorization_digest: Digest,
     pub visible: BTreeSet<NodeId>,
+    /// Configured hostnames of the visible nodes.
+    pub hostnames: BTreeMap<NodeId, String>,
     pub full: BTreeSet<NodeId>,
     pub observation_paths: BTreeSet<Vec<NodeId>>,
     pub mesh_addresses: BTreeSet<std::net::IpAddr>,
@@ -439,9 +441,17 @@ impl StateHub {
                 &scope.mesh_addresses,
                 now,
             );
+            let hostname = scope
+                .hostnames
+                .get(&node_id)
+                .cloned()
+                .ok_or(Error::Internal(
+                    "visible node without a configured hostname",
+                ))?;
             views.insert(
                 node_id,
                 NodeStateView {
+                    hostname,
                     instance_id: stored.map(|s| s.report.instance_id),
                     report_sequence: stored.map(|s| s.report.sequence),
                     observed_at: stored.map(|s| s.report.observed_at),

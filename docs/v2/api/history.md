@@ -79,7 +79,7 @@ scope 由所属记录及路径确定。返回时可以按权限投影主体／�
 
 ActivityAction 覆盖账户注册／登录／密码／邮箱／会话撤销、网络创建／改名、成员加入／角色／移除、加入链接创建／撤销以及 configuration.apply。配置系统变更的具体来源使用 ConfigurationChangeCause，不能把它当成另一组活动枚举。
 
-ActivityTarget 分支为 account(userId)、session(sessionId)、network(networkId)、membership(membershipId)、joinLink(linkId)、configuration(revision)。完整枚举见[生成契约](/v2/contracts/openapi.json)。
+ActivityTarget 分支为 account(userId, previousEmail)、session(sessionId)、network(networkId)、membership(membershipId)、joinLink(linkId)、configuration(revision)。`previousEmail` 只在 account.email 上携带修改前的地址，其他账户活动为 null；actor 的 email 快照是提交时刻的新地址。完整枚举见[生成契约](/v2/contracts/openapi.json)。
 
 ### 记录语义
 

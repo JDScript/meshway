@@ -197,7 +197,7 @@ fn revision_value(value: i64) -> rusqlite::Result<Revision> {
     Revision::new(u64::try_from(value).map_err(|_| rusqlite::Error::InvalidQuery)?)
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
-const SELECT: &str = "SELECT sequence,id,at,actor_kind,actor_user_id,action,target_user_id,target_session_id,network_id,target_membership_id,target_join_link_id,before_revision,after_revision,request_id,actor_email FROM activity_events";
+const SELECT: &str = "SELECT sequence,id,at,actor_kind,actor_user_id,action,target_user_id,target_session_id,network_id,target_membership_id,target_join_link_id,before_revision,after_revision,request_id,actor_email,previous_email FROM activity_events";
 fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, ActivityEvent)> {
     let actor = match r.get::<_, String>(3)?.as_str() {
         "user" => ActivityActor::User {
@@ -224,6 +224,7 @@ fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, ActivityEvent)> {
     } else if r.get::<_, Option<Vec<u8>>>(6)?.is_some() {
         ActivityTarget::Account {
             user_id: uuid(r, 6, UserId::new)?,
+            previous_email: r.get(15)?,
         }
     } else if r.get::<_, Option<Vec<u8>>>(9)?.is_some() {
         ActivityTarget::Membership {

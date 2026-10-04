@@ -18,6 +18,7 @@ pub(crate) fn network_actions(role: MembershipRole) -> meshway_model::NetworkAct
     let manage = matches!(role, MembershipRole::Owner | MembershipRole::Admin);
     meshway_model::NetworkActions {
         rename: manage,
+        read_configuration: manage,
         edit_configuration: manage,
         manage_members: manage,
         join_link_roles: [

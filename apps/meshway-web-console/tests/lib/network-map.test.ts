@@ -21,6 +21,7 @@ const B = "bbbbbbbb-0000-4000-8000-000000000002"
 const C = "cccccccc-0000-4000-8000-000000000003"
 
 const located = (lat: number, lng: number): NodeStateView => ({
+  hostname: "located",
   freshness: "current",
   derived: {
     ipInfo: {},
@@ -73,10 +74,12 @@ test("only a node with the controller's coordinates is located; the others keep 
     state({
       [A]: located(35.7, 139.7),
       [B]: {
+        hostname: "b",
         freshness: "awaiting_report",
         derived: { ipInfo: {}, locationAbsent: "datasetUnavailable" },
       },
       [C]: {
+        hostname: "c",
         freshness: "current",
         derived: {
           ...located(0, 0).derived,
@@ -103,7 +106,7 @@ test("a link is drawn only between two located nodes", () => {
     state({
       [A]: located(35.7, 139.7),
       [B]: located(37.5, 127),
-      [C]: { freshness: "current", derived: { ipInfo: {} } },
+      [C]: { hostname: "c", freshness: "current", derived: { ipInfo: {} } },
     }),
     new Map()
   )
@@ -187,7 +190,7 @@ test("the scene draws history links apart from current ones, never both for one 
     state({
       [A]: located(35.7, 139.7),
       [B]: located(37.5, 127),
-      [C]: { freshness: "current", derived: { ipInfo: {} } },
+      [C]: { hostname: "c", freshness: "current", derived: { ipInfo: {} } },
     }),
     new Map()
   )

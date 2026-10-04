@@ -70,7 +70,7 @@ Server 使用 SQLite 保存私有身份、完整配置、执行恢复依据和�
 | `token_hash` | 唯一凭据摘要 |
 | `created_by`／`issuer_membership_id` | 签发者及当次权限关系 |
 | `created_at`／`expires_at`／`revoked_at` | 创建、首次消费期限、撤销 |
-| `consumed_at`／`consumed_by_user_id`／`consumed_membership_id` | 同事务写入的唯一领取结果 |
+| `consumed_at`／`consumed_by_user_id`／`consumed_membership_id` | 同事务写入的唯一领取结果；视图中的签发者／领取者 email 读取时联接 users，不另存快照 |
 | `creation_request_id`／`creation_request_digest` | 幂等输入绑定 |
 
 签发者离网再加入不复活链接。成功领取重试只恢复仍有效的原 membership；创建重试不恢复 token 原值，见[秘密交付](/v2/api/authentication#创建请求的幂等与秘密交付)。
@@ -236,6 +236,7 @@ tags 是本次接入输入，注册后当前身份只来自 Configuration。模�
 | `action` | 固定管理动作枚举 |
 | `target_user_id`／`target_session_id`／`target_membership_id`／`target_join_link_id` | 按动作约束的目标关联 |
 | `before_revision`／`after_revision`／`request_id` | 配置变更与请求关联 |
+| `previous_email` | 仅 account.email 允许非空：修改前的地址快照 |
 
 记录与对应成功动作同事务提交；幂等恢复不重复插入。不包含秘密、完整 diff 或原始请求 body。Node 应用结果在 execution_receipts，不能改写“配置已保存”的活动事实。HTTP 范围见[版本与操作历史](/v2/api/history)。
 

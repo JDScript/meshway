@@ -222,6 +222,10 @@ impl Execution {
             observation_authorization_digest: super::proof::request_digest(&(
                 network, revision, actor, &full,
             ))?,
+            hostnames: visible
+                .iter()
+                .filter_map(|node| cfg.nodes.get(node).map(|n| (*node, n.hostname.clone())))
+                .collect(),
             visible,
             full,
             observation_paths,

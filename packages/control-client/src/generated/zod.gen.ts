@@ -137,6 +137,7 @@ export const zMembershipId = z.string().refine(value => [...value].length >= 36,
 export const zJoinLinkId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zActivityTarget = z.union([z.strictObject({
+  ["previousEmail"]: z.string().nullable(),
   ["type"]: z.enum(["account"]),
   ["userId"]: zUserId
 }), z.strictObject({
@@ -2049,13 +2050,19 @@ export const zJoinLinkActions = z.strictObject({
   ["revoke"]: z.boolean()
 });
 
+export const zLinkUser = z.strictObject({
+  ["email"]: z.string(),
+  ["userId"]: zUserId
+});
+
 export const zJoinLinkView = z.strictObject({
   ["actions"]: zJoinLinkActions,
   ["consumedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
-  ["consumedByUserId"]: zUserId.nullable(),
+  ["consumedBy"]: zLinkUser.nullable(),
   ["createdAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["id"]: zJoinLinkId,
+  ["issuedBy"]: zLinkUser,
   ["networkId"]: zNetworkId,
   ["revokedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
   ["role"]: zMembershipRole
@@ -2263,6 +2270,7 @@ export const zNetworkActions = z.strictObject({
   ["editConfiguration"]: z.boolean(),
   ["joinLinkRoles"]: z.array(zMembershipRole),
   ["manageMembers"]: z.boolean(),
+  ["readConfiguration"]: z.boolean(),
   ["rename"]: z.boolean()
 });
 
@@ -2460,6 +2468,7 @@ export const zVisibleReport = z.union([z.strictObject({
 export const zNodeStateView = z.strictObject({
   ["derived"]: zDerivedNodeState,
   ["freshness"]: zFreshness,
+  ["hostname"]: z.string(),
   ["instanceId"]: zInstanceId.nullable().exactOptional(),
   ["lastAuthenticatedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
@@ -2535,6 +2544,7 @@ export const zNodeEvent = z.union([z.strictObject({
   ["batch"]: z.string(),
   ["configuration"]: zNodeConfigurationView,
   ["progress"]: zConfigurationApplyProgress.nullable().exactOptional(),
+  ["requestId"]: zRequestId,
   ["type"]: z.enum(["config.snapshot"])
 }), z.strictObject({
   ["batch"]: z.string(),
@@ -2909,6 +2919,7 @@ export const zUserEvent = z.union([z.strictObject({
   ["batch"]: z.string(),
   ["configuration"]: zUserConfigurationView,
   ["progress"]: zConfigurationApplyProgress.nullable().exactOptional(),
+  ["requestId"]: zRequestId,
   ["type"]: z.enum(["config.snapshot"])
 }), z.strictObject({
   ["batch"]: z.string(),

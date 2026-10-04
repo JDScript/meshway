@@ -105,6 +105,9 @@ impl ObservationProvider for Fixture {
         Ok(session())
     }
 }
+fn rid() -> meshway_model::RequestId {
+    meshway_model::RequestId::new(crate::accounts::random_uuid().unwrap()).unwrap()
+}
 fn session() -> SessionId {
     uuid::Uuid::from_u128(200).to_string().parse().unwrap()
 }
@@ -200,7 +203,10 @@ async fn shared_core_independent_tabs_cancel_pending_and_replay_without_stopping
         .unwrap();
     assert_eq!(first.id, second.id);
     assert_ne!(first.subscription_id, second.subscription_id);
-    let stream = state.open_stream(identity.clone(), None).await.unwrap();
+    let stream = state
+        .open_stream(identity.clone(), None, rid())
+        .await
+        .unwrap();
     let initial = drain(&state, &stream).await;
     let ready = initial
         .iter()
@@ -243,7 +249,7 @@ async fn shared_core_independent_tabs_cancel_pending_and_replay_without_stopping
         1
     );
     let resumed = state
-        .open_stream(identity.clone(), Some(ready))
+        .open_stream(identity.clone(), Some(ready), rid())
         .await
         .unwrap();
     let replayed = drain(&state, &resumed).await;
@@ -278,21 +284,30 @@ async fn resume_at_owner_and_global_capacity_reuses_existing_slot() {
     let fixture = Fixture { admission, scope };
     let state = app.state_service(fixture.clone()).unwrap();
     let identity = super::tests::identity(fixture.scope.network_id);
-    let stream = state.open_stream(identity.clone(), None).await.unwrap();
+    let stream = state
+        .open_stream(identity.clone(), None, rid())
+        .await
+        .unwrap();
     let initial = drain(&state, &stream).await;
     let ready = initial
         .into_iter()
         .find_map(|(id, event)| matches!(event, Event::Ready { .. }).then_some(id).flatten())
         .unwrap();
     for _ in 0..3 {
-        state.open_stream(identity.clone(), None).await.unwrap();
+        state
+            .open_stream(identity.clone(), None, rid())
+            .await
+            .unwrap();
     }
     assert_eq!(
-        state.open_stream(identity.clone(), None).await.unwrap_err(),
+        state
+            .open_stream(identity.clone(), None, rid())
+            .await
+            .unwrap_err(),
         Error::StateLimit
     );
     let resumed = state
-        .open_stream(identity.clone(), Some(ready.clone()))
+        .open_stream(identity.clone(), Some(ready.clone()), rid())
         .await
         .unwrap();
     assert!(matches!(
@@ -314,6 +329,7 @@ async fn resume_at_owner_and_global_capacity_reuses_existing_slot() {
                         network: fixture.scope.network_id,
                     },
                     None,
+                    rid(),
                 )
                 .await
                 .unwrap();
@@ -328,13 +344,17 @@ async fn resume_at_owner_and_global_capacity_reuses_existing_slot() {
                     digest,
                     network: fixture.scope.network_id
                 },
-                None
+                None,
+                rid()
             )
             .await
             .unwrap_err(),
         Error::StateLimit
     );
-    state.open_stream(identity, Some(ready)).await.unwrap();
+    state
+        .open_stream(identity, Some(ready), rid())
+        .await
+        .unwrap();
     app.shutdown().await.unwrap();
 }
 
@@ -355,7 +375,10 @@ async fn terminal_phase_without_path_or_sample_is_delivered_and_cannot_restart()
         .create_observation(identity.clone(), request(&fixture, 100))
         .await
         .unwrap();
-    let stream = state.open_stream(identity.clone(), None).await.unwrap();
+    let stream = state
+        .open_stream(identity.clone(), None, rid())
+        .await
+        .unwrap();
     drain(&state, &stream).await;
     let terminal = ObservationResult {
         instance_id: fixture.admission.instance_id,
@@ -487,7 +510,10 @@ async fn expiry_invalidates_queued_samples_and_preserves_terminal_then_removes_i
         .create_observation(identity.clone(), request(&fixture, 101))
         .await
         .unwrap();
-    let stream = state.open_stream(identity.clone(), None).await.unwrap();
+    let stream = state
+        .open_stream(identity.clone(), None, rid())
+        .await
+        .unwrap();
     let initial = drain(&state, &stream).await;
     let ready = initial
         .into_iter()
@@ -501,7 +527,10 @@ async fn expiry_invalidates_queued_samples_and_preserves_terminal_then_removes_i
         state.poll(&stream).await.unwrap(),
         StreamPoll::Frame(_)
     ));
-    let resumed = state.open_stream(identity, Some(ready)).await.unwrap();
+    let resumed = state
+        .open_stream(identity, Some(ready), rid())
+        .await
+        .unwrap();
     // Advance the task clock at the same serial runtime boundary, with replay
     // and a second subscriber's sample already queued.
     state

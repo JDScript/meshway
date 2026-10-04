@@ -57,8 +57,9 @@ requestId 是服务端请求／活动关联，不是注册幂等键或秘密恢�
   → redeem 同事务消费链接、创建 Membership 并记录活动
 ```
 
-- 签发与消费均检查当前权限；链接绑定签发时 membership，签发者失权使未消费链接失效，后续重新加入不能复活。
-- inspect 用 POST body 接受 token，仅展示网络／角色；不消费链接，也不替代 redeem 时重检。
+- 签发与消费均检查当前权限；链接绑定签发时 membership，签发者失权时其未消费链接同事务写入 `revokedAt`，后续重新加入不能复活。
+- JoinLinkView 以 `issuedBy` 和 `consumedBy`（userId＋email）命名签发者与领取者；email 是账户当前地址，领取者离网后仍可读。
+- inspect 用 POST body 接受 token，仅展示网络／角色；不消费链接，也不替代 redeem 时重检。链接自身状态先于签发者状态报告：已撤销、已过期、已使用分别返回 join_link_revoked／join_link_expired／join_link_used，只有仍有效却找不到签发时权限关系的链接才返回 join_link_issuer_unavailable。
 - 链接不绑定收件人，任何持有人均可能领取。已有有效成员返回 already_member，不消费链接或改变角色。
 - 同一领取者重试仅恢复同一个仍有效 membership；已移除成员不能重放链接恢复。撤销已消费链接不替代移除成员。
 - SPA 可从 fragment 捕获 token 后清理地址栏，以 POST body 兑换；token 不进入查询参数、Referrer、日志、通用缓存或持久草稿。

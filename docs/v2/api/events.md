@@ -26,7 +26,7 @@ config.snapshot → entities.snapshot → state.snapshot → sync.ready
 
 | 帧 | 内容 |
 | --- | --- |
-| config.snapshot | 当前可见配置与配置应用进度；用户和 Node 使用不同配置视图 |
+| config.snapshot | 当前可见配置与配置应用进度；用户和 Node 使用不同配置视图。`requestId` 是承载本连接的 HTTP 请求关联 ID（同 `x-request-id`），与 GET 响应同义，客户端可据此把快照当作一次读取结果缓存 |
 | entities.snapshot | 与 GET 共用的库存、成员、网络和 actions 片段 |
 | state.snapshot | 当前可见 StateView，保留报告来源、时间与期限 |
 | sync.ready | batch、cursor、heartbeatIntervalMs、disconnectAfterMs |

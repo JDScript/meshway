@@ -172,6 +172,7 @@ CREATE TABLE activity_events (
     before_revision INTEGER,
     after_revision INTEGER,
     request_id BLOB NOT NULL CHECK (length(request_id) = 16 AND request_id != zeroblob(16)),
+    previous_email TEXT CHECK (previous_email IS NULL OR action = 'account.email'),
     CHECK ((actor_kind='user' AND actor_user_id IS NOT NULL) OR (actor_kind='system' AND actor_user_id IS NULL)),
     CHECK ((scope = 'account' AND account_user_id IS NOT NULL AND network_id IS NULL AND (actor_user_id = account_user_id OR (actor_kind='system' AND action='account.resetIssued')) AND
         ((action IN ('account.register', 'session.revokeOthers', 'session.revokeAll', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email') AND target_user_id IS NOT NULL AND target_user_id = account_user_id AND target_session_id IS NULL)

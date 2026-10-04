@@ -617,6 +617,10 @@ async fn join_link_actions_pagination_inspection_and_issuer_permission_loss() {
         panic!()
     };
     assert!(owner_link.actions.revoke && admin_link.actions.revoke);
+    assert_eq!(owner_link.issued_by.user_id, owner.user.id);
+    assert_eq!(admin_link.issued_by.user_id, admin.user.id);
+    assert_eq!(admin_link.issued_by.email, "links-admin@example.test");
+    assert_eq!(admin_link.consumed_by, None);
     let inspect = |token: &str, secret: &WireSecret| {
         c.post(format!("{}/api/v1/join-links/inspect", s.url))
             .bearer_auth(token)
@@ -662,15 +666,31 @@ async fn join_link_actions_pagination_inspection_and_issuer_permission_loss() {
             }),
     )
     .await;
+    // Demotion revokes the admin's unused links; inspect says so, as the
+    // list does, instead of pointing at the issuer.
     error(
         inspect(member.token.expose(), &admin_secret)
             .send()
             .await
             .unwrap(),
         StatusCode::BAD_REQUEST,
-        "join_link_issuer_unavailable",
+        "join_link_revoked",
     )
     .await;
+    let after_demotion: JoinLinkListResponse = value(
+        c.get(net(&s, n, "join-links?limit=10"))
+            .bearer_auth(owner.token.expose()),
+    )
+    .await;
+    assert!(
+        after_demotion
+            .items
+            .iter()
+            .find(|link| link.id == admin_link.id)
+            .unwrap()
+            .revoked_at
+            .is_some()
+    );
     error(
         c.get(net(&s, n, &format!("join-links?cursor={cursor}")))
             .bearer_auth(admin.token.expose())
@@ -711,6 +731,23 @@ async fn join_link_actions_pagination_inspection_and_issuer_permission_loss() {
     let joined: JoinLinkRedeemed = value(redeem()).await;
     let retry: JoinLinkRedeemed = value(redeem()).await;
     assert_eq!(joined.membership_id, retry.membership_id);
+    let consumer = |links: &JoinLinkListResponse| {
+        links
+            .items
+            .iter()
+            .find(|link| link.consumed_at.is_some() && link.issued_by.user_id == owner.user.id)
+            .unwrap()
+            .consumed_by
+            .clone()
+            .unwrap()
+    };
+    let consumed_list: JoinLinkListResponse = value(
+        c.get(net(&s, n, "join-links?limit=10"))
+            .bearer_auth(owner.token.expose()),
+    )
+    .await;
+    assert_eq!(consumer(&consumed_list).user_id, member.user.id);
+    assert_eq!(consumer(&consumed_list).email, "links-member@example.test");
     error(
         inspect(member.token.expose(), &secret)
             .send()
@@ -742,6 +779,13 @@ async fn join_link_actions_pagination_inspection_and_issuer_permission_loss() {
         "join_link_used",
     )
     .await;
+    // The consumer left the network; the link still names them.
+    let after_removal: JoinLinkListResponse = value(
+        c.get(net(&s, n, "join-links?limit=10"))
+            .bearer_auth(owner.token.expose()),
+    )
+    .await;
+    assert_eq!(consumer(&after_removal).email, "links-member@example.test");
     s.close().await;
 }
 
@@ -981,6 +1025,38 @@ async fn historical_actor_email_is_a_snapshot_after_departure_and_email_change()
     )
     .unwrap();
     assert!(matches!(unknown, ActivityActor::User { email: None, .. }));
+    // The account's own history shows the change as "from A to B"; the
+    // previous address is only present on the email change itself.
+    let own: ActivityListResponse = value(
+        c.get(format!("{}/api/v1/account/activity", s.url))
+            .bearer_auth(member.token.expose()),
+    )
+    .await;
+    let change = own
+        .items
+        .iter()
+        .find(|event| event.action == ActivityAction::AccountEmail)
+        .unwrap();
+    assert!(matches!(
+        &change.target,
+        ActivityTarget::Account { user_id, previous_email }
+            if *user_id == member.user.id
+                && previous_email.as_deref() == Some("history-old@example.test")
+    ));
+    assert!(matches!(
+        &change.actor,
+        ActivityActor::User { email, .. } if email.as_deref() == Some("history-private-new@example.test")
+    ));
+    assert!(own.items.iter().all(|event| {
+        event.action == ActivityAction::AccountEmail
+            || !matches!(
+                &event.target,
+                ActivityTarget::Account {
+                    previous_email: Some(_),
+                    ..
+                }
+            )
+    }));
     s.close().await;
 }
 

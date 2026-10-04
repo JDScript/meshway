@@ -11,6 +11,9 @@ use utoipa::ToSchema;
 #[serde(remote = "Self", rename_all = "camelCase", deny_unknown_fields)]
 pub struct NetworkActions {
     pub rename: bool,
+    /// Whether `GET /configuration` (the complete, management view) is
+    /// readable; otherwise the member view of own devices applies.
+    pub read_configuration: bool,
     pub edit_configuration: bool,
     pub manage_members: bool,
     pub join_link_roles: Vec<MembershipRole>,
