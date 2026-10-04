@@ -50,6 +50,42 @@ function ActionBadge({ action }: { action: TopologyAction }) {
   )
 }
 
+/**
+ * `defaults.topology`, the one control for it: the topology form and the
+ * defaults form both show it, over the same draft value.
+ */
+export function TopologyDefaultControl({
+  fallback,
+  editable,
+  onFallback,
+}: {
+  fallback: TopologyDefault
+  editable: boolean
+  onFallback: (fallback: TopologyDefault) => void
+}) {
+  return (
+    <div className="flex min-h-12 items-center justify-between gap-3 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
+      <span className="text-row font-medium">
+        {m.configuration_topology_default()}
+      </span>
+      {editable ? (
+        <SegmentedControl
+          size="sm"
+          label={m.configuration_topology_default()}
+          value={fallback}
+          options={[
+            { value: "allow", label: defaultLabel.allow() },
+            { value: "deny", label: defaultLabel.deny() },
+          ]}
+          onChange={onFallback}
+        />
+      ) : (
+        <span className="pr-1.5 text-row">{defaultLabel[fallback]()}</span>
+      )}
+    </div>
+  )
+}
+
 /** Which pairs of nodes may connect directly: any matching block wins, then any allow, then the default. */
 export function TopologyForm({
   rules,
@@ -75,25 +111,11 @@ export function TopologyForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex min-h-12 items-center justify-between gap-3 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
-        <span className="text-row font-medium">
-          {m.configuration_topology_default()}
-        </span>
-        {editable ? (
-          <SegmentedControl
-            size="sm"
-            label={m.configuration_topology_default()}
-            value={fallback}
-            options={[
-              { value: "allow", label: defaultLabel.allow() },
-              { value: "deny", label: defaultLabel.deny() },
-            ]}
-            onChange={onFallback}
-          />
-        ) : (
-          <span className="pr-1.5 text-row">{defaultLabel[fallback]()}</span>
-        )}
-      </div>
+      <TopologyDefaultControl
+        fallback={fallback}
+        editable={editable}
+        onFallback={onFallback}
+      />
       <Section title={m.configuration_topology_rules()} count={rules.length}>
         <div className="flex flex-col gap-2">
           {rules.length === 0 ? (

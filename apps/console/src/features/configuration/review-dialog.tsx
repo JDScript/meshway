@@ -11,19 +11,35 @@ import { ChangeList } from "./change-list"
 import { revisionQuery } from "./queries"
 import type { Refusal, Review } from "./use-apply"
 
-function NodeIds({ ids }: { ids: readonly string[] }) {
+/** Nodes by hostname (as the base revision has them) and ID. */
+function NodeIds({
+  ids,
+  names,
+}: {
+  ids: readonly string[]
+  names: Readonly<Record<string, { hostname: string }>> | undefined
+}) {
   if (ids.length === 0)
     return <EmptyLine size="sm">{m.configuration_review_none()}</EmptyLine>
   return (
     <ul className="flex flex-col gap-1">
-      {ids.map((id) => (
-        <li
-          key={id}
-          className="rounded-tile bg-fill-subtle px-3 py-2 font-mono text-meta"
-        >
-          {id}
-        </li>
-      ))}
+      {ids.map((id) => {
+        const hostname =
+          names && Object.hasOwn(names, id) ? names[id]?.hostname : undefined
+        return (
+          <li
+            key={id}
+            className="flex min-w-0 items-baseline gap-2 rounded-tile bg-fill-subtle px-3 py-2"
+          >
+            {hostname !== undefined ? (
+              <span className="shrink-0 text-row font-medium">{hostname}</span>
+            ) : null}
+            <span className="min-w-0 truncate font-mono text-meta text-muted-foreground">
+              {id}
+            </span>
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -127,13 +143,24 @@ export function ReviewDialog({
             title={m.configuration_review_deleted()}
             count={preview.deletedNodeIds.length}
           >
-            <NodeIds ids={preview.deletedNodeIds} />
+            {preview.deletedNodeIds.length > 0 ? (
+              <p className="text-row text-destructive">
+                {m.configuration_review_deleted_permanent()}
+              </p>
+            ) : null}
+            <NodeIds
+              ids={preview.deletedNodeIds}
+              names={base.data?.configuration.nodes}
+            />
           </Section>
           <Section
             title={m.configuration_review_address()}
             count={preview.addressChangedNodeIds.length}
           >
-            <NodeIds ids={preview.addressChangedNodeIds} />
+            <NodeIds
+              ids={preview.addressChangedNodeIds}
+              names={base.data?.configuration.nodes}
+            />
           </Section>
           {preview.changes.length > 0 ? (
             <ChangeList

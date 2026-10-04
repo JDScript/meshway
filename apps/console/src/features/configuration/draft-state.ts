@@ -111,11 +111,29 @@ export function editPart<P extends FormPart>(
   part: P,
   value: FormValues[P]
 ): DraftEntry | null {
+  return editOperations(entry, view, (ops, base) =>
+    withValue(ops, base, part, value)
+  )
+}
+
+/**
+ * The draft's operations changed by `change`, over the same base as
+ * `editPart`: how the node workspace's edits (`node-operations.ts`) enter
+ * the draft. Refused while the source holds edits.
+ */
+export function editOperations(
+  entry: DraftEntry | null,
+  view: { revision: number; configuration: ConfigurationView },
+  change: (
+    ops: readonly ConfigurationOperation[],
+    base: ConfigurationView
+  ) => ConfigurationOperation[]
+): DraftEntry | null {
   if (holdsDocument(entry)) return entry
   const held = entry?.input.kind === "operations" ? entry.input : null
   const base = held ? held.base : view.configuration
   const baseRevision = held && entry ? entry.baseRevision : view.revision
-  const ops = withValue(held?.ops ?? [], base, part, value)
+  const ops = change(held?.ops ?? [], base)
   // The source read at the same revision is still the base.
   const baseText =
     entry && entry.baseRevision === baseRevision ? entry.baseText : null

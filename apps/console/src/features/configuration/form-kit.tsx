@@ -351,6 +351,14 @@ const LOCAL: Record<LocalCode, () => string> = {
   url: () => m.configuration_local_url(),
   duration: () => m.configuration_local_duration(),
   key: () => m.configuration_local_key(),
+  dialer: () => m.configuration_local_dialer(),
+  hostname: () => m.configuration_local_hostname(),
+  hostname_taken: () => m.configuration_local_hostname_taken(),
+  tags: () => m.configuration_local_tags(),
+  tag: () => m.configuration_local_tag(),
+  address: () => m.configuration_local_address(),
+  address_pool: () => m.configuration_local_address_pool(),
+  address_taken: () => m.configuration_local_address_taken(),
 }
 
 export type Note = {

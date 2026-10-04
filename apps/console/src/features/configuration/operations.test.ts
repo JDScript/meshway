@@ -109,7 +109,8 @@ test("one operation per part, in a fixed order whatever the editing order", () =
 })
 
 test("the topology default restates the dialers the view shows", () => {
-  const update = defaultsUpdate(VIEW, "deny")
+  const base = valueOf([], VIEW, "defaults")
+  const update = defaultsUpdate(VIEW, { ...base, topology: "deny" })
   assert.equal(update.topology, "deny")
   assert.equal(update.access, "deny")
   assert.deepEqual(update.dialers.native_udp, { priority: 100 })
@@ -123,9 +124,30 @@ test("the topology default restates the dialers the view shows", () => {
     update.dialers.vless && "websocketHeaderNames" in update.dialers.vless,
     false
   )
-  const ops = withValue([], VIEW, "topologyDefault", "deny")
-  assert.equal(valueOf(ops, VIEW, "topologyDefault"), "deny")
-  assert.deepEqual(withValue(ops, VIEW, "topologyDefault", "allow"), [])
+  const ops = withValue([], VIEW, "defaults", { ...base, topology: "deny" })
+  assert.equal(valueOf(ops, VIEW, "defaults").topology, "deny")
+  assert.deepEqual(withValue(ops, VIEW, "defaults", base), [])
+})
+
+test("the topology and dialer defaults share one replaceDefaults", () => {
+  const base = valueOf([], VIEW, "defaults")
+  let ops = withValue([], VIEW, "defaults", { ...base, topology: "deny" })
+  const dialers = { ...base.dialers, native_tcp: {} }
+  ops = withValue(ops, VIEW, "defaults", {
+    ...valueOf(ops, VIEW, "defaults"),
+    dialers,
+  })
+  assert.equal(ops.length, 1)
+  const op = ops[0]
+  assert.ok(op?.type === "replaceDefaults")
+  assert.equal(op.defaults.topology, "deny")
+  assert.deepEqual(op.defaults.dialers.native_tcp, {})
+  // Key order does not make a change.
+  const reordered = Object.fromEntries(Object.entries(base.dialers).reverse())
+  assert.deepEqual(
+    withValue([], VIEW, "defaults", { ...base, dialers: reordered }),
+    []
+  )
 })
 
 test("routing edits collapse into one replaceRouting; back to base drops it", () => {

@@ -24,11 +24,20 @@ import { sameRuleSets, writtenRuleSet, type RuleSetMap } from "./rule-sets.ts"
 
 export type GroupMap = Record<string, string[]>
 
+/**
+ * The defaults the forms edit: the topology's and the dialers'. The access
+ * default has one value (`deny`), so it is restated as the view holds it.
+ */
+export type DefaultsValue = {
+  topology: TopologyDefault
+  dialers: DialerSetUpdate
+}
+
 /** The parts the forms edit, by what they hold. */
 export type FormValues = {
   access: AccessRule[]
   topology: TopologyRule[]
-  topologyDefault: TopologyDefault
+  defaults: DefaultsValue
   groups: GroupMap
   tagsOwners: GroupMap
   dns: DnsConfiguration
@@ -105,20 +114,22 @@ const sameRules =
     })
 
 /**
- * The defaults as an update: `DefaultsUpdate` restates the dialers, so they
- * are the view's (a VLESS dialer's WebSocket headers are omitted: kept).
+ * The defaults as an update. `DefaultsUpdate.dialers` is required, so a
+ * change to the topology default alone restates the dialers as the view
+ * shows them (a VLESS dialer's WebSocket headers are omitted: kept).
  */
 export function defaultsUpdate(
   view: ConfigurationView,
-  topology: TopologyDefault
+  value: DefaultsValue
 ): DefaultsUpdate {
   return {
     access: view.defaults.access,
-    topology,
-    dialers: dialerUpdate(view.defaults.dialers),
+    topology: value.topology,
+    dialers: value.dialers,
   }
 }
 
+/** A dialer set as the view shows it, restated as an update (the same set). */
 export function dialerUpdate(view: DialerSetView): DialerSetUpdate {
   const out: DialerSetUpdate = {}
   if (view.native_udp) out.native_udp = view.native_udp
@@ -131,6 +142,23 @@ export function dialerUpdate(view: DialerSetView): DialerSetUpdate {
   }
   return out
 }
+
+/** A value with its object keys sorted and undefined members dropped, for comparing. */
+export function canonical(value: unknown): string {
+  return JSON.stringify(value, (_, inner: unknown) =>
+    inner !== null && typeof inner === "object" && !Array.isArray(inner)
+      ? Object.fromEntries(
+          Object.entries(inner)
+            .filter(([, member]) => member !== undefined)
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        )
+      : inner
+  )
+}
+
+/** Two dialer sets the controller reads alike: the same protocols with the same fields. */
+export const sameDialers = (a: DialerSetUpdate, b: DialerSetUpdate) =>
+  canonical(a) === canonical(b)
 
 const DNS_DEFAULTS = {
   magicDNS: true,
@@ -182,15 +210,24 @@ const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
     base: (view) => view.topology,
     same: sameRules(sameTopologyRule),
   },
-  topologyDefault: {
-    operation: (topology, base) => ({
+  defaults: {
+    operation: (value, base) => ({
       type: "replaceDefaults",
-      defaults: defaultsUpdate(base, topology),
+      defaults: defaultsUpdate(base, value),
     }),
     read: (op) =>
-      op.type === "replaceDefaults" ? op.defaults.topology : undefined,
-    base: (view) => view.defaults.topology,
-    same: (a, b) => a === b,
+      op.type === "replaceDefaults"
+        ? {
+            topology: op.defaults.topology ?? "allow",
+            dialers: op.defaults.dialers,
+          }
+        : undefined,
+    base: (view) => ({
+      topology: view.defaults.topology,
+      dialers: dialerUpdate(view.defaults.dialers),
+    }),
+    same: (a, b) =>
+      a.topology === b.topology && sameDialers(a.dialers, b.dialers),
   },
   groups: {
     operation: (groups) => ({ type: "replaceGroups", groups }),
@@ -250,7 +287,7 @@ const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
 export const FORM_PARTS: readonly FormPart[] = [
   "access",
   "topology",
-  "topologyDefault",
+  "defaults",
   "groups",
   "tagsOwners",
   "dns",
@@ -308,7 +345,7 @@ export function withValue<P extends FormPart>(
 export const sectionOfPart: Record<FormPart, string> = {
   access: "access",
   topology: "topology",
-  topologyDefault: "defaults",
+  defaults: "defaults",
   groups: "groups",
   tagsOwners: "tagsOwners",
   dns: "dns",

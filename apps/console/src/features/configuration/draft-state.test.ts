@@ -172,7 +172,10 @@ test("forms refuse over source edits, and the source over form edits", () => {
 test("an operations draft keeps its base when the controller moves on", () => {
   const formed = editPart(null, AT_3, "access", [RULE])
   const moved = { revision: 4, configuration: { ...VIEW, access: [] } }
-  const next = editPart(formed, moved, "topologyDefault", "deny")
+  const next = editPart(formed, moved, "defaults", {
+    topology: "deny",
+    dialers: {},
+  })
   assert.ok(next)
   assert.equal(next.baseRevision, 3)
   assert.equal(next.input.kind === "operations" && next.input.base, VIEW)

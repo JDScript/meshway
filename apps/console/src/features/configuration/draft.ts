@@ -1,4 +1,7 @@
-import type { ConfigurationView } from "@meshway/control-client"
+import type {
+  ConfigurationOperation,
+  ConfigurationView,
+} from "@meshway/control-client"
 import { useCallback, useMemo } from "react"
 import { create } from "zustand"
 
@@ -8,6 +11,7 @@ import { currentSession } from "@/lib/session"
 import {
   afterApply,
   discardEdits,
+  editOperations,
   editPart,
   editText,
   isDirty,
@@ -76,6 +80,17 @@ export function useConfigurationDraft(networkId: string) {
     ) => update(networkId, (current) => editPart(current, view, part, value)),
     [networkId]
   )
+  /** The node workspace's edits: `change` maps the operations over the draft's base. */
+  const editOps = useCallback(
+    (
+      view: { revision: number; configuration: ConfigurationView },
+      change: (
+        ops: readonly ConfigurationOperation[],
+        base: ConfigurationView
+      ) => ConfigurationOperation[]
+    ) => update(networkId, (current) => editOperations(current, view, change)),
+    [networkId]
+  )
   const discard = useCallback(
     () =>
       update(networkId, (current) =>
@@ -105,11 +120,12 @@ export function useConfigurationDraft(networkId: string) {
       load,
       edit,
       editForm,
+      editOps,
       discard,
       checked,
       applied,
       reset,
     }),
-    [entry, load, edit, editForm, discard, checked, applied, reset]
+    [entry, load, edit, editForm, editOps, discard, checked, applied, reset]
   )
 }

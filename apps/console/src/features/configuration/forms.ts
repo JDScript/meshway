@@ -15,18 +15,21 @@ export type FormSection = Extract<
   | "dns"
   | "addressPools"
   | "ruleSets"
+  | "defaults"
 >
 
 export const FORM_PARTS_OF: Record<FormSection, readonly FormPart[]> = {
   access: ["access"],
-  // The topology's default (`defaults.topology`) is edited with its rules.
-  topology: ["topology", "topologyDefault"],
+  // The topology's default (`defaults.topology`) is edited with its rules,
+  // and with the dialer defaults: one `replaceDefaults` holds both.
+  topology: ["topology", "defaults"],
   groups: ["groups"],
   tagsOwners: ["tagsOwners"],
   dns: ["dns"],
   addressPools: ["addressPools"],
   routing: ["routing"],
   ruleSets: ["ruleSets"],
+  defaults: ["defaults"],
 }
 
 export const isFormSection = (section: string): section is FormSection =>
@@ -36,7 +39,7 @@ export const isFormSection = (section: string): section is FormSection =>
 export function formViewOf(pointer: string): FormSection | null {
   const segments = pointerSegments(pointer) ?? []
   if (segments[0] === "defaults")
-    return segments[1] === "topology" ? "topology" : null
+    return segments[1] === "topology" ? "topology" : "defaults"
   // A node's addresses outside the pools are the pools' to show.
   if (segments[0] === "nodes" && segments[2] === "addresses")
     return "addressPools"

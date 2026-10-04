@@ -4,7 +4,9 @@ import type {
   ConfigurationView,
 } from "@meshway/control-client"
 
+import { dialerProblems } from "./dialer-model.ts"
 import { pointerOf, pointerSegments, type JsonPath } from "./jsonc.ts"
+import { nodeProblems } from "./node-problems.ts"
 import {
   edits,
   FORM_PARTS,
@@ -44,6 +46,14 @@ export type LocalCode =
   | "cidr"
   | RoutingCode
   | RuleSetCode
+  | "dialer"
+  | "hostname"
+  | "hostname_taken"
+  | "tags"
+  | "tag"
+  | "address"
+  | "address_pool"
+  | "address_taken"
 
 export type LocalProblem = { path: string; code: LocalCode }
 
@@ -91,7 +101,11 @@ const PROBLEMS: {
     })
     return out
   },
-  topologyDefault: () => [],
+  defaults: (value) =>
+    dialerProblems(value.dialers).map((protocol) => ({
+      path: at(["defaults", "dialers", protocol]),
+      code: "dialer",
+    })),
   groups(groups) {
     return Object.entries(groups)
       .filter(([, members]) => !members.every(isEmail))
@@ -150,14 +164,16 @@ export function partProblems<P extends FormPart>(
   return check(value)
 }
 
-/** What the parts the operations edit cannot be saved with. */
+/** What the parts and the nodes the operations edit cannot be saved with. */
 export const operationsProblems = (
   ops: readonly ConfigurationOperation[],
   base: ConfigurationView
-): LocalProblem[] =>
-  FORM_PARTS.filter((part) => edits(ops, part)).flatMap((part) =>
+): LocalProblem[] => [
+  ...FORM_PARTS.filter((part) => edits(ops, part)).flatMap((part) =>
     partProblems(part, valueOf(ops, base, part))
-  )
+  ),
+  ...nodeProblems(ops, base),
+]
 
 /** `pointer` is `prefix` or inside it. */
 export function within(pointer: string, prefix: string): boolean {

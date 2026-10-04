@@ -19,7 +19,8 @@ import { m } from "@/paraglide/messages.js"
 import { AccessForm } from "./access-form"
 import { AddressPoolsForm } from "./address-pools-form"
 import { JsonBlock } from "./change-list"
-import { entryCount, type SectionKey } from "./changes"
+import { entryCount, sectionOf, type SectionKey } from "./changes"
+import { DefaultsForm } from "./defaults-form"
 import { DnsForm } from "./dns-form"
 import { useConfigurationDraft } from "./draft"
 import {
@@ -46,6 +47,9 @@ import { GroupsForm } from "./groups-form"
 import { pointerOf, pointerSegments } from "./jsonc"
 import { renamed } from "./keyed"
 import { sectionLabel } from "./labels"
+import { isDeleted } from "./node-operations"
+import { nodeProblems } from "./node-problems"
+import { NodesSection } from "./nodes-section"
 import { DraftNotice } from "./notice"
 import { edits, valueOf, type FormPart, type FormValues } from "./operations"
 import { configurationQuery, isDenied } from "./queries"
@@ -145,6 +149,13 @@ export function SectionWorkspace({
           <EmptyLine>{m.configuration_read_failed()}</EmptyLine>
         ) : !base || !configuration.data ? (
           <Skeleton className="h-40 w-full rounded-tile" />
+        ) : section === "nodes" ? (
+          <NodesSection
+            networkId={networkId}
+            base={base}
+            ops={ops}
+            notes={nodeNotes(entry, base)}
+          />
         ) : form === null ? (
           <section aria-label={m.configuration_view_label({ section: label })}>
             <JsonBlock value={base[section]} className="max-h-none text-row" />
@@ -183,7 +194,10 @@ function countOf(
   base: ConfigurationView,
   ops: ReturnType<typeof operationsOf>
 ): number | null {
+  if (section === "nodes")
+    return Object.keys(base.nodes).filter((id) => !isDeleted(ops, id)).length
   if (!isFormSection(section)) return entryCount(base[section])
+  if (section === "defaults") return null
   if (section === "addressPools") {
     const pools = valueOf(ops, base, "addressPools")
     return pools.ipv4.length + pools.ipv6.length
@@ -251,6 +265,25 @@ function routingConcerns(path: string): boolean {
   return (
     (segments[0] === "ruleSets" && segments.length === 2) ||
     (segments[0] === "nodes" && segments.length === 2)
+  )
+}
+
+/** The node problems found here, and what the controller said about the nodes. */
+function nodeNotes(
+  entry: ReturnType<typeof useConfigurationDraft>["entry"],
+  base: ConfigurationView
+): Note[] {
+  const ops = operationsOf(entry)
+  const current = checkedNow(entry)
+  const checked =
+    current ??
+    (entry?.checked?.input.kind === "operations" ? entry.checked : null)
+  return notesFrom(
+    nodeProblems(ops, base),
+    (checked?.issues ?? []).filter(
+      (issue) => sectionOf(issue.path) === "nodes"
+    ),
+    current === null
   )
 }
 
@@ -329,12 +362,14 @@ function SectionForm({
       body = (
         <TopologyForm
           rules={valueOf(ops, base, "topology")}
-          fallback={valueOf(ops, base, "topologyDefault")}
+          fallback={valueOf(ops, base, "defaults").topology}
           editable={editable}
           names={names}
           notes={notes}
           onChange={set("topology")}
-          onFallback={set("topologyDefault")}
+          onFallback={(topology) =>
+            set("defaults")({ ...valueOf(ops, base, "defaults"), topology })
+          }
         />
       )
       break
@@ -419,6 +454,17 @@ function SectionForm({
             onChange(view, "ruleSets", renamed(ruleSets, from, to))
             onChange(view, "routing", renameSetReferences(routing, from, to))
           }}
+        />
+      )
+      break
+    case "defaults":
+      body = (
+        <DefaultsForm
+          value={valueOf(ops, base, "defaults")}
+          access={base.defaults.access}
+          editable={editable}
+          notes={notes}
+          onChange={set("defaults")}
         />
       )
       break
