@@ -88,6 +88,38 @@ fn demand(i: u8, source: u8, target: u8) -> Demand {
 }
 
 #[test]
+fn published_dns_filters_path_peers_by_business_access_for_each_source() {
+    let mut c = configuration();
+    c.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec![format!("node:{}", node(1))],
+        dst: vec![format!("node:{}", node(3))],
+        ip: vec!["tcp:443".into()],
+        bidirectional: false,
+    }];
+    c.routing.mesh = vec![MeshRoute {
+        remark: String::new(),
+        src: vec![format!("node:{}", node(1))],
+        dst: vec![format!("node:{}", node(3))],
+        via: vec![format!("node:{}", node(2))],
+    }];
+    let d = demand(1, 1, 3);
+    let result = run(&c, &inventory(), &BTreeMap::from([(d.id, d)]), &[]);
+    let a = &result.nodes[&node(1)].configuration;
+    assert!(a.peers.contains_key(&node(2)));
+    assert!(a.dns.mesh_hosts.contains_key("n3.test.internal"));
+    assert!(!a.dns.mesh_hosts.contains_key("n2.test.internal"));
+    for id in [node(2), node(3)] {
+        let configuration = &result.nodes[&id].configuration;
+        assert!(!configuration.peers.is_empty());
+        assert!(
+            configuration.dns.mesh_hosts.is_empty(),
+            "relay/reply qualification does not grant name visibility"
+        );
+    }
+}
+
+#[test]
 fn discovery_access_and_concrete_demands_share_traffic_and_direction() {
     let mut c = configuration();
     let subjects = SubjectContext::default();

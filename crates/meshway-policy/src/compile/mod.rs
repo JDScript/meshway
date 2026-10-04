@@ -10,7 +10,7 @@ use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
 use std::collections::BTreeMap;
 
-pub const COMPILER_VERSION: &str = "meshway-demand-1";
+pub const COMPILER_VERSION: &str = "meshway-demand-2";
 pub const MAX_DEMANDS: usize = 256;
 pub const MAX_PATHS: usize = 4;
 /// Ordered exit candidates have a separate budget from alternatives per exit.
@@ -178,11 +178,22 @@ pub fn compile_with_diagnostics(
                                 dataplane_key: t.dataplane_key.clone(),
                             },
                         );
-                        node.dns.mesh_hosts.insert(
-                            node_dns_name(&s.hostname, &input.configuration.dns.domain)
-                                .map_err(|_| CompileError::InvalidInput)?,
-                            s.addresses.clone(),
-                        );
+                        // Membership in a forwarding path is not permission
+                        // to initiate business traffic to that peer. Published
+                        // names obey the same source-scoped Access predicate as
+                        // exact-name discovery, including relay/receiver views.
+                        if crate::mesh_access_allows_any(
+                            input.configuration,
+                            input.subjects,
+                            *id,
+                            *peer,
+                        ) {
+                            node.dns.mesh_hosts.insert(
+                                node_dns_name(&s.hostname, &input.configuration.dns.domain)
+                                    .map_err(|_| CompileError::InvalidInput)?,
+                                s.addresses.clone(),
+                            );
+                        }
                     }
                     if let Some(keys) = path.dial_candidates.get(id) {
                         for key in keys {

@@ -22,6 +22,44 @@ fn engine(node: &Node) -> Engine {
 }
 
 #[tokio::test]
+async fn published_mesh_dns_never_turns_relay_or_reply_rights_into_name_visibility() {
+    use hickory_proto::rr::RecordType;
+    use meshway_dns::{Begin, ExitSelection, Owner, Unavailable};
+    let mut mesh = Mesh::start().await;
+    let name = |node: &Node| {
+        let guard = node.control.execution_snapshot().unwrap();
+        let cfg = guard.configuration().unwrap();
+        meshway_configuration::node_dns_name(&cfg.hostname, &cfg.dns.settings.domain).unwrap()
+    };
+    let (a_name, r_name, b_name) = (name(&mesh.a), name(&mesh.r), name(&mesh.b));
+    let limits = meshway_dns::Limits {
+        max_pending: 4,
+        query_timeout: Duration::from_secs(5),
+    };
+    let mut a_dns = Owner::new(mesh.a.control.execution_snapshot().unwrap(), limits).unwrap();
+    assert!(matches!(
+        a_dns.begin(dns::query(&b_name, RecordType::A), ExitSelection::NoExit),
+        Begin::Answer(_)
+    ));
+    let lookup = dns::discover(&mut a_dns, &r_name, RecordType::A);
+    let response = mesh.a.control.query_dns(&lookup.name).await.unwrap();
+    assert!(response.record.is_none());
+    assert!(matches!(
+        a_dns.complete_discovery(&lookup.ticket, response),
+        Begin::Unavailable(Unavailable::NotVisible)
+    ));
+    let mut b_dns = Owner::new(mesh.b.control.execution_snapshot().unwrap(), limits).unwrap();
+    let lookup = dns::discover(&mut b_dns, &a_name, RecordType::A);
+    let response = mesh.b.control.query_dns(&lookup.name).await.unwrap();
+    assert!(response.record.is_none());
+    assert!(matches!(
+        b_dns.complete_discovery(&lookup.ticket, response),
+        Begin::Unavailable(Unavailable::NotVisible)
+    ));
+    mesh.close().await;
+}
+
+#[tokio::test]
 async fn acknowledged_demand_cancellation_fences_old_outputs_before_target_resync() {
     use meshway_protocol::CancelDemandRequest;
     let mut mesh = Mesh::start().await;
