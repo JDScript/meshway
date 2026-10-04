@@ -3,7 +3,7 @@
 // expiry passing while it is open (the controller then reads it as expired).
 
 export type DevicePhase =
-  "pending" | "approved" | "denied" | "consumed" | "expired"
+  "pending" | "approved" | "withdrawn" | "cancelled" | "consumed" | "expired"
 
 /** The phase to show at `now`: a pending or approved request past its expiry is expired. */
 export function phaseAt(

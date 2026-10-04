@@ -42,16 +42,18 @@
   "device_deny": "拒绝",
   "device_phase_pending": "等待批准",
   "device_phase_approved": "已批准，等待设备领取",
-  "device_phase_denied": "已拒绝",
   "device_phase_consumed": "设备已接入",
   "device_phase_expired": "已过期",
   "device_approved_into": "已批准接入 {network}。设备会用自己的密钥领取批准并完成接入，这里无需其他操作。",
   "device_approved_text": "已批准。设备会用自己的密钥领取批准并完成接入，这里无需其他操作。",
   "device_consumed_text": "设备已领取批准，完成接入。",
-  "device_denied_text": "这个请求已被拒绝，设备不能用它接入。",
   "device_expired_text": "这个请求已过期。请在设备上重新开始接入。",
   "device_approve_forbidden": "这个账户不能把设备接入所选网络。",
   "device_deny_forbidden": "这个请求已由其他账户批准或已被领取，不能拒绝。",
   "device_changed": "请求状态已改变。",
-  "device_other_account": "使用其他账户"
+  "device_other_account": "使用其他账户",
+  "device_phase_withdrawn": "批准已撤回",
+  "device_phase_cancelled": "设备已取消",
+  "device_withdrawn_text": "批准已被撤回，设备不能再用这次请求接入。",
+  "device_cancelled_text": "设备取消了这次请求，不能再用它接入。"
 }

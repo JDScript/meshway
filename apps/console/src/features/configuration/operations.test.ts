@@ -108,24 +108,14 @@ test("one operation per part, in a fixed order whatever the editing order", () =
   )
 })
 
-test("the topology default restates the dialers the view shows", () => {
+test("a topology default change sends the topology alone", () => {
   const base = valueOf([], VIEW, "defaults")
   const update = defaultsUpdate(VIEW, { ...base, topology: "deny" })
-  assert.equal(update.topology, "deny")
-  assert.equal(update.access, "deny")
-  assert.deepEqual(update.dialers.native_udp, { priority: 100 })
-  assert.equal("trojan" in update.dialers, false)
-  // WebSocket headers are not in the view: omitted, so they are kept.
-  assert.equal(
-    update.dialers.vless && "websocket" in update.dialers.vless,
-    false
-  )
-  assert.equal(
-    update.dialers.vless && "websocketHeaderNames" in update.dialers.vless,
-    false
-  )
+  // Omitted fields are kept: no access, no dialers restated.
+  assert.deepEqual(update, { topology: "deny" })
   const ops = withValue([], VIEW, "defaults", { ...base, topology: "deny" })
   assert.equal(valueOf(ops, VIEW, "defaults").topology, "deny")
+  assert.deepEqual(valueOf(ops, VIEW, "defaults").dialers, base.dialers)
   assert.deepEqual(withValue(ops, VIEW, "defaults", base), [])
 })
 
@@ -141,7 +131,7 @@ test("the topology and dialer defaults share one replaceDefaults", () => {
   const op = ops[0]
   assert.ok(op?.type === "replaceDefaults")
   assert.equal(op.defaults.topology, "deny")
-  assert.deepEqual(op.defaults.dialers.native_tcp, {})
+  assert.deepEqual(op.defaults.dialers?.native_tcp, {})
   // Key order does not make a change.
   const reordered = Object.fromEntries(Object.entries(base.dialers).reverse())
   assert.deepEqual(

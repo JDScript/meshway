@@ -42,16 +42,18 @@
   "device_deny": "Deny",
   "device_phase_pending": "Awaiting approval",
   "device_phase_approved": "Approved, awaiting the device",
-  "device_phase_denied": "Denied",
   "device_phase_consumed": "Device joined",
   "device_phase_expired": "Expired",
   "device_approved_into": "Approved into {network}. The device redeems the approval with its own key and joins; nothing more is needed here.",
   "device_approved_text": "Approved. The device redeems the approval with its own key and joins; nothing more is needed here.",
   "device_consumed_text": "The device redeemed the approval and joined.",
-  "device_denied_text": "This request was denied; the device cannot join with it.",
   "device_expired_text": "This request expired. Start again on the device.",
   "device_approve_forbidden": "This account cannot add the device to that network.",
   "device_deny_forbidden": "Another account approved this request, or it was redeemed; it cannot be denied.",
   "device_changed": "The request's state changed.",
-  "device_other_account": "Use another account"
+  "device_other_account": "Use another account",
+  "device_phase_withdrawn": "Approval withdrawn",
+  "device_phase_cancelled": "Cancelled by the device",
+  "device_withdrawn_text": "The approval was withdrawn; the device cannot join with this request any more.",
+  "device_cancelled_text": "The device cancelled this request; it cannot be used to join."
 }

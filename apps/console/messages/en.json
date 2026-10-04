@@ -81,5 +81,9 @@
   "problem_invalid_password_reset": "The reset link is not valid.",
   "problem_password_reset_used": "The reset link has been used.",
   "problem_password_reset_expired": "The reset link has expired.",
-  "problem_password_reset_replaced": "A newer reset link was issued; this one no longer works."
+  "problem_password_reset_replaced": "A newer reset link was issued; this one no longer works.",
+  "problem_join_link_used": "The join link has been used.",
+  "problem_join_link_revoked": "The join link has been revoked.",
+  "problem_join_link_expired": "The join link has expired.",
+  "problem_join_link_issuer_unavailable": "Whoever issued this link can no longer invite; it no longer works."
 }

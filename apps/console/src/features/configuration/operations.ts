@@ -49,10 +49,18 @@ export type FormValues = {
 export type FormPart = keyof FormValues
 
 type Part<V> = {
-  /** The operation from `value`; `base` supplies what the operation must restate. */
+  /** The one kind of operation that carries the part. */
+  kind: ConfigurationOperation["type"]
+  /** The operation from `value`, against `base` for what it may leave out. */
   operation: (value: V, base: ConfigurationView) => ConfigurationOperation
-  /** The part's value in an operation of its kind; undefined in any other. */
-  read: (operation: ConfigurationOperation) => V | undefined
+  /**
+   * The part's value in an operation of its kind, with what the operation
+   * leaves out (kept) taken from `base`; undefined in any other.
+   */
+  read: (
+    operation: ConfigurationOperation,
+    base: ConfigurationView
+  ) => V | undefined
   base: (view: ConfigurationView) => V
   same: (a: V, b: V) => boolean
 }
@@ -114,19 +122,21 @@ const sameRules =
     })
 
 /**
- * The defaults as an update. `DefaultsUpdate.dialers` is required, so a
- * change to the topology default alone restates the dialers as the view
- * shows them (a VLESS dialer's WebSocket headers are omitted: kept).
+ * The defaults as an update: only the fields that differ from `view`. An
+ * omitted field is kept, so a change to the topology default alone sends no
+ * dialers, and checking it again against a newer revision changes nothing
+ * else.
  */
 export function defaultsUpdate(
   view: ConfigurationView,
   value: DefaultsValue
 ): DefaultsUpdate {
-  return {
-    access: view.defaults.access,
-    topology: value.topology,
-    dialers: value.dialers,
-  }
+  const update: DefaultsUpdate = {}
+  if (value.topology !== view.defaults.topology)
+    update.topology = value.topology
+  if (!sameDialers(value.dialers, dialerUpdate(view.defaults.dialers)))
+    update.dialers = value.dialers
+  return update
 }
 
 /** A dialer set as the view shows it, restated as an update (the same set). */
@@ -193,6 +203,7 @@ function sameDns(a: DnsConfiguration, b: DnsConfiguration): boolean {
 
 const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
   access: {
+    kind: "replaceAccess",
     operation: (access) => ({
       type: "replaceAccess",
       access: access.map(accessRule),
@@ -202,6 +213,7 @@ const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
     same: sameRules(sameAccessRule),
   },
   topology: {
+    kind: "replaceTopology",
     operation: (topology) => ({
       type: "replaceTopology",
       topology: topology.map(topologyRule),
@@ -211,15 +223,16 @@ const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
     same: sameRules(sameTopologyRule),
   },
   defaults: {
+    kind: "replaceDefaults",
     operation: (value, base) => ({
       type: "replaceDefaults",
       defaults: defaultsUpdate(base, value),
     }),
-    read: (op) =>
+    read: (op, base) =>
       op.type === "replaceDefaults"
         ? {
-            topology: op.defaults.topology ?? "allow",
-            dialers: op.defaults.dialers,
+            topology: op.defaults.topology ?? base.defaults.topology,
+            dialers: op.defaults.dialers ?? dialerUpdate(base.defaults.dialers),
           }
         : undefined,
     base: (view) => ({
@@ -230,24 +243,28 @@ const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
       a.topology === b.topology && sameDialers(a.dialers, b.dialers),
   },
   groups: {
+    kind: "replaceGroups",
     operation: (groups) => ({ type: "replaceGroups", groups }),
     read: (op) => (op.type === "replaceGroups" ? op.groups : undefined),
     base: (view) => view.groups,
     same: (a, b) => sameMap(a, b, sameSet),
   },
   tagsOwners: {
+    kind: "replaceTagsOwners",
     operation: (tagsOwners) => ({ type: "replaceTagsOwners", tagsOwners }),
     read: (op) => (op.type === "replaceTagsOwners" ? op.tagsOwners : undefined),
     base: (view) => view.tagsOwners,
     same: (a, b) => sameMap(a, b, sameSet),
   },
   dns: {
+    kind: "replaceDns",
     operation: (dns) => ({ type: "replaceDns", dns }),
     read: (op) => (op.type === "replaceDns" ? op.dns : undefined),
     base: (view) => view.dns,
     same: sameDns,
   },
   addressPools: {
+    kind: "setAddressPools",
     operation: (pools) => ({
       type: "setAddressPools",
       addressPools: { ipv4: pools.ipv4, ipv6: pools.ipv6 },
@@ -262,6 +279,7 @@ const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
     same: (a, b) => sameList(a.ipv4, b.ipv4) && sameList(a.ipv6, b.ipv6),
   },
   routing: {
+    kind: "replaceRouting",
     operation: (routing) => ({
       type: "replaceRouting",
       routing: writtenRouting(routing),
@@ -271,6 +289,7 @@ const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
     same: sameRouting,
   },
   ruleSets: {
+    kind: "replaceRuleSets",
     operation: (ruleSets) => ({
       type: "replaceRuleSets",
       ruleSets: Object.fromEntries(
@@ -297,7 +316,7 @@ export const FORM_PARTS: readonly FormPart[] = [
 ]
 
 const partOf = (op: ConfigurationOperation): FormPart | null =>
-  FORM_PARTS.find((part) => PARTS[part].read(op) !== undefined) ?? null
+  FORM_PARTS.find((part) => PARTS[part].kind === op.type) ?? null
 
 /** A part's value in the draft: its operation's, else the base's. */
 export function valueOf<P extends FormPart>(
@@ -307,7 +326,7 @@ export function valueOf<P extends FormPart>(
 ): FormValues[P] {
   const described: Part<FormValues[P]> = PARTS[part]
   for (const op of ops) {
-    const value = described.read(op)
+    const value = described.read(op, base)
     if (value !== undefined) return value
   }
   return described.base(base)
@@ -317,7 +336,7 @@ export function valueOf<P extends FormPart>(
 export const edits = (
   ops: readonly ConfigurationOperation[],
   part: FormPart
-): boolean => ops.some((op) => PARTS[part].read(op) !== undefined)
+): boolean => ops.some((op) => op.type === PARTS[part].kind)
 
 /**
  * The operations with `part` set to `value`: its operation replaced, or
@@ -330,7 +349,7 @@ export function withValue<P extends FormPart>(
   value: FormValues[P]
 ): ConfigurationOperation[] {
   const described: Part<FormValues[P]> = PARTS[part]
-  const rest = ops.filter((op) => described.read(op) === undefined)
+  const rest = ops.filter((op) => op.type !== described.kind)
   const next = described.same(value, described.base(base))
     ? rest
     : [...rest, described.operation(value, base)]

@@ -31,7 +31,7 @@ export const enrollmentKeysQuery = (networkId: string) =>
     queryKey: [...networkKey(networkId), "enrollment-keys"],
     queryFn: ({ signal }) =>
       authed((token) =>
-        listEnrollmentKeys(client, { networkId }, { token, signal })
+        listEnrollmentKeys(client, { networkId }, {}, { token, signal })
       ),
     staleTime: 10_000,
     refetchInterval: (query) => (isDenied(query.state.error) ? false : 30_000),

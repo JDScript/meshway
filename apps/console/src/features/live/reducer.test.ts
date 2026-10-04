@@ -94,7 +94,12 @@ const node = (id: string, hostname: string): NodeInventoryView => ({
   keys: { control: KEY, dataplane: KEY },
   controlKeyRevokedAt: null,
   dataplaneKeyRevokedAt: null,
+  controlKeyCreatedAt: "2026-10-03T00:00:00Z",
+  dataplaneKeyCreatedAt: "2026-10-03T00:00:00Z",
   canDelete: true,
+  canRevokeControlKey: true,
+  canRevokeDataplaneKey: true,
+  desiredExecution: null,
 })
 
 const entities = (
@@ -107,7 +112,12 @@ const entities = (
     createdAt: "2026-10-03T00:00:00Z",
     membershipId: "60000000-0000-4000-8000-000000000006",
     role: "owner",
-    actions: { editConfiguration: true, manageMembers: true, rename: true },
+    actions: {
+      editConfiguration: true,
+      manageMembers: true,
+      rename: true,
+      joinLinkRoles: ["admin", "member"],
+    },
   },
   nodes,
   members: {},

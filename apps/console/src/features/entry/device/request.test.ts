@@ -27,12 +27,21 @@ test("a settled request keeps the controller's phase after its expiry", () => {
     phaseAt({ phase: "consumed", expiresAt: earlier }, at),
     "consumed"
   )
-  assert.equal(phaseAt({ phase: "denied", expiresAt: earlier }, at), "denied")
+  assert.equal(
+    phaseAt({ phase: "withdrawn", expiresAt: earlier }, at),
+    "withdrawn"
+  )
 })
 
 test("only a pending request is decided here; an approved one waits for the device", () => {
   assert.equal(decidable("pending"), true)
-  for (const phase of ["approved", "denied", "consumed", "expired"] as const)
+  for (const phase of [
+    "approved",
+    "withdrawn",
+    "cancelled",
+    "consumed",
+    "expired",
+  ] as const)
     assert.equal(decidable(phase), false)
   assert.equal(awaitingDevice("approved"), true)
   assert.equal(awaitingDevice("pending"), false)

@@ -81,5 +81,9 @@
   "problem_invalid_password_reset": "重置链接无效。",
   "problem_password_reset_used": "重置链接已使用。",
   "problem_password_reset_expired": "重置链接已过期。",
-  "problem_password_reset_replaced": "已签发了更新的重置链接，这条已失效。"
+  "problem_password_reset_replaced": "已签发了更新的重置链接，这条已失效。",
+  "problem_join_link_used": "加入链接已使用。",
+  "problem_join_link_revoked": "加入链接已撤销。",
+  "problem_join_link_expired": "加入链接已过期。",
+  "problem_join_link_issuer_unavailable": "签发这条链接的成员已无权邀请，链接不再有效。"
 }

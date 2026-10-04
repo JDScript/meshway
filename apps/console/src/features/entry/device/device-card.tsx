@@ -60,7 +60,8 @@ const SIGN_IN: InlineEntry = {
 const phaseLabel: Record<DevicePhase, () => string> = {
   pending: () => m.device_phase_pending(),
   approved: () => m.device_phase_approved(),
-  denied: () => m.device_phase_denied(),
+  withdrawn: () => m.device_phase_withdrawn(),
+  cancelled: () => m.device_phase_cancelled(),
   consumed: () => m.device_phase_consumed(),
   expired: () => m.device_phase_expired(),
 }
@@ -186,7 +187,7 @@ function Decide({
         if (!live) return
         const user = session.user
         setAccount({ id: user.id, email: user.email })
-        setRequest(read)
+        setRequest(read.request)
         setNow(Date.now())
         setNetworks(items)
         const remembered = rememberedNetwork(user.id)
@@ -209,9 +210,9 @@ function Decide({
   const reread = useCallback(async () => {
     try {
       const read = await readRequest(requestId)
-      setRequest(read)
+      setRequest(read.request)
       setNow(Date.now())
-      return read
+      return read.request
     } catch (error) {
       settleRead(error)
       return null
@@ -252,7 +253,7 @@ function Decide({
             { token }
           )
         )
-        setRequest(view)
+        setRequest(view.request)
         setNow(Date.now())
         setApprovedInto(networkId)
       } else {
@@ -308,11 +309,13 @@ function Decide({
         : m.device_approved_text()
       : phase === "consumed"
         ? m.device_consumed_text()
-        : phase === "denied"
-          ? m.device_denied_text()
-          : phase === "expired"
-            ? m.device_expired_text()
-            : null
+        : phase === "withdrawn"
+          ? m.device_withdrawn_text()
+          : phase === "cancelled"
+            ? m.device_cancelled_text()
+            : phase === "expired"
+              ? m.device_expired_text()
+              : null
   const open = phase !== null && decidable(phase)
   const busy = pending !== null
 
