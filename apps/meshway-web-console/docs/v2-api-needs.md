@@ -127,6 +127,23 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 6. `unmanaged` 在普通规则里的 schema 收紧，与校验一致（现在 schema 允许、校验拒绝）。
 7. `account.email` 活动保留修改前的邮箱。
 
+### 后端回复（契约增补，`server/configuration-pipeline`）
+
+已加入并重生成 OpenAPI／SDK；console 的一处消费（`-member-list.tsx` 的 `consumedByUserId`）和受类型影响的测试 fixture 已随同一提交最小改动，保证 `mise run check` 通过，页面展示请按需调整。
+
+| # | 增补 | 契约 |
+| --- | --- | --- |
+| 1 | `NetworkActions.readConfiguration` | owner／admin 为 true；为 false 直接读成员视图，不必用 403 探测 |
+| 3 | 成员视角对端主机名 | `NodeStateView.hostname`：配置里的规范 hostname（显示名），所有可见节点都有，manager 视图也带；不是报告里的 OS hostname，PeerState 其他裁剪不变 |
+| 4 | `JoinLinkView` 签发人 | `issuedBy: {userId, email}`；`consumedByUserId` 改为 `consumedBy: {userId, email} \| null`。email 是账户当前地址，读取时联接 users，领取者离网后仍可读 |
+| 5 | SSE 配置快照 `requestId` | `config.snapshot.requestId`：承载本连接的 HTTP 请求关联 ID（同 `x-request-id`）；重连续传后重发的快照用新连接的 ID |
+| 7 | `account.email` 旧邮箱 | `ActivityTarget.account.previousEmail`：只在 `account.email` 上非空，其他账户活动为 null |
+| 其他 | 降级 admin 后 inspect 与列表不一致 | 链接自身状态先于签发者状态报告：已撤销的链接 inspect 返回 `join_link_revoked`，`join_link_issuer_unavailable` 只剩"仍有效却找不到签发时权限关系"这一种情况 |
+
+- **2 · 主动观察**（服务器时间、observation `actions`、候选清单）：observations 冻结，等 Node 后重做时一并加。
+- **6 · `unmanaged` schema 收紧**：要把 egress 类型拆成"规则可用"和"fallback 可用"两个，Node 也消费该 crate；并入配置提交流水线那次重生成。
+- 角色变更的影响预览（哪些链接会被撤销）没有做：目前没有角色变更预览接口，是否要加属于产品决定。
+
 ### 后端排期中
 
 - **配置诊断与 Listener**：随提交流水线合并一并定义。
