@@ -30,6 +30,7 @@
 ## 源码组织
 
 - App 做装配和用例协调，库按真实职责和消费者划分，不按表／临时阶段机械拆包，不让库反向依赖 App。
+- 同一业务逻辑只有一个实现归属和状态 owner；多入口、平台适配、插件导出与测试复用它。并行任务先明确共享接口及所有权，缺少依赖时不另写一份替代实现；整合时检查重复实现、循环／反向依赖和遗留过渡路径。Node 跨入口边界见 `docs/v2/architecture.md`。
 - 单文件模块 `foo.rs`；有子模块用 `foo/mod.rs`。私有单测为所属模块的 cfg(test) 子模块；黑盒测试遵守 Cargo `tests/*.rs` 或 `tests/<suite>/main.rs`，共享 helper 放子目录。
 - 不为测试扩大生产可见性、复制实现或用临时 path/autotests 配置绕过边界。生成／vendor 由其权威来源维护。
 - Rust 业务代码 forbid unsafe；确需 native/FFI 的桥接隔离审计，不静默放开应用 lint 或 TLS 默认 features。
