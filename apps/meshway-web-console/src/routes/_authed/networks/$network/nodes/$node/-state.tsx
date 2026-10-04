@@ -13,7 +13,7 @@ import { CopyButton } from "@/components/chrome/copy-button"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
-import { dateTime, relativeTime } from "@/lib/format"
+import { agoTime, dateTime, relativeTime } from "@/lib/format"
 import {
   configurationFacts,
   desiredAgainst,
@@ -170,7 +170,7 @@ export function NodeStateSections({
                       {problemText(problem)}
                     </span>
                     <span className="shrink-0 text-meta text-muted-foreground">
-                      {relativeTime(problem.observedAt, now)}
+                      {agoTime(problem.observedAt, now)}
                     </span>
                   </li>
                 ))}
@@ -357,7 +357,7 @@ function ConfigurationSection({
                 {progressAt ? (
                   <span className="font-normal text-muted-foreground">
                     {" · "}
-                    {relativeTime(progressAt, now)}
+                    {agoTime(progressAt, now)}
                   </span>
                 ) : null}
               </>

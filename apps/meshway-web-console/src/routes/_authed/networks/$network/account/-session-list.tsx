@@ -27,7 +27,7 @@ import { useNow } from "@/hooks/use-now"
 import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { useSignOut } from "@/hooks/use-sign-out"
 import { endsThisTab, pagedCount, type Revocation } from "@/lib/account"
-import { dateTime, relativeTime, shortId } from "@/lib/format"
+import { agoTime, dateTime, relativeTime, shortId } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 import { currentSession } from "@/state/session"
 
@@ -253,7 +253,7 @@ function SessionRow({
         used:
           session.lastUsedAt === null
             ? m.account_unknown()
-            : (relativeTime(session.lastUsedAt, now) ?? m.account_unknown()),
+            : (agoTime(session.lastUsedAt, now) ?? m.account_unknown()),
       })}
       detail={shortId(session.id)}
       state={relativeTime(session.expiresAt, now) ?? m.account_unknown()}

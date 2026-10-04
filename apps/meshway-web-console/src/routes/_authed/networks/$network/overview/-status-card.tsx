@@ -6,7 +6,7 @@ import { failureText } from "@/api/failure"
 import { StatusDot } from "@/components/chrome/status-dot"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
-import { dateTime, relativeTime } from "@/lib/format"
+import { agoTime, dateTime } from "@/lib/format"
 import {
   countBy,
   EVIDENCE_ORDER,
@@ -74,7 +74,7 @@ export function StatusCard({
           <span title={dateTime(state.asOf) ?? undefined}>
             {live ? m.overview_live() : m.overview_polling()} ·{" "}
             {m.overview_as_of({
-              time: relativeTime(state.asOf, now) ?? "—",
+              time: agoTime(state.asOf, now) ?? "—",
             })}
           </span>
         ) : null}
@@ -299,7 +299,7 @@ function LinkRow({
             m.overview_link_initiator({ node: nameOf(link.initiatorNodeId) }),
             link.since
               ? m.overview_link_since({
-                  time: relativeTime(link.since, now) ?? "—",
+                  time: agoTime(link.since, now) ?? "—",
                 })
               : null,
           ]

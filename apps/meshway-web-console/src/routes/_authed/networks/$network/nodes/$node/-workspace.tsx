@@ -22,7 +22,7 @@ import { useNow } from "@/hooks/use-now"
 import { operationsOf } from "@/lib/configuration/draft-state"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { editsNode, isDeleted } from "@/lib/configuration/node-operations"
-import { dateTime, relativeTime } from "@/lib/format"
+import { agoTime, dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
@@ -272,7 +272,7 @@ function Overview({
               {dateTime(node.registeredAt) ?? "—"}
               <span className="font-normal text-muted-foreground">
                 {" "}
-                · {relativeTime(node.registeredAt, now)}
+                · {agoTime(node.registeredAt, now)}
               </span>
             </Tile>
           </div>

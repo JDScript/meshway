@@ -13,7 +13,7 @@ import { EmptyLine, Section } from "@/components/chrome/section"
 import { StatusDot } from "@/components/chrome/status-dot"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
-import { dateTime, relativeTime } from "@/lib/format"
+import { agoTime, dateTime, relativeTime } from "@/lib/format"
 import {
   isPast,
   listenerRuntime,
@@ -208,7 +208,7 @@ function ReportLine({
       <span className="font-medium">{freshnessLabel[view.freshness]()}</span>
       <span className="text-muted-foreground">
         {at
-          ? m.nodes_report_at({ at: relativeTime(at, now) ?? at })
+          ? m.nodes_report_at({ at: agoTime(at, now) ?? at })
           : m.nodes_report_none()}
       </span>
       <span className="ml-auto text-meta text-muted-foreground">
@@ -334,7 +334,7 @@ function Links({
                       : m.nodes_link_use_unknown(),
                   link.since
                     ? m.nodes_link_since({
-                        at: relativeTime(link.since, now) ?? link.since,
+                        at: agoTime(link.since, now) ?? link.since,
                       })
                     : null,
                 ]

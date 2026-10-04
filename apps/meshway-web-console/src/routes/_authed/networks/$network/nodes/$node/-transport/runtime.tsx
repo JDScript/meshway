@@ -1,6 +1,6 @@
 import type { EndpointCandidate, SocketState } from "@meshway/control-client"
 
-import { relativeTime } from "@/lib/format"
+import { agoTime, relativeTime } from "@/lib/format"
 import { candidateExpired, listenerRuntime } from "@/lib/nodes/state-model"
 import {
   endpointSourceText,
@@ -146,8 +146,7 @@ function CandidateRow({
         ) : (
           <>
             {m.nodes_candidate_observed({
-              at:
-                relativeTime(candidate.observedAt, now) ?? candidate.observedAt,
+              at: agoTime(candidate.observedAt, now) ?? candidate.observedAt,
             })}
             {" · "}
             {m.nodes_candidate_expires({

@@ -22,7 +22,7 @@ import {
 import { useNow } from "@/hooks/use-now"
 import { operationsOf } from "@/lib/configuration/draft-state"
 import { editsNode, isDeleted } from "@/lib/configuration/node-operations"
-import { relativeTime } from "@/lib/format"
+import { agoTime } from "@/lib/format"
 import { keyRevoked, shownNodes } from "@/lib/nodes/model"
 import {
   fullReport,
@@ -202,7 +202,7 @@ export function NodeList({
             view === undefined
               ? undefined
               : view.freshness === "current" && at !== null
-                ? (relativeTime(at, now) ?? freshnessLabel.current())
+                ? (agoTime(at, now) ?? freshnessLabel.current())
                 : freshnessLabel[view.freshness]()
           return (
             <ListRow

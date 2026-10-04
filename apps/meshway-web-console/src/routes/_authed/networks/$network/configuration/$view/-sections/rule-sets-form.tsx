@@ -37,7 +37,7 @@ import {
   type Preparation,
   type RuleSetMap,
 } from "@/lib/configuration/rule-sets"
-import { dateTime, relativeTime } from "@/lib/format"
+import { agoTime, dateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
@@ -387,8 +387,7 @@ function StatusBlock({
   const good = preparation === "ready" || preparation === "inline"
   const Icon = good ? CircleCheckIcon : CircleAlertIcon
   // A time read after the last tick reads as now, not as ahead of it.
-  const when = (at: string) =>
-    relativeTime(at, Math.max(now, Date.parse(at) || now)) ?? dateTime(at) ?? at
+  const when = (at: string) => agoTime(at, now) ?? dateTime(at) ?? at
   const facts: string[] = []
   if (view?.artifact)
     facts.push(
