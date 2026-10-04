@@ -25,8 +25,8 @@ its generated client only, and only what the controller delivers:
   the transport catalog (`getTransportCatalog`).
 - Pages now: `/login`, `/register`; `/` opens the remembered network (kept
   per account) or the first listed, else offers creating the first; a
-  network's overview (the empty globe and one line saying this controller
-  reports no node locations or state), nodes, members (for `actions.manageMembers`: the members and
+  network's overview (the globe with the State's located nodes and links,
+  the status corner and the history layer), nodes, members (for `actions.manageMembers`: the members and
   the join links, a member's workspace), settings `network` (the name,
   editable when `actions.rename`; the ID, creation date and role; leaving)
   and `activity` (for `manageMembers`), and the account (email and ID,
@@ -89,7 +89,7 @@ its generated client only, and only what the controller delivers:
   every node, a member their own User-identity devices). The list searches
   by hostname and shows each node's identity (its user's email or its
   tags), first address, and whether it is disabled or has a revoked key. A
-  node's workspace (`/nodes/<id>?tab=overview|transport|manage`): the
+  node's workspace (`/nodes/<id>?tab=overview|transport|latency|manage`): the
   registration facts and one line that this controller reports no node
   state; the listeners its configuration holds (`getConfiguration`, read
   only; owners and admins only, which the tab says to others); its two
@@ -166,6 +166,43 @@ its generated client only, and only what the controller delivers:
   `ruleSetContent` requirement says exactly that. A set without content is
   never treated as empty. Renaming a set or a profile renames its
   references.
+- Overview (`getNetworkState`, `listNodes` for names,
+  `queryObservationHistory`): a node is on the globe only with the
+  controller's `derived.location` and its coordinates; pointing at one
+  shows the place, the address it rests on and its source (STUN or
+  interface), observation and expiry, and the dataset. Every other node is
+  listed under 待定位 with the controller's `locationAbsent` (a GeoIP result
+  without coordinates names its region). Current links (`StateView.links`)
+  are drawn only between located ends, styled by evidence, then phase
+  (matched, one end, conflicting, expired, preparing, failed, closed), and
+  never animated: nothing travels along a line, and `inUse` is a listed
+  fact. Links with an unlocated end are counted and listed, not drawn. Links
+  between the same nodes take successive arcs. The corner counts nodes by
+  freshness and links by phase and evidence, with the State's `asOf` and
+  whether the stream keeps it live. A node opens its workspace from the
+  globe or the list. More than 120 placed nodes show names only on the one
+  pointed at, focused or selected.
+- History layer (D3): off by default; a chosen window (1 h, 6 h, 24 h, 7 d,
+  the controller's longest) is fixed when chosen, and refreshing reads a new
+  one, because cursors are bound to the window and lapse after 15 minutes.
+  `recentLinks` (kinds `link_opened`, `link_closed`), both ends' records of
+  a link merged, the latest deciding opened or closed; drawn faint, apart
+  from current links, and never for a link that is current. The first 5
+  pages (200 each) are read on their own, then on request. Coverage is
+  shown as the controller states it: pruning that reaches into the window,
+  and each collection gap with its own interval and drop count.
+- Node latency (`?tab=latency`): `buckets` of `probe_completed`, sent by the
+  node (`sourceNodeId`) or to it (`peerNodeId`), in the same windows (1 min,
+  5 min, 15 min, 1 h buckets). One series per source, probe kind, path, link
+  and transport; the controller's per-instance and per-publication buckets
+  of one series merge into one point (the mean weighted by successes, exact
+  because a success always has its duration). A step per bucket for the
+  mean of successful probes, a strip for the buckets with records, warning
+  where probes timed out or failed; a bucket with no records is blank and
+  one with no success has no step, never zero. The window's mean, bucket
+  mean range, probe counts and 未回应率 (timed out or failed over probes;
+  not packet loss). Drawn with SVG by hand. It reads records only; it never
+  starts a measurement.
 - Not delivered: node runtime state and the node settings form. Their
   pages below are the target design; they return when their operations
   exist, and nothing stands in for them. What the console needs from the
@@ -191,7 +228,7 @@ its generated client only, and only what the controller delivers:
   they use, `hooks/`) stay for the pages to come, though no page uses most
   of them yet. Dependencies no page uses are removed; the pages that need
   them re-add the versions they were tested with: `cmdk` ^1.1.1 (the
-  palette), `recharts` 3.8.0 (latency history, with the shadcn `chart`).
+  palette).
   The JSONC editor's (CodeMirror 6, `jsonc-parser` 3.3.1) are back with the
   configuration source; the editor chunk loads with the first source
   opened (~111 kB gzip).
@@ -279,7 +316,7 @@ controller supports today; the rest of each row is the target design.
 
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
-| Overview `/overview?node=` | the empty globe, one line: no node locations or state | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
+| Overview `/overview?node=` | the globe with located nodes and current links; the status corner (counts, 待定位, current links, the history layer) | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
 | Nodes `/nodes?view=nodes\|tags` | `?q=`; a node's facts, configured listeners, keys and deletion; adding one with an enrolment key | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
