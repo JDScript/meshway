@@ -89,12 +89,10 @@
   "configuration_review_deleted": "永久删除的节点",
   "configuration_review_address": "地址变化的节点",
   "configuration_review_none": "无",
-  "configuration_review_changes": "修改",
   "configuration_review_apply": "应用",
   "configuration_review_restore": "恢复",
   "configuration_review_refused": "未通过校验",
   "configuration_review_unknown": "结果未知，再次应用会发送同一请求",
-  "configuration_review_conflict": "控制面已有新版本，未应用",
   "configuration_change_added": "新增",
   "configuration_change_removed": "删除",
   "configuration_change_changed": "修改",
@@ -165,5 +163,7 @@
   "configuration_progress_fresh_superseded": "已被替代",
   "configuration_progress_received": "最近回报 {time}",
   "configuration_progress_never_received": "没有回报",
-  "configuration_progress_open": "查看部署"
+  "configuration_progress_open": "查看部署",
+  "configuration_commit_fields": "{count} 个字段无法保存",
+  "configuration_notice_operations": "草稿中有 {count} 项表单修改。先应用或放弃，才能编辑源文件。"
 }

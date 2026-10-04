@@ -1,4 +1,7 @@
-import type { NetworkSummary } from "@meshway/control-client"
+import type {
+  ConfigurationValidationParams,
+  NetworkSummary,
+} from "@meshway/control-client"
 import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo } from "react"
 
@@ -9,7 +12,9 @@ import { m } from "@/paraglide/messages.js"
 import { isSection } from "./changes"
 import { ConfigurationPanel } from "./configuration-panel"
 import { useConfigurationDraft } from "./draft"
-import { isOutdated } from "./draft-state"
+import { isOutdated, type DraftInput } from "./draft-state"
+import { operationsProblems } from "./form-problems"
+import { formViewOf } from "./forms"
 import { HistoryWorkspace } from "./history-workspace"
 import { parseJsonc } from "./jsonc"
 import { useConfigurationNavigation, useConfigurationRoute } from "./navigation"
@@ -46,34 +51,58 @@ export function ConfigurationPage({
 
   const view = route.view
   const { openView } = nav
-  const onInvalidDocument = useCallback(() => {
-    if (view !== "source") openView("source")
-  }, [view, openView])
+  // Refused: the source at its problems, or the form holding the first one.
+  const onInvalid = useCallback(
+    (input: DraftInput, params: ConfigurationValidationParams) => {
+      if (input.kind === "document") {
+        if (view !== "source") openView("source")
+        return
+      }
+      const first = params.issues[0]?.path ?? params.requirements[0]?.path
+      const section = first === undefined ? null : formViewOf(first)
+      if (section !== null && section !== view) openView(section)
+    },
+    [view, openView]
+  )
   const { openRevision } = nav
   const onShowProgress = useCallback(
     (revision: number) => openRevision({ revision, against: null }),
     [openRevision]
   )
-  const apply = useConfigurationApply(networkId, {
-    onInvalidDocument,
-    onShowProgress,
-  })
+  const apply = useConfigurationApply(networkId, { onInvalid, onShowProgress })
 
   const entry = draft.entry
   const outdated = isOutdated(entry, current)
-  const text = draft.dirty ? (entry?.input.text ?? null) : null
-  const invalid = useMemo(() => text !== null && !parseJsonc(text).ok, [text])
+  const input = draft.dirty ? (entry?.input ?? null) : null
+  // A document that does not parse, or form fields that will not save, stop applying.
+  const blocked = useMemo(() => {
+    if (input === null) return null
+    if (input.kind === "document")
+      return parseJsonc(input.text).ok ? null : m.configuration_commit_invalid()
+    const count = operationsProblems(input.ops, input.base).length
+    return count === 0 ? null : m.configuration_commit_fields({ count })
+  }, [input])
+  /** Checks the draft, against the controller's revision once it moved on (a new review). */
+  const checkDraft = () => {
+    if (!entry || blocked !== null) return
+    void apply.check({
+      type: "draft",
+      input: entry.input,
+      expectedRevision:
+        outdated && current !== undefined ? current : entry.baseRevision,
+    })
+  }
   useCommit(
     editable && draft.dirty && entry
       ? {
           page: "configuration",
           label: m.configuration_commit_label(),
-          tone: outdated ? "warning" : invalid ? "destructive" : "plain",
+          tone: outdated ? "warning" : blocked ? "destructive" : "plain",
           text:
             outdated && current !== undefined
               ? m.configuration_commit_outdated({ current })
-              : invalid
-                ? m.configuration_commit_invalid()
+              : blocked
+                ? blocked
                 : apply.checking
                   ? m.configuration_checking()
                   : m.configuration_commit_unsaved(),
@@ -85,19 +114,11 @@ export function ConfigurationPage({
             outdated && current !== undefined
               ? m.configuration_commit_recheck({ current })
               : m.configuration_commit_apply(),
-          primaryDisabled: invalid,
+          primaryDisabled: blocked !== null,
           busy: apply.checking,
-          // Starting over reads the current source; discarding keeps the base.
+          // Starting over reads the current configuration; discarding keeps the base.
           secondary: outdated ? draft.reset : draft.discard,
-          primary: () =>
-            void apply.check({
-              type: "document",
-              sourceJsonc: entry.input.text,
-              expectedRevision:
-                outdated && current !== undefined
-                  ? current
-                  : entry.baseRevision,
-            }),
+          primary: checkDraft,
         }
       : null
   )
@@ -109,6 +130,8 @@ export function ConfigurationPage({
         networkId={networkId}
         network={network}
         at={route.at}
+        checking={apply.checking}
+        onApplyDraft={checkDraft}
         onCompare={(from, to) =>
           nav.openRevision({ revision: to, against: from })
         }

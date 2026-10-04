@@ -30,8 +30,14 @@ import { m } from "@/paraglide/messages.js"
 
 import type { EditorHandle, EditorMark } from "./code-editor"
 import { useConfigurationDraft } from "./draft"
-import { isOutdated, needsSource } from "./draft-state"
+import {
+  holdsOperations,
+  isOutdated,
+  needsSource,
+  operationsOf,
+} from "./draft-state"
 import { formatJsonc, lineColumn, parseJsonc, spanOfPointer } from "./jsonc"
+import { DraftNotice } from "./notice"
 import { readSource, type SourceProblem } from "./problems"
 import {
   configurationQuery,
@@ -61,6 +67,8 @@ export function SourceWorkspace({
   networkId,
   network,
   at,
+  checking,
+  onApplyDraft,
   onCompare,
   onClose,
 }: {
@@ -69,6 +77,10 @@ export function SourceWorkspace({
   network: NetworkSummary | null
   /** A JSON Pointer to open at. */
   at: string | null
+  /** The draft is being checked. */
+  checking: boolean
+  /** Checks the draft and opens its review, as the commit bar does. */
+  onApplyDraft: () => void
   onCompare: (from: number, to: number) => void
   onClose: () => void
 }) {
@@ -106,7 +118,8 @@ export function SourceWorkspace({
     }
   }, [load, networkId, current, loadDraft])
 
-  const text = entry?.input.text ?? null
+  const text = entry?.input.kind === "document" ? entry.input.text : null
+  const formEdits = holdsOperations(entry)
   const problems = useMemo(
     () =>
       text === null
@@ -157,6 +170,16 @@ export function SourceWorkspace({
       <div className="flex min-h-0 flex-1 flex-col px-6 pt-1 pb-6">
         {!editable ? (
           <EmptyLine>{m.configuration_read_denied()}</EmptyLine>
+        ) : formEdits ? (
+          <DraftNotice
+            text={m.configuration_notice_operations({
+              count: operationsOf(entry).length,
+            })}
+            primaryLabel={m.configuration_commit_apply()}
+            busy={checking}
+            onPrimary={onApplyDraft}
+            onDiscard={draft.discard}
+          />
         ) : text === null || problems === null ? (
           failed ? (
             <EmptyLine>{m.configuration_source_failed()}</EmptyLine>
@@ -169,7 +192,11 @@ export function SourceWorkspace({
             text={text}
             problems={problems}
             at={at}
-            checkedText={entry?.checked?.text ?? null}
+            checkedText={
+              entry?.checked?.input.kind === "document"
+                ? entry.checked.input.text
+                : null
+            }
             onChange={draft.edit}
           />
         )}

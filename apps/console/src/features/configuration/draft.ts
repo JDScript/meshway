@@ -1,3 +1,4 @@
+import type { ConfigurationView } from "@meshway/control-client"
 import { useCallback, useMemo } from "react"
 import { create } from "zustand"
 
@@ -7,13 +8,16 @@ import { currentSession } from "@/lib/session"
 import {
   afterApply,
   discardEdits,
+  editPart,
   editText,
   isDirty,
   loadSource,
   withChecked,
   type Checked,
   type DraftEntry,
+  type DraftInput,
 } from "./draft-state"
+import type { FormPart, FormValues } from "./operations"
 
 // The configuration drafts of this tab: one per sign-in and network, kept
 // across the network's pages and routes, in memory only (the source holds
@@ -64,6 +68,14 @@ export function useConfigurationDraft(networkId: string) {
       ),
     [networkId]
   )
+  const editForm = useCallback(
+    <P extends FormPart>(
+      view: { revision: number; configuration: ConfigurationView },
+      part: P,
+      value: FormValues[P]
+    ) => update(networkId, (current) => editPart(current, view, part, value)),
+    [networkId]
+  )
   const discard = useCallback(
     () =>
       update(networkId, (current) =>
@@ -79,10 +91,11 @@ export function useConfigurationDraft(networkId: string) {
     [networkId]
   )
   const applied = useCallback(
-    (text: string) => update(networkId, (current) => afterApply(current, text)),
+    (input: DraftInput) =>
+      update(networkId, (current) => afterApply(current, input)),
     [networkId]
   )
-  /** Starts over from the controller's current source (read again). */
+  /** Starts over from the controller's current configuration (read again). */
   const reset = useCallback(() => update(networkId, () => null), [networkId])
 
   return useMemo(
@@ -91,11 +104,12 @@ export function useConfigurationDraft(networkId: string) {
       dirty: isDirty(entry),
       load,
       edit,
+      editForm,
       discard,
       checked,
       applied,
       reset,
     }),
-    [entry, load, edit, discard, checked, applied, reset]
+    [entry, load, edit, editForm, discard, checked, applied, reset]
   )
 }

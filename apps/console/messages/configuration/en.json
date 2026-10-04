@@ -116,12 +116,10 @@
   "configuration_review_deleted": "Nodes deleted permanently",
   "configuration_review_address": "Nodes changing address",
   "configuration_review_none": "None",
-  "configuration_review_changes": "Changes",
   "configuration_review_apply": "Apply",
   "configuration_review_restore": "Restore",
   "configuration_review_refused": "Refused by the controller",
   "configuration_review_unknown": "Outcome unknown; applying again sends the same request",
-  "configuration_review_conflict": "The controller has a newer revision; not applied",
   "configuration_change_added": "Added",
   "configuration_change_removed": "Removed",
   "configuration_change_changed": "Changed",
@@ -201,5 +199,25 @@
   "configuration_progress_fresh_superseded": "Superseded",
   "configuration_progress_received": "Last report {time}",
   "configuration_progress_never_received": "No report",
-  "configuration_progress_open": "View deployment"
+  "configuration_progress_open": "View deployment",
+  "configuration_commit_fields": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} field will not save",
+        "countPlural=other": "{count} fields will not save"
+      }
+    }
+  ],
+  "configuration_notice_operations": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "The draft holds {count} form edit. Apply or discard it to edit the source.",
+        "countPlural=other": "The draft holds {count} form edits. Apply or discard them to edit the source."
+      }
+    }
+  ]
 }

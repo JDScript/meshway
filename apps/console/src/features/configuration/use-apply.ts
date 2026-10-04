@@ -24,19 +24,21 @@ import { m } from "@/paraglide/messages.js"
 
 import { recordApplied } from "./applied"
 import { useConfigurationDraft } from "./draft"
+import type { DraftInput } from "./draft-state"
 import { deploymentOf } from "./progress"
 import { configurationQuery, configurationReads } from "./queries"
 
 // Applying is always: validate, review what the controller says would
-// change, then the person confirms. The draft's document and a restore of
-// a past revision take the same path; neither is ever applied unreviewed.
+// change, then the person confirms. The draft (its JSONC document or the
+// forms' typed operations) and a restore of a past revision take the same
+// path; neither is ever applied unreviewed.
 // Strict CAS: a newer revision keeps the draft and its base as they are.
 
 const TOAST = "configuration-apply"
 
 /** What is to be applied, without its request ID (one per distinct attempt). */
 export type Proposal =
-  | { type: "document"; expectedRevision: number; sourceJsonc: string }
+  | { type: "draft"; expectedRevision: number; input: DraftInput }
   | { type: "restore"; expectedRevision: number; restoreFrom: number }
 
 export type Review = {
@@ -52,13 +54,23 @@ export type Refusal = {
   params: ConfigurationValidationParams
 }
 
-const withRequestId = (
+function withRequestId(
   proposal: Proposal,
   requestId: string
-): ConfigurationRequest =>
-  proposal.type === "document"
-    ? { ...proposal, requestId }
-    : { ...proposal, requestId }
+): ConfigurationRequest {
+  const { expectedRevision } = proposal
+  if (proposal.type === "restore")
+    return {
+      type: "restore",
+      expectedRevision,
+      restoreFrom: proposal.restoreFrom,
+      requestId,
+    }
+  const { input } = proposal
+  return input.kind === "document"
+    ? { type: "document", expectedRevision, sourceJsonc: input.text, requestId }
+    : { type: "operations", expectedRevision, ops: [...input.ops], requestId }
+}
 
 const failureOf = (error: unknown): Failure | null =>
   error instanceof ApiFailure ? error.failure : null
@@ -102,10 +114,14 @@ export function appliedText(result: ConfigurationAppliedResponse): string {
 export function useConfigurationApply(
   networkId: string,
   {
-    onInvalidDocument,
+    onInvalid,
     onShowProgress,
   }: {
-    onInvalidDocument: () => void
+    /** The controller refused the draft: show where. */
+    onInvalid: (
+      input: DraftInput,
+      params: ConfigurationValidationParams
+    ) => void
     /** Opens the deployment of a revision this tab applied. */
     onShowProgress: (revision: number) => void
   }
@@ -148,17 +164,17 @@ export function useConfigurationApply(
   const refused = useCallback(
     (proposal: Proposal, params: ConfigurationValidationParams) => {
       const count = params.issues.length + params.requirements.length
-      if (proposal.type === "document") {
+      if (proposal.type === "draft") {
         draft.checked({
-          text: proposal.sourceJsonc,
+          input: proposal.input,
           issues: params.issues,
           requirements: params.requirements,
         })
         toast.error(m.configuration_invalid_toast({ count }), { id: TOAST })
-        onInvalidDocument()
+        onInvalid(proposal.input, params)
       } else setRefusal({ proposal, params })
     },
-    [draft, onInvalidDocument]
+    [draft, onInvalid]
   )
 
   /** Asks the controller what `proposal` would change, and opens the review. */
@@ -176,9 +192,9 @@ export function useConfigurationApply(
             { token }
           )
         )
-        if (proposal.type === "document")
+        if (proposal.type === "draft")
           draft.checked({
-            text: proposal.sourceJsonc,
+            input: proposal.input,
             issues: [],
             requirements: [],
           })
@@ -219,7 +235,7 @@ export function useConfigurationApply(
         applyConfiguration(client, { networkId }, attempt.body, { token })
       )
       unsettled.current = null
-      if (proposal.type === "document") draft.applied(proposal.sourceJsonc)
+      if (proposal.type === "draft") draft.applied(proposal.input)
       setReview(null)
       recordApplied(result)
       toast.success(appliedText(result), {

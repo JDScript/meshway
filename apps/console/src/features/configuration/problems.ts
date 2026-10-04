@@ -137,15 +137,19 @@ export function readSource(
           }
         })
       : []
-  const controller: SourceProblem[] = checked
+  // Only a check of a document is about a text.
+  const document = checked?.input.kind === "document" ? checked : null
+  const checkedText =
+    document?.input.kind === "document" ? document.input.text : null
+  const controller: SourceProblem[] = document
     ? [
-        ...checked.issues.map((issue: ConfigurationIssue) => ({
+        ...document.issues.map((issue: ConfigurationIssue) => ({
           origin: "controller" as const,
           path: issue.path,
           ...placeAt(tree, text, issue.path),
           message: issue.message,
         })),
-        ...checked.requirements.map((requirement) => ({
+        ...document.requirements.map((requirement) => ({
           origin: "controller" as const,
           path: requirement.path,
           ...placeAt(tree, text, requirement.path),
@@ -161,6 +165,6 @@ export function readSource(
     syntax: syntax.sort(byPlace),
     schema: hints.sort(byPlace),
     controller: controller.sort(byPlace),
-    stale: checked !== null && checked.text !== text,
+    stale: checkedText !== null && checkedText !== text,
   }
 }
