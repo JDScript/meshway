@@ -58,20 +58,32 @@ its generated client only, and only what the controller delivers:
   `getConfiguration`, `getConfigurationSource`, `getConfigurationSchema`,
   `validateConfiguration`, `applyConfiguration` (the `document` and
   `restore` inputs), `listConfigurationRevisions`,
-  `getConfigurationRevision`, `compareConfiguration`. The sections read
-  only, the whole document as JSONC (`actions.editConfiguration`) and the
-  revisions. One draft per sign-in and network (`features/configuration/
-  draft.ts`): the source text as typed, invalid or with comments, and the
-  revision it was read at; kept across the network's pages, in memory only
-  (the source holds secrets: never storage, the URL or the query cache),
-  dropped when the sign-in changes. Applying always validates first and
-  opens a review: the effective change count, permanent node deletions and
-  address changes on their own, every change with its value before and
-  after (non-secret views); only its confirmation applies, against the
-  draft's revision. A newer revision keeps the draft and its base; the bar
-  offers to start over from it or to check the same text against it (a
-  new review). A restore takes the same review. The section forms (typed
-  `operations` into the same draft) come next.
+  `getConfigurationRevision`, `compareConfiguration`. The whole document as
+  JSONC (`actions.editConfiguration`), the revisions, and forms for access,
+  topology (with `defaults.topology`), groups, tag owners, DNS and address
+  pools; routing, nodes, rule sets and the other defaults read only. One
+  draft per sign-in and network (`features/configuration/draft.ts`), kept
+  across the network's pages, in memory only (the source holds secrets:
+  never storage, the URL or the query cache), dropped when the sign-in
+  changes. It holds one kind of input with the revision it was read at:
+  the source text as typed (invalid or with comments), or the forms' typed
+  operations over the non-secret view of that revision, one `replace…` /
+  `setAddressPools` per edited part holding its final value (a part set
+  back to its base value drops its operation). Never both, and one is never
+  rebuilt from the other: a form reads only while the source holds edits,
+  and the source while the forms do; each says so and offers to apply or
+  discard first. Values are checked in the form the configuration
+  reference states before applying (the bar says how many fields will not
+  save); the controller's refusals sit under the rules and fields at their
+  pointers. `DefaultsUpdate` restates the dialers, so changing the topology
+  default sends the view's dialers (WebSocket headers omitted: kept).
+  Applying always validates first and opens a review: the effective change
+  count, permanent node deletions and address changes on their own, every
+  change with its value before and after (non-secret views); only its
+  confirmation applies, against the draft's revision. A newer revision
+  keeps the draft and its base; the bar offers to start over from it or to
+  check the same text or operations against it (a new review). A restore
+  takes the same review.
 - Nodes (`/nodes?q=`, every member: the controller lists owners and admins
   every node, a member their own User-identity devices). The list searches
   by hostname and shows each node's identity (its user's email or its
@@ -86,8 +98,7 @@ its generated client only, and only what the controller delivers:
   and sends it; a `revision_conflict` reads it again and keeps the
   confirmation open. While the configuration draft holds edits not
   applied, deletion is refused with a toast saying to apply or discard
-  them first (the draft holds only a JSONC document, so a `deleteNode`
-  cannot join it yet).
+  them first (a `deleteNode` operation does not join the draft yet).
 - Adding a node (`/nodes/add`, for `actions.editConfiguration`): an
   enrolment key for a Tag-identity device: at least one tag among the
   configuration's `tagsOwners`, an optional hostname (one lowercase DNS
@@ -118,8 +129,8 @@ its generated client only, and only what the controller delivers:
   publication IDs after the apply response, so nothing is summed across
   publications and a revision applied elsewhere says its progress is not
   available here.
-- Not delivered: node runtime state, the configuration's section forms,
-  and the event stream. Their pages below are the target design; they return when their
+- Not delivered: node runtime state, the forms for routing, rule sets and
+  node settings, and the event stream. Their pages below are the target design; they return when their
   operations exist, and nothing stands in for them. What the console needs
   from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
@@ -234,7 +245,7 @@ controller supports today; the rest of each row is the target design.
 | Overview `/overview?node=` | the empty globe, one line: no node locations or state | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
 | Nodes `/nodes?view=nodes\|tags` | `?q=`; a node's facts, configured listeners, keys and deletion; adding one with an enrolment key | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
-| Configuration `/configuration` | the sections read only; source (JSONC) and history for owners and admins | the source, the history, the sections with what they hold | `/configuration/<section>` (a form; read only now), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
+| Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
 | Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity, DNS | leave |
 | Account `/account` (from the account menu) | email, ID, email and password changes, sessions, activity | none | memberships | end a session, the others, all; change the password |
 
