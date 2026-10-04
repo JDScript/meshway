@@ -23,7 +23,7 @@ fn renewed_guard_cannot_revive_a_flow_expired_by_the_old_guard_wall_clock() {
 }
 
 use super::*;
-use crate::{AuthenticatedPeer, fixtures::*};
+use crate::{Action, AuthenticatedPeer, Packet, fixtures::*};
 use configuration::{Scene, node, request};
 use std::time::Duration;
 
@@ -88,6 +88,99 @@ fn reply(scene: &mut Scene, packet: Packet) {
         Direction::Reply,
         &[1, 2, 3],
     );
+}
+
+#[test]
+fn signed_facts_and_parsed_packets_share_protocol_state_and_rejections() {
+    for (protocol, packets) in [
+        (
+            BusinessProtocol::Udp,
+            vec![
+                (false, udp(1, 3, 50000, 443)),
+                (true, udp(3, 1, 444, 50000)),
+                (true, udp(3, 1, 443, 50000)),
+            ],
+        ),
+        (
+            BusinessProtocol::IcmpEcho,
+            vec![
+                (false, echo(false, 12, 34)),
+                (true, echo(true, 12, 35)),
+                (true, echo(true, 12, 34)),
+            ],
+        ),
+        (
+            BusinessProtocol::Tcp,
+            vec![
+                (false, tcp(false, 100, 0, 2, 0)),
+                (true, tcp(true, 900, 102, 0x12, 0)),
+                (true, tcp(true, 900, 101, 0x12, 0)),
+                (false, tcp(false, 101, 901, 0x10, 0)),
+                (false, tcp(false, 101, 901, 0x18, 7)),
+                (true, tcp(true, 901, 108, 0x18, 5)),
+            ],
+        ),
+    ] {
+        let mut plaintext = Scene::new(protocol, false, true);
+        let mut encrypted = Scene::new(protocol, false, true);
+        for (reply, packet) in packets {
+            let (sender, previous) = if reply { (3, 3) } else { (1, 1) };
+            let facts = packet.facts();
+            let packet_result = plaintext.process(2, Some(previous), sender, &[1, 2, 3], packet);
+            let facts_result = encrypted.admit_facts(
+                2,
+                Ingress::Peer {
+                    demand: request(),
+                    path: vec![node(1), node(2), node(3)],
+                    identity: AuthenticatedPeer {
+                        origin: node(1),
+                        sender: node(sender),
+                        previous: node(previous),
+                    },
+                },
+                facts,
+            );
+            match (packet_result, facts_result) {
+                (Ok(Action::Forward { next, route, .. }), Ok(checked)) => {
+                    assert_eq!(checked.hop, Hop::Forward(next));
+                    assert_eq!(checked.route.direction, route.direction);
+                    assert_eq!(checked.route.original_path, route.original_path);
+                }
+                (Err(packet), Err(facts)) => assert_eq!(
+                    std::mem::discriminant(&packet),
+                    std::mem::discriminant(&facts)
+                ),
+                result => panic!("packet/facts admission diverged: {result:?}"),
+            }
+            assert_eq!(
+                plaintext.tables[&node(2)].len(),
+                encrypted.tables[&node(2)].len()
+            );
+        }
+    }
+}
+
+#[test]
+fn handshake_admission_does_not_establish_reverse_business_flow() {
+    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
+    assert_eq!(
+        meshway_policy::admission::admit_handshake(
+            &scene.configs[&node(2)],
+            request(),
+            &[node(1), node(2), node(3)],
+            node(1),
+            Some(node(3)),
+            true,
+            scene.now_ms,
+        ),
+        Ok(Hop::Forward(node(1)))
+    );
+    assert!(
+        scene
+            .process(2, Some(3), 3, &[1, 2, 3], udp(3, 1, 443, 50000))
+            .is_err()
+    );
+    assert_eq!(scene.tables[&node(2)].len(), 0);
 }
 
 #[test]

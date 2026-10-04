@@ -42,10 +42,16 @@ impl Keys {
         })
     }
     pub(super) fn sign(&self, transcript: &[u8]) -> Result<WireSecret, Error> {
-        let signature = SigningKey::from_bytes(&*decode(&self.control)?).sign(transcript);
+        let signature = self.signing_key()?.sign(transcript);
         Ok(WireSecret::new(
             URL_SAFE_NO_PAD.encode(signature.to_bytes()),
         ))
+    }
+    pub(super) fn signing_key(&self) -> Result<SigningKey, Error> {
+        Ok(SigningKey::from_bytes(&*decode(&self.control)?))
+    }
+    pub(super) fn noise_key(&self) -> Result<Zeroizing<[u8; 32]>, Error> {
+        decode(&self.dataplane)
     }
     pub(super) fn matches(&self, binding: &EnrollmentResponse) -> Result<bool, Error> {
         Ok(binding.keys.control.public_key == self.control()?

@@ -1,6 +1,6 @@
 # Node：节点端
 
-Node 由长期运行的 **`meshwayd`** 和本机 CLI **`meshway`** 组成，Linux 首版采用单机系统服务。当前可[启动并接入 Server](/v2/node/runtime#启动与接入)，自动认证、续租、保存配置与报告状态。独立库已有[明文准入核心、Linux TUN I/O 与 DNS 查询 owner](/v2/node/dataplane)；daemon 的网络安装、端到端加密、SOCKS5、插件和完整包流仍待实现。旧节点源码已退出活跃树，复用通过[白名单与回归审查](/v2/architecture#旧实现退出与复用)进行。
+Node 由长期运行的 **`meshwayd`** 和本机 CLI **`meshway`** 组成，Linux 首版采用单机系统服务。当前可[启动并接入 Server](/v2/node/runtime#启动与接入)，自动认证、续租、保存配置与报告状态。独立库已有[共同准入核心、候选加密 circuit、Linux TUN I/O 与 DNS 查询 owner](/v2/node/dataplane)，并提供隔离的受保护包流 conformance；daemon 的网络安装、持续连接管理、SOCKS5 和插件仍待实现。旧节点源码已退出活跃树，复用通过[白名单与回归审查](/v2/architecture#旧实现退出与复用)进行。
 
 ## 运行形状
 

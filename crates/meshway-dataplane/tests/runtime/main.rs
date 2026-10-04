@@ -4,6 +4,8 @@
 //! end-to-end encryption, installed UDP transport, daemon execution or TUN I/O.
 #![cfg(unix)]
 
+mod secure;
+mod send_lifetime;
 mod support;
 
 use meshway_dataplane::{

@@ -1,5 +1,6 @@
 pub mod dns;
 pub mod packet;
+pub mod secure;
 
 use meshway_configuration::{AccessRule, MeshRoute, NetworkConfigurationInput};
 use meshway_control::Control;
@@ -143,6 +144,27 @@ impl Server {
     }
 
     pub async fn enroll(&self, owner: &Owner, hostname: &str) -> Node {
+        use meshway_model::state::{Capability, StreamKind, TransportRole};
+        self.enroll_with_capabilities(
+            owner,
+            hostname,
+            BTreeMap::from([(
+                "transport:native_udp".into(),
+                Capability::Transport {
+                    roles: vec![TransportRole::Dial, TransportRole::Listen],
+                    streams: vec![StreamKind::Udp],
+                },
+            )]),
+        )
+        .await
+    }
+
+    pub async fn enroll_with_capabilities(
+        &self,
+        owner: &Owner,
+        hostname: &str,
+        capabilities: BTreeMap<String, meshway_model::state::Capability>,
+    ) -> Node {
         let path = self.temp.path().canonicalize().unwrap().join(hostname);
         let mut control = Control::open(
             &path,
@@ -170,19 +192,7 @@ impl Server {
         let enrolled = control.redeem_enrollment().await.unwrap();
         control.authenticate().await.unwrap();
         assert!(control.execution_snapshot().is_err());
-        // Compiler-admission metadata fixture only: this test installs no UDP
-        // provider, transport socket, wire authentication or encrypted channel.
-        use meshway_model::state::{Capability, StreamKind, TransportRole};
-        control
-            .acquire_instance(BTreeMap::from([(
-                "transport:native_udp".into(),
-                Capability::Transport {
-                    roles: vec![TransportRole::Dial, TransportRole::Listen],
-                    streams: vec![StreamKind::Udp],
-                },
-            )]))
-            .await
-            .unwrap();
+        control.acquire_instance(capabilities).await.unwrap();
         assert!(control.execution_snapshot().is_err());
         Node {
             id: enrolled.node_id,

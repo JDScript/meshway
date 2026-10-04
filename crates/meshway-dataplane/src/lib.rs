@@ -1,12 +1,13 @@
-//! Shared plaintext L3 admission and bounded flow ownership.
+//! Shared L3 admission, bounded flow ownership and protected packet transport.
 //!
 //! `meshway-policy` is the only grant/path/address admission implementation;
 //! `meshway-control::ExecutionSnapshot` is the only execution authority. This
-//! crate parses packets and associates replies with previously admitted forward
-//! facts. It implements no encryption, authentication handshake, wire envelope,
-//! I/O, NAT, TCP stack, lease renewal or background task.
+//! The core parses packets and associates replies with previously admitted
+//! forward facts. The secure adapter authenticates metadata before using that
+//! same core; relays need no plaintext. Neither core admission nor authenticated
+//! metadata substitutes for checking decrypted packet facts at an endpoint.
 //!
-//! Peer ingress is a trusted-adapter contract for a future cryptographic layer,
+//! Peer ingress is a trusted-adapter contract for the cryptographic layer,
 //! **not** a decoder for peer-supplied identity claims. In particular plaintext
 //! transport frames must not be passed off as authenticated end-to-end traffic.
 #![forbid(unsafe_code)]
@@ -16,12 +17,12 @@ mod fixtures;
 mod flow;
 mod packet;
 
-use flow::{FlowTable, FlowTime};
+use flow::{CommittedRoute, FlowTable, FlowTime};
 use meshway_control::ExecutionSnapshot;
 use meshway_model::{NodeId, RequestId};
 use meshway_policy::admission::AdmissionError;
 pub use meshway_policy::admission::Hop;
-pub use packet::{Packet, PacketError, TcpSegment, Transport};
+pub use packet::{Packet, PacketError, PacketFacts, TcpSegment, Transport};
 use std::{
     fmt,
     time::{Duration, Instant},
@@ -152,6 +153,10 @@ pub enum Action {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("invalid packet facts: {0}")]
+    Packet(#[from] PacketError),
+    #[error("packet does not match the admitted facts")]
+    FactsMismatch,
     #[error("execution authority is no longer current: {0}")]
     Control(#[from] meshway_control::Error),
     #[error("packet admission rejected: {0}")]
@@ -175,17 +180,36 @@ pub enum Error {
 /// Owns the action until the same control guard and packet lifetime are checked
 /// at delivery. A delayed queue must retain this wrapper, not a released Action.
 pub struct PendingAction {
+    pending: PendingRoute,
+    packet: Packet,
+}
+
+/// The same checked route and immutable lifetime for plaintext and encrypted
+/// admission. It contains no plaintext and cannot release an unchecked packet.
+pub(crate) struct PendingRoute {
     snapshot: ExecutionSnapshot,
     expires_at: Instant,
     permit_expires_at_ms: u64,
-    action: Action,
+    checked: CommittedRoute,
+    facts: PacketFacts,
+    cancellation: Option<tokio_util::sync::CancellationToken>,
+}
+
+impl fmt::Debug for PendingRoute {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PendingRoute")
+            .field("expires_at", &self.expires_at)
+            .field("checked", &self.checked)
+            .finish_non_exhaustive()
+    }
 }
 
 impl fmt::Debug for PendingAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PendingAction")
-            .field("expires_at", &self.expires_at)
-            .field("action", &self.action)
+            .field("expires_at", &self.pending.expires_at)
+            .field("route", &self.pending.checked)
+            .field("packet", &self.packet)
             .finish_non_exhaustive()
     }
 }
@@ -194,28 +218,15 @@ impl PendingAction {
     /// Scheduling metadata only. The packet remains guarded while the host
     /// waits for the selected sink to become writable.
     pub fn hop(&self) -> Hop {
-        match &self.action {
-            Action::Forward { next, .. } => Hop::Forward(*next),
-            Action::Deliver { .. } => Hop::Deliver,
-            Action::Exit { .. } => Hop::Exit,
-        }
+        self.pending.hop()
     }
 
     pub fn route(&self) -> &Route {
-        match &self.action {
-            Action::Forward { route, .. }
-            | Action::Deliver { route, .. }
-            | Action::Exit { route, .. } => route,
-        }
+        self.pending.route()
     }
 
     pub fn ensure_current(&self) -> Result<(), Error> {
-        self.snapshot.ensure_current()?;
-        if Instant::now() >= self.expires_at || self.snapshot.now_ms()? >= self.permit_expires_at_ms
-        {
-            return Err(Error::Expired);
-        }
-        Ok(())
+        self.pending.ensure_current()
     }
 
     /// Invoke the final synchronous sink immediately after validation. The sink
@@ -224,19 +235,103 @@ impl PendingAction {
     /// write boundary; invalidation also needs to cancel their own pending I/O.
     pub fn release<T>(self, sink: impl FnOnce(Action) -> T) -> Result<T, Error> {
         self.ensure_current()?;
-        Ok(sink(self.action))
+        let route = self.pending.checked.route;
+        let packet = self.packet;
+        let action = match self.pending.checked.hop {
+            Hop::Forward(next) => Action::Forward {
+                next,
+                packet,
+                route,
+            },
+            Hop::Deliver => Action::Deliver { packet, route },
+            Hop::Exit => Action::Exit { packet, route },
+        };
+        Ok(sink(action))
     }
 
     /// Wait for the original guard or this packet's shorter retention deadline.
     /// A refresh of the Engine cannot extend either deadline on this action.
     /// Permit-clock changes use the control owner's same notification source.
     pub async fn invalidated(&self) {
+        self.pending.invalidated().await;
+    }
+}
+
+impl PendingRoute {
+    pub(crate) fn hop(&self) -> Hop {
+        self.checked.hop
+    }
+
+    pub(crate) fn route(&self) -> &Route {
+        &self.checked.route
+    }
+
+    pub(crate) fn snapshot(&self) -> &ExecutionSnapshot {
+        &self.snapshot
+    }
+
+    pub(crate) fn expires_at(&self) -> Instant {
+        self.expires_at
+    }
+
+    pub(crate) fn permit_expires_at_ms(&self) -> u64 {
+        self.permit_expires_at_ms
+    }
+
+    pub(crate) fn ensure_current(&self) -> Result<(), Error> {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+        {
+            return Err(Error::Expired);
+        }
+        self.snapshot.ensure_current()?;
+        if Instant::now() >= self.expires_at || self.snapshot.now_ms()? >= self.permit_expires_at_ms
+        {
+            return Err(Error::Expired);
+        }
+        self.snapshot.ensure_current()?;
+        Ok(())
+    }
+
+    pub(crate) fn attach(self, packet: Packet) -> Result<PendingAction, Error> {
+        self.facts.check_packet(&packet)?;
+        self.ensure_current()?;
+        Ok(PendingAction {
+            pending: self,
+            packet,
+        })
+    }
+
+    pub(crate) fn constrain(
+        &mut self,
+        expires_at: Instant,
+        expires_at_ms: u64,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<(), Error> {
+        if self.cancellation.is_some() {
+            return Err(Error::ExecutionScope);
+        }
+        self.expires_at = self.expires_at.min(expires_at);
+        self.permit_expires_at_ms = self.permit_expires_at_ms.min(expires_at_ms);
+        self.cancellation = Some(cancellation);
+        self.ensure_current()
+    }
+
+    pub(crate) async fn invalidated(&self) {
         if self.ensure_current().is_err() {
             return;
         }
         tokio::select! { biased;
             _ = self.snapshot.invalidated_at(self.permit_expires_at_ms) => {},
             _ = tokio::time::sleep_until(self.expires_at.into()) => {},
+            _ = async {
+                match &self.cancellation {
+                    Some(token) => token.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            } => {},
         }
     }
 }
@@ -290,6 +385,16 @@ impl Engine {
     }
 
     pub fn process(&mut self, ingress: Ingress, packet: Packet) -> Result<PendingAction, Error> {
+        self.admit_facts(ingress, packet.facts())?.attach(packet)
+    }
+
+    /// The secure adapter must authenticate the complete facts/path/producer
+    /// before calling this shared state-changing admission boundary.
+    pub(crate) fn admit_facts(
+        &mut self,
+        ingress: Ingress,
+        facts: PacketFacts,
+    ) -> Result<PendingRoute, Error> {
         self.maintain()?;
         let time = FlowTime {
             instant: Instant::now(),
@@ -299,7 +404,7 @@ impl Engine {
         };
         let prepared =
             self.flows
-                .prepare(self.snapshot.configuration()?, &ingress, &packet, time)?;
+                .prepare(self.snapshot.configuration()?, &ingress, &facts, time)?;
         // A rejected/fenced transaction cannot establish or advance flow state.
         if let Err(error) = self.snapshot.ensure_current() {
             self.flows.clear();
@@ -312,12 +417,16 @@ impl Engine {
         }
         let expires_at = prepared.expires_at;
         let permit_expires_at_ms = prepared.permit_expires_at_ms;
-        let action = self.flows.commit(prepared, packet);
-        Ok(PendingAction {
+        // Clock reads can fence a guard; the final guard check precedes commit.
+        self.snapshot.ensure_current()?;
+        let checked = self.flows.commit(prepared);
+        Ok(PendingRoute {
             snapshot: self.snapshot.clone(),
             expires_at,
             permit_expires_at_ms,
-            action,
+            checked,
+            facts,
+            cancellation: None,
         })
     }
 
@@ -344,3 +453,6 @@ impl Engine {
         self.flows.clear();
     }
 }
+
+pub mod carrier;
+pub mod secure;

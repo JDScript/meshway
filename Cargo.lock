@@ -1616,6 +1616,7 @@ name = "meshway-dataplane"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "ed25519-dalek",
  "getrandom 0.3.4",
  "hickory-proto",
  "meshway-configuration",
@@ -1626,13 +1627,20 @@ dependencies = [
  "meshway-policy",
  "meshway-protocol",
  "meshway-server",
+ "meshway-transport",
  "meshway-transport-spec",
+ "meshway-transport-tcp",
+ "meshway-tun",
  "reqwest",
  "serde_json",
+ "sha2",
+ "snow",
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -1687,6 +1695,42 @@ dependencies = [
  "serde_json",
  "thiserror",
  "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "meshway-packet-fixture"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "getrandom 0.3.4",
+ "hyper",
+ "hyper-util",
+ "meshway-configuration",
+ "meshway-control",
+ "meshway-control-client",
+ "meshway-dataplane",
+ "meshway-logging",
+ "meshway-model",
+ "meshway-policy",
+ "meshway-protocol",
+ "meshway-server",
+ "meshway-tls",
+ "meshway-transport",
+ "meshway-transport-spec",
+ "meshway-transport-tcp",
+ "meshway-tun",
+ "rcgen",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -2838,6 +2882,20 @@ name = "smallvec"
 version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
+
+[[package]]
+name = "snow"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "599b506ccc4aff8cf7844bc42cf783009a434c1e26c964432560fb6d6ad02d82"
+dependencies = [
+ "chacha20poly1305",
+ "curve25519-dalek",
+ "getrandom 0.3.4",
+ "rustc_version",
+ "sha2",
+ "subtle",
+]
 
 [[package]]
 name = "socket2"

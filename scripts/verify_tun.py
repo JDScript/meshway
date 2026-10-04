@@ -23,6 +23,17 @@ def fingerprint():
     return digest.hexdigest()
 
 
+def pinned_image(platform, directory):
+    # Read the one image declaration without deploying the persistent lab.
+    env = dict(os.environ, MESHWAY_NODE_RELEASE=str(directory), MESHWAY_NODE_PLATFORM=platform)
+    compose = json.loads(run("docker", "compose", "-f", str(ROOT / "dev/node-lab/compose.yaml"),
+                             "config", "--format", "json", capture=True, env=env))
+    image = compose["services"]["lax"]["image"]
+    if "@sha256:" not in image:
+        raise SystemExit("The fixture image must be digest-pinned.")
+    return image
+
+
 def main():
     os.umask(0o077)
     if shutil.disk_usage(ROOT).free < 50 * 1024 ** 3:
@@ -49,13 +60,7 @@ def main():
     shutil.copyfile(executables[0], binary)
     binary.chmod(0o500)
     check_elf(binary, machine)
-    # Consume the lab's pinned image declaration; config performs no deployment.
-    compose_env = dict(os.environ, MESHWAY_NODE_RELEASE=str(report), MESHWAY_NODE_PLATFORM=platform)
-    compose = json.loads(run("docker", "compose", "-f", str(ROOT / "dev/node-lab/compose.yaml"),
-                             "config", "--format", "json", capture=True, env=compose_env))
-    image = compose["services"]["lax"]["image"]
-    if "@sha256:" not in image:
-        raise SystemExit("The fixture image must be digest-pinned.")
+    image = pinned_image(platform, report)
     command = ["docker", "create", "--name", "meshway-tun-check-" + identity.lower(),
                "--label", "io.meshway.tun-fixture=" + identity,
                "--platform", platform, "--network", "none", "--read-only",

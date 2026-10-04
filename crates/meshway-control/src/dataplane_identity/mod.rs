@@ -1,0 +1,107 @@
+//! Scoped cryptographic key operations for the Node's packet plane.
+use crate::{Control, Error, ExecutionSnapshot};
+use ed25519_dalek::{Signer, SigningKey};
+use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId};
+use std::{fmt, sync::Arc};
+use zeroize::Zeroizing;
+
+struct Material {
+    signing: SigningKey,
+    noise: Zeroizing<[u8; 32]>,
+}
+
+/// Key operations tied to the exact live control handoff. Private material is
+/// never serializable or printable. The host and in-process crypto code remain
+/// trusted; the Noise callback is not a memory-isolation boundary.
+#[derive(Clone)]
+pub struct DataPlaneIdentity {
+    snapshot: ExecutionSnapshot,
+    material: Arc<Material>,
+}
+
+impl Control {
+    pub fn dataplane_identity(
+        &self,
+        snapshot: ExecutionSnapshot,
+    ) -> Result<DataPlaneIdentity, Error> {
+        snapshot.ensure_current()?;
+        let current = self.execution_snapshot()?;
+        if !current.same_execution(&snapshot) {
+            return Err(Error::Contract);
+        }
+        let keys = self.record.keys.as_ref().ok_or(Error::Lifecycle)?;
+        let cfg = snapshot.configuration()?;
+        if keys.control()? != cfg.self_keys.control_key.public_key
+            || keys.dataplane()? != cfg.self_keys.dataplane_key.public_key
+        {
+            return Err(Error::Contract);
+        }
+        let material = Arc::new(Material {
+            signing: keys.signing_key()?,
+            noise: keys.noise_key()?,
+        });
+        snapshot.ensure_current()?;
+        Ok(DataPlaneIdentity { snapshot, material })
+    }
+}
+
+impl DataPlaneIdentity {
+    pub fn snapshot(&self) -> &ExecutionSnapshot {
+        &self.snapshot
+    }
+
+    /// Borrow the registered X25519 seed to initialize the maintained Noise
+    /// implementation. Every call is checked against the original handoff.
+    pub fn with_noise_key<R>(&self, action: impl FnOnce(&[u8; 32]) -> R) -> Result<R, Error> {
+        self.snapshot.ensure_current()?;
+        let output = action(&self.material.noise);
+        self.snapshot.ensure_current()?;
+        Ok(output)
+    }
+
+    /// Sign only the packet-plane digest transcript, never arbitrary control
+    /// authentication bytes. Domain, network, node and exact key generation are
+    /// always added by this implementation.
+    pub fn sign_packet(&self, digest: Digest) -> Result<[u8; 64], Error> {
+        let cfg = self.snapshot.configuration()?;
+        let message = packet_proof_message(
+            cfg.network_id,
+            cfg.node_id,
+            &cfg.self_keys.control_key,
+            digest,
+        );
+        let signature = self.material.signing.sign(&message).to_bytes();
+        self.snapshot.ensure_current()?;
+        Ok(signature)
+    }
+}
+
+/// The one canonical signature transcript for packet-plane hop proofs. This
+/// helper encodes context only; callers must obtain the key from their own
+/// current execution target and perform normal Ed25519 strict verification.
+pub fn packet_proof_message(
+    network: NetworkId,
+    node: NodeId,
+    key: &BoundNodeKey,
+    digest: Digest,
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(128);
+    message.extend_from_slice(b"meshway/packet-proof/v1\0");
+    message.extend_from_slice(network.as_uuid().as_bytes());
+    message.extend_from_slice(node.as_uuid().as_bytes());
+    message.extend_from_slice(key.id.as_uuid().as_bytes());
+    message.extend_from_slice(&key.generation.get().to_be_bytes());
+    message.extend_from_slice(digest.as_bytes());
+    message
+}
+
+impl fmt::Debug for DataPlaneIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DataPlaneIdentity")
+            .field("snapshot", &self.snapshot)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests;

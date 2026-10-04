@@ -2,6 +2,63 @@ use super::*;
 use crate::fixtures::*;
 
 #[test]
+fn facts_validate_shape_and_reject_different_packet_metadata() {
+    for packet in [
+        udp(1, 3, 50000, 443),
+        tcp(false, 100, 0, 2, 0),
+        echo(false, 12, 34),
+    ] {
+        let facts = packet.facts();
+        assert_eq!(facts.validate(), Ok(()));
+        facts.check_packet(&packet).unwrap();
+        let mut bad = facts;
+        bad.len = Packet::MAX_LEN + 1;
+        assert_eq!(bad.validate(), Err(PacketError::Length));
+        bad = facts;
+        bad.len = 0;
+        assert_eq!(bad.validate(), Err(PacketError::Length));
+        bad = facts;
+        bad.traffic.destination = "fd00::3".parse().unwrap();
+        assert_eq!(bad.validate(), Err(PacketError::Header));
+        bad = facts;
+        bad.traffic.destination_port = if facts.traffic.destination_port.is_some() {
+            None
+        } else {
+            Some(Port::new(443).unwrap())
+        };
+        assert_eq!(bad.validate(), Err(PacketError::Header));
+        bad = facts;
+        bad.transport = if matches!(facts.transport, Transport::Udp) {
+            Transport::Echo {
+                reply: false,
+                identifier: 0,
+                sequence: 0,
+            }
+        } else {
+            Transport::Udp
+        };
+        assert_eq!(bad.validate(), Err(PacketError::Header));
+    }
+    let facts = tcp(false, 100, 0, 2, 0).facts();
+    for other in [
+        tcp(false, 101, 0, 2, 0),
+        tcp(false, 100, 0, 2, 1),
+        tcp(true, 100, 0, 2, 0),
+    ] {
+        assert!(matches!(
+            facts.check_packet(&other),
+            Err(crate::Error::FactsMismatch)
+        ));
+    }
+    let mut bad = facts;
+    let Transport::Tcp(segment) = &mut bad.transport else {
+        unreachable!()
+    };
+    segment.payload_len = 1;
+    assert_eq!(bad.validate(), Err(PacketError::Length));
+}
+
+#[test]
 fn rfc1071_checksum_and_owned_redacted_packet() {
     assert_eq!(
         finish(sum(0, &[0, 1, 0xf2, 3, 0xf4, 0xf5, 0xf6, 0xf7])),

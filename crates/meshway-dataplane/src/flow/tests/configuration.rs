@@ -1,5 +1,5 @@
 use super::super::*;
-use crate::AuthenticatedPeer;
+use crate::{Action, AuthenticatedPeer, Packet};
 use meshway_configuration::execution::*;
 use meshway_configuration::*;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
@@ -219,11 +219,30 @@ impl Scene {
         self.admit(local, ingress, packet)
     }
     pub fn admit(&mut self, local: u8, ingress: Ingress, packet: Packet) -> Result<Action, Error> {
+        let checked = self.admit_facts(local, ingress, packet.facts())?;
+        let route = checked.route;
+        Ok(match checked.hop {
+            Hop::Forward(next) => Action::Forward {
+                next,
+                packet,
+                route,
+            },
+            Hop::Deliver => Action::Deliver { packet, route },
+            Hop::Exit => Action::Exit { packet, route },
+        })
+    }
+
+    pub fn admit_facts(
+        &mut self,
+        local: u8,
+        ingress: Ingress,
+        facts: PacketFacts,
+    ) -> Result<CommittedRoute, Error> {
         let table = self.tables.get_mut(&node(local)).unwrap();
         let prepared = table.prepare(
             &self.configs[&node(local)],
             &ingress,
-            &packet,
+            &facts,
             FlowTime {
                 instant: self.instant,
                 now_ms: self.now_ms,
@@ -231,6 +250,6 @@ impl Scene {
                 guard_expires_at_ms: self.guard_expires_at_ms,
             },
         )?;
-        Ok(table.commit(prepared, packet))
+        Ok(table.commit(prepared))
     }
 }

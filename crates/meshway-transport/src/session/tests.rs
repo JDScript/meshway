@@ -56,6 +56,143 @@ fn rejects_unrepresentable_or_inconsistent_budgets() {
 }
 
 #[tokio::test]
+async fn wait_capacity_wakes_after_send_and_restores_all_budgets_and_original_frame() {
+    let configured = Limits::new(16, 1, 16, 1, 1).unwrap();
+    let (stream, mut remote) = tokio::io::duplex(1);
+    let (mut sender, receiver) = Session::stream(stream, peer(), configured).into_split();
+    let mut frames = batch(&[b"0123456789abcdef"]);
+    let original = frames[0].payload.as_ptr();
+    let admitted = sender.try_send(&mut frames, SendContext::default());
+    assert_eq!(admitted.accepted, 1);
+    assert!(frames.is_empty());
+    assert_eq!(
+        sender.available_budget(),
+        BudgetAvailable {
+            frames: 0,
+            bytes: 0,
+            operations: 0
+        }
+    );
+    let (waiting, started) = tokio::sync::oneshot::channel();
+    let ready = tokio::spawn(async move {
+        let mut ready = Box::pin(sender.wait_capacity(16));
+        assert!(futures_util::poll!(&mut ready).is_pending());
+        waiting.send(()).unwrap();
+        ready.await.unwrap();
+        sender
+    });
+    timeout(Duration::from_secs(2), started)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut received = [0; 20];
+    timeout(Duration::from_secs(2), remote.read_exact(&mut received))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(received.as_slice(), wire(&[b"0123456789abcdef"]));
+    // The capacity waiter has its own task/waker: draining the peer must wake
+    // it, rather than a later caller poll merely observing restored budgets.
+    let mut sender = timeout(Duration::from_secs(2), ready)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        sender.available_budget(),
+        BudgetAvailable {
+            frames: 1,
+            bytes: 16,
+            operations: 1
+        }
+    );
+    let completed = timeout(Duration::from_secs(2), admitted.completion.unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(completed.frames.len(), 1);
+    assert_eq!(completed.frames[0].frame.payload.as_ptr(), original);
+    assert_eq!(completed.frames[0].frame.payload, b"0123456789abcdef");
+    assert_eq!(completed.frames[0].frame.peer, None);
+    assert!(matches!(
+        completed.frames[0].outcome,
+        SendOutcome::LocalComplete
+    ));
+    sender.shutdown().await.unwrap();
+    drop(receiver);
+}
+
+#[tokio::test]
+async fn wait_capacity_rejects_impossible_allocation_without_waiting() {
+    let configured = Limits::new(16, 1, 16, 1, 1).unwrap();
+    let (stream, _remote) = tokio::io::duplex(1);
+    let mut session = Session::stream(stream, peer(), configured);
+    {
+        let mut ready = Box::pin(session.sender().wait_capacity(17));
+        assert_eq!(
+            futures_util::poll!(&mut ready),
+            Poll::Ready(Err(AdmissionStop::ByteBudget))
+        );
+    }
+    assert_eq!(
+        session.sender().available_budget(),
+        BudgetAvailable {
+            frames: 1,
+            bytes: 16,
+            operations: 1
+        }
+    );
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn wait_capacity_wakes_closed_when_receive_half_closes_blocked_carrier() {
+    let configured = Limits::new(16, 1, 16, 1, 1).unwrap();
+    let (stream, _remote) = tokio::io::duplex(1);
+    let (mut sender, receiver) = Session::stream(stream, peer(), configured).into_split();
+    let mut frames = batch(&[b"0123456789abcdef"]);
+    let admitted = sender.try_send(&mut frames, SendContext::default());
+    assert_eq!(admitted.accepted, 1);
+    let (waiting, started) = tokio::sync::oneshot::channel();
+    let ready = tokio::spawn(async move {
+        let mut ready = Box::pin(sender.wait_capacity(16));
+        assert!(futures_util::poll!(&mut ready).is_pending());
+        waiting.send(()).unwrap();
+        let result = ready.await;
+        (sender, result)
+    });
+    timeout(Duration::from_secs(2), started)
+        .await
+        .unwrap()
+        .unwrap();
+    // Receiver's public close boundary is Drop; it closes the shared carrier
+    // without borrowing Sender while wait_capacity retains that borrow.
+    drop(receiver);
+    let (mut sender, result) = timeout(Duration::from_secs(2), ready)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(result, Err(AdmissionStop::Closed));
+    assert!(sender.is_closed());
+    let completed = timeout(Duration::from_secs(2), admitted.completion.unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        completed.frames[0].outcome,
+        SendOutcome::Indeterminate(SendFailure::Cancelled(CancelReason::SessionClosed))
+    ));
+    assert_eq!(
+        sender.available_budget(),
+        BudgetAvailable {
+            frames: 1,
+            bytes: 16,
+            operations: 1
+        }
+    );
+    sender.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn receive_is_cancellation_safe_across_partial_header_and_payload() {
     let (stream, mut remote) = tokio::io::duplex(128);
     let mut session = Session::stream(stream, peer(), limits());

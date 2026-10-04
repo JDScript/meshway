@@ -2,7 +2,7 @@
 //! expired-entry collection; commit happens only after final guard validation.
 mod tcp;
 
-use crate::{Action, Direction, Error, Ingress, Limits, Packet, Route, Transport};
+use crate::{Direction, Error, Ingress, Limits, PacketFacts, Route, Transport};
 use meshway_configuration::execution::{BusinessProtocol, NodeConfiguration};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId};
 use meshway_policy::admission::{Hop, Traffic, admit_forward, admit_reply};
@@ -24,8 +24,8 @@ struct Tuple {
     echo: Option<(u16, u16)>,
 }
 impl Tuple {
-    fn packet(packet: &Packet) -> Self {
-        let traffic = packet.traffic();
+    fn facts(facts: &PacketFacts) -> Self {
+        let traffic = facts.traffic;
         Self {
             source: traffic.source,
             destination: traffic.destination,
@@ -36,7 +36,7 @@ impl Tuple {
             },
             source_port: traffic.source_port,
             destination_port: traffic.destination_port,
-            echo: match packet.transport() {
+            echo: match facts.transport {
                 Transport::Echo {
                     identifier,
                     sequence,
@@ -113,6 +113,12 @@ pub(super) struct FlowTable {
     entries: BTreeMap<Key, Flow>,
 }
 
+#[derive(Debug)]
+pub(super) struct CommittedRoute {
+    pub hop: Hop,
+    pub route: Route,
+}
+
 impl FlowTable {
     pub fn new(limits: Limits) -> Self {
         Self {
@@ -138,9 +144,10 @@ impl FlowTable {
         &mut self,
         config: &NodeConfiguration,
         ingress: &Ingress,
-        packet: &Packet,
+        facts: &PacketFacts,
         time: FlowTime,
     ) -> Result<Prepared, Error> {
+        facts.validate()?;
         self.expire(time.instant, time.now_ms);
         let path = ingress.path();
         // Match the compiler's bound before retaining any caller-owned path.
@@ -152,7 +159,7 @@ impl FlowTable {
             .position(|node| *node == config.node_id)
             .ok_or(Error::Ingress)?;
         let origin = ingress.origin().ok_or(Error::Ingress)?;
-        let tuple = Tuple::packet(packet);
+        let tuple = Tuple::facts(facts);
         if tuple == tuple.reversed() {
             return Err(Error::Flow);
         }
@@ -209,7 +216,7 @@ impl FlowTable {
                 path,
                 origin,
                 ingress.previous(),
-                &packet.traffic(),
+                &facts.traffic,
                 time.now_ms,
             )?,
             Direction::Reply => admit_reply(
@@ -219,7 +226,7 @@ impl FlowTable {
                 origin,
                 ingress.previous(),
                 &existing.ok_or(Error::Flow)?.forward,
-                &packet.traffic(),
+                &facts.traffic,
                 time.now_ms,
             )?,
         };
@@ -236,7 +243,7 @@ impl FlowTable {
                 if self.entries.len() == self.limits.max_flows {
                     return Err(Error::Capacity);
                 }
-                match packet.transport() {
+                match facts.transport {
                     Transport::Udp => ProtocolState::Udp,
                     Transport::Echo { reply: false, .. } => ProtocolState::Echo,
                     Transport::Tcp(segment) => ProtocolState::Tcp(TcpState::new(segment)?),
@@ -245,7 +252,7 @@ impl FlowTable {
             }
         };
         let remove = if existing.is_some() {
-            match (&mut state, packet.transport()) {
+            match (&mut state, facts.transport) {
                 (ProtocolState::Udp, Transport::Udp) => false,
                 (ProtocolState::Echo, Transport::Echo { reply, .. })
                     if reply == (direction == Direction::Reply) =>
@@ -268,7 +275,7 @@ impl FlowTable {
             .ok_or(Error::Limits)?
             .min(time.guard_expires_at);
         let flow = Flow {
-            forward: existing.map_or_else(|| packet.traffic(), |flow| flow.forward),
+            forward: existing.map_or(facts.traffic, |flow| flow.forward),
             state,
             expires_at,
             permit_expires_at_ms,
@@ -285,7 +292,7 @@ impl FlowTable {
         })
     }
 
-    pub fn commit(&mut self, prepared: Prepared, packet: Packet) -> Action {
+    pub fn commit(&mut self, prepared: Prepared) -> CommittedRoute {
         let route = Route {
             demand: prepared.key.demand,
             origin: prepared.key.path[0],
@@ -297,14 +304,9 @@ impl FlowTable {
         } else {
             self.entries.insert(prepared.key, prepared.flow);
         }
-        match prepared.hop {
-            Hop::Forward(next) => Action::Forward {
-                next,
-                packet,
-                route,
-            },
-            Hop::Deliver => Action::Deliver { packet, route },
-            Hop::Exit => Action::Exit { packet, route },
+        CommittedRoute {
+            hop: prepared.hop,
+            route,
         }
     }
 }

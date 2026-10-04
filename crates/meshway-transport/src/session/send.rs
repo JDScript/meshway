@@ -360,6 +360,24 @@ impl Sender {
         }
     }
 
+    /// Wait until one frame's allocation can be admitted. This does not retain
+    /// a reservation: callers must still use `try_send` and check its result.
+    /// Closing the carrier wakes the waiter; impossible capacities fail early.
+    pub async fn wait_capacity(&self, capacity: usize) -> Result<(), AdmissionStop> {
+        if capacity > self.limits.max_bytes() {
+            return Err(AdmissionStop::ByteBudget);
+        }
+        tokio::select! { biased;
+            _ = self.io.stop.cancelled() => Err(AdmissionStop::Closed),
+            result = async {
+                let _frame = self.frame_budget.clone().acquire_owned().await.map_err(|_| AdmissionStop::Closed)?;
+                let _bytes = self.byte_budget.clone().acquire_many_owned(capacity as u32).await.map_err(|_| AdmissionStop::Closed)?;
+                let _operation = self.operation_budget.clone().acquire_owned().await.map_err(|_| AdmissionStop::Closed)?;
+                Ok(())
+            } => result,
+        }
+    }
+
     /// Nonwaiting prefix admission. Capacity is charged across queued **and**
     /// in-flight batches until their completion is produced. No suffix frame
     /// is cloned, retained, or consumed. One operation permit covers a batch.
@@ -586,7 +604,13 @@ async fn run(io: Arc<Shared>, mut queue: mpsc::Receiver<Operation>, idle: Arc<Se
             // I/O is indefinitely Pending. A wake before handoff is harmless:
             // the engine also checks the current scope synchronously.
             if !invalid_ready {
-                invalid_ready = invalidated.as_mut().poll(cx).is_ready();
+                match catch_unwind(AssertUnwindSafe(|| invalidated.as_mut().poll(cx))) {
+                    Ok(state) => invalid_ready = state.is_ready(),
+                    Err(_panic) => {
+                        invalid_ready = true;
+                        operation.fail(&io, SendFailure::ProviderPanicked);
+                    }
+                }
             }
             if !stop_ready {
                 stop_ready = stopped.as_mut().poll(cx).is_ready();

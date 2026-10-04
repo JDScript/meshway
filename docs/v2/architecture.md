@@ -34,6 +34,7 @@ crates/
   meshway-transport-vless/
   meshway-transport-trojan/
 tools/meshway-transport-perf/ # 独立运行的性能测量程序
+tools/meshway-packet-fixture/ # 独立运行的隔离 Linux 包流 conformance
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
@@ -91,7 +92,7 @@ Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它�
 
 `meshway-control`、`meshway-dataplane`、`meshway-connectivity`、`meshway-underlay`、`meshway-transport-{udp,tcp,vless,trojan}`、`meshway-tun`、`meshway-netstack`、`meshway-dns`、`meshway-diagnostics` 按[节点职责](/v2/node)实现。这些是节点运行能力，不是必须供 Server 使用的 shared crates。
 
-其中 `meshway-control` 已提供[Server 接入与执行快照](/v2/node/control)，UDP／TCP／VLESS／Trojan 库提供[承载适配](/v2/node/transport)。`meshway-dataplane` 已有明文 IP 准入／流状态核心，`meshway-tun` 提供 Linux 设备 I/O，`meshway-dns` 提供 wire／选择与有界查询 owner；接口及限制见[数据面组件](/v2/node/dataplane)。这些运行组件尚未接入 daemon 执行安装；端到端加密、连接管理、出口转发和 netstack 仍待实现。
+其中 `meshway-control` 已提供[Server 接入与执行快照](/v2/node/control)，UDP／TCP／VLESS／Trojan 库提供[承载适配](/v2/node/transport)。`meshway-dataplane` 提供共同 IP 准入／流状态、候选身份加密 circuit 与受期限保护的 I/O 适配，`meshway-tun` 提供 Linux 设备 I/O，`meshway-dns` 提供 wire／选择与有界查询 owner；接口及限制见[数据面组件](/v2/node/dataplane)。这些运行组件尚未接入 daemon 执行安装；持续连接管理、出口转发和 netstack 仍待实现。
 
 组件可独立测试，并可被其他宿主复用。native 导出入口只适配共同 ABI，不复制业务、配置或状态模型。私有文件操作确有多个实际消费者时才抽窄存储原语，不为每张表、每个任务、每种状态各建库。
 

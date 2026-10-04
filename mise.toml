@@ -77,6 +77,11 @@ description = "Explicit real Linux TUN verification in a disposable isolated con
 tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
 run = "python3 scripts/verify_tun.py"
 
+[tasks."test:packet:linux"]
+description = "Explicit protected TUN packet conformance in disposable isolated Linux namespaces"
+tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
+run = "python3 scripts/verify_packet.py"
+
 [tasks."perf:transport"]
 description = "Explicit release raw/datagram transport measurements and JSON/Markdown reports"
 run = "python3 scripts/perf/transport.py"

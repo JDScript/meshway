@@ -40,6 +40,71 @@ pub struct Packet {
     transport: Transport,
 }
 
+/// Payload-free packet metadata. Shape validation does not authenticate these
+/// facts or prove that they describe an encrypted inner packet. Endpoints must
+/// compare them with the facts produced by the one plaintext packet parser.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PacketFacts {
+    pub traffic: Traffic,
+    pub transport: Transport,
+    pub len: usize,
+}
+
+impl PacketFacts {
+    pub fn validate(&self) -> Result<(), PacketError> {
+        if self.traffic.source.is_ipv4() != self.traffic.destination.is_ipv4() {
+            return Err(PacketError::Header);
+        }
+        let ip_header = if self.traffic.source.is_ipv4() {
+            20
+        } else {
+            40
+        };
+        let max_len = if self.traffic.source.is_ipv4() {
+            usize::from(u16::MAX)
+        } else {
+            Packet::MAX_LEN
+        };
+        let transport_header = match (self.traffic.protocol, self.transport) {
+            (BusinessProtocol::Tcp, Transport::Tcp(_)) => 20,
+            (BusinessProtocol::Udp, Transport::Udp)
+            | (BusinessProtocol::IcmpEcho, Transport::Echo { .. }) => 8,
+            _ => return Err(PacketError::Header),
+        };
+        if self.len > max_len || self.len < ip_header + transport_header {
+            return Err(PacketError::Length);
+        }
+        let ports = [self.traffic.source_port, self.traffic.destination_port];
+        if match self.transport {
+            Transport::Echo { .. } => ports.iter().any(Option::is_some),
+            _ => ports
+                .iter()
+                .any(|port| port.is_none_or(|port| port.get() == 0)),
+        } {
+            return Err(PacketError::Header);
+        }
+        if let Transport::Tcp(segment) = self.transport {
+            if usize::from(segment.payload_len) > self.len - ip_header - transport_header {
+                return Err(PacketError::Length);
+            }
+            if segment.flags & 0x03 == 0x03
+                || segment.flags & 0x06 == 0x06
+                || segment.flags & 0x05 == 0x05
+            {
+                return Err(PacketError::Header);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_packet(&self, packet: &Packet) -> Result<(), crate::Error> {
+        if *self != packet.facts() {
+            return Err(crate::Error::FactsMismatch);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transport {
     Tcp(TcpSegment),
@@ -205,6 +270,13 @@ impl Packet {
     }
     pub fn transport(&self) -> Transport {
         self.transport
+    }
+    pub fn facts(&self) -> PacketFacts {
+        PacketFacts {
+            traffic: self.traffic,
+            transport: self.transport,
+            len: self.bytes.len(),
+        }
     }
 }
 

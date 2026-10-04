@@ -1,6 +1,6 @@
 # 承载会话与发送边界
 
-当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收，可独立运行正确性验证和性能脚本。它们尚未接入 `meshwayd` 的执行安装，Mesh 包头、端到端加密、TUN、动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
+当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收，可独立运行正确性验证和性能脚本。候选 Mesh circuit、端到端加密和 TUN 接线见[数据面组件](/v2/node/dataplane)；它们尚未接入 `meshwayd` 的执行安装，动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
 
 ## 分层
 
@@ -88,7 +88,9 @@ Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP
 
 关闭时先停止接纳，再取消／完成在途工作，最后归还 buffer、句柄和代码引用。完成通知是内存可回收的边界，必须保证之后不再访问对应 buffer。整个顺序由会话 owner 协调，不由 CLI、provider 和数据面分别启动一套关闭流程。
 
-`SendContext` 只携带宿主提供的取消信号与单调截止时间，不是授权凭据。编码组开始 I/O 前失效可清空 staging 并复用 stream；flush 已尝试后的失败／取消将整组标为不确定并关闭 stream，后续尚未处理的组／操作标为未开始。接收采用 pull API；取消一次接收等待保留已读半帧。丢弃任一会话半部会关闭承载并停止 owner，显式 shutdown 还会完成已接纳操作的收尾并 join。捕获的 provider panic 关闭承载并以不含原始 panic 内容的 `ProviderPanicked` 表达；owner 意外丢失通过 `CompletionLost` 表达。
+`SendContext` 携带宿主取消信号、单调截止时间和可选 `SendLifetime`，不构成授权凭据。已接纳操作保留完整 lifetime：每次底层 write／flush 前同步检查，阻塞 worker 自行监听失效，不依赖完成等待者继续被轮询。`wait_capacity` 提供有界预算等待，返回不代表预留，调用者仍须检查 `try_send` 结果。
+
+编码组开始 I/O 前失效可清空 staging 并复用 stream；flush 已尝试后的失败／取消将整组标为不确定并关闭 stream，后续尚未处理的组／操作标为未开始。接收采用 pull API；取消一次接收等待保留已读半帧。丢弃任一会话半部会关闭承载并停止 owner，显式 shutdown 还会完成已接纳操作的收尾并 join。捕获的回调 panic 关闭承载并以不含原始 panic 内容的 `ProviderPanicked` 表达；owner 意外丢失通过 `CompletionLost` 表达。
 
 ## 连接复用与切换
 

@@ -12,7 +12,7 @@ mod session;
 
 pub use frame::Frame;
 pub use limits::{LimitError, Limits};
-pub use scope::{CancelReason, SendContext};
+pub use scope::{CancelReason, SendContext, SendLifetime};
 pub use session::{
     Admission, AdmissionStop, BatchCompletion, BudgetAvailable, CompletedFrame, Completion,
     CompletionLost, ReceiveError, Receiver, SendFailure, SendOutcome, Sender, Session,

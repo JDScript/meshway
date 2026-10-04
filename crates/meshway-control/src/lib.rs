@@ -7,7 +7,9 @@
 
 mod authority;
 mod clock;
+mod dataplane_identity;
 pub use authority::ExecutionSnapshot;
+pub use dataplane_identity::{DataPlaneIdentity, packet_proof_message};
 mod demand;
 mod dns;
 mod enrollment;

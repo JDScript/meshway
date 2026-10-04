@@ -18,6 +18,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `renew_instance` | 更新当前实例的期限，验证返回实例与代际 |
 | `sync_configuration` | 读取完整目标或用共享库应用 delta，检查 digest／身份／实例绑定，原子保存目标 |
 | `execution_snapshot` | 从当前有效实例、lease 和匹配的已保存目标取得不可变执行快照；不证明 installed／applied |
+| `dataplane_identity` | 验证同执行快照与已登记密钥后，取得受期限约束的 Noise 初始化及包平面签名句柄 |
 | `create_demand` | 使用当前 Node 会话提交匹配当前 instance 的类型化需求；调用方保持重试 request ID，随后同步执行目标 |
 | `cancel_demand` | 取消当前实例的需求；成功确认后立即使本机旧执行快照失效，重新同步后取得新快照 |
 | `query_dns` | 按当前 Node 身份[精确查询名称](/v2/configuration-reference/dns#node-精确名称查询)，无需 instance，不延长任何 lease |

@@ -6,6 +6,63 @@ use meshway_control::{Control, Error};
 use std::time::Duration;
 
 #[tokio::test]
+async fn packet_identity_uses_registered_keys_and_stops_with_the_execution_handoff() {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    let server = Server::start().await;
+    let owner = server.owner().await;
+    let mut control = Control::open(
+        &server.path("packet-identity"),
+        &server.origin,
+        reqwest::Client::builder().no_proxy(),
+    )
+    .unwrap();
+    server.enroll(&owner, &mut control, "packet-identity").await;
+    control.authenticate().await.unwrap();
+    control.acquire_instance(Default::default()).await.unwrap();
+    control.sync_configuration().await.unwrap();
+    let snapshot = control.execution_snapshot().unwrap();
+    let identity = control.dataplane_identity(snapshot.clone()).unwrap();
+    let cfg = snapshot.configuration().unwrap();
+    let digest: meshway_model::Digest = [7; 32].into();
+    let signature = identity.sign_packet(digest).unwrap();
+    let verifier =
+        VerifyingKey::from_bytes(cfg.self_keys.control_key.public_key.bytes.as_bytes()).unwrap();
+    verifier
+        .verify_strict(
+            &meshway_control::packet_proof_message(
+                cfg.network_id,
+                cfg.node_id,
+                &cfg.self_keys.control_key,
+                digest,
+            ),
+            &Signature::from_bytes(&signature),
+        )
+        .unwrap();
+    let public = identity
+        .with_noise_key(|key| {
+            curve25519_dalek::montgomery::MontgomeryPoint::mul_base_clamped(*key).to_bytes()
+        })
+        .unwrap();
+    assert_eq!(
+        public.as_slice(),
+        cfg.self_keys
+            .dataplane_key
+            .public_key
+            .bytes
+            .as_bytes()
+            .as_slice()
+    );
+    control.stop().await.unwrap();
+    assert!(identity.sign_packet(digest).is_err());
+    let mut entered = false;
+    assert!(identity.with_noise_key(|_| entered = true).is_err());
+    assert!(!entered);
+    assert!(control.dataplane_identity(snapshot).is_err());
+    control.shutdown().await.unwrap();
+    server.close().await;
+}
+
+#[tokio::test]
 async fn execution_handoff_requires_current_saved_target_and_never_renews_old_snapshots() {
     let server = Server::start().await;
     let owner = server.owner().await;

@@ -24,6 +24,7 @@ members = [
     "crates/meshway-transport-vless",
     "crates/meshway-transport-trojan",
     "tools/meshway-transport-perf",
+    "tools/meshway-packet-fixture",
 ]
 resolver = "3"
 

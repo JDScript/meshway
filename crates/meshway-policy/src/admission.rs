@@ -8,7 +8,7 @@
 use crate::compile::{MAX_EXIT_CANDIDATES, MAX_HOPS, MAX_PATHS};
 use meshway_configuration::{NodeAddresses, execution::*};
 use meshway_model::{BoundNodeKey, KeyAlgorithm, NodeId, RequestId};
-use meshway_transport_spec::Port;
+use meshway_transport_spec::{Listener, Port, TransportProtocol};
 use std::net::IpAddr;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +25,15 @@ pub enum Hop {
     Forward(NodeId),
     Deliver,
     Exit,
+}
+
+/// Actual socket establishment orientation, independent of business direction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Carrier {
+    pub dialer: NodeId,
+    pub listener: NodeId,
+    pub listener_key: String,
+    pub protocol: TransportProtocol,
 }
 
 /// Bounded labels only; no addresses, keys, payloads or raw configuration.
@@ -90,7 +99,16 @@ fn valid_traffic(traffic: &Traffic) -> bool {
         }
 }
 
-/// Validate the complete original forward path and tuple, independent of the
+fn valid_path(path: &[NodeId]) -> bool {
+    path.len() >= 2
+        && path.len() <= MAX_HOPS
+        && !path
+            .iter()
+            .enumerate()
+            .any(|(index, node)| path[..index].contains(node))
+}
+
+/// Validate the complete original forward path, independent of the
 /// direction of this packet. No decisions, diagnostic grants or neighbors can
 /// substitute for the current exact business permit.
 fn admitted_path(
@@ -98,7 +116,6 @@ fn admitted_path(
     demand_id: RequestId,
     path: &[NodeId],
     origin: NodeId,
-    traffic: &Traffic,
     now_ms: u64,
 ) -> Result<(usize, bool), AdmissionError> {
     if !configuration.enabled
@@ -120,13 +137,8 @@ fn admitted_path(
     if now_ms >= permit.expires_at_ms {
         return Err(AdmissionError::Expired);
     }
-    if path.is_empty()
-        || path.len() > MAX_HOPS
+    if !valid_path(path)
         || path.first() != Some(&origin)
-        || path
-            .iter()
-            .enumerate()
-            .any(|(index, node)| path[..index].contains(node))
         || permit.paths.len() > MAX_PATHS * MAX_EXIT_CANDIDATES
         || !permit.paths.iter().any(|candidate| candidate.nodes == path)
     {
@@ -145,22 +157,45 @@ fn admitted_path(
         }
     }
     let source = addresses(configuration, origin)?;
-    if source != &permit.source_addresses
-        || !contains(source, traffic.source)
+    if source != &permit.source_addresses {
+        return Err(AdmissionError::Traffic);
+    }
+    let external = match &permit.target {
+        BusinessTarget::Mesh { node } => {
+            if path.last() != Some(node) {
+                return Err(AdmissionError::Path);
+            }
+            false
+        }
+        BusinessTarget::Ip { .. } | BusinessTarget::Domain { .. } => true,
+    };
+    if external && position + 1 == path.len() && !configuration.exit_enabled {
+        return Err(AdmissionError::ExitDisabled);
+    }
+    Ok((position, external))
+}
+
+fn admitted_traffic(
+    configuration: &NodeConfiguration,
+    demand_id: RequestId,
+    traffic: &Traffic,
+) -> Result<(), AdmissionError> {
+    let permit = configuration
+        .permits
+        .get(&demand_id)
+        .ok_or(AdmissionError::Permit)?;
+    if !contains(&permit.source_addresses, traffic.source)
         || !valid_traffic(traffic)
         || traffic.protocol != permit.protocol
         || traffic.destination_port != permit.port
     {
         return Err(AdmissionError::Traffic);
     }
-    let external = match &permit.target {
+    match &permit.target {
         BusinessTarget::Mesh { node } => {
-            if path.last() != Some(node)
-                || !contains(addresses(configuration, *node)?, traffic.destination)
-            {
+            if !contains(addresses(configuration, *node)?, traffic.destination) {
                 return Err(AdmissionError::Traffic);
             }
-            false
         }
         BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } => {
             if address.0 != traffic.destination
@@ -172,13 +207,40 @@ fn admitted_path(
             {
                 return Err(AdmissionError::Traffic);
             }
-            true
         }
-    };
-    if external && position + 1 == path.len() && !configuration.exit_enabled {
-        return Err(AdmissionError::ExitDisabled);
     }
-    Ok((position, external))
+    Ok(())
+}
+
+/// Admit a no-application-data handshake along the exact complete business
+/// path. `reply` selects handshake travel direction only: this predicate never
+/// establishes a flow or grants reverse business traffic. Packet admission
+/// still requires traffic checks and caller-owned established reply state.
+pub fn admit_handshake(
+    configuration: &NodeConfiguration,
+    demand_id: RequestId,
+    path: &[NodeId],
+    origin: NodeId,
+    previous: Option<NodeId>,
+    reply: bool,
+    now_ms: u64,
+) -> Result<Hop, AdmissionError> {
+    let (position, external) = admitted_path(configuration, demand_id, path, origin, now_ms)?;
+    let upstream = position.checked_sub(1).map(|index| path[index]);
+    let downstream = path.get(position + 1).copied();
+    let (expected, next) = if reply {
+        (downstream, upstream)
+    } else {
+        (upstream, downstream)
+    };
+    if previous != expected {
+        return Err(AdmissionError::Peer);
+    }
+    Ok(match next {
+        Some(next) => Hop::Forward(next),
+        None if external && !reply => Hop::Exit,
+        None => Hop::Deliver,
+    })
 }
 
 /// Admit a forward packet only along its installed complete path.
@@ -191,17 +253,17 @@ pub fn admit_forward(
     traffic: &Traffic,
     now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let (position, external) =
-        admitted_path(configuration, demand_id, path, origin, traffic, now_ms)?;
-    let expected = position.checked_sub(1).map(|index| path[index]);
-    if previous != expected {
-        return Err(AdmissionError::Peer);
-    }
-    Ok(match path.get(position + 1) {
-        Some(next) => Hop::Forward(*next),
-        None if external => Hop::Exit,
-        None => Hop::Deliver,
-    })
+    let hop = admit_handshake(
+        configuration,
+        demand_id,
+        path,
+        origin,
+        previous,
+        false,
+        now_ms,
+    )?;
+    admitted_traffic(configuration, demand_id, traffic)?;
+    Ok(hop)
 }
 
 /// `path` and `origin` always describe the original forward business packet.
@@ -219,10 +281,16 @@ pub fn admit_reply(
     reply: &Traffic,
     now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let (position, _) = admitted_path(configuration, demand_id, path, origin, forward, now_ms)?;
-    if previous != path.get(position + 1).copied() {
-        return Err(AdmissionError::Peer);
-    }
+    let hop = admit_handshake(
+        configuration,
+        demand_id,
+        path,
+        origin,
+        previous,
+        true,
+        now_ms,
+    )?;
+    admitted_traffic(configuration, demand_id, forward)?;
     if !valid_traffic(reply)
         || reply.protocol != forward.protocol
         || reply.source != forward.destination
@@ -232,8 +300,84 @@ pub fn admit_reply(
     {
         return Err(AdmissionError::Traffic);
     }
-    Ok(match position.checked_sub(1) {
-        Some(index) => Hop::Forward(path[index]),
-        None => Hop::Deliver,
-    })
+    Ok(hop)
+}
+
+/// Check an edge against a selected complete path's actual dial candidates.
+/// Remote dial parameters are not published locally; this predicate only checks
+/// the edge and candidate ID. Each socket endpoint must also use `admit_carrier`.
+pub fn path_carrier(path: &LogicalPath, carrier: &Carrier) -> bool {
+    valid_path(&path.nodes)
+        && !carrier.listener_key.is_empty()
+        && path.nodes.windows(2).any(|edge| {
+            (edge[0] == carrier.dialer && edge[1] == carrier.listener)
+                || (edge[1] == carrier.dialer && edge[0] == carrier.listener)
+        })
+        && path
+            .dial_candidates
+            .get(&carrier.dialer)
+            .is_some_and(|keys| {
+                keys.contains(&format!("{}/{}", carrier.listener, carrier.listener_key))
+            })
+}
+
+/// Check the actual local socket pair and its transport against a business
+/// path. Compose with current handshake/packet admission for identity, expiry
+/// and flow checks; diagnostics and neighbor connectivity grant nothing here.
+pub fn admit_carrier(
+    configuration: &NodeConfiguration,
+    demand_id: RequestId,
+    path: &[NodeId],
+    peer: NodeId,
+    carrier: &Carrier,
+) -> Result<(), AdmissionError> {
+    if !configuration.enabled {
+        return Err(AdmissionError::Configuration);
+    }
+    let permit = configuration
+        .permits
+        .get(&demand_id)
+        .ok_or(AdmissionError::Permit)?;
+    if permit.demand_id != demand_id || path.first() != Some(&permit.source) {
+        return Err(AdmissionError::Permit);
+    }
+    let selected = permit
+        .paths
+        .iter()
+        .find(|candidate| candidate.nodes == path)
+        .ok_or(AdmissionError::Path)?;
+    if !path_carrier(selected, carrier) {
+        return Err(AdmissionError::Path);
+    }
+    let local = configuration.node_id;
+    if local == carrier.dialer && peer == carrier.listener {
+        let key = format!("{}/{}", carrier.listener, carrier.listener_key);
+        let dialer = configuration
+            .dialers
+            .get(&key)
+            .ok_or(AdmissionError::Peer)?;
+        if dialer.peer != peer
+            || dialer.listener_key != carrier.listener_key
+            || dialer.parameters.transport() != carrier.protocol
+        {
+            return Err(AdmissionError::Peer);
+        }
+    } else if local == carrier.listener && peer == carrier.dialer {
+        let listener = configuration
+            .listeners
+            .get(&carrier.listener_key)
+            .ok_or(AdmissionError::Peer)?;
+        let (protocol, enabled) = match listener.declaration() {
+            Listener::NativeUdp(value) => (TransportProtocol::NativeUdp, value.enabled),
+            Listener::NativeTcp(value) => (TransportProtocol::NativeTcp, value.enabled),
+            Listener::Vless(value) => (TransportProtocol::Vless, value.enabled),
+            Listener::Trojan(value) => (TransportProtocol::Trojan, value.enabled),
+        };
+        if !enabled || protocol != carrier.protocol {
+            return Err(AdmissionError::Peer);
+        }
+    } else {
+        return Err(AdmissionError::Peer);
+    }
+    Ok(())
 }
