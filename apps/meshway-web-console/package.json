@@ -1,5 +1,5 @@
 {
-  "name": "@meshway/console",
+  "name": "@meshway/web-console",
   "private": true,
   "version": "0.0.1",
   "type": "module",

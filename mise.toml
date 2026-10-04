@@ -1,0 +1,104 @@
+[tools]
+rust = { version = "1.98.0", profile = "minimal", components = "clippy,rustfmt" }
+node = "24.19.0"
+pnpm = "11.24.0"
+python = "3.14.7"
+
+[env]
+CARGO_INCREMENTAL = "0"
+CARGO_BUILD_JOBS = "2"
+CARGO_TARGET_DIR = "{{config_root}}/target"
+
+[tasks.setup]
+description = "Install workspace dependencies from the committed lockfile"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.build]
+description = "Build Server, Web Console and documentation"
+run = [{ task = "build:server" }, { task = "build:console" }, { task = "build:docs" }]
+
+[tasks.check]
+description = "Run the complete CI checks in order (shared Cargo target)"
+run = [
+  { task = "check:rust" },
+  { task = "test:rust" },
+  { task = "test:codegen" },
+  { task = "check:protocol" },
+  { task = "check:sdk" },
+  { task = "check:console" },
+  { task = "test:console" },
+  { task = "build:console" },
+  { task = "test:scripts" },
+  { task = "check:docs" },
+]
+
+[tasks."check:rust"]
+description = "Check Rust formatting and strict Clippy for every target/feature"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+]
+
+[tasks."test:rust"]
+description = "Test every Rust target/feature (4 test threads; override RUST_TEST_THREADS)"
+run = "cargo test --workspace --all-targets --all-features --locked -- --test-threads=\"${RUST_TEST_THREADS:-4}\""
+
+[tasks."build:server"]
+description = "Build the Server binary used by local services and SDK tests"
+run = "cargo build -p meshway-server --bin meshway-server --locked"
+
+[tasks."generate:protocol"]
+description = "Generate OpenAPI and Rust/TypeScript clients from actual routes"
+run = "pnpm --filter @meshway/control-client generate"
+
+[tasks."check:protocol"]
+description = "Check generated contract/client drift"
+run = "pnpm --filter @meshway/control-client check:generated"
+
+[tasks."test:codegen"]
+description = "Test schema generation and real Rust/TypeScript consumers"
+run = "node --test scripts/protocol/generate.test.mjs"
+
+[tasks."check:sdk"]
+description = "Type-check browser/Node consumers and test against the real Server"
+run = [
+  { task = "build:server" },
+  "pnpm --filter @meshway/control-client typecheck",
+  "pnpm --filter @meshway/control-client test",
+]
+
+[tasks."check:console"]
+description = "Check Web Console types, lint and formatting"
+run = "pnpm --filter @meshway/web-console check"
+
+[tasks."test:console"]
+description = "Run Web Console domain tests"
+run = "pnpm --filter @meshway/web-console test"
+
+[tasks."build:console"]
+description = "Build the Web Console SPA"
+run = "pnpm --filter @meshway/web-console build"
+
+[tasks."check:docs"]
+description = "Build docs and check links, anchors, contracts and examples"
+run = "pnpm --filter @meshway/docs check"
+
+[tasks."build:docs"]
+description = "Build the documentation site"
+run = "pnpm --filter @meshway/docs build"
+
+[tasks."test:scripts"]
+description = "Test local service ownership and lifecycle helpers"
+run = "python3 -B -m unittest discover -s scripts -p 'test_*.py'"
+
+[tasks."dev:console"]
+description = "Run Web Console; requires MESHWAY_CONTROLLER_URL"
+run = "pnpm --filter @meshway/web-console dev"
+
+[tasks."dev:docs"]
+description = "Run the documentation dev server in the foreground"
+run = "pnpm --filter @meshway/docs dev"
+
+[tasks.services]
+description = "Manage persistent Server/docs: start|status|stop|restart|update [server|docs|all]"
+run = "python3 scripts/dev.py"

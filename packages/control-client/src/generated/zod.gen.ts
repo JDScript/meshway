@@ -1,4 +1,4 @@
-// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.
+// Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.
 
 import * as z from "zod";
 

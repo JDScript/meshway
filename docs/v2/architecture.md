@@ -9,7 +9,7 @@
 ```text
 apps/
   meshway-server/           # Rust Server
-  console/                  # React pure SPA
+  meshway-web-console/     # React pure SPA
 crates/
   meshway-model/
   meshway-transport-spec/
@@ -20,7 +20,9 @@ crates/
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
-scripts/                    # 生成、构建、开发与发布
+scripts/protocol/           # 契约与客户端生成／检查
+scripts/dev.py              # 持久开发服务生命周期
+mise.toml                   # 工具链版本、workspace 任务与 CI 入口
 references/                 # 独立上游参考 checkout
 ```
 

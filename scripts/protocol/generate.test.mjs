@@ -7,9 +7,9 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { generatedFiles, validators, root } from "./generate-protocol.mjs";
+import { generatedFiles, validators, root } from "./generate.mjs";
 import { operationModel } from "./codegen/operations.mjs";
-import { compareArtifacts } from "./check-protocol.mjs";
+import { compareArtifacts } from "./check.mjs";
 
 const require = createRequire(join(root, "packages/control-client/package.json"));
 const ref = name => ({ $ref: `#/components/schemas/${name}` });

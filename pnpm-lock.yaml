@@ -15,7 +15,7 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
-  apps/console:
+  apps/meshway-web-console:
     dependencies:
       '@base-ui/react':
         specifier: ^1.8.0

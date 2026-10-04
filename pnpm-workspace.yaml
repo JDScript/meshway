@@ -1,5 +1,5 @@
 packages:
-  - apps/console
+  - apps/meshway-web-console
   - docs
   - packages/*
 

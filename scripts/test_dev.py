@@ -69,9 +69,9 @@ class Services(unittest.TestCase):
 
     def test_docs_start_command_remains_recognizable(self):
         log = self.local.directory / "meshway-docs.log"
-        command = "exec pnpm dev:docs >>" + shlex.quote(str(log)) + " 2>&1"
+        command = "exec pnpm --filter @meshway/docs dev >>" + shlex.quote(str(log)) + " 2>&1"
         self.assertTrue(dev.known_start(command, "docs", self.root, log))
-        self.assertTrue(dev.actual_command("node /usr/local/bin/pnpm dev:docs", "docs", self.root))
+        self.assertTrue(dev.actual_command("node /usr/local/bin/pnpm --filter @meshway/docs dev", "docs", self.root))
         self.assertFalse(dev.known_start(command.replace("exec pnpm", "exec env TOKEN=SECRET pnpm"), "docs", self.root, log))
 
 

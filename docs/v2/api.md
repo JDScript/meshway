@@ -48,4 +48,4 @@ Rust 操作直接复用 `meshway-protocol` 的公开 DTO。TypeScript 对成功�
 
 JSON 与显式声明的 SSE 由同一路由导出。SSE 使用 `x-meshway-sse` 指向具体事件根类型；接收事件不自动推进调用者的已应用 cursor。用法和具体函数签名见 `packages/control-client/README.md`。
 
-生成／检查入口是 `scripts/generate-protocol.mjs` 与 `scripts/check-protocol.mjs`。修改合同同时重生成，不直接编辑产物；Server Rust 构建不依赖 Console 构建。
+生成／检查入口是 `mise run generate:protocol` 与 `mise run check:protocol`，实现位于 `scripts/protocol/`。修改合同同时重生成，不直接编辑产物；Server Rust 构建不依赖 Console 构建。

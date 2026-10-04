@@ -35,7 +35,7 @@ Server HTTP／SDK 和持钥测试 Node 的验证止于相应控制流程；新 N
 ## 运行与维护
 
 ```sh
-cargo run -p meshway-server --bin meshway-server --locked -- \
+mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
   --data-dir /absolute/private/data-dir --listen 127.0.0.1:0 \
   --registration-enabled true --session-ttl-seconds 86400
 ```
@@ -45,7 +45,7 @@ cargo run -p meshway-server --bin meshway-server --locked -- \
 运维密码恢复使用 `reset-password` binary，须先停止占有同一 dataDir 的服务：
 
 ```sh
-cargo run -p meshway-server --bin reset-password --locked -- \
+mise exec -- cargo run -p meshway-server --bin reset-password --locked -- \
   --data-dir /absolute/private/data-dir --email user@example.com \
   --console-origin https://console.example.com --expires-in-seconds 900
 ```

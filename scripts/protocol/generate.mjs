@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { operationModel, typescriptOperations, rustOperations } from "./codegen/operations.mjs";
 import { integerBounds, parameterSchemas } from "./codegen/parameters.mjs";
 
-export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const artifactPaths = [
   "packages/protocol/openapi.json",
   "crates/meshway-control-client/src/generated",
@@ -63,7 +63,7 @@ function editorSchemas(document) {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     components: { schemas: document.components.schemas },
   };
-  return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nexport const schemaDocument = ${JSON.stringify(schemaDocument, null, 2)} as const;\n\nexport const componentSchemas = schemaDocument.components.schemas;\n\nexport function schemaFor(name: keyof typeof componentSchemas) {\n  return { ...schemaDocument, $ref: \`#/components/schemas/\${name}\` } as const;\n}\n`;
+  return `// Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.\n\nexport const schemaDocument = ${JSON.stringify(schemaDocument, null, 2)} as const;\n\nexport const componentSchemas = schemaDocument.components.schemas;\n\nexport function schemaFor(name: keyof typeof componentSchemas) {\n  return { ...schemaDocument, $ref: \`#/components/schemas/\${name}\` } as const;\n}\n`;
 }
 
 // Types are inferred from the same validators used at runtime. The narrow
@@ -279,7 +279,7 @@ export function validators(document) {
     return typeof schema.type === "string" && schema.type !== "null";
   }
   for (const name of Object.keys(schemas).sort()) component(name);
-  return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nimport * as z from "zod";\n\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${usesDateTime ? dateTimeHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
+  return `// Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.\n\nimport * as z from "zod";\n\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${usesDateTime ? dateTimeHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
 }
 
 // RFC 3339 permits lowercase t/z and leap seconds. Zod's ISO validator is

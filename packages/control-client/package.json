@@ -9,8 +9,8 @@
     "./json-schema": "./src/generated/json-schema.gen.ts"
   },
   "scripts": {
-    "generate": "node ../../scripts/generate-protocol.mjs",
-    "check:generated": "node ../../scripts/check-protocol.mjs",
+    "generate": "node ../../scripts/protocol/generate.mjs",
+    "check:generated": "node ../../scripts/protocol/check.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "test": "node --experimental-strip-types --test test/*.test.ts"
   },

@@ -318,19 +318,15 @@ The SDK's TypeScript check covers both browser libraries and a Node-only
 
 ## Generation and verification
 
-From the repository root, using this task's isolated Cargo target when working in
-parallel:
+From the repository root, using the pinned toolchain and checkout-local Cargo
+target from `mise.toml`:
 
 ```sh
-export CARGO_INCREMENTAL=0
-export CARGO_TARGET_DIR="$PWD/target"
-node scripts/generate-protocol.mjs
-node scripts/check-protocol.mjs
-node --test scripts/generate-protocol.test.mjs
-cargo test -p meshway-control-client --locked
-cargo build -p meshway-server --bin meshway-server --locked
-pnpm --filter @meshway/control-client typecheck
-MESHWAY_SERVER_BINARY="$CARGO_TARGET_DIR/debug/meshway-server" pnpm --filter @meshway/control-client test
+mise run generate:protocol
+mise run check:protocol
+mise run test:codegen
+mise exec -- cargo test -p meshway-control-client --locked
+mise run check:sdk
 ```
 
 The integration tests start a real Controller on loopback with private temporary

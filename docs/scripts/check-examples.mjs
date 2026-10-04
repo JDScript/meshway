@@ -1,9 +1,9 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as schemas from "../packages/control-client/src/generated/zod.gen.ts";
+import * as schemas from "../../packages/control-client/src/generated/zod.gen.ts";
 
-const root = fileURLToPath(new URL("..", import.meta.url));
+const root = fileURLToPath(new URL("../..", import.meta.url));
 async function walk(path) {
   const entries = await readdir(path, { withFileTypes: true });
   return (await Promise.all(entries.map(entry => entry.isDirectory()

@@ -1,4 +1,4 @@
-// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.
+// Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.
 
 export const schemaDocument = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",

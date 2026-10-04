@@ -7,7 +7,7 @@
 //   https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_110m_land.geojson
 //   sha256 9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9
 //
-// Usage: node apps/console/scripts/generate-land-dots.ts <ne_110m_land.geojson>
+// Usage: node apps/meshway-web-console/scripts/generate-land-dots.ts <ne_110m_land.geojson>
 import { createHash } from "node:crypto"
 import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"

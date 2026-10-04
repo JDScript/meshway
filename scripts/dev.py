@@ -75,7 +75,7 @@ def run(args, *, cwd=ROOT, check=True, timeout=30, env=None):
 def command(service, root):
     if service == "server":
         return [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server")]
-    return ["pnpm", "dev:docs"]
+    return ["pnpm", "--filter", "@meshway/docs", "dev"]
 
 
 def known_start(raw, service, root, log):
@@ -120,7 +120,7 @@ def actual_command(raw, service, root):
         args = shlex.split(raw)
         if args and Path(args[0]).name in ("node", "nodejs"):
             args.pop(0)
-        return len(args) == 2 and Path(args[0]).name in ("pnpm", "pnpm.cjs") and args[1] == "dev:docs"
+        return len(args) == 4 and Path(args[0]).name in ("pnpm", "pnpm.cjs") and args[1:] == command(service, root)[1:]
     except ValueError:
         return False
 
@@ -239,7 +239,9 @@ class LocalServices:
             log = self.directory / ("meshway-" + service + ".log")
             private(log, create=True)
             shell = "exec " + shlex.join(command(service, self.root)) + " >>" + shlex.quote(str(log)) + " 2>&1"
-            run(["tmux", "new-session", "-d", "-s", "meshway-" + service, "-c", str(self.root), shell], cwd=self.root)
+            # tmux may predate the current mise environment; new services must
+            # resolve tools from this invocation rather than its global PATH.
+            run(["tmux", "new-session", "-d", "-s", "meshway-" + service, "-c", str(self.root), "-e", "PATH=" + os.environ["PATH"], shell], cwd=self.root)
         deadline = time.monotonic() + self.wait
         while True:
             try:

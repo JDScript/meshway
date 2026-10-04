@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { artifactPaths, generate, root } from "./generate-protocol.mjs";
+import { artifactPaths, generate, root } from "./generate.mjs";
 
 async function files(path, prefix = "") {
   if (!(await stat(path)).isDirectory()) return [prefix];
@@ -41,7 +41,7 @@ export async function check() {
     await generate(temporary);
     const stale = await compareArtifacts(temporary, root);
     if (stale.length) {
-    throw new Error(`Protocol artifacts are stale:\n${stale.join("\n")}\nRun pnpm --filter @meshway/control-client generate`);
+    throw new Error(`Protocol artifacts are stale:\n${stale.join("\n")}\nRun mise run generate:protocol`);
     }
     console.log("OpenAPI, Rust operations, TypeScript operations and validators are current.");
   } finally {

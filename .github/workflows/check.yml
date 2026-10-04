@@ -7,33 +7,11 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: jdx/mise-action@v4
         with:
-          components: rustfmt, clippy
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pnpm install --frozen-lockfile
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --workspace --all-targets --all-features --locked -- --test-threads=1
-      - run: pnpm test:codegen
-      - run: pnpm protocol:check
-      - run: cargo build -p meshway-server --bin meshway-server --locked
-      - run: pnpm test:protocol
-      - run: pnpm typecheck
-      - run: pnpm --filter @meshway/console check
-      - run: pnpm test:console
-      - run: pnpm build:console
-      - run: pnpm test:scripts
-      - run: pnpm check:docs
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run setup
+      - run: mise run check
