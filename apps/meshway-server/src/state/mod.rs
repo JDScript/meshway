@@ -454,7 +454,7 @@ impl StateHub {
                 },
             );
         }
-        let (links, paths) = aggregate(&views, now);
+        let (links, paths) = aggregate(&views, &scope.current, now);
         Ok(StateView {
             network_id: scope.network_id,
             state_epoch: self.epoch,
@@ -500,6 +500,7 @@ fn next_expiration(
 
 fn aggregate(
     views: &BTreeMap<NodeId, NodeStateView>,
+    current_nodes: &BTreeMap<NodeId, CurrentNode>,
     now: DateTime<Utc>,
 ) -> (Vec<AggregatedLink>, Vec<AggregatedPath>) {
     let mut links: BTreeMap<(NodeId, NodeId, String), AggregatedLink> = BTreeMap::new();
@@ -515,11 +516,18 @@ fn aggregate(
             instance_id,
             report_sequence,
         };
+        // A fresh report is not current link evidence by itself: the reporter
+        // must still hold a usable execution, otherwise its authenticated
+        // channels have lost their authorization even if the report is young.
+        let executing = current_nodes
+            .get(node)
+            .is_some_and(|current| current.execution.is_some());
         for (peer, records) in &report.links {
             for link in records {
                 let a = (*node).min(*peer);
                 let b = (*node).max(*peer);
-                let current = view.freshness == Freshness::Current && link.expires_at > now;
+                let current =
+                    view.freshness == Freshness::Current && executing && link.expires_at > now;
                 let key = (a, b, link.link_id.clone());
                 if let Some(existing) = links.get_mut(&key) {
                     let matches = existing.transport == link.transport

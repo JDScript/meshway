@@ -575,6 +575,42 @@ fn retained_configuration_context_does_not_keep_old_peer_endpoints_usable() {
 }
 
 #[test]
+fn link_evidence_requires_a_current_execution_not_only_a_fresh_report() {
+    let (admission, mut report, mut scope, now) = setup();
+    let peer = *scope
+        .visible
+        .iter()
+        .find(|id| **id != admission.node_id)
+        .unwrap();
+    report.state.links.insert(
+        peer,
+        vec![LinkState {
+            link_id: "link-1".into(),
+            transport: "native_udp".into(),
+            initiator_node_id: admission.node_id,
+            socket_id: "s1".into(),
+            phase: LinkPhase::Authenticated,
+            business_dependencies: 1,
+            observation_ids: vec![],
+            observed_at: now,
+            expires_at: now + Duration::minutes(1),
+            since: Some(now),
+        }],
+    );
+    let mut hub = StateHub::new().unwrap();
+    hub.accept_report(&admission, report, now).unwrap();
+    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    assert_eq!(view.links.len(), 1);
+    assert_eq!(view.links[0].evidence, LinkEvidence::OneSided);
+    // The instance lease is still valid and the report is young, but the
+    // execution lease lapsed: the channel is no longer current evidence.
+    scope.current.get_mut(&admission.node_id).unwrap().execution = None;
+    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    assert_eq!(view.nodes[&admission.node_id].freshness, Freshness::Current);
+    assert_eq!(view.links[0].evidence, LinkEvidence::Expired);
+}
+
+#[test]
 fn neighbor_probe_uses_explicit_transport_adjacency_not_business_subpath() {
     let (mut admission, _, _, now) = setup();
     let relay = id(90);
