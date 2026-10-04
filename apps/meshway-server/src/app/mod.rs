@@ -158,7 +158,7 @@ impl App {
             },
             downloads.clone(),
         );
-        Ok(Self {
+        let app = Self {
             resource_scheduler,
             downloads,
             executor,
@@ -172,7 +172,17 @@ impl App {
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
             )
             .map_err(|_| AppError::Cryptography)?,
-        })
+        };
+        // Deployment-owned IP datasets live in storage; derived State needs them
+        // from the first report on, so loading is part of opening, not a task.
+        app.ip_datasets()
+            .restore()
+            .await
+            .map_err(|error| match error {
+                crate::error::Error::Storage(_) => AppError::Database,
+                _ => AppError::StorageIntegrity,
+            })?;
+        Ok(app)
     }
 
     /// An account service handle, without network or instance privileges.

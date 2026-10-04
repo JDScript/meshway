@@ -164,7 +164,7 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 需要产品决定
 
-- GeoIP／ASN 数据集的部署入口（CLI 还是管理 API）。`IpDatasets::install` 现在没有调用方，所以所有节点都没有位置。
+- ~~GeoIP／ASN 数据集的部署入口~~：已定为 CLI。`ip-datasets --data-dir <data> import --kind geoip|asn --file <mmdb>`（另有 `status`／`lookup`），Server 启动时加载；见 ip-info.md「数据集部署」。没有管理 API，console 无需改动——导入后节点的 `derived.ipInfo`／`location` 自然出现。
 - 设备授权的浏览器链接格式。console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
 - 两端都报告自己是发起方时 link 的判定：现在判为 `conflicting`，`inUse` 变成 null。
 - `--listen` 的默认端口：仍是 `127.0.0.1:8420`。

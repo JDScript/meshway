@@ -57,7 +57,7 @@ mise exec -- cargo run -p meshway-server --bin reset-password --locked -- \
   --console-origin https://console.example.com --expires-in-seconds 900
 ```
 
-命令显式交付一次性链接；网络 Owner 无他人全局密码重置权。部署配置、存储和 Node 信任的切换须协调，不通过任意数据库错误自动清库。
+命令显式交付一次性链接；网络 Owner 无他人全局密码重置权。GeoIP／ASN 数据集同样由本机的 `ip-datasets` binary 导入，见[数据集部署](/v2/state-reference/ip-info#datasets)。部署配置、存储和 Node 信任的切换须协调，不通过任意数据库错误自动清库。
 
 ## 参考
 

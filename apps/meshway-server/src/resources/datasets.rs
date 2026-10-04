@@ -8,10 +8,26 @@ use chrono::Utc;
 use meshway_model::ArtifactId;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IpDatasetKind {
     GeoIp,
     Asn,
+}
+impl std::str::FromStr for IpDatasetKind {
+    type Err = &'static str;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "geoip" => Ok(Self::GeoIp),
+            "asn" => Ok(Self::Asn),
+            _ => Err("expected geoip or asn"),
+        }
+    }
+}
+/// What is installed right now: the artifact each lookup cites as `datasetId`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IpDatasetStatus {
+    pub geoip: Option<ArtifactId>,
+    pub asn: Option<ArtifactId>,
 }
 #[derive(Clone)]
 pub struct IpDatasets {
@@ -21,6 +37,17 @@ pub struct IpDatasets {
 impl IpDatasets {
     pub(crate) fn new(handle: Handle, runtime: Arc<Mutex<Runtime>>) -> Self {
         Self { handle, runtime }
+    }
+    pub fn status(&self) -> Result<IpDatasetStatus, Error> {
+        let runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
+        let (geoip, asn) = runtime.geoip.dataset_ids();
+        Ok(IpDatasetStatus { geoip, asn })
+    }
+    /// A diagnostic lookup against the installed datasets; it is cached like
+    /// a State derivation but creates no observation.
+    pub fn lookup(&self, ip: std::net::IpAddr) -> Result<meshway_model::resources::IpInfo, Error> {
+        let mut runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
+        Ok(runtime.geoip.lookup(ip, Utc::now()))
     }
     /// Reinstalls immutable data, never volatile reports or observations.
     pub async fn restore(&self) -> Result<(), Error> {
