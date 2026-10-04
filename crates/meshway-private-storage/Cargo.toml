@@ -1,0 +1,17 @@
+[package]
+name = "meshway-private-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Owner-only directory, file and atomic publication primitives"
+
+[dependencies]
+getrandom.workspace = true
+rustix.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

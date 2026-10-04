@@ -110,14 +110,7 @@ pub(crate) fn create_request(
         || i.dataplane_key.algorithm != KeyAlgorithm::X25519
         || i.control_key.bytes == i.dataplane_key.bytes
         || i.dataplane_key.bytes.as_bytes() == &[0; 32]
-        || i.hostname.is_empty()
-        || i.hostname.len() > 63
-        || i.hostname.starts_with('-')
-        || i.hostname.ends_with('-')
-        || !i
-            .hostname
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        || !meshway_configuration::valid_node_hostname(&i.hostname)
         || i.code_challenge.len() != 43
         || URL_SAFE_NO_PAD.decode(&i.code_challenge).is_err()
     {

@@ -12,6 +12,18 @@ mod routing;
 pub use allocation::allocate_addresses;
 pub use references::{domain_suffix_matches, topology_allows};
 
+/// Canonical Node hostname accepted by configuration and signed enrollment.
+/// Callers which normalize user input do so before signing or validation.
+pub fn valid_node_hostname(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 63
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UserBinding {
@@ -242,15 +254,7 @@ pub fn normalize_with_dependencies(
             check.require(format!("{path}/identity"), PreparationKind::IdentityProof);
         }
         node.hostname.make_ascii_lowercase();
-        if node.hostname.is_empty()
-            || node.hostname.len() > 63
-            || node.hostname.starts_with('-')
-            || node.hostname.ends_with('-')
-            || !node
-                .hostname
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        {
+        if !valid_node_hostname(&node.hostname) {
             check.issue(format!("{path}/hostname"), "expected a single DNS label");
         }
         if let Input::Value(dialers) = &node.dialers

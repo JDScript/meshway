@@ -17,6 +17,8 @@ crates/
   meshway-protocol/
   meshway-control-client/
   meshway-serde/
+  meshway-private-storage/
+  meshway-control/
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
@@ -36,9 +38,9 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 
 新 Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，接口库和 provider 目录按同名规则建立；目前尚未实现，不在当前构建成员中。
 
-## 跨端共享的契约库
+## 跨端共享库 {#跨端共享的契约库}
 
-这些契约库是 Server 和 Node 的共同基础：
+这些库是 Server 和 Node 的共同基础：
 
 | 包名＝目标目录名 | 消费者 | 唯一职责 |
 | --- | --- | --- |
@@ -48,6 +50,7 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 | `meshway-protocol` | Server、生成客户端 | HTTP／SSE 请求响应、认证消息、错误与分页；引用上面的类型 |
 | `meshway-control-client` | Node control、其他 Rust API 消费者 | 生成操作、严格解码和 HTTP／stream 接线 |
 | `meshway-serde` | 各 Rust 契约库 | 共同对象／判别联合声明、map-only 和重复键检查 |
+| `meshway-private-storage` | Server、Node control | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
 
 `configuration` 中较重的编译模块可用 feature 限定消费者；Node 仍需要执行输入校验。SQL、账户密码哈希、全局可变容器和平台 I/O 不放进 model。HTTP handler 不成为 DTO 的依赖。
 
@@ -67,6 +70,8 @@ Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它�
 ## Node 组件库
 
 `meshway-control`、`meshway-dataplane`、`meshway-connectivity`、`meshway-underlay`、`meshway-transport-{udp,tcp,vless,trojan}`、`meshway-tun`、`meshway-netstack`、`meshway-dns`、`meshway-diagnostics` 按[节点职责](/v2/node)实现。这些是节点运行能力，不是必须供 Server 使用的 shared crates。
+
+其中 `meshway-control` 已提供[由宿主驱动的 Server 接入生命周期](/v2/node/control)，其余运行组件尚未实现。
 
 组件可独立测试，并可被其他宿主复用。native 导出入口只适配共同 ABI，不复制业务、配置或状态模型。私有文件操作确有多个实际消费者时才抽窄存储原语，不为每张表、每个任务、每种状态各建库。
 
@@ -92,14 +97,14 @@ bootstrap 解析与业务 DNS 具有不同启动条件和权限，按 [Node 底�
 ```text
 以下简写省略统一的 meshway- 前缀：
 
-transport-spec
-model ──► transport-spec
+transport-spec ──► serde
+model ──► serde
 configuration ──► model + transport-spec
 protocol ──► model + configuration
 control-client ──► protocol
 
-Server ──► protocol + configuration（编译）+ 自有领域／存储模块
-Node control ──► control-client + 共享配置／模型
+Server ──► protocol + configuration（编译）+ private-storage + 自有领域／存储模块
+Node control ──► control-client + 共享配置／模型 + private-storage
 Node providers ──► plugin + 领域接口 + 所需共享类型
 meshway CLI ──► ipc
 ```

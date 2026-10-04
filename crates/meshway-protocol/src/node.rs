@@ -107,3 +107,16 @@ pub fn proof_transcript(c: &NodeChallenge) -> Vec<u8> {
     out.extend_from_slice(c.request_digest.as_bytes());
     out
 }
+
+/// Digest of an already typed intent, independent of struct/property order.
+/// This encoding is shared by the signing Node and verifying Server.
+pub fn request_digest<T: Serialize>(intent: &T) -> Result<Digest, serde_json::Error> {
+    use sha2::{Digest as _, Sha256};
+    let mut value = serde_json::to_value(intent)?;
+    value.sort_all_objects();
+    let bytes = serde_json::to_vec(&value)?;
+    let mut hash = Sha256::new();
+    hash.update(b"meshway/node-intent/v1\0");
+    hash.update(bytes);
+    Ok(Digest::from_bytes(hash.finalize().into()))
+}

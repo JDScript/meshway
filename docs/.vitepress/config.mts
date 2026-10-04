@@ -36,6 +36,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     text: "Node · 节点端",
     items: [
       { text: "Daemon、CLI 与组件", link: "/v2/node" },
+      { text: "Server 接入组件", link: "/v2/node/control" },
       { text: "网络模式与本机运行", link: "/v2/node/runtime" },
       { text: "插件与能力", link: "/v2/node/plugins" },
     ],

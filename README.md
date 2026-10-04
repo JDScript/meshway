@@ -8,7 +8,7 @@ Rust Server、React Console 与节点网络架构。以 Tailscale 为常规产�
 
 - **Server**：账户、网络隔离、配置版本／CAS、持钥节点接入、执行发布、State／SSE、历史、规则集和观察任务。
 - **Console**：纯 SPA，消费生成 SDK；支持上述已交付管理与观测流程。
-- **Node**：新 `meshwayd`／`meshway` 与启动时插件架构处于设计阶段，实际网络运行尚未接入。
+- **Node**：`meshway-control` 已接通持钥接入、认证、实例／lease 与目标保存；`meshwayd`／`meshway`、插件与实际网络运行仍待实现。
 
 旧节点／Apple 实现和实验已移出活跃源码树。历史参考保留在 `archive/pre-consolidation-main-007e9deb`、`archive/node-runtime-8da83a7f`、`archive/apple-007e9deb`；复用须逐项审查，不把历史实现当成新合同。
 
@@ -18,7 +18,7 @@ Rust Server、React Console 与节点网络架构。以 Tailscale 为常规产�
 | --- | --- |
 | `apps/meshway-server` | Server 应用与私有领域／存储模块 |
 | `apps/meshway-web-console` | Web Console（`@meshway/web-console`） |
-| `crates/meshway-*` | model、configuration、transport-spec、protocol、control-client、serde |
+| `crates/meshway-*` | 共享契约／私有存储原语，以及 Node control 组件；职责见架构文档 |
 | `packages/protocol` | 生成 OpenAPI |
 | `packages/control-client` | 生成 TypeScript SDK 与运行时校验 |
 | `docs` | 当前文档、字段参考与构建 |

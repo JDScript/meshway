@@ -1,0 +1,183 @@
+use super::{Directory, Error};
+use rustix::{
+    fs::{Mode, OFlags, mkdirat, open as open_directory, openat},
+    io::Errno,
+};
+use std::{
+    fs::{File, TryLockError},
+    io::Write,
+    os::unix::fs::MetadataExt,
+    path::{Component, Path},
+};
+
+const DIRECTORY_FLAGS: OFlags = OFlags::RDONLY
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::NOFOLLOW)
+    .union(OFlags::CLOEXEC);
+const FILE_FLAGS: OFlags = OFlags::RDWR
+    .union(OFlags::NOFOLLOW)
+    .union(OFlags::CLOEXEC)
+    .union(OFlags::NONBLOCK);
+
+pub(super) fn open(path: &Path, lock_name: &str) -> Result<Directory, Error> {
+    if !path.is_absolute() {
+        return Err(Error::InvalidPath);
+    }
+    let mut names = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir | Component::CurDir => {}
+            Component::Normal(name) => names.push(name),
+            _ => return Err(Error::InvalidPath),
+        }
+    }
+    let Some((name, parents)) = names.split_last() else {
+        return Err(Error::InvalidPath);
+    };
+    let mut parent =
+        File::from(open_directory("/", DIRECTORY_FLAGS, Mode::empty()).map_err(io_error)?);
+    check_ancestor(&parent)?;
+    for name in parents {
+        parent =
+            File::from(openat(&parent, *name, DIRECTORY_FLAGS, Mode::empty()).map_err(io_error)?);
+        check_ancestor(&parent)?;
+    }
+    match mkdirat(&parent, *name, Mode::from_raw_mode(0o700)) {
+        Ok(()) => parent.sync_all().map_err(|_| Error::Io)?,
+        Err(Errno::EXIST) => {}
+        Err(error) => return Err(io_error(error)),
+    }
+    let directory =
+        File::from(openat(&parent, *name, DIRECTORY_FLAGS, Mode::empty()).map_err(io_error)?);
+    check(&directory, true)?;
+    let lock = file(&directory, lock_name, true)?.ok_or(Error::Io)?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Err(Error::InUse),
+        Err(TryLockError::Error(_)) => return Err(Error::Io),
+    }
+    Ok(Directory {
+        path: path.to_owned(),
+        lock_name: lock_name.into(),
+        directory,
+        _lock: lock,
+    })
+}
+
+pub(super) fn file(directory: &File, name: &str, create: bool) -> Result<Option<File>, Error> {
+    let flags = if create {
+        FILE_FLAGS | OFlags::CREATE | OFlags::EXCL
+    } else {
+        FILE_FLAGS
+    };
+    let fd = match openat(directory, name, flags, Mode::from_raw_mode(0o600)) {
+        Ok(fd) => fd,
+        Err(Errno::EXIST) if create => {
+            openat(directory, name, FILE_FLAGS, Mode::empty()).map_err(io_error)?
+        }
+        Err(Errno::NOENT) if !create => return Ok(None),
+        Err(error) => return Err(io_error(error)),
+    };
+    let file = File::from(fd);
+    check(&file, false)?;
+    Ok(Some(file))
+}
+
+pub(super) fn publish_once(
+    directory: &File,
+    final_name: &str,
+    staging: &str,
+    bytes: Option<&[u8]>,
+) -> Result<(), Error> {
+    let flags = if bytes.is_some() {
+        FILE_FLAGS | OFlags::CREATE | OFlags::EXCL
+    } else {
+        FILE_FLAGS
+    };
+    let mut file = File::from(
+        openat(directory, staging, flags, Mode::from_raw_mode(0o600)).map_err(io_error)?,
+    );
+    check(&file, false)?;
+    if let Some(bytes) = bytes {
+        file.write_all(bytes).map_err(|_| Error::Io)?;
+    }
+    file.sync_all().map_err(|_| Error::Io)?;
+    rustix::fs::renameat_with(
+        directory,
+        staging,
+        directory,
+        final_name,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(io_error)?;
+    directory.sync_all().map_err(|_| Error::Io)
+}
+
+pub(super) fn replace(directory: &File, final_name: &str, bytes: &[u8]) -> Result<(), Error> {
+    file(directory, final_name, false)?;
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|_| Error::Io)?;
+    let staging = format!(".write-{:032x}", u128::from_be_bytes(nonce));
+    let mut file = File::from(
+        openat(
+            directory,
+            staging.as_str(),
+            FILE_FLAGS | OFlags::CREATE | OFlags::EXCL,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(io_error)?,
+    );
+    let result = (|| {
+        check(&file, false)?;
+        file.write_all(bytes).map_err(|_| Error::Io)?;
+        file.sync_all().map_err(|_| Error::Io)?;
+        // The directory is exclusively owned. Check destination type again so
+        // accidental same-owner corruption is never silently overwritten.
+        self::file(directory, final_name, false)?;
+        rustix::fs::renameat(directory, staging.as_str(), directory, final_name)
+            .map_err(io_error)?;
+        directory.sync_all().map_err(|_| Error::Io)
+    })();
+    if result.is_err() {
+        let _ = rustix::fs::unlinkat(directory, staging.as_str(), rustix::fs::AtFlags::empty());
+    }
+    result
+}
+
+fn check(file: &File, directory: bool) -> Result<(), Error> {
+    let metadata = file.metadata().map_err(|_| Error::Io)?;
+    let kind_ok = if directory {
+        metadata.is_dir()
+    } else {
+        metadata.is_file() && metadata.nlink() == 1
+    };
+    let mode = if directory { 0o700 } else { 0o600 };
+    if !kind_ok
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.mode() & 0o7777 != mode
+    {
+        return Err(Error::UnsafeStorage);
+    }
+    Ok(())
+}
+
+fn check_ancestor(directory: &File) -> Result<(), Error> {
+    let metadata = directory.metadata().map_err(|_| Error::Io)?;
+    let owner = metadata.uid();
+    let trusted_owner = owner == 0 || owner == rustix::process::geteuid().as_raw();
+    let writable_by_others = metadata.mode() & 0o022 != 0;
+    let sticky = metadata.mode() & 0o1000 != 0;
+    // Root/euid-owned sticky temporary ancestors cannot have our children
+    // renamed by other UIDs. Root and our own UID are inside the trust boundary.
+    if !metadata.is_dir() || !trusted_owner || (writable_by_others && !sticky) {
+        return Err(Error::UnsafeStorage);
+    }
+    Ok(())
+}
+
+fn io_error(error: Errno) -> Error {
+    match error {
+        Errno::LOOP | Errno::NOTDIR => Error::UnsafeStorage,
+        _ => Error::Io,
+    }
+}
