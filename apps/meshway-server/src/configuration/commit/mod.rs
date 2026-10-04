@@ -13,7 +13,6 @@ use super::{
 };
 use crate::error::Error;
 use crate::{
-    accounts::random_uuid,
     enrollment::NodeAdmission,
     secrets::{Purpose, Sealer},
     store::{self, authorization::current_session},
@@ -23,7 +22,7 @@ use meshway_model::{
     ArtifactId, MembershipId, NetworkId, NodeId, RequestId, Revision, UserId, Version,
 };
 use meshway_protocol::configuration::{ConfigurationPreviewResponse, ConfigurationRequest};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::Transaction;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use zeroize::Zeroizing;
@@ -119,7 +118,7 @@ impl Committer {
         self.cache.load(
             tx,
             network,
-            super::current_revision(tx, network)?,
+            store::configuration::versions::current_revision(tx, network)?,
             &self.sealer,
         )
     }
@@ -294,15 +293,12 @@ impl Committer {
         now: i64,
     ) -> Result<CommitEffects, Error> {
         let network = current.network_id;
-        let actual = tx
-            .query_row(
-                "SELECT current_revision FROM networks WHERE id=?1 AND deleted_at IS NULL",
-                [network.as_uuid().as_bytes().as_slice()],
-                |r| r.get::<_, i64>(0),
-            )
-            .optional()?
-            .ok_or(Error::NotFound)?;
-        if actual != current.revision.get() as i64
+        let current_revision_matches = store::configuration::versions::current_revision_matches(
+            tx,
+            network,
+            current.revision,
+        )?;
+        if !current_revision_matches
             || prepared.base_revision != current.revision
             || prepared.network_id != network
         {
@@ -342,20 +338,19 @@ impl Committer {
         let bindings = self
             .sealer
             .seal(network, revision, Purpose::Bindings, &bindings)?;
-        tx.execute(
-            "INSERT INTO configuration_versions(network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from,created_by_email) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,(SELECT email FROM users WHERE id=?6))",
-            params![network.as_uuid().as_bytes().as_slice(), revision.get() as i64,
-                source.as_bytes(), configuration.as_bytes(), bindings.as_bytes(),
-                actor.as_uuid().as_bytes().as_slice(), now, prepared.cause.as_str(),
-                request.as_uuid().as_bytes().as_slice(), prepared.rollback_from.map(|r|r.get() as i64)],
-        )?;
-        tx.execute(
-            "UPDATE networks SET current_revision=?1 WHERE id=?2 AND current_revision=?3",
-            params![
-                revision.get() as i64,
-                network.as_uuid().as_bytes().as_slice(),
-                current.revision.get() as i64
-            ],
+        let version_commit = store::configuration::versions::VersionCommit {
+            network,
+            previous_revision: current.revision,
+            revision,
+            actor,
+            request,
+            now,
+        };
+        store::configuration::versions::insert_version(
+            tx,
+            &version_commit,
+            &prepared,
+            [&source, &configuration, &bindings],
         )?;
         crate::resources::bindings::inherit_checks(tx, current, &prepared, revision)?;
         let publication = store::execution::apply_configuration_effects(
@@ -387,17 +382,10 @@ impl Committer {
                 return Err(Error::DependencyUnavailable);
             }
         }
-        tx.execute(
-            "UPDATE configuration_versions SET execution_targets=?3 WHERE network_id=?1 AND revision=?2",
-            params![network.as_uuid().as_bytes().as_slice(), revision.get() as i64,
-                serde_json::to_string(&execution_targets).map_err(|_| Error::encode("configuration execution targets"))?],
-        )?;
-        tx.execute(
-            "INSERT INTO activity_events(id,scope,network_id,at,actor_user_id,action,request_id,before_revision,after_revision,actor_email) VALUES(?1,'network',?2,?3,?4,'configuration.apply',?5,?6,?7,(SELECT email FROM users WHERE id=?4))",
-            params![random_uuid()?.as_bytes().as_slice(),
-                network.as_uuid().as_bytes().as_slice(), now,
-                actor.as_uuid().as_bytes().as_slice(), request.as_uuid().as_bytes().as_slice(),
-                current.revision.get() as i64, revision.get() as i64],
+        store::configuration::versions::record_execution_targets(
+            tx,
+            &version_commit,
+            &execution_targets,
         )?;
         Ok(CommitEffects {
             notice: Some(meshway_protocol::events::ConfigurationNotice {

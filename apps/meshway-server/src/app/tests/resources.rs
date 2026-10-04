@@ -30,7 +30,7 @@ async fn resource_scan_shutdown_releases_its_waiter_before_accepted_sql_drains()
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().canonicalize().unwrap().join("data");
     let app = App::open(Settings::new(path.clone())).await.unwrap();
-    let cache_owners = Arc::strong_count(&app.configuration_cache);
+    let cache_owners = Arc::strong_count(&app.committer.cache);
     let handle = app.executor.handle();
     let (entered, started) = tokio::sync::oneshot::channel();
     let (release, blocked) = std::sync::mpsc::channel();
@@ -50,7 +50,7 @@ async fn resource_scan_shutdown_releases_its_waiter_before_accepted_sql_drains()
     // The scanner clones its provider before awaiting the serial owner. The
     // extra cache reference proves it has entered a scan behind the blocked job.
     tokio::time::timeout(Duration::from_secs(3), async {
-        while Arc::strong_count(&app.configuration_cache) == cache_owners {
+        while Arc::strong_count(&app.committer.cache) == cache_owners {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
     })
@@ -489,7 +489,7 @@ async fn enroll(
             .bearer_auth(session.token.expose())
             .json(&AcquireInstanceRequest {
                 instance_id: InstanceId::new(*rid().as_uuid()).unwrap(),
-                capabilities: super::node_tests::caps(),
+                capabilities: super::node::caps(),
             }),
     )
     .await;
@@ -1506,7 +1506,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         .resource_service(CommitGate {
             provider: crate::resources::provider::Provider {
                 sealer: s.app.sealer(),
-                cache: s.app.configuration_cache.clone(),
+                cache: s.app.committer.cache.clone(),
             },
             entered: Mutex::new(Some(entered)),
             release: Mutex::new(gate),

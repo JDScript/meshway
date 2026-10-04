@@ -6,12 +6,12 @@ use super::{
     service::{ResourceProvider, ResourceService, SystemTask},
 };
 use crate::error::Error;
-use crate::store::Handle;
+use crate::store::{self, Handle};
 use chrono::Utc;
 use meshway_configuration::RuleSet;
 use meshway_model::NetworkId;
-use rusqlite::{OptionalExtension, Transaction, params};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use rusqlite::Transaction;
+use std::{sync::Arc, time::Duration};
 
 pub(crate) const MIN_INTERVAL_MS: u64 = 1_000;
 const SCAN_PERIOD: Duration = Duration::from_millis(100);
@@ -72,17 +72,9 @@ fn scan_network(
     provider: &Provider,
     after: Option<NetworkId>,
 ) -> Result<(Option<NetworkId>, Option<SystemTask>), Error> {
-    let next = |after: Option<NetworkId>| -> Result<Option<NetworkId>, Error> {
-        let bytes: Option<Vec<u8>> = tx.query_row(
-            "SELECT id FROM networks WHERE deleted_at IS NULL AND (?1 IS NULL OR id>?1) ORDER BY id LIMIT 1",
-            [after.map(|id| id.as_uuid().as_bytes().to_vec())],
-            |row| row.get(0),
-        ).optional()?;
-        bytes.map(crate::store::execution::id).transpose()
-    };
-    let network = match next(after)? {
+    let network = match store::resources::checks::next_network(tx, after)? {
         Some(id) => Some(id),
-        None => next(None)?,
+        None => store::resources::checks::next_network(tx, None)?,
     };
     let Some(network) = network else {
         return Ok((None, None));
@@ -94,28 +86,7 @@ fn scan_network(
         Ok(scope) => scope,
         Err(_) => return Ok((Some(network), None)),
     };
-    let created: i64 = tx.query_row(
-        "SELECT created_at FROM configuration_versions WHERE network_id=?1 AND revision=?2",
-        params![
-            network.as_uuid().as_bytes().as_slice(),
-            scope.revision.get() as i64
-        ],
-        |row| row.get(0),
-    )?;
-    let created =
-        u64::try_from(created).map_err(|_| Error::decode("dataset_artifacts.created_at"))?;
-    let mut statement = tx.prepare(
-        "SELECT rule_set_key,failures FROM rule_set_checks WHERE network_id=?1 AND revision=?2",
-    )?;
-    let failures = statement
-        .query_map(
-            params![
-                network.as_uuid().as_bytes().as_slice(),
-                scope.revision.get() as i64
-            ],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?)),
-        )?
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let (created, failures) = store::resources::checks::schedule(tx, network, scope.revision)?;
     let task = scope
         .definitions
         .iter()

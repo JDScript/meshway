@@ -4,12 +4,13 @@ use crate::effect::Effect;
 use crate::error::Error;
 use crate::secrets::{Purpose, Sealer};
 use crate::store::authorization::{authorize_manager, current_session};
+use crate::store::configuration::{commits, versions};
 use crate::{accounts::token_digest, store::Handle};
 use meshway_configuration::{configuration_changes, edit_source, parse_jsonc};
 use meshway_model::{NetworkId, RequestId, Revision, UserId};
 use meshway_protocol::{WireSecret, configuration::*};
+use rusqlite::Transaction;
 use rusqlite::TransactionBehavior;
-use rusqlite::{OptionalExtension, Transaction, params};
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
@@ -67,7 +68,7 @@ impl Configurations {
                 service.authorize(tx, &digest, network)?;
                 let revision = match revision {
                     Some(r) => r,
-                    None => current_revision(tx, network)?,
+                    None => versions::current_revision(tx, network)?,
                 };
                 let snapshot = service
                     .cache()
@@ -172,25 +173,12 @@ impl Configurations {
         let encoded = Zeroizing::new(
             serde_json::to_vec(&request).map_err(|_| Error::encode("configuration request"))?,
         );
-        let prior = tx.query_row(
-            "SELECT base_revision,input,result FROM configuration_commits WHERE network_id=?1 AND user_id=?2 AND request_id=?3",
-            params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(), request.request_id().as_uuid().as_bytes().as_slice()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, String>(2)?)),
-        ).optional()?;
-        if let Some((base, input, result)) = prior {
-            let base = Revision::new(
-                u64::try_from(base)
-                    .map_err(|_| Error::decode("configuration_commits.base_revision"))?,
-            )
-            .map_err(|_| Error::decode("configuration_commits.base_revision"))?;
-            let original = self
-                .sealer()
-                .open(network, base, Purpose::Request, &input)?;
-            if original.as_bytes() != encoded.as_slice() {
+        let prior = commits::find(tx, self.sealer(), network, user, request.request_id())?;
+        if let Some(prior) = prior {
+            if prior.original.as_bytes() != encoded.as_slice() {
                 return Err(Error::RequestConflict);
             }
-            let mut result: ConfigurationAppliedResponse = serde_json::from_str(&result)
-                .map_err(|_| Error::decode("configuration_commits.result"))?;
+            let mut result = prior.result()?;
             result.request_id = id;
             return Ok((result, Vec::new()));
         }
@@ -225,11 +213,14 @@ impl Configurations {
         let input = self
             .sealer()
             .seal(network, base, Purpose::Request, &encoded)?;
-        tx.execute(
-            "INSERT INTO configuration_commits(network_id,user_id,request_id,base_revision,input,result) VALUES(?1,?2,?3,?4,?5,?6)",
-            params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(),
-                request.request_id().as_uuid().as_bytes().as_slice(), base.get() as i64,
-                input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::encode("configuration commit result"))?],
+        commits::insert(
+            tx,
+            network,
+            user,
+            request.request_id(),
+            base,
+            &input,
+            &result,
         )?;
         // One valid bulk deletion may exceed the replay window. The bounded
         // journal evicts old entries; it must not cap the configuration commit.
@@ -312,11 +303,9 @@ impl Configurations {
         retry: bool,
     ) -> Result<Option<resources::Preparation>, Error> {
         let user = self.authorize(tx, &digest, network)?;
-        if retry && tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM configuration_commits WHERE network_id=?1 AND user_id=?2 AND request_id=?3)",
-                params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),request.request_id().as_uuid().as_bytes().as_slice()],
-                |row| row.get::<_,bool>(0),
-            )? { return Ok(None); }
+        if retry && commits::exists(tx, network, user, request.request_id())? {
+            return Ok(None);
+        }
         let current = self.committer.current(tx, network)?;
         if current.revision != request.expected_revision() {
             return Err(Error::RevisionConflict);
@@ -333,22 +322,6 @@ impl Configurations {
         context::check_inputs(tx, &current, &input)?;
         resources::Preparation::stage(tx, &current, &input).map(Some)
     }
-}
-
-pub(crate) fn current_revision(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-) -> Result<Revision, Error> {
-    let r = tx
-        .query_row(
-            "SELECT current_revision FROM networks WHERE id=?1 AND deleted_at IS NULL",
-            [network.as_uuid().as_bytes().as_slice()],
-            |r| r.get::<_, i64>(0),
-        )
-        .optional()?
-        .ok_or(Error::NotFound)?;
-    Revision::new(u64::try_from(r).map_err(|_| Error::decode("networks.current_revision"))?)
-        .map_err(|_| Error::decode("networks.current_revision"))
 }
 
 pub(crate) fn source_response(snapshot: &Snapshot, id: RequestId) -> ConfigurationSourceResponse {
@@ -403,7 +376,17 @@ mod tests {
             .read(user.token.expose(), network, None)
             .await
             .unwrap();
-        service.handle.execute(|db| db.execute_batch("CREATE TRIGGER fail_commit BEFORE INSERT ON configuration_commits BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")).await.unwrap().unwrap();
+        service
+            .handle
+            .execute(|db| {
+                let tx = db.transaction()?;
+                commits::testing::install_failure(&tx)?;
+                tx.commit()?;
+                Ok::<_, Error>(())
+            })
+            .await
+            .unwrap()
+            .unwrap();
         let edit_id = request();
         let edit = || ConfigurationRequest::Document {
             expected_revision: current.revision,
@@ -431,21 +414,12 @@ mod tests {
         service
             .handle
             .execute(|db| {
-                let versions: i64 = db
-                    .query_row("SELECT count(*) FROM configuration_versions", [], |r| {
-                        r.get(0)
-                    })
-                    .unwrap();
-                let activities: i64 = db
-                    .query_row(
-                        "SELECT count(*) FROM activity_events WHERE action='configuration.apply'",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .unwrap();
+                let tx = db.transaction().unwrap();
+                let (versions, activities) = commits::testing::counts(&tx).unwrap();
                 assert_eq!(versions, 1);
                 assert_eq!(activities, 0);
-                db.execute_batch("DROP TRIGGER fail_commit").unwrap();
+                commits::testing::remove_failure(&tx).unwrap();
+                tx.commit().unwrap();
             })
             .await
             .unwrap();

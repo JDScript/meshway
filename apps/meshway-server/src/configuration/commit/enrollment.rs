@@ -9,7 +9,7 @@ use meshway_configuration::{
     UserBinding, allocate_addresses,
 };
 use rusqlite::Transaction;
-use std::{collections::BTreeSet, net::IpAddr};
+use std::collections::BTreeSet;
 
 pub(super) fn author(
     tx: &Transaction<'_>,
@@ -23,7 +23,8 @@ pub(super) fn author(
     if let Some(node) = input.nodes.get_mut(&admission.node) {
         node.identity = admission.identity.clone();
     } else {
-        let retired = retired_addresses(tx, current)?;
+        let retired =
+            crate::store::configuration::addresses::retired_addresses(tx, current.network_id)?;
         let hostname = unique_hostname(
             admission.initial.hostname.as_deref().unwrap_or("node"),
             input.nodes.values().map(|n| n.hostname.as_str()),
@@ -84,25 +85,6 @@ pub(super) fn author(
         ChangeCause::Enrollment
     };
     Ok(draft)
-}
-
-fn retired_addresses(tx: &Transaction<'_>, current: &Snapshot) -> Result<BTreeSet<IpAddr>, Error> {
-    let mut statement = tx.prepare(
-        "SELECT address FROM address_retirements WHERE network_id=?1 AND (release_after IS NULL OR release_after>?2)",
-    )?;
-    statement
-        .query_map(
-            rusqlite::params![
-                current.network_id.as_uuid().as_bytes().as_slice(),
-                crate::store::execution::now()?
-            ],
-            |r| r.get::<_, String>(0),
-        )?
-        .map(|r| {
-            r?.parse::<IpAddr>()
-                .map_err(|_| Error::decode("address_retirements.address"))
-        })
-        .collect()
 }
 
 /// The suggested hostname, or the first free numbered variant of it.

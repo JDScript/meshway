@@ -10,10 +10,11 @@ use chacha20poly1305::{
     aead::{Aead, Payload},
 };
 use meshway_model::{KeyId, NetworkId, Revision};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use zeroize::Zeroizing;
 
 use crate::directory::{Directory, DirectoryError};
+use crate::store::keys;
 
 mod cursor;
 pub(crate) use cursor::CursorScope;
@@ -219,20 +220,13 @@ impl Sealer {
     }
 
     pub(crate) fn check_binding(&self, connection: &Connection) -> Result<(), KeyError> {
-        let binding: Option<(Vec<u8>, Vec<u8>)> = connection
-            .query_row(
-                "SELECT key_id, key_check FROM master_key_binding WHERE singleton = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(|_| KeyError::Database)?;
-        let Some((id, proof)) = binding else {
+        let binding = keys::binding(connection, self.id).map_err(|_| KeyError::Database)?;
+        let Some(binding) = binding else {
             return Err(KeyError::Mismatch);
         };
-        if id != self.id.as_uuid().as_bytes()
+        if !binding.key_matches
             || !self
-                .decrypt(b"master-key-binding\0", &proof)
+                .decrypt(b"master-key-binding\0", &binding.proof)
                 .map_err(|_| KeyError::Mismatch)?
                 .as_bytes()
                 .is_empty()
@@ -295,12 +289,7 @@ pub(crate) fn initialize(
     let sealer = decode_key(&bytes)?;
     if fresh {
         let proof = sealer.encrypt(b"master-key-binding\0", b"")?;
-        connection
-            .execute(
-                "INSERT INTO master_key_binding (singleton, key_id, key_check) VALUES (1, ?1, ?2)",
-                rusqlite::params![sealer.id.as_uuid().as_bytes().as_slice(), proof.as_bytes()],
-            )
-            .map_err(|_| KeyError::Database)?;
+        keys::insert_binding(connection, sealer.id, &proof).map_err(|_| KeyError::Database)?;
     }
     sealer.check_binding(connection)?;
     Ok(sealer)

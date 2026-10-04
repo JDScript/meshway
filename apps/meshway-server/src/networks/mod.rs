@@ -25,7 +25,7 @@ use crate::{
 pub struct Networks {
     handle: Handle,
     sealer: Arc<Sealer>,
-    configuration_cache: Arc<crate::configuration::SnapshotCache>,
+    committer: crate::configuration::Committer,
 }
 pub(crate) struct NameChange {
     pub(crate) name: String,
@@ -37,12 +37,12 @@ impl Networks {
     pub(crate) fn new(
         handle: Handle,
         sealer: Arc<Sealer>,
-        configuration_cache: Arc<crate::configuration::SnapshotCache>,
+        committer: crate::configuration::Committer,
     ) -> Self {
         Self {
             handle,
             sealer,
-            configuration_cache,
+            committer,
         }
     }
 
@@ -61,7 +61,7 @@ impl Networks {
             .await?;
         let prepared = configuration::prepare(name, &self.sealer)?;
         let sealer = Arc::clone(&self.sealer);
-        let cache = Arc::clone(&self.configuration_cache);
+        let cache = Arc::clone(&self.committer.cache);
         self.handle
             .write(move |tx| store::create(tx, digest, prepared, request_id, &sealer, &cache))
             .await
@@ -76,7 +76,7 @@ impl Networks {
         pagination::validate_limit(limit)?;
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
-        let cache = Arc::clone(&self.configuration_cache);
+        let cache = Arc::clone(&self.committer.cache);
         self.handle
             .read(move |tx| store::list(tx, digest, limit, cursor, &sealer, &cache))
             .await
@@ -85,7 +85,7 @@ impl Networks {
     pub async fn get(&self, token: &str, network_id: NetworkId) -> Result<NetworkSummary, Error> {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
-        let cache = Arc::clone(&self.configuration_cache);
+        let cache = Arc::clone(&self.committer.cache);
         self.handle
             .read(move |tx| store::get(tx, digest, network_id, &sealer, &cache))
             .await
@@ -106,7 +106,7 @@ impl Networks {
             return Err(Error::InvalidName);
         }
         let sealer = Arc::clone(&self.sealer);
-        let cache = Arc::clone(&self.configuration_cache);
+        let cache = Arc::clone(&self.committer.cache);
         let changed = name != expected_name;
         self.handle
             .transact(TransactionBehavior::Immediate, move |tx| {
@@ -142,7 +142,7 @@ impl Networks {
         pagination::validate_limit(limit)?;
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
-        let cache = Arc::clone(&self.configuration_cache);
+        let cache = Arc::clone(&self.committer.cache);
         self.handle
             .read(move |tx| store::members(tx, digest, network_id, limit, cursor, &sealer, &cache))
             .await

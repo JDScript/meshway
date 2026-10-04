@@ -6,9 +6,9 @@ use crate::error::Error;
 use crate::secrets::Sealer;
 use chrono::Datelike;
 use meshway_configuration::{ConfigurationError, NetworkConfigurationInput};
-use meshway_model::{NetworkId, NodeId};
+use meshway_model::{Digest, NetworkId, NodeId};
 use meshway_transport_spec::{Listener, ListenerTls, SecretString, TlsMode};
-use rusqlite::{Transaction, params};
+use rusqlite::Transaction;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn invalid() -> Error {
@@ -197,10 +197,11 @@ fn check_revocation(
     value: &[u8],
 ) -> Result<(), Error> {
     let fingerprint = sealer.fingerprint(network, kind, value)?;
-    let revoked = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM credential_revocations WHERE network_id=?1 AND kind=?2 AND fingerprint=?3)",
-        params![network.as_uuid().as_bytes().as_slice(), kind, fingerprint.as_slice()],
-        |row| row.get::<_, bool>(0),
+    let revoked = crate::store::configuration::materials::check_revocation(
+        tx,
+        network,
+        kind,
+        Digest::from_bytes(fingerprint),
     )?;
     if revoked { Err(invalid()) } else { Ok(()) }
 }

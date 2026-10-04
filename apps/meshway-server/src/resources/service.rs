@@ -1,11 +1,12 @@
 use crate::effect::Effect;
 use crate::error::Error;
 use crate::state::service::ReadIdentity;
+use crate::store;
 use chrono::{DateTime, Utc};
 use meshway_configuration::RuleSet;
 use meshway_model::{NetworkId, Revision};
 use meshway_protocol::resources::{ArtifactSummary, ResourceProblem, RuleSetList, RuleSetView};
-use rusqlite::{Transaction, TransactionBehavior, params};
+use rusqlite::{Transaction, TransactionBehavior};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -225,7 +226,9 @@ impl<P: ResourceProvider> ResourceService<P> {
                 if !scope.can_refresh {
                     return Err(Error::PermissionDenied);
                 }
-                let current_artifact = scope.views.get(&key)
+                let current_artifact = scope
+                    .views
+                    .get(&key)
                     .and_then(|view| view.artifact.as_ref())
                     .map(|artifact| artifact.id);
                 if scope.network != network
@@ -240,45 +243,28 @@ impl<P: ResourceProvider> ResourceService<P> {
                 let problem = match converted {
                     Err(problem) => Some(problem),
                     Ok(data) => {
-                        tx.execute_batch("SAVEPOINT resource_binding")?;
+                        store::resources::bindings::begin(tx)?;
                         let candidate = super::store_artifact(tx, network, "rule-set", &data, now)?;
                         match provider.bind_rule_set(tx, network, revision, &key, &candidate, now) {
                             Ok(()) => {
-                                tx.execute_batch("RELEASE resource_binding")?;
+                                store::resources::bindings::release(tx)?;
                                 artifact = Some(candidate);
                                 None
                             }
                             Err(Error::InvalidRequest | Error::InvalidConfiguration(_)) => {
-                                tx.execute_batch("ROLLBACK TO resource_binding; RELEASE resource_binding")?;
+                                store::resources::bindings::rollback(tx)?;
                                 Some(ResourceProblem::ValidationFailed)
                             }
                             Err(error) => return Err(error),
                         }
                     }
                 };
-                let stored_problem = problem
-                    .map(|value| serde_json::to_string(&value))
-                    .transpose()
-                    .map_err(|_| Error::encode("rule set check problem"))?;
-                tx.execute(
-                    "INSERT INTO rule_set_checks(network_id,revision,rule_set_key,problem,checked_at,last_success_at,failures)
-                     VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(network_id,revision,rule_set_key)
-                     DO UPDATE SET problem=excluded.problem,checked_at=excluded.checked_at,
-                        last_success_at=COALESCE(excluded.last_success_at,rule_set_checks.last_success_at),
-                        failures=CASE WHEN excluded.problem IS NULL THEN 0 ELSE min(rule_set_checks.failures+1,16) END,
-                        check_version=rule_set_checks.check_version+1",
-                    params![
-                        network.as_uuid().as_bytes().as_slice(),
-                        revision.get() as i64,
-                        key,
-                        stored_problem,
-                        now.timestamp_millis(),
-                        problem.is_none().then_some(now.timestamp_millis()),
-                        i64::from(problem.is_some()),
-                    ],
-                )?;
-                let result = identity.scope(provider.as_ref(), tx, now)?
-                    .views.remove(&key).ok_or(Error::Internal("bound rule set view missing"))?;
+                store::resources::checks::record(tx, network, revision, &key, problem, now)?;
+                let result = identity
+                    .scope(provider.as_ref(), tx, now)?
+                    .views
+                    .remove(&key)
+                    .ok_or(Error::Internal("bound rule set view missing"))?;
                 if result.artifact != artifact || result.problem != problem {
                     return Err(Error::Internal("bound rule set view mismatch"));
                 }
@@ -287,8 +273,12 @@ impl<P: ResourceProvider> ResourceService<P> {
                 Ok((
                     result,
                     vec![
-                        Effect::Resource { network_id: network },
-                        Effect::Progress { network_id: network },
+                        Effect::Resource {
+                            network_id: network,
+                        },
+                        Effect::Progress {
+                            network_id: network,
+                        },
                     ],
                 ))
             })

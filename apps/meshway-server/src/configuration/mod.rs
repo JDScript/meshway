@@ -10,7 +10,7 @@ mod service;
 mod snapshot;
 pub(crate) use commit::{Committer, Intent};
 pub(crate) use service::Configurations;
-pub(crate) use service::{current_revision, source_response};
+pub(crate) use service::source_response;
 pub(crate) use snapshot::{Snapshot, SnapshotCache};
 
 use crate::error::Error;
