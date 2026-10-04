@@ -279,7 +279,6 @@
   "nodes_settings_exit": "May be an exit",
   "nodes_settings_identity": "Tags",
   "nodes_settings_identity_switch": "Applied, this device takes a Tag identity and no longer gets user or group grants",
-  "nodes_settings_member_unavailable": "This node's settings have not arrived over the live stream",
   "nodes_settings_pools": "Pools: {pools}; empty: no address of that family",
   "nodes_settings_pools_none": "none",
   "nodes_settings_remark": "Remark",
@@ -316,5 +315,16 @@
   "nodes_enrollment_node": "Enrolled as {name}",
   "nodes_enrollment_node_gone": "Enrolled as node {id} (deleted, or not among the nodes this account sees)",
   "nodes_enrollment_more": "Load more",
-  "nodes_enrollment_revoke_moot": "This key was used or expired first; it was not revoked."
+  "nodes_enrollment_revoke_moot": "This key was used or expired first; it was not revoked.",
+  "nodes_key_created_at": "Created",
+  "nodes_execution": "Execution target",
+  "nodes_execution_revision": "Revision",
+  "nodes_execution_publication": "Publication",
+  "nodes_execution_digest": "Digest",
+  "nodes_execution_none": "The controller holds no execution target for this node now.",
+  "nodes_execution_unreported": "This is what the controller wants the node to run; it is not saved or applied by itself, and there is no full report from the node to compare.",
+  "nodes_execution_applied": "This is what the controller wants the node to run; the node reports applying it.",
+  "nodes_execution_saved": "This is what the controller wants the node to run; the node reports saving it, not yet applying it.",
+  "nodes_execution_elsewhere": "This is what the controller wants the node to run; what the node reports saved and applied is another target — it has not taken or not reported this one yet.",
+  "nodes_settings_unreadable": "This account can read the settings of its own User-identity devices only."
 }

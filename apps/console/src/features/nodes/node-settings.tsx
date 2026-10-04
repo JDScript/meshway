@@ -111,8 +111,10 @@ export function NodeSettings({
       )
     case "missing":
       return <EmptyLine>{m.nodes_listeners_missing()}</EmptyLine>
+    case "unreadable":
+      return <EmptyLine>{m.nodes_settings_unreadable()}</EmptyLine>
     case "member":
-      return state.settings ? (
+      return (
         <SettingsBody
           value={settingsBase(state.settings)}
           identity={state.settings.identity}
@@ -130,8 +132,6 @@ export function NodeSettings({
           nodeId={nodeId}
           change={null}
         />
-      ) : (
-        <EmptyLine>{m.nodes_settings_member_unavailable()}</EmptyLine>
       )
     case "manager": {
       const { base, ops } = state

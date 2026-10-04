@@ -1,4 +1,5 @@
 import {
+  getNodeSettings,
   getTransportCatalog,
   listEnrollmentKeys,
   listNodes,
@@ -51,6 +52,23 @@ export const enrollmentKeysQuery = (networkId: string) =>
     getNextPageParam: (last) => last.nextCursor,
     staleTime: 10_000,
     refetchInterval: (query) => (isDenied(query.state.error) ? false : 30_000),
+  })
+
+/**
+ * One node's settings as the controller reads them to this account, with
+ * the revision they belong to: owners and admins any node, a member their
+ * own User-identity devices (others are not found). The event stream does
+ * not write it; it is read again when the revision changes.
+ */
+export const nodeSettingsQuery = (networkId: string, nodeId: string) =>
+  queryOptions({
+    queryKey: [...networkKey(networkId), "nodes", nodeId, "settings"],
+    queryFn: ({ signal }) =>
+      authed((token) =>
+        getNodeSettings(client, { networkId, nodeId }, { token, signal })
+      ),
+    staleTime: 10_000,
+    refetchInterval: pollUnlessLive(networkId, 30_000),
   })
 
 /** The transports this controller manages. */

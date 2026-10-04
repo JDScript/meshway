@@ -164,8 +164,7 @@ export function NodeTransport({
                   configuration.state.view.configuration.nodes[nodeId]
                     ?.listeners ?? {}
                 )
-              : configuration.state.kind === "member" &&
-                  configuration.state.settings
+              : configuration.state.kind === "member"
                 ? Object.keys(configuration.state.settings.listeners)
                 : null
           }
@@ -374,30 +373,29 @@ function ConfiguredListeners({
         <Skeleton className="h-12 w-full rounded-tile" />
       </Section>
     )
-  if (state.kind === "failed" || state.kind === "missing")
+  if (
+    state.kind === "failed" ||
+    state.kind === "missing" ||
+    state.kind === "unreadable"
+  )
     return (
       <Section title={m.nodes_listeners()} count={null}>
         <EmptyLine>
           {state.kind === "missing"
             ? m.nodes_listeners_missing()
-            : (failureText(state.error) ?? m.nodes_listeners_failed())}
+            : state.kind === "unreadable"
+              ? m.nodes_settings_unreadable()
+              : (failureText(state.error) ?? m.nodes_listeners_failed())}
         </EmptyLine>
       </Section>
     )
   if (state.kind === "member") {
-    const listeners = state.settings
-      ? Object.entries(state.settings.listeners).sort(([a], [b]) =>
-          a.localeCompare(b)
-        )
-      : null
+    const listeners = Object.entries(state.settings.listeners).sort(
+      ([a], [b]) => a.localeCompare(b)
+    )
     return (
-      <Section
-        title={m.nodes_listeners()}
-        count={listeners ? listeners.length : null}
-      >
-        {listeners === null ? (
-          <EmptyLine>{m.nodes_settings_member_unavailable()}</EmptyLine>
-        ) : listeners.length === 0 ? (
+      <Section title={m.nodes_listeners()} count={listeners.length}>
+        {listeners.length === 0 ? (
           <EmptyLine>{m.nodes_listeners_none()}</EmptyLine>
         ) : (
           <div className="flex flex-col gap-6">

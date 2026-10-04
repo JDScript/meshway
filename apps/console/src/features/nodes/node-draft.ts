@@ -22,19 +22,25 @@ import {
   isDenied,
   memberConfigurationQuery,
 } from "@/features/configuration/queries"
+import { ApiFailure, problemCode } from "@/lib/api"
 import { m } from "@/paraglide/messages.js"
+
+import { nodeSettingsQuery } from "./queries"
 
 /**
  * A node's settings as its workspace reads and edits them. Owners and
  * admins read the whole configuration and edit through the one draft (over
  * its base while it holds operations); a member has only their own nodes'
- * settings, from the event stream, read only.
+ * settings, read only: from the event stream once it has sent them, else
+ * the controller's read of the node's settings.
  */
 export type NodeConfiguration =
   | { kind: "loading" }
   | { kind: "failed"; error: unknown }
   /** Read but without this node (deleted, or not yet in this revision). */
   | { kind: "missing" }
+  /** A member's read of a node that is not one of their own User-identity devices. */
+  | { kind: "unreadable" }
   | {
       kind: "manager"
       /** What the draft's values are over. */
@@ -47,7 +53,7 @@ export type NodeConfiguration =
       editable: boolean
       notes: Note[]
     }
-  | { kind: "member"; settings: NodeSettingsView | null }
+  | { kind: "member"; settings: NodeSettingsView }
 
 export function useNodeConfiguration(
   networkId: string,
@@ -60,20 +66,29 @@ export function useNodeConfiguration(
     ...memberConfigurationQuery(networkId),
     enabled: denied,
   })
+  const streamed = member.data?.nodes
+  const fromStream =
+    streamed && Object.hasOwn(streamed, nodeId)
+      ? (streamed[nodeId] ?? null)
+      : null
+  const read = useQuery({
+    ...nodeSettingsQuery(networkId, nodeId),
+    enabled: denied && fromStream === null,
+  })
   const draft = useConfigurationDraft(networkId)
   const entry = draft.entry
   const { editOps } = draft
 
   const state: NodeConfiguration = useMemo(() => {
     if (denied) {
-      const nodes = member.data?.nodes
-      return {
-        kind: "member",
-        settings:
-          nodes && Object.hasOwn(nodes, nodeId)
-            ? (nodes[nodeId] ?? null)
-            : null,
-      }
+      if (fromStream) return { kind: "member", settings: fromStream }
+      if (read.data) return { kind: "member", settings: read.data.settings }
+      if (read.isError)
+        return read.error instanceof ApiFailure &&
+          problemCode(read.error.failure) === "not_found"
+          ? { kind: "unreadable" }
+          : { kind: "failed", error: read.error }
+      return { kind: "loading" }
     }
     const view = configuration.data
     if (!view)
@@ -117,7 +132,10 @@ export function useNodeConfiguration(
     }
   }, [
     denied,
-    member.data,
+    fromStream,
+    read.data,
+    read.isError,
+    read.error,
     nodeId,
     configuration.data,
     configuration.isError,

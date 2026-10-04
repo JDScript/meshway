@@ -111,7 +111,10 @@ its generated client only, and only what the controller delivers:
     full report the system (reported hostname against the configured one,
     OS, architecture, Agent version, routing profile), the configuration
     saved / applied / in progress against the current revision, and the
-    problems the node reports; the controller's location (or why it has
+    problems the node reports; the inventory's `desiredExecution` (the
+    target the controller wants it to run: revision, publication, digest),
+    never itself saved or applied, said against the report's saved and
+    applied (same target applied, only saved, another target, no report); the controller's location (or why it has
     none) and IP information.
   - settings: hostname, remark, enabled, exit, tags (a User identity given
     tags becomes a Tag identity; the last tag cannot be taken), Mesh
@@ -127,15 +130,20 @@ its generated client only, and only what the controller delivers:
     UUID and a provided certificate are kept unless written; recreating
     generates new ones). Trojan listeners and listeners with WebSocket
     response headers (shown by name only) are edited in the source.
-  - manage: the keys (revoking with `expectedGeneration`) and permanent
-    deletion where `canDelete`. With form edits in the draft, deletion
+  - manage: the keys with their creation times, each revoked (with
+    `expectedGeneration`) where `canRevokeControlKey` /
+    `canRevokeDataplaneKey`; a `version_conflict` reads the nodes again
+    and keeps the confirmation over the key read; and permanent deletion
+    where `canDelete`. With form edits in the draft, deletion
     joins it as `deleteNode` (reviewed with the rest, listed as permanent);
     with source edits it is refused; with no draft it is sent at once,
     against the revision read when it is asked (a `revision_conflict`
     reads it again and keeps the confirmation open).
   Without `actions.editConfiguration` the settings read only; a member's
-  come only from the event stream (`memberConfigurationQuery`), and until
-  they do the tabs say so.
+  come from the event stream (`memberConfigurationQuery`) once it has sent
+  them, else from `getNodeSettings` (`nodeSettingsQuery`, key
+  `[network, "nodes", id, "settings"]`, polled while the stream is not
+  live).
 - Adding a node (`/nodes/add`, for `actions.editConfiguration`): an
   enrolment key for a Tag-identity device: at least one tag among the
   configuration's `tagsOwners`, an optional hostname (one lowercase DNS

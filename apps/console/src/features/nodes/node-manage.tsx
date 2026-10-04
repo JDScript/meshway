@@ -48,9 +48,9 @@ import { nodesQuery } from "./queries"
 const shortKey = (hex: string) => `${hex.slice(0, 12)}…${hex.slice(-12)}`
 
 /**
- * The node's two keys (each revocable for good) and its permanent deletion.
- * Only those the controller lets delete the node (`canDelete`) see the
- * controls; the controller checks again.
+ * The node's two keys (each revocable for good where the controller offers
+ * it: `canRevokeControlKey`, `canRevokeDataplaneKey`) and its permanent
+ * deletion (`canDelete`); the controller checks again.
  */
 export function NodeManage({
   networkId,
@@ -68,14 +68,18 @@ export function NodeManage({
         node={node}
         purpose="control"
         bound={node.keys.control}
+        createdAt={node.controlKeyCreatedAt}
         revokedAt={node.controlKeyRevokedAt}
+        canRevoke={node.canRevokeControlKey}
       />
       <NodeKey
         networkId={networkId}
         node={node}
         purpose="dataplane"
         bound={node.keys.dataplane}
+        createdAt={node.dataplaneKeyCreatedAt}
         revokedAt={node.dataplaneKeyRevokedAt}
+        canRevoke={node.canRevokeDataplaneKey}
       />
       {node.canDelete ? (
         <Deletion networkId={networkId} node={node} onDeleted={onDeleted} />
@@ -89,13 +93,17 @@ function NodeKey({
   node,
   purpose,
   bound,
+  createdAt,
   revokedAt,
+  canRevoke,
 }: {
   networkId: string
   node: NodeInventoryView
   purpose: KeyPurpose
   bound: BoundNodeKey
+  createdAt: string
   revokedAt: string | null
+  canRevoke: boolean
 }) {
   const queryClient = useQueryClient()
   const [confirming, setConfirming] = useState(false)
@@ -119,11 +127,14 @@ function NodeKey({
       )
     },
     onError: (error) => {
-      setConfirming(false)
       toastFailureWith({
-        request_id_conflict: () => m.nodes_key_changed(),
+        version_conflict: () => m.nodes_key_changed(),
         permission_denied: () => m.nodes_manage_denied(),
       })(error)
+      // A newer key generation: the dialog stays, over the key read again.
+      const code =
+        error instanceof ApiFailure ? problemCode(error.failure) : null
+      if (code !== "version_conflict") setConfirming(false)
     },
     onSettled: () =>
       queryClient.invalidateQueries({
@@ -137,7 +148,7 @@ function NodeKey({
     <Section
       title={label}
       action={
-        node.canDelete && revokedAt === null ? (
+        canRevoke ? (
           <Button
             variant="ghost"
             size="sm"
@@ -157,6 +168,11 @@ function NodeKey({
         <Tile label={m.nodes_key_generation()}>
           <span className="tabular-nums">{bound.generation}</span>
         </Tile>
+        <div className="col-span-2">
+          <Tile label={m.nodes_key_created_at()}>
+            {dateTime(createdAt) ?? "—"}
+          </Tile>
+        </div>
         <div className="col-span-2">
           <Tile
             label={m.nodes_key_state()}

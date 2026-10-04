@@ -5,6 +5,7 @@ import type { NodeState, StateView } from "@meshway/control-client"
 import {
   candidateExpired,
   configurationFacts,
+  desiredAgainst,
   listenerRuntime,
   nodeLinks,
   nodePaths,
@@ -165,4 +166,31 @@ test("an endpoint past its expiry is expired", () => {
   }
   assert.equal(candidateExpired(candidate, Date.parse(T0)), false)
   assert.equal(candidateExpired(candidate, Date.parse(T1)), true)
+})
+
+test("the desired target against what the node reports", () => {
+  const target = ref(4)
+  const other = { ...ref(4), digest: "b".repeat(64) }
+  assert.equal(desiredAgainst(null, { applied: target }), "none")
+  assert.equal(desiredAgainst(target, null), "unreported")
+  assert.equal(
+    desiredAgainst(target, { saved: target, applied: target }),
+    "applied"
+  )
+  assert.equal(
+    desiredAgainst(target, { saved: target, applied: ref(3) }),
+    "saved"
+  )
+  // The same revision in another slice is another target.
+  assert.equal(
+    desiredAgainst(target, { saved: other, applied: other }),
+    "elsewhere"
+  )
+  assert.equal(desiredAgainst(target, {}), "elsewhere")
+  assert.equal(
+    desiredAgainst(target, {
+      applied: { ...target, executionPublication: INSTANCE },
+    }),
+    "elsewhere"
+  )
 })

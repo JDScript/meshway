@@ -290,6 +290,7 @@ function Overview({
         currentRevision={
           state.data?.configurationRevision ?? network?.currentRevision
         }
+        desired={node.desiredExecution}
         state={state}
         now={now}
       />

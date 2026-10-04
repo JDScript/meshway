@@ -279,7 +279,6 @@
   "nodes_settings_exit": "可作为出口",
   "nodes_settings_identity": "标签",
   "nodes_settings_identity_switch": "应用后这个设备改为标签身份，不再按用户和组授权",
-  "nodes_settings_member_unavailable": "这个节点的设置尚未通过实时连接送达",
   "nodes_settings_pools": "地址池：{pools}；留空表示不分配这一族地址",
   "nodes_settings_pools_none": "无",
   "nodes_settings_remark": "备注",
@@ -316,5 +315,16 @@
   "nodes_enrollment_node": "接入为 {name}",
   "nodes_enrollment_node_gone": "接入为节点 {id}（已删除，或不在这个账户可见的节点中）",
   "nodes_enrollment_more": "加载更多",
-  "nodes_enrollment_revoke_moot": "这个密钥已使用或已过期，没有撤销。"
+  "nodes_enrollment_revoke_moot": "这个密钥已使用或已过期，没有撤销。",
+  "nodes_key_created_at": "创建时间",
+  "nodes_execution": "执行目标",
+  "nodes_execution_revision": "配置版本",
+  "nodes_execution_publication": "发布",
+  "nodes_execution_digest": "摘要",
+  "nodes_execution_none": "控制面当前没有给这个节点的执行目标。",
+  "nodes_execution_unreported": "这是控制面希望节点执行的目标，不代表已保存或已应用；没有节点的完整报告可以对照。",
+  "nodes_execution_applied": "这是控制面希望节点执行的目标；节点报告已应用它。",
+  "nodes_execution_saved": "这是控制面希望节点执行的目标；节点报告已保存它，尚未报告应用。",
+  "nodes_execution_elsewhere": "这是控制面希望节点执行的目标；节点报告的已保存和已应用都不是它——节点尚未取得或尚未报告这个目标。",
+  "nodes_settings_unreadable": "这个账户只能读取自己用户身份设备的设置。"
 }

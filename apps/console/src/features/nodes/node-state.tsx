@@ -1,4 +1,6 @@
 import type {
+  ConfigurationRef,
+  ConfigurationState,
   DerivedNodeState,
   IpInfo,
   NodeStateView,
@@ -20,7 +22,14 @@ import {
   locationAbsentLabel,
   problemText,
 } from "./state-labels"
-import { configurationFacts, isPast, reportOf, stateOf } from "./state-model"
+import {
+  configurationFacts,
+  desiredAgainst,
+  isPast,
+  reportOf,
+  stateOf,
+  type DesiredMatch,
+} from "./state-model"
 
 function When({
   at,
@@ -54,6 +63,7 @@ export function NodeStateSections({
   nodeId,
   configuredHostname,
   currentRevision,
+  desired,
   state,
   now,
 }: {
@@ -61,27 +71,35 @@ export function NodeStateSections({
   configuredHostname: string
   /** The configuration's current revision, when known. */
   currentRevision: number | undefined
+  /** The controller's desired execution target for the node (the inventory's). */
+  desired: ConfigurationRef | null
   state: UseQueryResult<StateView>
   now: number
 }) {
   if (state.data === undefined)
     return (
-      <Section title={m.nodes_state()}>
-        {state.isError ? (
-          <EmptyLine>
-            {failureText(state.error) ?? m.nodes_state_failed()}
-          </EmptyLine>
-        ) : (
-          <Skeleton className="h-24 w-full rounded-tile" />
-        )}
-      </Section>
+      <>
+        <Section title={m.nodes_state()}>
+          {state.isError ? (
+            <EmptyLine>
+              {failureText(state.error) ?? m.nodes_state_failed()}
+            </EmptyLine>
+          ) : (
+            <Skeleton className="h-24 w-full rounded-tile" />
+          )}
+        </Section>
+        <Execution desired={desired} reported={null} />
+      </>
     )
   const view = stateOf(state.data, nodeId)
   if (!view)
     return (
-      <Section title={m.nodes_state()}>
-        <EmptyLine>{m.nodes_state_absent()}</EmptyLine>
-      </Section>
+      <>
+        <Section title={m.nodes_state()}>
+          <EmptyLine>{m.nodes_state_absent()}</EmptyLine>
+        </Section>
+        <Execution desired={desired} reported={null} />
+      </>
     )
   const report = reportOf(view)
   return (
@@ -89,6 +107,9 @@ export function NodeStateSections({
       <Section title={m.nodes_state()}>
         <Freshness view={view} now={now} />
       </Section>
+      {report.view === "full" ? null : (
+        <Execution desired={desired} reported={null} />
+      )}
       {report.view === "full" ? (
         <>
           <Section title={m.nodes_system()}>
@@ -123,6 +144,7 @@ export function NodeStateSections({
               </Tile>
             </div>
           </Section>
+          <Execution desired={desired} reported={report.report.configuration} />
           <ConfigurationSection
             facts={configurationFacts(
               report.report.configuration,
@@ -213,6 +235,80 @@ function Freshness({ view, now }: { view: NodeStateView; now: number }) {
         </Tile>
       </div>
     </div>
+  )
+}
+
+const desiredText: Record<DesiredMatch, () => string> = {
+  none: () => m.nodes_execution_none(),
+  unreported: () => m.nodes_execution_unreported(),
+  applied: () => m.nodes_execution_applied(),
+  saved: () => m.nodes_execution_saved(),
+  elsewhere: () => m.nodes_execution_elsewhere(),
+}
+
+/**
+ * What the controller wants the node to run now (its desired execution
+ * target), and how that compares with what the node reports: the target
+ * is never itself saved or applied.
+ */
+function Execution({
+  desired,
+  reported,
+}: {
+  desired: ConfigurationRef | null
+  /** The node's own report of its configuration; null without a full report. */
+  reported: ConfigurationState | null
+}) {
+  const match = desiredAgainst(desired, reported)
+  return (
+    <Section title={m.nodes_execution()}>
+      {desired ? (
+        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+          <Tile label={m.nodes_execution_revision()}>
+            <span className="font-mono">
+              {m.revision({ revision: desired.revision })}
+            </span>
+          </Tile>
+          <Tile
+            label={m.nodes_execution_publication()}
+            action={
+              <CopyButton
+                value={desired.executionPublication}
+                label={m.nodes_execution_publication()}
+              />
+            }
+          >
+            <span className="font-mono font-normal">
+              {desired.executionPublication.slice(0, 8)}
+            </span>
+          </Tile>
+          <div className="col-span-2">
+            <Tile
+              label={m.nodes_execution_digest()}
+              action={
+                <CopyButton
+                  value={desired.digest}
+                  label={m.nodes_execution_digest()}
+                />
+              }
+            >
+              <span className="font-mono font-normal">
+                {desired.digest.slice(0, 16)}…
+              </span>
+            </Tile>
+          </div>
+        </div>
+      ) : null}
+      <p
+        className={
+          match === "elsewhere"
+            ? "text-row text-warning"
+            : "text-row text-muted-foreground"
+        }
+      >
+        {desiredText[match]()}
+      </p>
+    </Section>
   )
 }
 

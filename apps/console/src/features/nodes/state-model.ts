@@ -2,6 +2,7 @@ import type {
   AggregatedLink,
   AggregatedPath,
   ApplyPhase,
+  ConfigurationRef,
   ConfigurationState,
   EndpointCandidate,
   Freshness,
@@ -89,6 +90,38 @@ export function configurationFacts(
       : null,
     current: currentRevision === undefined ? null : applied === currentRevision,
   }
+}
+
+/** The same execution target: one publication's slice for the node, at one revision. */
+const sameTarget = (a: ConfigurationRef, b: ConfigurationRef) =>
+  a.executionPublication === b.executionPublication &&
+  a.digest === b.digest &&
+  a.revision === b.revision
+
+/**
+ * The controller's desired execution target for the node against what the
+ * node reports saving and applying. The target is what it should run, not
+ * what it runs: only the node's own report says that.
+ * - `none`: the controller holds no target for the node;
+ * - `unreported`: no full report to compare with;
+ * - `applied` / `saved`: the node reports applying, or only saving, it;
+ * - `elsewhere`: what the node reports saved and applied is another target
+ *   (it has not taken this one yet, or not reported it).
+ */
+export type DesiredMatch =
+  "none" | "unreported" | "applied" | "saved" | "elsewhere"
+
+export function desiredAgainst(
+  desired: ConfigurationRef | null,
+  configuration: ConfigurationState | null
+): DesiredMatch {
+  if (desired === null) return "none"
+  if (configuration === null) return "unreported"
+  if (configuration.applied && sameTarget(configuration.applied, desired))
+    return "applied"
+  if (configuration.saved && sameTarget(configuration.saved, desired))
+    return "saved"
+  return "elsewhere"
 }
 
 /** A configured listener's runtime state and its sockets, as the full report has them. */
