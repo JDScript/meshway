@@ -25,7 +25,7 @@ Node 接入、成员移除、身份转换、配置提交及执行退出各自在
   → 继承／生成材料 → 规范化 → 检查差异落在 intent 允许范围内、CAS 和依赖
   → 保存完整版本、绑定、发布、必要记录与 current 指针
   → 事务返回 (结果, effects) → COMMIT → 执行器按序应用 effects
-  → 内存 journal／订阅／观察任务更新 → SSE 可见
+  → 内存 journal／观察任务更新 → 唤醒该网络的订阅 → 重投影 → SSE 可见
 ```
 
 每个用例是一个事务闭包，返回结果和这次提交应产生的 **effects**（配置通知、授权变化、进度变化、Node 退出、观察样本、资源变化、会话吊销）。执行器只在 COMMIT 成功后、在数据库 owner 线程上按序把 effects 交给内存 runtime；回滚一个 effect 都不产生，HTTP waiter 取消不能把提交和它的 effects 分开。effects 的数量不受 journal 保留容量限制：一次合法的批量删除可以超过 journal 能回放的条数，受影响的订阅者按 [SSE 合同](/v2/api/events)收到 reset。

@@ -3,6 +3,7 @@
 pub mod service;
 pub mod stream;
 pub(crate) mod validation;
+pub mod wake;
 
 use crate::error::Error;
 use crate::resources::GeoIp;
@@ -115,6 +116,8 @@ pub struct StateHub {
     reports: BTreeMap<(NetworkId, NodeId), StoredReport>,
     pub events: stream::EventLog,
     bytes: usize,
+    /// Every journaled change wakes the network's stream subscriptions.
+    pub wakeups: std::sync::Arc<wake::Wakeups>,
 }
 
 #[cfg(test)]
@@ -160,7 +163,18 @@ impl StateHub {
             reports: BTreeMap::new(),
             events: stream::EventLog::new(epoch),
             bytes: 0,
+            wakeups: std::sync::Arc::default(),
         })
+    }
+
+    /// The earliest moment a stored report of this network changes on its own:
+    /// a report, endpoint, link or path reaching its expiry.
+    pub fn next_expiration(&self, network: NetworkId) -> Option<DateTime<Utc>> {
+        self.reports
+            .iter()
+            .filter(|((candidate, _), _)| *candidate == network)
+            .filter_map(|(_, stored)| stored.next_expiration)
+            .min()
     }
 
     pub fn accept_report(
@@ -276,6 +290,7 @@ impl StateHub {
             }
         }
         self.events.append(change);
+        self.wakeups.bump(Some(network));
     }
 
     pub fn dataset_changed(&mut self) {

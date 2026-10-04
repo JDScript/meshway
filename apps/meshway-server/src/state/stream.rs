@@ -1,5 +1,6 @@
 //! A bounded commit journal and SSE transport. The provider performs each poll
-//! on the same serial owner as commits, reauthorizing before returning frames.
+//! on the same serial owner as commits, reauthorizing before returning frames;
+//! between polls a stream waits for a wake-up, never on a timer.
 use crate::effect::Effect;
 use crate::error::Error;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -89,12 +90,17 @@ pub enum StreamPoll {
     Closed,
 }
 pub type PollFuture<'a> = Pin<Box<dyn Future<Output = Result<StreamPoll, Error>> + Send + 'a>>;
+pub type WaitFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 /// One call produces at most one frame and must recheck current authorization,
 /// even when draining an initial snapshot or replay buffer. Pending must not
 /// extend any authentication, execution or observation lease.
 pub trait StreamSource: Send + Sync + 'static {
     fn poll<'a>(&'a self, subscription: &'a str) -> PollFuture<'a>;
+    /// Resolves when a Pending subscription should poll again: a committed
+    /// change it may see, or a deadline it computed. Returns at once for an
+    /// unknown subscription.
+    fn wait<'a>(&'a self, subscription: &'a str) -> WaitFuture<'a>;
     fn cancel(&self, subscription: &str);
 }
 struct StreamGuard {
@@ -126,7 +132,7 @@ pub fn response(
                     }
                     return Some((Ok(event), Some(guard)));
                 }
-                Ok(StreamPoll::Pending) => tokio::time::sleep(Duration::from_millis(250)).await,
+                Ok(StreamPoll::Pending) => guard.source.wait(&guard.subscription).await,
                 Ok(StreamPoll::Closed) | Err(_) => return None,
             }
         }

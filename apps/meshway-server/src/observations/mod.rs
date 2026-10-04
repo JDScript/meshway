@@ -637,6 +637,21 @@ impl Observations {
         stored.task.phase = ObservationPhase::Running;
         Ok(stored.task.clone())
     }
+    /// The earliest moment `expire` would change something.
+    pub fn next_expiration(&self) -> Option<DateTime<Utc>> {
+        self.tasks
+            .values()
+            .flat_map(|task| {
+                task.subscribers.values().flat_map(|s| {
+                    [
+                        s.terminal.is_none().then_some(s.expires_at),
+                        Some(s.expires_at + Duration::minutes(1)),
+                    ]
+                })
+            })
+            .flatten()
+            .min()
+    }
     pub fn expire(&mut self, now: DateTime<Utc>) {
         let affected: Vec<_> = self
             .tasks

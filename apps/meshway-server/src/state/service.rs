@@ -121,6 +121,10 @@ type ProviderEvent<P> = StreamEvent<
 struct Subscription<P: StateProvider> {
     identity: ReadIdentity,
     request_id: RequestId,
+    /// Wake-up channels and the earliest self-computed deadline for the next
+    /// projection; see `wake`.
+    listener: super::wake::Listener,
+    deadline: Option<DateTime<Utc>>,
     owner: Digest,
     authorization: Digest,
     last: ProviderView<P>,
@@ -150,6 +154,7 @@ impl crate::effect::EffectSink for Mutex<Runtime> {
         match effect {
             crate::effect::Effect::SessionRevoked { session_id } => {
                 runtime.observations.revoke_session(session_id);
+                runtime.hub.wakeups.bump(None);
             }
             journaled => runtime.hub.publish_committed(journaled),
         }
@@ -159,6 +164,7 @@ impl Runtime {
     pub(crate) fn close(&mut self) {
         self.closed = true;
         self.observations = Observations::default();
+        self.hub.wakeups.bump(None);
     }
     pub(crate) fn new() -> Result<Self, Error> {
         Ok(Self {
@@ -397,11 +403,14 @@ impl<P: StateProvider> StateService<P> {
                     return Err(Error::StateLimit);
                 }
                 let Runtime { hub, geoip, .. } = &mut *runtime;
+                let listener = hub.wakeups.listen(view.scope.network_id);
                 let state = hub.query(&view.scope, None, geoip, now)?;
                 let ready = random_id()?;
                 let mut sub = Subscription {
                     identity,
                     request_id,
+                    listener,
+                    deadline: None,
                     owner,
                     authorization,
                     last: view,
@@ -444,6 +453,8 @@ impl<P: StateProvider> StateService<P> {
                 };
                 // Remove-first ensures all failure paths discard pending old-scope
                 // frames. There is no send queue outside this guarded poll.
+                // Anything committed from here on resolves the next wait at once.
+                sub.listener.mark_seen();
                 if runtime.closed {
                     return closed::<P>(ClosedReason::ServerShutdown);
                 }
@@ -726,6 +737,12 @@ impl<P: StateProvider> StateService<P> {
                     sub.last = view;
                     sub.state = state;
                     if !changed {
+                        sub.deadline = next_deadline(
+                            &sub,
+                            runtime.hub.next_expiration(sub.last.scope.network_id),
+                            runtime.observations.next_expiration(),
+                            now,
+                        );
                         subscriptions.insert(id, sub);
                         return Ok(StreamPoll::Pending);
                     }
@@ -855,7 +872,69 @@ fn enqueue_at<P: StateProvider>(
     sub.cursor = next;
     Ok(())
 }
+/// When this subscription's view changes without any commit: a report, lease,
+/// endpoint or observation reaching its expiry, the scope or the subscription
+/// itself running out. Capped so authorization is rechecked at least every
+/// minute even on a silent network.
+fn next_deadline<P: StateProvider>(
+    sub: &Subscription<P>,
+    reports: Option<DateTime<Utc>>,
+    observations: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    let scope = &sub.last.scope;
+    let cap = now + Duration::seconds(60);
+    [
+        Some(scope.expires_at),
+        Some(sub.created_at + Duration::minutes(15)),
+        reports,
+        observations,
+        Some(cap),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(
+        scope
+            .current
+            .values()
+            .filter_map(|node| node.lease_expires_at),
+    )
+    .chain(
+        sub.state
+            .nodes
+            .values()
+            .filter_map(|node| node.report_expires_at),
+    )
+    .filter(|at| *at > now)
+    .min()
+}
+
 impl<P: StateProvider> StreamSource for StateService<P> {
+    fn wait<'a>(&'a self, subscription: &'a str) -> WaitFuture<'a> {
+        let pending = self.subscriptions.lock().ok().and_then(|subscriptions| {
+            subscriptions
+                .get(subscription)
+                .map(|sub| (sub.listener.clone(), sub.deadline))
+        });
+        Box::pin(async move {
+            let Some((mut listener, deadline)) = pending else {
+                return;
+            };
+            let sleep = async {
+                match deadline {
+                    Some(at) => {
+                        let remaining = (at - Utc::now()).to_std().unwrap_or_default();
+                        tokio::time::sleep(remaining).await;
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            tokio::select! {
+                _ = listener.changed() => {}
+                _ = sleep => {}
+            }
+        })
+    }
     fn poll<'a>(&'a self, subscription: &'a str) -> PollFuture<'a> {
         Box::pin(async move {
             match self.poll_frame(subscription.to_owned()).await {
