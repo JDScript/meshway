@@ -444,5 +444,21 @@
   "configuration_binding_listeners": "监听器的创建代际变化",
   "configuration_binding_ruleSets": "规则集所用的内容变化（Controller 固定的内容版本）",
   "configuration_binding_other": "Controller 保存在配置旁的绑定变化",
-  "configuration_routing_set_note": "规则集 {key}：{message}"
+  "configuration_routing_set_note": "规则集 {key}：{message}",
+  "configuration_preparation_address_pool_v4": "IPv4 地址池",
+  "configuration_preparation_address_pool_v6": "IPv6 地址池",
+  "configuration_preparation_address_v4": "IPv4 地址",
+  "configuration_preparation_address_v6": "IPv6 地址",
+  "configuration_preparation_identity_proof": "身份证明",
+  "configuration_preparation_rule_set_content": "规则集内容",
+  "configuration_preparation_uuid": "UUID",
+  "configuration_preparation_password": "密码",
+  "configuration_preparation_certificate": "证书",
+  "configuration_preparation_private_key": "私钥",
+  "configuration_preparation_certificate_validation": "证书校验",
+  "configuration_review_material": "监听器材料",
+  "configuration_review_will_generate": "应用时生成：{items}",
+  "configuration_review_requires": "待完成：{items}",
+  "configuration_review_material_note": "预览不含实际材料；应用时由控制面生成并重新校验。",
+  "configuration_review_listener": "监听器 {key}"
 }

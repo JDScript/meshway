@@ -1,8 +1,4 @@
-import type {
-  ConfigurationView,
-  NetworkSummary,
-  PreparationRequirement,
-} from "@meshway/control-client"
+import type { ConfigurationView, NetworkSummary } from "@meshway/control-client"
 import { useQuery } from "@tanstack/react-query"
 import { FileCodeIcon } from "lucide-react"
 import { useMemo, type ReactNode } from "react"
@@ -54,6 +50,7 @@ import {
   type FormPart,
   type FormValues,
 } from "@/lib/configuration/operations"
+import { requirementText } from "@/lib/configuration/preparation"
 import {
   referencedSets,
   renameSetReferences,
@@ -246,7 +243,7 @@ function notesFor(
     ...(checked?.issues ?? []),
     ...(checked?.requirements ?? []).map((requirement) => ({
       path: requirement.path,
-      message: requirementMessage(requirement),
+      message: requirementText(requirement),
     })),
   ].filter(
     (issue) =>
@@ -255,19 +252,6 @@ function notesFor(
       (form === "routing" && routingConcerns(issue.path))
   )
   return notesFrom(local, controller, current === null)
-}
-
-function requirementMessage(requirement: PreparationRequirement): string {
-  if (requirement.kind === "ruleSetContent")
-    return m.configuration_requirement_rule_set({
-      key: pointerSegments(requirement.path)?.[1] ?? requirement.path,
-    })
-  return m.configuration_requirement({
-    kind:
-      typeof requirement.kind === "string"
-        ? requirement.kind
-        : requirement.kind.material,
-  })
 }
 
 /** A rule set's content, or a node as a whole (the egress a node is assigned against its access). */

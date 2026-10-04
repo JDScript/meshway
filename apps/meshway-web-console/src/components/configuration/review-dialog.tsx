@@ -1,4 +1,7 @@
-import type { PreparedRuleSet } from "@meshway/control-client"
+import type {
+  PreparationRequirement,
+  PreparedRuleSet,
+} from "@meshway/control-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 
@@ -8,6 +11,11 @@ import { EmptyLine, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  listenerOf,
+  preparationLabel,
+  requirementText,
+} from "@/lib/configuration/preparation"
 import { m } from "@/paraglide/messages.js"
 import {
   closeRefusal,
@@ -46,6 +54,86 @@ function NodeIds({
             <span className="min-w-0 truncate font-mono text-meta text-muted-foreground">
               {id}
             </span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/**
+ * What the controller will prepare for the listeners being created: the
+ * material it generates on apply and what it still has to complete, by
+ * listener. The preview holds none of it.
+ */
+function ListenerMaterial({
+  willGenerate,
+  requirements,
+  nodes,
+}: {
+  willGenerate: readonly PreparationRequirement[]
+  requirements: readonly PreparationRequirement[]
+  nodes: Readonly<Record<string, { hostname: string }>> | undefined
+}) {
+  const listeners = new Map<
+    string,
+    { nodeId: string; key: string; generate: string[]; require: string[] }
+  >()
+  const add = (
+    items: readonly PreparationRequirement[],
+    into: "generate" | "require"
+  ) => {
+    for (const item of items) {
+      const at = listenerOf(item.path)
+      if (!at) continue
+      const id = `${at.nodeId}/${at.key}`
+      const entry = listeners.get(id) ?? { ...at, generate: [], require: [] }
+      const label = preparationLabel(item.kind)
+      if (!entry[into].includes(label)) entry[into].push(label)
+      listeners.set(id, entry)
+    }
+  }
+  add(willGenerate, "generate")
+  add(requirements, "require")
+  // Generating is itself a requirement; list only what generating does not cover.
+  for (const entry of listeners.values())
+    entry.require = entry.require.filter(
+      (label) => !entry.generate.includes(label)
+    )
+  return (
+    <ul className="flex flex-col gap-1">
+      {[...listeners.entries()].map(([id, entry]) => {
+        const hostname =
+          nodes && Object.hasOwn(nodes, entry.nodeId)
+            ? nodes[entry.nodeId]?.hostname
+            : undefined
+        return (
+          <li
+            key={id}
+            className="flex min-w-0 flex-col gap-0.5 rounded-tile bg-fill-subtle px-3 py-2"
+          >
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="text-row font-medium">
+                {m.configuration_review_listener({ key: entry.key })}
+              </span>
+              <span className="min-w-0 truncate text-meta text-muted-foreground">
+                {hostname ?? entry.nodeId}
+              </span>
+            </span>
+            {entry.generate.length > 0 ? (
+              <span className="text-meta text-muted-foreground">
+                {m.configuration_review_will_generate({
+                  items: entry.generate.join(" · "),
+                })}
+              </span>
+            ) : null}
+            {entry.require.length > 0 ? (
+              <span className="text-meta text-warning">
+                {m.configuration_review_requires({
+                  items: entry.require.join(" · "),
+                })}
+              </span>
+            ) : null}
           </li>
         )
       })}
@@ -111,6 +199,17 @@ function ReviewDialog({
   })
   const restore =
     review?.proposal.type === "restore" ? review.proposal.restoreFrom : null
+  const material = preview
+    ? new Set(
+        [
+          ...(preview.willGenerate ?? []),
+          ...(preview.requirements ?? []),
+        ].flatMap((item) => {
+          const at = listenerOf(item.path)
+          return at ? [`${at.nodeId}/${at.key}`] : []
+        })
+      ).size
+    : 0
   const nothing =
     preview !== undefined && preview.changeCount === 0 && !preview.sourceChanged
   const note = !preview
@@ -214,6 +313,18 @@ function ReviewDialog({
               <PreparedRuleSets sets={preview.preparedRuleSets} />
             </Section>
           ) : null}
+          {material > 0 ? (
+            <Section title={m.configuration_review_material()} count={material}>
+              <p className="text-row text-muted-foreground">
+                {m.configuration_review_material_note()}
+              </p>
+              <ListenerMaterial
+                willGenerate={preview.willGenerate ?? []}
+                requirements={preview.requirements ?? []}
+                nodes={preview.preview.nodes}
+              />
+            </Section>
+          ) : null}
           {preview.changes.length > 0 ? (
             <ChangeList
               changes={preview.changes}
@@ -261,12 +372,7 @@ function RefusalDialog({
           })),
           ...(params?.requirements ?? []).map((requirement) => ({
             path: requirement.path,
-            message: m.configuration_requirement({
-              kind:
-                typeof requirement.kind === "string"
-                  ? requirement.kind
-                  : requirement.kind.material,
-            }),
+            message: requirementText(requirement),
           })),
         ].map((item, index) => (
           <li

@@ -524,5 +524,21 @@
   "configuration_binding_listeners": "A listener's generation changes",
   "configuration_binding_ruleSets": "The content a rule set uses changes (the version the controller pins)",
   "configuration_binding_other": "A binding the controller keeps beside the configuration changes",
-  "configuration_routing_set_note": "Rule set {key}: {message}"
+  "configuration_routing_set_note": "Rule set {key}: {message}",
+  "configuration_preparation_address_pool_v4": "an IPv4 address pool",
+  "configuration_preparation_address_pool_v6": "an IPv6 address pool",
+  "configuration_preparation_address_v4": "an IPv4 address",
+  "configuration_preparation_address_v6": "an IPv6 address",
+  "configuration_preparation_identity_proof": "an identity proof",
+  "configuration_preparation_rule_set_content": "rule set content",
+  "configuration_preparation_uuid": "UUID",
+  "configuration_preparation_password": "password",
+  "configuration_preparation_certificate": "certificate",
+  "configuration_preparation_private_key": "private key",
+  "configuration_preparation_certificate_validation": "certificate validation",
+  "configuration_review_material": "Listener material",
+  "configuration_review_will_generate": "Generated on apply: {items}",
+  "configuration_review_requires": "Still to complete: {items}",
+  "configuration_review_material_note": "The preview holds no material; the controller generates it on apply and checks it again.",
+  "configuration_review_listener": "Listener {key}"
 }

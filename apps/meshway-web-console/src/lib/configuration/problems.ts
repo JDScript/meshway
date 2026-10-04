@@ -1,7 +1,4 @@
-import type {
-  ConfigurationIssue,
-  PreparationRequirement,
-} from "@meshway/control-client"
+import type { ConfigurationIssue } from "@meshway/control-client"
 
 import { m } from "@/paraglide/messages.js"
 
@@ -15,6 +12,7 @@ import {
   type JsoncNode,
   type Span,
 } from "./jsonc"
+import { requirementText } from "./preparation"
 import { checkSchema, type SchemaIssue } from "./schema-check"
 
 // What is wrong with the draft's text, placed on it: JSONC syntax (found
@@ -73,11 +71,6 @@ function schemaMessage(issue: SchemaIssue): string {
       return m.configuration_schema_pattern()
   }
 }
-
-const requirementKind = (requirement: PreparationRequirement) =>
-  typeof requirement.kind === "string"
-    ? requirement.kind
-    : requirement.kind.material
 
 /** Where a pointer's problem goes: on its value, the deepest value holding it, or the start. */
 function placeAt(tree: JsoncNode | null, text: string, pointer: string): Span {
@@ -153,9 +146,7 @@ export function readSource(
           origin: "controller" as const,
           path: requirement.path,
           ...placeAt(tree, text, requirement.path),
-          message: m.configuration_requirement({
-            kind: requirementKind(requirement),
-          }),
+          message: requirementText(requirement),
         })),
       ]
     : []

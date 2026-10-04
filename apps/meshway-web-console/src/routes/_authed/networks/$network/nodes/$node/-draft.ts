@@ -23,7 +23,7 @@ import {
 import { within } from "@/lib/configuration/form-problems"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { nodeProblems } from "@/lib/configuration/node-problems"
-import { m } from "@/paraglide/messages.js"
+import { requirementText } from "@/lib/configuration/preparation"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
 /**
@@ -110,12 +110,7 @@ export function useNodeConfiguration(
         ...(checked?.issues ?? []),
         ...(checked?.requirements ?? []).map((requirement) => ({
           path: requirement.path,
-          message: m.configuration_requirement({
-            kind:
-              typeof requirement.kind === "string"
-                ? requirement.kind
-                : requirement.kind.material,
-          }),
+          message: requirementText(requirement),
         })),
       ].filter((issue) => within(issue.path, prefix)),
       current === null
