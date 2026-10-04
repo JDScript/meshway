@@ -127,3 +127,40 @@ test("the topology default restates the dialers the view shows", () => {
   assert.equal(valueOf(ops, VIEW, "topologyDefault"), "deny")
   assert.deepEqual(withValue(ops, VIEW, "topologyDefault", "allow"), [])
 })
+
+test("routing edits collapse into one replaceRouting; back to base drops it", () => {
+  const first = withValue([], VIEW, "routing", {
+    mesh: [{ src: ["*"], dst: ["tag:web"], via: [] }],
+  })
+  const second = withValue(first, VIEW, "routing", {
+    mesh: [
+      { src: ["*"], dst: ["tag:web"], via: [] },
+      { src: ["*"], dst: ["tag:db"], via: [] },
+    ],
+  })
+  assert.equal(second.length, 1)
+  assert.equal(second[0]?.type, "replaceRouting")
+  assert.equal(valueOf(second, VIEW, "routing").mesh?.length, 2)
+  assert.deepEqual(
+    withValue(second, VIEW, "routing", { mesh: [], egress: { rules: [] } }),
+    []
+  )
+})
+
+test("rule sets go before the routing that names them", () => {
+  const ops = withValue(
+    withValue([], VIEW, "routing", {
+      egress: {
+        rules: [{ match: { ruleSets: ["o"] }, action: { type: "direct" } }],
+      },
+    }),
+    VIEW,
+    "ruleSets",
+    { o: { type: "inline", ipCIDR: ["10.0.0.0/8"] } }
+  )
+  assert.deepEqual(
+    ops.map((op) => op.type),
+    ["replaceRuleSets", "replaceRouting"]
+  )
+  assert.equal(edits(ops, "ruleSets"), true)
+})

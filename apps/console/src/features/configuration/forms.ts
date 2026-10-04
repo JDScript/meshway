@@ -7,7 +7,14 @@ import type { FormPart } from "./operations.ts"
 
 export type FormSection = Extract<
   SectionKey,
-  "access" | "topology" | "groups" | "tagsOwners" | "dns" | "addressPools"
+  | "access"
+  | "topology"
+  | "routing"
+  | "groups"
+  | "tagsOwners"
+  | "dns"
+  | "addressPools"
+  | "ruleSets"
 >
 
 export const FORM_PARTS_OF: Record<FormSection, readonly FormPart[]> = {
@@ -18,6 +25,8 @@ export const FORM_PARTS_OF: Record<FormSection, readonly FormPart[]> = {
   tagsOwners: ["tagsOwners"],
   dns: ["dns"],
   addressPools: ["addressPools"],
+  routing: ["routing"],
+  ruleSets: ["ruleSets"],
 }
 
 export const isFormSection = (section: string): section is FormSection =>

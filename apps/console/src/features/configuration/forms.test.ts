@@ -10,6 +10,7 @@ test("diagnostics go to the form that shows their field", () => {
   assert.equal(formViewOf("/groups/group:dev"), "groups")
   assert.equal(formViewOf("/nodes/abc/addresses/ipv4"), "addressPools")
   assert.equal(formViewOf("/nodes/abc/hostname"), null)
-  assert.equal(formViewOf("/routing/mesh/0"), null)
+  assert.equal(formViewOf("/routing/mesh/0"), "routing")
+  assert.equal(formViewOf("/ruleSets/office"), "ruleSets")
   assert.equal(formViewOf(""), null)
 })

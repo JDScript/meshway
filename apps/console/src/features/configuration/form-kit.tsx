@@ -341,6 +341,16 @@ const LOCAL: Record<LocalCode, () => string> = {
   server: () => m.configuration_local_server(),
   default: () => m.configuration_local_default(),
   cidr: () => m.configuration_local_cidr(),
+  node: () => m.configuration_local_node(),
+  match: () => m.configuration_local_match(),
+  destination: () => m.configuration_local_destination(),
+  exits: () => m.configuration_local_exits(),
+  unmanagedRule: () => m.configuration_local_unmanaged_rule(),
+  country: () => m.configuration_local_country(),
+  profileName: () => m.configuration_local_profile_name(),
+  url: () => m.configuration_local_url(),
+  duration: () => m.configuration_local_duration(),
+  key: () => m.configuration_local_key(),
 }
 
 export type Note = {

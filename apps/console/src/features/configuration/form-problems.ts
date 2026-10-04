@@ -12,6 +12,8 @@ import {
   type FormPart,
   type FormValues,
 } from "./operations.ts"
+import { routingProblems, type RoutingCode } from "./routing.ts"
+import { ruleSetProblems, type RuleSetCode } from "./rule-sets.ts"
 import {
   cidrFamily,
   isDomain,
@@ -40,6 +42,8 @@ export type LocalCode =
   | "server"
   | "default"
   | "cidr"
+  | RoutingCode
+  | RuleSetCode
 
 export type LocalProblem = { path: string; code: LocalCode }
 
@@ -134,6 +138,8 @@ const PROBLEMS: {
         out.push({ path: at(["addressPools", family]), code: "cidr" })
     return out
   },
+  routing: routingProblems,
+  ruleSets: ruleSetProblems,
 }
 
 export function partProblems<P extends FormPart>(

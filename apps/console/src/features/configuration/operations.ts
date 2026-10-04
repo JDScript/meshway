@@ -7,9 +7,13 @@ import type {
   DialerSetUpdate,
   DialerSetView,
   DnsConfiguration,
+  RoutingConfiguration,
   TopologyDefault,
   TopologyRule,
 } from "@meshway/control-client"
+
+import { sameRouting, writtenRouting } from "./routing.ts"
+import { sameRuleSets, writtenRuleSet, type RuleSetMap } from "./rule-sets.ts"
 
 // What the section forms put in the draft: one typed operation per edited
 // part, holding that part's final value (`replaceAccess` with every rule,
@@ -29,6 +33,8 @@ export type FormValues = {
   tagsOwners: GroupMap
   dns: DnsConfiguration
   addressPools: AddressPools
+  routing: RoutingConfiguration
+  ruleSets: RuleSetMap
 }
 
 export type FormPart = keyof FormValues
@@ -218,6 +224,26 @@ const PARTS: { [P in FormPart]: Part<FormValues[P]> } = {
     base: (view) => view.addressPools,
     same: (a, b) => sameList(a.ipv4, b.ipv4) && sameList(a.ipv6, b.ipv6),
   },
+  routing: {
+    operation: (routing) => ({
+      type: "replaceRouting",
+      routing: writtenRouting(routing),
+    }),
+    read: (op) => (op.type === "replaceRouting" ? op.routing : undefined),
+    base: (view) => view.routing,
+    same: sameRouting,
+  },
+  ruleSets: {
+    operation: (ruleSets) => ({
+      type: "replaceRuleSets",
+      ruleSets: Object.fromEntries(
+        Object.entries(ruleSets).map(([key, set]) => [key, writtenRuleSet(set)])
+      ),
+    }),
+    read: (op) => (op.type === "replaceRuleSets" ? op.ruleSets : undefined),
+    base: (view) => view.ruleSets,
+    same: sameRuleSets,
+  },
 }
 
 /** The parts, in the order their operations are sent. */
@@ -229,6 +255,8 @@ export const FORM_PARTS: readonly FormPart[] = [
   "tagsOwners",
   "dns",
   "addressPools",
+  "ruleSets",
+  "routing",
 ]
 
 const partOf = (op: ConfigurationOperation): FormPart | null =>
@@ -285,4 +313,6 @@ export const sectionOfPart: Record<FormPart, string> = {
   tagsOwners: "tagsOwners",
   dns: "dns",
   addressPools: "addressPools",
+  routing: "routing",
+  ruleSets: "ruleSets",
 }
