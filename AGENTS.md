@@ -8,7 +8,7 @@
 - Rust 包根目录和 Cargo 包名统一 `meshway-xxx`。现行 HTTP 根仍是 `/api/v1`／`/agent-api/v1`，目录整理不自行改 wire。
 - 新 Node 尚未实现。设计为 `meshwayd`＋`meshway` 本机 CLI，up/down/ping/status 与网络选择，业务配置在 Server 管理；支持无 TUN userspace 与系统 TUN，启动时加载随发行包整体安装的插件。具体 ABI／入口按文档定版后实施。
 - 旧 Node、Apple、运行库与实验退出活跃树，保存在冻结 Git 分支及必要证据中。新实现只按明确白名单复用，不恢复长期 legacy 目录或旧 HTTP 兼容轨。Meshing 项目不是本项目依据。
-- 冻结参考：`archive/pre-consolidation-main-007e9deb`、`archive/node-runtime-8da83a7f`、`archive/apple-007e9deb`。未完成配置补全与旧 review WIP 保留在其原工作树，不当成已交付功能合入。
+- 冻结参考：`archive/pre-consolidation-main-007e9deb`、`archive/node-runtime-8da83a7f`、`archive/apple-007e9deb`。未完成配置补全与旧 review WIP 保存在 `archive/wip-*-20261003` 分支，归档提交不代表通过验收；私有证据保存在 `.meshway/worktree-archives/20261003/`。
 
 ## 信息来源与文档
 
