@@ -27,6 +27,8 @@ use sha2::{Digest as _, Sha256};
 
 pub const MAX_DATASET_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_RULE_ENTRIES: usize = 100_000;
+/// Remote rule sets one configuration may need to download in a single edit.
+pub const MAX_REMOTE_RULE_SETS: usize = 32;
 
 pub fn content_digest(bytes: &[u8]) -> Digest {
     let text: String = Sha256::digest(bytes)

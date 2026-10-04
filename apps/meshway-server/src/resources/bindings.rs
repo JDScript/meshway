@@ -74,16 +74,17 @@ pub(crate) fn inherit_checks(
         current.revision,
         &current.bindings.rule_sets,
     )?;
-    for (key, artifact) in &prepared.bindings.rule_sets {
-        if previous.get(key) == Some(artifact)
-            && current
-                .document
-                .configuration
-                .rule_sets
-                .get(key)
-                .zip(prepared.document.configuration.rule_sets.get(key))
-                .is_some_and(|(a, b)| same_source(a, b))
-        {
+    // A check record follows its rule set into the next version whenever the
+    // definition and the bound content are unchanged, including a set that has
+    // no content yet because every check so far failed.
+    for (key, definition) in &prepared.document.configuration.rule_sets {
+        let unchanged_source = current
+            .document
+            .configuration
+            .rule_sets
+            .get(key)
+            .is_some_and(|before| same_source(before, definition));
+        if unchanged_source && previous.get(key) == prepared.bindings.rule_sets.get(key) {
             store::resources::checks::inherit(
                 tx,
                 current.network_id,

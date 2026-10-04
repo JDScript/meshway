@@ -46,8 +46,11 @@ impl Preparation {
             })
             .map(|(key, definition)| (key.clone(), definition.clone()))
             .collect();
-        if definitions.len() > 32 {
-            return Err(Error::DependencyUnavailable);
+        if definitions.len() > crate::resources::MAX_REMOTE_RULE_SETS {
+            return Err(budget_exceeded(
+                "maxSets",
+                crate::resources::MAX_REMOTE_RULE_SETS,
+            ));
         }
         Ok(Self {
             base,
@@ -111,7 +114,10 @@ impl Preparation {
                     .len(),
             );
             if bytes > crate::resources::MAX_DATASET_BYTES {
-                return Err(Error::DependencyUnavailable);
+                return Err(budget_exceeded(
+                    "maxBytes",
+                    crate::resources::MAX_DATASET_BYTES,
+                ));
             }
             self.contents.insert(key.clone(), data);
         }
@@ -218,4 +224,16 @@ impl Preparation {
         }
         Ok(())
     }
+}
+
+/// Limits on what one edit may pull in are a property of the configuration,
+/// reported like any other rule-set diagnostic, not a server outage.
+fn budget_exceeded(limit: &'static str, value: usize) -> Error {
+    Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(vec![
+        meshway_configuration::ConfigurationIssue::new(
+            "/ruleSets",
+            meshway_configuration::IssueCode::RuleSetBudget,
+        )
+        .with(limit, value),
+    ]))
 }
