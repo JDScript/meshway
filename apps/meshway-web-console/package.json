@@ -9,10 +9,10 @@
     "preview": "vite preview --port 3001 --strictPort",
     "i18n": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy localStorage preferredLanguage baseLocale --emit-ts-declarations --silent",
     "typecheck": "pnpm run i18n && tsr generate && tsc -b",
-    "lint": "eslint --max-warnings=0 .",
+    "lint": "eslint --max-warnings=0 --cache --cache-location node_modules/.cache/eslint/ .",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "format": "prettier --write \"**/*.{ts,tsx,css,json}\"",
-    "format:check": "prettier --check \"**/*.{ts,tsx,css,json}\"",
+    "format:check": "prettier --check --cache --cache-location node_modules/.cache/prettier \"**/*.{ts,tsx,css,json}\"",
     "test": "pnpm run i18n && vitest run"
   },
   "dependencies": {
