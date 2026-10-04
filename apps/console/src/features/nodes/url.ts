@@ -10,9 +10,18 @@ export const zNodesSearch = z.object({
   q: z.string().max(120).optional().catch(undefined),
 })
 
-export const NODE_TABS = ["overview", "transport", "latency", "manage"] as const
+export const NODE_TABS = [
+  "overview",
+  "settings",
+  "transport",
+  "latency",
+  "manage",
+] as const
 export type NodeTab = (typeof NODE_TABS)[number]
 
 export const zNodeSearch = z.object({
-  tab: z.enum(["transport", "latency", "manage"]).optional().catch(undefined),
+  tab: z
+    .enum(["settings", "transport", "latency", "manage"])
+    .optional()
+    .catch(undefined),
 })

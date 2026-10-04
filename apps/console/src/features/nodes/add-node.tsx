@@ -77,7 +77,7 @@ type Body = Omit<CreateEnrollmentKeyRequest, "requestId">
 
 const fieldLabelClass = cn("leading-snug font-medium", FIELD_SIZE.default.label)
 
-const listenerProblemText: Record<ListenerProblem, () => string> = {
+export const listenerProblemText: Record<ListenerProblem, () => string> = {
   port: () => m.nodes_listener_port_invalid(),
   host: () => m.nodes_listener_host_invalid(),
   public_port: () => m.nodes_listener_public_port_invalid(),
@@ -403,14 +403,24 @@ export function AddNode({
   )
 }
 
-function ListenerInputs({
+/** A listener's reachability inputs: public address, port, TLS name, and under "advanced" the bind address and a public port of its own. */
+export function ListenerInputs({
   fields,
   invalid,
   onChange,
+  idPrefix = "add-listener",
+  generated = true,
+  children,
 }: {
   fields: ListenerFields
   invalid: ReadonlySet<ListenerField>
   onChange: (fields: ListenerFields) => void
+  /** Prefixes the fields' IDs, unique on the page. */
+  idPrefix?: string
+  /** Says the rest is generated (a new node's listener). */
+  generated?: boolean
+  /** More inputs under "advanced". */
+  children?: ReactNode
 }) {
   const set = (key: ListenerField, value: string) =>
     onChange({ ...fields, [key]: value })
@@ -429,7 +439,7 @@ function ListenerInputs({
     <div className="swap-in flex flex-col gap-4">
       <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-x-2 gap-y-4">
         <TextField
-          id="add-listener-host"
+          id={`${idPrefix}-host`}
           name="public-host"
           label={m.nodes_listener_host()}
           autoComplete="off"
@@ -443,7 +453,7 @@ function ListenerInputs({
           onChange={(event) => set("host", event.target.value)}
         />
         <TextField
-          id="add-listener-port"
+          id={`${idPrefix}-port`}
           name="port"
           label={m.nodes_listener_port()}
           inputMode="numeric"
@@ -458,7 +468,7 @@ function ListenerInputs({
         {vless ? (
           <div className="col-span-2">
             <TextField
-              id="add-listener-server-name"
+              id={`${idPrefix}-server-name`}
               name="server-name"
               label={m.nodes_listener_server_name()}
               autoComplete="off"
@@ -504,7 +514,7 @@ function ListenerInputs({
         <CollapsibleContent>
           <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-x-2 pt-3">
             <TextField
-              id="add-listener-listen"
+              id={`${idPrefix}-listen`}
               name="listen"
               label={m.nodes_listener_listen()}
               autoComplete="off"
@@ -518,7 +528,7 @@ function ListenerInputs({
               onChange={(event) => set("listen", event.target.value)}
             />
             <TextField
-              id="add-listener-public-port"
+              id={`${idPrefix}-public-port`}
               name="public-port"
               label={m.nodes_listener_public_port()}
               inputMode="numeric"
@@ -532,11 +542,14 @@ function ListenerInputs({
               onChange={(event) => set("publicPort", event.target.value.trim())}
             />
           </div>
+          {children}
         </CollapsibleContent>
       </Collapsible>
-      <p className="text-meta text-muted-foreground">
-        {m.nodes_listener_generated()}
-      </p>
+      {generated ? (
+        <p className="text-meta text-muted-foreground">
+          {m.nodes_listener_generated()}
+        </p>
+      ) : null}
     </div>
   )
 }

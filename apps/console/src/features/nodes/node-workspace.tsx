@@ -1,18 +1,26 @@
 import type {
+  NetworkSummary,
   NodeInventoryResponse,
   NodeInventoryView,
+  StateView,
 } from "@meshway/control-client"
 import type { UseQueryResult } from "@tanstack/react-query"
+import { useNavigate } from "@tanstack/react-router"
 import type { ReactNode } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
-import { EmptyLine, Section } from "@/components/chrome/section"
+import { DraftMark } from "@/components/chrome/draft-mark"
+import { Section } from "@/components/chrome/section"
 import { SegmentedTabs } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
+import { useConfigurationDraft } from "@/features/configuration/draft"
+import { operationsOf } from "@/features/configuration/draft-state"
+import { pointerOf } from "@/features/configuration/jsonc"
+import { editsNode, isDeleted } from "@/features/configuration/node-operations"
 import { LatencyTab } from "@/features/history/latency-tab"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { useNow } from "@/hooks/use-now"
@@ -20,21 +28,26 @@ import { dateTime, relativeTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
 import { identityText } from "./labels"
-import { NodeListeners } from "./node-listeners"
 import { NodeManage } from "./node-manage"
+import { NodeSettings } from "./node-settings"
+import { NodeStateSections } from "./node-state"
+import { NodeTransport } from "./node-transport"
 import { NODE_TABS, type NodeTab } from "./url"
 
 const isTab = (value: unknown): value is NodeTab =>
   NODE_TABS.some((tab) => tab === value)
 
 /**
- * One node in full: what the controller registered for it, the listeners
- * its configuration holds, and its keys and deletion. This controller
- * reports no runtime state, and the workspace says so rather than guess.
+ * One node in full: what the controller registered for it and its runtime
+ * State; its settings and listeners (edited into the configuration draft)
+ * with what the node reports about its sockets, links and paths; its keys
+ * and deletion.
  */
 export function NodeWorkspace({
   networkId,
+  network,
   nodeId,
+  state,
   tab,
   nodes,
   onClose,
@@ -42,7 +55,9 @@ export function NodeWorkspace({
   onDeleted,
 }: {
   networkId: string
+  network: NetworkSummary | null
   nodeId: string
+  state: UseQueryResult<StateView>
   tab: NodeTab
   nodes: UseQueryResult<NodeInventoryResponse>
   onClose: () => void
@@ -71,6 +86,9 @@ export function NodeWorkspace({
     <Body
       key={node.id}
       networkId={networkId}
+      network={network}
+      state={state}
+      nodes={nodes.data}
       node={node}
       tab={tab}
       onClose={onClose}
@@ -97,6 +115,9 @@ function Pane({ value, children }: { value: NodeTab; children: ReactNode }) {
 
 function Body({
   networkId,
+  network,
+  state,
+  nodes,
   node,
   tab,
   onClose,
@@ -104,12 +125,24 @@ function Body({
   onDeleted,
 }: {
   networkId: string
+  network: NetworkSummary | null
+  state: UseQueryResult<StateView>
+  nodes: NodeInventoryResponse | undefined
   node: NodeInventoryView
   tab: NodeTab
   onClose: () => void
   onTab: (tab: NodeTab) => void
   onDeleted: () => void
 }) {
+  const navigate = useNavigate()
+  const ops = operationsOf(useConfigurationDraft(networkId).entry)
+  const deleting = isDeleted(ops, node.id)
+  const openSource = () =>
+    void navigate({
+      to: "/networks/$network/configuration/$view",
+      params: { network: networkId, view: "source" },
+      search: { at: pointerOf(["nodes", node.id]) },
+    })
   return (
     <div className="swap-in flex min-h-0 flex-1 flex-col">
       <SurfaceHeader
@@ -117,7 +150,10 @@ function Body({
         className="px-6 pt-6 pb-4"
         title={(className) => (
           <h2 id={surfaceTitleId("nodes", "workspace")} className={className}>
-            {node.hostname}
+            <span className="inline-flex items-center gap-2">
+              {node.hostname}
+              {editsNode(ops, node.id) ? <DraftMark /> : null}
+            </span>
           </h2>
         )}
         action={<CloseButton onClick={onClose} />}
@@ -129,6 +165,11 @@ function Body({
             <span className="min-w-0 truncate">
               {identityText(node.identity)}
             </span>
+            {deleting ? (
+              <span className="shrink-0 text-destructive">
+                {m.nodes_delete_pending()}
+              </span>
+            ) : null}
           </div>
         }
       />
@@ -145,6 +186,7 @@ function Body({
             value={tab}
             options={[
               { value: "overview", label: m.nodes_tab_overview() },
+              { value: "settings", label: m.nodes_tab_settings() },
               { value: "transport", label: m.nodes_tab_transport() },
               { value: "latency", label: m.history_tab() },
               { value: "manage", label: m.nodes_tab_manage() },
@@ -152,10 +194,24 @@ function Body({
           />
         </div>
         <Pane value="overview">
-          <Overview node={node} />
+          <Overview node={node} network={network} state={state} />
+        </Pane>
+        <Pane value="settings">
+          <NodeSettings
+            networkId={networkId}
+            nodeId={node.id}
+            network={network}
+            onEditSource={openSource}
+          />
         </Pane>
         <Pane value="transport">
-          <NodeListeners networkId={networkId} nodeId={node.id} />
+          <NodeTransport
+            networkId={networkId}
+            nodeId={node.id}
+            network={network}
+            state={state}
+            nodes={nodes}
+          />
         </Pane>
         <Pane value="latency">
           <LatencyTab networkId={networkId} nodeId={node.id} />
@@ -168,8 +224,16 @@ function Body({
   )
 }
 
-function Overview({ node }: { node: NodeInventoryView }) {
-  const now = useNow(30_000)
+function Overview({
+  node,
+  network,
+  state,
+}: {
+  node: NodeInventoryView
+  network: NetworkSummary | null
+  state: UseQueryResult<StateView>
+}) {
+  const now = useNow(10_000)
   return (
     <div className="flex flex-col gap-8">
       <Section title={m.nodes_facts()}>
@@ -220,9 +284,15 @@ function Overview({ node }: { node: NodeInventoryView }) {
           </div>
         </div>
       </Section>
-      <Section title={m.nodes_state()}>
-        <EmptyLine>{m.nodes_state_unreported()}</EmptyLine>
-      </Section>
+      <NodeStateSections
+        nodeId={node.id}
+        configuredHostname={node.hostname}
+        currentRevision={
+          state.data?.configurationRevision ?? network?.currentRevision
+        }
+        state={state}
+        now={now}
+      />
     </div>
   )
 }

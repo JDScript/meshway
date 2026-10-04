@@ -7,7 +7,7 @@ import {
   type NodeInventoryView,
 } from "@meshway/control-client"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { BanIcon, Trash2Icon } from "lucide-react"
+import { BanIcon, Trash2Icon, Undo2Icon } from "lucide-react"
 import { useRef, useState } from "react"
 import { toast } from "sonner"
 
@@ -16,8 +16,20 @@ import { ConfirmDialog } from "@/components/chrome/glass-dialog"
 import { DangerRow, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
-import { draftEntry } from "@/features/configuration/draft"
-import { isDirty } from "@/features/configuration/draft-state"
+import {
+  draftEntry,
+  useConfigurationDraft,
+} from "@/features/configuration/draft"
+import {
+  holdsDocument,
+  holdsOperations,
+  isDirty,
+  operationsOf,
+} from "@/features/configuration/draft-state"
+import {
+  isDeleted,
+  withDeleted,
+} from "@/features/configuration/node-operations"
 import {
   configurationQuery,
   configurationReads,
@@ -271,9 +283,30 @@ function Deletion({
     },
   })
 
+  const draft = useConfigurationDraft(networkId)
+  const deleting = isDeleted(operationsOf(draft.entry), node.id)
+
+  /**
+   * With form edits in the draft, the deletion joins them (`deleteNode`,
+   * applied and reviewed with the rest); source edits refuse it; with no
+   * draft it is sent now.
+   */
   const ask = () => {
-    if (draftHeld(networkId)) {
+    const entry = draftEntry(networkId)
+    if (holdsDocument(entry)) {
       toast.error(m.nodes_delete_draft())
+      return
+    }
+    if (holdsOperations(entry)) {
+      const current = queryClient.getQueryData(
+        configurationQuery(networkId).queryKey
+      )
+      if (!current) return
+      draft.editOps(
+        { revision: current.revision, configuration: current.configuration },
+        (ops) => withDeleted(ops, node.id, true)
+      )
+      toast.success(m.nodes_delete_joined({ name: node.hostname }))
       return
     }
     void queryClient.invalidateQueries({
@@ -287,19 +320,47 @@ function Deletion({
 
   return (
     <Section title={m.nodes_deletion()}>
-      <DangerRow
-        fact={m.nodes_delete_fact()}
-        action={
-          <Button
-            variant="destructive"
-            className="h-9 rounded-full px-4"
-            onClick={ask}
-          >
-            <Trash2Icon />
-            {m.nodes_delete()}
-          </Button>
-        }
-      />
+      {deleting ? (
+        <DangerRow
+          fact={m.nodes_delete_in_draft()}
+          action={
+            <Button
+              variant="secondary"
+              className="h-9 rounded-full px-4"
+              onClick={() => {
+                const current = queryClient.getQueryData(
+                  configurationQuery(networkId).queryKey
+                )
+                if (!current) return
+                draft.editOps(
+                  {
+                    revision: current.revision,
+                    configuration: current.configuration,
+                  },
+                  (ops) => withDeleted(ops, node.id, false)
+                )
+              }}
+            >
+              <Undo2Icon />
+              {m.nodes_delete_undo()}
+            </Button>
+          }
+        />
+      ) : (
+        <DangerRow
+          fact={m.nodes_delete_fact()}
+          action={
+            <Button
+              variant="destructive"
+              className="h-9 rounded-full px-4"
+              onClick={ask}
+            >
+              <Trash2Icon />
+              {m.nodes_delete()}
+            </Button>
+          }
+        />
+      )}
       <ConfirmDialog
         open={confirming}
         onOpenChange={(open) => {

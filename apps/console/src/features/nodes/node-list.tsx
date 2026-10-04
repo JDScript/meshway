@@ -1,8 +1,9 @@
-import type { NodeInventoryResponse } from "@meshway/control-client"
+import type { NodeInventoryResponse, StateView } from "@meshway/control-client"
 import type { UseQueryResult } from "@tanstack/react-query"
-import { PlusIcon, SearchIcon, TagIcon, UserIcon } from "lucide-react"
+import { PlusIcon, SearchIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
+import { DraftMark } from "@/components/chrome/draft-mark"
 import {
   ListNote,
   ListPlaceholders,
@@ -11,17 +12,25 @@ import {
   useListKeys,
 } from "@/components/chrome/list"
 import { PanelAction, PanelHeader } from "@/components/chrome/panel-header"
+import { StatusDot } from "@/components/chrome/status-dot"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group"
+import { useConfigurationDraft } from "@/features/configuration/draft"
+import { operationsOf } from "@/features/configuration/draft-state"
+import { editsNode, isDeleted } from "@/features/configuration/node-operations"
 import { surfaceTitleId } from "@/features/shell/page-frame"
+import { useNow } from "@/hooks/use-now"
+import { relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { identityText } from "./labels"
 import { keyRevoked, shownNodes } from "./model"
+import { freshnessLabel } from "./state-labels"
+import { fullReport, reportTime, stateOf, vitalityOf } from "./state-model"
 
 /** Typing settles this long before it is written to the address. */
 const SEARCH_SETTLE_MS = 150
@@ -94,11 +103,15 @@ function SearchField({
 
 /**
  * The nodes page's index: the nodes this account may see, by hostname,
- * with their identity, address and what stops them (disabled, a revoked
- * key). The search lives in the URL; choosing a row opens its workspace.
+ * with their identity, address, what stops them (disabled, a revoked
+ * key) and their runtime report: lit while the controller holds a current
+ * one, with when it arrived; else its freshness. The search lives in the
+ * URL; choosing a row opens its workspace.
  */
 export function NodeList({
+  networkId,
   nodes,
+  state,
   q,
   openId,
   canAdd,
@@ -106,7 +119,9 @@ export function NodeList({
   onOpen,
   onAdd,
 }: {
+  networkId: string
   nodes: UseQueryResult<NodeInventoryResponse>
+  state: StateView | undefined
   q: string
   openId: string | null
   canAdd: boolean
@@ -117,6 +132,8 @@ export function NodeList({
   const all = nodes.data?.items
   const rows = useMemo(() => shownNodes(all ?? [], q), [all, q])
   const unread = all === undefined
+  const now = useNow(15_000)
+  const ops = operationsOf(useConfigurationDraft(networkId).entry)
   const { ref: list, onKeyDown } = useListKeys({
     ids: rows.map((node) => node.id),
     openId,
@@ -172,7 +189,16 @@ export function NodeList({
         ) : null}
         {rows.map((node) => {
           const stopped = !node.enabled || keyRevoked(node)
-          const Glyph = node.identity.type === "tag" ? TagIcon : UserIcon
+          const view = stateOf(state, node.id)
+          const report = fullReport(view)
+          const at = reportTime(view)
+          const deleting = isDeleted(ops, node.id)
+          const fact =
+            view === undefined
+              ? undefined
+              : view.freshness === "current" && at !== null
+                ? (relativeTime(at, now) ?? freshnessLabel.current())
+                : freshnessLabel[view.freshness]()
           return (
             <ListRow
               key={node.id}
@@ -180,17 +206,25 @@ export function NodeList({
               current={node.id === openId}
               onClick={() => onOpen(node.id)}
               lead={
-                <Glyph
-                  aria-hidden
-                  className={cn("size-4", stopped && "text-muted-foreground")}
-                />
+                vitalityOf(view?.freshness) === "live" ? (
+                  <StatusDot color="var(--vitality-live)" shape="live" />
+                ) : (
+                  <StatusDot color="var(--vitality-quiet)" shape="hollow" />
+                )
               }
               title={
-                <span
-                  className={cn("truncate", stopped && "text-muted-foreground")}
-                >
-                  {node.hostname}
-                </span>
+                <>
+                  <span
+                    className={cn(
+                      "truncate",
+                      (stopped || deleting) && "text-muted-foreground",
+                      deleting && "line-through"
+                    )}
+                  >
+                    {node.hostname}
+                  </span>
+                  {editsNode(ops, node.id) ? <DraftMark /> : null}
+                </>
               }
               subtitle={
                 <>
@@ -199,15 +233,18 @@ export function NodeList({
                   </span>
                   <span className="min-w-0 truncate">
                     {identityText(node.identity)}
+                    {report
+                      ? ` · ${report.system.os} ${report.system.agentVersion}`
+                      : ""}
                   </span>
                 </>
               }
               trail={
                 keyRevoked(node)
                   ? m.nodes_key_revoked()
-                  : node.enabled
-                    ? undefined
-                    : m.nodes_disabled()
+                  : !node.enabled
+                    ? m.nodes_disabled()
+                    : fact
               }
             />
           )
