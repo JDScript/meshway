@@ -9,6 +9,7 @@ import {
   SparklesIcon,
   WaypointsIcon,
 } from "lucide-react"
+import { type ReactNode } from "react"
 
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import {
@@ -18,6 +19,8 @@ import {
 } from "@/components/configuration/chips"
 import {
   refusedAt,
+  RemarkInput,
+  RemoveButton,
   type Names,
   type Note,
 } from "@/components/configuration/form-kit"
@@ -32,6 +35,8 @@ import {
 } from "@/lib/configuration/routing"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
+
+import { MoveButtons } from "./ordered"
 
 // The values the routing and rule-set forms pick: concrete nodes (via
 // nodes, exits), destinations (domain suffixes, prefixes, rule sets),
@@ -281,4 +286,63 @@ export function ActionField({
       ) : null}
     </span>
   )
+}
+
+export const replaceAt = <T,>(
+  items: readonly T[],
+  index: number,
+  next: T
+): T[] => items.map((item, at) => (at === index ? next : item))
+
+export function Hint({ children }: { children: ReactNode }) {
+  return <p className="text-meta text-muted-foreground">{children}</p>
+}
+
+/** A rule's end: its remark, moving it, removing it. */
+export function RowEnd({
+  remark,
+  editable,
+  index,
+  count,
+  label,
+  onRemark,
+  onMove,
+  onRemove,
+}: {
+  remark: string
+  editable: boolean
+  index: number
+  count: number
+  label: string
+  onRemark: (remark: string) => void
+  onMove: (delta: -1 | 1) => void
+  onRemove: () => void
+}) {
+  return (
+    <>
+      <RemarkInput value={remark} editable={editable} onChange={onRemark} />
+      {editable ? (
+        <>
+          <MoveButtons
+            index={index}
+            count={count}
+            label={label}
+            onMove={onMove}
+          />
+          <RemoveButton
+            label={m.configuration_rule_remove({ index: index + 1 })}
+            onRemove={onRemove}
+          />
+        </>
+      ) : null}
+    </>
+  )
+}
+
+export type Common = {
+  editable: boolean
+  names: Names
+  notes: readonly Note[]
+  exits: ReadonlySet<string>
+  ruleSets: readonly string[]
 }

@@ -32,7 +32,7 @@ import { LatencyTab } from "./-latency/latency-tab"
 import { NodeManage } from "./-manage"
 import { NodeSettings } from "./-settings"
 import { NodeStateSections } from "./-state"
-import { NodeTransport } from "./-transport"
+import { NodeTransport } from "./-transport/transport-tab"
 
 const isTab = (value: unknown): value is NodeTab =>
   NODE_TABS.some((tab) => tab === value)

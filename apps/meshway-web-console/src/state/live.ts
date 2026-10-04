@@ -6,7 +6,7 @@ import { createStore } from "zustand/vanilla"
  * or after a drop, `since` that moment), live (`since` its sync was ready)
  * or stopped for good (the account cannot read the network). Times are the
  * console's clock, in milliseconds. Written by the stream alone
- * (`features/live/stream.ts`); no entry while none runs.
+ * (`api/live/stream.ts`); no entry while none runs.
  */
 export type Connection =
   | { phase: "connecting"; since: number; dropped: boolean }

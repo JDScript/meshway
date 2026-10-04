@@ -28,8 +28,8 @@ import {
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
-import { presetLabel } from "../-labels"
-import { ListenerInputs, listenerProblemText } from "../add/-add-node"
+import { presetLabel } from "../../-labels"
+import { ListenerInputs, listenerProblemText } from "../../-listener-inputs"
 
 const draftProblemText: Record<
   Exclude<DraftProblem, ListenerProblem>,

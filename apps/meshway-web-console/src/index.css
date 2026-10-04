@@ -9,7 +9,7 @@
  * Meshway's tokens beyond shadcn's. Surfaces float over the globe; anything
  * set close inside one follows its corner (inner radius = outer − inset).
  * Geometry (edges, panel sizes) is not here: it is shared with the globe and
- * lives in features/shell/layout.ts, which publishes it as CSS variables.
+ * lives in components/surface/layout.ts, which publishes it as CSS variables.
  */
 @theme static {
   /* Page panels and popovers over the globe. */
@@ -104,7 +104,7 @@
 /*
  * Meshway palette: cool neutrals; one signal colour carries live state,
  * focus and the primary accent. The globe reads every --globe-* / --link-* token
- * at runtime (features/globe/colors.ts).
+ * at runtime (globe/colors.ts).
  */
 /* How far a scrolled body's top edge fades (see .scroll-edge). */
 @property --scroll-edge-fade {

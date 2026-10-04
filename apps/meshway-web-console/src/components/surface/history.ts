@@ -31,7 +31,7 @@ declare module "@tanstack/react-router" {
  *   left (`pageBase`): moving to another page replaces, and leaving the
  *   pages goes straight back to that overview.
  *
- * Pages build their own typed moves from these (see `features/settings/navigation.ts`).
+ * Pages build their own typed moves from these (see the settings route's `-navigation.ts`).
  */
 export function useSurfaceHistory(networkId: string) {
   const router = useRouter()

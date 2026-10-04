@@ -1,0 +1,491 @@
+import type {
+  AutoProfile,
+  ProfileAssignment,
+  RouteAction,
+  RoutingConfiguration,
+  RoutingProfile,
+} from "@meshway/control-client"
+import { ArrowRightIcon, LockIcon, LockOpenIcon } from "lucide-react"
+import { useId } from "react"
+
+import { SwitchRow } from "@/components/chrome/form"
+import { Section } from "@/components/chrome/section"
+import { ChipField, ChipSetField } from "@/components/configuration/chips"
+import {
+  AddButton,
+  NoneLine,
+  Notes,
+  notesWithin,
+  refusedAt,
+  RemoveButton,
+  RuleRow,
+  selectorChips,
+  type Names,
+  type Note,
+} from "@/components/configuration/form-kit"
+import { Button } from "@/components/ui/button"
+import { pointerOf } from "@/lib/configuration/jsonc"
+import { without } from "@/lib/configuration/keyed"
+import {
+  moved,
+  profileChoices,
+  renameProfile,
+  type ProfileChoice,
+} from "@/lib/configuration/routing"
+import { cn } from "@/lib/utils"
+import { m } from "@/paraglide/messages.js"
+
+import { AddKey, KeyInput, type KeyRule } from "./keyed-form"
+import { MoveButtons, moveKeys, OrderedRules, useRowKeys } from "./ordered"
+import {
+  ActionField,
+  countryChips,
+  Hint,
+  profileChips,
+  profileLabel,
+  replaceAt,
+  type Common,
+} from "./route-kit"
+import { EgressRules } from "./routing-egress"
+
+const profileKey = (): KeyRule => ({
+  prefix: "",
+  placeholder: m.configuration_routing_profile_name_placeholder(),
+})
+
+/** The configuration's profiles: each its ordered rules and its fallback; the built-ins beside them. */
+export function Profiles({
+  routing,
+  onChange,
+  ...common
+}: Common & {
+  routing: RoutingConfiguration
+  onChange: (routing: RoutingConfiguration) => void
+}) {
+  const { editable, names, notes, exits } = common
+  const egress = routing.egress ?? {}
+  const profiles = egress.profiles ?? {}
+  const entries = Object.entries(profiles)
+  const setProfiles = (next: Record<string, RoutingProfile>) =>
+    onChange({ ...routing, egress: { ...egress, profiles: next } })
+  const builtins = profileChoices(routing, [...exits], true).filter(
+    (choice) => choice.kind !== "custom"
+  )
+
+  return (
+    <Section title={m.configuration_routing_profiles()} count={entries.length}>
+      <Hint>{m.configuration_routing_profiles_hint()}</Hint>
+      <div className="flex flex-wrap items-center gap-1.5 rounded-tile bg-fill-subtle px-3.5 py-2.5">
+        <span className="pr-1 text-meta text-muted-foreground">
+          {m.configuration_routing_builtin()}
+        </span>
+        {builtins.map((choice) => (
+          <ChipField
+            key={choice.value}
+            value={choice.value}
+            kind={profileChips(builtins, names)}
+            label={profileLabel(choice.value, names)}
+            editable={false}
+            onChange={() => undefined}
+          />
+        ))}
+        {exits.size === 0 ? (
+          <span className="text-meta text-muted-foreground">
+            {m.configuration_routing_no_exits()}
+          </span>
+        ) : null}
+      </div>
+      {entries.length === 0 ? (
+        <NoneLine>{m.configuration_routing_profiles_none()}</NoneLine>
+      ) : null}
+      <ul
+        aria-label={m.configuration_routing_profiles()}
+        className="flex flex-col gap-3"
+      >
+        {entries.map(([key, profile], index) => {
+          const path = ["routing", "egress", "profiles", key]
+          const own = [
+            ...notes.filter((note) => note.path === pointerOf(path)),
+            ...notesWithin(notes, pointerOf([...path, "fallback"])),
+          ]
+          return (
+            // A profile is its place: renaming keeps it.
+            <li
+              key={index}
+              className="group/rule flex flex-col gap-3 rounded-surface border border-divider p-3"
+            >
+              <div className="flex min-h-8 items-center gap-2">
+                <KeyInput
+                  map={profiles}
+                  value={key}
+                  rule={profileKey()}
+                  label={m.configuration_routing_profile_name()}
+                  editable={editable}
+                  invalid={refusedAt(notes, pointerOf(path))}
+                  onRename={(next) =>
+                    onChange(renameProfile(routing, key, next))
+                  }
+                  className="w-56 min-w-0 text-row"
+                />
+                <span className="flex-1" />
+                {editable ? (
+                  <RemoveButton
+                    label={m.configuration_key_remove({ name: key })}
+                    onRemove={() => setProfiles(without(profiles, key))}
+                  />
+                ) : null}
+              </div>
+              <EgressRules
+                {...common}
+                path={[...path, "rules"]}
+                rules={profile.rules ?? []}
+                end={
+                  <>
+                    <span className="shrink-0">
+                      {m.configuration_routing_fallback()}
+                    </span>
+                    <ActionField
+                      action={profile.fallback}
+                      path={[...path, "fallback"]}
+                      fallback
+                      editable={editable}
+                      names={names}
+                      exits={exits}
+                      notes={notes}
+                      onChange={(fallback: RouteAction) =>
+                        setProfiles({
+                          ...profiles,
+                          [key]: { ...profile, fallback },
+                        })
+                      }
+                    />
+                  </>
+                }
+                onChange={(rules) =>
+                  setProfiles({ ...profiles, [key]: { ...profile, rules } })
+                }
+              />
+              <Notes notes={own} className="px-1.5" />
+            </li>
+          )
+        })}
+      </ul>
+      {editable ? (
+        <AddKey
+          map={profiles}
+          rule={profileKey()}
+          label={m.configuration_routing_profile_new()}
+          addLabel={m.configuration_key_add()}
+          onAdd={(key) =>
+            setProfiles({
+              ...profiles,
+              [key]: { rules: [], fallback: { type: "unmanaged" } },
+            })
+          }
+        />
+      ) : null}
+    </Section>
+  )
+}
+
+/** The automatic profile: countries and regions to profiles, in order, and the profile when the region is not known. */
+export function Auto({
+  auto,
+  choices,
+  editable,
+  names,
+  notes,
+  onChange,
+}: {
+  auto: AutoProfile | null
+  /** What it may choose: not itself. */
+  choices: readonly ProfileChoice[]
+  editable: boolean
+  names: Names
+  notes: readonly Note[]
+  onChange: (auto: AutoProfile | null) => void
+}) {
+  const id = useId()
+  const rows = useRowKeys(auto?.rules.length ?? 0)
+  const profiles = profileChips(choices, names)
+  const countries = countryChips()
+  const path = ["routing", "egress", "auto"]
+  const own = notes.filter(
+    (note) =>
+      note.path === pointerOf(path) ||
+      note.path === pointerOf([...path, "rules"])
+  )
+
+  return (
+    <Section title={m.configuration_routing_auto()}>
+      <Hint>{m.configuration_routing_auto_hint()}</Hint>
+      <SwitchRow
+        id={`${id}-auto`}
+        label={m.configuration_routing_auto_enabled()}
+        checked={auto !== null}
+        disabled={!editable}
+        onCheckedChange={(on) =>
+          onChange(on ? { rules: [], fallback: "mesh" } : null)
+        }
+      />
+      {auto ? (
+        <>
+          <OrderedRules
+            label={m.configuration_routing_auto()}
+            end={
+              <>
+                <span className="shrink-0">
+                  {m.configuration_routing_auto_fallback()}
+                </span>
+                <ChipField
+                  value={auto.fallback}
+                  kind={profiles}
+                  label={m.configuration_routing_auto_fallback()}
+                  editable={editable}
+                  invalid={refusedAt(notes, pointerOf(path))}
+                  onChange={(fallback) => onChange({ ...auto, fallback })}
+                />
+              </>
+            }
+            items={auto.rules.map((rule, index) => {
+              const label = m.configuration_rule_label({ index: index + 1 })
+              const onMove = (delta: -1 | 1) => {
+                rows.moved(index, delta)
+                onChange({ ...auto, rules: moved(auto.rules, index, delta) })
+              }
+              const update = (next: typeof rule) =>
+                onChange({ ...auto, rules: replaceAt(auto.rules, index, next) })
+              return {
+                key: rows.key(index),
+                node: (
+                  <div
+                    onKeyDown={
+                      editable
+                        ? moveKeys(index, auto.rules.length, onMove)
+                        : undefined
+                    }
+                  >
+                    <RuleRow
+                      label={label}
+                      notes={[]}
+                      end={
+                        editable ? (
+                          <>
+                            <MoveButtons
+                              index={index}
+                              count={auto.rules.length}
+                              label={label}
+                              onMove={onMove}
+                            />
+                            <RemoveButton
+                              label={m.configuration_rule_remove({
+                                index: index + 1,
+                              })}
+                              onRemove={() => {
+                                rows.removed(index)
+                                onChange({
+                                  ...auto,
+                                  rules: auto.rules.filter(
+                                    (_, at) => at !== index
+                                  ),
+                                })
+                              }}
+                            />
+                          </>
+                        ) : null
+                      }
+                    >
+                      <ChipSetField
+                        values={rule.countries}
+                        kind={countries}
+                        label={m.configuration_routing_countries()}
+                        addLabel={m.configuration_routing_countries_add()}
+                        editable={editable}
+                        onChange={(next) =>
+                          update({ ...rule, countries: next })
+                        }
+                      />
+                      <ArrowRightIcon
+                        role="img"
+                        aria-label={m.configuration_routing_to()}
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
+                      <ChipField
+                        value={rule.profile}
+                        kind={profiles}
+                        label={m.configuration_routing_profile()}
+                        editable={editable}
+                        onChange={(profile) => update({ ...rule, profile })}
+                      />
+                    </RuleRow>
+                  </div>
+                ),
+              }
+            })}
+            add={
+              editable ? (
+                <AddButton
+                  label={m.configuration_routing_auto_add()}
+                  onAdd={() =>
+                    onChange({
+                      ...auto,
+                      rules: [
+                        ...auto.rules,
+                        { countries: [], profile: "mesh" },
+                      ],
+                    })
+                  }
+                />
+              ) : undefined
+            }
+          />
+          <Notes notes={own} className="px-1.5" />
+        </>
+      ) : null}
+    </Section>
+  )
+}
+
+/** Who may use which profiles: the allowed sets add up; overlapping assignments must agree on the default and the lock. */
+export function Assignments({
+  assignments,
+  choices,
+  editable,
+  names,
+  notes,
+  onChange,
+}: {
+  assignments: readonly ProfileAssignment[]
+  choices: readonly ProfileChoice[]
+  editable: boolean
+  names: Names
+  notes: readonly Note[]
+  onChange: (assignments: ProfileAssignment[]) => void
+}) {
+  const targets = selectorChips(names, false)
+  const profiles = profileChips(choices, names)
+  const update = (index: number, next: ProfileAssignment) =>
+    onChange(replaceAt(assignments, index, next))
+
+  return (
+    <Section
+      title={m.configuration_routing_assignments()}
+      count={assignments.length}
+    >
+      <Hint>{m.configuration_routing_assignments_hint()}</Hint>
+      {assignments.length === 0 ? (
+        <NoneLine>{m.configuration_routing_assignments_none()}</NoneLine>
+      ) : null}
+      <ul
+        aria-label={m.configuration_routing_assignments()}
+        className="flex flex-col gap-2"
+      >
+        {assignments.map((assignment, index) => {
+          const path = pointerOf(["routing", "egress", "assignments", index])
+          const locked = assignment.locked ?? false
+          const LockGlyph = locked ? LockIcon : LockOpenIcon
+          return (
+            // Assignments have no IDs: a row is its position.
+            <li key={index}>
+              <RuleRow
+                label={m.configuration_routing_assignment_label({
+                  index: index + 1,
+                })}
+                notes={notesWithin(notes, path)}
+                end={
+                  <>
+                    {editable ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-pressed={locked}
+                        onClick={() =>
+                          update(index, { ...assignment, locked: !locked })
+                        }
+                        className={cn(
+                          "h-7 rounded-full px-2.5 text-meta",
+                          locked ? "text-foreground" : "text-muted-foreground"
+                        )}
+                      >
+                        <LockGlyph />
+                        {locked
+                          ? m.configuration_routing_locked()
+                          : m.configuration_routing_unlocked()}
+                      </Button>
+                    ) : (
+                      <span className="inline-flex h-7 items-center gap-1.5 px-2.5 text-meta text-muted-foreground">
+                        <LockGlyph className="size-3.5" />
+                        {locked
+                          ? m.configuration_routing_locked()
+                          : m.configuration_routing_unlocked()}
+                      </span>
+                    )}
+                    {editable ? (
+                      <RemoveButton
+                        label={m.configuration_routing_assignment_remove({
+                          index: index + 1,
+                        })}
+                        onRemove={() =>
+                          onChange(assignments.filter((_, at) => at !== index))
+                        }
+                      />
+                    ) : null}
+                  </>
+                }
+              >
+                <ChipSetField
+                  values={assignment.target}
+                  kind={targets}
+                  label={m.configuration_routing_target()}
+                  addLabel={m.configuration_routing_target_add()}
+                  editable={editable}
+                  invalid={refusedAt(notes, `${path}/target`)}
+                  onChange={(target) =>
+                    update(index, { ...assignment, target })
+                  }
+                />
+                <span className="pl-1 text-meta text-muted-foreground">
+                  {m.configuration_routing_allowed()}
+                </span>
+                <ChipSetField
+                  values={assignment.allowed}
+                  kind={profiles}
+                  label={m.configuration_routing_allowed_label()}
+                  addLabel={m.configuration_routing_allowed_add()}
+                  editable={editable}
+                  onChange={(allowed) =>
+                    update(index, { ...assignment, allowed })
+                  }
+                />
+                <span className="pl-1 text-meta text-muted-foreground">
+                  {m.configuration_routing_default()}
+                </span>
+                <ChipField
+                  value={assignment.default}
+                  kind={profiles}
+                  label={m.configuration_routing_default_label()}
+                  editable={editable}
+                  onChange={(value) =>
+                    update(index, { ...assignment, default: value })
+                  }
+                />
+              </RuleRow>
+            </li>
+          )
+        })}
+      </ul>
+      {editable ? (
+        <AddButton
+          label={m.configuration_routing_assignment_add()}
+          onAdd={() =>
+            onChange([
+              ...assignments,
+              { target: [], allowed: ["mesh"], default: "mesh" },
+            ])
+          }
+        />
+      ) : null}
+    </Section>
+  )
+}

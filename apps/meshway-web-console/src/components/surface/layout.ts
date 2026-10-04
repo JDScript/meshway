@@ -48,18 +48,6 @@ export const SHEET_EXIT_OVERSHOOT = 2
 export const COMMIT_BOTTOM = 16
 export const COMMIT_SHEET_INSET = 6
 
-/**
- * Popups opened inside a workspace's body keep this far from its edges
- * (see `shell/popup-boundary.tsx`); at the bottom, clear of the commit bar
- * floating there (on phones it sits closer, so this is the larger case).
- */
-export const WORKSPACE_POPUP_CLEARANCE = {
-  top: GAP,
-  right: GAP,
-  bottom: COMMIT_BOTTOM + BAR_HEIGHT + GAP,
-  left: GAP,
-}
-
 /** Room an editor keeps free at the bottom of its workspace for the commit bar floating there. */
 const COMMIT_SPACE = BAR_HEIGHT + 2 * COMMIT_BOTTOM
 

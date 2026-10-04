@@ -13,7 +13,7 @@ import { useCallback } from "react"
 import { m } from "@/paraglide/messages.js"
 
 // The pages of a network, the one list the dock, the network switcher and
-// the shell read. A page's own surfaces live in `features/<page>/page.tsx`.
+// the shell read. Each page's route draws its own surfaces.
 // Only pages with operations behind them are here (docs/decisions.md).
 
 export const PAGES = {
