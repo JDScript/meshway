@@ -76,24 +76,18 @@ function sectionFact(view: ConfigurationView, section: SectionKey): string {
 
 /** The configuration page's index: the source and history for those who edit, then the sections. */
 export function ConfigurationPanel({
-  active,
   networkId,
   network,
   openView,
   onOpen,
 }: {
-  /** The page is open: read what it shows. */
-  active: boolean
   networkId: string
   /** null until read. */
   network: NetworkSummary | null
   openView: ConfigurationViewId | null
   onOpen: (view: ConfigurationViewId) => void
 }) {
-  const configuration = useQuery({
-    ...configurationQuery(networkId),
-    enabled: active,
-  })
+  const configuration = useQuery(configurationQuery(networkId))
   const draft = useConfigurationDraft(networkId)
   const editable = network?.actions.editConfiguration ?? false
   // Source edits mark the source; form edits, the sections they change.

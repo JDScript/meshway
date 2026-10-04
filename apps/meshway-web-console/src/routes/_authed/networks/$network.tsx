@@ -39,20 +39,21 @@ export const Route = createFileRoute("/_authed/networks/$network")({
   ),
 })
 
-/** One shell and one event stream for every page of the network, so changing pages only moves panels. */
+/** One shell and one event stream for every page of the network; each page's route draws its own surfaces. */
 function NetworkLayout() {
   const { network: networkId } = Route.useParams()
   useNetworkStream(networkId)
   const network = useQuery(networkQuery(networkId))
   // Removed from the network, or the network is gone, since it was opened.
   if (isNotFound(network.error)) return <NetworkNotFound />
+  // The page's surfaces first: the chrome sits above them.
   return (
     <>
+      <Outlet />
       <NetworkShell
         networkId={networkId}
         network={network.data?.network ?? null}
       />
-      <Outlet />
     </>
   )
 }

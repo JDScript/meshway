@@ -29,49 +29,46 @@ export function MembersPage({
 }) {
   const navigate = useNavigate()
   const route = useMembersRoute()
-  const current = route.current
   const nav = useMemberNavigation(networkId)
   const allowed = network?.actions.manageMembers ?? false
   const session = useQuery(sessionQuery())
   const now = useNow(30_000)
   const members = useInfiniteQuery({
     ...membersQuery(networkId),
-    enabled: route.current && allowed,
+    enabled: allowed,
   })
   const links = useInfiniteQuery({
     ...joinLinksQuery(networkId),
-    enabled: route.current && allowed,
+    enabled: allowed,
   })
 
   useEffect(() => {
-    if (current && network && !allowed)
+    if (network && !allowed)
       void navigate({
         to: "/networks/$network/overview",
         params: { network: networkId },
         replace: true,
       })
-  }, [current, network, allowed, navigate, networkId])
+  }, [network, allowed, navigate, networkId])
 
   useReadFailureToast(
     "members",
-    route.current && members.isError && !members.isFetchNextPageError,
+    members.isError && !members.isFetchNextPageError,
     failureText(members.error) ?? m.members_failed()
   )
   useReadFailureToast(
     "join-links",
-    route.current &&
-      route.view === "links" &&
-      links.isError &&
-      !links.isFetchNextPageError,
+    route.view === "links" && links.isError && !links.isFetchNextPageError,
     failureText(links.error) ?? m.members_links_failed()
   )
 
   const viewerId = session.data?.user.id ?? null
+  // Until the network is read, and once it is not offered.
+  if (!allowed) return null
   return (
     <PageFrame
       networkId={networkId}
       page="members"
-      current={route.current && allowed}
       panel={
         <MemberList
           networkId={networkId}

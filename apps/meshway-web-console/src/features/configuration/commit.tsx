@@ -22,26 +22,20 @@ import { configurationQuery } from "./queries"
  * configuration page, a node's workspace): one draft, so one bar and one
  * review wherever it was edited from. The review and refusal are the
  * network shell's (`ConfigurationDialogs`). `onInvalid` shows a refused
- * draft where this page edits it. `active`: the page is on screen and
- * reads the configuration.
+ * draft where this page edits it.
  */
 export function useConfigurationCommit({
   networkId,
   network,
-  active,
   onInvalid,
 }: {
   networkId: string
   network: NetworkSummary | null
-  active: boolean
   onInvalid: OnInvalid
 }) {
   const queryClient = useQueryClient()
   const draft = useConfigurationDraft(networkId)
-  const configuration = useQuery({
-    ...configurationQuery(networkId),
-    enabled: active,
-  })
+  const configuration = useQuery(configurationQuery(networkId))
   const current = configuration.data?.revision ?? network?.currentRevision
   const editable = network?.actions.editConfiguration ?? false
   const checking = useConfigurationApply(networkId).busy === "checking"
@@ -72,7 +66,7 @@ export function useConfigurationCommit({
   }
 
   const bar: Commit | null =
-    active && editable && draft.dirty && entry
+    editable && draft.dirty && entry
       ? {
           label: m.configuration_commit_label(),
           tone: outdated ? "warning" : blocked ? "destructive" : "plain",

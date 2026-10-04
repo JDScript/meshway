@@ -1,9 +1,10 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
 
+import { MembersPage } from "@/features/members/page"
 import { zMembersSearch } from "@/features/members/url"
-import { networkQuery } from "@/features/network/queries"
+import { networkQuery, useNetworkSummary } from "@/features/network/queries"
 
-/** The members, for those who may manage them; `features/members/page.tsx` draws them. */
+/** The members, for those who may manage them, and one member over them (its child route). */
 export const Route = createFileRoute("/_authed/networks/$network/members")({
   staticData: { page: "members" },
   validateSearch: zMembersSearch,
@@ -19,4 +20,12 @@ export const Route = createFileRoute("/_authed/networks/$network/members")({
         replace: true,
       })
   },
+  component: MembersRoute,
 })
+
+function MembersRoute() {
+  const { network } = Route.useParams()
+  return (
+    <MembersPage networkId={network} network={useNetworkSummary(network)} />
+  )
+}

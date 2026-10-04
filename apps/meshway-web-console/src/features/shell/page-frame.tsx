@@ -33,7 +33,6 @@ export const surfaceTitleId = (page: PageId, level: "panel" | "workspace") =>
 export function PageFrame({
   networkId,
   page,
-  current,
   panel,
   workspace,
   commit = null,
@@ -41,8 +40,6 @@ export function PageFrame({
 }: {
   networkId: string
   page: PageId
-  /** The URL is on this page. */
-  current: boolean
   /** The page's index, headed by `surfaceTitleId(page, "panel")`; pages without one (the account) leave it out. */
   panel?: ReactNode
   /** What the open workspace shows, headed by `surfaceTitleId(page, "workspace")`; null when none is open. */
@@ -54,8 +51,8 @@ export function PageFrame({
   const mobile = useIsMobile()
   const ready = useBooted()
   const history = useSurfaceHistory(networkId)
-  const panelShown = ready && current && panel !== undefined
-  const workspaceShown = ready && current && workspace !== null
+  const panelShown = ready && panel !== undefined
+  const workspaceShown = ready && workspace !== null
 
   // Escape closes the workspace on wide screens; a sheet handles its own.
   useEffect(() => {

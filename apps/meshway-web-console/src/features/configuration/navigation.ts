@@ -5,7 +5,6 @@ import { useSurfaceHistory } from "@/features/shell/history"
 
 import { isConfigurationView, type ConfigurationViewId } from "./url"
 
-const PAGE = "/_authed/networks/$network/configuration" as const
 const VIEW = "/_authed/networks/$network/configuration/$view" as const
 
 export type HistorySelection = {
@@ -15,8 +14,6 @@ export type HistorySelection = {
 
 /** The configuration page as the URL has it. */
 export function useConfigurationRoute() {
-  const current =
-    useMatch({ from: PAGE, shouldThrow: false, select: () => true }) ?? false
   const match = useMatch({
     from: VIEW,
     shouldThrow: false,
@@ -30,7 +27,6 @@ export function useConfigurationRoute() {
   const view: ConfigurationViewId | null =
     match && isConfigurationView(match.view) ? match.view : null
   return {
-    current,
     view,
     at: match?.at ?? null,
     history: {

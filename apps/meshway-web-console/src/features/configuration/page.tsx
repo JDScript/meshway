@@ -54,7 +54,6 @@ export function ConfigurationPage({
   const commit = useConfigurationCommit({
     networkId,
     network,
-    active: route.current,
     onInvalid,
   })
   const { checkDraft } = commit
@@ -110,10 +109,8 @@ export function ConfigurationPage({
       <PageFrame
         networkId={networkId}
         page="configuration"
-        current={route.current}
         panel={
           <ConfigurationPanel
-            active={route.current}
             networkId={networkId}
             network={network}
             openView={view}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 
 import { m } from "@/paraglide/messages.js"
 import { markEngineReady, markRevealed, useBootPhase } from "@/state/boot"
-import { hoverFromGlobe, selectFromGlobe, useGlobe } from "@/state/globe"
+import { pointAtOnGlobe, selectFromGlobe, useGlobe } from "@/state/globe"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
 import type { GlobeEngine } from "./engine"
@@ -57,7 +57,7 @@ export function GlobeStage() {
       created = createGlobeEngine(
         element,
         selectFromGlobe,
-        hoverFromGlobe,
+        pointAtOnGlobe,
         markRevealed
       )
       const instance = created

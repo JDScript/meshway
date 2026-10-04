@@ -10,8 +10,6 @@ const WORKSPACE = "/_authed/networks/$network/members/$member" as const
 
 /** The members page as the URL has it. */
 export function useMembersRoute() {
-  const current =
-    useMatch({ from: LIST, shouldThrow: false, select: () => true }) ?? false
   const view: MembersView =
     useMatch({
       from: LIST,
@@ -24,7 +22,7 @@ export function useMembersRoute() {
       shouldThrow: false,
       select: (match) => match.params.member,
     }) ?? null
-  return { current, view, member }
+  return { view, member }
 }
 
 /** Every move on the members page, under the shell's history rules. */

@@ -3,16 +3,10 @@ import { useEffect, useMemo } from "react"
 
 import { GlassToolbar } from "@/components/chrome/glass-toolbar"
 import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
-import { AccountPage } from "@/features/account/page"
 import { AccountMenu } from "@/features/auth/account-menu"
-import { ConfigurationPage } from "@/features/configuration/page"
 import { ConfigurationDialogs } from "@/features/configuration/review-dialog"
 import { LiveIndicator } from "@/features/live/live-indicator"
-import { MembersPage } from "@/features/members/page"
-import { NodesPage } from "@/features/nodes/page"
 import { NetworkChip } from "@/features/overview/network-chip"
-import { OverviewPage } from "@/features/overview/page"
-import { SettingsPage } from "@/features/settings/page"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useViewportHeight } from "@/hooks/use-viewport-height"
 import { cn } from "@/lib/utils"
@@ -22,6 +16,7 @@ import { setGlobe } from "@/state/globe"
 import { Dock, DockLauncher } from "./dock"
 import { CHROME } from "./glass-drawer"
 import { globeLayout } from "./layout"
+import { useGlobeNetwork } from "./network-scene"
 import {
   dockFor,
   PAGES,
@@ -32,10 +27,9 @@ import {
 
 /**
  * Everything around the globe on a network's pages, mounted once for all of
- * them: changing pages only brings surfaces in and out, while the chrome
- * stays put. Each page draws its own surfaces (`features/<page>/page.tsx`);
- * the shell places the chrome and frames the globe, and the overview
- * writes what it shows (the network's located nodes and links).
+ * them by the network's route: the chrome stays put while each page's route
+ * draws its own surfaces. The shell places the chrome, frames the globe and
+ * puts the network on it, and holds the configuration's review.
  */
 export function NetworkShell({
   networkId,
@@ -68,15 +62,10 @@ export function NetworkShell({
     setGlobe({ framing: "network", insets, recede })
   }, [insets, recede])
   useEffect(() => () => setGlobe({ hoveredNodeId: null, recede: false }), [])
+  useGlobeNetwork(networkId)
 
   return (
     <>
-      <OverviewPage networkId={networkId} />
-      <NodesPage networkId={networkId} network={network} />
-      <MembersPage networkId={networkId} network={network} />
-      <ConfigurationPage networkId={networkId} network={network} />
-      <SettingsPage networkId={networkId} network={network} />
-      <AccountPage networkId={networkId} />
       <ConfigurationDialogs networkId={networkId} />
 
       {/* Desktop: the card top left, the dock below it. Phones: one bottom bar on every page, the launcher where the thumb is. */}

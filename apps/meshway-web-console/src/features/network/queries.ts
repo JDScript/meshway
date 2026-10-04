@@ -1,5 +1,13 @@
-import { getNetwork, listNetworks } from "@meshway/control-client"
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query"
+import {
+  getNetwork,
+  listNetworks,
+  type NetworkSummary,
+} from "@meshway/control-client"
+import {
+  infiniteQueryOptions,
+  queryOptions,
+  useQuery,
+} from "@tanstack/react-query"
 
 import { ApiFailure, authed, client, problemCode } from "@/lib/api"
 
@@ -48,3 +56,7 @@ export const networkQuery = (networkId: string) =>
 /** The controller says the network does not exist, or this account is not in it. */
 export const isNotFound = (error: unknown) =>
   error instanceof ApiFailure && problemCode(error.failure) === "not_found"
+
+/** The network as last read (its name, revision and this account's actions); null until read. */
+export const useNetworkSummary = (networkId: string): NetworkSummary | null =>
+  useQuery(networkQuery(networkId)).data?.network ?? null

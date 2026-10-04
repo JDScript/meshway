@@ -41,7 +41,6 @@ export function SettingsPage({
     <PageFrame
       networkId={networkId}
       page="settings"
-      current={route.current}
       panel={
         <SettingsPanel
           network={network}

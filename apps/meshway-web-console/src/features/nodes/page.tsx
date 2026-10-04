@@ -46,11 +46,8 @@ export function NodesPage({
   const navigate = useNavigate()
   const route = useNodesRoute()
   const nav = useNodeNavigation(networkId)
-  const nodes = useQuery({ ...nodesQuery(networkId), enabled: route.current })
-  const state = useQuery({
-    ...networkStateQuery(networkId),
-    enabled: route.current,
-  })
+  const nodes = useQuery(nodesQuery(networkId))
+  const state = useQuery(networkStateQuery(networkId))
   const canAdd = network?.actions.editConfiguration ?? false
 
   const { openNode } = nav
@@ -65,7 +62,6 @@ export function NodesPage({
   const commit = useConfigurationCommit({
     networkId,
     network,
-    active: route.current,
     onInvalid,
   })
 
@@ -80,7 +76,7 @@ export function NodesPage({
 
   useReadFailureToast(
     "nodes",
-    route.current && nodes.isError,
+    nodes.isError,
     failureText(nodes.error) ?? m.nodes_failed()
   )
 
@@ -89,7 +85,6 @@ export function NodesPage({
       <PageFrame
         networkId={networkId}
         page="nodes"
-        current={route.current}
         panel={
           <NodeList
             networkId={networkId}

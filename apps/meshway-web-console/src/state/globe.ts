@@ -5,8 +5,8 @@ import { EMPTY_SCENE, type Scene } from "@/features/globe/scene"
 
 // The globe is created once, above every route, and never re-created on
 // navigation. Routes describe what it should show through this store; what
-// a click or a pointer on the globe means is the view showing the network's
-// (`onGlobeSelect`, `onGlobeHover`), held as runtime handlers, not state.
+// a click on a node means is the network layout's (`onGlobeSelect`), held
+// as a runtime handler, not state.
 
 /**
  * - `welcome`: signed out; the globe sits to one side of the sign-in card.
@@ -35,6 +35,8 @@ export type GlobeState = {
   framing: Framing
   scene: Scene
   selectedNodeId: string | null
+  /** The node the pointer is on, on the globe (the stage reports it). */
+  pointedNodeId: string | null
   /** A node pointed at elsewhere (a list row); highlighted, the camera stays. */
   hoveredNodeId: string | null
   insets: Insets
@@ -46,6 +48,7 @@ const globeStore = createStore<GlobeState>(() => ({
   framing: "welcome",
   scene: EMPTY_SCENE,
   selectedNodeId: null,
+  pointedNodeId: null,
   hoveredNodeId: null,
   insets: NO_INSETS,
   recede: false,
@@ -53,6 +56,10 @@ const globeStore = createStore<GlobeState>(() => ({
 
 /** What the globe shows, for its stage. */
 export const useGlobe = (): GlobeState => useStore(globeStore)
+
+/** The node the pointer is on, on the globe; null when none. */
+export const usePointedNode = (): string | null =>
+  useStore(globeStore, (globe) => globe.pointedNodeId)
 
 export function setGlobe(patch: Partial<GlobeState>) {
   const current = globeStore.getState()
@@ -68,6 +75,7 @@ export function showWelcomeGlobe() {
     framing: "welcome",
     scene: EMPTY_SCENE,
     selectedNodeId: null,
+    pointedNodeId: null,
     hoveredNodeId: null,
     insets: NO_INSETS,
     recede: false,
@@ -96,18 +104,8 @@ export function selectFromGlobe(nodeId: string | null) {
   selectHandler(nodeId)
 }
 
-let hoverHandler: (nodeId: string | null) => void = () => undefined
-
-/** The view that shows a network owns what pointing at a node on the globe shows. Returns the cleanup. */
-export function onGlobeHover(
-  handler: (nodeId: string | null) => void
-): () => void {
-  hoverHandler = handler
-  return () => {
-    if (hoverHandler === handler) hoverHandler = () => undefined
-  }
-}
-
-export function hoverFromGlobe(nodeId: string | null) {
-  hoverHandler(nodeId)
+/** The stage reports where the pointer is. */
+export function pointAtOnGlobe(nodeId: string | null) {
+  if (globeStore.getState().pointedNodeId !== nodeId)
+    globeStore.setState({ pointedNodeId: nodeId })
 }

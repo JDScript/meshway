@@ -28,7 +28,6 @@ export function useNodesRoute() {
   const add =
     useMatch({ from: ADD, shouldThrow: false, select: () => true }) ?? false
   return {
-    current: q !== null,
     q: q ?? "",
     node: workspace?.node ?? null,
     tab: workspace?.tab ?? ("overview" as const),

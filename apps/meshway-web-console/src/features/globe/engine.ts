@@ -936,7 +936,11 @@ export function createGlobeEngine(
     }
     const onGlobe = (id: string | null) =>
       id !== null && anchors.has(id) ? id : null
-    emphasise(onGlobe(input.hoveredNodeId) ?? onGlobe(input.selectedNodeId))
+    emphasise(
+      onGlobe(input.pointedNodeId) ??
+        onGlobe(input.hoveredNodeId) ??
+        onGlobe(input.selectedNodeId)
+    )
 
     const focus = focusOf(input)
     if (input.boot === "loading") {
