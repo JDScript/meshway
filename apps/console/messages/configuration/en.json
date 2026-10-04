@@ -14,8 +14,13 @@
   "configuration_section_document": "Whole document",
   "configuration_entries": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{count} entry",
         "countPlural=other": "{count} entries"
@@ -37,8 +42,13 @@
   "configuration_source_valid": "JSONC syntax is valid",
   "configuration_source_syntax": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{count} syntax error",
         "countPlural=other": "{count} syntax errors"
@@ -95,8 +105,13 @@
   "configuration_checking": "Checking",
   "configuration_invalid_toast": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "Refused by the controller: {count} problem",
         "countPlural=other": "Refused by the controller: {count} problems"
@@ -131,8 +146,13 @@
   "configuration_applied_targets": "Applied r{revision}: {targets} target nodes",
   "configuration_history_count": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{count} revision",
         "countPlural=other": "{count} revisions"
@@ -194,8 +214,13 @@
   "configuration_progress_open": "View deployment",
   "configuration_commit_fields": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{count} field will not save",
         "countPlural=other": "{count} fields will not save"
@@ -206,8 +231,13 @@
   "configuration_notice_open_source": "Open the source",
   "configuration_notice_operations": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "The draft holds {count} form edit. Apply or discard it to edit the source.",
         "countPlural=other": "The draft holds {count} form edits. Apply or discard them to edit the source."
@@ -335,7 +365,7 @@
   "configuration_local_key": "The name cannot be empty or contain spaces",
   "configuration_move_up": "Move {name} up",
   "configuration_move_down": "Move {name} down",
-  "configuration_requirement_rule_set": "Rule set {key} has no content yet: apply its definition without referencing it, refresh it, then reference it",
+  "configuration_requirement_rule_set": "Rule set {key} has no content; it is never taken as empty",
   "configuration_routing_mesh": "Mesh routes",
   "configuration_routing_mesh_hint": "Top to bottom: the first rule matching both source and destination decides the nodes traffic must pass, in order.",
   "configuration_routing_mesh_end": "No rule matched: the platform chooses the path",
@@ -366,10 +396,6 @@
   "configuration_routing_exit_via": "first via",
   "configuration_routing_exit_via_label": "Nodes to pass before the exit, in order",
   "configuration_routing_not_exit": "Not an exit",
-  "configuration_routing_set_unready": "No content yet",
-  "configuration_routing_set_note_unsaved": "Rule set {key} is only in this draft: apply and refresh it on its own before referencing it",
-  "configuration_routing_set_note_changed": "Rule set {key} is changed in this draft: rules naming it cannot apply until it is applied and refreshed",
-  "configuration_routing_set_note_missing": "Rule set {key} has no content yet: refresh it first",
   "configuration_routing_set_note_unknown": "There is no rule set {key}",
   "configuration_routing_open_rule_sets": "Open rule sets",
   "configuration_routing_profiles": "Routing profiles",
@@ -409,7 +435,7 @@
   "configuration_routing_default_label": "Default profile",
   "configuration_routing_locked": "Locked",
   "configuration_routing_unlocked": "Switchable",
-  "configuration_ruleset_hint": "The controller downloads, converts and delivers rule sets; devices never download them. A remote set: apply its definition unreferenced, refresh it, then reference it in traffic routing.",
+  "configuration_ruleset_hint": "The controller downloads, converts and delivers rule sets; devices never download them. A remote set that is new or has a new source is downloaded and converted when the draft is checked (tentatively, nothing saved) and again when it is applied, so the same apply can reference it. At most 32 remote sets are prepared at once, 8 MiB of content in all, within 30 seconds. The controller checks applied sets on their update interval; they can also be refreshed by hand.",
   "configuration_ruleset_none": "No rule sets",
   "configuration_ruleset_new": "New rule set name",
   "configuration_ruleset_key": "Rule set name",
@@ -428,14 +454,10 @@
   "configuration_ruleset_format_mihomo_ipcidr": "mihomo IP CIDR",
   "configuration_ruleset_interval": "Update interval",
   "configuration_ruleset_step_inline": "Inline: its content is saved with the configuration; nothing to refresh.",
-  "configuration_ruleset_step_unsaved": "New rule set: apply this definition (without referencing it), then refresh it to download its content; then it can be referenced.",
-  "configuration_ruleset_step_unsaved_referenced": "New rule set, and this draft already references it: remove the reference and apply the definition, refresh it, then add the reference back.",
-  "configuration_ruleset_step_changed": "Changed in this draft: the status below is the saved definition's. Refresh again once applied.",
-  "configuration_ruleset_step_changed_referenced": "Changed in this draft and still referenced: applying needs its new content. Remove the reference and apply, refresh, then add it back.",
   "configuration_ruleset_step_unread": "Status not read yet",
-  "configuration_ruleset_step_ready": "Content ready: it can be referenced in traffic routing.",
-  "configuration_ruleset_step_failing": "The last refresh failed; the content from the last success is still used.",
-  "configuration_ruleset_step_missing": "No content yet: refresh to download and convert it. Until that succeeds, routes naming it cannot be applied.",
+  "configuration_ruleset_step_ready": "Content ready. The controller checks it on its update interval.",
+  "configuration_ruleset_step_failing": "The last check failed; the content from the last success is still used. The controller tries again on its update interval.",
+  "configuration_ruleset_step_missing": "No content yet, and never taken as empty: refreshing it, or applying a draft, has the controller download and convert it again.",
   "configuration_ruleset_refresh": "Refresh",
   "configuration_ruleset_refresh_moved": "The configuration or content changed during the refresh; try again",
   "configuration_ruleset_refresh_busy": "The controller is busy with other downloads; try again shortly",
@@ -461,7 +483,9 @@
         "input created",
         "local entriesPlural = entries: plural"
       ],
-      "selectors": ["entriesPlural"],
+      "selectors": [
+        "entriesPlural"
+      ],
       "match": {
         "entriesPlural=one": "{entries} entry · digest {digest} · made {created}",
         "entriesPlural=other": "{entries} entries · digest {digest} · made {created}"
@@ -508,5 +532,9 @@
   "configuration_nodes_disabled": "Disabled",
   "configuration_nodes_exit": "May be an exit",
   "configuration_nodes_enabled": "Enabled",
-  "configuration_actor_self": "{name} (you)"
+  "configuration_actor_self": "{name} (you)",
+  "configuration_ruleset_step_new": "New remote set: the controller downloads and converts its source when the draft is checked and when it is applied.",
+  "configuration_ruleset_step_replaced": "Its source is changed in this draft: checking and applying download and convert the new source. The status below is the saved source's.",
+  "configuration_ruleset_referenced": "Referenced in traffic routing",
+  "configuration_routing_set_note": "Rule set {key}: {message}"
 }

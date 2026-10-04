@@ -82,7 +82,7 @@ function useNow() {
   return now
 }
 
-/** Rule sets: inline content, or a remote source the controller downloads when refreshed. */
+/** Rule sets: inline content, or a remote source the controller downloads with the draft, on its interval and when refreshed. */
 export function RuleSetsForm({
   networkId,
   sets,
@@ -255,7 +255,7 @@ function RuleSetCard({
       {set.type === "inline" ? (
         <ChipSetField
           values={inlineValues(set)}
-          kind={destinationChips([], () => true, false)}
+          kind={destinationChips([], false)}
           label={m.configuration_ruleset_entries()}
           addLabel={m.configuration_ruleset_entries_add()}
           editable={editable}
@@ -353,19 +353,15 @@ function Labelled({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-/** What the preparation means and the next step, then the controller's facts. */
-function nextStep(preparation: Preparation, referenced: boolean): string {
+/** Where the set's content stands and what comes next, then the controller's facts. */
+function stepOf(preparation: Preparation): string {
   switch (preparation) {
     case "inline":
       return m.configuration_ruleset_step_inline()
-    case "unsaved":
-      return referenced
-        ? m.configuration_ruleset_step_unsaved_referenced()
-        : m.configuration_ruleset_step_unsaved()
-    case "changed":
-      return referenced
-        ? m.configuration_ruleset_step_changed_referenced()
-        : m.configuration_ruleset_step_changed()
+    case "new":
+      return m.configuration_ruleset_step_new()
+    case "replaced":
+      return m.configuration_ruleset_step_replaced()
     case "unread":
       return m.configuration_ruleset_step_unread()
     case "ready":
@@ -428,7 +424,9 @@ function StatusBlock({
         })
       )
   }
-  const shownFacts = preparation === "unsaved" ? [] : facts
+  // A new source has no status of its own yet.
+  const shownFacts = preparation === "new" ? [] : facts
+  if (referenced) shownFacts.push(m.configuration_ruleset_referenced())
   return (
     <div className="flex flex-col gap-1 rounded-tile bg-fill-subtle px-3.5 py-2.5">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
@@ -440,9 +438,7 @@ function StatusBlock({
               good ? "text-success" : "text-warning"
             )}
           />
-          <span className="min-w-0 break-words">
-            {nextStep(preparation, referenced)}
-          </span>
+          <span className="min-w-0 break-words">{stepOf(preparation)}</span>
         </p>
         {editable && refreshable(preparation) ? (
           <Button
@@ -468,7 +464,7 @@ function StatusBlock({
           </Button>
         ) : null}
       </div>
-      {view?.problem && preparation !== "unsaved" ? (
+      {view?.problem && preparation !== "new" ? (
         <p
           className={cn(
             "pl-5.5 text-meta",

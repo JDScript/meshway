@@ -219,13 +219,19 @@ its generated client only, and only what the controller delivers:
   configuration's own. A match is one chip set: domain suffixes, prefixes
   and rule sets (`set:<key>`). The controller reports no shadowed rules,
   so none are shown. Rule sets: inline content, or a remote HTTPS source
-  with its format and interval; the status (`listRuleSets`, Owner / Admin,
-  key `[network, "rule-sets"]`) is for the current revision's definition,
-  and each set says its next step: a new remote set is applied
-  unreferenced, refreshed (`refreshRuleSet`), then referenced; a
-  `ruleSetContent` requirement says exactly that. A set without content is
-  never treated as empty. Renaming a set or a profile renames its
-  references.
+  with its format and interval. A remote set that is new or has a new
+  source (URL or format; the interval alone is not) is downloaded and
+  converted by the controller when the draft is checked and again when it
+  is applied, so one apply adds a set and the rules naming it; the review
+  lists `preparedRuleSets` (entries, digest) as tentative, nothing saved.
+  A failed preparation comes back as an issue at the set, shown there and
+  under the rules naming it. The status (`listRuleSets`, Owner / Admin, key
+  `[network, "rule-sets"]`: content, checked, last success, problem,
+  publication) is for the current revision's definition; a set whose
+  source is saved as the draft has it can be refreshed (`refreshRuleSet`),
+  and the controller checks it on its `updateInterval`. A set without
+  content is never treated as empty. Renaming a set or a profile renames
+  its references.
 - Overview (`getNetworkState`, `listNodes` for names,
   `queryObservationHistory`): a node is on the globe only with the
   controller's `derived.location` and its coordinates; pointing at one

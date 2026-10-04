@@ -31,7 +31,7 @@ import {
   type Names,
   type Note,
 } from "./form-kit"
-import { pointerOf, type JsonPath } from "./jsonc"
+import { pointerOf, pointerSegments, type JsonPath } from "./jsonc"
 import { without } from "./keyed"
 import { AddKey, KeyInput, type KeyRule } from "./keyed-form"
 import { MoveButtons, moveKeys, OrderedRules, useRowKeys } from "./ordered"
@@ -51,30 +51,23 @@ import {
   renameProfile,
   type ProfileChoice,
 } from "./routing"
-import { usable, type Preparation } from "./rule-sets"
 
 const replaceAt = <T,>(items: readonly T[], index: number, next: T): T[] =>
   items.map((item, at) => (at === index ? next : item))
 
-export type SetStatus = (key: string) => Preparation | null
-
-const PREPARATION_NOTE: Partial<Record<Preparation, (key: string) => string>> =
-  {
-    unsaved: (key) => m.configuration_routing_set_note_unsaved({ key }),
-    changed: (key) => m.configuration_routing_set_note_changed({ key }),
-    missing: (key) => m.configuration_routing_set_note_missing({ key }),
-  }
-
-/** What the form knows about the rule sets a rule names, as notes under it (the controller has the last word). */
-function setNotes(rule: EgressRule, path: string, status: SetStatus): Note[] {
-  return (rule.match.ruleSets ?? []).flatMap((key) => {
-    const state = status(key)
-    const message =
-      state === null
-        ? m.configuration_routing_set_note_unknown({ key })
-        : PREPARATION_NOTE[state]?.(key)
-    return message ? [{ path, message, origin: "local" as const }] : []
-  })
+/** A rule set a rule names that the draft does not have, as a note under it (the controller has the last word). */
+function setNotes(
+  rule: EgressRule,
+  path: string,
+  ruleSets: readonly string[]
+): Note[] {
+  return (rule.match.ruleSets ?? [])
+    .filter((key) => !ruleSets.includes(key))
+    .map((key) => ({
+      path,
+      message: m.configuration_routing_set_note_unknown({ key }),
+      origin: "local" as const,
+    }))
 }
 
 /** Traffic routing: Mesh routes, then egress (public rules, profiles, the automatic profile, assignments). */
@@ -85,7 +78,6 @@ export function RoutingForm({
   notes,
   exits,
   ruleSets,
-  setStatus,
   onChange,
   onOpenRuleSets,
 }: {
@@ -97,30 +89,37 @@ export function RoutingForm({
   exits: ReadonlySet<string>
   /** The draft's rule set keys. */
   ruleSets: readonly string[]
-  setStatus: SetStatus
   onChange: (routing: RoutingConfiguration) => void
   onOpenRuleSets: () => void
 }) {
   const egress = routing.egress ?? {}
   const setEgress = (next: EgressRouting) =>
     onChange({ ...routing, egress: next })
-  const common = { editable, names, notes, exits, ruleSets, setStatus }
+  const common = { editable, names, notes, exits, ruleSets }
   // A node as a whole (its assigned egress against its access) or a rule set's content.
   const outside = notes
     .filter(
       (note) => !note.path.startsWith("/routing/") && note.path !== "/routing"
     )
     .map((note) => {
-      const id = note.path.startsWith("/nodes/") ? note.path.slice(7) : null
-      return id === null
-        ? note
-        : {
-            ...note,
-            message: m.configuration_routing_node_note({
-              node: names.nodes.get(id) ?? id.slice(0, 8),
-              message: note.message,
-            }),
-          }
+      const [section, key] = pointerSegments(note.path) ?? []
+      if (section === "nodes" && key !== undefined)
+        return {
+          ...note,
+          message: m.configuration_routing_node_note({
+            node: names.nodes.get(key) ?? key.slice(0, 8),
+            message: note.message,
+          }),
+        }
+      if (section === "ruleSets" && key !== undefined)
+        return {
+          ...note,
+          message: m.configuration_routing_set_note({
+            key,
+            message: note.message,
+          }),
+        }
+      return note
     })
 
   return (
@@ -358,7 +357,6 @@ type Common = {
   notes: readonly Note[]
   exits: ReadonlySet<string>
   ruleSets: readonly string[]
-  setStatus: SetStatus
 }
 
 /** Egress rules, top to bottom, ending in `end` (or a profile's fallback). */
@@ -371,7 +369,6 @@ function EgressRules({
   notes,
   exits,
   ruleSets,
-  setStatus,
   onChange,
 }: Common & {
   path: JsonPath
@@ -380,14 +377,7 @@ function EgressRules({
   onChange: (rules: EgressRule[]) => void
 }) {
   const rows = useRowKeys(rules.length)
-  const destinations = destinationChips(
-    ruleSets,
-    (key) => {
-      const state = setStatus(key)
-      return state !== null && usable(state)
-    },
-    true
-  )
+  const destinations = destinationChips(ruleSets, true)
   const update = (index: number, next: EgressRule) =>
     onChange(replaceAt(rules, index, next))
 
@@ -417,7 +407,7 @@ function EgressRules({
                   ...setNotes(
                     rule,
                     pointerOf([...path, index, "match"]),
-                    setStatus
+                    ruleSets
                   ),
                 ]}
                 end={

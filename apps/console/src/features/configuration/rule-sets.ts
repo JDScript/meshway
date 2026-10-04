@@ -9,7 +9,8 @@ import { badDestination, matchKind } from "./routing.ts"
 
 // Rule sets as the form edits them (rule-sets.md): inline prefixes and
 // domain suffixes, or a remote HTTPS source the controller downloads and
-// converts when asked (refresh). What a set's status means for using it.
+// converts (when a draft is checked and applied, on its interval, and when
+// refreshed). Where a set's content stands.
 
 export type RuleSetMap = Record<string, RuleSet>
 
@@ -148,21 +149,31 @@ export function ruleSetProblems(sets: RuleSetMap): RuleSetProblem[] {
   return out
 }
 
+/** Whether two sets download the same content: the same remote URL and format (the interval aside), or the same inline set. */
+export function sameSource(a: RuleSet, b: RuleSet): boolean {
+  if (a.type === "remote" && b.type === "remote")
+    return a.url === b.url && a.format === b.format
+  return sameRuleSet(a, b)
+}
+
 /**
- * Where a set stands for being used in routing (rule-sets.md, "新 Controller
- * 候选用法"). The controller's status is for the definition at the current
- * revision; a draft's own definition has none until applied.
+ * Where a set's content stands (rule-sets.md, "新 Controller 候选用法").
+ * The controller downloads and converts a remote source that is new or
+ * replaced when the draft is checked (tentatively, saving nothing) and again
+ * when it is applied, so one apply may add a set and reference it. Its
+ * status is for the definition at the current revision; a source only the
+ * draft has has none until applied.
  *
  * - `inline`: its content is the configuration itself.
- * - `unsaved`: a remote set only this draft has: apply it unreferenced, then refresh.
- * - `changed`: a remote set the draft changes: the status is the saved definition's; apply, then refresh.
+ * - `new`: a remote set only this draft has: prepared when checked and applied.
+ * - `replaced`: the draft changes the source (URL or format): prepared again; the status is the saved source's.
  * - `unread`: no status read (yet, or not readable).
  * - `ready`: content selected for the current revision.
  * - `failing`: the last check failed; content from an earlier success is still selected.
- * - `missing`: no content: a route naming it cannot be applied until a refresh succeeds.
+ * - `missing`: no content, never an empty set: refreshing, or applying the draft, downloads it again.
  */
 export type Preparation =
-  "inline" | "unsaved" | "changed" | "unread" | "ready" | "failing" | "missing"
+  "inline" | "new" | "replaced" | "unread" | "ready" | "failing" | "missing"
 
 export function preparationOf(
   draft: RuleSet,
@@ -170,20 +181,14 @@ export function preparationOf(
   view: RuleSetView | undefined
 ): Preparation {
   if (draft.type === "inline") return "inline"
-  if (saved === undefined) return "unsaved"
-  if (!sameRuleSet(draft, saved)) return "changed"
+  if (saved === undefined) return "new"
+  if (!sameSource(draft, saved)) return "replaced"
   if (view === undefined) return "unread"
   if (view.artifact) return view.problem ? "failing" : "ready"
   return "missing"
 }
 
-/** Whether a set can be referenced and applied as it is now. */
-export const usable = (preparation: Preparation) =>
-  preparation === "inline" ||
-  preparation === "ready" ||
-  preparation === "failing"
-
-/** Whether the controller can refresh this set now: it is saved at the current revision as the draft has it. */
+/** Whether the controller can refresh this set now: its source is saved at the current revision as the draft has it. */
 export const refreshable = (preparation: Preparation) =>
   preparation === "ready" ||
   preparation === "failing" ||

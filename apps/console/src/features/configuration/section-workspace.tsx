@@ -56,7 +56,6 @@ import { configurationQuery, isDenied } from "./queries"
 import { referencedSets, renameSetReferences } from "./routing"
 import { RoutingForm } from "./routing-form"
 import { ruleSetsQuery } from "./rule-set-queries"
-import { preparationOf } from "./rule-sets"
 import { RuleSetsForm, type RuleSetStatus } from "./rule-sets-form"
 import { TopologyForm } from "./topology-form"
 
@@ -332,8 +331,10 @@ function SectionForm({
     () => ({ users: userChips(names), owners: ownerChips(names) }),
     [names]
   )
-  const routes = section === "routing" || section === "ruleSets"
-  const statusRead = useQuery({ ...ruleSetsQuery(networkId), enabled: routes })
+  const statusRead = useQuery({
+    ...ruleSetsQuery(networkId),
+    enabled: section === "ruleSets",
+  })
   const status: RuleSetStatus = statusRead.data
     ? {
         kind: "read",
@@ -408,7 +409,6 @@ function SectionForm({
       )
       break
     case "routing": {
-      const saved = view.configuration.ruleSets
       body = (
         <RoutingForm
           routing={routing}
@@ -423,16 +423,6 @@ function SectionForm({
             )
           }
           ruleSets={Object.keys(ruleSets)}
-          setStatus={(key) => {
-            const set = ruleSets[key]
-            return set
-              ? preparationOf(
-                  set,
-                  saved[key],
-                  status.kind === "read" ? status.views.get(key) : undefined
-                )
-              : null
-          }}
           onChange={set("routing")}
           onOpenRuleSets={() => onOpenSection("ruleSets")}
         />

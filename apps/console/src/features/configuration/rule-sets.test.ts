@@ -10,7 +10,7 @@ import {
   refreshable,
   ruleSetProblems,
   sameRuleSets,
-  usable,
+  sameSource,
   writtenRuleSet,
 } from "./rule-sets.ts"
 
@@ -95,21 +95,36 @@ test("problems sit at the controller's pointers", () => {
   )
 })
 
-test("preparation: saved unreferenced, refreshed, then referenced", () => {
+test("preparation: a new or replaced source is prepared with the draft", () => {
   assert.equal(
     preparationOf({ type: "inline" }, undefined, undefined),
     "inline"
   )
-  assert.equal(preparationOf(remote, undefined, undefined), "unsaved")
+  assert.equal(preparationOf(remote, undefined, undefined), "new")
   assert.equal(
     preparationOf(
       { ...remote, url: "https://example.com/b" },
       remote,
       view({})
     ),
-    "changed"
+    "replaced"
+  )
+  assert.equal(
+    preparationOf({ ...remote, format: "mihomo-domain" }, remote, view({})),
+    "replaced"
+  )
+  assert.equal(preparationOf(remote, { type: "inline" }, view({})), "replaced")
+  // Only the interval changed: the same content, its status still holds.
+  assert.equal(
+    preparationOf(
+      { ...remote, updateInterval: "1h" },
+      remote,
+      view({ artifact: ARTIFACT })
+    ),
+    "ready"
   )
   assert.equal(preparationOf(remote, remote, undefined), "unread")
+  // A set without content is never treated as empty.
   assert.equal(
     preparationOf(remote, remote, view({ problem: "not_ready" })),
     "missing"
@@ -126,11 +141,17 @@ test("preparation: saved unreferenced, refreshed, then referenced", () => {
     preparationOf(remote, remote, view({ artifact: ARTIFACT })),
     "ready"
   )
-  // A missing set is never treated as empty: it cannot be used until refreshed.
-  assert.equal(usable("missing"), false)
-  assert.equal(usable("unsaved"), false)
-  assert.equal(usable("failing"), true)
-  assert.equal(refreshable("unsaved"), false)
-  assert.equal(refreshable("changed"), false)
+  assert.equal(refreshable("new"), false)
+  assert.equal(refreshable("replaced"), false)
   assert.equal(refreshable("missing"), true)
+  assert.equal(refreshable("failing"), true)
+})
+
+test("same source: URL and format, not the interval", () => {
+  assert.equal(sameSource(remote, { ...remote, updateInterval: "1h" }), true)
+  assert.equal(
+    sameSource(remote, { ...remote, url: "https://example.com/b" }),
+    false
+  )
+  assert.equal(sameSource({ type: "inline" }, { type: "inline" }), true)
 })

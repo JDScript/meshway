@@ -75,7 +75,6 @@ export function nodeChips(
 /** Destinations: domain suffixes and prefixes typed, rule sets (`set:<key>`) picked or typed. */
 export function destinationChips(
   ruleSets: readonly string[],
-  usable: (key: string) => boolean,
   withSets: boolean
 ): ChipKind {
   return {
@@ -83,9 +82,6 @@ export function destinationChips(
       ? ruleSets.map((key) => ({
           value: SET_PREFIX + key,
           label: key,
-          detail: usable(key)
-            ? undefined
-            : m.configuration_routing_set_unready(),
           group: m.configuration_section_ruleSets(),
         }))
       : [],
@@ -106,7 +102,7 @@ export function destinationChips(
           icon: ListIcon,
           label: key,
           mono: false,
-          known: ruleSets.includes(key) && usable(key),
+          known: ruleSets.includes(key),
         }
       }
       return {
