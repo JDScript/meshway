@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { byJoinLinkState, joinLinkState } from "./join-link.ts"
+import { initialRole, joinLinkState, revocable } from "./join-link.ts"
 
 const now = Date.parse("2026-10-03T12:00:00Z")
 const link = {
@@ -49,20 +49,20 @@ test("a link's state follows its times", () => {
   )
 })
 
-test("pending links come first, soonest first; the rest latest first", () => {
-  const rows = [
-    { state: "used", at: "2026-10-01T00:00:00Z" },
-    { state: "pending", at: "2026-10-05T00:00:00Z" },
-    { state: "revoked", at: "2026-10-02T00:00:00Z" },
-    { state: "pending", at: "2026-10-04T00:00:00Z" },
-  ] as const
-  assert.deepEqual(
-    [...rows].sort(byJoinLinkState).map((row) => `${row.state} ${row.at}`),
-    [
-      "pending 2026-10-04T00:00:00Z",
-      "pending 2026-10-05T00:00:00Z",
-      "revoked 2026-10-02T00:00:00Z",
-      "used 2026-10-01T00:00:00Z",
-    ]
-  )
+test("revoking is offered only where the controller allows it on a pending link", () => {
+  const allowed = { actions: { revoke: true } }
+  const refused = { actions: { revoke: false } }
+  assert.equal(revocable(allowed, "pending"), true)
+  assert.equal(revocable(refused, "pending"), false)
+  // Expired since the controller's read: nothing left to revoke.
+  assert.equal(revocable(allowed, "expired"), false)
+  assert.equal(revocable(allowed, "used"), false)
+})
+
+test("a new link starts as member when offered, else the lowest offered role", () => {
+  assert.equal(initialRole(["owner", "admin", "member"]), "member")
+  assert.equal(initialRole(["member"]), "member")
+  assert.equal(initialRole(["owner", "admin"]), "admin")
+  assert.equal(initialRole(["owner"]), "owner")
+  assert.equal(initialRole([]), null)
 })

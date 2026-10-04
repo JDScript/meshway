@@ -2,6 +2,7 @@ import {
   revokeJoinLink,
   type JoinLinkListResponse,
   type JoinLinkView,
+  type MembershipRole,
   type MemberSummary,
   type NetworkMembersResponse,
 } from "@meshway/control-client"
@@ -12,7 +13,7 @@ import {
   type UseInfiniteQueryResult,
 } from "@tanstack/react-query"
 import { LinkIcon, XIcon } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { toast } from "sonner"
 
 import { InitialAvatar } from "@/components/chrome/avatar"
@@ -39,7 +40,7 @@ import { toastFailure, toastFailureWith } from "@/lib/failure"
 import { calendarDate, dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
-import { byJoinLinkState, joinLinkState, type JoinLinkState } from "./join-link"
+import { joinLinkState, revocable, type JoinLinkState } from "./join-link"
 import { JoinLinkDialog } from "./join-link-dialog"
 import { joinLinksQuery } from "./queries"
 import type { MembersView } from "./url"
@@ -52,15 +53,9 @@ type LinksRead = Paged<JoinLinkListResponse>
 const rowsOf = <T,>(read: Paged<{ items: T[] }>): T[] =>
   read.data?.pages.flatMap((page) => page.items) ?? []
 
-/** How many: the controller's total when it gives one, else the rows read ("100+" while more remain). */
-function countOf(read: Paged<{ items: unknown[]; total?: number }>) {
-  const pages = read.data?.pages
-  if (!pages) return null
-  const total = pages.at(-1)?.total
-  if (total !== undefined) return total
-  const rows = pages.reduce((sum, page) => sum + page.items.length, 0)
-  return read.hasNextPage ? `${rows}+` : rows
-}
+/** How many there are: the controller's `total`, as of its latest page; never the rows read. */
+const totalOf = (read: Paged<{ total: number }>) =>
+  read.data?.pages.at(-1)?.total ?? null
 
 /** "Load more" for a paged list; an expired cursor reads the list again from its start. */
 function loadMore(read: Paged<unknown>) {
@@ -76,11 +71,14 @@ function loadMore(read: Paged<unknown>) {
 }
 
 /**
- * The members page's index: the network's members, or its join links.
- * Choosing a member opens their workspace; a link is revoked in place.
+ * The members page's index: the network's members, or its join links
+ * (newest first, as the controller pages them). Choosing a member opens
+ * their workspace; a link is revoked in place where the controller allows.
+ * Issuing is offered only with roles the controller lets this account issue.
  */
 export function MemberList({
   networkId,
+  joinLinkRoles,
   view,
   members,
   links,
@@ -91,6 +89,7 @@ export function MemberList({
   onOpen,
 }: {
   networkId: string
+  joinLinkRoles: readonly MembershipRole[]
   view: MembersView
   members: MembersRead
   links: LinksRead
@@ -101,8 +100,9 @@ export function MemberList({
   onOpen: (membershipId: string) => void
 }) {
   const [issuing, setIssuing] = useState(false)
-  const memberCount = countOf(members)
-  const linkCount = countOf(links)
+  const memberCount = totalOf(members)
+  const linkCount = totalOf(links)
+  const mayIssue = joinLinkRoles.length > 0
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -111,11 +111,13 @@ export function MemberList({
         title={m.members_title()}
         count={memberCount}
         action={
-          <PanelAction
-            label={m.members_link_create()}
-            icon={LinkIcon}
-            onClick={() => setIssuing(true)}
-          />
+          mayIssue ? (
+            <PanelAction
+              label={m.members_link_create()}
+              icon={LinkIcon}
+              onClick={() => setIssuing(true)}
+            />
+          ) : null
         }
       >
         <SegmentedControl<MembersView>
@@ -127,7 +129,7 @@ export function MemberList({
               label: (
                 <SegmentCount
                   label={m.members_view_members()}
-                  count={typeof memberCount === "number" ? memberCount : null}
+                  count={memberCount}
                 />
               ),
             },
@@ -136,7 +138,7 @@ export function MemberList({
               label: (
                 <SegmentCount
                   label={m.members_view_links()}
-                  count={typeof linkCount === "number" ? linkCount : null}
+                  count={linkCount}
                 />
               ),
             },
@@ -164,7 +166,8 @@ export function MemberList({
 
       <JoinLinkDialog
         networkId={networkId}
-        open={issuing}
+        roles={joinLinkRoles}
+        open={issuing && mayIssue}
         onOpenChange={setIssuing}
       />
     </div>
@@ -295,13 +298,10 @@ function Links({
   })
 
   const read = links.data
-  const rows = useMemo(
-    () =>
-      (read?.pages.flatMap((page) => page.items) ?? [])
-        .map((link) => ({ link, ...joinLinkState(link, now) }))
-        .sort(byJoinLinkState),
-    [read, now]
-  )
+  const rows = rowsOf(links).map((link) => ({
+    link,
+    ...joinLinkState(link, now),
+  }))
   const emailOf = (userId: string | null) =>
     members.find((member) => member.userId === userId)?.email
 
@@ -348,7 +348,7 @@ function Links({
               }
               trail={
                 <span className="flex size-7 items-center justify-center">
-                  {state === "pending" ? (
+                  {revocable(link, state) ? (
                     <Button
                       variant="ghost"
                       size="icon-sm"

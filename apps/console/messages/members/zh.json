@@ -55,5 +55,6 @@
   "members_link_revoke_effect": "这个{role}链接（{at} 到期）不能再用于加入",
   "members_link_revoke_done": "加入链接已撤销",
   "members_link_revoke_denied": "你的角色不能撤销这个角色的加入链接。",
-  "members_done": "完成"
+  "members_done": "完成",
+  "members_link_no_roles": "你的角色现在不能生成加入链接。"
 }

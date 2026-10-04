@@ -75,6 +75,7 @@ export function MembersPage({
       panel={
         <MemberList
           networkId={networkId}
+          joinLinkRoles={network?.actions.joinLinkRoles ?? []}
           view={route.view}
           members={members}
           links={links}

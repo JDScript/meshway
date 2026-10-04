@@ -1,4 +1,4 @@
-import type { JoinLinkView } from "@meshway/control-client"
+import type { JoinLinkView, MembershipRole } from "@meshway/control-client"
 
 // A join link's state, from the times the controller reports. A link is
 // used or revoked for good; until then it expires at `expiresAt`.
@@ -19,16 +19,27 @@ export function joinLinkState(
   return { state: "pending", at: link.expiresAt }
 }
 
-/** Pending links first, the soonest to expire on top; then the rest, latest first. */
-export function byJoinLinkState(
-  a: { state: JoinLinkState; at: string },
-  b: { state: JoinLinkState; at: string }
-): number {
-  const pendingA = a.state === "pending"
-  const pendingB = b.state === "pending"
-  if (pendingA !== pendingB) return pendingA ? -1 : 1
-  const order = Date.parse(a.at) - Date.parse(b.at)
-  return pendingA ? order : -order
+/**
+ * Whether revoking is offered: the controller's `actions.revoke`, as of its
+ * read, while the link is still pending here (a link that expired since the
+ * read has nothing left to revoke).
+ */
+export const revocable = (
+  link: Pick<JoinLinkView, "actions">,
+  state: JoinLinkState
+) => link.actions.revoke && state === "pending"
+
+/**
+ * The role a new link starts with, among those the controller lets this
+ * account issue (`NetworkActions.joinLinkRoles`): member when offered, else
+ * the lowest offered; none when nothing may be issued.
+ */
+export function initialRole(
+  roles: readonly MembershipRole[]
+): MembershipRole | null {
+  if (roles.includes("member")) return "member"
+  if (roles.includes("admin")) return "admin"
+  return roles.includes("owner") ? "owner" : null
 }
 
 /** How long a new link may be used for, in seconds; the controller takes 60 to 604800. */

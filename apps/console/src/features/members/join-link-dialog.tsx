@@ -31,7 +31,11 @@ import { toastFailure } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
-import { JOIN_LINK_EXPIRIES, type JoinLinkExpiry } from "./join-link"
+import {
+  initialRole,
+  JOIN_LINK_EXPIRIES,
+  type JoinLinkExpiry,
+} from "./join-link"
 import { joinLinksQuery } from "./queries"
 
 /** Long enough for the dialog to finish closing before its content (and the link) is dropped. */
@@ -47,12 +51,14 @@ const expiryLabel: Record<JoinLinkExpiry, () => string> = {
 }
 
 /**
- * Issues a join link: one role, one expiry. The link is shown once, in this
- * dialog only; it is dropped when the dialog closes, and the dialog itself
- * unmounts so nothing keeps it.
+ * Issues a join link: one role among those the controller lets this account
+ * issue (`roles`), one expiry. The link is shown once, in this dialog only;
+ * it is dropped when the dialog closes, and the dialog itself unmounts so
+ * nothing keeps it.
  */
 export function JoinLinkDialog(props: {
   networkId: string
+  roles: readonly MembershipRole[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
@@ -62,16 +68,20 @@ export function JoinLinkDialog(props: {
 
 function Issue({
   networkId,
+  roles,
   open,
   onOpenChange,
 }: {
   networkId: string
+  roles: readonly MembershipRole[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const queryClient = useQueryClient()
   const formId = useId()
-  const [role, setRole] = useState<MembershipRole>("member")
+  const [picked, setPicked] = useState<MembershipRole | null>(null)
+  // The choice holds while the controller still offers it.
+  const role = picked && roles.includes(picked) ? picked : initialRole(roles)
   const [expiry, setExpiry] = useState<JoinLinkExpiry>(86_400)
   const [replacing, setReplacing] = useState(false)
   // An attempt whose outcome is unknown is sent again as itself.
@@ -125,7 +135,7 @@ function Issue({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (secret.pending) return
+    if (secret.pending || role === null) return
     issue({ role, expiresInSeconds: expiry })
   }
 
@@ -161,7 +171,8 @@ function Issue({
         title={m.members_link_created()}
         busy={replacing}
         footer={
-          link ? (
+          // Replacing revokes the link first: offered only where it may be revoked.
+          link || !created.link.actions.revoke ? (
             <Button
               className="h-9 rounded-full px-4"
               onClick={() => close(false)}
@@ -229,7 +240,7 @@ function Issue({
             type="submit"
             form={formId}
             className="h-9 rounded-full px-4"
-            disabled={secret.pending}
+            disabled={secret.pending || role === null}
             aria-busy={secret.pending}
           >
             <BusyLabel busy={secret.pending}>
@@ -246,15 +257,20 @@ function Issue({
         onSubmit={submit}
       >
         <Choice label={m.members_role()}>
-          <SegmentedControl<MembershipRole>
-            label={m.members_role()}
-            value={role}
-            options={ROLES.map((value) => ({
-              value,
-              label: roleLabel[value](),
-            }))}
-            onChange={setRole}
-          />
+          {role === null ? (
+            <span className="text-row text-muted-foreground">
+              {m.members_link_no_roles()}
+            </span>
+          ) : (
+            <SegmentedControl<MembershipRole>
+              label={m.members_role()}
+              value={role}
+              options={ROLES.filter((value) => roles.includes(value)).map(
+                (value) => ({ value, label: roleLabel[value]() })
+              )}
+              onChange={setPicked}
+            />
+          )}
         </Choice>
         <Choice label={m.members_link_valid_for()}>
           <SegmentedControl<`${JoinLinkExpiry}`>
