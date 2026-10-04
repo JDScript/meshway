@@ -23,9 +23,11 @@
 
 管理／配置候选现已扩展真实 HTTP／SQLite 操作：账户读取、邮箱／密码修改、会话分页及撤销、主机 CLI 密码恢复、角色变更、一次性加入链接、无 Node 依赖的移除／离网、配置普通视图与显式秘密 source、JSONC／强类型编辑校验及 CAS 保存、版本分页／对照／恢复、账户／网络活动、配置 schema 与承载目录。名称规则通过 `getAuthOptions.networkNameRules` 发布；成员 actions 由当前权限推导，网络／成员列表 total 在同一查询事务内按创建上界和当前权限计算。邮箱同步更新可读引用但保留稳定主体绑定；恢复历史版本不会把旧邮箱绑定到同名新账户。
 
-Node 控制流程已整合真实 HTTP／SQLite：签名接入、PKCE 批准与兑换、接入密钥、持钥会话与轮换恢复、实例／lease、完整执行目标与增量、demand、saved／applied／failed 回执、永久删除及成员删除联动。需求重试不重复扰动无关节点，回执按尝试／序号处理乱序；节点身份与策略引用使用独立的稳定绑定。当前生成物包含 63 个路径、68 个操作，精确方法、输入与错误以实际路由导出的 OpenAPI 为准。
+Node 控制流程已整合真实 HTTP／SQLite：签名接入、PKCE 批准与兑换、接入密钥、持钥会话与轮换恢复、实例／lease、完整执行目标与增量、demand、saved／applied／failed 回执、永久删除及成员删除联动。需求重试不重复扰动无关节点，回执按尝试／序号处理乱序；节点身份与策略引用使用独立的稳定绑定。当前生成物包含 72 个路径、77 个操作，精确方法、输入与错误以实际路由导出的 OpenAPI 为准。
 
-State／观测／资源的生产 provider 与主 Router、完整配置事件通知、远端规则集及可信 DNS／GeoIP 输入仍待接通。`reassignAddresses`／`rotateMaterial` 与完整预览计划尚未成为可用 HTTP 操作；地址退出安全下界仍需实际 Agent 证据。上述 Node 控制流程及编译／回执测试不等于 Agent 安装、TUN 或真实组网验收，网络 SSE 尚未作为生产操作导出。
+State 查询／Node 上报、历史接纳／查询、按 revision 的配置进度，以及用户／Node SSE 已接入正常 Router 和真实权限 provider。固定 apply 目标随配置版本保存；配置、权限与进度变化在已接纳 SQLite job 的提交后进入统一 journal。用户首次完整同步及后续增量经过权限裁剪，正常配置变化保持通知连续，失权、期限和重放断档分别处理。
+
+主动诊断需求合成及其 HTTP 操作、远端规则集绑定、可信 DNS／GeoIP 数据输入与自动方案仍待接通。`reassignAddresses`／`rotateMaterial` 与完整预览计划尚未成为可用 HTTP 操作；地址退出安全下界仍需实际 Agent 证据。Controller HTTP／SSE 与持钥测试 Node 的验收不等于 Agent 安装、TUN 或真实组网验收。
 
 错误为 `ErrorResponse { requestId, status, problem: { code, params, message } }`；requestId 仅在其安全生成失败时为 null。请求和响应对象拒绝数组表示、重复字段和未知字段。
 
@@ -43,7 +45,7 @@ dataDir 使用无符号链接的绝对路径，父目录须存在；进程创建
 
 `export-openapi` binary 从同一份真实路由声明导出 `packages/protocol/openapi.json` 的内容，不启动数据库或服务。生成 SDK 的可用操作以这份产物为依据，不从本页目标索引推断尚未交付的接口。
 
-上述管理／配置 JSON 操作及字段变更已统一生成 Rust／TypeScript 客户端和运行时校验 schema。SDK 用法见 `packages/control-client/README.md`。SSE 生成链已支持显式声明的 JSON-data 事件流，但 State 候选仍待真实 provider／主 Router 接线，尚未导出可用的网络／Node SSE 操作。
+上述 JSON／SSE 操作已统一生成 Rust／TypeScript 客户端和运行时校验 schema，包含 `watchNetwork`／`watchNode`、`getNetworkState`／`getNodeState`、`reportNodeState`／`queryPeerState`、`reportNodeHistory`／`queryObservationHistory`、`getConfigurationProgress`。SDK 用法见 `packages/control-client/README.md`；SSE 契约见[事件流](/v2/api/events)。
 
 主机运维签发密码重置链接（先停止占有同一 dataDir 的 Controller）：
 

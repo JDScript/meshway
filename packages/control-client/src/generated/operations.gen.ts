@@ -1,8 +1,8 @@
 // Generated from Controller OpenAPI. Do not edit.
 
 import type * as z from "zod";
-import { ControlClient, type AuthenticatedRequestOptions, type RequestOptions } from "../transport.ts";
-import { zAccountResponse, zAccountSessionsResponse, zAcquireInstanceRequest, zActivityListResponse, zActivityResponse, zApplyConfigurationPath, zApproveDeviceAuthorizationPath, zApproveEnrollmentRequest, zAuthOptionsResponse, zAuthSessionResponse, zCancelDemandRequest, zCancelEnrollmentRequestPath, zChangeEmailRequest, zChangeMemberRolePath, zChangeMemberRoleRequest, zChangePasswordRequest, zCompareConfigurationPath, zCompareConfigurationRequest, zConfigurationAppliedResponse, zConfigurationComparison, zConfigurationPreviewResponse, zConfigurationRequest, zConfigurationResponse, zConfigurationRevisionList, zConfigurationSchemaResponse, zConfigurationSourceResponse, zCreateEnrollmentKeyPath, zCreateEnrollmentKeyRequest, zCreateEnrollmentRequest, zCreateJoinLinkPath, zCreateJoinLinkRequest, zCreateNetworkRequest, zDeleteNodePath, zDeleteNodeRequest, zDemandRequest, zDemandResponse, zDenyDeviceAuthorizationPath, zEnrollmentDeviceProof, zEnrollmentKeyResponse, zEnrollmentKeysResponse, zEnrollmentPollResponse, zEnrollmentRequestView, zEnrollmentResponse, zErrorResponse, zGetConfigurationPath, zGetConfigurationRevisionPath, zGetConfigurationSourcePath, zGetConfigurationSourceQuery, zGetDeviceAuthorizationPath, zGetExecutionPublicationPath, zGetLeaveImpactPath, zGetMemberRemovalImpactPath, zGetNetworkActivityPath, zGetNetworkPath, zGetNodePath, zInstanceLease, zInstanceRequest, zJoinLinkCreated, zJoinLinkCredentialRequest, zJoinLinkInspection, zJoinLinkListResponse, zJoinLinkRedeemed, zKeyEnrollmentRequest, zLeaveNetworkPath, zListAccountActivityQuery, zListAccountSessionsQuery, zListConfigurationRevisionsPath, zListConfigurationRevisionsQuery, zListEnrollmentKeysPath, zListJoinLinksPath, zListJoinLinksQuery, zListNetworkActivityPath, zListNetworkActivityQuery, zListNetworkMembersPath, zListNetworkMembersQuery, zListNetworksQuery, zListNodesPath, zLoginRequest, zMemberMutationResponse, zMemberRemovedResponse, zNetworkListResponse, zNetworkMembersResponse, zNetworkResponse, zNodeChallenge, zNodeChallengeRequest, zNodeConfigurationRequest, zNodeConfigurationResponse, zNodeInventoryResponse, zNodeInventoryView, zNodeKeyMetadata, zNodeRotationRequest, zNodeSessionRequest, zNodeSessionResponse, zPasswordResetInspectRequest, zPasswordResetInspection, zPasswordResetRedeemRequest, zPublicationProgress, zQueryEnrollmentRequestPath, zReceiptRequest, zRedeemEnrollmentRequest, zRedeemEnrollmentRequestPath, zRegisterRequest, zRemovalImpactResponse, zRemoveMemberPath, zRemoveMemberRequest, zRenameNetworkPath, zRenameNetworkRequest, zRevokeAccountSessionPath, zRevokeEnrollmentKeyPath, zRevokeJoinLinkPath, zRevokeNodeKeyPath, zRevokeNodeKeyRequest, zRoutingSelectionRequest, zRoutingSelectionResponse, zSessionIssuedResponse, zTransportCatalogResponse, zValidateConfigurationPath } from "./zod.gen.ts";
+import { ControlClient, type AuthenticatedRequestOptions, type AuthenticatedStreamOptions, type RequestOptions } from "../transport.ts";
+import { zAccountResponse, zAccountSessionsResponse, zAcquireInstanceRequest, zActivityListResponse, zActivityResponse, zApplyConfigurationPath, zApproveDeviceAuthorizationPath, zApproveEnrollmentRequest, zAuthOptionsResponse, zAuthSessionResponse, zCancelDemandRequest, zCancelEnrollmentRequestPath, zChangeEmailRequest, zChangeMemberRolePath, zChangeMemberRoleRequest, zChangePasswordRequest, zCompareConfigurationPath, zCompareConfigurationRequest, zConfigurationAppliedResponse, zConfigurationApplyProgress, zConfigurationComparison, zConfigurationPreviewResponse, zConfigurationRequest, zConfigurationResponse, zConfigurationRevisionList, zConfigurationSchemaResponse, zConfigurationSourceResponse, zCreateEnrollmentKeyPath, zCreateEnrollmentKeyRequest, zCreateEnrollmentRequest, zCreateJoinLinkPath, zCreateJoinLinkRequest, zCreateNetworkRequest, zDeleteNodePath, zDeleteNodeRequest, zDemandRequest, zDemandResponse, zDenyDeviceAuthorizationPath, zEnrollmentDeviceProof, zEnrollmentKeyResponse, zEnrollmentKeysResponse, zEnrollmentPollResponse, zEnrollmentRequestView, zEnrollmentResponse, zErrorResponse, zGetConfigurationPath, zGetConfigurationProgressPath, zGetConfigurationRevisionPath, zGetConfigurationSourcePath, zGetConfigurationSourceQuery, zGetDeviceAuthorizationPath, zGetExecutionPublicationPath, zGetLeaveImpactPath, zGetMemberRemovalImpactPath, zGetNetworkActivityPath, zGetNetworkPath, zGetNetworkStatePath, zGetNodePath, zGetNodeStatePath, zHistoryAccepted, zHistoryPage, zHistoryQuery, zHistoryReport, zInstanceLease, zInstanceRequest, zJoinLinkCreated, zJoinLinkCredentialRequest, zJoinLinkInspection, zJoinLinkListResponse, zJoinLinkRedeemed, zKeyEnrollmentRequest, zLeaveNetworkPath, zListAccountActivityQuery, zListAccountSessionsQuery, zListConfigurationRevisionsPath, zListConfigurationRevisionsQuery, zListEnrollmentKeysPath, zListJoinLinksPath, zListJoinLinksQuery, zListNetworkActivityPath, zListNetworkActivityQuery, zListNetworkMembersPath, zListNetworkMembersQuery, zListNetworksQuery, zListNodesPath, zLoginRequest, zMemberMutationResponse, zMemberRemovedResponse, zNetworkListResponse, zNetworkMembersResponse, zNetworkResponse, zNodeChallenge, zNodeChallengeRequest, zNodeConfigurationRequest, zNodeConfigurationResponse, zNodeEvent, zNodeInventoryResponse, zNodeInventoryView, zNodeKeyMetadata, zNodeRotationRequest, zNodeSessionRequest, zNodeSessionResponse, zPasswordResetInspectRequest, zPasswordResetInspection, zPasswordResetRedeemRequest, zPublicationProgress, zQueryEnrollmentRequestPath, zQueryObservationHistoryPath, zReceiptRequest, zRedeemEnrollmentRequest, zRedeemEnrollmentRequestPath, zRegisterRequest, zRemovalImpactResponse, zRemoveMemberPath, zRemoveMemberRequest, zRenameNetworkPath, zRenameNetworkRequest, zRevokeAccountSessionPath, zRevokeEnrollmentKeyPath, zRevokeJoinLinkPath, zRevokeNodeKeyPath, zRevokeNodeKeyRequest, zRoutingSelectionRequest, zRoutingSelectionResponse, zSessionIssuedResponse, zStateAccepted, zStateQuery, zStateReport, zStateView, zTransportCatalogResponse, zUserEvent, zValidateConfigurationPath, zWatchNetworkPath } from "./zod.gen.ts";
 
 export function acquireNodeInstance(client: ControlClient, body: z.output<typeof zAcquireInstanceRequest>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/agent-api/v1/instances", authenticated: true, successStatus: 200, success: zInstanceLease, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zAcquireInstanceRequest, value: body } }, options);
@@ -96,6 +96,10 @@ export function getConfiguration(client: ControlClient, path: z.output<typeof zG
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/configuration", authenticated: true, successStatus: 200, success: zConfigurationResponse, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zGetConfigurationPath, value: path } }, options);
 }
 
+export function getConfigurationProgress(client: ControlClient, path: z.output<typeof zGetConfigurationProgressPath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/configuration/revisions/{revision}/progress", authenticated: true, successStatus: 200, success: zConfigurationApplyProgress, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse, pathParameters: { schema: zGetConfigurationProgressPath, value: path } }, options);
+}
+
 export function getConfigurationRevision(client: ControlClient, path: z.output<typeof zGetConfigurationRevisionPath>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/configuration/revisions/{revision}", authenticated: true, successStatus: 200, success: zConfigurationResponse, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zGetConfigurationRevisionPath, value: path } }, options);
 }
@@ -132,8 +136,16 @@ export function getNetworkActivity(client: ControlClient, path: z.output<typeof 
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/activity/{activityId}", authenticated: true, successStatus: 200, success: zActivityResponse, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zGetNetworkActivityPath, value: path } }, options);
 }
 
+export function getNetworkState(client: ControlClient, path: z.output<typeof zGetNetworkStatePath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/state", authenticated: true, successStatus: 200, success: zStateView, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse, pathParameters: { schema: zGetNetworkStatePath, value: path } }, options);
+}
+
 export function getNode(client: ControlClient, path: z.output<typeof zGetNodePath>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/nodes/{nodeId}", authenticated: true, successStatus: 200, success: zNodeInventoryView, errors: [401, 404], problem: zErrorResponse, pathParameters: { schema: zGetNodePath, value: path } }, options);
+}
+
+export function getNodeState(client: ControlClient, path: z.output<typeof zGetNodeStatePath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/nodes/{nodeId}/state", authenticated: true, successStatus: 200, success: zStateView, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse, pathParameters: { schema: zGetNodeStatePath, value: path } }, options);
 }
 
 export function getTransportCatalog(client: ControlClient, options: AuthenticatedRequestOptions) {
@@ -204,6 +216,14 @@ export function queryNodeConfiguration(client: ControlClient, body: z.output<typ
   return client.request({ method: "POST", path: "/agent-api/v1/configuration/query", authenticated: true, successStatus: 200, success: zNodeConfigurationResponse, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zNodeConfigurationRequest, value: body } }, options);
 }
 
+export function queryObservationHistory(client: ControlClient, path: z.output<typeof zQueryObservationHistoryPath>, body: z.output<typeof zHistoryQuery>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/history/query", authenticated: true, successStatus: 200, success: zHistoryPage, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse, pathParameters: { schema: zQueryObservationHistoryPath, value: path }, body: { schema: zHistoryQuery, value: body } }, options);
+}
+
+export function queryPeerState(client: ControlClient, body: z.output<typeof zStateQuery>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/state/query", authenticated: true, successStatus: 200, success: zStateView, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse, body: { schema: zStateQuery, value: body } }, options);
+}
+
 export function redeemEnrollmentRequest(client: ControlClient, path: z.output<typeof zRedeemEnrollmentRequestPath>, body: z.output<typeof zRedeemEnrollmentRequest>, options: RequestOptions = {}) {
   return client.request({ method: "POST", path: "/agent-api/v1/enrollment-requests/{enrollmentRequestId}/redeem", authenticated: false, successStatus: 200, success: zEnrollmentResponse, errors: [400, 401, 403, 409, 503], problem: zErrorResponse, pathParameters: { schema: zRedeemEnrollmentRequestPath, value: path }, body: { schema: zRedeemEnrollmentRequest, value: body } }, options);
 }
@@ -234,6 +254,14 @@ export function renameNetwork(client: ControlClient, path: z.output<typeof zRena
 
 export function renewNodeInstance(client: ControlClient, body: z.output<typeof zInstanceRequest>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/agent-api/v1/instances/renew", authenticated: true, successStatus: 200, success: zInstanceLease, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zInstanceRequest, value: body } }, options);
+}
+
+export function reportNodeHistory(client: ControlClient, body: z.output<typeof zHistoryReport>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/history", authenticated: true, successStatus: 200, success: zHistoryAccepted, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse, body: { schema: zHistoryReport, value: body } }, options);
+}
+
+export function reportNodeState(client: ControlClient, body: z.output<typeof zStateReport>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/state", authenticated: true, successStatus: 200, success: zStateAccepted, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse, body: { schema: zStateReport, value: body } }, options);
 }
 
 export function revokeAccountSession(client: ControlClient, path: z.output<typeof zRevokeAccountSessionPath>, options: AuthenticatedRequestOptions) {
@@ -274,4 +302,12 @@ export function submitNodeConfigurationReceipt(client: ControlClient, body: z.ou
 
 export function validateConfiguration(client: ControlClient, path: z.output<typeof zValidateConfigurationPath>, body: z.output<typeof zConfigurationRequest>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/configuration/validate", authenticated: true, successStatus: 200, success: zConfigurationPreviewResponse, errors: [400, 401, 403, 404, 409, 413, 415, 422, 503], problem: zErrorResponse, pathParameters: { schema: zValidateConfigurationPath, value: path }, body: { schema: zConfigurationRequest, value: body } }, options);
+}
+
+export function watchNetwork(client: ControlClient, path: z.output<typeof zWatchNetworkPath>, options: AuthenticatedStreamOptions) {
+  return client.stream({ method: "GET", path: "/api/v1/networks/{networkId}/events", authenticated: true, successStatus: 200, success: zUserEvent, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse, pathParameters: { schema: zWatchNetworkPath, value: path } }, options);
+}
+
+export function watchNode(client: ControlClient, options: AuthenticatedStreamOptions) {
+  return client.stream({ method: "GET", path: "/agent-api/v1/events", authenticated: true, successStatus: 200, success: zNodeEvent, errors: [400, 401, 403, 404, 409, 429, 503], problem: zErrorResponse }, options);
 }

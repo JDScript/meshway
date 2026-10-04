@@ -95,4 +95,4 @@ Controller 本地维护版本化数据集，更新走部署／运维配置；网
 
 ## 实现边界
 
-GeoIP／ASN State 尚未接线。现有 TypeScript 自有生成器目前不支持 number schema；引入经纬度时需同步补有界数值类型生成与校验，不能用未验证断言或字符串伪装数值绕过。
+GeoIP／ASN 字段及派生结果已随 State／SSE 契约提供，TypeScript 生成器按 Schema 校验有限 binary64 数值及其范围。正常部署的数据集更新／绑定和自动方案输入仍待接通；无数据集或有效观测时如实返回缺失原因，不伪造位置。

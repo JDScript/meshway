@@ -53,6 +53,12 @@ pub struct GetConfigurationPath {
 }
 
 #[derive(Clone)]
+pub struct GetConfigurationProgressPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#revision: meshway_protocol::Revision,
+}
+
+#[derive(Clone)]
 pub struct GetConfigurationRevisionPath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#revision: meshway_protocol::Revision,
@@ -101,7 +107,18 @@ pub struct GetNetworkActivityPath {
 }
 
 #[derive(Clone)]
+pub struct GetNetworkStatePath {
+    pub r#network_id: meshway_protocol::NetworkId,
+}
+
+#[derive(Clone)]
 pub struct GetNodePath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#node_id: meshway_protocol::NodeId,
+}
+
+#[derive(Clone)]
+pub struct GetNodeStatePath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#node_id: meshway_protocol::NodeId,
 }
@@ -185,6 +202,11 @@ pub struct QueryEnrollmentRequestPath {
 }
 
 #[derive(Clone)]
+pub struct QueryObservationHistoryPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+}
+
+#[derive(Clone)]
 pub struct RedeemEnrollmentRequestPath {
     pub r#enrollment_request_id: meshway_protocol::EnrollmentRequestId,
 }
@@ -225,6 +247,11 @@ pub struct RevokeNodeKeyPath {
 
 #[derive(Clone)]
 pub struct ValidateConfigurationPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+}
+
+#[derive(Clone)]
+pub struct WatchNetworkPath {
     pub r#network_id: meshway_protocol::NetworkId,
 }
 
@@ -1012,6 +1039,65 @@ impl crate::Client {
         }
     }
 
+    pub async fn get_configuration_progress(
+        &self,
+        path: &GetConfigurationProgressPath,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::ConfigurationApplyProgress,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("revision", {
+                let value = serde_json::from_slice::<i64>(
+                    &serde_json::to_vec(&path.r#revision)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(1..=9007199254740991).contains(&value) {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/configuration/revisions/{revision}/progress",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn get_configuration_revision(
         &self,
         path: &GetConfigurationRevisionPath,
@@ -1500,6 +1586,49 @@ impl crate::Client {
         }
     }
 
+    pub async fn get_network_state(
+        &self,
+        path: &GetNetworkStatePath,
+        token: &str,
+    ) -> Result<meshway_protocol::StateView, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let path_values = [("networkId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#network_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/state",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn get_node(
         &self,
         path: &GetNodePath,
@@ -1566,6 +1695,74 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             401 | 404 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn get_node_state(
+        &self,
+        path: &GetNodeStatePath,
+        token: &str,
+    ) -> Result<meshway_protocol::StateView, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("nodeId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#node_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/nodes/{nodeId}/state",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -2403,6 +2600,71 @@ impl crate::Client {
         }
     }
 
+    pub async fn query_observation_history(
+        &self,
+        path: &QueryObservationHistoryPath,
+        body: &meshway_protocol::HistoryQuery,
+        token: &str,
+    ) -> Result<meshway_protocol::HistoryPage, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let path_values = [("networkId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#network_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/history/query",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn query_peer_state(
+        &self,
+        body: &meshway_protocol::StateQuery,
+        token: &str,
+    ) -> Result<meshway_protocol::StateView, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/state/query",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn redeem_enrollment_request(
         &self,
         path: &RedeemEnrollmentRequestPath,
@@ -2667,6 +2929,50 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn report_node_history(
+        &self,
+        body: &meshway_protocol::HistoryReport,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::HistoryAccepted,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/history",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn report_node_state(
+        &self,
+        body: &meshway_protocol::StateReport,
+        token: &str,
+    ) -> Result<meshway_protocol::StateAccepted, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/state",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -3061,5 +3367,68 @@ impl crate::Client {
             400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
+    }
+
+    pub async fn watch_network(
+        &self,
+        path: &WatchNetworkPath,
+        token: &str,
+        options: &crate::StreamOptions<'_>,
+    ) -> Result<
+        crate::EventStream<meshway_protocol::UserEvent, meshway_protocol::ErrorResponse>,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("networkId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#network_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/events",
+            &path_values,
+            &query_values,
+        )?;
+        self.stream(
+            url,
+            Some(token),
+            options,
+            crate::StreamResponse::json(200, &[400, 401, 403, 404, 409, 429, 503]),
+        )
+        .await
+    }
+
+    pub async fn watch_node(
+        &self,
+        token: &str,
+        options: &crate::StreamOptions<'_>,
+    ) -> Result<
+        crate::EventStream<meshway_protocol::NodeEvent, meshway_protocol::ErrorResponse>,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let url = self.parameter_url("/agent-api/v1/events", &[], &[])?;
+        self.stream(
+            url,
+            Some(token),
+            options,
+            crate::StreamResponse::json(200, &[400, 401, 403, 404, 409, 429, 503]),
+        )
+        .await
     }
 }

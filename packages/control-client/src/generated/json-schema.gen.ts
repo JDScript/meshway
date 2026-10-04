@@ -484,6 +484,91 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AggregatedLink": {
+        "type": "object",
+        "required": [
+          "a",
+          "b",
+          "linkId",
+          "transport",
+          "initiatorNodeId",
+          "evidence",
+          "phase",
+          "reports"
+        ],
+        "properties": {
+          "a": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "b": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/LinkEvidence"
+          },
+          "inUse": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "initiatorNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "linkId": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/LinkPhase"
+          },
+          "reports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportRef"
+            }
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "transport": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AggregatedPath": {
+        "type": "object",
+        "required": [
+          "pathId",
+          "reporter",
+          "state"
+        ],
+        "properties": {
+          "pathId": {
+            "type": "string"
+          },
+          "reporter": {
+            "$ref": "#/components/schemas/ReportRef"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PathState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ApplicationPhase": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "saved",
+          "applied",
+          "failed"
+        ]
+      },
       "ApplyFailure": {
         "type": "string",
         "enum": [
@@ -494,6 +579,17 @@ export const schemaDocument = {
           "tun",
           "dns",
           "dataplane"
+        ]
+      },
+      "ApplyPhase": {
+        "type": "string",
+        "enum": [
+          "receiving",
+          "validating",
+          "saved",
+          "applying",
+          "applied",
+          "failed"
         ]
       },
       "ApproveEnrollmentRequest": {
@@ -507,6 +603,14 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "ArtifactId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Immutable dataset artifact identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
       },
       "AuthOptionsResponse": {
         "type": "object",
@@ -680,6 +784,14 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CandidateSource": {
+        "type": "string",
+        "enum": [
+          "configured",
+          "interface",
+          "stun"
+        ]
+      },
       "Capability": {
         "oneOf": [
           {
@@ -818,6 +930,25 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CloseReason": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "remote_closed",
+          "timeout",
+          "withdrawn",
+          "local_failure"
+        ]
+      },
+      "ClosedReason": {
+        "type": "string",
+        "enum": [
+          "session_expired",
+          "membership_revoked",
+          "node_lease_expired",
+          "server_shutdown"
+        ]
+      },
       "CompareConfigurationRequest": {
         "type": "object",
         "required": [
@@ -886,6 +1017,45 @@ export const schemaDocument = {
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationApplyProgress": {
+        "type": "object",
+        "required": [
+          "networkId",
+          "revision",
+          "scope",
+          "summary",
+          "nodes"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ConfigurationNodeProgress"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ProgressScope"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ConfigurationProgressSummary"
           }
         },
         "additionalProperties": false
@@ -970,6 +1140,65 @@ export const schemaDocument = {
           },
           "path": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationNodeProgress": {
+        "type": "object",
+        "required": [
+          "target",
+          "phase",
+          "freshness"
+        ],
+        "properties": {
+          "attempt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/ReceiptFreshness",
+            "description": "Independent of historical result; never implies data-plane health."
+          },
+          "instanceId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ApplicationPhase",
+            "description": "Last result for the original target, including historical instances."
+          },
+          "receivedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sequence": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sequence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/ConfigurationRef"
           }
         },
         "additionalProperties": false
@@ -1362,6 +1591,76 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ConfigurationProgress": {
+        "type": "object",
+        "required": [
+          "target",
+          "phase",
+          "observedAt"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ApplyPhase"
+          },
+          "problem": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StateProblem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationProgressSummary": {
+        "type": "object",
+        "required": [
+          "targetCount",
+          "pending",
+          "saved",
+          "applied",
+          "failed"
+        ],
+        "properties": {
+          "applied": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "saved": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "targetCount": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Counts of the original targets' last accepted phase, not online/healthy\nnodes. Inspect each node's independent freshness before presenting it as\ncurrently applied; expired/superseded results remain historical evidence.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "ConfigurationRef": {
         "type": "object",
         "required": [
@@ -1614,6 +1913,42 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ConfigurationState": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "saved": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "ConfigurationValidationParams": {
         "type": "object",
         "required": [
@@ -1749,6 +2084,13 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "CoverageReason": {
+        "type": "string",
+        "enum": [
+          "retention",
+          "capacity"
+        ]
       },
       "CreateEnrollmentKeyRequest": {
         "type": "object",
@@ -2061,6 +2403,44 @@ export const schemaDocument = {
           },
           "publication": {
             "$ref": "#/components/schemas/PublicationId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DerivedNodeState": {
+        "type": "object",
+        "required": [
+          "ipInfo"
+        ],
+        "properties": {
+          "ipInfo": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/IpInfo"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "location": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GeoObservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locationAbsent": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LocationAbsentReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -2559,6 +2939,93 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "EndpointCandidate": {
+        "type": "object",
+        "required": [
+          "address",
+          "origin",
+          "observedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/EndpointSource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EndpointSource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "configPath",
+              "source"
+            ],
+            "properties": {
+              "configPath": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "configured"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "interface",
+              "source"
+            ],
+            "properties": {
+              "interface": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "interface"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "observer",
+              "source"
+            ],
+            "properties": {
+              "observer": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "stun"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
       "EnrollmentDeviceProof": {
         "type": "object",
         "required": [
@@ -2812,6 +3279,28 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "EntityRemovals": {
+        "type": "object",
+        "required": [
+          "nodes",
+          "members"
+        ],
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MembershipId"
+            }
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "ErrorResponse": {
         "type": "object",
         "required": [
@@ -2843,6 +3332,86 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "EventActor": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "userId",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "user"
+                ]
+              },
+              "userId": {
+                "$ref": "#/components/schemas/UserId"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "node"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "system"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "redacted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EventId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Source observation event identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
       "ExecutionAddress": {
         "type": "string"
       },
@@ -2866,6 +3435,551 @@ export const schemaDocument = {
           },
           "nodeId": {
             "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Freshness": {
+        "type": "string",
+        "enum": [
+          "current",
+          "awaiting_report",
+          "expired",
+          "superseded",
+          "config_mismatch",
+          "revoked"
+        ]
+      },
+      "GeoIpData": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GeoPosition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "GeoObservation": {
+        "type": "object",
+        "required": [
+          "address",
+          "sourceSocketId",
+          "sourceGeneration",
+          "datasetId",
+          "data",
+          "endpointSource",
+          "observedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/GeoIpData"
+          },
+          "datasetId": {
+            "$ref": "#/components/schemas/ArtifactId"
+          },
+          "endpointSource": {
+            "$ref": "#/components/schemas/LocationSource"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceGeneration": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "sourceSocketId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GeoPosition": {
+        "type": "object",
+        "required": [
+          "latitude",
+          "longitude"
+        ],
+        "properties": {
+          "accuracyRadiusKm": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "minimum": 0
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "maximum": 90,
+            "minimum": -90
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "maximum": 180,
+            "minimum": -180
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoricalEvent": {
+        "type": "object",
+        "required": [
+          "sourceNodeId",
+          "instanceId",
+          "receivedAt",
+          "event"
+        ],
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/ObservationEvent"
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryAccepted": {
+        "type": "object",
+        "required": [
+          "accepted",
+          "duplicates"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "duplicates": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryBucket": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "sourceNodeId",
+          "sampleCount",
+          "success",
+          "timeout",
+          "failed",
+          "instanceId",
+          "publicationId",
+          "path",
+          "kind"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProbeKind"
+          },
+          "linkId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meanSuccessDurationUs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "publicationId": {
+            "$ref": "#/components/schemas/PublicationId"
+          },
+          "sampleCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sourceNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "success": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "timeout": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "transport": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryCoverage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "sourceNodeId",
+              "before",
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "before": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/CoverageReason"
+              },
+              "sourceNodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pruned"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "sourceNodeId",
+              "instanceId",
+              "eventId",
+              "from",
+              "to",
+              "dropped",
+              "type"
+            ],
+            "properties": {
+              "dropped": {
+                "$ref": "#/components/schemas/Sequence"
+              },
+              "eventId": {
+                "$ref": "#/components/schemas/EventId"
+              },
+              "from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "instanceId": {
+                "$ref": "#/components/schemas/InstanceId"
+              },
+              "sourceNodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "to": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "collectionGap"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "HistoryItems": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "items",
+              "mode"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/HistoricalEvent"
+                }
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "raw"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "items",
+              "mode"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/HistoryBucket"
+                }
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "buckets"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "items",
+              "mode"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RecentLink"
+                }
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "recentLinks"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "HistoryKind": {
+        "type": "string",
+        "enum": [
+          "dial_started",
+          "dial_failed",
+          "link_opened",
+          "link_closed",
+          "probe_completed",
+          "collection_gap"
+        ]
+      },
+      "HistoryMode": {
+        "type": "string",
+        "enum": [
+          "raw",
+          "buckets",
+          "recentLinks"
+        ]
+      },
+      "HistoryPage": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "asOf",
+          "coverage",
+          "result"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "coverage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryCoverage"
+            }
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/HistoryItems"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryQuery": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "mode",
+          "limit"
+        ],
+        "properties": {
+          "bucketSeconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kinds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/HistoryKind"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 200,
+            "minimum": 1
+          },
+          "linkId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "$ref": "#/components/schemas/HistoryMode"
+          },
+          "peerNodeId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceNodeId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryReport": {
+        "type": "object",
+        "required": [
+          "instanceId",
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObservationEvent"
+            }
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
           }
         },
         "additionalProperties": false
@@ -2953,6 +4067,22 @@ export const schemaDocument = {
           },
           "instanceId": {
             "$ref": "#/components/schemas/InstanceId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IpInfo": {
+        "type": "object",
+        "required": [
+          "geoip",
+          "asn"
+        ],
+        "properties": {
+          "asn": {
+            "$ref": "#/components/schemas/LookupResult_AsnData"
+          },
+          "geoip": {
+            "$ref": "#/components/schemas/LookupResult_GeoIpData"
           }
         },
         "additionalProperties": false
@@ -3194,6 +4324,82 @@ export const schemaDocument = {
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
       },
+      "LinkEvidence": {
+        "type": "string",
+        "enum": [
+          "oneSided",
+          "matched",
+          "conflicting",
+          "expired"
+        ]
+      },
+      "LinkPhase": {
+        "type": "string",
+        "enum": [
+          "preparing",
+          "authenticated",
+          "closed",
+          "failed"
+        ]
+      },
+      "LinkState": {
+        "type": "object",
+        "required": [
+          "linkId",
+          "transport",
+          "initiatorNodeId",
+          "socketId",
+          "phase",
+          "businessDependencies",
+          "observationIds",
+          "observedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "businessDependencies": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "initiatorNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "linkId": {
+            "type": "string"
+          },
+          "observationIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObservationId"
+            }
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/LinkPhase"
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "socketId": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "Listener": {
         "oneOf": [
           {
@@ -3418,6 +4624,64 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ListenerPhase": {
+        "type": "string",
+        "enum": [
+          "preparing",
+          "listening",
+          "stopped",
+          "failed"
+        ]
+      },
+      "ListenerState": {
+        "type": "object",
+        "required": [
+          "phase",
+          "socketIds"
+        ],
+        "properties": {
+          "configuration": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "loadedCertificateSha256": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Digest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ListenerPhase"
+          },
+          "problem": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StateProblem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "socketIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "ListenerTls": {
         "type": "object",
         "required": [
@@ -3636,6 +4900,24 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "LocationAbsentReason": {
+        "type": "string",
+        "enum": [
+          "noObservation",
+          "observationExpired",
+          "datasetUnavailable",
+          "notInDataset",
+          "lookupFailed",
+          "ambiguousObservation"
+        ]
+      },
+      "LocationSource": {
+        "type": "string",
+        "enum": [
+          "interface",
+          "stun"
+        ]
+      },
       "LogicalPath": {
         "type": "object",
         "required": [
@@ -3685,6 +4967,248 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "LookupResult_AsnData": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "datasetId",
+              "lookedUpAt",
+              "data",
+              "status"
+            ],
+            "properties": {
+              "data": {
+                "type": "object",
+                "required": [
+                  "number"
+                ],
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  },
+                  "organization": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "prefix": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "datasetId": {
+                "$ref": "#/components/schemas/ArtifactId"
+              },
+              "lookedUpAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "available"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "datasetId",
+              "lookedUpAt",
+              "status"
+            ],
+            "properties": {
+              "datasetId": {
+                "$ref": "#/components/schemas/ArtifactId"
+              },
+              "lookedUpAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "notFound"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/UnavailableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/NotApplicableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "notApplicable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "LookupResult_GeoIpData": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "datasetId",
+              "lookedUpAt",
+              "data",
+              "status"
+            ],
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "country": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "position": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/GeoPosition"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "region": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "datasetId": {
+                "$ref": "#/components/schemas/ArtifactId"
+              },
+              "lookedUpAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "available"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "datasetId",
+              "lookedUpAt",
+              "status"
+            ],
+            "properties": {
+              "datasetId": {
+                "$ref": "#/components/schemas/ArtifactId"
+              },
+              "lookedUpAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "notFound"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/UnavailableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/NotApplicableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "notApplicable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "MaterialRequirement": {
         "type": "string",
@@ -3836,6 +5360,14 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "MetricKind": {
+        "type": "string",
+        "enum": [
+          "rtt",
+          "traffic",
+          "probeLoss"
+        ]
       },
       "NativeTcpDialer": {
         "type": "object",
@@ -4618,6 +6150,456 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeConfigurationView": {
+        "type": "object",
+        "required": [
+          "networkId",
+          "nodeId",
+          "revision",
+          "settings"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision",
+            "description": "Revision of the desired settings below, not the installable target."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/NodeSettingsView"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef",
+                "description": "Exact current execution target. Fetch materials with configuration/query."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeEntitiesView": {
+        "type": "object",
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodeInventoryView"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "batch",
+              "configuration",
+              "type"
+            ],
+            "properties": {
+              "batch": {
+                "type": "string"
+              },
+              "configuration": {
+                "$ref": "#/components/schemas/NodeConfigurationView"
+              },
+              "progress": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConfigurationApplyProgress"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "config.snapshot"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "batch",
+              "entities",
+              "type"
+            ],
+            "properties": {
+              "batch": {
+                "type": "string"
+              },
+              "entities": {
+                "$ref": "#/components/schemas/NodeEntitiesView"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "entities.snapshot"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "batch",
+              "state",
+              "type"
+            ],
+            "properties": {
+              "batch": {
+                "type": "string"
+              },
+              "state": {
+                "$ref": "#/components/schemas/StateView"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "state.snapshot"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "batch",
+              "cursor",
+              "heartbeatIntervalMs",
+              "disconnectAfterMs",
+              "type"
+            ],
+            "properties": {
+              "batch": {
+                "type": "string"
+              },
+              "cursor": {
+                "type": "string"
+              },
+              "disconnectAfterMs": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "heartbeatIntervalMs": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sync.ready"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "stateEpoch",
+              "baseCursor",
+              "cursor",
+              "updated",
+              "removed",
+              "links",
+              "paths",
+              "type"
+            ],
+            "properties": {
+              "baseCursor": {
+                "type": "string"
+              },
+              "cursor": {
+                "type": "string"
+              },
+              "links": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AggregatedLink"
+                }
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AggregatedPath"
+                }
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NodeId"
+                }
+              },
+              "stateEpoch": {
+                "$ref": "#/components/schemas/StateEpoch"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "state.delta"
+                ]
+              },
+              "updated": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/NodeStateView"
+                },
+                "propertyNames": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+                  "maxLength": 36,
+                  "minLength": 36,
+                  "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "baseCursor",
+              "cursor",
+              "updated",
+              "removed",
+              "type"
+            ],
+            "properties": {
+              "baseCursor": {
+                "type": "string"
+              },
+              "cursor": {
+                "type": "string"
+              },
+              "removed": {
+                "$ref": "#/components/schemas/EntityRemovals"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "entities.delta"
+                ]
+              },
+              "updated": {
+                "$ref": "#/components/schemas/NodeEntitiesView"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "networkId",
+              "previousRevision",
+              "revision",
+              "changedAt",
+              "cause",
+              "actor",
+              "changedPointers",
+              "changesComplete",
+              "sourceChanged",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "$ref": "#/components/schemas/EventActor"
+              },
+              "cause": {
+                "$ref": "#/components/schemas/ConfigurationChangeCause"
+              },
+              "changedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "changedPointers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "changesComplete": {
+                "type": "boolean"
+              },
+              "networkId": {
+                "$ref": "#/components/schemas/NetworkId"
+              },
+              "previousRevision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "requestId": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "sourceChanged": {
+                "type": "boolean"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "configuration.changed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "progress",
+              "type"
+            ],
+            "properties": {
+              "progress": {
+                "$ref": "#/components/schemas/ConfigurationApplyProgress"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "configuration.progress"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "observation",
+              "type"
+            ],
+            "properties": {
+              "observation": {
+                "$ref": "#/components/schemas/ObservationTask"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "observation.status"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "observation",
+              "type"
+            ],
+            "properties": {
+              "observation": {
+                "$ref": "#/components/schemas/ObservationTask"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "observation.sample"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "subscriptionId",
+              "type"
+            ],
+            "properties": {
+              "subscriptionId": {
+                "$ref": "#/components/schemas/ObservationSubscriptionId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "observation.removed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/ResetReason"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sync.reset"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/ClosedReason"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "stream.closed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
       "NodeId": {
         "type": "string",
         "format": "uuid",
@@ -5049,6 +7031,617 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeState": {
+        "type": "object",
+        "required": [
+          "system",
+          "capabilities",
+          "configuration",
+          "listeners",
+          "sockets",
+          "links",
+          "paths",
+          "selection",
+          "probes",
+          "problems"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationState"
+          },
+          "links": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/LinkState"
+              }
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "listeners": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ListenerState"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "paths": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PathState"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "probes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProbeObservation"
+            }
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StateProblem"
+            }
+          },
+          "selection": {
+            "$ref": "#/components/schemas/SelectionState"
+          },
+          "sockets": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SocketState"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "system": {
+            "$ref": "#/components/schemas/SystemState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeStateView": {
+        "type": "object",
+        "required": [
+          "freshness",
+          "derived"
+        ],
+        "properties": {
+          "derived": {
+            "$ref": "#/components/schemas/DerivedNodeState"
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/Freshness"
+          },
+          "instanceId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastAuthenticatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "observedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "receivedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "report": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VisibleReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reportExpiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reportSequence": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sequence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NotApplicableReason": {
+        "type": "string",
+        "enum": [
+          "nonPublicAddress",
+          "meshAddress"
+        ]
+      },
+      "ObservationEvent": {
+        "type": "object",
+        "required": [
+          "eventId",
+          "configuration",
+          "occurredAt",
+          "payload"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          },
+          "eventId": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ObservationPayload"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ObservationId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Leased observation task identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "ObservationPath": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "auto"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "path",
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "explicit"
+                ]
+              },
+              "path": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NodeId"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ObservationPayload": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "peerNodeId",
+              "attemptId",
+              "transport",
+              "kind"
+            ],
+            "properties": {
+              "attemptId": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dial_started"
+                ]
+              },
+              "peerNodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "transport": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "peerNodeId",
+              "attemptId",
+              "transport",
+              "reason",
+              "kind"
+            ],
+            "properties": {
+              "attemptId": {
+                "type": "string"
+              },
+              "durationUs": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sequence"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dial_failed"
+                ]
+              },
+              "peerNodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/CloseReason"
+              },
+              "transport": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "peerNodeId",
+              "linkId",
+              "transport",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "link_opened"
+                ]
+              },
+              "linkId": {
+                "type": "string"
+              },
+              "peerNodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "transport": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "peerNodeId",
+              "linkId",
+              "transport",
+              "reason",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "link_closed"
+                ]
+              },
+              "linkId": {
+                "type": "string"
+              },
+              "peerNodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/CloseReason"
+              },
+              "transport": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "probe",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "probe_completed"
+                ]
+              },
+              "probe": {
+                "$ref": "#/components/schemas/ProbeObservation"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "dropped",
+              "from",
+              "to",
+              "kind"
+            ],
+            "properties": {
+              "dropped": {
+                "$ref": "#/components/schemas/Sequence"
+              },
+              "from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "collection_gap"
+                ]
+              },
+              "to": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ObservationPhase": {
+        "type": "string",
+        "enum": [
+          "preparing",
+          "running",
+          "completed",
+          "failed",
+          "expired",
+          "cancelled",
+          "unsupported"
+        ]
+      },
+      "ObservationSample": {
+        "type": "object",
+        "required": [
+          "measurementId",
+          "version",
+          "windowStart",
+          "windowEnd",
+          "partial"
+        ],
+        "properties": {
+          "measurementId": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "partial": {
+            "type": "boolean"
+          },
+          "probe": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProbeObservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "probeCounts": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProbeWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "traffic": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TrafficWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Revisions replace a partial window rather than creating another sample."
+          },
+          "windowEnd": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "windowStart": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ObservationSubscriptionId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Independent observation demand and idempotency identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "ObservationTask": {
+        "type": "object",
+        "required": [
+          "id",
+          "sourceNodeId",
+          "targetNodeId",
+          "selection",
+          "configuration",
+          "instanceId",
+          "metrics",
+          "intervalMs",
+          "phase",
+          "expiresAt",
+          "renewAfter"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ObservationId"
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "intervalMs": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "latest": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ObservationSample"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetricKind"
+            }
+          },
+          "path": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "pathSegment": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sequence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ObservationPhase"
+          },
+          "renewAfter": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ObservationPath"
+          },
+          "sourceNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "subscriberExpiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "subscriptionId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ObservationSubscriptionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targetNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
       "OuterSocket": {
         "type": "string",
         "description": "Outer transport socket classification; never a business access decision.",
@@ -5141,6 +7734,15 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "PathEvidence": {
+        "type": "string",
+        "enum": [
+          "selected",
+          "sent",
+          "peerConfirmed",
+          "delivered"
+        ]
+      },
       "PathPermit": {
         "type": "object",
         "required": [
@@ -5200,6 +7802,69 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "PathState": {
+        "type": "object",
+        "required": [
+          "nodes",
+          "publicationId",
+          "reporterRole",
+          "evidence",
+          "observedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/PathEvidence"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "publicationId": {
+            "$ref": "#/components/schemas/PublicationId"
+          },
+          "reporterRole": {
+            "$ref": "#/components/schemas/ReporterRole"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerCandidate": {
+        "type": "object",
+        "required": [
+          "address",
+          "source",
+          "observedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "$ref": "#/components/schemas/CandidateSource"
+          }
+        },
+        "additionalProperties": false
+      },
       "PeerConfiguration": {
         "type": "object",
         "required": [
@@ -5249,6 +7914,63 @@ export const schemaDocument = {
               "maxLength": 36,
               "minLength": 36,
               "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerEndpoint": {
+        "type": "object",
+        "required": [
+          "socketId",
+          "resource",
+          "generation",
+          "network",
+          "candidate"
+        ],
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/PeerCandidate"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "network": {
+            "$ref": "#/components/schemas/SocketNetwork"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          },
+          "socketId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerState": {
+        "type": "object",
+        "required": [
+          "capabilities",
+          "configuration",
+          "endpoints"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationState"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PeerEndpoint"
             }
           }
         },
@@ -5609,6 +8331,121 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ]
+      },
+      "ProbeKind": {
+        "type": "string",
+        "enum": [
+          "neighbor",
+          "path",
+          "connect",
+          "controller"
+        ]
+      },
+      "ProbeObservation": {
+        "type": "object",
+        "required": [
+          "measurementId",
+          "kind",
+          "path",
+          "publicationId",
+          "startedAt",
+          "outcome"
+        ],
+        "properties": {
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "durationUs": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sequence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProbeKind"
+          },
+          "linkId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "measurementId": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ProbeOutcome"
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "publicationId": {
+            "$ref": "#/components/schemas/PublicationId"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "transport": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProbeOutcome": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "success",
+          "timeout",
+          "failed"
+        ]
+      },
+      "ProbeWindow": {
+        "type": "object",
+        "required": [
+          "sent",
+          "repliedWithinDeadline",
+          "timeout",
+          "pending"
+        ],
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "repliedWithinDeadline": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sent": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "timeout": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "Problem": {
         "oneOf": [
@@ -6333,6 +9170,13 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ProgressScope": {
+        "type": "string",
+        "enum": [
+          "full",
+          "partial"
+        ]
+      },
       "ProofOperation": {
         "type": "string",
         "enum": [
@@ -6453,6 +9297,39 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RecentLink": {
+        "type": "object",
+        "required": [
+          "sourceNodeId",
+          "peerNodeId",
+          "linkId",
+          "transport",
+          "lastEventAt",
+          "closed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          },
+          "lastEventAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "linkId": {
+            "type": "string"
+          },
+          "peerNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "sourceNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "transport": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "RedeemEnrollmentRequest": {
         "type": "object",
         "required": [
@@ -6565,6 +9442,35 @@ export const schemaDocument = {
           "statefulExactReversePath"
         ]
       },
+      "ReportRef": {
+        "type": "object",
+        "required": [
+          "nodeId",
+          "instanceId",
+          "reportSequence"
+        ],
+        "properties": {
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "reportSequence": {
+            "$ref": "#/components/schemas/Sequence"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReporterRole": {
+        "type": "string",
+        "enum": [
+          "origin",
+          "relay",
+          "target",
+          "exit"
+        ]
+      },
       "RequestId": {
         "type": "string",
         "format": "uuid",
@@ -6572,6 +9478,76 @@ export const schemaDocument = {
         "maxLength": 36,
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "ResetReason": {
+        "type": "string",
+        "enum": [
+          "cursor_too_old",
+          "view_changed",
+          "backpressure",
+          "epoch_changed"
+        ]
+      },
+      "ResourceRef": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "kind"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "listener"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "kind"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dial"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "kind"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "coordination"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "Revision": {
         "type": "integer",
@@ -6836,6 +9812,18 @@ export const schemaDocument = {
         "type": "string",
         "description": "Serialization is secret-bearing and requires protected storage."
       },
+      "SelectionState": {
+        "type": "object",
+        "properties": {
+          "appliedProfile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "Sequence": {
         "type": "integer",
         "description": "A nonnegative sequence number.",
@@ -6897,6 +9885,13 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "SocketNetwork": {
+        "type": "string",
+        "enum": [
+          "udp",
+          "tcp"
+        ]
+      },
       "SocketOptions": {
         "type": "object",
         "properties": {
@@ -6913,6 +9908,251 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "SocketState": {
+        "type": "object",
+        "required": [
+          "resource",
+          "generation",
+          "network",
+          "boundAddress",
+          "endpoints"
+        ],
+        "properties": {
+          "boundAddress": {
+            "type": "string"
+          },
+          "configuration": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef",
+                "description": "None inherits the report's applied configuration; installation sockets\nmust name their target even before the first configuration is applied."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EndpointCandidate"
+            }
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "network": {
+            "$ref": "#/components/schemas/SocketNetwork"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StateAccepted": {
+        "type": "object",
+        "required": [
+          "sequence",
+          "receivedAt",
+          "duplicate"
+        ],
+        "properties": {
+          "duplicate": {
+            "type": "boolean"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/Sequence"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StateEpoch": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Volatile controller state epoch.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "StateProblem": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "resource",
+              "observedAt",
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "resource_unavailable"
+                ]
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "resource": {
+                "$ref": "#/components/schemas/ResourceRef"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "target",
+              "observedAt",
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "configuration_rejected"
+                ]
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "target": {
+                "$ref": "#/components/schemas/ConfigurationRef"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "measurementId",
+              "observedAt",
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "probe_failed"
+                ]
+              },
+              "measurementId": {
+                "$ref": "#/components/schemas/EventId"
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "StateQuery": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "StateReport": {
+        "type": "object",
+        "required": [
+          "instanceId",
+          "sequence",
+          "observedAt",
+          "state"
+        ],
+        "properties": {
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "state": {
+            "$ref": "#/components/schemas/NodeState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StateView": {
+        "type": "object",
+        "required": [
+          "networkId",
+          "stateEpoch",
+          "sequence",
+          "configurationRevision",
+          "asOf",
+          "nodes",
+          "links",
+          "paths"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "configurationRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AggregatedLink"
+            }
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodeStateView"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AggregatedPath"
+            }
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "stateEpoch": {
+            "$ref": "#/components/schemas/StateEpoch"
+          }
+        },
+        "additionalProperties": false
+      },
       "StreamKind": {
         "type": "string",
         "enum": [
@@ -6920,6 +10160,30 @@ export const schemaDocument = {
           "websocket",
           "udp"
         ]
+      },
+      "SystemState": {
+        "type": "object",
+        "required": [
+          "hostname",
+          "os",
+          "arch",
+          "agentVersion"
+        ],
+        "properties": {
+          "agentVersion": {
+            "type": "string"
+          },
+          "arch": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "TcpKeepAlive": {
         "type": "object",
@@ -7006,6 +10270,26 @@ export const schemaDocument = {
           },
           "remark": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TrafficWindow": {
+        "type": "object",
+        "required": [
+          "txBytes",
+          "rxBytes",
+          "counterGeneration"
+        ],
+        "properties": {
+          "counterGeneration": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "rxBytes": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "txBytes": {
+            "$ref": "#/components/schemas/Sequence"
           }
         },
         "additionalProperties": false
@@ -7235,13 +10519,510 @@ export const schemaDocument = {
       "UnavailableReason": {
         "type": "string",
         "enum": [
-          "unauthorized",
-          "noPath",
-          "missingCapability",
-          "missingDependency",
-          "missingDns",
-          "invalidProfile",
-          "inactiveNode"
+          "datasetUnavailable",
+          "lookupFailed"
+        ]
+      },
+      "UserConfigurationView": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "networkId",
+              "revision",
+              "configuration",
+              "type"
+            ],
+            "properties": {
+              "configuration": {
+                "$ref": "#/components/schemas/ConfigurationView"
+              },
+              "networkId": {
+                "$ref": "#/components/schemas/NetworkId"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "manager"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "networkId",
+              "revision",
+              "nodes",
+              "type"
+            ],
+            "properties": {
+              "networkId": {
+                "$ref": "#/components/schemas/NetworkId"
+              },
+              "nodes": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/NodeSettingsView"
+                },
+                "propertyNames": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+                  "maxLength": 36,
+                  "minLength": 36,
+                  "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                }
+              },
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "member"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "UserEntitiesView": {
+        "type": "object",
+        "required": [
+          "network",
+          "nodes",
+          "members"
+        ],
+        "properties": {
+          "members": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MemberSummary"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Network membership identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkSummary"
+          },
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodeInventoryView"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "UserEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "batch",
+              "configuration",
+              "type"
+            ],
+            "properties": {
+              "batch": {
+                "type": "string"
+              },
+              "configuration": {
+                "$ref": "#/components/schemas/UserConfigurationView"
+              },
+              "progress": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConfigurationApplyProgress"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "config.snapshot"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "batch",
+              "entities",
+              "type"
+            ],
+            "properties": {
+              "batch": {
+                "type": "string"
+              },
+              "entities": {
+                "$ref": "#/components/schemas/UserEntitiesView"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "entities.snapshot"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "batch",
+              "state",
+              "type"
+            ],
+            "properties": {
+              "batch": {
+                "type": "string"
+              },
+              "state": {
+                "$ref": "#/components/schemas/StateView"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "state.snapshot"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "batch",
+              "cursor",
+              "heartbeatIntervalMs",
+              "disconnectAfterMs",
+              "type"
+            ],
+            "properties": {
+              "batch": {
+                "type": "string"
+              },
+              "cursor": {
+                "type": "string"
+              },
+              "disconnectAfterMs": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "heartbeatIntervalMs": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sync.ready"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "stateEpoch",
+              "baseCursor",
+              "cursor",
+              "updated",
+              "removed",
+              "links",
+              "paths",
+              "type"
+            ],
+            "properties": {
+              "baseCursor": {
+                "type": "string"
+              },
+              "cursor": {
+                "type": "string"
+              },
+              "links": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AggregatedLink"
+                }
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AggregatedPath"
+                }
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NodeId"
+                }
+              },
+              "stateEpoch": {
+                "$ref": "#/components/schemas/StateEpoch"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "state.delta"
+                ]
+              },
+              "updated": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/NodeStateView"
+                },
+                "propertyNames": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+                  "maxLength": 36,
+                  "minLength": 36,
+                  "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "baseCursor",
+              "cursor",
+              "updated",
+              "removed",
+              "type"
+            ],
+            "properties": {
+              "baseCursor": {
+                "type": "string"
+              },
+              "cursor": {
+                "type": "string"
+              },
+              "removed": {
+                "$ref": "#/components/schemas/EntityRemovals"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "entities.delta"
+                ]
+              },
+              "updated": {
+                "$ref": "#/components/schemas/UserEntitiesView"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "networkId",
+              "previousRevision",
+              "revision",
+              "changedAt",
+              "cause",
+              "actor",
+              "changedPointers",
+              "changesComplete",
+              "sourceChanged",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "$ref": "#/components/schemas/EventActor"
+              },
+              "cause": {
+                "$ref": "#/components/schemas/ConfigurationChangeCause"
+              },
+              "changedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "changedPointers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "changesComplete": {
+                "type": "boolean"
+              },
+              "networkId": {
+                "$ref": "#/components/schemas/NetworkId"
+              },
+              "previousRevision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "requestId": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "sourceChanged": {
+                "type": "boolean"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "configuration.changed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "progress",
+              "type"
+            ],
+            "properties": {
+              "progress": {
+                "$ref": "#/components/schemas/ConfigurationApplyProgress"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "configuration.progress"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "observation",
+              "type"
+            ],
+            "properties": {
+              "observation": {
+                "$ref": "#/components/schemas/ObservationTask"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "observation.status"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "observation",
+              "type"
+            ],
+            "properties": {
+              "observation": {
+                "$ref": "#/components/schemas/ObservationTask"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "observation.sample"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "subscriptionId",
+              "type"
+            ],
+            "properties": {
+              "subscriptionId": {
+                "$ref": "#/components/schemas/ObservationSubscriptionId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "observation.removed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/ResetReason"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sync.reset"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/ClosedReason"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "stream.closed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
         ]
       },
       "UserId": {
@@ -7275,6 +11056,48 @@ export const schemaDocument = {
         "description": "A positive record version, distinct from a configuration revision.",
         "maximum": 9007199254740991,
         "minimum": 1
+      },
+      "VisibleReport": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "report",
+              "view"
+            ],
+            "properties": {
+              "report": {
+                "$ref": "#/components/schemas/NodeState"
+              },
+              "view": {
+                "type": "string",
+                "enum": [
+                  "full"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "report",
+              "view"
+            ],
+            "properties": {
+              "report": {
+                "$ref": "#/components/schemas/PeerState"
+              },
+              "view": {
+                "type": "string",
+                "enum": [
+                  "peer"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "VlessDialer": {
         "type": "object",

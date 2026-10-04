@@ -154,9 +154,10 @@ Serde adapter; fixed signing transcripts still encode exact Unix milliseconds.
 No unbounded integer timestamps are exposed to TypeScript.
 
 The live SDK test uses Node's Ed25519 implementation and generated DTOs to run
-normal browser approval, signed PKCE redemption, a Node session, lease and full
-configuration reads, release and permanent DELETE against the Controller binary.
-It does not install a tunnel or manufacture an applied/data-plane result.
+normal browser approval, signed PKCE redemption, a Node session, lease/config
+reads, authenticated State reporting and delta delivery, release and permanent
+DELETE against the Controller binary. It does not install a tunnel or manufacture
+an applied/data-plane result.
 
 ## Event streams
 
@@ -188,9 +189,32 @@ payload. JSON errors keep their ordinary typed HTTP envelopes.
   budget). EOF discards incomplete frames. Invalid UTF-8, JSON, event types and
   oversized frames terminate decoding without exposing raw content in errors.
 
-These are generator/runtime capabilities. The currently exported management
-slice has no production SSE operation yet; State service candidates still need
-their real identity, configuration and execution providers wired into the Router.
+The normal Controller Router provides `watchNetwork` and `watchNode` with the
+root-exported `UserEvent` and `NodeEvent` contracts. `getNetworkState`,
+`getNodeState`, `reportNodeState`, `queryPeerState`, `reportNodeHistory` and
+`queryObservationHistory` use the same real identity and visibility rules.
+
+```ts
+const events = watchNetwork(client, { networkId }, {
+  token, signal, resumeCursor: () => appliedCursor,
+});
+```
+
+The initial sequence is `config.snapshot`, `entities.snapshot`, `state.snapshot`,
+then `sync.ready`. Stage the complete batch before installing its cache and ready
+cursor. Manager Config snapshots contain the full non-secret view; member
+snapshots contain only their own permitted Node settings. Node snapshots contain
+their own non-secret settings and the actual target reference. No source JSONC,
+private key, password or hidden header is broadcast. Config changes invalidate
+server-derived caches without overwriting the caller's draft or CAS base.
+
+`getConfigurationProgress(client, { networkId, revision }, { token })` returns
+`ConfigurationApplyProgress`, also used by initial snapshots and progress events.
+The fixed target set belongs to that configuration revision; later demands and
+refreshes do not enlarge its denominator. Summary phases represent original
+targets' accepted receipts; per-node `freshness` separately identifies expired,
+superseded or awaiting-instance evidence. Historical `applied` is not current
+health. Full/partial scope and counts follow the requesting identity.
 
 ## Generation and verification
 

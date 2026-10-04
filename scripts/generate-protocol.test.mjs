@@ -129,11 +129,13 @@ test("integer schemas must prove a lossless JS-safe range before emission", () =
 test("generated binary64 schemas retain measurement bounds and nullable absence", async t => {
   const document = fixture();
   document.components.schemas.FixtureLatitude = { type: "number", format: "double", minimum: -90, maximum: 90 };
+  document.components.schemas.Fixture_Measurement = { allOf: [ref("FixtureLatitude")] };
   document.components.schemas.FixturePositiveMeasurement = { type: "number", exclusiveMinimum: 0, exclusiveMaximum: 10 };
   document.components.schemas.FixtureOptionalMeasurement = { type: ["number", "null"], format: "double", minimum: 0 };
   const { packageRoot } = await generatedFixture(t, document);
   const schemas = await import(pathToFileURL(join(packageRoot, "src/generated/zod.gen.ts")));
   for (const value of [-90, -40.7128, 0, 89.999999, 90]) assert.equal(schemas.zFixtureLatitude.safeParse(value).success, true);
+  assert.equal(schemas.zFixture_Measurement.parse(12.5), 12.5);
   for (const value of [-90.0001, 90.0001, NaN, Infinity, -Infinity, "45", null]) assert.equal(schemas.zFixtureLatitude.safeParse(value).success, false);
   assert.equal(schemas.zFixturePositiveMeasurement.safeParse(0.125).success, true);
   for (const value of [0, 10]) assert.equal(schemas.zFixturePositiveMeasurement.safeParse(value).success, false);

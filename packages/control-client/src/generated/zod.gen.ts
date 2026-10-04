@@ -188,11 +188,63 @@ export const zAddressPoolsInput = z.strictObject({
   ["ipv6"]: z.array(z.string()).exactOptional()
 });
 
+export const zNodeId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zLinkEvidence = z.enum(["oneSided","matched","conflicting","expired"]);
+
+export const zLinkPhase = z.enum(["preparing","authenticated","closed","failed"]);
+
+export const zSequence = z.int().gte(0).lte(9007199254740991);
+
+export const zReportRef = z.strictObject({
+  ["instanceId"]: zInstanceId,
+  ["nodeId"]: zNodeId,
+  ["reportSequence"]: zSequence
+});
+
+export const zAggregatedLink = z.strictObject({
+  ["a"]: zNodeId,
+  ["b"]: zNodeId,
+  ["evidence"]: zLinkEvidence,
+  ["inUse"]: z.boolean().nullable().exactOptional(),
+  ["initiatorNodeId"]: zNodeId,
+  ["linkId"]: z.string(),
+  ["phase"]: zLinkPhase,
+  ["reports"]: z.array(zReportRef),
+  ["since"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["transport"]: z.string()
+});
+
+export const zPathEvidence = z.enum(["selected","sent","peerConfirmed","delivered"]);
+
+export const zPublicationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zReporterRole = z.enum(["origin","relay","target","exit"]);
+
+export const zPathState = z.strictObject({
+  ["evidence"]: zPathEvidence,
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["nodes"]: z.array(zNodeId),
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["publicationId"]: zPublicationId,
+  ["reporterRole"]: zReporterRole
+});
+
+export const zAggregatedPath = z.strictObject({
+  ["pathId"]: z.string(),
+  ["reporter"]: zReportRef,
+  ["state"]: zPathState
+});
+
+export const zApplicationPhase = z.enum(["pending","saved","applied","failed"]);
+
 export const zApplyConfigurationPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
 
 export const zApplyFailure = z.enum(["validation","storage","listeners","underlay","tun","dns","dataplane"]);
+
+export const zApplyPhase = z.enum(["receiving","validating","saved","applying","applied","failed"]);
 
 export const zEnrollmentRequestId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
@@ -203,6 +255,8 @@ export const zApproveDeviceAuthorizationPath = z.strictObject({
 export const zApproveEnrollmentRequest = z.strictObject({
   ["networkId"]: zNetworkId
 });
+
+export const zArtifactId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zNetworkNameTrim = z.enum(["unicodeWhiteSpace"]);
 
@@ -273,8 +327,6 @@ export const zBoundNodeKey = z.strictObject({
 
 export const zBusinessProtocol = z.enum(["tcp","udp","icmpEcho"]);
 
-export const zNodeId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
 export const zExecutionAddress = z.string();
 
 export const zBusinessTarget = z.union([z.strictObject({
@@ -302,6 +354,8 @@ export const zCancelDemandRequest = z.strictObject({
 export const zCancelEnrollmentRequestPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
 });
+
+export const zCandidateSource = z.enum(["configured","interface","stun"]);
 
 export const zChallengeId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
@@ -353,6 +407,10 @@ export const zClientTls = z.strictObject({
   ["serverName"]: z.string()
 });
 
+export const zCloseReason = z.enum(["idle","remote_closed","timeout","withdrawn","local_failure"]);
+
+export const zClosedReason = z.enum(["session_expired","membership_revoked","node_lease_expired","server_shutdown"]);
+
 export const zCompareConfigurationPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
@@ -389,7 +447,7 @@ export const zPathPermit = z.strictObject({
   ["target"]: zBusinessTarget
 });
 
-export const zUnavailableReason = z.enum(["unauthorized","noPath","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
+export const zUnavailableReason = z.enum(["datasetUnavailable","lookupFailed"]);
 
 export const zDemandDecision = z.union([z.strictObject({
   ["permit"]: zPathPermit,
@@ -641,8 +699,6 @@ export const zPeerConfiguration = z.strictObject({
   ["identity"]: zNodeIdentity
 });
 
-export const zPublicationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
 export const zTrustedNode = z.strictObject({
   ["capabilities"]: typedMap(z.string(), zCapability, {}),
   ["controlKey"]: zBoundNodeKey,
@@ -681,6 +737,42 @@ export const zConfigurationAppliedResponse = z.strictObject({
   ["requestId"]: zRequestId,
   ["revision"]: zRevision,
   ["targetCount"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zReceiptFreshness = z.enum(["current","expired","awaitingInstance","superseded"]);
+
+export const zConfigurationRef = z.strictObject({
+  ["digest"]: zDigest,
+  ["executionPublication"]: zPublicationId,
+  ["revision"]: zRevision
+});
+
+export const zConfigurationNodeProgress = z.strictObject({
+  ["attempt"]: zVersion.nullable().exactOptional(),
+  ["freshness"]: zReceiptFreshness,
+  ["instanceId"]: zInstanceId.nullable().exactOptional(),
+  ["phase"]: zApplicationPhase,
+  ["receivedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["sequence"]: zSequence.nullable().exactOptional(),
+  ["target"]: zConfigurationRef
+});
+
+export const zProgressScope = z.enum(["full","partial"]);
+
+export const zConfigurationProgressSummary = z.strictObject({
+  ["applied"]: z.int().gte(0).lte(2147483647),
+  ["failed"]: z.int().gte(0).lte(2147483647),
+  ["pending"]: z.int().gte(0).lte(2147483647),
+  ["saved"]: z.int().gte(0).lte(2147483647),
+  ["targetCount"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zConfigurationApplyProgress = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zConfigurationNodeProgress, {}),
+  ["revision"]: zRevision,
+  ["scope"]: zProgressScope,
+  ["summary"]: zConfigurationProgressSummary
 });
 
 export const zConfigurationChange = z.strictObject({
@@ -1036,10 +1128,38 @@ export const zConfigurationPreviewResponse = z.strictObject({
   ["unavailableDependencies"]: z.array(zConfigurationIssue)
 });
 
-export const zConfigurationRef = z.strictObject({
-  ["digest"]: zDigest,
-  ["executionPublication"]: zPublicationId,
-  ["revision"]: zRevision
+export const zResourceRef = z.union([z.strictObject({
+  ["key"]: z.string(),
+  ["kind"]: z.enum(["listener"])
+}), z.strictObject({
+  ["key"]: z.string(),
+  ["kind"]: z.enum(["dial"])
+}), z.strictObject({
+  ["key"]: z.string(),
+  ["kind"]: z.enum(["coordination"])
+})]);
+
+export const zEventId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zStateProblem = z.union([z.strictObject({
+  ["code"]: z.enum(["resource_unavailable"]),
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["resource"]: zResourceRef
+}), z.strictObject({
+  ["code"]: z.enum(["configuration_rejected"]),
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["target"]: zConfigurationRef
+}), z.strictObject({
+  ["code"]: z.enum(["probe_failed"]),
+  ["measurementId"]: zEventId,
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+})]);
+
+export const zConfigurationProgress = z.strictObject({
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["phase"]: zApplyPhase,
+  ["problem"]: zStateProblem.nullable().exactOptional(),
+  ["target"]: zConfigurationRef
 });
 
 export const zConfigurationRequest = z.union([z.strictObject({
@@ -1133,6 +1253,12 @@ export const zConfigurationSourceResponse = z.strictObject({
   ["sourceJsonc"]: zWireSecret
 });
 
+export const zConfigurationState = z.strictObject({
+  ["applied"]: zConfigurationRef.nullable().exactOptional(),
+  ["progress"]: zConfigurationProgress.nullable().exactOptional(),
+  ["saved"]: zConfigurationRef.nullable().exactOptional()
+});
+
 export const zMaterialRequirement = z.enum(["uuid","password","certificate","privateKey","certificateValidation"]);
 
 export const zPreparationKind = z.union([z.enum(["addressPoolV4","addressPoolV6","addressV4","addressV6","identityProof","ruleSetContent"]), z.strictObject({
@@ -1150,6 +1276,8 @@ export const zConfigurationValidationParams = z.strictObject({
 });
 
 export const zCount = z.int().gte(0).lte(9007199254740991);
+
+export const zCoverageReason = z.enum(["retention","capacity"]);
 
 export const zCreateEnrollmentKeyPath = z.strictObject({
   ["networkId"]: zNetworkId
@@ -1237,6 +1365,90 @@ export const zDenyDeviceAuthorizationPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
 });
 
+export const zNotApplicableReason = z.enum(["nonPublicAddress","meshAddress"]);
+
+export const zLookupResult_AsnData = z.union([z.strictObject({
+  ["data"]: z.strictObject({
+  ["number"]: z.int().gte(0).lte(2147483647),
+  ["organization"]: z.string().nullable().exactOptional(),
+  ["prefix"]: z.string().nullable().exactOptional()
+}),
+  ["datasetId"]: zArtifactId,
+  ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["status"]: z.enum(["available"])
+}), z.strictObject({
+  ["datasetId"]: zArtifactId,
+  ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["status"]: z.enum(["notFound"])
+}), z.strictObject({
+  ["reason"]: zUnavailableReason,
+  ["status"]: z.enum(["unavailable"])
+}), z.strictObject({
+  ["reason"]: zNotApplicableReason,
+  ["status"]: z.enum(["notApplicable"])
+})]);
+
+export const zGeoPosition = z.strictObject({
+  ["accuracyRadiusKm"]: z.number().gte(0).nullable().exactOptional(),
+  ["latitude"]: z.number().gte(-90).lte(90),
+  ["longitude"]: z.number().gte(-180).lte(180)
+});
+
+export const zLookupResult_GeoIpData = z.union([z.strictObject({
+  ["data"]: z.strictObject({
+  ["city"]: z.string().nullable().exactOptional(),
+  ["country"]: z.string().nullable().exactOptional(),
+  ["position"]: zGeoPosition.nullable().exactOptional(),
+  ["region"]: z.string().nullable().exactOptional()
+}),
+  ["datasetId"]: zArtifactId,
+  ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["status"]: z.enum(["available"])
+}), z.strictObject({
+  ["datasetId"]: zArtifactId,
+  ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["status"]: z.enum(["notFound"])
+}), z.strictObject({
+  ["reason"]: zUnavailableReason,
+  ["status"]: z.enum(["unavailable"])
+}), z.strictObject({
+  ["reason"]: zNotApplicableReason,
+  ["status"]: z.enum(["notApplicable"])
+})]);
+
+export const zIpInfo = z.strictObject({
+  ["asn"]: zLookupResult_AsnData,
+  ["geoip"]: zLookupResult_GeoIpData
+});
+
+export const zGeoIpData = z.strictObject({
+  ["city"]: z.string().nullable().exactOptional(),
+  ["country"]: z.string().nullable().exactOptional(),
+  ["position"]: zGeoPosition.nullable().exactOptional(),
+  ["region"]: z.string().nullable().exactOptional()
+});
+
+export const zLocationSource = z.enum(["interface","stun"]);
+
+export const zGeoObservation = z.strictObject({
+  ["address"]: z.string(),
+  ["data"]: zGeoIpData,
+  ["datasetId"]: zArtifactId,
+  ["endpointSource"]: zLocationSource,
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["sourceGeneration"]: zSequence,
+  ["sourceSocketId"]: z.string()
+});
+
+export const zLocationAbsentReason = z.enum(["noObservation","observationExpired","datasetUnavailable","notInDataset","lookupFailed","ambiguousObservation"]);
+
+export const zDerivedNodeState = z.strictObject({
+  ["ipInfo"]: typedMap(z.string(), zIpInfo, {}),
+  ["location"]: zGeoObservation.nullable().exactOptional(),
+  ["locationAbsent"]: zLocationAbsentReason.nullable().exactOptional()
+});
+
 export const zDialerDelta = z.strictObject({
   ["remove"]: z.array(z.string()),
   ["upsert"]: typedMap(z.string(), zDialCandidate, {})
@@ -1244,6 +1456,24 @@ export const zDialerDelta = z.strictObject({
 
 export const zEmptyParams = z.strictObject({
 
+});
+
+export const zEndpointSource = z.union([z.strictObject({
+  ["configPath"]: z.string(),
+  ["source"]: z.enum(["configured"])
+}), z.strictObject({
+  ["interface"]: z.string(),
+  ["source"]: z.enum(["interface"])
+}), z.strictObject({
+  ["observer"]: z.string(),
+  ["source"]: z.enum(["stun"])
+})]);
+
+export const zEndpointCandidate = z.strictObject({
+  ["address"]: z.string(),
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["origin"]: zEndpointSource
 });
 
 export const zEnrollmentDeviceProof = z.strictObject({
@@ -1300,6 +1530,11 @@ export const zEnrollmentResponse = z.strictObject({
   ["keys"]: zNodeKeyMetadata,
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId
+});
+
+export const zEntityRemovals = z.strictObject({
+  ["members"]: z.array(zMembershipId),
+  ["nodes"]: z.array(zNodeId)
 });
 
 export const zProblem = z.union([z.strictObject({
@@ -1430,8 +1665,27 @@ export const zErrorResponse = z.strictObject({
   ["status"]: z.int().gte(0).lte(65535)
 });
 
+export const zEventActor = z.union([z.strictObject({
+  ["type"]: z.enum(["user"]),
+  ["userId"]: zUserId
+}), z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["type"]: z.enum(["node"])
+}), z.strictObject({
+  ["type"]: z.enum(["system"])
+}), z.strictObject({
+  ["type"]: z.enum(["redacted"])
+})]);
+
+export const zFreshness = z.enum(["current","awaiting_report","expired","superseded","config_mismatch","revoked"]);
+
 export const zGetConfigurationPath = z.strictObject({
   ["networkId"]: zNetworkId
+});
+
+export const zGetConfigurationProgressPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["revision"]: zRevision
 });
 
 export const zGetConfigurationRevisionPath = z.strictObject({
@@ -1474,9 +1728,170 @@ export const zGetNetworkPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
 
+export const zGetNetworkStatePath = z.strictObject({
+  ["networkId"]: zNetworkId
+});
+
 export const zGetNodePath = z.strictObject({
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId
+});
+
+export const zGetNodeStatePath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId
+});
+
+export const zProbeKind = z.enum(["neighbor","path","connect","controller"]);
+
+export const zProbeOutcome = z.enum(["pending","success","timeout","failed"]);
+
+export const zProbeObservation = z.strictObject({
+  ["completedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["durationUs"]: zSequence.nullable().exactOptional(),
+  ["kind"]: zProbeKind,
+  ["linkId"]: z.string().nullable().exactOptional(),
+  ["measurementId"]: zEventId,
+  ["outcome"]: zProbeOutcome,
+  ["path"]: z.array(zNodeId),
+  ["publicationId"]: zPublicationId,
+  ["startedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["transport"]: z.string().nullable().exactOptional()
+});
+
+export const zObservationPayload = z.union([z.strictObject({
+  ["attemptId"]: z.string(),
+  ["kind"]: z.enum(["dial_started"]),
+  ["peerNodeId"]: zNodeId,
+  ["transport"]: z.string()
+}), z.strictObject({
+  ["attemptId"]: z.string(),
+  ["durationUs"]: zSequence.nullable().exactOptional(),
+  ["kind"]: z.enum(["dial_failed"]),
+  ["peerNodeId"]: zNodeId,
+  ["reason"]: zCloseReason,
+  ["transport"]: z.string()
+}), z.strictObject({
+  ["kind"]: z.enum(["link_opened"]),
+  ["linkId"]: z.string(),
+  ["peerNodeId"]: zNodeId,
+  ["transport"]: z.string()
+}), z.strictObject({
+  ["kind"]: z.enum(["link_closed"]),
+  ["linkId"]: z.string(),
+  ["peerNodeId"]: zNodeId,
+  ["reason"]: zCloseReason,
+  ["transport"]: z.string()
+}), z.strictObject({
+  ["kind"]: z.enum(["probe_completed"]),
+  ["probe"]: zProbeObservation
+}), z.strictObject({
+  ["dropped"]: zSequence,
+  ["from"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["kind"]: z.enum(["collection_gap"]),
+  ["to"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+})]);
+
+export const zObservationEvent = z.strictObject({
+  ["configuration"]: zConfigurationRef,
+  ["eventId"]: zEventId,
+  ["occurredAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["payload"]: zObservationPayload
+});
+
+export const zHistoricalEvent = z.strictObject({
+  ["event"]: zObservationEvent,
+  ["instanceId"]: zInstanceId,
+  ["receivedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["sourceNodeId"]: zNodeId
+});
+
+export const zHistoryAccepted = z.strictObject({
+  ["accepted"]: z.int().gte(0).lte(2147483647),
+  ["duplicates"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zHistoryBucket = z.strictObject({
+  ["failed"]: z.int().gte(0).lte(2147483647),
+  ["from"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["instanceId"]: zInstanceId,
+  ["kind"]: zProbeKind,
+  ["linkId"]: z.string().nullable().exactOptional(),
+  ["meanSuccessDurationUs"]: z.number().nullable().exactOptional(),
+  ["path"]: z.array(zNodeId),
+  ["publicationId"]: zPublicationId,
+  ["sampleCount"]: z.int().gte(0).lte(2147483647),
+  ["sourceNodeId"]: zNodeId,
+  ["success"]: z.int().gte(0).lte(2147483647),
+  ["timeout"]: z.int().gte(0).lte(2147483647),
+  ["to"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["transport"]: z.string().nullable().exactOptional()
+});
+
+export const zHistoryCoverage = z.union([z.strictObject({
+  ["before"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["reason"]: zCoverageReason,
+  ["sourceNodeId"]: zNodeId,
+  ["type"]: z.enum(["pruned"])
+}), z.strictObject({
+  ["dropped"]: zSequence,
+  ["eventId"]: zEventId,
+  ["from"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["instanceId"]: zInstanceId,
+  ["sourceNodeId"]: zNodeId,
+  ["to"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["type"]: z.enum(["collectionGap"])
+})]);
+
+export const zRecentLink = z.strictObject({
+  ["closed"]: z.boolean(),
+  ["lastEventAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["linkId"]: z.string(),
+  ["peerNodeId"]: zNodeId,
+  ["sourceNodeId"]: zNodeId,
+  ["transport"]: z.string()
+});
+
+export const zHistoryItems = z.union([z.strictObject({
+  ["items"]: z.array(zHistoricalEvent),
+  ["mode"]: z.enum(["raw"])
+}), z.strictObject({
+  ["items"]: z.array(zHistoryBucket),
+  ["mode"]: z.enum(["buckets"])
+}), z.strictObject({
+  ["items"]: z.array(zRecentLink),
+  ["mode"]: z.enum(["recentLinks"])
+})]);
+
+export const zHistoryKind = z.enum(["dial_started","dial_failed","link_opened","link_closed","probe_completed","collection_gap"]);
+
+export const zHistoryMode = z.enum(["raw","buckets","recentLinks"]);
+
+export const zHistoryPage = z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["coverage"]: z.array(zHistoryCoverage),
+  ["from"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["nextCursor"]: z.string().nullable().exactOptional(),
+  ["result"]: zHistoryItems,
+  ["to"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+});
+
+export const zHistoryQuery = z.strictObject({
+  ["bucketSeconds"]: z.int().gte(0).lte(2147483647).nullable().exactOptional(),
+  ["cursor"]: z.string().nullable().exactOptional(),
+  ["from"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["kinds"]: z.array(zHistoryKind).nullable().exactOptional(),
+  ["limit"]: z.int().gte(1).lte(200),
+  ["linkId"]: z.string().nullable().exactOptional(),
+  ["mode"]: zHistoryMode,
+  ["peerNodeId"]: zNodeId.nullable().exactOptional(),
+  ["sourceNodeId"]: zNodeId.nullable().exactOptional(),
+  ["to"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+});
+
+export const zHistoryReport = z.strictObject({
+  ["events"]: z.array(zObservationEvent),
+  ["instanceId"]: zInstanceId
 });
 
 export const zInstanceLease = z.strictObject({
@@ -1540,6 +1955,21 @@ export const zKeyEnrollmentRequest = z.strictObject({
 
 export const zLeaveNetworkPath = z.strictObject({
   ["networkId"]: zNetworkId
+});
+
+export const zObservationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zLinkState = z.strictObject({
+  ["businessDependencies"]: z.int().gte(0).lte(2147483647),
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["initiatorNodeId"]: zNodeId,
+  ["linkId"]: z.string(),
+  ["observationIds"]: z.array(zObservationId),
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["phase"]: zLinkPhase,
+  ["since"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["socketId"]: z.string(),
+  ["transport"]: z.string()
 });
 
 export const zListAccountActivityQuery = z.strictObject({
@@ -1606,6 +2036,16 @@ export const zListenerDelta = z.strictObject({
   ["upsert"]: typedMap(z.string(), zPreparedListener, {})
 });
 
+export const zListenerPhase = z.enum(["preparing","listening","stopped","failed"]);
+
+export const zListenerState = z.strictObject({
+  ["configuration"]: zConfigurationRef.nullable().exactOptional(),
+  ["loadedCertificateSha256"]: zDigest.nullable().exactOptional(),
+  ["phase"]: zListenerPhase,
+  ["problem"]: zStateProblem.nullable().exactOptional(),
+  ["socketIds"]: z.array(z.string())
+});
+
 export const zLoginRequest = z.strictObject({
   ["email"]: z.string(),
   ["password"]: zWireSecret
@@ -1636,6 +2076,8 @@ export const zMemberRemovedResponse = z.strictObject({
   ["requestId"]: zRequestId,
   ["revision"]: zRevision
 });
+
+export const zMetricKind = z.enum(["rtt","traffic","probeLoss"]);
 
 export const zNativeTcpListener = z.strictObject({
   ["bindInterface"]: z.string().exactOptional(),
@@ -1759,6 +2201,14 @@ export const zNodeConfigurationResponse = z.strictObject({
   ["lease"]: zInstanceLease
 });
 
+export const zNodeConfigurationView = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId,
+  ["revision"]: zRevision,
+  ["settings"]: zNodeSettingsView,
+  ["target"]: zConfigurationRef.nullable().exactOptional()
+});
+
 export const zNodeInventoryView = z.strictObject({
   ["addresses"]: zNodeAddresses,
   ["canDelete"]: z.boolean(),
@@ -1773,6 +2223,221 @@ export const zNodeInventoryView = z.strictObject({
   ["registeredAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
 });
 
+export const zNodeEntitiesView = z.strictObject({
+  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeInventoryView, {})
+});
+
+export const zSelectionState = z.strictObject({
+  ["appliedProfile"]: z.string().nullable().exactOptional()
+});
+
+export const zSocketNetwork = z.enum(["udp","tcp"]);
+
+export const zSocketState = z.strictObject({
+  ["boundAddress"]: z.string(),
+  ["configuration"]: zConfigurationRef.nullable().exactOptional(),
+  ["endpoints"]: z.array(zEndpointCandidate),
+  ["generation"]: zSequence,
+  ["network"]: zSocketNetwork,
+  ["resource"]: zResourceRef
+});
+
+export const zSystemState = z.strictObject({
+  ["agentVersion"]: z.string(),
+  ["arch"]: z.string(),
+  ["hostname"]: z.string(),
+  ["os"]: z.string()
+});
+
+export const zNodeState = z.strictObject({
+  ["capabilities"]: typedMap(z.string(), zCapability, {}),
+  ["configuration"]: zConfigurationState,
+  ["links"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), z.array(zLinkState), {}),
+  ["listeners"]: typedMap(z.string(), zListenerState, {}),
+  ["paths"]: typedMap(z.string(), zPathState, {}),
+  ["probes"]: z.array(zProbeObservation),
+  ["problems"]: z.array(zStateProblem),
+  ["selection"]: zSelectionState,
+  ["sockets"]: typedMap(z.string(), zSocketState, {}),
+  ["system"]: zSystemState
+});
+
+export const zPeerCandidate = z.strictObject({
+  ["address"]: z.string(),
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["source"]: zCandidateSource
+});
+
+export const zPeerEndpoint = z.strictObject({
+  ["candidate"]: zPeerCandidate,
+  ["generation"]: zSequence,
+  ["network"]: zSocketNetwork,
+  ["resource"]: zResourceRef,
+  ["socketId"]: z.string()
+});
+
+export const zPeerState = z.strictObject({
+  ["capabilities"]: typedMap(z.string(), zCapability, {}),
+  ["configuration"]: zConfigurationState,
+  ["endpoints"]: z.array(zPeerEndpoint)
+});
+
+export const zVisibleReport = z.union([z.strictObject({
+  ["report"]: zNodeState,
+  ["view"]: z.enum(["full"])
+}), z.strictObject({
+  ["report"]: zPeerState,
+  ["view"]: z.enum(["peer"])
+})]);
+
+export const zNodeStateView = z.strictObject({
+  ["derived"]: zDerivedNodeState,
+  ["freshness"]: zFreshness,
+  ["instanceId"]: zInstanceId.nullable().exactOptional(),
+  ["lastAuthenticatedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["receivedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["report"]: zVisibleReport.nullable().exactOptional(),
+  ["reportExpiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["reportSequence"]: zSequence.nullable().exactOptional()
+});
+
+export const zStateEpoch = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zStateView = z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["configurationRevision"]: zRevision,
+  ["links"]: z.array(zAggregatedLink),
+  ["networkId"]: zNetworkId,
+  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {}),
+  ["paths"]: z.array(zAggregatedPath),
+  ["sequence"]: zSequence,
+  ["stateEpoch"]: zStateEpoch
+});
+
+export const zProbeWindow = z.strictObject({
+  ["pending"]: z.int().gte(0).lte(2147483647),
+  ["repliedWithinDeadline"]: z.int().gte(0).lte(2147483647),
+  ["sent"]: z.int().gte(0).lte(2147483647),
+  ["timeout"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zTrafficWindow = z.strictObject({
+  ["counterGeneration"]: zSequence,
+  ["rxBytes"]: zSequence,
+  ["txBytes"]: zSequence
+});
+
+export const zObservationSample = z.strictObject({
+  ["measurementId"]: zEventId,
+  ["partial"]: z.boolean(),
+  ["probe"]: zProbeObservation.nullable().exactOptional(),
+  ["probeCounts"]: zProbeWindow.nullable().exactOptional(),
+  ["traffic"]: zTrafficWindow.nullable().exactOptional(),
+  ["version"]: zVersion,
+  ["windowEnd"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["windowStart"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+});
+
+export const zObservationPhase = z.enum(["preparing","running","completed","failed","expired","cancelled","unsupported"]);
+
+export const zObservationPath = z.union([z.strictObject({
+  ["mode"]: z.enum(["auto"])
+}), z.strictObject({
+  ["mode"]: z.enum(["explicit"]),
+  ["path"]: z.array(zNodeId)
+})]);
+
+export const zObservationSubscriptionId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zObservationTask = z.strictObject({
+  ["configuration"]: zConfigurationRef,
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["id"]: zObservationId,
+  ["instanceId"]: zInstanceId,
+  ["intervalMs"]: z.int().gte(0).lte(2147483647),
+  ["latest"]: zObservationSample.nullable().exactOptional(),
+  ["metrics"]: z.array(zMetricKind),
+  ["path"]: z.array(zNodeId).nullable().exactOptional(),
+  ["pathSegment"]: zSequence.nullable().exactOptional(),
+  ["phase"]: zObservationPhase,
+  ["renewAfter"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["selection"]: zObservationPath,
+  ["sourceNodeId"]: zNodeId,
+  ["subscriberExpiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["subscriptionId"]: zObservationSubscriptionId.nullable().exactOptional(),
+  ["targetNodeId"]: zNodeId
+});
+
+export const zResetReason = z.enum(["cursor_too_old","view_changed","backpressure","epoch_changed"]);
+
+export const zNodeEvent = z.union([z.strictObject({
+  ["batch"]: z.string(),
+  ["configuration"]: zNodeConfigurationView,
+  ["progress"]: zConfigurationApplyProgress.nullable().exactOptional(),
+  ["type"]: z.enum(["config.snapshot"])
+}), z.strictObject({
+  ["batch"]: z.string(),
+  ["entities"]: zNodeEntitiesView,
+  ["type"]: z.enum(["entities.snapshot"])
+}), z.strictObject({
+  ["batch"]: z.string(),
+  ["state"]: zStateView,
+  ["type"]: z.enum(["state.snapshot"])
+}), z.strictObject({
+  ["batch"]: z.string(),
+  ["cursor"]: z.string(),
+  ["disconnectAfterMs"]: z.int().gte(0).lte(2147483647),
+  ["heartbeatIntervalMs"]: z.int().gte(0).lte(2147483647),
+  ["type"]: z.enum(["sync.ready"])
+}), z.strictObject({
+  ["baseCursor"]: z.string(),
+  ["cursor"]: z.string(),
+  ["links"]: z.array(zAggregatedLink),
+  ["paths"]: z.array(zAggregatedPath),
+  ["removed"]: z.array(zNodeId),
+  ["stateEpoch"]: zStateEpoch,
+  ["type"]: z.enum(["state.delta"]),
+  ["updated"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {})
+}), z.strictObject({
+  ["baseCursor"]: z.string(),
+  ["cursor"]: z.string(),
+  ["removed"]: zEntityRemovals,
+  ["type"]: z.enum(["entities.delta"]),
+  ["updated"]: zNodeEntitiesView
+}), z.strictObject({
+  ["actor"]: zEventActor,
+  ["cause"]: zConfigurationChangeCause,
+  ["changedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["changedPointers"]: z.array(z.string()),
+  ["changesComplete"]: z.boolean(),
+  ["networkId"]: zNetworkId,
+  ["previousRevision"]: zRevision,
+  ["requestId"]: zRequestId.nullable().exactOptional(),
+  ["revision"]: zRevision,
+  ["sourceChanged"]: z.boolean(),
+  ["type"]: z.enum(["configuration.changed"])
+}), z.strictObject({
+  ["progress"]: zConfigurationApplyProgress,
+  ["type"]: z.enum(["configuration.progress"])
+}), z.strictObject({
+  ["observation"]: zObservationTask,
+  ["type"]: z.enum(["observation.status"])
+}), z.strictObject({
+  ["observation"]: zObservationTask,
+  ["type"]: z.enum(["observation.sample"])
+}), z.strictObject({
+  ["subscriptionId"]: zObservationSubscriptionId,
+  ["type"]: z.enum(["observation.removed"])
+}), z.strictObject({
+  ["reason"]: zResetReason,
+  ["type"]: z.enum(["sync.reset"])
+}), z.strictObject({
+  ["reason"]: zClosedReason,
+  ["type"]: z.enum(["stream.closed"])
+})]);
+
 export const zNodeInventoryResponse = z.strictObject({
   ["items"]: z.array(zNodeInventoryView)
 });
@@ -1781,8 +2446,6 @@ export const zNodeProof = z.strictObject({
   ["challengeId"]: zChallengeId,
   ["signature"]: zWireSecret
 });
-
-export const zReceiptFreshness = z.enum(["current","expired","awaitingInstance","superseded"]);
 
 export const zNodePublicationProgress = z.strictObject({
   ["applied"]: z.boolean(),
@@ -1839,8 +2502,6 @@ export const zPasswordResetRedeemRequest = z.strictObject({
   ["token"]: zWireSecret
 });
 
-export const zSequence = z.int().gte(0).lte(9007199254740991);
-
 export const zPublicationProgress = z.strictObject({
   ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodePublicationProgress, {}),
   ["publication"]: zPublicationId,
@@ -1851,6 +2512,10 @@ export const zPublicationProgress = z.strictObject({
 
 export const zQueryEnrollmentRequestPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
+});
+
+export const zQueryObservationHistoryPath = z.strictObject({
+  ["networkId"]: zNetworkId
 });
 
 export const zReceiptPhase = z.enum(["saved","applied","failed"]);
@@ -1951,6 +2616,23 @@ export const zSessionIssuedResponse = z.strictObject({
   ["user"]: zUserView
 });
 
+export const zStateAccepted = z.strictObject({
+  ["duplicate"]: z.boolean(),
+  ["receivedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["sequence"]: zSequence
+});
+
+export const zStateQuery = z.strictObject({
+  ["nodes"]: z.array(zNodeId).nullable().exactOptional()
+});
+
+export const zStateReport = z.strictObject({
+  ["instanceId"]: zInstanceId,
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["sequence"]: zSequence,
+  ["state"]: zNodeState
+});
+
 export const zTransportCatalogEntry = z.strictObject({
   ["dialerSchema"]: z.string(),
   ["listenerSchema"]: z.string(),
@@ -1978,6 +2660,90 @@ export const zTrojanListener = z.strictObject({
   ["tls"]: zListenerTls
 });
 
+export const zUserConfigurationView = z.union([z.strictObject({
+  ["configuration"]: zConfigurationView,
+  ["networkId"]: zNetworkId,
+  ["revision"]: zRevision,
+  ["type"]: z.enum(["manager"])
+}), z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeSettingsView, {}),
+  ["revision"]: zRevision,
+  ["type"]: z.enum(["member"])
+})]);
+
+export const zUserEntitiesView = z.strictObject({
+  ["members"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zMemberSummary, {}),
+  ["network"]: zNetworkSummary,
+  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeInventoryView, {})
+});
+
+export const zUserEvent = z.union([z.strictObject({
+  ["batch"]: z.string(),
+  ["configuration"]: zUserConfigurationView,
+  ["progress"]: zConfigurationApplyProgress.nullable().exactOptional(),
+  ["type"]: z.enum(["config.snapshot"])
+}), z.strictObject({
+  ["batch"]: z.string(),
+  ["entities"]: zUserEntitiesView,
+  ["type"]: z.enum(["entities.snapshot"])
+}), z.strictObject({
+  ["batch"]: z.string(),
+  ["state"]: zStateView,
+  ["type"]: z.enum(["state.snapshot"])
+}), z.strictObject({
+  ["batch"]: z.string(),
+  ["cursor"]: z.string(),
+  ["disconnectAfterMs"]: z.int().gte(0).lte(2147483647),
+  ["heartbeatIntervalMs"]: z.int().gte(0).lte(2147483647),
+  ["type"]: z.enum(["sync.ready"])
+}), z.strictObject({
+  ["baseCursor"]: z.string(),
+  ["cursor"]: z.string(),
+  ["links"]: z.array(zAggregatedLink),
+  ["paths"]: z.array(zAggregatedPath),
+  ["removed"]: z.array(zNodeId),
+  ["stateEpoch"]: zStateEpoch,
+  ["type"]: z.enum(["state.delta"]),
+  ["updated"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {})
+}), z.strictObject({
+  ["baseCursor"]: z.string(),
+  ["cursor"]: z.string(),
+  ["removed"]: zEntityRemovals,
+  ["type"]: z.enum(["entities.delta"]),
+  ["updated"]: zUserEntitiesView
+}), z.strictObject({
+  ["actor"]: zEventActor,
+  ["cause"]: zConfigurationChangeCause,
+  ["changedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["changedPointers"]: z.array(z.string()),
+  ["changesComplete"]: z.boolean(),
+  ["networkId"]: zNetworkId,
+  ["previousRevision"]: zRevision,
+  ["requestId"]: zRequestId.nullable().exactOptional(),
+  ["revision"]: zRevision,
+  ["sourceChanged"]: z.boolean(),
+  ["type"]: z.enum(["configuration.changed"])
+}), z.strictObject({
+  ["progress"]: zConfigurationApplyProgress,
+  ["type"]: z.enum(["configuration.progress"])
+}), z.strictObject({
+  ["observation"]: zObservationTask,
+  ["type"]: z.enum(["observation.status"])
+}), z.strictObject({
+  ["observation"]: zObservationTask,
+  ["type"]: z.enum(["observation.sample"])
+}), z.strictObject({
+  ["subscriptionId"]: zObservationSubscriptionId,
+  ["type"]: z.enum(["observation.removed"])
+}), z.strictObject({
+  ["reason"]: zResetReason,
+  ["type"]: z.enum(["sync.reset"])
+}), z.strictObject({
+  ["reason"]: zClosedReason,
+  ["type"]: z.enum(["stream.closed"])
+})]);
+
 export const zValidateConfigurationPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
@@ -1996,4 +2762,8 @@ export const zVlessListener = z.strictObject({
   ["tls"]: zListenerTls,
   ["uuid"]: zSecretString.exactOptional(),
   ["websocket"]: zListenerWebSocket.exactOptional()
+});
+
+export const zWatchNetworkPath = z.strictObject({
+  ["networkId"]: zNetworkId
 });

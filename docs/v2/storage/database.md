@@ -141,7 +141,8 @@
 | `revision` | Revision | 递增配置版本 |
 | `sourceJsonc` | Sealed&lt;string&gt; | 编辑原文，含注释／可能的协议秘密 |
 | `configuration` | Sealed&lt;NetworkConfiguration&gt; | 规范化完整配置，类型见配置参考 |
-| `bindings` | ConfigurationBindings | 本版本固定的用户／listener 代际／数据集绑定 |
+| `bindings` | Sealed&lt;ConfigurationBindings&gt; | 本版本固定的用户／listener 代际／数据集绑定 |
+| `executionTargets` | Map&lt;NodeId, ConfigurationRef&gt; | 当前实现保存的本次配置应用固定目标；不含秘密，不随后续 demand／refresh 扩大分母 |
 | `createdBy` | ActorRef | 用户或系统修改来源 |
 | `createdAt` | Timestamp | 提交时间 |
 | `cause` | ConfigurationChangeCause | 配置版本的主触发来源，独立于 actor |
@@ -149,6 +150,8 @@
 | `rollbackFrom` | Revision? | 回滚来源；本记录仍是新 revision |
 
 NetworkConfiguration 的完整字段见[配置参考](/v2/configuration-reference)；其中 `nodes[id].identity`／`enabled` 是身份／业务启停的唯一源，addressPools／nodes[id].addresses 是地址期望的唯一源。历史原文、规范化值与绑定不可单独覆盖。
+
+`executionTargets` 对应当前 SQLite 的 `execution_targets` 列：在相同配置事务中，由实际 publication 切片填入并封存；删除节点不列为等待其 ACK 的目标。GET／SSE 进度依据这些固定引用读取真实回执，并单独给出当前新鲜度，不把旧 applied 当作当前数据面健康。
 
 规范化配置完整保存已补全的默认参数、UUID／password／证书／私钥；读取旧版本不会再运行当前默认补全。sourceJsonc 保留编辑意图和注释，configuration 保存确定结果，两者用途不同。线性完整历史可查得前序 revision；配置摘要需要时计算／缓存，CAS 使用 revision。
 

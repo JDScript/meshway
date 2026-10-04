@@ -136,7 +136,7 @@ src/
 | --- | --- |
 | Controller／Agent | Rust、Tokio；Controller 使用 Axum |
 | 存储 | SQLite、rusqlite、显式事务；最新 State 使用内存与有界 channel |
-| 契约 | Serde／Utoipa、OpenAPI、生成 Rust／TS SDK；已支持显式 SSE 声明，生产 State 流仍待接线 |
+| 契约 | Serde／Utoipa、OpenAPI、生成 Rust／TS SDK；正常 Router 已提供权限裁剪的 State／SSE |
 | 认证 | 用户 Argon2id＋不透明会话；Node 持久密钥身份，握手待定版 |
 | Console | React、TypeScript、Vite、TanStack Query／Router、Base UI／Tailwind |
 | Apple | SwiftUI、NetworkExtension、UniFFI；新增隧道开发仍暂停 |

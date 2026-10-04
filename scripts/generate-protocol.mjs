@@ -89,7 +89,7 @@ export function validators(document) {
     }
   }
   function component(name) {
-    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name) || !schemas[name]) throw new Error(`Invalid component: ${name}`);
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name) || !schemas[name]) throw new Error(`Invalid component: ${name}`);
     if (visiting.has(name)) throw new Error("Recursive schemas require an explicit generator extension");
     if (emitted.has(name)) return;
     visiting.add(name);
@@ -266,7 +266,7 @@ export function validators(document) {
   function referenceName(reference) {
     if (typeof reference !== "string" || !reference.startsWith(referencePrefix)) throw new Error("Only local definition references are supported");
     const name = reference.slice(referencePrefix.length);
-    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name) || !Object.hasOwn(schemas, name)) throw new Error(`Invalid component: ${name}`);
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name) || !Object.hasOwn(schemas, name)) throw new Error(`Invalid component: ${name}`);
     return name;
   }
   function excludesNull(schema, seen = new Set()) {
