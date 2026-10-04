@@ -594,6 +594,18 @@ async fn http_snapshot_cursor_replay_commit_cancellation_and_logout() {
         )
         .await
         .unwrap();
+    loop {
+        let (_, event) = resumed.next().await.expect("explicit session closure");
+        if matches!(
+            event,
+            TestEvent::Closed {
+                reason: meshway_protocol::events::ClosedReason::SessionExpired
+            }
+        ) {
+            break;
+        }
+        assert!(matches!(event, TestEvent::StateDelta { .. }));
+    }
     assert!(resumed.next().await.is_none());
     drop(resumed);
     stop.send(()).unwrap();

@@ -455,6 +455,77 @@ async fn member_inventory_excludes_execution_peers_and_settings_refresh_in_strea
 }
 
 #[tokio::test]
+async fn disconnected_streams_release_active_quota_and_keep_bounded_replay() {
+    use meshway_server::state::{
+        StateError,
+        service::ReadIdentity,
+        stream::{StreamPoll, StreamSource},
+    };
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(
+        &dir.path().canonicalize().unwrap().join("stream-quota"),
+        true,
+    )
+    .await;
+    let c = client();
+    let owner = register(&c, &s, "stream-quota@example.test", "valid password").await;
+    let network = create(&c, &s, owner.token.expose(), "streams")
+        .await
+        .network
+        .id;
+    let service = s.app.user_state_service().unwrap();
+    let identity = ReadIdentity::user_session(owner.token.expose(), network).unwrap();
+    let mut last_cursor = None;
+    for _ in 0..12 {
+        let id = service.open_stream(identity.clone(), None).await.unwrap();
+        for _ in 0..4 {
+            let StreamPoll::Frame(frame) = service.poll(&id).await.unwrap() else {
+                panic!("initial batch")
+            };
+            if frame.id.is_some() {
+                last_cursor = frame.id;
+            }
+        }
+        service.cancel(&id);
+    }
+    let mut active = vec![];
+    for _ in 0..4 {
+        active.push(service.open_stream(identity.clone(), None).await.unwrap());
+    }
+    assert!(matches!(
+        service.open_stream(identity.clone(), None).await,
+        Err(StateError::Budget)
+    ));
+    assert!(matches!(
+        service
+            .open_stream(identity.clone(), last_cursor.clone())
+            .await,
+        Err(StateError::Budget)
+    ));
+    service.cancel(&active.pop().unwrap());
+    let resumed = service.open_stream(identity, last_cursor).await.unwrap();
+    assert!(matches!(
+        service.poll(&resumed).await.unwrap(),
+        StreamPoll::Pending
+    ));
+    service.cancel(&resumed);
+    for id in active {
+        service.cancel(&id);
+    }
+    // The real response body's Drop must reach cancel, too; refreshes should
+    // not require waiting for the one-minute replay retention deadline.
+    for _ in 0..10 {
+        let mut events =
+            Events::open(&c, net(&s, network, "events"), owner.token.expose(), None).await;
+        events.ready().await;
+        drop(events);
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    s.close().await;
+}
+
+#[tokio::test]
 async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     let _serial = ACCOUNT_FLOW.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -536,7 +607,14 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     .await;
     assert!(!accepted.duplicate);
     let (cursor, delta, _) = events.user().await;
-    let StreamEvent::StateDelta { updated, .. } = delta.0 else {
+    let StreamEvent::StateDelta {
+        updated,
+        as_of,
+        sequence,
+        configuration_revision,
+        ..
+    } = delta.0
+    else {
         panic!("report delta")
     };
     assert_eq!(updated[&node.node_id].report_sequence.unwrap().get(), 1);
@@ -547,6 +625,13 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     )
     .await;
     assert_eq!(view.nodes[&node.node_id].report_sequence.unwrap().get(), 1);
+    assert_eq!(sequence, Some(view.sequence));
+    assert_eq!(configuration_revision, Some(view.configuration_revision));
+    assert!(as_of.unwrap() <= view.as_of);
+    assert_eq!(
+        updated[&node.node_id].observed_at,
+        view.nodes[&node.node_id].observed_at
+    );
     let peers: StateView = json(
         c.post(format!("{}/agent-api/v1/state/query", s.url))
             .bearer_auth(&node_token)
@@ -685,6 +770,14 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
         .unwrap()
         .error_for_status()
         .unwrap();
+    for stream in [&mut events, &mut unknown] {
+        assert!(matches!(
+            stream.user().await.1.0,
+            StreamEvent::Closed {
+                reason: meshway_protocol::events::ClosedReason::SessionExpired
+            }
+        ));
+    }
     assert!(
         events
             .frame::<meshway_protocol::UserEvent>()
@@ -976,6 +1069,17 @@ async fn production_config_changes_and_scope_changes_do_not_become_identity_loss
         .unwrap()
         .error_for_status()
         .unwrap();
+    let StreamPoll::Frame(frame) = service.poll(&initial).await.unwrap() else {
+        panic!("closed reason")
+    };
+    assert!(matches!(
+        serde_json::from_str::<meshway_protocol::UserEvent>(&frame.data)
+            .unwrap()
+            .0,
+        StreamEvent::Closed {
+            reason: meshway_protocol::events::ClosedReason::SessionExpired
+        }
+    ));
     assert!(matches!(
         service.poll(&initial).await.unwrap(),
         StreamPoll::Closed
@@ -1318,6 +1422,15 @@ async fn production_demand_receipts_peer_expansion_and_node_termination() {
         .status(),
         StatusCode::NO_CONTENT
     );
+    let StreamPoll::Frame(frame) = node_service.poll(&queued).await.unwrap() else {
+        panic!("node credential closed")
+    };
+    assert!(matches!(
+        serde_json::from_str::<meshway_protocol::NodeEvent>(&frame.data)
+            .unwrap()
+            .0,
+        StreamEvent::Closed { .. }
+    ));
     assert!(matches!(
         node_service.poll(&queued).await.unwrap(),
         StreamPoll::Closed

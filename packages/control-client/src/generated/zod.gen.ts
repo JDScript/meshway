@@ -2549,11 +2549,14 @@ export const zNodeEvent = z.union([z.strictObject({
   ["heartbeatIntervalMs"]: z.int().gte(0).lte(2147483647),
   ["type"]: z.enum(["sync.ready"])
 }), z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["baseCursor"]: z.string(),
+  ["configurationRevision"]: zRevision.nullable().exactOptional(),
   ["cursor"]: z.string(),
   ["links"]: z.array(zAggregatedLink),
   ["paths"]: z.array(zAggregatedPath),
   ["removed"]: z.array(zNodeId),
+  ["sequence"]: zSequence.nullable().exactOptional(),
   ["stateEpoch"]: zStateEpoch,
   ["type"]: z.enum(["state.delta"]),
   ["updated"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {})
@@ -2920,11 +2923,14 @@ export const zUserEvent = z.union([z.strictObject({
   ["heartbeatIntervalMs"]: z.int().gte(0).lte(2147483647),
   ["type"]: z.enum(["sync.ready"])
 }), z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["baseCursor"]: z.string(),
+  ["configurationRevision"]: zRevision.nullable().exactOptional(),
   ["cursor"]: z.string(),
   ["links"]: z.array(zAggregatedLink),
   ["paths"]: z.array(zAggregatedPath),
   ["removed"]: z.array(zNodeId),
+  ["sequence"]: zSequence.nullable().exactOptional(),
   ["stateEpoch"]: zStateEpoch,
   ["type"]: z.enum(["state.delta"]),
   ["updated"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {})

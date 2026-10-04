@@ -6733,8 +6733,26 @@ export const schemaDocument = {
               "type"
             ],
             "properties": {
+              "asOf": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
+                "description": "Projection time, not a new measurement timestamp. Current Server\nframes include these metadata fields; optionality permits consumers\nto apply previously retained deltas without inventing values."
+              },
               "baseCursor": {
                 "type": "string"
+              },
+              "configurationRevision": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Revision"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "cursor": {
                 "type": "string"
@@ -6756,6 +6774,16 @@ export const schemaDocument = {
                 "items": {
                   "$ref": "#/components/schemas/NodeId"
                 }
+              },
+              "sequence": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sequence"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "stateEpoch": {
                 "$ref": "#/components/schemas/StateEpoch"
@@ -11622,8 +11650,26 @@ export const schemaDocument = {
               "type"
             ],
             "properties": {
+              "asOf": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
+                "description": "Projection time, not a new measurement timestamp. Current Server\nframes include these metadata fields; optionality permits consumers\nto apply previously retained deltas without inventing values."
+              },
               "baseCursor": {
                 "type": "string"
+              },
+              "configurationRevision": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Revision"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "cursor": {
                 "type": "string"
@@ -11645,6 +11691,16 @@ export const schemaDocument = {
                 "items": {
                   "$ref": "#/components/schemas/NodeId"
                 }
+              },
+              "sequence": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sequence"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "stateEpoch": {
                 "$ref": "#/components/schemas/StateEpoch"
