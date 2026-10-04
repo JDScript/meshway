@@ -110,7 +110,11 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
 ### 需要修正
 
-- 节点停止上报、租约记录清掉以后，它的 `freshness` 从 `expired` 变成 `superseded`：`CurrentNode.instance_id` 为 `None` 时，`None != Some(上报的实例)` 先命中 superseded。结果一个已经停掉的节点在 console 里一直显示"刚重启"。应该只在有另一个当前实例时判 superseded，否则继续往下按租约判 expired（`apps/meshway-server/src/state/mod.rs` 的 freshness 判定）。用脚本节点复现：报一次后不再续租，约 1 分钟内是 `expired`，之后变成 `superseded`。
+- 没有活实例的节点被判为 `superseded`，而不是 `expired`，console 里一直显示"刚重启"。
+  - 原因：节点没有活实例（`node_execution` 过期或已释放）时，`CurrentNode.instance_id` 为 `None`（`execution/state.rs` 的 `live` 判定）；报告只在永久吊销时删除。freshness 判定（`state/mod.rs`）里 `None != Some(上报的实例)` 先命中 superseded，后面"没有租约判 expired"的分支在存有报告时走不到。
+  - 进程退出或断网，不释放实例：最后一次报告后 60 秒（`REPORT_TTL_SECONDS`）变 `expired`，最后一次续租后 120 秒（`INSTANCE_TTL`）变 `superseded`，之后不再变化。已用脚本节点复现。
+  - `meshway down`，释放实例：释放时把 `instance_expires_at` 设为当前时间（`store/execution/instances.rs` 的 `release`），节点立刻是 `superseded`，从不出现 `expired`。按代码推断，未实测。
+  - 应改为：没有活实例时判 `expired`；只有存在另一个活实例、且与报告的实例不同时才判 `superseded`。"没有活实例"要排在 `config_mismatch` 之前：没有租约时 `configurations` 为空，报告带 `applied` 的节点会被判成 `config_mismatch`（现在 Node 不报 `applied`，暂时看不到）。
 - schema 改动后，旧数据库无法启动（`Server storage startup failed.`，没有更具体的原因）。`activity_events.previous_email` 这次让开发环境只能重置数据库、重新接入节点；至少启动错误应说明是哪张表或哪一列与当前 schema 不符。
 
 ### 需要真实 Node 复核
