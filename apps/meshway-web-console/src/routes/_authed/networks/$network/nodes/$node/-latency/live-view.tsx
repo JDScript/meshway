@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
+import { ChartLegend } from "./chart-frame"
 import { metricLabel, phaseLabel, serviceText } from "./labels"
 import { ObservationChart } from "./observation-chart"
 import { useSubscription } from "./use-subscription"
@@ -242,9 +243,13 @@ function Measurements({
         />
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-meta text-muted-foreground">
-        <Legend swatch="line">{m.observation_legend_reply()}</Legend>
-        <Legend swatch="warning">{m.observation_legend_timeout()}</Legend>
-        <Legend swatch="muted">{m.observation_legend_failed()}</Legend>
+        <ChartLegend swatch="line">{m.observation_legend_reply()}</ChartLegend>
+        <ChartLegend swatch="mark">
+          {m.observation_legend_timeout()}
+        </ChartLegend>
+        <ChartLegend swatch="mark" muted>
+          {m.observation_legend_failed()}
+        </ChartLegend>
         <span>{m.observation_legend_gap()}</span>
       </div>
     </>
@@ -331,29 +336,5 @@ function Note({
     >
       {children}
     </div>
-  )
-}
-
-function Legend({
-  swatch,
-  children,
-}: {
-  swatch: "line" | "warning" | "muted"
-  children: string
-}) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span
-        aria-hidden="true"
-        className={cn(
-          swatch === "line"
-            ? "h-0.5 w-3 rounded-full bg-[var(--signal)]"
-            : "h-2 w-[3px] rounded-[1px]",
-          swatch === "warning" && "bg-warning",
-          swatch === "muted" && "bg-muted-foreground/70"
-        )}
-      />
-      {children}
-    </span>
   )
 }

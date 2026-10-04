@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/drawer"
 import { Spinner } from "@/components/ui/spinner"
 import { useKeptWhile } from "@/hooks/use-kept"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "@/hooks/use-media-query"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 

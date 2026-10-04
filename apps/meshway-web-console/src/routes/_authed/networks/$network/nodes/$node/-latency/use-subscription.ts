@@ -1,6 +1,6 @@
 import { cancelObservation, renewObservation } from "@meshway/control-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useState } from "react"
 
 import { ApiFailure, authed, client, problemCode } from "@/api/client"
 import {
@@ -8,24 +8,13 @@ import {
   writeRemoved,
   writeTask,
 } from "@/api/queries/observation"
+import { useDocumentVisible } from "@/hooks/use-document-visible"
 import { useNow } from "@/hooks/use-now"
 import { leasePlan, retryPlan } from "@/lib/observation/lease"
 import { standing, taskFor } from "@/lib/observation/record"
 
 /** Cancellations due once a holder has unmounted, unless it mounts again at once. */
 const leaving = new Map<string, number>()
-
-function subscribeVisibility(listener: () => void) {
-  document.addEventListener("visibilitychange", listener)
-  return () => document.removeEventListener("visibilitychange", listener)
-}
-
-/** Whether this tab is in front: a page in the background does not renew. */
-const useDocumentVisible = () =>
-  useSyncExternalStore(
-    subscribeVisibility,
-    () => document.visibilityState === "visible"
-  )
 
 /**
  * One subscription this tab holds, while it is mounted: its record (kept

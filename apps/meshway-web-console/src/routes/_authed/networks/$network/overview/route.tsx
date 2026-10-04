@@ -8,7 +8,7 @@ import {
   PANEL_TOP,
 } from "@/components/surface/layout"
 import { Surface } from "@/components/surface/surface"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "@/hooks/use-media-query"
 import { useBooted } from "@/state/boot"
 import { usePointedNode } from "@/state/globe"
 import { chooseHistoryLayer } from "@/state/history-layer"

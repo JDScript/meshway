@@ -1,24 +1,12 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useEffect, useRef, useState } from "react"
 
+import { usePrefersReducedMotion } from "@/hooks/use-media-query"
 import { m } from "@/paraglide/messages.js"
 import { markEngineReady, markRevealed, useBootPhase } from "@/state/boot"
 import { pointAtOnGlobe, selectFromGlobe, useGlobe } from "@/state/globe"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
 import type { GlobeEngine } from "./engine"
-
-const REDUCED_MOTION = "(prefers-reduced-motion: reduce)"
-
-function usePrefersMotion(): boolean {
-  return useSyncExternalStore(
-    (onChange) => {
-      const query = window.matchMedia(REDUCED_MOTION)
-      query.addEventListener("change", onChange)
-      return () => query.removeEventListener("change", onChange)
-    },
-    () => !window.matchMedia(REDUCED_MOTION).matches
-  )
-}
 
 /** Theme colours, re-read whenever the root's theme class changes. */
 function useGlobeColors(): GlobeColors {
@@ -44,7 +32,7 @@ export function GlobeStage() {
   const state = useGlobe()
   const boot = useBootPhase()
   const colors = useGlobeColors()
-  const motion = usePrefersMotion()
+  const motion = !usePrefersReducedMotion()
 
   useEffect(() => {
     const element = host.current

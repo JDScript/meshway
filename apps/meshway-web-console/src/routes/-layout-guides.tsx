@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useState } from "react"
 
 import {
   BAR_HEIGHT,
@@ -13,7 +13,8 @@ import {
   PEEK_WIDTH,
   WORKSPACE_LEFT,
 } from "@/components/surface/layout"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "@/hooks/use-media-query"
+import { useViewportHeight, useViewportWidth } from "@/hooks/use-viewport"
 
 // Development only: the layout's lines drawn over the interface, with a
 // faint 4px grid, for checking alignment by eye or in screenshots. Toggle
@@ -23,16 +24,11 @@ const KEY = "meshway.guides"
 
 type Guide = { at: number; label: string; tone: "edge" | "panel" }
 
-const subscribeSize = (onChange: () => void) => {
-  window.addEventListener("resize", onChange)
-  return () => window.removeEventListener("resize", onChange)
-}
-
 export function LayoutGuides() {
   const [on, setOn] = useState(() => localStorage.getItem(KEY) === "1")
   const mobile = useIsMobile()
-  const width = useSyncExternalStore(subscribeSize, () => window.innerWidth)
-  const height = useSyncExternalStore(subscribeSize, () => window.innerHeight)
+  const width = useViewportWidth()
+  const height = useViewportHeight()
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from "react"
 
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "@/hooks/use-media-query"
 import { useBooted } from "@/state/boot"
 
 import { CommitBar, type Commit } from "./commit-bar"

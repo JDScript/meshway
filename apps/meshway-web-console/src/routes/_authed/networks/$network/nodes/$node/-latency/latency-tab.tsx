@@ -20,6 +20,7 @@ import { bucketSeries, unansweredRate, type Series } from "@/lib/history/series"
 import { historyWindow, type WindowChoice } from "@/lib/history/window"
 import { m } from "@/paraglide/messages.js"
 
+import { ChartLegend } from "./chart-frame"
 import { LatencyChart } from "./latency-chart"
 import { ObservationPanel } from "./observation-panel"
 
@@ -232,32 +233,10 @@ function SeriesView({
         />
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-meta text-muted-foreground">
-        <Legend swatch="line">{m.history_legend_mean()}</Legend>
-        <Legend swatch="warning">{m.history_legend_unanswered()}</Legend>
+        <ChartLegend swatch="line">{m.history_legend_mean()}</ChartLegend>
+        <ChartLegend swatch="span">{m.history_legend_unanswered()}</ChartLegend>
         <span>{m.history_legend_unmeasured()}</span>
       </div>
     </section>
-  )
-}
-
-function Legend({
-  swatch,
-  children,
-}: {
-  swatch: "line" | "warning"
-  children: string
-}) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span
-        aria-hidden="true"
-        className={
-          swatch === "line"
-            ? "h-0.5 w-3 rounded-full bg-[var(--signal)]"
-            : "size-2 rounded-[2px] bg-warning"
-        }
-      />
-      {children}
-    </span>
   )
 }

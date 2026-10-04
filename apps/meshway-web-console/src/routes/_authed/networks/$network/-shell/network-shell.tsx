@@ -13,8 +13,8 @@ import {
   useSwitchNetwork,
   useWorkspaceOpen,
 } from "@/components/surface/pages"
-import { useIsMobile } from "@/hooks/use-mobile"
-import { useViewportHeight } from "@/hooks/use-viewport-height"
+import { useIsMobile } from "@/hooks/use-media-query"
+import { useViewportHeight } from "@/hooks/use-viewport"
 import { cn } from "@/lib/utils"
 import { useBooted } from "@/state/boot"
 import { setGlobe } from "@/state/globe"
