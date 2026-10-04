@@ -13,7 +13,8 @@
       "./messages/account/{locale}.json",
       "./messages/configuration/{locale}.json",
       "./messages/nodes/{locale}.json",
-      "./messages/live/{locale}.json"
+      "./messages/live/{locale}.json",
+      "./messages/history/{locale}.json"
     ]
   }
 }
