@@ -282,16 +282,23 @@ test("SDK preserves retired references across email changes and rejoin without a
   assert.ok(impact.ok && impact.data.nodeCount === 0);
   const removed = await removeMember(client, { ...path, membershipId }, { expectedRevision: impact.data.revision, expectedVersion: impact.data.version }, options);
   assert.ok(removed.ok);
+  const departed = await getConfigurationSource(client, path, {}, options);
+  assert.ok(departed.ok);
   const email = "retired-renamed@example.test";
   const changed = await changeAccountEmail(client, { password, email }, { token: member.data.token });
   assert.ok(changed.ok);
   assert.equal(changed.data.user.id, member.data.user.id);
+  const afterEmail = await getConfigurationSource(client, path, {}, options);
+  assert.ok(afterEmail.ok);
+  assert.equal(afterEmail.data.revision, departed.data.revision);
+  assert.equal(afterEmail.data.sourceJsonc === departed.data.sourceJsonc, true);
+  assert.deepEqual(afterEmail.data.configuration.groups?.["group:team"], [member.data.user.email]);
   const session = await login(client, { email, password });
   assert.ok(session.ok);
   assert.notEqual(await join(session.data.token), membershipId);
   const source = await getConfigurationSource(client, path, {}, options);
   assert.ok(source.ok);
-  assert.deepEqual(source.data.configuration.groups?.["group:team"], [email]);
+  assert.deepEqual(source.data.configuration.groups?.["group:team"], [member.data.user.email]);
   const inputs: ConfigurationRequest[] = [
     { type: "operations", expectedRevision: source.data.revision, requestId: randomUUID(), ops: [] },
     { type: "document", expectedRevision: source.data.revision, requestId: randomUUID(), sourceJsonc: source.data.sourceJsonc },

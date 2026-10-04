@@ -1,8 +1,9 @@
 //! Durable source events and coverage. Tombstones outlive the complete admission
 //! window, including clock skew; retries never recreate pruned payloads.
+use crate::error::Error;
 use crate::{
     resources::content_digest,
-    state::{ReportAdmission, StateError, VisibilityScope},
+    state::{ReportAdmission, VisibilityScope},
 };
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{
@@ -24,17 +25,17 @@ pub fn accept(
     admission: &ReportAdmission,
     batch: HistoryReport,
     now: DateTime<Utc>,
-) -> Result<HistoryAccepted, StateError> {
+) -> Result<HistoryAccepted, Error> {
     if admission.instance_id != batch.instance_id || admission.lease_expires_at <= now {
-        return Err(StateError::Unauthorized);
+        return Err(Error::InvalidSession);
     }
     if batch.events.len() > 256
         || serde_json::to_vec(&batch)
-            .map_err(|_| StateError::Invalid)?
+            .map_err(|_| Error::encode("observation history report"))?
             .len()
             > 1024 * 1024
     {
-        return Err(StateError::Budget);
+        return Err(Error::StateLimit);
     }
     let mut accepted = 0;
     let mut duplicates = 0;
@@ -44,7 +45,7 @@ pub fn accept(
             || event.occurred_at + Duration::seconds(ADMISSION_SECONDS) <= now
             || !admission.configurations.contains(&event.configuration)
         {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         match &event.payload {
             ObservationPayload::ProbeCompleted { probe } => {
@@ -52,7 +53,7 @@ pub fn accept(
                     || probe.publication_id != event.configuration.execution_publication
                     || probe.completed_at != Some(event.occurred_at)
                 {
-                    return Err(StateError::Invalid);
+                    return Err(Error::InvalidRequest);
                 }
                 crate::state::validation::validate_probe_context(
                     admission.node_id,
@@ -63,21 +64,21 @@ pub fn accept(
             }
             ObservationPayload::CollectionGap { dropped, from, to } => {
                 if dropped.get() == 0 || from >= to || *to > event.occurred_at {
-                    return Err(StateError::Invalid);
+                    return Err(Error::InvalidRequest);
                 }
             }
             payload => {
                 if peer(payload).is_none_or(|id| !context.peers.contains(&id)) {
-                    return Err(StateError::Invalid);
+                    return Err(Error::InvalidRequest);
                 }
             }
         }
-        let bytes = serde_json::to_vec(&event).map_err(|_| StateError::Invalid)?;
+        let bytes = serde_json::to_vec(&event).map_err(|_| Error::encode("observation event"))?;
         let digest = content_digest(&bytes).to_string();
         let prior: Option<(String, String)> = tx.query_row("SELECT payload_digest, instance_id FROM observation_events WHERE network_id = ?1 AND source_node_id = ?2 AND event_id = ?3", params![admission.network_id.as_uuid().as_bytes().as_slice(), admission.node_id.to_string(), event.event_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
         if let Some((original, instance)) = prior {
             if original != digest || instance != batch.instance_id.to_string() {
-                return Err(StateError::Conflict);
+                return Err(Error::StateConflict);
             }
             duplicates += 1;
             continue;
@@ -96,7 +97,7 @@ pub fn prune(
     tx: &Transaction<'_>,
     network: meshway_model::NetworkId,
     now: DateTime<Utc>,
-) -> Result<(), StateError> {
+) -> Result<(), Error> {
     let network = network.as_uuid().as_bytes().as_slice();
     let cutoff = (now - Duration::seconds(RETENTION_SECONDS)).timestamp_millis();
     let capacity_row: i64 = tx.query_row("SELECT coalesce((SELECT row_id FROM observation_events WHERE network_id = ?1 AND payload IS NOT NULL ORDER BY row_id DESC LIMIT 1 OFFSET ?2), 0)", params![network, MAX_EVENTS_PER_NETWORK], |row| row.get(0))?;
@@ -129,11 +130,11 @@ pub struct ReadWindow {
     pub authorization_digest: meshway_model::Digest,
     pub result_count: Option<usize>,
 }
-pub fn query_digest(query: &HistoryQuery) -> Result<meshway_model::Digest, StateError> {
+pub fn query_digest(query: &HistoryQuery) -> Result<meshway_model::Digest, Error> {
     let mut query = query.clone();
     query.cursor = None;
     Ok(content_digest(
-        &serde_json::to_vec(&query).map_err(|_| StateError::Invalid)?,
+        &serde_json::to_vec(&query).map_err(|_| Error::encode("observation history query"))?,
     ))
 }
 /// The service encrypts `ReadWindow` with caller/network-bound cursor AAD.
@@ -144,9 +145,9 @@ pub fn query(
     query: &HistoryQuery,
     previous: Option<ReadWindow>,
     now: DateTime<Utc>,
-) -> Result<(HistoryPage, Option<ReadWindow>), StateError> {
+) -> Result<(HistoryPage, Option<ReadWindow>), Error> {
     if scope.expires_at <= now {
-        return Err(StateError::Unauthorized);
+        return Err(Error::InvalidSession);
     }
     if query.from >= query.to
         || query.to - query.from > Duration::days(7)
@@ -159,7 +160,7 @@ pub fn query(
             .peer_node_id
             .is_some_and(|id| !scope.visible.contains(&id))
     {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     if query.mode == HistoryMode::Buckets
         && query
@@ -167,7 +168,7 @@ pub fn query(
             .is_none_or(|seconds| !(1..=86400).contains(&seconds))
         || query.mode != HistoryMode::Buckets && query.bucket_seconds.is_some()
     {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     if query.kinds.as_ref().is_some_and(|kinds| kinds.len() > 6)
         || query
@@ -175,7 +176,7 @@ pub fn query(
             .as_ref()
             .is_some_and(|id| id.is_empty() || id.len() > 256)
     {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     let query_digest = query_digest(query)?;
     let mut window = match previous {
@@ -184,7 +185,7 @@ pub fn query(
                 || window.authorization_digest != scope.authorization_digest
                 || window.as_of + Duration::minutes(15) <= now
             {
-                return Err(StateError::Cursor);
+                return Err(Error::InvalidCursor);
             }
             window
         }
@@ -225,17 +226,19 @@ pub fn query(
     let mut coverage = vec![];
     for (count, row) in rows.enumerate() {
         if count >= MAX_QUERY_ROWS {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
         let (node, instance, received_at, bytes) = row?;
-        let node: NodeId = node.parse().map_err(|_| StateError::Storage)?;
+        let node: NodeId = node
+            .parse()
+            .map_err(|_| Error::decode("observation_events.source_node_id"))?;
         if !scope.visible.contains(&node)
             || query.source_node_id.is_some_and(|source| source != node)
         {
             continue;
         }
-        let event: ObservationEvent =
-            serde_json::from_slice(&bytes).map_err(|_| StateError::Storage)?;
+        let event: ObservationEvent = serde_json::from_slice(&bytes)
+            .map_err(|_| Error::decode("observation_events.payload"))?;
         if let ObservationPayload::CollectionGap { from, to, dropped } = &event.payload {
             // A source-wide drop count has no narrower peer/link attribution.
             // Only readers of the complete source may see it, regardless of
@@ -243,7 +246,9 @@ pub fn query(
             if scope.full.contains(&node) && *from < query.to && *to > query.from {
                 coverage.push(HistoryCoverage::CollectionGap {
                     source_node_id: node,
-                    instance_id: instance.parse().map_err(|_| StateError::Storage)?,
+                    instance_id: instance
+                        .parse()
+                        .map_err(|_| Error::decode("observation_events.instance_id"))?,
                     event_id: event.event_id,
                     from: *from,
                     to: *to,
@@ -302,8 +307,9 @@ pub fn query(
             source_node_id: node,
             instance_id: instance
                 .parse::<InstanceId>()
-                .map_err(|_| StateError::Storage)?,
-            received_at: DateTime::from_timestamp_millis(received_at).ok_or(StateError::Storage)?,
+                .map_err(|_| Error::decode("observation_events.instance_id"))?,
+            received_at: DateTime::from_timestamp_millis(received_at)
+                .ok_or(Error::decode("observation_events.received_at"))?,
             event,
         });
     }
@@ -347,7 +353,7 @@ pub fn query(
         }
     };
     if window.offset > total || window.result_count.is_some_and(|count| count != total) {
-        return Err(StateError::Cursor);
+        return Err(Error::InvalidCursor);
     }
     window.result_count = Some(total);
     let mut statement = tx.prepare(
@@ -362,17 +368,20 @@ pub fn query(
     })?;
     for row in rows {
         let (source, before, reason) = row?;
-        let source: NodeId = source.parse().map_err(|_| StateError::Storage)?;
+        let source: NodeId = source
+            .parse()
+            .map_err(|_| Error::decode("history_coverage.source_node_id"))?;
         if !scope.visible.contains(&source) || query.source_node_id.is_some_and(|id| id != source) {
             continue;
         }
         coverage.push(HistoryCoverage::Pruned {
             source_node_id: source,
-            before: DateTime::from_timestamp_millis(before).ok_or(StateError::Storage)?,
+            before: DateTime::from_timestamp_millis(before)
+                .ok_or(Error::decode("history_coverage.before_at"))?,
             reason: match reason.as_str() {
                 "capacity" => CoverageReason::Capacity,
                 "retention" => CoverageReason::Retention,
-                _ => return Err(StateError::Storage),
+                _ => return Err(Error::decode("history_coverage.reason")),
             },
         });
     }
@@ -400,8 +409,8 @@ fn peer(payload: &ObservationPayload) -> Option<NodeId> {
 fn buckets(
     events: Vec<HistoricalEvent>,
     query: &HistoryQuery,
-) -> Result<Vec<HistoryBucket>, StateError> {
-    let seconds = i64::from(query.bucket_seconds.ok_or(StateError::Invalid)?);
+) -> Result<Vec<HistoryBucket>, Error> {
+    let seconds = i64::from(query.bucket_seconds.ok_or(Error::InvalidRequest)?);
     let mut buckets: BTreeMap<BucketKey, (HistoryBucket, u128, u32)> = BTreeMap::new();
     for event in events {
         let ObservationPayload::ProbeCompleted { probe } = event.event.payload else {

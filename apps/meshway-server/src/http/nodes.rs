@@ -1,5 +1,6 @@
-use super::{agent::error, auth::bearer, error::HttpError};
-use crate::execution::{Execution, NodeError};
+use super::{auth::bearer, error::HttpError};
+use crate::error::Error;
+use crate::execution::Execution;
 use axum::extract::rejection::JsonRejection;
 use axum::{
     Extension, Json,
@@ -20,7 +21,7 @@ pub(super) async fn settings(
     let (revision, settings) = service
         .settings(token, network, node)
         .await
-        .map_err(|e| error(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(NodeSettingsResponse {
         request_id: id,
         network_id: network,
@@ -55,7 +56,7 @@ pub(super) async fn delete(
         )
         .await
         .map(Json)
-        .map_err(|e| HttpError::configuration(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke",operation_id="revokeNodeKey",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=RevokeNodeKeyRequest,responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
 pub(super) async fn revoke_key(
@@ -71,7 +72,7 @@ pub(super) async fn revoke_key(
     service
         .revoke_key(token, network, node, body)
         .await
-        .map_err(|e| error(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes",operation_id="listNodes",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=NodeInventoryResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
@@ -87,7 +88,7 @@ pub(super) async fn list(
         .inventory(token, network)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}",operation_id="getNode",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=NodeInventoryView),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
 pub(super) async fn get(
@@ -101,12 +102,12 @@ pub(super) async fn get(
     service
         .inventory(token, network)
         .await
-        .map_err(|e| error(id, e))?
+        .map_err(|e| HttpError::domain(id, e))?
         .items
         .into_iter()
         .find(|n| n.id == node)
         .map(Json)
-        .ok_or_else(|| error(id, NodeError::NotFound))
+        .ok_or_else(|| HttpError::domain(id, Error::NotFound))
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/publications/{publicationId}",operation_id="getExecutionPublication",tag="execution",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("publicationId"=PublicationId,Path)),responses((status=200,body=PublicationProgress),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse)))]
 pub(super) async fn progress(
@@ -121,5 +122,5 @@ pub(super) async fn progress(
         .progress(token, network, publication)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }

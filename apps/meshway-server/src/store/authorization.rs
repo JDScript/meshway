@@ -8,8 +8,9 @@ use meshway_model::{MembershipId, MembershipRole, NetworkId, SessionId, UserId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use uuid::Uuid;
 
-use crate::accounts::{AccountError, AuthenticatedSession, User};
-use crate::networks::NetworkError;
+use crate::accounts::{AuthenticatedSession, User};
+
+use crate::error::Error;
 
 const SESSION_USE_RESOLUTION_MS: i64 = 30_000;
 
@@ -62,25 +63,25 @@ pub(crate) fn membership(
     tx: &Transaction<'_>,
     network: NetworkId,
     user: UserId,
-) -> Result<(MembershipId, MembershipRole), NetworkError> {
+) -> Result<(MembershipId, MembershipRole), Error> {
     let (id, role) = tx.query_row(
         "SELECT m.id,m.role FROM memberships m JOIN networks n ON n.id=m.network_id JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL AND u.disabled_at IS NULL",
         params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice()],
         |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)),
-    ).optional()?.ok_or(NetworkError::NotFound)?;
+    ).optional()?.ok_or(Error::NotFound)?;
     Ok((
-        MembershipId::new(Uuid::from_slice(&id).map_err(|_| NetworkError::Storage)?)
-            .map_err(|_| NetworkError::Storage)?,
+        MembershipId::new(Uuid::from_slice(&id).map_err(|_| Error::decode("memberships.id"))?)
+            .map_err(|_| Error::decode("memberships.id"))?,
         parse_role(&role)?,
     ))
 }
 
-pub(crate) fn parse_role(role: &str) -> Result<MembershipRole, NetworkError> {
+pub(crate) fn parse_role(role: &str) -> Result<MembershipRole, Error> {
     match role {
         "owner" => Ok(MembershipRole::Owner),
         "admin" => Ok(MembershipRole::Admin),
         "member" => Ok(MembershipRole::Member),
-        _ => Err(NetworkError::Storage),
+        _ => Err(Error::decode("memberships.role")),
     }
 }
 
@@ -88,27 +89,27 @@ pub(crate) fn authorize_manager(
     tx: &Transaction<'_>,
     network: NetworkId,
     user: UserId,
-) -> Result<(), NetworkError> {
+) -> Result<(), Error> {
     require_manager(membership(tx, network, user)?.1)
 }
 
-pub(crate) fn require_manager(role: MembershipRole) -> Result<(), NetworkError> {
+pub(crate) fn require_manager(role: MembershipRole) -> Result<(), Error> {
     match role {
         MembershipRole::Owner | MembershipRole::Admin => Ok(()),
-        MembershipRole::Member => Err(NetworkError::PermissionDenied),
+        MembershipRole::Member => Err(Error::PermissionDenied),
     }
 }
 
-pub(crate) fn owner_count(tx: &Transaction<'_>, network: NetworkId) -> Result<i64, NetworkError> {
+pub(crate) fn owner_count(tx: &Transaction<'_>, network: NetworkId) -> Result<i64, Error> {
     Ok(tx.query_row(
         "SELECT count(*) FROM memberships WHERE network_id=?1 AND revoked_at IS NULL AND role='owner'",
         [network.as_uuid().as_bytes().as_slice()], |row| row.get::<_, i64>(0),
     )?)
 }
 
-pub(crate) fn protect_owner(tx: &Transaction<'_>, network: NetworkId) -> Result<(), NetworkError> {
+pub(crate) fn protect_owner(tx: &Transaction<'_>, network: NetworkId) -> Result<(), Error> {
     if owner_count(tx, network)? <= 1 {
-        Err(NetworkError::LastOwner)
+        Err(Error::LastOwner)
     } else {
         Ok(())
     }
@@ -118,23 +119,25 @@ pub(crate) fn current_session(
     transaction: &Transaction<'_>,
     digest: &[u8; 32],
     now: i64,
-) -> Result<AuthenticatedSession, AccountError> {
+) -> Result<AuthenticatedSession, Error> {
     let row = transaction.query_row(
         "SELECT u.id, u.email, s.id, s.created_at, s.expires_at FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?1 AND s.revoked_at IS NULL AND s.expires_at > ?2 AND s.created_at <= ?2 AND u.disabled_at IS NULL AND s.credential_version = u.credential_version",
         params![digest.as_slice(), now], |row| {
             Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))
         },
-    ).optional()?.ok_or(AccountError::InvalidSession)?;
-    let user_id = Uuid::from_slice(&row.0).map_err(|_| AccountError::Storage)?;
-    let session_id = Uuid::from_slice(&row.2).map_err(|_| AccountError::Storage)?;
+    ).optional()?.ok_or(Error::InvalidSession)?;
+    let user_id = Uuid::from_slice(&row.0).map_err(|_| Error::decode("users.id"))?;
+    let session_id = Uuid::from_slice(&row.2).map_err(|_| Error::decode("user_sessions.id"))?;
     let session = AuthenticatedSession {
         user: User {
-            id: UserId::new(user_id).map_err(|_| AccountError::Storage)?,
+            id: UserId::new(user_id).map_err(|_| Error::decode("users.id"))?,
             email: row.1,
         },
-        session_id: SessionId::new(session_id).map_err(|_| AccountError::Storage)?,
-        created_at: DateTime::<Utc>::from_timestamp_millis(row.3).ok_or(AccountError::Storage)?,
-        expires_at: DateTime::<Utc>::from_timestamp_millis(row.4).ok_or(AccountError::Storage)?,
+        session_id: SessionId::new(session_id).map_err(|_| Error::decode("user_sessions.id"))?,
+        created_at: DateTime::<Utc>::from_timestamp_millis(row.3)
+            .ok_or(Error::decode("user_sessions.created_at"))?,
+        expires_at: DateTime::<Utc>::from_timestamp_millis(row.4)
+            .ok_or(Error::decode("user_sessions.expires_at"))?,
     };
     // This is observed use, not a sliding auth lease. Coalesce metadata writes
     // while rechecking the actual session and credential version on every call.

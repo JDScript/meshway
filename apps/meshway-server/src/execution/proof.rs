@@ -1,6 +1,6 @@
 //! Fixed transcript encoding is exported by the protocol crate. Verification uses
 //! dalek strict Ed25519 (including weak-key rejection), never X25519-as-signature.
-use super::NodeError;
+use crate::error::Error;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, VerifyingKey};
 use meshway_model::{Digest, KeyAlgorithm, NodePublicKey};
@@ -14,9 +14,9 @@ pub fn verify(
     key: &NodePublicKey,
     challenge: &NodeChallenge,
     signature: &str,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     if key.algorithm != KeyAlgorithm::Ed25519 {
-        return Err(NodeError::Unauthorized);
+        return Err(Error::InvalidCredentials);
     }
     verify_bytes(
         key.bytes.as_bytes(),
@@ -24,40 +24,36 @@ pub fn verify(
         signature,
     )
 }
-pub(crate) fn verify_bytes(
-    key: &[u8; 32],
-    message: &[u8],
-    signature: &str,
-) -> Result<(), NodeError> {
-    let key = VerifyingKey::from_bytes(key).map_err(|_| NodeError::Unauthorized)?;
+pub(crate) fn verify_bytes(key: &[u8; 32], message: &[u8], signature: &str) -> Result<(), Error> {
+    let key = VerifyingKey::from_bytes(key).map_err(|_| Error::InvalidCredentials)?;
     if key.is_weak() || signature.len() != 86 {
-        return Err(NodeError::Unauthorized);
+        return Err(Error::InvalidCredentials);
     }
     let bytes = URL_SAFE_NO_PAD
         .decode(signature)
-        .map_err(|_| NodeError::Unauthorized)?;
-    let signature = Signature::from_slice(&bytes).map_err(|_| NodeError::Unauthorized)?;
+        .map_err(|_| Error::InvalidCredentials)?;
+    let signature = Signature::from_slice(&bytes).map_err(|_| Error::InvalidCredentials)?;
     key.verify_strict(message, &signature)
-        .map_err(|_| NodeError::Unauthorized)
+        .map_err(|_| Error::InvalidCredentials)
 }
-pub fn request_digest<T: serde::Serialize>(intent: &T) -> Result<Digest, NodeError> {
-    meshway_protocol::node::request_digest(intent).map_err(|_| NodeError::Invalid)
+pub fn request_digest<T: serde::Serialize>(intent: &T) -> Result<Digest, Error> {
+    meshway_protocol::node::request_digest(intent).map_err(|_| Error::InvalidRequest)
 }
-pub(crate) fn token_hash(token: &str) -> Result<[u8; 32], NodeError> {
+pub(crate) fn token_hash(token: &str) -> Result<[u8; 32], Error> {
     if token.len() != 48 || !token.starts_with("mwns_") {
-        return Err(NodeError::Unauthorized);
+        return Err(Error::InvalidCredentials);
     }
     let decoded = URL_SAFE_NO_PAD
         .decode(&token[5..])
-        .map_err(|_| NodeError::Unauthorized)?;
+        .map_err(|_| Error::InvalidCredentials)?;
     if decoded.len() != 32 {
-        return Err(NodeError::Unauthorized);
+        return Err(Error::InvalidCredentials);
     }
     Ok(Sha256::digest(token.as_bytes()).into())
 }
-pub(crate) fn issue_token() -> Result<(WireSecret, [u8; 32]), NodeError> {
+pub(crate) fn issue_token() -> Result<(WireSecret, [u8; 32]), Error> {
     let mut bytes = [0; 32];
-    getrandom::fill(&mut bytes).map_err(|_| NodeError::Storage)?;
+    getrandom::fill(&mut bytes).map_err(|_| Error::ENTROPY)?;
     let token = format!("mwns_{}", URL_SAFE_NO_PAD.encode(bytes));
     let digest = token_hash(&token)?;
     Ok((WireSecret::new(token), digest))

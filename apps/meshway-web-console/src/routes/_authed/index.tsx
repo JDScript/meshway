@@ -1,12 +1,11 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
 
-import { sessionQuery } from "@/features/auth/queries"
-import { EntryPage } from "@/features/entry/frame"
-import { FirstNetwork, NetworkFailed } from "@/features/network/network-states"
-import { rememberedNetwork } from "@/features/network/preferences"
-import { networkQuery, networksQuery } from "@/features/network/queries"
-import { landing } from "@/features/network/remembered"
-import { SessionRejected } from "@/lib/api"
+import { SessionRejected } from "@/api/client"
+import { sessionQuery } from "@/api/queries/auth"
+import { networkQuery, networksQuery } from "@/api/queries/network"
+import { EntryPage } from "@/components/entry/frame"
+import { FirstNetwork, NetworkFailed } from "@/components/entry/network-states"
+import { landing, rememberedNetwork } from "@/lib/remembered-network"
 import { m } from "@/paraglide/messages.js"
 
 /** `/`: the remembered network, else the first one this account may open, else creating one. */

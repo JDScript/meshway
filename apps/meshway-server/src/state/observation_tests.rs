@@ -3,6 +3,7 @@
 use super::service::*;
 use super::stream::{StreamPoll, StreamSource};
 use super::*;
+use crate::effect::{Effect, EffectSink};
 use crate::{
     App, Settings,
     observations::{
@@ -31,11 +32,11 @@ impl StateProvider for Fixture {
         _: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<ProviderView<Self>, StateError> {
+    ) -> Result<ProviderView<Self>, Error> {
         if !matches!(identity, ReadIdentity::UserSession { digest, network } if digest[0] == 42 && *network == self.scope.network_id)
             || self.scope.expires_at <= now
         {
-            return Err(StateError::Unauthorized);
+            return Err(Error::InvalidSession);
         }
         Ok(ViewContext {
             scope: self.scope.clone(),
@@ -50,9 +51,9 @@ impl StateProvider for Fixture {
         _: &Transaction<'_>,
         authorization: &str,
         _: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError> {
+    ) -> Result<ReportAdmission, Error> {
         if authorization != "fixture-node" {
-            return Err(StateError::Unauthorized);
+            return Err(Error::InvalidSession);
         }
         Ok(self.admission.clone())
     }
@@ -63,7 +64,7 @@ impl ObservationProvider for Fixture {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<VisibilityScope, StateError> {
+    ) -> Result<VisibilityScope, Error> {
         Ok(self.view(tx, identity, now)?.scope)
     }
     fn report(
@@ -71,7 +72,7 @@ impl ObservationProvider for Fixture {
         tx: &Transaction<'_>,
         authorization: &str,
         now: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError> {
+    ) -> Result<ReportAdmission, Error> {
         StateProvider::report(self, tx, authorization, now)
     }
     fn observation(
@@ -80,7 +81,7 @@ impl ObservationProvider for Fixture {
         identity: &ReadIdentity,
         _: &CreateObservation,
         now: DateTime<Utc>,
-    ) -> Result<TaskAdmission, StateError> {
+    ) -> Result<TaskAdmission, Error> {
         self.view(tx, identity, now)?;
         Ok(TaskAdmission {
             configuration: self.admission.execution.clone().unwrap(),
@@ -99,7 +100,7 @@ impl ObservationProvider for Fixture {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<SessionId, StateError> {
+    ) -> Result<SessionId, Error> {
         self.view(tx, identity, now)?;
         Ok(session())
     }
@@ -247,7 +248,9 @@ async fn shared_core_independent_tabs_cancel_pending_and_replay_without_stopping
         .unwrap();
     let replayed = drain(&state, &resumed).await;
     assert!(!replayed.iter().any(|(_, event)| matches!(event, Event::ObservationSample { observation } if observation.subscription_id == Some(subscription(100)))));
-    state.publisher().revoke_session(session());
+    state.runtime.apply(Effect::SessionRevoked {
+        session_id: session(),
+    });
     assert!(
         observations
             .node_tasks("fixture-node".into())
@@ -259,7 +262,7 @@ async fn shared_core_independent_tabs_cancel_pending_and_replay_without_stopping
     app.shutdown().await.unwrap();
     assert!(matches!(
         reader.location(&fixture.admission, Utc::now()),
-        Err(StateError::Unavailable)
+        Err(Error::Unavailable(_))
     ));
 }
 
@@ -286,7 +289,7 @@ async fn resume_at_owner_and_global_capacity_reuses_existing_slot() {
     }
     assert_eq!(
         state.open_stream(identity.clone(), None).await.unwrap_err(),
-        StateError::Budget
+        Error::StateLimit
     );
     let resumed = state
         .open_stream(identity.clone(), Some(ready.clone()))
@@ -329,7 +332,7 @@ async fn resume_at_owner_and_global_capacity_reuses_existing_slot() {
             )
             .await
             .unwrap_err(),
-        StateError::Budget
+        Error::StateLimit
     );
     state.open_stream(identity, Some(ready)).await.unwrap();
     app.shutdown().await.unwrap();
@@ -450,7 +453,9 @@ async fn same_session_networks_keep_separate_identity_and_only_session_revocatio
             .len(),
         1
     );
-    state.publisher().revoke_session(session());
+    state.runtime.apply(Effect::SessionRevoked {
+        session_id: session(),
+    });
     assert!(
         b.node_tasks("fixture-node".into())
             .await

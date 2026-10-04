@@ -1,4 +1,4 @@
--- Current Node identity and execution tables are owned by the Node/execution work package.
+-- Node identity, key generations, instances, publications and receipts.
 -- Node identity is only in Configuration. These rows contain immutable admission
 -- binding, independent key generations and irreversible revocation facts.
 CREATE TABLE nodes (

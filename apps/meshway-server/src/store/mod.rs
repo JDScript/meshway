@@ -13,13 +13,15 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
+
+use crate::effect::{Effect, EffectSink};
 
 pub(crate) mod accounts;
 pub(crate) mod authorization;
@@ -119,6 +121,31 @@ pub(crate) struct Handle {
 }
 
 impl Executor {
+    /// [`Self::open_with_effects`] without a runtime: committed effects are
+    /// discarded. Only storage-level tests need this.
+    #[cfg(test)]
+    pub(crate) async fn open<F, E, G, T>(
+        path: PathBuf,
+        options: Options,
+        lifetime_guard: G,
+        initialize: F,
+    ) -> Result<(Self, T), OpenError<E>>
+    where
+        F: FnOnce(&mut Connection, &G) -> Result<T, E> + Send + 'static,
+        E: Send + 'static,
+        G: Send + 'static,
+        T: Send + 'static,
+    {
+        Self::open_with_effects(
+            path,
+            options,
+            lifetime_guard,
+            Weak::<crate::effect::NoEffects>::new(),
+            initialize,
+        )
+        .await
+    }
+
     /// Opens/configures SQLite and invokes `initialize` on its owning thread.
     /// Initialization failure closes the connection and joins the thread. It
     /// never deletes, resets, or retries a database; initialization atomicity is
@@ -126,10 +153,13 @@ impl Executor {
     /// The initializer borrows the worker-owned lifetime guard and returns its
     /// startup value through the same bounded one-shot as startup success. An
     /// abandoned reply drops that value; the guard remains until worker exit.
-    pub(crate) async fn open<F, E, G, T>(
+    /// `effects` receives every committed transaction's effects on the worker
+    /// thread for as long as its owner keeps it alive.
+    pub(crate) async fn open_with_effects<F, E, G, T>(
         path: PathBuf,
         options: Options,
         lifetime_guard: G,
+        effects: Weak<dyn EffectSink>,
         initialize: F,
     ) -> Result<(Self, T), OpenError<E>>
     where
@@ -146,6 +176,7 @@ impl Executor {
             }),
             ready: Condvar::new(),
             capacity: Arc::new(Semaphore::new(options.queue_capacity)),
+            effects,
         });
         let (initialized, initialization) = oneshot::channel();
         let worker_shared = Arc::clone(&shared);
@@ -266,6 +297,60 @@ impl Handle {
         self.shared.ready.notify_one();
         response.await.map_err(|_| ExecutorError::Closed)
     }
+
+    /// One transaction, one closure. The closure returns its result together
+    /// with the effects the commit should have; they are applied in order on
+    /// this thread only after COMMIT succeeded, so a rollback publishes nothing
+    /// and a cancelled HTTP waiter cannot separate a commit from its effects.
+    pub(crate) async fn transact<F, T>(
+        &self,
+        behavior: TransactionBehavior,
+        operation: F,
+    ) -> Result<T, crate::error::Error>
+    where
+        F: FnOnce(&Transaction<'_>) -> Result<(T, Vec<Effect>), crate::error::Error>
+            + Send
+            + 'static,
+        T: Send + 'static,
+    {
+        let effects = Weak::clone(&self.shared.effects);
+        self.execute(move |connection| {
+            let tx = connection.transaction_with_behavior(behavior)?;
+            let (value, pending) = operation(&tx)?;
+            tx.commit()?;
+            if let Some(sink) = effects.upgrade() {
+                for effect in pending {
+                    sink.apply(effect);
+                }
+            }
+            Ok(value)
+        })
+        .await?
+    }
+
+    /// A deferred transaction that produces no effects: consistent reads.
+    pub(crate) async fn read<F, T>(&self, operation: F) -> Result<T, crate::error::Error>
+    where
+        F: FnOnce(&Transaction<'_>) -> Result<T, crate::error::Error> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.transact(TransactionBehavior::Deferred, |tx| {
+            operation(tx).map(|value| (value, Vec::new()))
+        })
+        .await
+    }
+
+    /// An immediate write transaction whose commit has no runtime effect.
+    pub(crate) async fn write<F, T>(&self, operation: F) -> Result<T, crate::error::Error>
+    where
+        F: FnOnce(&Transaction<'_>) -> Result<T, crate::error::Error> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.transact(TransactionBehavior::Immediate, |tx| {
+            operation(tx).map(|value| (value, Vec::new()))
+        })
+        .await
+    }
 }
 
 fn open_connection(path: PathBuf, options: Options) -> Result<Connection, ExecutorError> {
@@ -309,6 +394,9 @@ struct Shared {
     queue: Mutex<Queue>,
     ready: Condvar,
     capacity: Arc<Semaphore>,
+    /// The application owns the runtime; the executor only delivers to it.
+    /// After the owner dropped it, committed effects have no audience.
+    effects: Weak<dyn EffectSink>,
 }
 
 impl Shared {

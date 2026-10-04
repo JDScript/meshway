@@ -1,16 +1,23 @@
-//! Controller-owned material generation, certificate verification and private
+//! Server-owned material generation, certificate verification and private
 //! irreversible-revocation checks. Declarations never self-attest validation.
-use super::*;
+use crate::accounts::random_uuid;
+use crate::configuration::Snapshot;
+use crate::error::Error;
+use crate::secrets::Sealer;
 use chrono::Datelike;
+use meshway_configuration::{ConfigurationError, NetworkConfigurationInput};
+use meshway_model::{NetworkId, NodeId};
 use meshway_transport_spec::{Listener, ListenerTls, SecretString, TlsMode};
+use rusqlite::{Transaction, params};
 use rustls::{
     client::danger::ServerCertVerifier,
     pki_types::{ServerName, UnixTime},
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::{io::Cursor, sync::Arc};
 
 fn invalid() -> Error {
-    Error::Invalid(ConfigurationError::Invalid(vec![
+    Error::InvalidConfiguration(ConfigurationError::Invalid(vec![
         meshway_configuration::ConfigurationIssue {
             path: "/nodes".into(),
             message: "listener credentials or TLS certificate/key/name/validity are invalid".into(),
@@ -63,17 +70,14 @@ pub(crate) fn prepare_listener_materials(
     match listener {
         Listener::Vless(v) => {
             if v.uuid.is_none() && generate {
-                v.uuid = Some(SecretString::new(
-                    random_uuid().map_err(|_| Error::Storage)?.to_string(),
-                ));
+                v.uuid = Some(SecretString::new(random_uuid()?.to_string()));
             }
             prepare_tls(&mut v.tls, generate)?;
         }
         Listener::Trojan(v) => {
             if v.password.is_none() && generate {
                 v.password = Some(SecretString::new(
-                    crate::accounts::issue_one_time("mwp_")
-                        .map_err(|_| Error::Storage)?
+                    crate::accounts::issue_one_time("mwp_")?
                         .0
                         .expose()
                         .to_owned(),
@@ -127,19 +131,21 @@ fn prepare_tls(tls: &mut ListenerTls, generate: bool) -> Result<(), Error> {
     let now = chrono::Utc::now().date_naive();
     let end = now
         .checked_add_signed(chrono::Duration::days(90))
-        .ok_or(Error::Storage)?;
+        .ok_or(Error::Internal("certificate validity overflow"))?;
     params.not_before = rcgen::date_time_ymd(
         now.year(),
-        u8::try_from(now.month()).map_err(|_| Error::Storage)?,
-        u8::try_from(now.day()).map_err(|_| Error::Storage)?,
+        u8::try_from(now.month()).map_err(|_| Error::Internal("certificate month"))?,
+        u8::try_from(now.day()).map_err(|_| Error::Internal("certificate day"))?,
     );
     params.not_after = rcgen::date_time_ymd(
         end.year(),
-        u8::try_from(end.month()).map_err(|_| Error::Storage)?,
-        u8::try_from(end.day()).map_err(|_| Error::Storage)?,
+        u8::try_from(end.month()).map_err(|_| Error::Internal("certificate month"))?,
+        u8::try_from(end.day()).map_err(|_| Error::Internal("certificate day"))?,
     );
-    let key = rcgen::KeyPair::generate().map_err(|_| Error::Storage)?;
-    let certificate = params.self_signed(&key).map_err(|_| Error::Storage)?;
+    let key = rcgen::KeyPair::generate().map_err(|_| Error::Internal("TLS key generation"))?;
+    let certificate = params
+        .self_signed(&key)
+        .map_err(|_| Error::Internal("TLS certificate signing"))?;
     tls.certificate = Some(SecretString::new(certificate.pem()));
     tls.private_key = Some(SecretString::new(key.serialize_pem()));
     Ok(())
@@ -188,9 +194,7 @@ fn check_revocation(
     kind: &str,
     value: &[u8],
 ) -> Result<(), Error> {
-    let fingerprint = sealer
-        .fingerprint(network, kind, value)
-        .map_err(|_| Error::Storage)?;
+    let fingerprint = sealer.fingerprint(network, kind, value)?;
     let revoked = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM credential_revocations WHERE network_id=?1 AND kind=?2 AND fingerprint=?3)",
         params![network.as_uuid().as_bytes().as_slice(), kind, fingerprint.as_slice()],

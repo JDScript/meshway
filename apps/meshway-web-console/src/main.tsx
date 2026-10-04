@@ -5,15 +5,19 @@ import { createRoot } from "react-dom/client"
 
 import "./index.css"
 
-import { ThemeProvider } from "@/components/chrome/theme-provider"
+import { ApiFailure } from "@/api/client"
+import { LAYOUT_VARIABLES } from "@/components/surface/layout"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { GlobeStage } from "@/features/globe/globe-stage"
-import { LAYOUT_VARIABLES } from "@/features/shell/layout"
-import { ApiFailure, handleSessionRejected } from "@/lib/api"
-import { useLocale } from "@/lib/locale"
-import { onSessionChange } from "@/lib/session"
-import { getLocale } from "@/paraglide/runtime.js"
+import { GlobeStage } from "@/globe/globe-stage"
+import { startBoot } from "@/state/boot"
+import { anyDraftHeld } from "@/state/configuration-draft"
+import { applyPreferences, useLocale } from "@/state/preferences"
+import {
+  onSessionChange,
+  sessionStore,
+  watchStoredSession,
+} from "@/state/session"
 
 import { routeTree } from "./routeTree.gen"
 
@@ -56,14 +60,23 @@ declare module "@tanstack/react-router" {
 // for the new sign-in, and the loader's read would be cancelled under it.
 onSessionChange(() => router.clearCache())
 
-handleSessionRejected(() => {
+// The controller rejected this tab's session: every read drops and the
+// sign-in says why.
+sessionStore.subscribe((state, previous) => {
+  if (state.rejectedAt === previous.rejectedAt) return
   queryClient.clear()
-  if (router.state.location.pathname !== "/login") {
+  if (router.state.location.pathname !== "/login")
     void router.navigate({ to: "/login", search: { reason: "expired" } })
-  }
 })
 
-document.documentElement.lang = getLocale()
+// A draft not applied yet: closing or reloading the tab asks first.
+window.addEventListener("beforeunload", (event) => {
+  if (anyDraftHeld()) event.preventDefault()
+})
+
+watchStoredSession()
+applyPreferences()
+startBoot()
 for (const [name, value] of Object.entries(LAYOUT_VARIABLES))
   document.documentElement.style.setProperty(name, value)
 
@@ -89,12 +102,10 @@ if (!root) throw new Error("#root is missing from index.html")
 
 createRoot(root).render(
   <StrictMode>
-    <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Console />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Console />
+      </TooltipProvider>
+    </QueryClientProvider>
   </StrictMode>
 )

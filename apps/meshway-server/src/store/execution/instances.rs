@@ -1,7 +1,19 @@
-use super::*;
+use super::{
+    authentication::authorize_node,
+    bytes, current_configuration, id, now,
+    publications::{
+        check_publication, historical_target, publish, refresh_expired_demands, target,
+        target_for_node,
+    },
+};
+use crate::effect::Effect;
+use crate::error::Error;
+use crate::execution::NodePrincipal;
+use crate::secrets::Sealer;
 use meshway_model::state::Capability;
+use meshway_model::{ConfigurationRef, InstanceId, NetworkId, NodeId, Version};
 use meshway_protocol::execution::*;
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 pub(crate) const INSTANCE_TTL: i64 = 120_000;
 pub(crate) const EXECUTION_TTL: i64 = 60_000;
@@ -21,22 +33,21 @@ pub(crate) fn current_instance(
     p: &NodePrincipal,
     request: &InstanceRequest,
     now: i64,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND instance_id=?3 AND generation=?4 AND boot_id=?5 AND instance_expires_at>?6)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),request.generation.get() as i64,boot.as_uuid().as_bytes().as_slice(),now],|r|r.get(0))?;
     if valid {
         Ok(())
     } else {
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     }
 }
 pub(crate) fn acquire(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     request: AcquireInstanceRequest,
-    publisher: &CommitPublisher,
-) -> Result<InstanceLease, NodeError> {
+) -> Result<(InstanceLease, Vec<Effect>), Error> {
     if request.capabilities.len() > 32
         || request.capabilities.iter().any(|(k, v)| {
             k.len() > 64
@@ -60,11 +71,10 @@ pub(crate) fn acquire(
                 }
         })
     {
-        return Err(NodeError::Invalid);
+        return Err(Error::InvalidRequest);
     }
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
-    let p = authorize_node(&tx, sealer, boot, token, now)?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
     let previous=tx.query_row("SELECT instance_id,generation,boot_id,instance_expires_at,capabilities FROM node_execution WHERE network_id=?1 AND node_id=?2",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice()],|r|Ok(PreviousInstance{instance:r.get(0)?,generation:r.get(1)?,boot:r.get(2)?,expires:r.get(3)?,capabilities:r.get(4)?})).optional()?;
     let caps = bytes(&request.capabilities)?;
     let generation = if let Some(PreviousInstance {
@@ -80,21 +90,20 @@ pub(crate) fn acquire(
             && expires.is_some_and(|t| t > now)
         {
             if old_caps != &caps {
-                return Err(NodeError::Conflict);
+                return Err(Error::BindingConflict);
             }
-            let lease = lease(&tx, sealer, &p)?;
-            tx.commit()?;
-            return Ok(lease);
+            let lease = lease(tx, sealer, &p)?;
+            return Ok((lease, Vec::new()));
         }
         generation + 1
     } else {
         1
     };
-    Version::new(generation.try_into().map_err(|_| NodeError::Conflict)?)
-        .map_err(|_| NodeError::Conflict)?;
+    Version::new(generation.try_into().map_err(|_| Error::BindingConflict)?)
+        .map_err(|_| Error::BindingConflict)?;
     let claimed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_instance_claims WHERE network_id=?1 AND node_id=?2 AND instance_id=?3)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
     if claimed {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
     tx.execute("INSERT INTO node_instance_claims(network_id,node_id,instance_id,generation) VALUES(?1,?2,?3,?4)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation])?;
     // Replacing a process fences its demands as well as its ACK/report authority.
@@ -106,26 +115,28 @@ pub(crate) fn acquire(
         ],
     )?;
     tx.execute("INSERT INTO node_execution(network_id,node_id,instance_id,generation,boot_id,instance_expires_at,capabilities) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(network_id,node_id) DO UPDATE SET instance_id=excluded.instance_id,generation=excluded.generation,boot_id=excluded.boot_id,instance_expires_at=excluded.instance_expires_at,execution_expires_at=NULL,capabilities=excluded.capabilities",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation,boot.as_uuid().as_bytes().as_slice(),now+INSTANCE_TTL,caps])?;
-    publish(&tx, sealer, p.network, "refresh", now)?;
-    grant_lease(&tx, sealer, &p, now)?;
-    let result = lease(&tx, sealer, &p)?;
-    commit_progress(tx, publisher, p.network, true)?;
-    Ok(result)
+    publish(tx, sealer, p.network, "refresh", now)?;
+    grant_lease(tx, sealer, &p, now)?;
+    let result = lease(tx, sealer, &p)?;
+    Ok((
+        result,
+        vec![Effect::Progress {
+            network_id: p.network,
+        }],
+    ))
 }
 pub(crate) fn renew(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     request: InstanceRequest,
-    publisher: &CommitPublisher,
-) -> Result<InstanceLease, NodeError> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<(InstanceLease, Vec<Effect>), Error> {
     let now = now()?;
-    let p = authorize_node(&tx, sealer, boot, token, now)?;
-    current_instance(&tx, boot, &p, &request, now)?;
-    let before = lease(&tx, sealer, &p)?;
-    let refreshed = refresh_expired_demands(&tx, sealer, p.network, now)?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request, now)?;
+    let before = lease(tx, sealer, &p)?;
+    let refreshed = refresh_expired_demands(tx, sealer, p.network, now)?;
     let old_execution_expiry: Option<i64> = tx.query_row(
         "SELECT execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",
         params![
@@ -137,7 +148,7 @@ pub(crate) fn renew(
     if old_execution_expiry.is_some_and(|expires| expires <= now) {
         // Expiry fences the old run. A fresh publication prevents an old
         // applied receipt from becoming current merely because HTTP renewed.
-        publish(&tx, sealer, p.network, "refresh", now)?;
+        publish(tx, sealer, p.network, "refresh", now)?;
     }
     tx.execute(
         "UPDATE node_execution SET instance_expires_at=?1 WHERE network_id=?2 AND node_id=?3",
@@ -147,23 +158,27 @@ pub(crate) fn renew(
             p.node.as_uuid().as_bytes().as_slice()
         ],
     )?;
-    grant_lease(&tx, sealer, &p, now)?;
-    let result = lease(&tx, sealer, &p)?;
-    commit_progress(tx, publisher, p.network, refreshed || before != result)?;
-    Ok(result)
+    grant_lease(tx, sealer, &p, now)?;
+    let result = lease(tx, sealer, &p)?;
+    let effects = if refreshed || before != result {
+        vec![Effect::Progress {
+            network_id: p.network,
+        }]
+    } else {
+        Vec::new()
+    };
+    Ok((result, effects))
 }
 pub(crate) fn release(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     request: InstanceRequest,
-    publisher: &CommitPublisher,
-) -> Result<(), NodeError> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<((), Vec<Effect>), Error> {
     let now = now()?;
-    let p = authorize_node(&tx, sealer, boot, token, now)?;
-    current_instance(&tx, boot, &p, &request, now)?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request, now)?;
     tx.execute("UPDATE node_execution SET instance_expires_at=?1,execution_expires_at=NULL WHERE network_id=?2 AND node_id=?3",params![now,p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice()])?;
     tx.execute(
         "UPDATE execution_demands SET cancelled_at=?3 WHERE network_id=?1 AND node_id=?2 AND cancelled_at IS NULL",
@@ -172,16 +187,20 @@ pub(crate) fn release(
             p.node.as_uuid().as_bytes().as_slice(), now
         ],
     )?;
-    publish(&tx, sealer, p.network, "refresh", now)?;
-    commit_progress(tx, publisher, p.network, true)?;
-    Ok(())
+    publish(tx, sealer, p.network, "refresh", now)?;
+    Ok((
+        (),
+        vec![Effect::Progress {
+            network_id: p.network,
+        }],
+    ))
 }
 pub(super) fn grant_lease(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     p: &NodePrincipal,
     now: i64,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     let (revision, cfg, _) = current_configuration(tx, sealer, p.network)?;
     let target = target(tx, sealer, p)?;
     let mut address_blocked = false;
@@ -240,7 +259,7 @@ pub(crate) fn lease(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     p: &NodePrincipal,
-) -> Result<InstanceLease, NodeError> {
+) -> Result<InstanceLease, Error> {
     lease_for_node(tx, sealer, p.network, p.node)
 }
 pub(crate) fn lease_for_node(
@@ -248,7 +267,7 @@ pub(crate) fn lease_for_node(
     sealer: &Sealer,
     network: NetworkId,
     node: NodeId,
-) -> Result<InstanceLease, NodeError> {
+) -> Result<InstanceLease, Error> {
     let (instance,generation,expires,execution):(Vec<u8>,i64,i64,Option<i64>)=tx.query_row("SELECT instance_id,generation,instance_expires_at,execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
     let target =
         target_for_node(tx, sealer, network, node)?.map(|(publication, c)| ConfigurationRef {
@@ -258,79 +277,87 @@ pub(crate) fn lease_for_node(
         });
     Ok(InstanceLease {
         instance_id: id(instance)?,
-        generation: Version::new(generation.try_into().map_err(|_| NodeError::Storage)?)
-            .map_err(|_| NodeError::Storage)?,
-        expires_at_ms: expires.try_into().map_err(|_| NodeError::Storage)?,
+        generation: Version::new(
+            generation
+                .try_into()
+                .map_err(|_| Error::decode("node_execution.generation"))?,
+        )
+        .map_err(|_| Error::decode("node_execution.generation"))?,
+        expires_at_ms: expires
+            .try_into()
+            .map_err(|_| Error::decode("node_execution.instance_expires_at"))?,
         execution_expires_at_ms: execution
             .map(u64::try_from)
             .transpose()
-            .map_err(|_| NodeError::Storage)?,
+            .map_err(|_| Error::decode("node_execution.execution_expires_at"))?,
         target,
     })
 }
 pub(crate) fn configuration(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     request: NodeConfigurationRequest,
-    publisher: &CommitPublisher,
-) -> Result<NodeConfigurationResponse, NodeError> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<(NodeConfigurationResponse, Vec<Effect>), Error> {
     let now = now()?;
-    let p = authorize_node(&tx, sealer, boot, token, now)?;
-    current_instance(&tx, boot, &p, &request.instance, now)?;
-    let refreshed = refresh_expired_demands(&tx, sealer, p.network, now)?;
-    let lease = lease(&tx, sealer, &p)?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request.instance, now)?;
+    let refreshed = refresh_expired_demands(tx, sealer, p.network, now)?;
+    let lease = lease(tx, sealer, &p)?;
     let full = if request.base == lease.target {
         None
     } else {
-        target(&tx, sealer, &p)?.map(|(_, c)| c)
+        target(tx, sealer, &p)?.map(|(_, c)| c)
     };
     let mut delta = None;
     let mut full = full;
     if let (Some(base_ref), Some(target)) = (&request.base, &full)
-        && let Some(base) = historical_target(&tx, sealer, &p, base_ref)?
+        && let Some(base) = historical_target(tx, sealer, &p, base_ref)?
     {
         delta = Some(meshway_configuration::execution::configuration_delta(
             &base, target,
         )?);
         full = None;
     }
-    commit_progress(tx, publisher, p.network, refreshed)?;
-    Ok(NodeConfigurationResponse { lease, full, delta })
+    let effects = if refreshed {
+        vec![Effect::Progress {
+            network_id: p.network,
+        }]
+    } else {
+        Vec::new()
+    };
+    Ok((NodeConfigurationResponse { lease, full, delta }, effects))
 }
 pub(crate) fn receipt(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     request: ReceiptRequest,
-    publisher: &CommitPublisher,
-) -> Result<(), NodeError> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<((), Vec<Effect>), Error> {
     let now = now()?;
-    let p = authorize_node(&tx, sealer, boot, token, now)?;
-    current_instance(&tx, boot, &p, &request.instance, now)?;
-    let lease = lease(&tx, sealer, &p)?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request.instance, now)?;
+    let lease = lease(tx, sealer, &p)?;
     if lease.target.as_ref() != Some(&request.target)
         || request.reported_at_ms > now as u64 + 5000
         || request.reported_at_ms.saturating_add(300_000) < now as u64
         || (request.phase == ReceiptPhase::Failed) != request.failure.is_some()
     {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
-    let target_enabled = target(&tx, sealer, &p)?.is_none_or(|(_, n)| n.configuration.enabled);
+    let target_enabled = target(tx, sealer, &p)?.is_none_or(|(_, n)| n.configuration.enabled);
     if request.phase == ReceiptPhase::Applied
         && target_enabled
         && lease
             .execution_expires_at_ms
             .is_none_or(|e| e <= now as u64)
     {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
     check_publication(
-        &tx,
+        tx,
         sealer,
         p.network,
         p.node,
@@ -351,7 +378,7 @@ pub(crate) fn receipt(
                 request.attempt.get() as i64, request.sequence.get() as i64], |r| r.get(0),
         )?;
         if !saved {
-            return Err(NodeError::Conflict);
+            return Err(Error::BindingConflict);
         }
     }
     let failure = request.failure.map(|f| match f {
@@ -380,7 +407,7 @@ pub(crate) fn receipt(
                 failure.map(str::to_owned),
             )
         {
-            return Err(NodeError::Conflict);
+            return Err(Error::BindingConflict);
         }
     } else {
         // History accepts late evidence; only a new greatest attempt/sequence
@@ -400,6 +427,12 @@ pub(crate) fn receipt(
                 request.reported_at_ms as i64, now, failure, request.attempt.get() as i64, request.sequence.get() as i64],
         )?;
     }
-    commit_progress(tx, publisher, p.network, changed)?;
-    Ok(())
+    let effects = if changed {
+        vec![Effect::Progress {
+            network_id: p.network,
+        }]
+    } else {
+        Vec::new()
+    };
+    Ok(((), effects))
 }

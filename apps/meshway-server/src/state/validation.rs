@@ -1,5 +1,10 @@
-use super::*;
+use super::{
+    CLOCK_SKEW_SECONDS, ConfigurationAdmission, MAX_REPORT_BYTES, REPORT_TTL_SECONDS,
+    ReportAdmission,
+};
+use crate::error::Error;
 use chrono::{DateTime, Duration, Utc};
+use meshway_model::NodeId;
 use meshway_model::state::*;
 use meshway_protocol::state::StateReport;
 use std::{collections::BTreeSet, net::SocketAddr};
@@ -16,22 +21,22 @@ pub(super) fn report(
     admission: &ReportAdmission,
     report: &StateReport,
     now: DateTime<Utc>,
-) -> Result<(), StateError> {
+) -> Result<(), Error> {
     if admission.instance_id != report.instance_id || admission.lease_expires_at <= now {
-        return Err(StateError::Unauthorized);
+        return Err(Error::InvalidSession);
     }
     if report.sequence.get() == 0
         || report.observed_at > now + Duration::seconds(CLOCK_SKEW_SECONDS)
         || report.observed_at + Duration::seconds(REPORT_TTL_SECONDS) <= now
     {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     if serde_json::to_vec(report)
-        .map_err(|_| StateError::Invalid)?
+        .map_err(|_| Error::encode("state report"))?
         .len()
         > MAX_REPORT_BYTES
     {
-        return Err(StateError::Budget);
+        return Err(Error::StateLimit);
     }
     let state = &report.state;
     if [
@@ -50,7 +55,7 @@ pub(super) fn report(
         || state.probes.len() > 64
         || state.problems.len() > 64
     {
-        return Err(StateError::Budget);
+        return Err(Error::StateLimit);
     }
     for reference in state
         .configuration
@@ -60,7 +65,7 @@ pub(super) fn report(
         .chain(state.configuration.progress.iter().map(|p| &p.target))
     {
         if !admission.configurations.contains(reference) {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
     }
     for (key, capability) in &state.capabilities {
@@ -82,19 +87,19 @@ pub(super) fn report(
                         .enumerate()
                         .any(|(i, stream)| streams[..i].contains(stream))
                 {
-                    return Err(StateError::Invalid);
+                    return Err(Error::InvalidRequest);
                 }
             }
             Capability::Feature { version }
                 if key.starts_with("feature:") && text(key) && *version > 0 => {}
-            _ => return Err(StateError::Invalid),
+            _ => return Err(Error::InvalidRequest),
         }
     }
     if (!state.links.is_empty() || !state.paths.is_empty())
         && (admission.execution.is_none()
             || state.configuration.applied.as_ref() != admission.execution.as_ref())
     {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     for (key, listener) in &state.listeners {
         let resource = ResourceRef::Listener { key: key.clone() };
@@ -102,10 +107,10 @@ pub(super) fn report(
             .configuration
             .as_ref()
             .or(state.configuration.applied.as_ref())
-            .ok_or(StateError::Invalid)?;
+            .ok_or(Error::InvalidRequest)?;
         let context = admission.context(reference)?;
         if !context.resources.contains_key(&resource) || listener.socket_ids.len() > 32 {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         if Some(reference) != admission.execution.as_ref()
             && (!context.installation_allowed
@@ -115,7 +120,7 @@ pub(super) fn report(
                 )
                 || !installation_reference(state, reference))
         {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         for socket in &listener.socket_ids {
             if state.sockets.get(socket).is_none_or(|s| {
@@ -125,7 +130,7 @@ pub(super) fn report(
                         .or(state.configuration.applied.as_ref())
                         != Some(reference)
             }) {
-                return Err(StateError::Invalid);
+                return Err(Error::InvalidRequest);
             }
         }
     }
@@ -134,28 +139,28 @@ pub(super) fn report(
             .configuration
             .as_ref()
             .or(state.configuration.applied.as_ref())
-            .ok_or(StateError::Invalid)?;
+            .ok_or(Error::InvalidRequest)?;
         let context = admission.context(reference)?;
         if Some(reference) != admission.execution.as_ref()
             && (!context.installation_allowed || !installation_reference(state, reference))
         {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         let admitted = context
             .resources
             .get(&socket.resource)
-            .ok_or(StateError::Invalid)?;
+            .ok_or(Error::InvalidRequest)?;
         if socket.bound_address.port() == 0
             || !text(socket_id)
             || socket.generation.get() == 0
             || socket.network != admitted.network
             || socket.endpoints.len() > 32
         {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         for candidate in &socket.endpoints {
             if !time(candidate.observed_at, candidate.expires_at, now) {
-                return Err(StateError::Invalid);
+                return Err(Error::InvalidRequest);
             }
             match &candidate.origin {
                 EndpointSource::Configured { config_path }
@@ -163,16 +168,18 @@ pub(super) fn report(
                         == Some(&candidate.address) => {}
                 EndpointSource::Interface { interface } => {
                     if !text(interface) {
-                        return Err(StateError::Invalid);
+                        return Err(Error::InvalidRequest);
                     }
                     check_address(&candidate.address, socket, admission)?;
-                    let address: SocketAddr =
-                        candidate.address.parse().map_err(|_| StateError::Invalid)?;
+                    let address: SocketAddr = candidate
+                        .address
+                        .parse()
+                        .map_err(|_| Error::InvalidRequest)?;
                     if address.port() != socket.bound_address.port()
                         || !socket.bound_address.ip().is_unspecified()
                             && address.ip() != socket.bound_address.ip()
                     {
-                        return Err(StateError::Invalid);
+                        return Err(Error::InvalidRequest);
                     }
                 }
                 EndpointSource::Stun { observer } => {
@@ -180,11 +187,11 @@ pub(super) fn report(
                         || observer.len() > 256
                         || observer.parse::<SocketAddr>().is_err()
                     {
-                        return Err(StateError::Invalid);
+                        return Err(Error::InvalidRequest);
                     }
                     check_address(&candidate.address, socket, admission)?;
                 }
-                _ => return Err(StateError::Invalid),
+                _ => return Err(Error::InvalidRequest),
             }
         }
     }
@@ -192,27 +199,27 @@ pub(super) fn report(
     for (peer, records) in &state.links {
         let context = admission.current()?;
         if *peer == admission.node_id || !context.peers.contains(peer) || records.len() > 8 {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         for link in records {
             let socket = state
                 .sockets
                 .get(&link.socket_id)
-                .ok_or(StateError::Invalid)?;
+                .ok_or(Error::InvalidRequest)?;
             if socket
                 .configuration
                 .as_ref()
                 .or(state.configuration.applied.as_ref())
                 != admission.execution.as_ref()
             {
-                return Err(StateError::Invalid);
+                return Err(Error::InvalidRequest);
             }
             let resource = context
                 .resources
                 .get(&socket.resource)
-                .ok_or(StateError::Invalid)?;
+                .ok_or(Error::InvalidRequest)?;
             if resource.transport != link.transport {
-                return Err(StateError::Invalid);
+                return Err(Error::InvalidRequest);
             }
             if !text(&link.link_id)
                 || !links.insert(&link.link_id)
@@ -223,7 +230,7 @@ pub(super) fn report(
                 || link.observation_ids.len() > 16
                 || link.since.is_some_and(|since| since > link.observed_at)
             {
-                return Err(StateError::Invalid);
+                return Err(Error::InvalidRequest);
             }
         }
     }
@@ -236,13 +243,13 @@ pub(super) fn report(
                 .is_none_or(|execution| execution.execution_publication != path.publication_id)
             || !time(path.observed_at, path.expires_at, now)
         {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         let index = path
             .nodes
             .iter()
             .position(|id| *id == admission.node_id)
-            .ok_or(StateError::Invalid)?;
+            .ok_or(Error::InvalidRequest)?;
         match path.reporter_role {
             ReporterRole::Origin if index == 0 => {}
             ReporterRole::Target | ReporterRole::Exit if index + 1 == path.nodes.len() => {}
@@ -250,7 +257,7 @@ pub(super) fn report(
                 if index > 0
                     && index + 1 < path.nodes.len()
                     && path.evidence != PathEvidence::Delivered => {}
-            _ => return Err(StateError::Invalid),
+            _ => return Err(Error::InvalidRequest),
         }
     }
     if state.selection.applied_profile.as_ref().is_some_and(|p| {
@@ -258,12 +265,12 @@ pub(super) fn report(
             .current()
             .map_or(true, |context| !context.profiles.contains(p))
     }) {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     let mut measurements = BTreeSet::new();
     for probe in &state.probes {
         if !measurements.insert(probe.measurement_id) {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         validate_probe(admission, probe, now)?;
     }
@@ -281,8 +288,8 @@ fn check_address(
     address: &str,
     socket: &SocketState,
     admission: &ReportAdmission,
-) -> Result<(), StateError> {
-    let address: SocketAddr = address.parse().map_err(|_| StateError::Invalid)?;
+) -> Result<(), Error> {
+    let address: SocketAddr = address.parse().map_err(|_| Error::InvalidRequest)?;
     if address.port() == 0
         || address.ip().is_unspecified()
         || address.ip().is_loopback()
@@ -290,7 +297,7 @@ fn check_address(
         || address.is_ipv4() != socket.bound_address.is_ipv4()
         || admission.mesh_addresses.contains(&address.ip())
     {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     Ok(())
 }
@@ -298,7 +305,7 @@ pub(crate) fn validate_probe(
     admission: &ReportAdmission,
     probe: &ProbeObservation,
     now: DateTime<Utc>,
-) -> Result<(), StateError> {
+) -> Result<(), Error> {
     validate_probe_context(admission.node_id, admission.current()?, probe, now)
 }
 pub(crate) fn validate_probe_context(
@@ -306,7 +313,7 @@ pub(crate) fn validate_probe_context(
     context: &ConfigurationAdmission,
     probe: &ProbeObservation,
     now: DateTime<Utc>,
-) -> Result<(), StateError> {
+) -> Result<(), Error> {
     if probe.link_id.as_ref().is_some_and(|id| !text(id))
         || probe.transport.as_ref().is_some_and(|transport| {
             !context
@@ -317,7 +324,7 @@ pub(crate) fn validate_probe_context(
         || probe.kind == ProbeKind::Neighbor
             && (probe.link_id.is_none() || probe.transport.is_none())
     {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     let authorized = match probe.kind {
         ProbeKind::Path => {
@@ -339,7 +346,7 @@ pub(crate) fn validate_probe_context(
                         .is_some_and(|allowed| allowed.contains(transport))
                 })
         }
-        // Controller probes have no Mesh peer/path. No current producer or
+        // Server-originated probes have no Mesh peer/path. No current producer or
         // authorization contract exists for them yet.
         ProbeKind::Controller => false,
     };
@@ -353,7 +360,7 @@ pub(crate) fn validate_probe_context(
             end < probe.started_at || end > now + Duration::seconds(CLOCK_SKEW_SECONDS)
         })
     {
-        return Err(StateError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     match probe.outcome {
         ProbeOutcome::Pending if probe.completed_at.is_none() && probe.duration_us.is_none() => {
@@ -363,6 +370,6 @@ pub(crate) fn validate_probe_context(
             Ok(())
         }
         ProbeOutcome::Timeout | ProbeOutcome::Failed if probe.completed_at.is_some() => Ok(()),
-        _ => Err(StateError::Invalid),
+        _ => Err(Error::InvalidRequest),
     }
 }

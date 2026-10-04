@@ -1,7 +1,9 @@
 use meshway_model::{ActivityId, RequestId};
 use rusqlite::{Transaction, params};
 
-use crate::accounts::{AccountError, AuthenticatedSession, random_uuid};
+use crate::accounts::{AuthenticatedSession, random_uuid};
+
+use crate::error::Error;
 
 /// Server-determined account actions. There is no caller-controlled action,
 /// actor, scope, arbitrary metadata, or request body in the activity writer.
@@ -17,8 +19,9 @@ pub(super) fn record(
     at: i64,
     request: RequestId,
     activity: AccountActivity,
-) -> Result<(), AccountError> {
-    let id = ActivityId::new(random_uuid()?).map_err(|_| AccountError::Unavailable)?;
+) -> Result<(), Error> {
+    let id =
+        ActivityId::new(random_uuid()?).map_err(|_| Error::Internal("generated activity ID"))?;
     let user_id = session.user.id.as_uuid().as_bytes().as_slice();
     let session_id = session.session_id.as_uuid().as_bytes().as_slice();
     let (action, target_user, target_session) = match activity {

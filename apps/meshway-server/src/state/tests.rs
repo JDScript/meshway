@@ -143,7 +143,7 @@ fn retry_is_idempotent_without_refreshing_report_or_endpoint() {
     conflicting.state.system.hostname = "changed".into();
     assert_eq!(
         hub.accept_report(&admission, conflicting, now).unwrap_err(),
-        StateError::Conflict
+        Error::StateConflict
     );
     let mut geo = GeoIp::default();
     let view = hub
@@ -174,7 +174,7 @@ fn snapshot_replacement_deletes_resources_and_stale_instance_rejected() {
     report.instance_id = id(99);
     assert_eq!(
         hub.accept_report(&admission, report, now).unwrap_err(),
-        StateError::Unauthorized
+        Error::InvalidSession
     );
     let mut restarted = StateHub::new().unwrap();
     assert_ne!(restarted.epoch, hub.epoch);
@@ -245,7 +245,7 @@ fn peer_projection_expires_candidates_and_does_not_leak_interfaces() {
     assert_eq!(
         hub.query(&scope, Some(&[id(999)]), &mut GeoIp::default(), now)
             .unwrap_err(),
-        StateError::NotFound
+        Error::NotFound
     );
 }
 #[test]
@@ -348,23 +348,23 @@ fn observation_authorization_distinguishes_user_session_from_execution_and_scope
         let expected = match case {
             0 => {
                 changed.node_expires_at = now;
-                StateError::Conflict
+                Error::StateConflict
             }
             1 => {
                 changed.report.instance_id = id(99);
-                StateError::Conflict
+                Error::StateConflict
             }
             2 => {
                 changed.configuration.execution_publication = id(99);
-                StateError::Conflict
+                Error::StateConflict
             }
             3 => {
                 changed.authorization_digest = Digest::from_bytes([99; 32]);
-                StateError::Forbidden
+                Error::PermissionDenied
             }
             _ => {
                 changed.session_expires_at = now;
-                StateError::Unauthorized
+                Error::InvalidSession
             }
         };
         assert_eq!(
@@ -385,7 +385,7 @@ fn observation_authorization_distinguishes_user_session_from_execution_and_scope
         Observations::default()
             .create(&expired_node, identity(report.network_id), request, now)
             .unwrap_err(),
-        StateError::Conflict
+        Error::StateConflict
     );
 }
 
@@ -475,11 +475,14 @@ fn bounded_journal_replay_detects_gap_without_making_new_samples() {
     let mut hub = StateHub::new().unwrap();
     let network = id(1);
     for _ in 0..600 {
-        hub.publish_committed(stream::CommittedChange::Progress {
+        hub.publish_committed(crate::effect::Effect::Progress {
             network_id: network,
         });
     }
-    assert_eq!(hub.events.after(0, network).err(), Some(StateError::Cursor));
+    assert_eq!(
+        hub.events.after(0, network).err(),
+        Some(Error::InvalidCursor)
+    );
     assert_eq!(hub.events.after(599, network).unwrap().len(), 1);
 }
 pub(super) fn identity(network: NetworkId) -> service::ReadIdentity {
@@ -504,9 +507,9 @@ fn permanent_retirement_releases_report_count_and_byte_budget() {
     assert_eq!(
         hub.accept_report(&admission, report.clone(), now)
             .unwrap_err(),
-        StateError::Budget
+        Error::StateLimit
     );
-    hub.publish_committed(stream::CommittedChange::NodeRetired {
+    hub.publish_committed(crate::effect::Effect::NodeRetired {
         network_id: admission.network_id,
         node_id: id(1),
     });

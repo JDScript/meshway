@@ -1,4 +1,4 @@
-//! The first account-storage slice, not the complete V2 persistence model.
+//! The current private schema: accounts, networks, configuration, execution, state and diagnostics.
 //! Only this exact schema is accepted; there is no historical migration chain.
 
 use rusqlite::{Connection, TransactionBehavior};

@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     accounts::{Secret, random_uuid},
-    state::stream::CommittedChange,
+    effect::Effect,
 };
 use meshway_model::*;
 use meshway_protocol::{
@@ -16,7 +16,7 @@ fn request() -> RequestId {
 fn sequence(app: &App) -> u64 {
     app.state_runtime.lock().unwrap().hub.events.sequence()
 }
-fn changes(app: &App, after: u64, network: NetworkId) -> Vec<CommittedChange> {
+fn changes(app: &App, after: u64, network: NetworkId) -> Vec<Effect> {
     app.state_runtime
         .lock()
         .unwrap()
@@ -32,7 +32,7 @@ fn notices(app: &App, after: u64, network: NetworkId) -> Vec<ConfigurationNotice
     changes(app, after, network)
         .into_iter()
         .filter_map(|change| match change {
-            CommittedChange::Configuration { notice } => Some(notice),
+            Effect::Configuration { notice } => Some(notice),
             _ => None,
         })
         .collect()
@@ -88,7 +88,7 @@ async fn account_revocation_cannot_be_blocked_by_the_replay_window_size() {
         .unwrap();
     assert!(matches!(
         app.accounts().authenticate(owner.token.expose()).await,
-        Err(crate::accounts::AccountError::InvalidSession)
+        Err(crate::error::Error::InvalidSession)
     ));
     {
         let runtime = app.state_runtime.lock().unwrap();
@@ -409,7 +409,7 @@ async fn apply_targets_do_not_follow_instance_refresh_demands_or_retired_nodes()
         assert_eq!(
             changes(&app, before, network)
                 .iter()
-                .filter(|c| matches!(c, CommittedChange::Progress { .. }))
+                .filter(|c| matches!(c, Effect::Progress { .. }))
                 .count(),
             1
         );
@@ -642,7 +642,7 @@ async fn account_revocations_remove_real_observation_subscriptions_at_commit() {
         assert!(
             changes(&app, before, network)
                 .iter()
-                .any(|change| matches!(change, CommittedChange::Authorization { .. }))
+                .any(|change| matches!(change, Effect::Authorization { .. }))
         );
         assert!(
             app.accounts()

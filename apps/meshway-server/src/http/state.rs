@@ -2,19 +2,16 @@
 //! Execution authenticates Node sessions, instances and publication lifetimes.
 use super::TypedPath as Path;
 use super::{auth::bearer, error::HttpError};
-use crate::state::{
-    StateError,
-    service::{ReadIdentity, StateProvider, StateService},
-};
+use crate::state::service::{ReadIdentity, StateProvider, StateService};
 use axum::{
     Extension, Json, Router,
     extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     middleware,
     response::{IntoResponse, Response},
 };
 use meshway_model::{NetworkId, NodeId, RequestId};
-use meshway_protocol::{EmptyParams, ErrorResponse, Problem, observations::*, state::*};
+use meshway_protocol::{ErrorResponse, observations::*, state::*};
 use std::sync::Arc;
 
 pub fn user_router<P: StateProvider>(service: StateService<P>) -> Router {
@@ -44,7 +41,7 @@ pub(super) fn user(
     id: RequestId,
 ) -> Result<ReadIdentity, HttpError> {
     ReadIdentity::user_session(bearer(headers, id)?, network)
-        .map_err(|_| HttpError::invalid_session(id))
+        .map_err(|error| HttpError::domain(id, error))
 }
 pub(super) fn node(headers: &HeaderMap, id: RequestId) -> Result<String, HttpError> {
     let value = bearer(headers, id)?;
@@ -53,57 +50,6 @@ pub(super) fn node(headers: &HeaderMap, id: RequestId) -> Result<String, HttpErr
     }
     Ok(value.to_owned())
 }
-pub(super) fn failure(id: RequestId, error: StateError) -> HttpError {
-    let (status, problem) = match error {
-        StateError::Unauthorized => return HttpError::invalid_session(id),
-        StateError::Unavailable | StateError::Storage => return HttpError::unavailable(Some(id)),
-        StateError::NotFound => (
-            StatusCode::NOT_FOUND,
-            Problem::NotFound {
-                params: EmptyParams {},
-                message: "Resource not available.".into(),
-            },
-        ),
-        StateError::Forbidden => (
-            StatusCode::FORBIDDEN,
-            Problem::PermissionDenied {
-                params: EmptyParams {},
-                message: "Operation not permitted.".into(),
-            },
-        ),
-        StateError::Conflict => (
-            StatusCode::CONFLICT,
-            Problem::StateConflict {
-                params: EmptyParams {},
-                message: "State context or sequence conflicts.".into(),
-            },
-        ),
-        StateError::Cursor => (
-            StatusCode::BAD_REQUEST,
-            Problem::InvalidCursor {
-                params: EmptyParams {},
-                message: "Cursor is invalid or expired.".into(),
-            },
-        ),
-        StateError::Budget => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Problem::StateLimit {
-                params: EmptyParams {},
-                message: "State resource budget exceeded.".into(),
-            },
-        ),
-        StateError::ObservationLimit => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Problem::ObservationLimit {
-                params: EmptyParams {},
-                message: "Observation budget exceeded.".into(),
-            },
-        ),
-        StateError::Invalid => return HttpError::invalid_request(id),
-    };
-    HttpError::new(id, status, problem)
-}
-
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}/state", operation_id = "getNetworkState", tag = "state", security(("userSession"=[])), params(("networkId"=NetworkId, Path)), responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn network_state<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -115,7 +61,7 @@ async fn network_state<P: StateProvider>(
         service
             .query(user(&headers, network, id)?, None)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}/nodes/{nodeId}/state", operation_id = "getNodeState", tag = "state", security(("userSession"=[])), params(("networkId"=NetworkId, Path),("nodeId"=NodeId, Path)), responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
@@ -129,7 +75,7 @@ async fn node_state<P: StateProvider>(
         service
             .query(user(&headers, network, id)?, Some(vec![node_id]))
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post, path = "/agent-api/v1/state", operation_id = "reportNodeState", tag = "state", security(("nodeSession"=[])), request_body=StateReport, responses((status=200, body=StateAccepted),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
@@ -145,7 +91,7 @@ async fn report<P: StateProvider>(
         service
             .accept_report(authorization, body)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post, path = "/agent-api/v1/state/query", operation_id = "queryPeerState", tag = "state", security(("nodeSession"=[])), request_body=StateQuery, responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
@@ -163,7 +109,7 @@ async fn peer_query<P: StateProvider>(
         service
             .query(identity, body.nodes)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post, path = "/agent-api/v1/history", operation_id = "reportNodeHistory", tag = "observations", security(("nodeSession"=[])), request_body=HistoryReport, responses((status=200, body=HistoryAccepted),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
@@ -179,7 +125,7 @@ async fn report_history<P: StateProvider>(
         service
             .accept_history(authorization, body)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post, path = "/api/v1/networks/{networkId}/history/query", operation_id = "queryObservationHistory", tag = "observations", security(("userSession"=[])), params(("networkId"=NetworkId, Path)), request_body=HistoryQuery, responses((status=200, body=HistoryPage),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
@@ -196,7 +142,7 @@ async fn history<P: StateProvider>(
         service
             .history(identity, body)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 fn last_cursor(headers: &HeaderMap, id: RequestId) -> Result<Option<String>, HttpError> {
@@ -224,7 +170,7 @@ async fn events<P: StateProvider>(
     let subscription = service
         .open_stream(identity, last_cursor(&headers, id)?)
         .await
-        .map_err(|e| failure(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     let mut response =
         crate::state::stream::response(Arc::new(service), subscription).into_response();
     response.headers_mut().insert(
@@ -290,13 +236,9 @@ async fn progress(
     let provider = Arc::clone(&service.provider);
     let result = service
         .handle
-        .execute(move |connection| {
-            let tx = connection.transaction()?;
-            provider.progress(&tx, &identity, revision, chrono::Utc::now())
-        })
+        .read(move |tx| provider.progress(tx, &identity, revision, chrono::Utc::now()))
         .await
-        .map_err(|_| failure(id, StateError::Unavailable))?
-        .map_err(|error| failure(id, error))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok(Json(result))
 }
 #[derive(utoipa::OpenApi)]

@@ -1,7 +1,9 @@
-use super::{AccountError, Accounts, Secret, email, password, secret};
+use super::{Accounts, Secret, email, password, secret};
+use crate::error::Error;
 use crate::store::accounts::management as store;
 use chrono::{DateTime, Utc};
 use meshway_model::{RequestId, SessionId};
+use rusqlite::TransactionBehavior;
 
 #[derive(Clone, Debug)]
 pub struct AccountSession {
@@ -44,31 +46,22 @@ impl Accounts {
         email: String,
         request: RequestId,
         configurations: crate::configuration::Configurations,
-    ) -> Result<super::User, AccountError> {
+    ) -> Result<super::User, Error> {
         let digest = secret::token_digest(token)?;
         let email = email::normalize(&email)?;
         let candidate = self
             .handle
-            .execute(move |db| store::candidate(db, digest))
-            .await??;
-        password::validate(&current).map_err(|_| AccountError::InvalidCurrentPassword)?;
+            .read(move |tx| store::candidate(tx, digest))
+            .await?;
+        password::validate(&current).map_err(|_| Error::InvalidCurrentPassword)?;
         let verified = password::verify(current, Some(candidate))
             .await
             .map_err(current_password_error)?;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| {
-                store::change_email(
-                    db,
-                    digest,
-                    verified,
-                    email,
-                    request,
-                    &configurations,
-                    &publisher,
-                )
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::change_email(tx, digest, verified, email, request, &configurations)
             })
-            .await?
+            .await
     }
     pub(crate) async fn sessions(
         &self,
@@ -76,14 +69,14 @@ impl Accounts {
         limit: u16,
         cursor: Option<String>,
         sealer: std::sync::Arc<crate::secrets::Sealer>,
-    ) -> Result<AccountSessionPage, AccountError> {
+    ) -> Result<AccountSessionPage, Error> {
         if !(1..=200).contains(&limit) {
-            return Err(AccountError::InvalidRequest);
+            return Err(Error::InvalidRequest);
         }
         let digest = secret::token_digest(token)?;
         self.handle
-            .execute(move |db| store::sessions(db, digest, limit, cursor, &sealer))
-            .await?
+            .read(move |tx| store::sessions(tx, digest, limit, cursor, &sealer))
+            .await
     }
 
     pub async fn revoke_sessions(
@@ -91,12 +84,13 @@ impl Accounts {
         token: &str,
         target: RevokeSessions,
         request: RequestId,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), Error> {
         let digest = secret::token_digest(token)?;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| store::revoke(db, digest, target, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::revoke(tx, digest, target, request)
+            })
+            .await
     }
 
     pub async fn change_password(
@@ -105,24 +99,23 @@ impl Accounts {
         current: Secret,
         replacement: Secret,
         request: RequestId,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), Error> {
         let digest = secret::token_digest(token)?;
         let candidate = self
             .handle
-            .execute(move |db| store::candidate(db, digest))
-            .await??;
-        password::validate(&current).map_err(|_| AccountError::InvalidCurrentPassword)?;
+            .read(move |tx| store::candidate(tx, digest))
+            .await?;
+        password::validate(&current).map_err(|_| Error::InvalidCurrentPassword)?;
         password::validate(&replacement)?;
         let verified = password::verify(current, Some(candidate))
             .await
             .map_err(current_password_error)?;
         let hash = password::hash(replacement).await?;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| {
-                store::change_password(db, digest, verified, hash, request, &publisher)
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::change_password(tx, digest, verified, hash, request)
             })
-            .await?
+            .await
     }
 
     /// Host-maintenance entry point. No HTTP route exposes this operation.
@@ -132,24 +125,21 @@ impl Accounts {
         email: String,
         expires_in_seconds: u32,
         request: RequestId,
-    ) -> Result<IssuedReset, AccountError> {
+    ) -> Result<IssuedReset, Error> {
         if !(60..=86400).contains(&expires_in_seconds) {
-            return Err(AccountError::InvalidRequest);
+            return Err(Error::InvalidRequest);
         }
         let email = email::normalize(&email)?;
         self.handle
-            .execute(move |db| store::issue_reset(db, email, expires_in_seconds, request))
-            .await?
+            .write(move |tx| store::issue_reset(tx, email, expires_in_seconds, request))
+            .await
     }
 
-    pub async fn inspect_password_reset(
-        &self,
-        token: &str,
-    ) -> Result<ResetInspection, AccountError> {
+    pub async fn inspect_password_reset(&self, token: &str) -> Result<ResetInspection, Error> {
         let digest = secret::one_time_digest("mwr_", token)?;
         self.handle
-            .execute(move |db| store::inspect_reset(db, digest))
-            .await?
+            .read(move |tx| store::inspect_reset(tx, digest))
+            .await
     }
 
     pub async fn redeem_password_reset(
@@ -157,23 +147,26 @@ impl Accounts {
         token: &str,
         password: Secret,
         request: RequestId,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), Error> {
         let digest = secret::one_time_digest("mwr_", token)?;
         password::validate(&password)?;
         self.handle
-            .execute(move |db| store::inspect_reset(db, digest))
-            .await??;
+            .read(move |tx| store::inspect_reset(tx, digest))
+            .await?;
         let hash = password::hash(password).await?;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| store::redeem_reset(db, digest, hash, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::redeem_reset(tx, digest, hash, request)
+            })
+            .await
     }
 }
 
-fn current_password_error(error: AccountError) -> AccountError {
+/// A failed verification of the caller's own current password is a distinct
+/// outcome from a failed login.
+fn current_password_error(error: Error) -> Error {
     match error {
-        AccountError::InvalidCredentials => AccountError::InvalidCurrentPassword,
+        Error::InvalidCredentials => Error::InvalidCurrentPassword,
         other => other,
     }
 }

@@ -1,6 +1,6 @@
 //! Complete typed initial configuration and its three protected persistence fields.
 
-use super::NetworkError;
+use crate::error::Error;
 use crate::{
     accounts::random_uuid,
     secrets::{ProtectedBytes, Purpose, Sealer},
@@ -34,7 +34,7 @@ pub(crate) struct PreparedNetwork {
     pub(crate) bindings: ProtectedBytes,
 }
 
-pub(crate) fn initial(id: NetworkId) -> Result<NetworkConfiguration, NetworkError> {
+pub(crate) fn initial(id: NetworkId) -> Result<NetworkConfiguration, Error> {
     let bytes = id.as_uuid().as_bytes();
     let ula = std::net::Ipv6Addr::new(
         0xfd00 | u16::from(bytes[0]),
@@ -51,15 +51,16 @@ pub(crate) fn initial(id: NetworkId) -> Result<NetworkConfiguration, NetworkErro
         ipv6: vec![format!("{ula}/48")],
     };
     new_network(pools, format!("{}.meshway.internal", id.as_uuid().simple()))
-        .map_err(|_| NetworkError::Unavailable)
+        .map_err(|_| Error::Internal("initial network configuration"))
 }
 
-pub(crate) fn prepare(name: String, sealer: &Sealer) -> Result<PreparedNetwork, NetworkError> {
-    let id = NetworkId::new(random_uuid()?).map_err(|_| NetworkError::Unavailable)?;
-    let canonical = canonical_json(&initial(id)?).map_err(|_| NetworkError::Unavailable)?;
+pub(crate) fn prepare(name: String, sealer: &Sealer) -> Result<PreparedNetwork, Error> {
+    let id = NetworkId::new(random_uuid()?).map_err(|_| Error::Internal("generated network ID"))?;
+    let canonical = canonical_json(&initial(id)?)
+        .map_err(|_| Error::encode("initial network configuration"))?;
     let bindings = Zeroizing::new(
         serde_json::to_vec(&ConfigurationBindings::default())
-            .map_err(|_| NetworkError::Unavailable)?,
+            .map_err(|_| Error::encode("configuration bindings"))?,
     );
     let mut digest = Sha256::new();
     digest.update(b"meshway/network-create/v1\0");
@@ -68,24 +69,18 @@ pub(crate) fn prepare(name: String, sealer: &Sealer) -> Result<PreparedNetwork, 
         id,
         name,
         request_digest: digest.finalize().into(),
-        source: sealer
-            .seal(
-                id,
-                Revision::MIN,
-                Purpose::Source,
-                canonical.expose().as_bytes(),
-            )
-            .map_err(|_| NetworkError::Unavailable)?,
-        configuration: sealer
-            .seal(
-                id,
-                Revision::MIN,
-                Purpose::Configuration,
-                canonical.expose().as_bytes(),
-            )
-            .map_err(|_| NetworkError::Unavailable)?,
-        bindings: sealer
-            .seal(id, Revision::MIN, Purpose::Bindings, &bindings)
-            .map_err(|_| NetworkError::Unavailable)?,
+        source: sealer.seal(
+            id,
+            Revision::MIN,
+            Purpose::Source,
+            canonical.expose().as_bytes(),
+        )?,
+        configuration: sealer.seal(
+            id,
+            Revision::MIN,
+            Purpose::Configuration,
+            canonical.expose().as_bytes(),
+        )?,
+        bindings: sealer.seal(id, Revision::MIN, Purpose::Bindings, &bindings)?,
     })
 }

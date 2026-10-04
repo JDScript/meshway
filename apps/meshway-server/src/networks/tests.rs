@@ -87,7 +87,7 @@ async fn real_creation_isolation_idempotency_sealed_complete_configuration_and_r
         networks
             .create(alice.token.expose(), "different".into(), req)
             .await,
-        Err(NetworkError::RequestConflict)
+        Err(Error::RequestConflict)
     );
     let second = networks
         .create(bob.token.expose(), "Personal".into(), req)
@@ -96,11 +96,11 @@ async fn real_creation_isolation_idempotency_sealed_complete_configuration_and_r
     assert_ne!(first.id, second.id);
     assert_eq!(
         networks.get(bob.token.expose(), first.id).await,
-        Err(NetworkError::NotFound)
+        Err(Error::NotFound)
     );
     assert_eq!(
         networks.get(alice.token.expose(), second.id).await,
-        Err(NetworkError::NotFound)
+        Err(Error::NotFound)
     );
     assert_eq!(
         networks
@@ -196,10 +196,10 @@ async fn real_creation_isolation_idempotency_sealed_complete_configuration_and_r
     assert_eq!(counts, (2, 2, 2, 2));
     app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
-    assert_eq!(
+    assert!(matches!(
         networks.get(alice.token.expose(), first.id).await,
-        Err(NetworkError::Unavailable)
-    );
+        Err(Error::Unavailable(_))
+    ));
     let app = App::open(Settings::new(&path)).await.unwrap();
     assert_eq!(
         app.networks()
@@ -245,7 +245,7 @@ async fn current_roles_creator_revocation_rename_cas_and_transactional_activity(
         networks
             .members(bob.token.expose(), original.id, 20, None)
             .await,
-        Err(NetworkError::PermissionDenied)
+        Err(Error::PermissionDenied)
     );
     assert_eq!(
         networks
@@ -257,7 +257,7 @@ async fn current_roles_creator_revocation_rename_cas_and_transactional_activity(
                 request()
             )
             .await,
-        Err(NetworkError::PermissionDenied)
+        Err(Error::PermissionDenied)
     );
     let saved = config_bytes(&networks, original.id).await;
     let renamed = networks
@@ -283,7 +283,7 @@ async fn current_roles_creator_revocation_rename_cas_and_transactional_activity(
                 request()
             )
             .await,
-        Err(NetworkError::NameConflict)
+        Err(Error::NameConflict)
     );
     assert_eq!(
         networks
@@ -294,13 +294,13 @@ async fn current_roles_creator_revocation_rename_cas_and_transactional_activity(
         "after"
     );
     networks.handle.execute(|c| c.execute_batch("CREATE TRIGGER fail_network_activity BEFORE INSERT ON activity_events WHEN NEW.scope = 'network' BEGIN SELECT RAISE(ABORT, 'test failure'); END").unwrap()).await.unwrap();
-    assert_eq!(
+    assert!(matches!(
         networks
             .create(alice.token.expose(), "rollback".into(), request())
             .await,
-        Err(NetworkError::Storage)
-    );
-    assert_eq!(
+        Err(Error::Storage(_))
+    ));
+    assert!(matches!(
         networks
             .rename(
                 alice.token.expose(),
@@ -310,8 +310,8 @@ async fn current_roles_creator_revocation_rename_cas_and_transactional_activity(
                 request()
             )
             .await,
-        Err(NetworkError::Storage)
-    );
+        Err(Error::Storage(_))
+    ));
     networks
         .handle
         .execute(|c| {
@@ -370,11 +370,11 @@ async fn current_roles_creator_revocation_rename_cas_and_transactional_activity(
         networks
             .create(alice.token.expose(), "before".into(), req)
             .await,
-        Err(NetworkError::NotFound)
+        Err(Error::NotFound)
     );
     assert_eq!(
         networks.get(alice.token.expose(), original.id).await,
-        Err(NetworkError::NotFound)
+        Err(Error::NotFound)
     );
     assert!(
         networks
@@ -405,7 +405,7 @@ async fn current_roles_creator_revocation_rename_cas_and_transactional_activity(
         networks
             .create(alice.token.expose(), "before".into(), req)
             .await,
-        Err(NetworkError::NotFound)
+        Err(Error::NotFound)
     );
     app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
@@ -443,10 +443,10 @@ async fn final_create_transaction_rechecks_session_after_preparation_and_cancell
         release.send(()).unwrap();
         gate.await.unwrap();
         revoke.await.unwrap();
-        assert_eq!(creating.await, Err(NetworkError::InvalidSession));
+        assert_eq!(creating.await, Err(Error::InvalidSession));
         assert_eq!(
             networks.list(alice.token.expose(), 1, None).await,
-            Err(NetworkError::InvalidSession)
+            Err(Error::InvalidSession)
         );
         networks.handle.execute(|c| c.execute_batch("UPDATE user_sessions SET revoked_at = NULL; UPDATE users SET disabled_at = NULL, credential_version = 1").unwrap()).await.unwrap();
     }
@@ -542,7 +542,7 @@ async fn network_pages_bound_creations_membership_admission_and_opaque_cursor_sc
         networks
             .list(bob.token.expose(), 1, Some(cursor.clone()))
             .await,
-        Err(NetworkError::InvalidCursor)
+        Err(Error::InvalidCursor)
     );
     let mut tampered = cursor.clone().into_bytes();
     tampered[10] = if tampered[10] == b'A' { b'B' } else { b'A' };
@@ -554,18 +554,18 @@ async fn network_pages_bound_creations_membership_admission_and_opaque_cursor_sc
                 Some(String::from_utf8(tampered).unwrap())
             )
             .await,
-        Err(NetworkError::InvalidCursor)
+        Err(Error::InvalidCursor)
     );
     for bad in [String::new(), "a".repeat(2049), "not/a+cursor=".into()] {
         assert_eq!(
             networks.list(alice.token.expose(), 1, Some(bad)).await,
-            Err(NetworkError::InvalidCursor)
+            Err(Error::InvalidCursor)
         );
     }
     for limit in [0, 201, u16::MAX] {
         assert_eq!(
             networks.list(alice.token.expose(), limit, None).await,
-            Err(NetworkError::InvalidLimit)
+            Err(Error::InvalidLimit)
         );
     }
     let scope = CursorScope::Networks(alice.session.user.id);
@@ -575,7 +575,7 @@ async fn network_pages_bound_creations_membership_admission_and_opaque_cursor_sc
         .unwrap();
     assert_eq!(
         networks.list(alice.token.expose(), 1, Some(expired)).await,
-        Err(NetworkError::InvalidCursor)
+        Err(Error::InvalidCursor)
     );
     let future = pagination::Window::new(100, 100, Utc::now().timestamp_millis() + 60_000)
         .unwrap()
@@ -583,7 +583,7 @@ async fn network_pages_bound_creations_membership_admission_and_opaque_cursor_sc
         .unwrap();
     assert_eq!(
         networks.list(alice.token.expose(), 1, Some(future)).await,
-        Err(NetworkError::InvalidCursor)
+        Err(Error::InvalidCursor)
     );
     networks
         .create(alice.token.expose(), "later".into(), request())
@@ -628,7 +628,7 @@ async fn network_pages_bound_creations_membership_admission_and_opaque_cursor_sc
         app.networks()
             .list(alice.token.expose(), 1, Some(cursor))
             .await,
-        Err(NetworkError::InvalidSession)
+        Err(Error::InvalidSession)
     );
     app.shutdown().await.unwrap();
 }
@@ -660,19 +660,19 @@ async fn members_pages_are_admin_only_bounded_and_recheck_revocation() {
         networks
             .members(alice.token.expose(), two.id, 1, Some(cursor.clone()))
             .await,
-        Err(NetworkError::InvalidCursor)
+        Err(Error::InvalidCursor)
     );
     assert_eq!(
         networks
             .members(bob.token.expose(), one.id, 1, Some(cursor.clone()))
             .await,
-        Err(NetworkError::InvalidCursor)
+        Err(Error::InvalidCursor)
     );
     assert_eq!(
         networks
             .list(alice.token.expose(), 1, Some(cursor.clone()))
             .await,
-        Err(NetworkError::InvalidCursor)
+        Err(Error::InvalidCursor)
     );
     grant(&networks, one.id, carol.session.user.id, "member").await;
     let second = networks
@@ -697,7 +697,7 @@ async fn members_pages_are_admin_only_bounded_and_recheck_revocation() {
         networks
             .members(carol.token.expose(), one.id, 200, None)
             .await,
-        Err(NetworkError::PermissionDenied)
+        Err(Error::PermissionDenied)
     );
     let before_rejoin = networks
         .members(alice.token.expose(), one.id, 1, None)
@@ -744,7 +744,7 @@ async fn members_pages_are_admin_only_bounded_and_recheck_revocation() {
         networks
             .members(alice.token.expose(), one.id, 1, Some(cursor.clone()))
             .await,
-        Err(NetworkError::PermissionDenied)
+        Err(Error::PermissionDenied)
     );
     networks
         .handle
@@ -761,7 +761,7 @@ async fn members_pages_are_admin_only_bounded_and_recheck_revocation() {
         networks
             .members(alice.token.expose(), one.id, 1, Some(cursor))
             .await,
-        Err(NetworkError::NotFound)
+        Err(Error::NotFound)
     );
     assert_eq!(
         networks
@@ -773,7 +773,7 @@ async fn members_pages_are_admin_only_bounded_and_recheck_revocation() {
                 request()
             )
             .await,
-        Err(NetworkError::NotFound)
+        Err(Error::NotFound)
     );
     app.shutdown().await.unwrap();
 }
@@ -798,29 +798,29 @@ async fn final_metadata_transaction_rechecks_membership_and_account_and_input_is
     ] {
         assert_eq!(
             networks.create(alice.token.expose(), name, request()).await,
-            Err(NetworkError::InvalidName)
+            Err(Error::InvalidName)
         );
     }
     for (mutation, expected) in [
         (
             "UPDATE memberships SET role = 'member'",
-            NetworkError::PermissionDenied,
+            Error::PermissionDenied,
         ),
         (
             "UPDATE memberships SET revoked_at = joined_at",
-            NetworkError::NotFound,
+            Error::NotFound,
         ),
         (
             "UPDATE user_sessions SET revoked_at = created_at",
-            NetworkError::InvalidSession,
+            Error::InvalidSession,
         ),
         (
             "UPDATE users SET disabled_at = created_at",
-            NetworkError::InvalidSession,
+            Error::InvalidSession,
         ),
         (
             "UPDATE users SET credential_version = credential_version + 1",
-            NetworkError::InvalidSession,
+            Error::InvalidSession,
         ),
     ] {
         let (started, running) = oneshot::channel();

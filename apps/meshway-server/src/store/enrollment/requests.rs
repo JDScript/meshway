@@ -1,4 +1,25 @@
-use super::*;
+use super::{hash, pkce, redeem::validate_existing, token};
+use crate::error::Error;
+use crate::execution::proof;
+use crate::secrets::Sealer;
+use crate::store::{
+    authorization::current_session,
+    execution::{bytes, id, json, now},
+};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use meshway_model::{
+    Digest, EnrollmentRequestId, KeyAlgorithm, MembershipId, NetworkId, NodeId, NodePublicKey,
+    UserId,
+};
+use meshway_protocol::{
+    WireSecret,
+    enrollment::{
+        ApproveEnrollmentRequest, CreateEnrollmentRequest, DeviceAuthorizationView,
+        EnrollmentApprovalView, EnrollmentDeviceProof, EnrollmentPhase, EnrollmentPollResponse,
+        EnrollmentRequestView, EnrollmentReturnMethod, ExistingNodeBinding, enrollment_transcript,
+    },
+};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -56,7 +77,7 @@ impl Pending {
         &self,
         proof: &EnrollmentDeviceProof,
         operation: &str,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), Error> {
         pkce(&self.challenge, proof.verifier.expose())?;
         proof::verify_bytes(
             &self.control,
@@ -68,7 +89,7 @@ impl Pending {
 pub(super) fn pending(
     tx: &Transaction<'_>,
     request: EnrollmentRequestId,
-) -> Result<Pending, NodeError> {
+) -> Result<Pending, Error> {
     let raw = tx.query_row(
         "SELECT control_key,dataplane_key,request_digest,code_challenge,hostname,expires_at,
                 approval,result_hash,delivery,denied_at,consumed_at,node_id,existing_binding,cancelled_at
@@ -81,12 +102,22 @@ pub(super) fn pending(
             r.get::<_, Option<i64>>(9)?, r.get::<_, Option<i64>>(10)?,
             r.get::<_, Option<Vec<u8>>>(11)?, r.get::<_, Option<Vec<u8>>>(12)?, r.get::<_, Option<i64>>(13)?,
         )),
-    ).optional()?.ok_or(NodeError::NotFound)?;
+    ).optional()?.ok_or(Error::NotFound)?;
     Ok(Pending {
         id: request,
-        control: raw.0.try_into().map_err(|_| NodeError::Storage)?,
-        dataplane: raw.1.try_into().map_err(|_| NodeError::Storage)?,
-        digest: Digest::from_bytes(raw.2.try_into().map_err(|_| NodeError::Storage)?),
+        control: raw
+            .0
+            .try_into()
+            .map_err(|_| Error::decode("enrollment_requests.control_key"))?,
+        dataplane: raw
+            .1
+            .try_into()
+            .map_err(|_| Error::decode("enrollment_requests.dataplane_key"))?,
+        digest: Digest::from_bytes(
+            raw.2
+                .try_into()
+                .map_err(|_| Error::decode("enrollment_requests.request_digest"))?,
+        ),
         challenge: raw.3,
         hostname: raw.4,
         expires: raw.5,
@@ -101,10 +132,10 @@ pub(super) fn pending(
     })
 }
 pub(crate) fn create_request(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     request: CreateEnrollmentRequest,
-) -> Result<EnrollmentRequestView, NodeError> {
+) -> Result<EnrollmentRequestView, Error> {
     let i = request.intent;
     if i.control_key.algorithm != KeyAlgorithm::Ed25519
         || i.dataplane_key.algorithm != KeyAlgorithm::X25519
@@ -114,7 +145,7 @@ pub(crate) fn create_request(
         || i.code_challenge.len() != 43
         || URL_SAFE_NO_PAD.decode(&i.code_challenge).is_err()
     {
-        return Err(NodeError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     let digest = proof::request_digest(&i)?;
     proof::verify_bytes(
@@ -122,49 +153,46 @@ pub(crate) fn create_request(
         &enrollment_transcript(i.id, digest, "create"),
         request.signature.expose(),
     )?;
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     if let Some(existing) = &i.existing {
         validate_existing(
-            &tx,
+            tx,
             sealer,
             existing,
             i.control_key.bytes.as_bytes(),
             i.dataplane_key.bytes.as_bytes(),
         )?;
     }
-    if let Ok(p) = pending(&tx, i.id) {
+    if let Ok(p) = pending(tx, i.id) {
         if p.digest != digest {
-            return Err(NodeError::Conflict);
+            return Err(Error::BindingConflict);
         }
         return Ok(p.view(now));
     }
     let count:i64=tx.query_row("SELECT count(*) FROM enrollment_requests WHERE expires_at>?1 AND consumed_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL",[now],|r|r.get(0))?;
     if count >= 4096 {
-        return Err(NodeError::Busy);
+        return Err(Error::Busy);
     }
     tx.execute("INSERT INTO enrollment_requests(id,control_key,dataplane_key,request_digest,code_challenge,hostname,created_at,expires_at,existing_binding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![i.id.as_uuid().as_bytes().as_slice(),i.control_key.bytes.as_bytes().as_slice(),i.dataplane_key.bytes.as_bytes().as_slice(),digest.as_bytes().as_slice(),i.code_challenge,i.hostname,now,now+600_000,i.existing.as_ref().map(bytes).transpose()?])?;
-    let view = pending(&tx, i.id)?.view(now);
-    tx.commit()?;
+    let view = pending(tx, i.id)?.view(now);
     Ok(view)
 }
 pub(crate) fn inspect(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     token: [u8; 32],
     id: EnrollmentRequestId,
-) -> Result<DeviceAuthorizationView, NodeError> {
-    let tx = c.transaction()?;
+) -> Result<DeviceAuthorizationView, Error> {
     let now = now()?;
-    let user = current_session(&tx, &token, now)?.user.id;
-    let p = pending(&tx, id)?;
-    user_view(&tx, &p, user, now)
+    let user = current_session(tx, &token, now)?.user.id;
+    let p = pending(tx, id)?;
+    user_view(tx, &p, user, now)
 }
 fn user_view(
     tx: &Transaction<'_>,
     p: &Pending,
     user: UserId,
     now: i64,
-) -> Result<DeviceAuthorizationView, NodeError> {
+) -> Result<DeviceAuthorizationView, Error> {
     let approval = p
         .approval
         .as_ref()
@@ -182,31 +210,30 @@ fn user_view(
     })
 }
 pub(crate) fn approve(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     token_hash: [u8; 32],
     id: EnrollmentRequestId,
     request: ApproveEnrollmentRequest,
-) -> Result<DeviceAuthorizationView, NodeError> {
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<DeviceAuthorizationView, Error> {
     let now = now()?;
-    let session = current_session(&tx, &token_hash, now)?;
-    let membership:Vec<u8>=tx.query_row("SELECT m.id FROM memberships m JOIN networks n ON n.id=m.network_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",params![request.network_id.as_uuid().as_bytes().as_slice(),session.user.id.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(NodeError::Forbidden)?;
-    let p = pending(&tx, id)?;
+    let session = current_session(tx, &token_hash, now)?;
+    let membership:Vec<u8>=tx.query_row("SELECT m.id FROM memberships m JOIN networks n ON n.id=m.network_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",params![request.network_id.as_uuid().as_bytes().as_slice(),session.user.id.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(Error::PermissionDenied)?;
+    let p = pending(tx, id)?;
     if p.existing
         .as_ref()
         .is_some_and(|e| e.network_id != request.network_id)
     {
-        return Err(NodeError::Forbidden);
+        return Err(Error::PermissionDenied);
     }
     if p.expires <= now || p.denied.is_some() || p.cancelled.is_some() || p.consumed.is_some() {
-        return Err(NodeError::StateConflict);
+        return Err(Error::StateConflict);
     }
     if let Some(a) = &p.approval {
         if a.network != request.network_id || a.user != session.user.id {
-            return Err(NodeError::StateConflict);
+            return Err(Error::StateConflict);
         }
-        return user_view(&tx, &p, session.user.id, now);
+        return user_view(tx, &p, session.user.id, now);
     }
     let approval = Approval {
         network: request.network_id,
@@ -215,9 +242,7 @@ pub(crate) fn approve(
         session_hash: token_hash.into(),
     };
     let code = token()?;
-    let delivery = sealer
-        .seal_enrollment(id.into_uuid(), code.as_bytes())
-        .map_err(|_| NodeError::Storage)?;
+    let delivery = sealer.seal_enrollment(id.into_uuid(), code.as_bytes())?;
     tx.execute(
         "UPDATE enrollment_requests SET approval=?1,result_hash=?2,delivery=?3 WHERE id=?4",
         params![
@@ -227,56 +252,50 @@ pub(crate) fn approve(
             id.as_uuid().as_bytes().as_slice()
         ],
     )?;
-    let view = user_view(&tx, &pending(&tx, id)?, session.user.id, now)?;
-    tx.commit()?;
+    let view = user_view(tx, &pending(tx, id)?, session.user.id, now)?;
     Ok(view)
 }
 pub(crate) fn deny(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     token: [u8; 32],
     id: EnrollmentRequestId,
-) -> Result<(), NodeError> {
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<(), Error> {
     let now = now()?;
-    let session = current_session(&tx, &token, now)?;
-    let p = pending(&tx, id)?;
+    let session = current_session(tx, &token, now)?;
+    let p = pending(tx, id)?;
     // Before approval there is no bound user. Leaving the browser is local;
     // only the device's signed cancel operation can cancel a pending request.
-    let approval = p.approval.ok_or(NodeError::Forbidden)?;
+    let approval = p.approval.ok_or(Error::PermissionDenied)?;
     if approval.user != session.user.id {
-        return Err(NodeError::Forbidden);
+        return Err(Error::PermissionDenied);
     }
     if p.consumed.is_some() || p.cancelled.is_some() || p.expires <= now {
-        return Err(NodeError::StateConflict);
+        return Err(Error::StateConflict);
     }
     tx.execute(
         "UPDATE enrollment_requests SET denied_at=COALESCE(denied_at,?1),delivery=NULL WHERE id=?2",
         params![now, id.as_uuid().as_bytes().as_slice()],
     )?;
-    tx.commit()?;
     Ok(())
 }
 pub(crate) fn poll(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     id: EnrollmentRequestId,
     proof: EnrollmentDeviceProof,
-) -> Result<EnrollmentPollResponse, NodeError> {
-    let tx = c.transaction()?;
+) -> Result<EnrollmentPollResponse, Error> {
     let now = now()?;
-    let p = pending(&tx, id)?;
+    let p = pending(tx, id)?;
     p.device(&proof, "poll")?;
     let code =
         if p.expires > now && p.denied.is_none() && p.cancelled.is_none() && p.consumed.is_none() {
             p.delivery
                 .as_ref()
                 .map(|d| {
-                    let plaintext = sealer
-                        .open_enrollment(id.into_uuid(), d)
-                        .map_err(|_| NodeError::Storage)?;
-                    Ok::<_, NodeError>(WireSecret::new(
+                    let plaintext = sealer.open_enrollment(id.into_uuid(), d)?;
+                    Ok::<_, Error>(WireSecret::new(
                         std::str::from_utf8(plaintext.as_bytes())
-                            .map_err(|_| NodeError::Storage)?
+                            .map_err(|_| Error::decode("enrollment_requests.delivery"))?
                             .to_owned(),
                     ))
                 })
@@ -295,21 +314,19 @@ pub(crate) fn poll(
     })
 }
 pub(crate) fn cancel(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     id: EnrollmentRequestId,
     proof: EnrollmentDeviceProof,
-) -> Result<(), NodeError> {
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let p = pending(&tx, id)?;
+) -> Result<(), Error> {
+    let p = pending(tx, id)?;
     p.device(&proof, "cancel")?;
     let now = now()?;
     if p.consumed.is_some() || p.denied.is_some() || p.expires <= now {
-        return Err(NodeError::StateConflict);
+        return Err(Error::StateConflict);
     }
     tx.execute(
         "UPDATE enrollment_requests SET cancelled_at=COALESCE(cancelled_at,?1),delivery=NULL WHERE id=?2",
         params![now, id.as_uuid().as_bytes().as_slice()],
     )?;
-    tx.commit()?;
     Ok(())
 }

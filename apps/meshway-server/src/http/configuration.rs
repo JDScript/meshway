@@ -6,13 +6,12 @@ pub(super) async fn schema(
     Extension(id): Extension<RequestId>,
     headers: HeaderMap,
 ) -> Result<Json<ConfigurationSchemaResponse>, HttpError> {
-    let rules = super::auth::rules(accounts.options().password, id)?;
     accounts
         .authenticate(bearer(&headers, id)?)
         .await
-        .map_err(|e| HttpError::account(id, e, rules))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(
-        crate::configuration::catalog::schema(id).map_err(|e| HttpError::configuration(id, e))?,
+        crate::configuration::catalog::schema(id).map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(get,path="/api/v1/transport-catalog",operation_id="getTransportCatalog",tag="configuration",security(("userSession"=[])),responses((status=200,body=TransportCatalogResponse),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -21,11 +20,10 @@ pub(super) async fn catalog(
     Extension(id): Extension<RequestId>,
     headers: HeaderMap,
 ) -> Result<Json<TransportCatalogResponse>, HttpError> {
-    let rules = super::auth::rules(accounts.options().password, id)?;
     accounts
         .authenticate(bearer(&headers, id)?)
         .await
-        .map_err(|e| HttpError::account(id, e, rules))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(crate::configuration::catalog::transports(id)))
 }
 use crate::configuration::Configurations;
@@ -51,7 +49,7 @@ pub(super) async fn get(
     let snapshot = service
         .read(bearer(&headers, id)?, network, None)
         .await
-        .map_err(|e| HttpError::configuration(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(ConfigurationResponse {
         request_id: id,
         network_id: network,
@@ -70,7 +68,7 @@ pub(super) async fn revision(
     let snapshot = service
         .read(bearer(&headers, id)?, network, Some(revision))
         .await
-        .map_err(|e| HttpError::configuration(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(ConfigurationResponse {
         request_id: id,
         network_id: network,
@@ -91,7 +89,7 @@ pub(super) async fn source(
     let snapshot = service
         .read(bearer(&headers, id)?, network, query.revision)
         .await
-        .map_err(|e| HttpError::configuration(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(crate::configuration::source_response(&snapshot, id)))
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/validate",operation_id="validateConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=ConfigurationRequest,responses((status=200,body=ConfigurationPreviewResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -108,7 +106,7 @@ pub(super) async fn validate(
         service
             .validate(bearer(&headers, id)?, network, body, id)
             .await
-            .map_err(|e| HttpError::configuration(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration",operation_id="applyConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=ConfigurationRequest,responses((status=200,body=ConfigurationAppliedResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -125,7 +123,7 @@ pub(super) async fn apply(
         service
             .apply(bearer(&headers, id)?, network, body, id)
             .await
-            .map_err(|e| HttpError::configuration(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/compare",operation_id="compareConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CompareConfigurationRequest,responses((status=200,body=ConfigurationComparison),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -142,6 +140,6 @@ pub(super) async fn compare(
         service
             .compare(bearer(&headers, id)?, network, body, id)
             .await
-            .map_err(|e| HttpError::configuration(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }

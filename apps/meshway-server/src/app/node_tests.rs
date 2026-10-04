@@ -1,8 +1,9 @@
 //! Real admission/configuration transactions feed authentication and execution.
 use super::*;
+use crate::error::Error;
 use crate::{
     accounts::{Secret, random_uuid},
-    execution::{NodeError, proof},
+    execution::proof,
     store,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -429,7 +430,7 @@ async fn try_enroll_user_node(
     network: NetworkId,
     signer: &SigningKey,
     dp: [u8; 32],
-) -> Result<meshway_protocol::enrollment::EnrollmentResponse, NodeError> {
+) -> Result<meshway_protocol::enrollment::EnrollmentResponse, Error> {
     use meshway_protocol::enrollment::*;
     use sha2::{Digest as _, Sha256};
     let verifier = "p".repeat(43);
@@ -615,13 +616,13 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
         .events
         .after(event_sequence, network)
         .unwrap();
-    assert_eq!(changes.iter().filter(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == enrolled.node_id)).count(),1);
-    assert!(!changes.iter().any(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == tag)));
+    assert_eq!(changes.iter().filter(|entry| matches!(entry.change, crate::effect::Effect::NodeRetired { node_id, .. } if node_id == enrolled.node_id)).count(),1);
+    assert!(!changes.iter().any(|entry| matches!(entry.change, crate::effect::Effect::NodeRetired { node_id, .. } if node_id == tag)));
     assert!(matches!(
         app.execution()
             .authenticate(node_session.token.expose())
             .await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     let inventory = app
         .execution()
@@ -654,7 +655,8 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
 
 #[tokio::test]
 async fn state_admission_uses_real_node_instance_and_current_publication_dependencies() {
-    use crate::state::{StateError, service::ReadIdentity};
+    use crate::error::Error;
+    use crate::state::service::ReadIdentity;
     use meshway_model::state::ResourceRef;
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let (_dir, app, network, a, b, ak, bk, signer_a, signer_b) = fixture().await;
@@ -796,7 +798,7 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
             };
             assert!(matches!(
                 s.observation_admission_in_transaction(&tx, &identity, &invalid, now),
-                Err(StateError::Forbidden)
+                Err(Error::PermissionDenied)
             ));
         })
         .await
@@ -830,7 +832,7 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
                     "mws_not-a-node-session",
                     chrono::Utc::now()
                 ),
-                Err(StateError::Unauthorized)
+                Err(Error::InvalidCredentials)
             ));
         })
         .await
@@ -1021,7 +1023,7 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
         app.execution()
             .authenticate(tag_session.token.expose())
             .await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     let user_session = session(
         &app.execution(),
@@ -1031,11 +1033,111 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
         &signer,
     )
     .await;
+    // A second login with the same User identity changes no configuration but
+    // still ends the previous control session and its instance.
+    let stale_instance = app
+        .execution()
+        .acquire(
+            user_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let before_relogin = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    let again = make_intent(
+        Some(ExistingNodeBinding {
+            network_id: network,
+            node_id: enrolled.node_id,
+            key_id: enrolled.keys.control.id,
+            key_generation: enrolled.keys.control.generation,
+        }),
+        "same-identity",
+    );
+    let again_digest = proof::request_digest(&again).unwrap();
+    let again_proof = |operation| EnrollmentDeviceProof {
+        verifier: WireSecret::new(verifier.clone()),
+        signature: WireSecret::new(
+            URL_SAFE_NO_PAD.encode(
+                signer
+                    .sign(&enrollment_transcript(again.id, again_digest, operation))
+                    .to_bytes(),
+            ),
+        ),
+    };
+    app.enrollment()
+        .create_request(CreateEnrollmentRequest {
+            intent: again.clone(),
+            signature: again_proof("create").signature,
+        })
+        .await
+        .unwrap();
+    app.enrollment()
+        .approve(
+            owner.token.expose(),
+            again.id,
+            ApproveEnrollmentRequest {
+                network_id: network,
+            },
+        )
+        .await
+        .unwrap();
+    let pending = app
+        .enrollment()
+        .poll(again.id, again_proof("poll"))
+        .await
+        .unwrap();
+    let relogged = app
+        .enrollment()
+        .redeem(
+            again.id,
+            RedeemEnrollmentRequest {
+                proof: again_proof("redeem"),
+                code: pending.code.unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(relogged.node_id, enrolled.node_id);
+    assert_eq!(relogged.keys, enrolled.keys);
+    assert!(matches!(
+        app.execution()
+            .authenticate(user_session.token.expose())
+            .await,
+        Err(Error::InvalidCredentials)
+    ));
+    let user_session = session(
+        &app.execution(),
+        network,
+        enrolled.node_id,
+        &enrolled.keys,
+        &signer,
+    )
+    .await;
+    assert!(matches!(
+        app.execution()
+            .renew(
+                user_session.token.expose(),
+                InstanceRequest {
+                    instance_id: stale_instance.instance_id,
+                    generation: stale_instance.generation,
+                },
+            )
+            .await,
+        Err(Error::BindingConflict)
+    ));
     let current = app
         .configurations()
         .read(owner.token.expose(), network, None)
         .await
         .unwrap();
+    assert_eq!(current.revision, before_relogin.revision);
     let restored = &current.document.configuration.nodes[&enrolled.node_id];
     assert!(current.bindings.users.is_empty());
     assert_eq!(
@@ -1125,16 +1227,16 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
         .await
         .unwrap();
     assert_eq!(deleted.deleted_node_ids, vec![enrolled.node_id]);
-    assert!(app.state_runtime.lock().unwrap().hub.events.after(0,network).unwrap().iter().any(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == enrolled.node_id)));
+    assert!(app.state_runtime.lock().unwrap().hub.events.after(0,network).unwrap().iter().any(|entry| matches!(entry.change, crate::effect::Effect::NodeRetired { node_id, .. } if node_id == enrolled.node_id)));
     assert!(matches!(
         app.execution()
             .authenticate(user_session.token.expose())
             .await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     assert!(matches!(
         app.enrollment().redeem_key(key_request()).await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
@@ -1304,26 +1406,21 @@ async fn actual_http_signatures_and_pkce_polling() {
             &self,
             _tx: &rusqlite::Transaction<'_>,
             _admission: &crate::enrollment::NodeAdmission,
-        ) -> Result<crate::configuration::CommitEffects, NodeError> {
-            Err(NodeError::Invalid)
+        ) -> Result<crate::configuration::CommitEffects, Error> {
+            Err(Error::InvalidRequest)
         }
     }
     assert!(matches!(
-        crate::enrollment::Enrollment::new(
-            app.executor.handle(),
-            app.sealer(),
-            Arc::new(Reject),
-            app.commit_publisher()
-        )
-        .redeem(
-            id,
-            RedeemEnrollmentRequest {
-                proof: proof("redeem"),
-                code: poll.code.unwrap()
-            }
-        )
-        .await,
-        Err(NodeError::Invalid)
+        crate::enrollment::Enrollment::new(app.executor.handle(), app.sealer(), Arc::new(Reject),)
+            .redeem(
+                id,
+                RedeemEnrollmentRequest {
+                    proof: proof("redeem"),
+                    code: poll.code.unwrap()
+                }
+            )
+            .await,
+        Err(Error::InvalidRequest)
     ));
     let after = app.enrollment().poll(id, proof("poll")).await.unwrap();
     assert_eq!(after.request.phase, EnrollmentPhase::Approved);
@@ -1395,7 +1492,7 @@ async fn actual_http_signatures_and_pkce_polling() {
         execution
             .authenticate(original_session.token.expose())
             .await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     let tag_session = session(&execution, own.id, enrolled.node_id, &enrolled.keys, &key).await;
     let current = app
@@ -1496,7 +1593,7 @@ async fn actual_http_signatures_and_pkce_polling() {
     assert_eq!(recovered.keys, enrolled.keys);
     assert!(matches!(
         execution.authenticate(tag_session.token.expose()).await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     let current = app
         .configurations()
@@ -1575,7 +1672,7 @@ async fn actual_http_signatures_and_pkce_polling() {
             .unwrap(),
         })
         .await;
-    assert!(matches!(attempt, Err(NodeError::Unauthorized)));
+    assert!(matches!(attempt, Err(Error::InvalidCredentials)));
     server.abort();
     let _ = server.await;
     app.shutdown().await.unwrap();
@@ -1607,7 +1704,7 @@ async fn signed_authentication_replay_rotation_and_controller_restart() {
     let issued = service.session(request()).await.unwrap();
     assert!(matches!(
         service.session(request()).await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     assert_eq!(
         service
@@ -1660,7 +1757,7 @@ async fn signed_authentication_replay_rotation_and_controller_restart() {
     assert_eq!(rotated.control.generation.get(), 2);
     assert!(matches!(
         service.authenticate(issued.token.expose()).await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     let fresh = session(&service, network, a, &rotated, &new).await;
     let original_instance = service
@@ -1681,7 +1778,7 @@ async fn signed_authentication_replay_rotation_and_controller_restart() {
     .unwrap();
     assert!(matches!(
         app.execution().authenticate(fresh.token.expose()).await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     let renewed_session = session(&app.execution(), network, a, &rotated, &new).await;
     assert_eq!(
@@ -1694,7 +1791,7 @@ async fn signed_authentication_replay_rotation_and_controller_restart() {
                 }
             )
             .await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     let resumed = app
         .execution()
@@ -1789,7 +1886,7 @@ async fn multi_demand_saved_applied_fencing_and_revocation() {
     };
     assert_eq!(
         s.receipt(at.token.expose(), receipt.clone()).await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     receipt.phase = ReceiptPhase::Saved;
     s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
@@ -1828,7 +1925,7 @@ async fn multi_demand_saved_applied_fencing_and_revocation() {
     .unwrap();
     assert_eq!(
         s.renew(at.token.expose(), ar).await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     app.executor
         .handle()
@@ -1846,7 +1943,7 @@ async fn multi_demand_saved_applied_fencing_and_revocation() {
         .unwrap();
     assert!(matches!(
         s.authenticate(at.token.expose()).await,
-        Err(NodeError::Unauthorized)
+        Err(Error::InvalidCredentials)
     ));
     app.shutdown().await.unwrap();
 }
@@ -1939,7 +2036,7 @@ async fn review_released_instance_id_cannot_be_reacquired() {
     .unwrap();
     assert_eq!(
         s.acquire(at.token.expose(), request).await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     app.shutdown().await.unwrap();
 }
@@ -2047,6 +2144,48 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
         )
         .await
         .unwrap();
+    // Revoking the retired generation records the revocation but leaves the
+    // execution established with the current generation untouched, even when
+    // the same revocation is repeated.
+    let current = session(&app.execution(), network, a, &recovered, &new).await;
+    let lease = app
+        .execution()
+        .acquire(
+            current.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(lease.target.is_some());
+    for _ in 0..2 {
+        app.execution()
+            .revoke_key(
+                owner.token.expose(),
+                network,
+                a,
+                RevokeNodeKeyRequest {
+                    key_id: keys.control.id,
+                    expected_generation: keys.control.generation,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let renewed = app
+        .execution()
+        .renew(
+            current.token.expose(),
+            InstanceRequest {
+                instance_id: lease.instance_id,
+                generation: lease.generation,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renewed.target, lease.target);
     app.execution()
         .revoke_key(
             owner.token.expose(),
@@ -2059,6 +2198,18 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
         )
         .await
         .unwrap();
+    assert!(matches!(
+        app.execution()
+            .renew(
+                current.token.expose(),
+                InstanceRequest {
+                    instance_id: lease.instance_id,
+                    generation: lease.generation,
+                },
+            )
+            .await,
+        Err(Error::InvalidCredentials)
+    ));
     assert_eq!(
         client
             .post(&url)
@@ -2131,7 +2282,7 @@ async fn review_late_failed_receipt_does_not_override_newer_applied() {
     late.failure = Some(ApplyFailure::Dns);
     assert_eq!(
         s.receipt(at.token.expose(), late).await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     assert_eq!(
         app.state_runtime.lock().unwrap().hub.events.sequence(),
@@ -2170,19 +2321,19 @@ async fn review_late_failed_receipt_does_not_override_newer_applied() {
     invalid.target.digest = [42; 32].into();
     assert_eq!(
         s.receipt(at.token.expose(), invalid).await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     let mut invalid = receipt.clone();
     invalid.instance.instance_id = iid();
     assert_eq!(
         s.receipt(at.token.expose(), invalid).await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     let mut invalid = receipt.clone();
     invalid.instance.generation = Version::new(receipt.instance.generation.get() + 1).unwrap();
     assert_eq!(
         s.receipt(at.token.expose(), invalid).await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     let evidence: i64 = app
         .executor
@@ -2327,7 +2478,7 @@ async fn independent_demands_keep_unrelated_publication_lease_and_progress() {
     .unwrap();
     assert_eq!(
         s.demand(sessions[0].token.expose(), ab).await,
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     );
     s.revoke_key(
         owner.token.expose(),
@@ -2820,7 +2971,7 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
             })
             .await
             .err(),
-        Some(NodeError::Unauthorized)
+        Some(Error::InvalidCredentials)
     );
     let node_session = session(&service, network, enrolled.node_id, &enrolled.keys, &signer).await;
     let lease = service
@@ -2992,7 +3143,7 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
             .authenticate(node_session.token.expose())
             .await
             .err(),
-        Some(NodeError::Unauthorized)
+        Some(Error::InvalidCredentials)
     );
     let removed = app
         .configurations()
@@ -3178,7 +3329,7 @@ async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_d
     }
     assert_eq!(
         service.authenticate(bt.token.expose()).await.err(),
-        Some(NodeError::Unauthorized)
+        Some(Error::InvalidCredentials)
     );
     let after = app
         .configurations()

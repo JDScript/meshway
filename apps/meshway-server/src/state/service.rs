@@ -1,6 +1,8 @@
 //! Integration seam for management and Node identity owners. Providers execute
 //! on the real SQLite transaction, never from a cached HTTP authorization result.
-use super::{ReportAdmission, StateError, StateHub, VisibilityScope, stream::*};
+use super::{ReportAdmission, StateHub, VisibilityScope, stream::*};
+use crate::effect::Effect;
+use crate::error::Error;
 use crate::{observations::Observations, resources::GeoIp, store::Handle};
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{Digest, NetworkId, NodeId};
@@ -8,14 +10,14 @@ use meshway_protocol::{
     events::{ClosedReason, ResetReason, StreamEvent},
     state::{StateAccepted, StateReport, StateView},
 };
-use rusqlite::Transaction;
+use rusqlite::{Transaction, TransactionBehavior};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex},
 };
 
-/// The Node credential encoding/verification is owned by B. This enum is never
+/// Node credential encoding/verification lives in `execution`. This enum is never
 /// serialized or logged and is checked again in each provider transaction.
 #[derive(Clone)]
 pub enum ReadIdentity {
@@ -30,8 +32,8 @@ pub enum ReadIdentity {
 impl ReadIdentity {
     /// Parse a session credential without granting authorization. Providers
     /// still recheck the actual session and membership on every transaction.
-    pub fn user_session(token: &str, network: NetworkId) -> Result<Self, StateError> {
-        let digest = crate::accounts::token_digest(token).map_err(|_| StateError::Unauthorized)?;
+    pub fn user_session(token: &str, network: NetworkId) -> Result<Self, Error> {
+        let digest = crate::accounts::token_digest(token)?;
         Ok(Self::UserSession { digest, network })
     }
     pub(crate) fn fingerprint(&self) -> Digest {
@@ -64,7 +66,7 @@ pub trait StateProvider: Send + Sync + 'static {
     type Progress: Clone + PartialEq + Serialize + Send + Sync + 'static;
     /// Scope of data that may remain in replay, separate from the evolving
     /// execution/observation authorization digest used inside the State core.
-    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<Digest, StateError> {
+    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<Digest, Error> {
         Ok(view.scope.authorization_digest)
     }
     /// Managers may replay prior non-secret network views in order before the
@@ -98,13 +100,13 @@ pub trait StateProvider: Send + Sync + 'static {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<ProviderView<Self>, StateError>;
+    ) -> Result<ProviderView<Self>, Error>;
     fn report(
         &self,
         tx: &Transaction<'_>,
         authorization: &str,
         now: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError>;
+    ) -> Result<ReportAdmission, Error>;
 }
 pub type ProviderView<P> = ViewContext<
     <P as StateProvider>::Configuration,
@@ -138,12 +140,26 @@ pub(crate) struct Runtime {
     pub geoip: GeoIp,
     pub observations: Observations,
 }
+/// The executor applies committed effects here, on its own thread, after COMMIT.
+impl crate::effect::EffectSink for Mutex<Runtime> {
+    fn apply(&self, effect: crate::effect::Effect) {
+        let Ok(mut runtime) = self.lock() else {
+            return;
+        };
+        match effect {
+            crate::effect::Effect::SessionRevoked { session_id } => {
+                runtime.observations.revoke_session(session_id);
+            }
+            journaled => runtime.hub.publish_committed(journaled),
+        }
+    }
+}
 impl Runtime {
     pub(crate) fn close(&mut self) {
         self.closed = true;
         self.observations = Observations::default();
     }
-    pub(crate) fn new() -> Result<Self, StateError> {
+    pub(crate) fn new() -> Result<Self, Error> {
         Ok(Self {
             closed: false,
             hub: StateHub::new()?,
@@ -181,15 +197,12 @@ impl<P: StateProvider> StateService<P> {
             runtime.close();
         }
     }
-    pub fn publisher(&self) -> CommitPublisher {
-        CommitPublisher::new(Arc::clone(&self.runtime))
-    }
     pub(crate) fn new(
         handle: Handle,
         provider: P,
         sealer: Arc<crate::secrets::Sealer>,
         runtime: Arc<Mutex<Runtime>>,
-    ) -> Result<Self, StateError> {
+    ) -> Result<Self, Error> {
         Ok(Self {
             handle,
             provider: Arc::new(provider),
@@ -202,119 +215,107 @@ impl<P: StateProvider> StateService<P> {
         &self,
         authorization: String,
         report: meshway_protocol::observations::HistoryReport,
-    ) -> Result<meshway_protocol::observations::HistoryAccepted, StateError> {
+    ) -> Result<meshway_protocol::observations::HistoryAccepted, Error> {
         let provider = Arc::clone(&self.provider);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .transact(TransactionBehavior::Deferred, move |tx| {
                 let now = Utc::now();
-                let admission = provider.report(&tx, &authorization, now)?;
-                let result = crate::observations::history::accept(&tx, &admission, report, now)?;
-                tx.commit()?;
-                Ok(result)
+                let admission = provider.report(tx, &authorization, now)?;
+                let result = crate::observations::history::accept(tx, &admission, report, now)?;
+                Ok((result, Vec::new()))
             })
-            .await?
+            .await
     }
     pub async fn history(
         &self,
         identity: ReadIdentity,
         query: meshway_protocol::observations::HistoryQuery,
-    ) -> Result<meshway_protocol::observations::HistoryPage, StateError> {
+    ) -> Result<meshway_protocol::observations::HistoryPage, Error> {
         use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
         let provider = Arc::clone(&self.provider);
         let sealer = Arc::clone(&self.sealer);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let view = provider.view(&tx, &identity, now)?;
+                let view = provider.view(tx, &identity, now)?;
                 let scope = crate::secrets::CursorScope::ObservationHistory(identity.fingerprint());
                 let previous = match &query.cursor {
                     None => None,
                     Some(cursor) => {
                         if cursor.len() > 4096 {
-                            return Err(StateError::Cursor);
+                            return Err(Error::InvalidCursor);
                         }
                         let bytes = URL_SAFE_NO_PAD
                             .decode(cursor)
-                            .map_err(|_| StateError::Cursor)?;
+                            .map_err(|_| Error::InvalidCursor)?;
                         let plain = sealer
                             .open_cursor(scope, &bytes)
-                            .map_err(|_| StateError::Cursor)?;
+                            .map_err(|_| Error::InvalidCursor)?;
                         Some(
                             serde_json::from_slice(plain.as_bytes())
-                                .map_err(|_| StateError::Cursor)?,
+                                .map_err(|_| Error::InvalidCursor)?,
                         )
                     }
                 };
                 let (mut page, next) =
-                    crate::observations::history::query(&tx, &view.scope, &query, previous, now)?;
+                    crate::observations::history::query(tx, &view.scope, &query, previous, now)?;
                 if let Some(next) = next {
-                    let bytes = serde_json::to_vec(&next).map_err(|_| StateError::Unavailable)?;
-                    page.next_cursor = Some(
-                        URL_SAFE_NO_PAD.encode(
-                            sealer
-                                .seal_cursor(scope, &bytes)
-                                .map_err(|_| StateError::Unavailable)?
-                                .as_bytes(),
-                        ),
-                    );
+                    let bytes = serde_json::to_vec(&next)
+                        .map_err(|_| Error::encode("observation history cursor"))?;
+                    page.next_cursor =
+                        Some(URL_SAFE_NO_PAD.encode(sealer.seal_cursor(scope, &bytes)?.as_bytes()));
                 }
                 Ok(page)
             })
-            .await?
+            .await
     }
     pub async fn query(
         &self,
         identity: ReadIdentity,
         nodes: Option<Vec<NodeId>>,
-    ) -> Result<StateView, StateError> {
+    ) -> Result<StateView, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let view = provider.view(&tx, &identity, now)?;
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
+                let view = provider.view(tx, &identity, now)?;
+                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let Runtime { hub, geoip, .. } = &mut *runtime;
                 hub.query(&view.scope, nodes.as_deref(), geoip, now)
             })
-            .await?
+            .await
     }
     pub async fn accept_report(
         &self,
         authorization: String,
         report: StateReport,
-    ) -> Result<StateAccepted, StateError> {
+    ) -> Result<StateAccepted, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let admission = provider.report(&tx, &authorization, now)?;
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
+                let admission = provider.report(tx, &authorization, now)?;
+                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 runtime.hub.accept_report(&admission, report, now)
             })
-            .await?
+            .await
     }
     pub async fn open_stream(
         &self,
         identity: ReadIdentity,
         cursor: Option<String>,
-    ) -> Result<String, StateError> {
+    ) -> Result<String, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         let subscriptions = Arc::clone(&self.subscriptions);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let view = provider.view(&tx, &identity, now)?;
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                let mut subscriptions =
-                    subscriptions.lock().map_err(|_| StateError::Unavailable)?;
+                let view = provider.view(tx, &identity, now)?;
+                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
+                let mut subscriptions = subscriptions.lock().map_err(|_| Error::RUNTIME)?;
                 let authorization = provider.replay_scope(&view)?;
                 subscriptions.retain(|_, sub| {
                     sub.created_at + Duration::minutes(15) > now
@@ -323,7 +324,7 @@ impl<P: StateProvider> StateService<P> {
                             .is_none_or(|at| at + Duration::minutes(1) > now)
                 });
                 if runtime.closed {
-                    return Err(StateError::Unavailable);
+                    return Err(Error::CLOSED);
                 }
                 let owner = identity.fingerprint();
                 let id = random_id()?;
@@ -342,9 +343,11 @@ impl<P: StateProvider> StateService<P> {
                             >= 4
                             && subscriptions[&previous].disconnected_at.is_some()
                         {
-                            return Err(StateError::Budget);
+                            return Err(Error::StateLimit);
                         }
-                        let mut sub = subscriptions.remove(&previous).ok_or(StateError::Cursor)?;
+                        let mut sub = subscriptions
+                            .remove(&previous)
+                            .ok_or(Error::InvalidCursor)?;
                         let mut pending: VecDeque<_> = sub.replay.after(cursor)?.into();
                         let replayed: std::collections::BTreeSet<_> = pending
                             .iter()
@@ -388,7 +391,7 @@ impl<P: StateProvider> StateService<P> {
                         .count()
                         >= 4
                 {
-                    return Err(StateError::Budget);
+                    return Err(Error::StateLimit);
                 }
                 let Runtime { hub, geoip, .. } = &mut *runtime;
                 let state = hub.query(&view.scope, None, geoip, now)?;
@@ -421,19 +424,17 @@ impl<P: StateProvider> StateService<P> {
                 subscriptions.insert(id.clone(), sub);
                 Ok(id)
             })
-            .await?
+            .await
     }
-    async fn poll_frame(&self, id: String) -> Result<StreamPoll, StateError> {
+    async fn poll_frame(&self, id: String) -> Result<StreamPoll, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         let subscriptions = Arc::clone(&self.subscriptions);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                let mut subscriptions =
-                    subscriptions.lock().map_err(|_| StateError::Unavailable)?;
+                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
+                let mut subscriptions = subscriptions.lock().map_err(|_| Error::RUNTIME)?;
                 let Some(mut sub) = subscriptions.remove(&id) else {
                     return Ok(StreamPoll::Closed);
                 };
@@ -442,17 +443,17 @@ impl<P: StateProvider> StateService<P> {
                 if runtime.closed {
                     return closed::<P>(ClosedReason::ServerShutdown);
                 }
-                let view = match provider.view(&tx, &sub.identity, now) {
+                let view = match provider.view(tx, &sub.identity, now) {
                     Ok(view) => view,
-                    Err(StateError::Unauthorized) => {
+                    Err(Error::InvalidSession | Error::InvalidCredentials) => {
                         return closed::<P>(ClosedReason::SessionExpired);
                     }
-                    Err(StateError::NotFound | StateError::Forbidden)
+                    Err(Error::NotFound | Error::PermissionDenied)
                         if matches!(sub.identity, ReadIdentity::UserSession { .. }) =>
                     {
                         return closed::<P>(ClosedReason::MembershipRevoked);
                     }
-                    Err(StateError::Conflict)
+                    Err(Error::StateConflict | Error::BindingConflict)
                         if matches!(sub.identity, ReadIdentity::Node { .. }) =>
                     {
                         return closed::<P>(ClosedReason::NodeLeaseExpired);
@@ -529,7 +530,7 @@ impl<P: StateProvider> StateService<P> {
                     let mut revision = sub.last.scope.configuration_revision;
                     for entry in journal? {
                         match entry.change {
-                            CommittedChange::Resource { network_id }
+                            Effect::Resource { network_id }
                                 if provider.can_drain_configuration_changes(&view) =>
                             {
                                 enqueue::<P>(
@@ -541,7 +542,7 @@ impl<P: StateProvider> StateService<P> {
                                 )?;
                                 changed = true;
                             }
-                            CommittedChange::Configuration { notice }
+                            Effect::Configuration { notice }
                                 if notice.revision > revision
                                     && notice.previous_revision == revision =>
                             {
@@ -564,7 +565,7 @@ impl<P: StateProvider> StateService<P> {
                                 )?;
                                 changed = true;
                             }
-                            CommittedChange::ObservationSample { observation, .. }
+                            Effect::ObservationSample { observation, .. }
                                 if visible_tasks.contains(&observation.id)
                                     && observation.path.as_ref().is_none_or(|path| {
                                         path.iter().all(|node| view.scope.visible.contains(node))
@@ -603,7 +604,10 @@ impl<P: StateProvider> StateService<P> {
                         let ready = random_id()?;
                         sub.cursor = ready.clone();
                         initial::<P>(&mut sub, ready)?;
-                        let frame = sub.pending.pop_front().ok_or(StateError::Unavailable)?;
+                        let frame = sub
+                            .pending
+                            .pop_front()
+                            .ok_or(Error::Internal("pending sse frame missing"))?;
                         subscriptions.insert(id, sub);
                         return Ok(StreamPoll::Frame(frame));
                     }
@@ -626,9 +630,12 @@ impl<P: StateProvider> StateService<P> {
                         changed = true;
                     }
                     for task in tasks {
-                        let subscription = task.subscription_id.ok_or(StateError::Unavailable)?;
+                        let subscription = task
+                            .subscription_id
+                            .ok_or(Error::Internal("observation subscription missing"))?;
                         let digest = crate::resources::content_digest(
-                            &serde_json::to_vec(&task).map_err(|_| StateError::Invalid)?,
+                            &serde_json::to_vec(&task)
+                                .map_err(|_| Error::encode("observation task"))?,
                         );
                         if sub.observations.get(&subscription) != Some(&digest) {
                             sub.observations.insert(subscription, digest);
@@ -719,7 +726,10 @@ impl<P: StateProvider> StateService<P> {
                         return Ok(StreamPoll::Pending);
                     }
                 }
-                let frame = sub.pending.pop_front().ok_or(StateError::Unavailable)?;
+                let frame = sub
+                    .pending
+                    .pop_front()
+                    .ok_or(Error::Internal("pending sse frame missing"))?;
                 if frame.id.is_some() && frame.id == sub.initial_batch {
                     sub.initial_batch = None;
                 }
@@ -729,16 +739,9 @@ impl<P: StateProvider> StateService<P> {
                 subscriptions.insert(id, sub);
                 Ok(StreamPoll::Frame(frame))
             })
-            .await?
+            .await
     }
 }
-/// Clone this handle into A/B's accepted SQLite closures. Publish directly
-/// after COMMIT, never in the awaiting HTTP future.
-pub struct CommitPublisher {
-    runtime: Arc<Mutex<Runtime>>,
-}
-/// Synchronous execution input for B. Call after B has validated the supplied
-/// admission in the same transaction; no HTTP source address participates.
 pub struct StateReader {
     runtime: Arc<Mutex<Runtime>>,
 }
@@ -757,66 +760,25 @@ impl StateReader {
         &self,
         admission: &ReportAdmission,
         now: DateTime<Utc>,
-    ) -> Result<meshway_protocol::state::DerivedNodeState, StateError> {
-        let mut runtime = self.runtime.lock().map_err(|_| StateError::Unavailable)?;
+    ) -> Result<meshway_protocol::state::DerivedNodeState, Error> {
+        let mut runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
         if runtime.closed {
-            return Err(StateError::Unavailable);
+            return Err(Error::CLOSED);
         }
         let Runtime { hub, geoip, .. } = &mut *runtime;
         Ok(hub.location(admission, geoip, now))
     }
 }
-impl Clone for CommitPublisher {
-    fn clone(&self) -> Self {
-        Self {
-            runtime: Arc::clone(&self.runtime),
-        }
-    }
+fn random_id() -> Result<String, Error> {
+    Ok(crate::accounts::random_uuid()?.to_string())
 }
-impl CommitPublisher {
-    pub(crate) fn new(runtime: Arc<Mutex<Runtime>>) -> Self {
-        Self { runtime }
-    }
-    /// Preferred A/B write boundary: invoke inside the accepted store job.
-    /// A failed transaction emits nothing; cancellation of the HTTP waiter
-    /// cannot interrupt this synchronous commit-to-journal sequence.
-    pub fn commit(
-        &self,
-        transaction: Transaction<'_>,
-        changes: Vec<CommittedChange>,
-    ) -> Result<(), StateError> {
-        if changes.len() > MAX_REPLAY_EVENTS {
-            return Err(StateError::Budget);
-        }
-        transaction.commit()?;
-        for change in changes {
-            self.publish_committed(change);
-        }
-        Ok(())
-    }
-    pub fn publish_committed(&self, change: CommittedChange) {
-        if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.hub.publish_committed(change);
-        }
-    }
-    pub fn revoke_session(&self, session: meshway_model::SessionId) {
-        if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.observations.revoke_session(session);
-        }
-    }
-}
-fn random_id() -> Result<String, StateError> {
-    Ok(crate::accounts::random_uuid()
-        .map_err(|_| StateError::Unavailable)?
-        .to_string())
-}
-fn closed<P: StateProvider>(reason: ClosedReason) -> Result<StreamPoll, StateError> {
+fn closed<P: StateProvider>(reason: ClosedReason) -> Result<StreamPoll, Error> {
     Ok(StreamPoll::Frame(SseFrame::encode(
         None,
         &ProviderEvent::<P>::Closed { reason },
     )?))
 }
-fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result<(), StateError> {
+fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result<(), Error> {
     sub.initial_batch = Some(batch.clone());
     sub.pending.push_back(SseFrame::encode(
         None,
@@ -856,14 +818,14 @@ fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result
         .sum::<usize>()
         > MAX_BATCH_BYTES
     {
-        return Err(StateError::Budget);
+        return Err(Error::StateLimit);
     }
     Ok(())
 }
 fn enqueue<P: StateProvider>(
     sub: &mut Subscription<P>,
     event: ProviderEvent<P>,
-) -> Result<(), StateError> {
+) -> Result<(), Error> {
     let next = random_id()?;
     enqueue_at::<P>(sub, event, next)
 }
@@ -871,7 +833,7 @@ fn enqueue_at<P: StateProvider>(
     sub: &mut Subscription<P>,
     event: ProviderEvent<P>,
     next: String,
-) -> Result<(), StateError> {
+) -> Result<(), Error> {
     let frame = SseFrame::encode(Some(next.clone()), &event)?;
     if sub.pending.len() >= MAX_REPLAY_EVENTS
         || sub
@@ -882,7 +844,7 @@ fn enqueue_at<P: StateProvider>(
             + frame.data.len()
             > MAX_BATCH_BYTES
     {
-        return Err(StateError::Budget);
+        return Err(Error::StateLimit);
     }
     sub.pending.push_back(frame);
     sub.cursor = next;
@@ -892,7 +854,7 @@ impl<P: StateProvider> StreamSource for StateService<P> {
     fn poll<'a>(&'a self, subscription: &'a str) -> PollFuture<'a> {
         Box::pin(async move {
             match self.poll_frame(subscription.to_owned()).await {
-                Err(StateError::Budget) => Ok(StreamPoll::Frame(SseFrame::encode(
+                Err(Error::StateLimit) => Ok(StreamPoll::Frame(SseFrame::encode(
                     None,
                     &ProviderEvent::<P>::Reset {
                         reason: ResetReason::Backpressure,

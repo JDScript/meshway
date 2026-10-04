@@ -1,4 +1,4 @@
-use crate::state::StateError;
+use crate::error::Error;
 use chrono::{DateTime, Utc};
 use maxminddb::{Reader, geoip2};
 use meshway_model::{ArtifactId, resources::*, state::EndpointSource};
@@ -20,27 +20,27 @@ impl GeoIp {
     }
     /// Deployment-owned bytes, loaded from immutable artifacts. Replacing a
     /// dataset clears derived cache, never modifies source report timestamps.
-    pub fn install_city(&mut self, id: ArtifactId, bytes: Vec<u8>) -> Result<(), StateError> {
+    pub fn install_city(&mut self, id: ArtifactId, bytes: Vec<u8>) -> Result<(), Error> {
         if bytes.len() > 128 * 1024 * 1024 {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
-        let reader = Reader::from_source(bytes).map_err(|_| StateError::Invalid)?;
+        let reader = Reader::from_source(bytes).map_err(|_| Error::InvalidRequest)?;
         if !reader.metadata.database_type.contains("City")
             && !reader.metadata.database_type.contains("Country")
         {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         self.city = Some((id, reader));
         self.cache.clear();
         Ok(())
     }
-    pub fn install_asn(&mut self, id: ArtifactId, bytes: Vec<u8>) -> Result<(), StateError> {
+    pub fn install_asn(&mut self, id: ArtifactId, bytes: Vec<u8>) -> Result<(), Error> {
         if bytes.len() > 128 * 1024 * 1024 {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
-        let reader = Reader::from_source(bytes).map_err(|_| StateError::Invalid)?;
+        let reader = Reader::from_source(bytes).map_err(|_| Error::InvalidRequest)?;
         if !reader.metadata.database_type.contains("ASN") {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         self.asn = Some((id, reader));
         self.cache.clear();

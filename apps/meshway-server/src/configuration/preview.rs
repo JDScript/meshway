@@ -1,9 +1,13 @@
 //! Non-executable declaration planning. No generated credential, prepared
 //! listener attestation or persistent configuration is manufactured here.
-use super::*;
+use super::{Snapshot, TrustedContext, binding_changes, listener_bindings, resources};
+use crate::error::Error;
+use crate::networks::configuration::ConfigurationBindings;
 use meshway_configuration::{
-    ChangeKind, PreparationKind, plan_configuration, planned_configuration_changes,
+    ChangeKind, ConfigurationChange, NetworkConfigurationInput, PreparationKind,
+    plan_configuration, planned_configuration_changes,
 };
+use meshway_model::RequestId;
 use meshway_protocol::configuration::ConfigurationPreviewResponse;
 use meshway_transport_spec::MaterialRequirement;
 
@@ -100,7 +104,8 @@ pub(super) fn build(
             .transpose()?
             .unwrap_or_default(),
         unavailable_dependencies: plan.unavailable_dependencies,
-        change_count: u32::try_from(changes.len()).map_err(|_| Error::Storage)?,
+        change_count: u32::try_from(changes.len())
+            .map_err(|_| Error::Internal("change count overflow"))?,
         changes,
         source_changed: current.document.source_jsonc.expose() != input.source,
         deleted_node_ids,

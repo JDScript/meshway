@@ -95,7 +95,6 @@ pub(super) async fn register(
     body: Result<Json<RegisterRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<SessionIssuedResponse>), HttpError> {
     let Json(body) = body.map_err(|error| HttpError::json(id, error))?;
-    let password_rules = rules(accounts.options().password, id)?;
     let issued = accounts
         .register_from_client(
             body.email,
@@ -104,7 +103,7 @@ pub(super) async fn register(
             client_label(&headers),
         )
         .await
-        .map_err(|error| HttpError::account(id, error, password_rules))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok((StatusCode::CREATED, Json(issued_view(id, issued))))
 }
 
@@ -117,7 +116,6 @@ pub(super) async fn login(
     body: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Json<SessionIssuedResponse>, HttpError> {
     let Json(body) = body.map_err(|error| HttpError::json(id, error))?;
-    let password_rules = rules(accounts.options().password, id)?;
     let issued = accounts
         .login_from_client(
             body.email,
@@ -126,7 +124,7 @@ pub(super) async fn login(
             client_label(&headers),
         )
         .await
-        .map_err(|error| HttpError::account(id, error, password_rules))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok(Json(issued_view(id, issued)))
 }
 
@@ -184,11 +182,10 @@ pub(super) async fn session(
     Extension(id): Extension<RequestId>,
     headers: HeaderMap,
 ) -> Result<Json<AuthSessionResponse>, HttpError> {
-    let password_rules = rules(accounts.options().password, id)?;
     let session = accounts
         .authenticate(bearer(&headers, id)?)
         .await
-        .map_err(|error| HttpError::account(id, error, password_rules))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok(Json(session_view(id, session)))
 }
 
@@ -199,11 +196,10 @@ pub(super) async fn logout(
     Extension(id): Extension<RequestId>,
     headers: HeaderMap,
 ) -> Result<StatusCode, HttpError> {
-    let password_rules = rules(accounts.options().password, id)?;
     accounts
         .logout(bearer(&headers, id)?, id)
         .await
-        .map_err(|error| HttpError::account(id, error, password_rules))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok(StatusCode::NO_CONTENT)
 }
 

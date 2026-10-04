@@ -696,8 +696,8 @@ async fn reacquired_instance_preserves_exact_target_but_requires_its_own_saved_a
 
 #[tokio::test]
 async fn disconnected_streams_release_active_quota_and_keep_bounded_replay() {
+    use meshway_server::error::Error;
     use meshway_server::state::{
-        StateError,
         service::ReadIdentity,
         stream::{StreamPoll, StreamSource},
     };
@@ -735,13 +735,13 @@ async fn disconnected_streams_release_active_quota_and_keep_bounded_replay() {
     }
     assert!(matches!(
         service.open_stream(identity.clone(), None).await,
-        Err(StateError::Budget)
+        Err(Error::StateLimit)
     ));
     assert!(matches!(
         service
             .open_stream(identity.clone(), last_cursor.clone())
             .await,
-        Err(StateError::Budget)
+        Err(Error::StateLimit)
     ));
     service.cancel(&active.pop().unwrap());
     let resumed = service.open_stream(identity, last_cursor).await.unwrap();

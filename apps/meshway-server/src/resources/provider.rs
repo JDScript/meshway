@@ -3,10 +3,11 @@ use super::{
     bindings,
     service::{ResourceProvider, RuleSetScope},
 };
+use crate::error::Error;
 use crate::{
     configuration::{Snapshot, SnapshotCache},
     secrets::Sealer,
-    state::{StateError, service::ReadIdentity},
+    state::service::ReadIdentity,
 };
 use chrono::{DateTime, Utc};
 use meshway_configuration::{NetworkConfigurationInput, RuleSet};
@@ -21,11 +22,7 @@ pub struct Provider {
     pub(crate) cache: Arc<SnapshotCache>,
 }
 impl Provider {
-    fn snapshot(
-        &self,
-        tx: &Transaction<'_>,
-        network: NetworkId,
-    ) -> Result<Arc<Snapshot>, StateError> {
+    fn snapshot(&self, tx: &Transaction<'_>, network: NetworkId) -> Result<Arc<Snapshot>, Error> {
         let revision: i64 = tx
             .query_row(
                 "SELECT current_revision FROM networks WHERE id=?1 AND deleted_at IS NULL",
@@ -33,12 +30,14 @@ impl Provider {
                 |row| row.get(0),
             )
             .optional()?
-            .ok_or(StateError::NotFound)?;
-        let revision = Revision::new(revision.try_into().map_err(|_| StateError::Storage)?)
-            .map_err(|_| StateError::Storage)?;
-        self.cache
-            .load(tx, network, revision, &self.sealer)
-            .map_err(|_| StateError::Storage)
+            .ok_or(Error::NotFound)?;
+        let revision = Revision::new(
+            revision
+                .try_into()
+                .map_err(|_| Error::decode("networks.current_revision"))?,
+        )
+        .map_err(|_| Error::decode("networks.current_revision"))?;
+        self.cache.load(tx, network, revision, &self.sealer)
     }
 }
 impl ResourceProvider for Provider {
@@ -47,17 +46,15 @@ impl ResourceProvider for Provider {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<RuleSetScope, StateError> {
+    ) -> Result<RuleSetScope, Error> {
         let ReadIdentity::UserSession { digest, network } = identity else {
-            return Err(StateError::Forbidden);
+            return Err(Error::PermissionDenied);
         };
         let session =
-            crate::store::authorization::current_session(tx, digest, now.timestamp_millis())
-                .map_err(|_| StateError::Unauthorized)?;
+            crate::store::authorization::current_session(tx, digest, now.timestamp_millis())?;
         // Resource administration is a full-network view. Member and Node views
         // receive compiled execution only, never source URLs or global catalogs.
-        crate::store::authorization::authorize_manager(tx, *network, session.user.id)
-            .map_err(|_| StateError::Forbidden)?;
+        crate::store::authorization::authorize_manager(tx, *network, session.user.id)?;
         self.system_rule_sets(tx, *network, now)
     }
     fn system_rule_sets(
@@ -65,7 +62,7 @@ impl ResourceProvider for Provider {
         tx: &Transaction<'_>,
         network: NetworkId,
         _now: DateTime<Utc>,
-    ) -> Result<RuleSetScope, StateError> {
+    ) -> Result<RuleSetScope, Error> {
         let network = &network;
         let snapshot = self.snapshot(tx, *network)?;
         let selected = bindings::at_revision(
@@ -73,10 +70,8 @@ impl ResourceProvider for Provider {
             *network,
             snapshot.revision,
             &snapshot.bindings.rule_sets,
-        )
-        .map_err(|_| StateError::Storage)?;
-        let publication = bindings::latest_publication(tx, *network, snapshot.revision)
-            .map_err(|_| StateError::Storage)?;
+        )?;
+        let publication = bindings::latest_publication(tx, *network, snapshot.revision)?;
         let mut views = BTreeMap::new();
         let mut check_versions = BTreeMap::new();
         for (key, definition) in &snapshot.document.configuration.rule_sets {
@@ -96,17 +91,24 @@ impl ResourceProvider for Provider {
             let problem = check
                 .as_ref()
                 .and_then(|(problem, _, _, _)| problem.as_ref())
-                .map(|value| serde_json::from_str(value).map_err(|_| StateError::Storage))
+                .map(|value| {
+                    serde_json::from_str(value)
+                        .map_err(|_| Error::decode("rule_set_checks.problem"))
+                })
                 .transpose()?;
             let checked_at = check
                 .as_ref()
                 .map(|(_, at, _, _)| {
-                    DateTime::from_timestamp_millis(*at).ok_or(StateError::Storage)
+                    DateTime::from_timestamp_millis(*at)
+                        .ok_or(Error::decode("rule_set_checks.checked_at"))
                 })
                 .transpose()?;
             let last_success_at = check
                 .and_then(|(_, _, at, _)| at)
-                .map(|at| DateTime::from_timestamp_millis(at).ok_or(StateError::Storage))
+                .map(|at| {
+                    DateTime::from_timestamp_millis(at)
+                        .ok_or(Error::decode("rule_set_checks.last_success_at"))
+                })
                 .transpose()?;
             views.insert(
                 key.clone(),
@@ -144,31 +146,28 @@ impl ResourceProvider for Provider {
         key: &str,
         artifact: &ArtifactSummary,
         now: DateTime<Utc>,
-    ) -> Result<(), StateError> {
+    ) -> Result<(), Error> {
         let current = self.snapshot(tx, network)?;
         if current.revision != revision {
-            return Err(StateError::Conflict);
+            return Err(Error::StateConflict);
         }
         current
             .document
             .configuration
             .rule_sets
             .get(key)
-            .ok_or(StateError::NotFound)?;
+            .ok_or(Error::NotFound)?;
         if summary(tx, network, artifact.id)? != *artifact {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         let input = NetworkConfigurationInput::from(&current.document.configuration);
         let mut selected =
-            bindings::at_revision(tx, network, revision, &current.bindings.rule_sets)
-                .map_err(|_| StateError::Storage)?;
+            bindings::at_revision(tx, network, revision, &current.bindings.rule_sets)?;
         let unchanged = selected.get(key) == Some(&artifact.id);
         selected.insert(key.into(), artifact.id);
         let mut context =
-            crate::execution::configuration::validation_context(tx, &current, &input, None, true)
-                .map_err(|_| StateError::Invalid)?;
-        context.rule_sets =
-            bindings::contents(tx, network, &selected).map_err(|_| StateError::Invalid)?;
+            crate::execution::configuration::validation_context(tx, &current, &input, None, true)?;
+        context.rule_sets = bindings::contents(tx, network, &selected)?;
         context.verified_listeners = current
             .document
             .configuration
@@ -180,8 +179,7 @@ impl ResourceProvider for Provider {
                 })
             })
             .collect();
-        meshway_configuration::normalize_with_dependencies(input, &context)
-            .map_err(|_| StateError::Invalid)?;
+        meshway_configuration::normalize_with_dependencies(input, &context)?;
         if unchanged {
             return Ok(());
         }
@@ -192,11 +190,7 @@ impl ResourceProvider for Provider {
             "refresh",
             now.timestamp_millis(),
             &selected,
-        )
-        .map_err(|error| match error {
-            crate::execution::NodeError::Storage => StateError::Storage,
-            _ => StateError::Invalid,
-        })?;
+        )?;
         Ok(())
     }
 }
@@ -205,7 +199,7 @@ fn summary(
     tx: &Transaction<'_>,
     network: NetworkId,
     id: meshway_model::ArtifactId,
-) -> Result<ArtifactSummary, StateError> {
+) -> Result<ArtifactSummary, Error> {
     let data = super::load_artifact(tx, network, id)?;
     let (digest, created): (String, i64) = tx.query_row(
         "SELECT digest,created_at FROM dataset_artifacts WHERE network_id=?1 AND id=?2 AND kind='ruleSet'",
@@ -213,8 +207,11 @@ fn summary(
     )?;
     Ok(ArtifactSummary {
         id,
-        digest: digest.parse().map_err(|_| StateError::Storage)?,
-        created_at: DateTime::from_timestamp_millis(created).ok_or(StateError::Storage)?,
+        digest: digest
+            .parse()
+            .map_err(|_| Error::decode("dataset_artifacts.digest"))?,
+        created_at: DateTime::from_timestamp_millis(created)
+            .ok_or(Error::decode("dataset_artifacts.created_at"))?,
         entries: (data.ip_cidr.len() + data.domain_suffix.len()) as u32,
     })
 }

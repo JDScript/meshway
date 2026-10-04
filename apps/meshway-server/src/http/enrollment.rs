@@ -1,4 +1,4 @@
-use super::{agent::error, auth::bearer, error::HttpError};
+use super::{auth::bearer, error::HttpError};
 
 #[utoipa::path(post,path="/agent-api/v1/enrollment-requests/{enrollmentRequestId}/redeem",operation_id="redeemEnrollmentRequest",tag="enrollment",params(("enrollmentRequestId"=EnrollmentRequestId,Path)),request_body=RedeemEnrollmentRequest,responses((status=200,body=EnrollmentResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn redeem(
@@ -13,7 +13,7 @@ pub(super) async fn redeem(
         .redeem(request, body)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(post,path="/agent-api/v1/enrollments",operation_id="enrollNodeWithKey",tag="enrollment",request_body=KeyEnrollmentRequest,responses((status=200,body=EnrollmentResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn redeem_key(
@@ -26,7 +26,7 @@ pub(super) async fn redeem_key(
         .redeem_key(body)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 use crate::enrollment::Enrollment;
 use axum::{
@@ -47,7 +47,7 @@ pub(super) async fn create(
         .create_request(body)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(get,path="/api/v1/device-authorizations/{enrollmentRequestId}",operation_id="getDeviceAuthorization",tag="enrollment",security(("userSession"=[])),params(("enrollmentRequestId"=EnrollmentRequestId,Path)),responses((status=200,body=DeviceAuthorizationView),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
 pub(super) async fn inspect(
@@ -62,7 +62,7 @@ pub(super) async fn inspect(
         .inspect(token, request)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(post,path="/api/v1/device-authorizations/{enrollmentRequestId}/approve",operation_id="approveDeviceAuthorization",tag="enrollment",security(("userSession"=[])),params(("enrollmentRequestId"=EnrollmentRequestId,Path)),request_body=ApproveEnrollmentRequest,responses((status=200,body=DeviceAuthorizationView),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
 pub(super) async fn approve(
@@ -79,7 +79,7 @@ pub(super) async fn approve(
         .approve(token, request, body)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(post,path="/api/v1/device-authorizations/{enrollmentRequestId}/deny",operation_id="denyDeviceAuthorization",tag="enrollment",security(("userSession"=[])),params(("enrollmentRequestId"=EnrollmentRequestId,Path)),responses((status=204),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
 pub(super) async fn deny(
@@ -93,7 +93,7 @@ pub(super) async fn deny(
     service
         .deny(token, request)
         .await
-        .map_err(|e| error(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
 #[utoipa::path(post,path="/agent-api/v1/enrollment-requests/{enrollmentRequestId}/query",operation_id="queryEnrollmentRequest",tag="enrollment",params(("enrollmentRequestId"=EnrollmentRequestId,Path)),request_body=EnrollmentDeviceProof,responses((status=200,body=EnrollmentPollResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
@@ -109,7 +109,7 @@ pub(super) async fn poll(
         .poll(request, body)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(post,path="/agent-api/v1/enrollment-requests/{enrollmentRequestId}/cancel",operation_id="cancelEnrollmentRequest",tag="enrollment",params(("enrollmentRequestId"=EnrollmentRequestId,Path)),request_body=EnrollmentDeviceProof,responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=409,body=ErrorResponse)))]
 pub(super) async fn cancel(
@@ -123,7 +123,7 @@ pub(super) async fn cancel(
     service
         .cancel(request, body)
         .await
-        .map_err(|e| error(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/enrollment-keys",operation_id="createEnrollmentKey",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CreateEnrollmentKeyRequest,responses((status=200,body=EnrollmentKeyResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse),(status=422,body=ErrorResponse)))]
@@ -141,7 +141,7 @@ pub(super) async fn create_key(
         .create_key(token, network, body)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/enrollment-keys",operation_id="listEnrollmentKeys",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path),meshway_protocol::NetworkPageQuery),responses((status=200,body=EnrollmentKeysResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse)))]
 pub(super) async fn list_keys(
@@ -161,7 +161,7 @@ pub(super) async fn list_keys(
         .list_keys(token, network, query.limit.unwrap_or(50), query.cursor)
         .await
         .map(Json)
-        .map_err(|e| error(id, e))
+        .map_err(|e| HttpError::domain(id, e))
 }
 #[utoipa::path(delete,path="/api/v1/networks/{networkId}/enrollment-keys/{keyId}",operation_id="revokeEnrollmentKey",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("keyId"=EnrollmentKeyId,Path)),responses((status=204),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse)))]
 pub(super) async fn revoke_key(
@@ -175,6 +175,6 @@ pub(super) async fn revoke_key(
     service
         .revoke_key(token, network, key)
         .await
-        .map_err(|e| error(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }

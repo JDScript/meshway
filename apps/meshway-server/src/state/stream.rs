@@ -1,9 +1,10 @@
 //! A bounded commit journal and SSE transport. The provider performs each poll
 //! on the same serial owner as commits, reauthorizing before returning frames.
-use super::StateError;
+use crate::effect::Effect;
+use crate::error::Error;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::{Stream, stream};
-use meshway_model::{NetworkId, NodeId, ObservationId, StateEpoch};
+use meshway_model::{NetworkId, StateEpoch};
 use serde::Serialize;
 use std::{
     collections::VecDeque, convert::Infallible, future::Future, pin::Pin, sync::Arc, time::Duration,
@@ -13,57 +14,10 @@ pub const MAX_REPLAY_EVENTS: usize = 512;
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Clone, Debug)]
-pub enum CommittedChange {
-    /// Publish only after permanent credential revocation and configuration
-    /// removal commit. Frees volatile report storage; SQL retains revocation.
-    NodeRetired {
-        network_id: NetworkId,
-        node_id: NodeId,
-    },
-    State {
-        network_id: NetworkId,
-        node_id: NodeId,
-    },
-    Configuration {
-        notice: meshway_protocol::events::ConfigurationNotice,
-    },
-    Authorization {
-        network_id: NetworkId,
-    },
-    Progress {
-        network_id: NetworkId,
-    },
-    Observation {
-        network_id: NetworkId,
-        observation_id: ObservationId,
-    },
-    ObservationSample {
-        network_id: NetworkId,
-        observation: Box<meshway_protocol::observations::ObservationTask>,
-    },
-    Resource {
-        network_id: NetworkId,
-    },
-}
-impl CommittedChange {
-    pub fn network(&self) -> NetworkId {
-        match self {
-            Self::State { network_id, .. }
-            | Self::NodeRetired { network_id, .. }
-            | Self::Authorization { network_id }
-            | Self::Progress { network_id }
-            | Self::Observation { network_id, .. }
-            | Self::ObservationSample { network_id, .. }
-            | Self::Resource { network_id } => *network_id,
-            Self::Configuration { notice } => notice.network_id,
-        }
-    }
-}
 #[derive(Clone)]
 pub struct JournalEntry {
     pub sequence: u64,
-    pub change: CommittedChange,
+    pub change: Effect,
 }
 pub struct EventLog {
     pub epoch: StateEpoch,
@@ -78,7 +32,7 @@ impl EventLog {
             entries: VecDeque::new(),
         }
     }
-    pub fn append(&mut self, change: CommittedChange) {
+    pub fn append(&mut self, change: Effect) {
         // Sequence exhaustion ends replay in this epoch instead of wrapping IDs.
         let Some(sequence) = self.sequence.checked_add(1) else {
             self.entries.clear();
@@ -93,23 +47,19 @@ impl EventLog {
     pub fn sequence(&self) -> u64 {
         self.sequence
     }
-    pub fn after(
-        &self,
-        sequence: u64,
-        network: NetworkId,
-    ) -> Result<Vec<JournalEntry>, StateError> {
+    pub fn after(&self, sequence: u64, network: NetworkId) -> Result<Vec<JournalEntry>, Error> {
         if sequence > self.sequence
             || self
                 .entries
                 .front()
                 .is_some_and(|first| sequence.saturating_add(1) < first.sequence)
         {
-            return Err(StateError::Cursor);
+            return Err(Error::InvalidCursor);
         }
         Ok(self
             .entries
             .iter()
-            .filter(|entry| entry.sequence > sequence && entry.change.network() == network)
+            .filter(|entry| entry.sequence > sequence && entry.change.network() == Some(network))
             .cloned()
             .collect())
     }
@@ -121,14 +71,14 @@ pub struct SseFrame {
     pub data: String,
 }
 impl SseFrame {
-    pub fn encode<T: Serialize>(id: Option<String>, value: &T) -> Result<Self, StateError> {
-        let data = serde_json::to_string(value).map_err(|_| StateError::Invalid)?;
+    pub fn encode<T: Serialize>(id: Option<String>, value: &T) -> Result<Self, Error> {
+        let data = serde_json::to_string(value).map_err(|_| Error::encode("sse frame"))?;
         if data.len() > MAX_FRAME_BYTES
             || id
                 .as_ref()
                 .is_some_and(|id| id.len() > 4096 || id.contains(['\n', '\r', '\0']))
         {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
         Ok(Self { id, data })
     }
@@ -138,7 +88,7 @@ pub enum StreamPoll {
     Pending,
     Closed,
 }
-pub type PollFuture<'a> = Pin<Box<dyn Future<Output = Result<StreamPoll, StateError>> + Send + 'a>>;
+pub type PollFuture<'a> = Pin<Box<dyn Future<Output = Result<StreamPoll, Error>> + Send + 'a>>;
 
 /// One call produces at most one frame and must recheck current authorization,
 /// even when draining an initial snapshot or replay buffer. Pending must not
@@ -212,12 +162,12 @@ impl ReplayBuffer {
             }
         }
     }
-    pub fn after(&self, cursor: &str) -> Result<Vec<SseFrame>, StateError> {
+    pub fn after(&self, cursor: &str) -> Result<Vec<SseFrame>, Error> {
         let index = self
             .frames
             .iter()
             .position(|frame| frame.id.as_deref() == Some(cursor))
-            .ok_or(StateError::Cursor)?;
+            .ok_or(Error::InvalidCursor)?;
         Ok(self.frames.iter().skip(index + 1).cloned().collect())
     }
     pub fn clear(&mut self) {

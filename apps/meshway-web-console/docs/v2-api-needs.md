@@ -46,17 +46,17 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `5cfa1b9c`）
+## 接入状态（后端 `ac4a1872`）
 
-console 已接入 `5cfa1b9c` 提供的全部 Console 操作（`/api/v1` 下共 66 个）：
+console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
 - 账户、会话和账户活动；
 - 网络、成员、加入链接和网络活动；
-- 配置：JSONC 和全部区段表单、validate（含规则集准备）、apply、历史、对照和恢复；
+- 配置：JSONC 和全部区段表单、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；
 - 节点、节点运行 State、节点设置（成员通过 `getNodeSettings` 读取）和节点密钥；
 - 接入密钥和设备授权；
 - 按 revision 的部署进度；
-- 网络 SSE，含观察事件；
+- 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；
 - 规则集；
 - 观测历史；
 - 主动路径观察。
@@ -67,97 +67,85 @@ console 已接入 `5cfa1b9c` 提供的全部 Console 操作（`/api/v1` 下共 6
 - 策略验证 `configuration/evaluate`：给定源、目的、协议和端口，返回命中的 access、topology、routing 规则，以及规划的完整路径或出口；结果标明是规划，不是实测。
 - 成员切换路由方案：`requestedProfile`、`appliedProfile`、允许的方案、`locked` 和自动方案的判断依据。
 - 节点的版本兼容状态 `versionStatus`（current、outdated、unsupported），由服务端按兼容门槛判定。
-- `reassignAddresses`、`rotateMaterial`。
+- `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
 - 安装脚本和 Agent 发布。
 - 可信 DNS 与 GeoIP 的数据输入，以及基于它们的自动方案。
 
 ## 待处理的问题
 
-以下按 `5cfa1b9c` 核对。
+以下按 main 上的 `ac4a1872` 核对（含提交事务与 effects 的重构；契约与 `c0f07f77` 相同），用隔离 Server 和脚本节点验证（脚本节点只接入、持有实例和上报 State，不应用配置、不执行任务）。凡是契约里能看出的，按 `packages/protocol/openapi.json` 核对。
 
-**`5cfa1b9c` 已修复的问题**（不再跟踪）：
+**已修复并已验证**（不再跟踪；`ac4a1872` 上重新确认过前几轮修复的项目没有回退）：
 
-- `DefaultsUpdate.dialers` 改为可省略。
-- 没有目标节点时，apply 返回 `publicationIds: []`。
-- `request_id_conflict`、`version_conflict`、`state_conflict` 各自返回。
-- 加入链接 `inspect` 区分各种失效状态。
-- 补齐了加入链接、接入密钥和节点密钥的 actions。
-- 补齐了字段：
-  - 设备请求的 `existing` 和 `returnMethod`；
-  - 批准信息；
-  - 接入密钥的创建人、使用时间、接入后的节点和预设摘要；
-  - 密钥的创建时间；
-  - 活动 actor 的邮箱快照。
-- 加入链接和接入密钥的列表带 `total`，并按倒序分页。
-- 成员可读自己设备的设置（`getNodeSettings`）。
-- 承载目录的 schema 名称说明。
+- OpenAPI 组件重名：IP 查询改用 `LookupUnavailableReason`。
+- 成员的设置变化后，服务端发 `sync.reset` 并重发完整批次；console 不再自行断开重连。
+- 会话被撤销时先发 `stream.closed`（`session_expired`）再结束。
+- 断开的流立即释放名额：同一会话连续打开并断开 7 次均为 200。
+- `state.delta` 带 `asOf`、`sequence`、`configurationRevision`；概览的"截至"随增量保持最新。
+- 新增 VLESS listener 可以预览：`willGenerate` 列出将生成的 UUID、证书和私钥，`requirements` 列出待完成的证书校验。
+- 成员的 SSE 库存与 `GET /nodes` 一致，只有自己的 User 身份设备。
+- 观察鉴权失败不再返回 401：源节点重新 acquire 后，订阅被移除（读取为 404），console 不会登出。
+- SDK 不再使用 DOM 类型 `ReadableStreamReadResult`。
+- 账户会话和账户活动的游标失效时返回 `invalid_cursor`，与网络列表一致。
+- `removeMember` 的 revision 不匹配时返回 `revision_conflict`。
+- 删除节点的预览不再把该节点列进 `addressChangedNodeIds`。
+
+提交事务重构后，配置变更、节点删除和成员移除的事件都在提交后立即送达（依次为 `configuration.changed`、`entities.delta`、`state.delta`、`configuration.progress`），被拒的提交不产生事件。
+
+下列问题在 `ac4a1872` 上实测仍然存在：撤销已失效的加入链接或接入密钥仍返回 204；降级 admin 后其链接的列表与 inspect 说法不一；`account.email` 的 actor 快照是新邮箱；VLESS 预览的 `requirements` 与 `willGenerate` 重叠；普通规则里的 `unmanaged` 被拒；`ConfigurationIssue` 只有 path 和 message；规则集准备失败仍是英文 Debug 名（如 `InvalidSource`、`DownloadFailed`）；观察目标没有可用路径时返回不带参数的 403；validate 响应的 `requestId` 不回显；成员读完整配置得到 403；GeoIP 数据集的 `install` 仍没有调用方。其余条目契约未变，或需要真实 Agent，这次没有重新实测。
 
 ### 影响功能或安全
 
-1. **OpenAPI 组件重名已在主线整合中修复。** 执行保留 `UnavailableReason`，IP 查询使用独立的 `LookupUnavailableReason`；路由、子 API 与 SSE schema 注册检查同名冲突并失败，生成 SDK 已区分两组词汇。其余反馈仍按下列原范围逐项核对。
-2. **成员的配置视图不会更新。** `configuration.changed` 之后不会重发成员的节点设置，console 只能断开重连做完整同步，或者重新调用 `getNodeSettings`。
-3. **SSE**
-   - 从不发送 `stream.closed`：会话过期、被移除、角色变化时，连接都只是 EOF 结束。console 要靠重连拿到 401 或 404 才知道原因。
-   - 每个会话每个网络最多 4 条流，已断开的订阅还要占名额 1 分钟。刷新几次或开多个标签页，就会连续收到约 1 分钟的 429。
-   - `state.delta` 不带 `asOf`、`sequence` 和 `configurationRevision`，应用增量后这三项一直是快照时的值。
-   - 快照不带 requestId，无法直接当 GET 响应写入缓存，管理员的配置只能重新读取。
-4. **部署与执行**
-   - 节点应用配置后如果重新 acquire instance，在原版本中它会被标为 `superseded`，并一直显示"未回报"，实际上它已经应用。
-   - 任何节点发起 demand 都会重新发布整网配置。其他节点立刻变成 `config_mismatch`，links 变成 `expired`，直到它们重新上报。报告有效期只有 60 秒，概览上的状态因此反复跳动。
-5. **需要生成材料的配置无法预览。** 新增 VLESS listener，或者删除后重建（轮换）时，validate 仍直接返回 422 requirements（uuid、certificate、privateKey、certificateValidation），拿不到 preview。这与 editing.md 写的"预览中显示将生成"不一致，界面因此无法完成新增 VLESS。
-6. **GeoIP/ASN 数据集没有部署入口。** `IpDatasets::install` 没有调用方，所以所有节点都没有位置。
-7. **设备授权的浏览器链接格式没有定义。** console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
-8. **SSE 把 Tag 节点的库存推给了普通成员。** 同一个成员，`GET /nodes` 只返回自己的 User 身份设备，而 `entities.snapshot` 返回了全网节点（含 identity、地址和密钥）。两者的可见范围不一致；按文档，GET 的范围是对的。
-9. **主动观察**
-   - 创建、续租、取消都会重新生成整网的执行发布。正在运行的观察每 10 秒就被打回"准备中"，path 变为 null、分段加一，无法连续测量；每个 console 的事件流也随之收到 `sync.reset` 并全量重新同步；节点频繁显示"报告与配置不符"。
-   - 续租和读取在内部校验失败时（例如节点租约已过）返回 401 `invalid_session`，console 无法和会话失效区分，会把用户登出。应改为 403、404 或 409。
-   - 有观察在运行时，controller 处理 Agent 请求（tasks、renew、receipts）要 0.4–1 秒。
+1. **部署与执行**（需要真实 Agent 复核，脚本节点无法验证）
+   - 节点应用配置后如果重新 acquire instance，在原版本中会被标为 `superseded`。
+   - 任何节点发起 demand 都会重新发布整网配置，其他节点变成 `config_mismatch`，links 变成 `expired`，直到重新上报。
+   - 主动观察的创建、续租、取消是否仍重新生成整网执行发布；有观察时 Agent 请求（tasks、renew、receipts）的耗时。
+2. **GeoIP/ASN 数据集没有部署入口。** `IpDatasets::install` 没有调用方，所以所有节点都没有位置。
+3. **设备授权的浏览器链接格式没有定义。** console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
+4. **`NetworkActions` 没有"读取完整配置"的动作。** console 只能先请求 `GET /configuration`，用 403 判断自己是成员，再改读成员视图，因此成员打开节点页时总有一次被拒绝的请求。
 
 ### 契约和字段
 
-10. **配置诊断**
+5. **配置诊断**
    - `ConfigurationIssue` 只有英文 message，没有 code 和 params，无法本地化。
    - 路径只到集合一级，解析错误时 path 为空。节点级的出口授权问题挂在 `/nodes/<id>` 上，指不到具体的规则或方案。
    - 没有 warning 通道，无法提示被前面规则完全遮挡的规则。
    - 数组变化只按整体报告。
-   - 预览缺 `affectedNodeIds`、`identityChangedNodeIds` 和 `changedListeners`；删除节点时，该节点也会出现在 `addressChangedNodeIds` 里。
-11. **配置操作**：`unmanaged` 在普通规则里会被拒绝，但 schema 允许它出现。
-12. **Listener**
-    - `ListenerView` 只给出 WebSocket 响应头的名字，而 `ListenerUpdate` 整体替换、不继承旧值，所以表单没法在保留这些响应头的前提下修改监听。editing.md 现在写明 dialer 更新时省略 headers 表示保持，listener 是否同理需要确认。
-    - 托管证书模式下修改 `serverName` 时，`inherit_materials` 可能沿用旧证书。这是读代码推断的，没有验证。
-13. **错误码与幂等**
-    - `removeMember` 的 version 或 revision 不匹配时一律返回 `version_conflict`；revision 不匹配应返回 `revision_conflict`。
-    - 账户会话、活动的游标失效时返回 `invalid_request`，应与网络列表一致，返回 `invalid_cursor`。
-    - `refreshRuleSet` 没有请求体，也就没有 requestId，重试会重新下载。
-    - 对已失效的对象执行撤销时也返回 204，客户端分不清"这次撤销成功"和"本来就已失效"，应返回 `state_conflict`。涉及两处：
-      - `revokeEnrollmentKey` 撤销已使用或已过期的密钥；
-      - `revokeJoinLink` 撤销已使用、已撤销或已过期的链接，这时也不记活动。
-    - `revokeNodeKey` 只核对 keyId + generation 是否存在。轮换后旧代际仍在，用旧 generation 也能成功，不会返回 `version_conflict`。
-    - 降级 admin 时，它签发的未用链接会被写上 `revokedAt`，但 inspect 对这些链接返回 `join_link_issuer_unavailable`，与列表里的"已撤销"说法不一致。角色变更也没有影响预览，不会告诉操作者哪些链接会被撤销。
-    - `getNodeSettings` 的 OpenAPI 只声明了 401 和 404。
-    - 规则集准备失败只返回一条英文 issue，消息里是 Debug 枚举名（`remote rule set preparation failed: DownloadFailed`），没有 `ResourceProblem` code。
-    - 规则集超出上限的处理不一致：超过 32 个、超过 8 MiB 或准备并发已满时返回 503，30 秒超时却作为 `/ruleSets` 上的 issue 返回。
-    - 主动观察的 429 `observation_limit` 同时表示续租过早、预算用满、已到终态和 4096 窗口满，无法据此给出准确提示。
-    - validate 响应的 `requestId` 与请求里的不同。如果本意是回显请求的 ID，需要修正。
-14. **缺少的字段**
-    - 设备请求没有系统和 Agent 版本。后端说明这是有意不在 intent 里提供，console 不显示。如果以后需要，要加进签名的 intent。
-    - 成员视角的 StateView 不给对端节点的主机名。
-    - `JoinLinkView` 没有签发人；使用者的邮箱只能从当前成员列表里查，使用者离开网络后就无法显示。
-    - 主动观察：
-      - 没有观察权限的 `actions`，console 只能按"角色 + 身份"自行重述规则；
-      - 没有允许的目标和路径候选清单，空闲网络里普通成员根本没有可选的目标；
-      - 响应里没有服务器时间，续租时机只能按浏览器时钟计算；
-      - 样本只给 `latest`，重载或接管后看不到之前的序列。
-    - `account.email` 活动的 actor 快照是修改后的新邮箱，需要确认是否有意如此。
-15. **历史**
+   - 预览缺 `affectedNodeIds`、`identityChangedNodeIds` 和 `changedListeners`。
+   - 新增 VLESS listener 时，`requirements` 同时列出 `willGenerate` 里的 UUID、证书和私钥，两者的边界需要说明；console 只把 `willGenerate` 之外的项显示为待完成。
+6. **配置操作**：`unmanaged` 在普通规则里会被拒绝，但 schema 允许它出现。
+7. **Listener**
+   - `ListenerView` 只给出 WebSocket 响应头的名字，而 `ListenerUpdate` 整体替换、不继承旧值，所以表单没法在保留这些响应头的前提下修改监听。editing.md 写明 dialer 更新时省略 headers 表示保持，listener 是否同理需要确认。
+   - 托管证书模式下修改 `serverName` 时，`inherit_materials` 可能沿用旧证书。这是读代码推断的，没有验证。
+8. **错误码与幂等**
+   - `refreshRuleSet` 没有请求体，也就没有 requestId，重试会重新下载。
+   - 对已失效的对象执行撤销时也返回 204，客户端分不清"这次撤销成功"和"本来就已失效"，应返回 `state_conflict`。涉及 `revokeEnrollmentKey`（已使用或已过期的密钥）和 `revokeJoinLink`（已使用、已撤销或已过期的链接，这时也不记活动）。
+   - `revokeNodeKey` 用已轮换的旧 generation 或重复撤销时，`c0f07f77` 起不再撤掉当前执行，但仍返回 204，不返回 `version_conflict`，客户端分不清是否真的撤销了。
+   - 降级 admin 时，它签发的未用链接会被写上 `revokedAt`，但 inspect 对这些链接返回 `join_link_issuer_unavailable`，与列表里的"已撤销"说法不一致。角色变更也没有影响预览，不会告诉操作者哪些链接会被撤销。
+   - `getNodeSettings` 的 OpenAPI 只声明了 401 和 404。
+   - 规则集准备失败只返回一条英文 issue，消息里是 Debug 枚举名（`remote rule set preparation failed: DownloadFailed`），没有 `ResourceProblem` code。
+   - 规则集超出上限的处理不一致：超过 32 个、超过 8 MiB 或准备并发已满时返回 503，30 秒超时却作为 `/ruleSets` 上的 issue 返回。
+   - 主动观察：
+     - 429 `observation_limit` 同时表示续租过早、预算用满、已到终态和 4096 窗口满，无法据此给出准确提示；
+     - 创建时目标没有可用路径（例如目标没有 listener）返回 403 `permission_denied`，与"未授权"无法区分，`DemandDecision` 已有的原因（`noPath`、`missingCapability` 等）没有带出；
+     - 订阅因源节点重新 acquire 而结束时只是被移除（404），不说明原因。
+   - validate 响应的 `requestId` 与请求里的不同。如果本意是回显请求的 ID，需要修正。
+9. **缺少的字段**
+   - 设备请求没有系统和 Agent 版本。后端说明这是有意不在 intent 里提供，console 不显示。如果以后需要，要加进签名的 intent。
+   - 成员视角的 StateView 不给对端节点的主机名。
+   - SSE 的配置快照不带 requestId，不能当 GET 响应写入缓存，管理员的配置因此在同步后重新读取。
+   - `JoinLinkView` 没有签发人；使用者的邮箱只能从当前成员列表里查，使用者离开网络后就无法显示。
+   - 主动观察：没有观察权限的 `actions`（console 按"角色 + 身份"重述规则）；没有允许的目标和路径候选清单；响应里没有服务器时间，续租时机只能按浏览器时钟计算；样本只给 `latest`，重载或接管后看不到之前的序列。
+   - `account.email` 活动的 actor 快照是修改后的新邮箱，需要确认是否有意如此。
+   - `docs/v2/api/events.md` 的事件表写着 `entities.delta` 带 `configurationRevision`，但契约和实际事件里都没有这个字段。要么补上字段，要么改文档。
+10. **历史**
     - `HistoryBucket` 没有 `peerNodeId`，而且按 instance 和 publication 拆开。每次 demand 都会重新发布，同一条曲线因此被切碎，console 端做了合并。
     - `RecentLink` 没有 RTT 和关闭原因。
     - 一次查询最多 10000 行，计数在按 kind 或节点过滤之前做，繁忙的网络即使只查一个节点也会收到 429。
     - 窗口外的清理记录也会返回。bucket 把 `pending` 计入 `failed`，语义不明确。
-16. **规则集**
+11. **规则集**
     - 检查失败的记录不跨版本保留，换到新版本后变成 `not_ready`、`checkedAt: null`；成功的绑定则会延续。
     - 绑定了 8483 条的集合后，即使只改 defaults 或 groups，validate 也要约 40 秒；只有 12 条时约 10 ms。测试用的是 debug 构建，但值得查一下。
-17. **双向同时拨号**：两端都报告自己是发起方时，link 被判为 `conflicting`，`inUse` 变成 null。这种情况需要定义。
-18. **给 Agent 实现方的提醒**：每个节点最多 8 个会话、8 个 challenge。
-19. **SDK**：`transport.ts` 用了 DOM 类型 `ReadableStreamReadResult`，只带 Node 类型的 TS 项目编译不过。
-20. **部署**：`--listen` 的默认值仍是 `127.0.0.1:8420`，与现在运行的旧服务冲突。
+12. **双向同时拨号**：两端都报告自己是发起方时，link 被判为 `conflicting`，`inUse` 变成 null。这种情况需要定义。
+13. **给 Agent 实现方的提醒**：每个节点最多 8 个会话、8 个 challenge。
+14. **部署**：`--listen` 的默认值仍是 `127.0.0.1:8420`，与现在运行的旧服务冲突。

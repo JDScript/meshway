@@ -1,6 +1,6 @@
 import { Brand } from "@/components/chrome/brand"
 import { Button } from "@/components/ui/button"
-import { useSignOut } from "@/features/auth/use-sign-out"
+import { useSignOut } from "@/hooks/use-sign-out"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 

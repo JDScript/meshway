@@ -1,8 +1,5 @@
 use super::TypedPath as Path;
-use super::{
-    error::HttpError,
-    state::{failure, user},
-};
+use super::{error::HttpError, state::user};
 use crate::resources::service::{ResourceProvider, ResourceService};
 use axum::{Extension, Json, Router, extract::State, http::HeaderMap, middleware};
 use meshway_model::{NetworkId, RequestId};
@@ -29,7 +26,7 @@ async fn list<P: ResourceProvider>(
         service
             .rule_sets(user(&headers, network, id)?, None)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}",operation_id="getRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetList),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -43,7 +40,7 @@ async fn detail<P: ResourceProvider>(
         service
             .rule_sets(user(&headers, network, id)?, Some(key))
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/refresh",operation_id="refreshRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetView),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=429,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -57,7 +54,7 @@ async fn refresh<P: ResourceProvider>(
         service
             .refresh_rule_set(user(&headers, network, id)?, key)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[derive(utoipa::OpenApi)]

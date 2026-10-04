@@ -1,7 +1,7 @@
 use super::TypedPath as Path;
 use super::{
     error::HttpError,
-    state::{failure, node, user},
+    state::{node, user},
 };
 use crate::observations::service::{ObservationOperation, ObservationProvider, ObservationService};
 use axum::{
@@ -42,7 +42,7 @@ async fn create<P: ObservationProvider>(
             service
                 .create_observation(identity, body)
                 .await
-                .map_err(|e| failure(id, e))?,
+                .map_err(|e| HttpError::domain(id, e))?,
         ),
     ))
 }
@@ -61,7 +61,7 @@ async fn list<P: ObservationProvider>(
                 ObservationOperation::Read,
             )
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/observations/{subscriptionId}",operation_id="getObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
@@ -79,7 +79,7 @@ async fn detail<P: ObservationProvider>(
                 ObservationOperation::Read,
             )
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/observations/{subscriptionId}/renew",operation_id="renewObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
@@ -97,7 +97,7 @@ async fn renew<P: ObservationProvider>(
                 ObservationOperation::Renew,
             )
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/observations/{subscriptionId}/cancel",operation_id="cancelObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=204),(status=401,body=ErrorResponse)))]
@@ -114,7 +114,7 @@ async fn cancel<P: ObservationProvider>(
             ObservationOperation::Cancel,
         )
         .await
-        .map_err(|e| failure(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
 #[utoipa::path(get,path="/agent-api/v1/tasks",operation_id="getNodeTasks",tag="observations",security(("nodeSession"=[])),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
@@ -127,7 +127,7 @@ async fn tasks<P: ObservationProvider>(
         service
             .node_tasks(node(&headers, id)?)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post,path="/agent-api/v1/tasks/{taskId}/results",operation_id="reportTaskResult",tag="observations",security(("nodeSession"=[])),params(("taskId"=ObservationId,Path)),request_body=ObservationResult,responses((status=200,body=ObservationTask),(status=401,body=ErrorResponse)))]
@@ -144,7 +144,7 @@ async fn result<P: ObservationProvider>(
         service
             .observation_result(authorization, task, body)
             .await
-            .map_err(|e| failure(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[derive(utoipa::OpenApi)]

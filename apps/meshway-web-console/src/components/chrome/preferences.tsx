@@ -1,6 +1,5 @@
 import { LanguagesIcon, MoonIcon, SunIcon } from "lucide-react"
 
-import { useTheme } from "@/components/chrome/theme-provider"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -14,22 +13,17 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { switchLocale, useLocale } from "@/lib/locale"
 import { m } from "@/paraglide/messages.js"
 import { isLocale, locales } from "@/paraglide/runtime.js"
-
-/** Whether the theme shows dark now, and the switch to the other one. */
-export function useThemeToggle(): { dark: boolean; toggle: () => void } {
-  const { theme, setTheme } = useTheme()
-  const dark =
-    theme === "dark" ||
-    (theme === "system" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches)
-  return { dark, toggle: () => setTheme(dark ? "light" : "dark") }
-}
+import {
+  switchLocale,
+  toggleTheme,
+  useDark,
+  useLocale,
+} from "@/state/preferences"
 
 export function ThemeSwitch() {
-  const { dark, toggle } = useThemeToggle()
+  const dark = useDark()
   return (
     <Tooltip>
       <TooltipTrigger
@@ -39,7 +33,7 @@ export function ThemeSwitch() {
             size="icon"
             className="bar-button"
             aria-label={m.theme_switch()}
-            onClick={toggle}
+            onClick={toggleTheme}
           >
             {dark ? <SunIcon /> : <MoonIcon />}
           </Button>

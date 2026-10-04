@@ -50,7 +50,7 @@ async fn cancellation_keeps_budget_until_real_blocking_kdf_finishes() {
     assert_eq!(KDFS.available_permits(), 0);
     assert!(matches!(
         hash(Secret::new("valid password".into())).await,
-        Err(AccountError::Busy)
+        Err(Error::Busy)
     ));
     release.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(10), completion)

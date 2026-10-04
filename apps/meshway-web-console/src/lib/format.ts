@@ -28,6 +28,15 @@ export function relativeTime(at: Instant, now: number): string | null {
   return null
 }
 
+/**
+ * When something happened, "3 minutes ago": never in the future, so a
+ * clock that ticked before the data arrived does not say "in 5 seconds".
+ */
+export function agoTime(at: Instant, now: number): string | null {
+  const ms = toMs(at)
+  return ms === null ? null : relativeTime(ms, Math.max(now, ms))
+}
+
 /** The time of day in the current locale, to the second unless `seconds` is false. */
 export function clockTime(
   at: number,
@@ -58,3 +67,6 @@ export function calendarDate(at: Instant): string | null {
     ms
   )
 }
+
+/** An ID's first eight characters, where nothing names what it identifies. */
+export const shortId = (id: string) => id.slice(0, 8)

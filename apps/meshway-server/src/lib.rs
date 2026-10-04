@@ -12,6 +12,10 @@ pub mod accounts;
 mod app;
 pub(crate) mod configuration;
 mod directory;
+pub mod effect;
+pub mod enrollment;
+pub mod error;
+pub mod execution;
 pub(crate) mod history;
 pub mod http;
 pub mod networks;
@@ -21,5 +25,3 @@ mod store;
 
 pub use app::{App, AppError};
 pub use settings::Settings;
-pub mod enrollment;
-pub mod execution;

@@ -1,10 +1,23 @@
-use super::*;
+use super::{
+    CommitEffects, CommitMetadata, CommitRuntime, EmailSync, Principal, TrustedContext,
+    apply_in_transaction, binding_changes, materials, prepare, preview, resources,
+};
+use crate::configuration::{ChangeCause, Snapshot, SnapshotCache};
+use crate::effect::Effect;
+use crate::error::Error;
 use crate::execution::configuration::{Participant, check_inputs, validation_context};
+use crate::secrets::{Purpose, Sealer};
+use crate::store::authorization::{authorize_manager, current_session};
 use crate::{accounts::token_digest, store::Handle};
+use meshway_configuration::{NetworkConfigurationInput, configuration_changes};
 use meshway_configuration::{UserBinding, edit_source, parse_jsonc};
+use meshway_model::{MembershipId, NetworkId, RequestId, Revision, UserId};
 use meshway_protocol::{WireSecret, configuration::*};
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::TransactionBehavior;
+use rusqlite::{OptionalExtension, Transaction, params};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 // Includes downloaded inputs waiting for the final accepted SQLite job. Its
 // permit moves into that job so cancelling an HTTP waiter cannot free it early.
@@ -23,7 +36,6 @@ pub(crate) struct Configurations {
     handle: Handle,
     sealer: Arc<Sealer>,
     cache: Arc<SnapshotCache>,
-    publisher: crate::state::service::CommitPublisher,
     downloads: Arc<crate::resources::downloads::Downloads>,
 }
 impl Configurations {
@@ -31,17 +43,17 @@ impl Configurations {
         handle: Handle,
         sealer: Arc<Sealer>,
         cache: Arc<SnapshotCache>,
-        publisher: crate::state::service::CommitPublisher,
         downloads: Arc<crate::resources::downloads::Downloads>,
     ) -> Self {
         Self {
             handle,
             sealer,
             cache,
-            publisher,
             downloads,
         }
     }
+    /// Renames the user's readable references in every network where they hold
+    /// an active membership. Only bindings of that membership are renamed.
     pub(crate) fn synchronize_email(
         &self,
         tx: &Transaction<'_>,
@@ -51,45 +63,50 @@ impl Configurations {
         request: RequestId,
     ) -> Result<Vec<CommitEffects>, Error> {
         let mut effects = Vec::new();
-        let networks = {
-            let mut stmt = tx.prepare("SELECT id FROM networks WHERE deleted_at IS NULL")?;
-            stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?
-                .collect::<Result<Vec<_>, _>>()?
+        let memberships = {
+            let mut stmt = tx.prepare(
+                "SELECT m.network_id, m.id FROM memberships m JOIN networks n ON n.id=m.network_id
+                 WHERE m.user_id=?1 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",
+            )?;
+            stmt.query_map([user.as_uuid().as_bytes().as_slice()], |r| {
+                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
         };
-        for network in networks {
-            let network =
-                NetworkId::new(uuid::Uuid::from_slice(&network).map_err(|_| Error::Storage)?)
-                    .map_err(|_| Error::Storage)?;
+        for (network, membership) in memberships {
+            let network = NetworkId::new(
+                uuid::Uuid::from_slice(&network)
+                    .map_err(|_| Error::decode("memberships.network_id"))?,
+            )
+            .map_err(|_| Error::decode("memberships.network_id"))?;
+            let membership = MembershipId::new(
+                uuid::Uuid::from_slice(&membership).map_err(|_| Error::decode("memberships.id"))?,
+            )
+            .map_err(|_| Error::decode("memberships.id"))?;
+            let binding = UserBinding {
+                user_id: user,
+                membership_id: membership,
+            };
             let current = self.current(tx, network)?;
-            if !current
-                .bindings
-                .users
-                .get(old_email)
-                .is_some_and(|binding| binding.user_id == user)
-                && !current
-                    .bindings
-                    .node_users
-                    .values()
-                    .any(|binding| binding.user_id == user)
+            if current.bindings.users.get(old_email) != Some(&binding)
+                && !current.bindings.node_users.values().any(|b| *b == binding)
             {
                 continue;
             }
             let mut input = NetworkConfigurationInput::from(&current.document.configuration);
-            rename_bound_user_references(&mut input, &current, user, old_email, new_email);
+            rename_bound_user_references(&mut input, &current, &binding, old_email, new_email);
             check_inputs(tx, &current, &input)?;
             let before =
                 meshway_configuration::parse_jsonc(current.document.source_jsonc.expose())?;
             let mut after = before.clone();
-            rename_bound_user_references(&mut after, &current, user, old_email, new_email);
+            rename_bound_user_references(&mut after, &current, &binding, old_email, new_email);
             let source = meshway_configuration::rewrite_source(
                 current.document.source_jsonc.expose(),
                 &before,
                 &after,
             )?;
             let mut expected = current.bindings.users.clone();
-            if expected
-                .get(old_email)
-                .is_some_and(|binding| binding.user_id == user)
+            if expected.get(old_email) == Some(&binding)
                 && let Some(binding) = expected.remove(old_email)
             {
                 expected.insert(new_email.into(), binding);
@@ -113,6 +130,7 @@ impl Configurations {
             let mut prepared = prepare(input, source, &current, &context)?;
             prepared.email_sync = Some(EmailSync {
                 user,
+                membership,
                 old_email: old_email.into(),
                 new_email: new_email.into(),
             });
@@ -143,24 +161,19 @@ impl Configurations {
         network: NetworkId,
         revision: Option<Revision>,
     ) -> Result<Arc<Snapshot>, Error> {
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let service = self.clone();
         self.handle
-            .execute(move |db| {
-                let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
-                service.authorize(&tx, &digest, network)?;
+            .read(move |tx| {
+                service.authorize(tx, &digest, network)?;
                 let revision = match revision {
                     Some(r) => r,
-                    None => current_revision(&tx, network)?,
+                    None => current_revision(tx, network)?,
                 };
-                let snapshot = service
-                    .cache
-                    .load(&tx, network, revision, &service.sealer)?;
-                tx.commit()?;
+                let snapshot = service.cache.load(tx, network, revision, &service.sealer)?;
                 Ok(snapshot)
             })
             .await
-            .map_err(|_| Error::Storage)?
     }
     pub(crate) async fn validate(
         &self,
@@ -172,25 +185,22 @@ impl Configurations {
         let permit = PREPARATIONS
             .try_acquire()
             .map_err(|_| Error::DependencyUnavailable)?;
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let (request, resources) = self
             .prepare_resources(digest, network, request, false)
             .await?;
         let service = self.clone();
         self.handle
-            .execute(move |db| {
+            .read(move |tx| {
                 let _permit = permit;
-                let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
-                service.authorize(&tx, &digest, network)?;
-                let current = service.current(&tx, network)?;
+                service.authorize(tx, &digest, network)?;
+                let current = service.current(tx, network)?;
                 let input =
-                    service.prepare_request(&tx, &current, &request, false, resources.as_ref())?;
+                    service.prepare_request(tx, &current, &request, false, resources.as_ref())?;
                 let result = preview::build(&current, input, resources.as_ref(), id)?;
-                tx.commit()?;
                 Ok(result)
             })
             .await
-            .map_err(|_| Error::Storage)?
     }
     pub(crate) async fn apply(
         &self,
@@ -202,32 +212,31 @@ impl Configurations {
         let permit = PREPARATIONS
             .try_acquire()
             .map_err(|_| Error::DependencyUnavailable)?;
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let service = self.clone();
         let stage = self
             .handle
-            .execute(move |db| {
-                let resources = {
-                    let tx = db.transaction()?;
-                    service.stage_resources(&tx, digest, network, &request, true)?
-                };
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                let resources = service.stage_resources(tx, digest, network, &request, true)?;
                 if let Some(resources) = resources.filter(|r| r.needs_download()) {
-                    Ok(ApplyStage::Download {
-                        request,
-                        resources,
-                        permit,
-                    })
+                    Ok((
+                        ApplyStage::Download {
+                            request,
+                            resources,
+                            permit,
+                        },
+                        Vec::new(),
+                    ))
                 } else {
                     // No network preparation: retain the original single accepted
                     // write-job cancellation semantics for ordinary configuration.
                     let _permit = permit;
                     service
-                        .apply_request(db, digest, network, request, id, None)
-                        .map(ApplyStage::Complete)
+                        .apply_request(tx, digest, network, request, id, None)
+                        .map(|(result, effects)| (ApplyStage::Complete(result), effects))
                 }
             })
-            .await
-            .map_err(|_| Error::Storage)??;
+            .await?;
         let (request, mut resources, permit) = match stage {
             ApplyStage::Complete(result) => return Ok(result),
             ApplyStage::Download {
@@ -239,48 +248,47 @@ impl Configurations {
         resources.download(&self.downloads).await?;
         let service = self.clone();
         self.handle
-            .execute(move |db| {
+            .transact(TransactionBehavior::Immediate, move |tx| {
                 let _permit = permit;
-                service.apply_request(db, digest, network, request, id, Some(&resources))
+                service.apply_request(tx, digest, network, request, id, Some(&resources))
             })
             .await
-            .map_err(|_| Error::Storage)?
     }
     fn apply_request(
         &self,
-        db: &mut Connection,
+        tx: &Transaction<'_>,
         digest: [u8; 32],
         network: NetworkId,
         request: ConfigurationRequest,
         id: RequestId,
         resources: Option<&resources::Preparation>,
-    ) -> Result<ConfigurationAppliedResponse, Error> {
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let user = self.authorize(&tx, &digest, network)?;
-        let encoded = Zeroizing::new(serde_json::to_vec(&request).map_err(|_| Error::Storage)?);
+    ) -> Result<(ConfigurationAppliedResponse, Vec<Effect>), Error> {
+        let user = self.authorize(tx, &digest, network)?;
+        let encoded = Zeroizing::new(
+            serde_json::to_vec(&request).map_err(|_| Error::encode("configuration request"))?,
+        );
         let prior = tx.query_row(
             "SELECT base_revision,input,result FROM configuration_commits WHERE network_id=?1 AND user_id=?2 AND request_id=?3",
             params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(), request.request_id().as_uuid().as_bytes().as_slice()],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, String>(2)?)),
         ).optional()?;
         if let Some((base, input, result)) = prior {
-            let base = Revision::new(u64::try_from(base).map_err(|_| Error::Storage)?)
-                .map_err(|_| Error::Storage)?;
-            let original = self
-                .sealer
-                .open(network, base, Purpose::Request, &input)
-                .map_err(|_| Error::Storage)?;
+            let base = Revision::new(
+                u64::try_from(base)
+                    .map_err(|_| Error::decode("configuration_commits.base_revision"))?,
+            )
+            .map_err(|_| Error::decode("configuration_commits.base_revision"))?;
+            let original = self.sealer.open(network, base, Purpose::Request, &input)?;
             if original.as_bytes() != encoded.as_slice() {
                 return Err(Error::RequestConflict);
             }
-            let mut result: ConfigurationAppliedResponse =
-                serde_json::from_str(&result).map_err(|_| Error::Storage)?;
+            let mut result: ConfigurationAppliedResponse = serde_json::from_str(&result)
+                .map_err(|_| Error::decode("configuration_commits.result"))?;
             result.request_id = id;
-            tx.commit()?;
-            return Ok(result);
+            return Ok((result, Vec::new()));
         }
-        let current = self.current(&tx, network)?;
-        let input = self.prepare_request(&tx, &current, &request, true, resources)?;
+        let current = self.current(tx, network)?;
+        let input = self.prepare_request(tx, &current, &request, true, resources)?;
         let mut prepared = prepare(input.input, input.source, &current, &input.context)?;
         if let ConfigurationRequest::Restore { restore_from, .. } = &request {
             prepared.rollback_from = Some(*restore_from);
@@ -291,7 +299,7 @@ impl Configurations {
             ChangeCause::Edit
         };
         let effects = apply_in_transaction(
-            &tx,
+            tx,
             &Principal::Session(digest),
             request.expected_revision(),
             &current,
@@ -309,7 +317,7 @@ impl Configurations {
             },
         )?;
         if let Some(resources) = resources {
-            resources.record(&tx, network, effects.revision)?;
+            resources.record(tx, network, effects.revision)?;
         }
         let changes = effects.changes();
         let result = ConfigurationAppliedResponse {
@@ -322,26 +330,21 @@ impl Configurations {
                 effects.publication_ids
             },
             target_count: u32::try_from(effects.target_node_ids.len())
-                .map_err(|_| Error::Storage)?,
+                .map_err(|_| Error::Internal("configuration target count overflow"))?,
             deleted_node_ids: effects.deleted_node_ids.into_iter().collect(),
         };
         let input = self
             .sealer
-            .seal(network, current.revision, Purpose::Request, &encoded)
-            .map_err(|_| Error::Storage)?;
+            .seal(network, current.revision, Purpose::Request, &encoded)?;
         tx.execute(
             "INSERT INTO configuration_commits(network_id,user_id,request_id,base_revision,input,result) VALUES(?1,?2,?3,?4,?5,?6)",
             params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(),
                 request.request_id().as_uuid().as_bytes().as_slice(), current.revision.get() as i64,
-                input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::Storage)?],
+                input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::encode("configuration commit result"))?],
         )?;
         // One valid bulk deletion may exceed the replay window. The bounded
         // journal evicts old entries; it must not cap the configuration commit.
-        tx.commit()?;
-        for change in changes {
-            self.publisher.publish_committed(change);
-        }
-        Ok(result)
+        Ok((result, changes))
     }
     pub(crate) async fn compare(
         &self,
@@ -350,18 +353,17 @@ impl Configurations {
         request: CompareConfigurationRequest,
         id: RequestId,
     ) -> Result<ConfigurationComparison, Error> {
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let service = self.clone();
         self.handle
-            .execute(move |db| {
-                let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
-                service.authorize(&tx, &digest, network)?;
+            .read(move |tx| {
+                service.authorize(tx, &digest, network)?;
                 let a = service
                     .cache
-                    .load(&tx, network, request.from_revision, &service.sealer)?;
+                    .load(tx, network, request.from_revision, &service.sealer)?;
                 let b = service
                     .cache
-                    .load(&tx, network, request.to_revision, &service.sealer)?;
+                    .load(tx, network, request.to_revision, &service.sealer)?;
                 let mut changes =
                     configuration_changes(&a.document.configuration, &b.document.configuration)?;
                 let configuration_changed = !changes.is_empty();
@@ -375,11 +377,9 @@ impl Configurations {
                     bindings_changed: a.bindings != b.bindings,
                     changes,
                 };
-                tx.commit()?;
                 Ok(result)
             })
             .await
-            .map_err(|_| Error::Storage)?
     }
     fn authorize(
         &self,
@@ -387,8 +387,7 @@ impl Configurations {
         digest: &[u8; 32],
         network: NetworkId,
     ) -> Result<UserId, Error> {
-        let user = current_session(tx, digest, chrono::Utc::now().timestamp_millis())
-            .map_err(|_| Error::InvalidSession)?
+        let user = current_session(tx, digest, chrono::Utc::now().timestamp_millis())?
             .user
             .id;
         authorize_manager(tx, network, user)?;
@@ -407,7 +406,7 @@ impl Configurations {
         resources: Option<&resources::Preparation>,
     ) -> Result<preview::RequestInput<'a>, Error> {
         if request.expected_revision() != current.revision {
-            return Err(Error::Conflict);
+            return Err(Error::RevisionConflict);
         }
         let (source, mut input, expected, expected_nodes) = match request {
             ConfigurationRequest::Document { source_jsonc, .. } => (
@@ -566,13 +565,11 @@ impl Configurations {
         let service = self.clone();
         let (request, mut resources) = self
             .handle
-            .execute(move |db| {
-                let tx = db.transaction()?;
-                let preparation = service.stage_resources(&tx, digest, network, &request, retry)?;
+            .read(move |tx| {
+                let preparation = service.stage_resources(tx, digest, network, &request, retry)?;
                 Ok::<_, Error>((request, preparation))
             })
-            .await
-            .map_err(|_| Error::Storage)??;
+            .await?;
         if let Some(resources) = &mut resources {
             resources.download(&self.downloads).await?;
         }
@@ -594,7 +591,7 @@ impl Configurations {
             )? { return Ok(None); }
         let current = self.current(tx, network)?;
         if current.revision != request.expected_revision() {
-            return Err(Error::Conflict);
+            return Err(Error::RevisionConflict);
         }
         let input = match &request {
             ConfigurationRequest::Document { source_jsonc, .. } => {
@@ -622,24 +619,23 @@ pub(crate) fn current_revision(
         )
         .optional()?
         .ok_or(Error::NotFound)?;
-    Revision::new(u64::try_from(r).map_err(|_| Error::Storage)?).map_err(|_| Error::Storage)
+    Revision::new(u64::try_from(r).map_err(|_| Error::decode("networks.current_revision"))?)
+        .map_err(|_| Error::decode("networks.current_revision"))
 }
 
 /// Readable names follow the stable subject for each binding purpose. An email
 /// reused by another account must not rename the old account's policy references.
+/// Readable names follow the stable subject of each binding. Only bindings of
+/// this exact user and membership are renamed: an email reused by another
+/// account, or a revoked membership of the same user, keeps its old name.
 pub(crate) fn rename_bound_user_references(
     input: &mut NetworkConfigurationInput,
     snapshot: &Snapshot,
-    user: UserId,
+    binding: &UserBinding,
     old: &str,
     new: &str,
 ) {
-    if snapshot
-        .bindings
-        .users
-        .get(old)
-        .is_some_and(|binding| binding.user_id == user)
-    {
+    if snapshot.bindings.users.get(old) == Some(binding) {
         meshway_configuration::rebind_policy_user_references(
             input,
             &BTreeMap::from([(old.to_owned(), new.to_owned())]),
@@ -649,7 +645,7 @@ pub(crate) fn rename_bound_user_references(
         .bindings
         .node_users
         .iter()
-        .filter(|(_, binding)| binding.user_id == user)
+        .filter(|(_, bound)| *bound == binding)
         .map(|(id, _)| (*id, new.to_owned()))
         .collect();
     meshway_configuration::rebind_node_user_references(input, &names);
@@ -675,12 +671,14 @@ pub(crate) fn members(
             Ok((
                 email,
                 UserBinding {
-                    user_id: UserId::new(uuid::Uuid::from_slice(&u).map_err(|_| Error::Storage)?)
-                        .map_err(|_| Error::Storage)?,
-                    membership_id: meshway_model::MembershipId::new(
-                        uuid::Uuid::from_slice(&m).map_err(|_| Error::Storage)?,
+                    user_id: UserId::new(
+                        uuid::Uuid::from_slice(&u).map_err(|_| Error::decode("users.id"))?,
                     )
-                    .map_err(|_| Error::Storage)?,
+                    .map_err(|_| Error::decode("users.id"))?,
+                    membership_id: meshway_model::MembershipId::new(
+                        uuid::Uuid::from_slice(&m).map_err(|_| Error::decode("memberships.id"))?,
+                    )
+                    .map_err(|_| Error::decode("memberships.id"))?,
                 },
             ))
         })
@@ -700,6 +698,7 @@ pub(crate) fn source_response(snapshot: &Snapshot, id: RequestId) -> Configurati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accounts::random_uuid;
     use crate::{
         App, Settings,
         accounts::{Secret, TEST_KDF_LOCK},
@@ -752,7 +751,7 @@ mod tests {
             service
                 .apply(user.token.expose(), network, edit(), request())
                 .await,
-            Err(Error::Storage)
+            Err(Error::Storage(_))
         ));
         let after = service
             .read(user.token.expose(), network, None)

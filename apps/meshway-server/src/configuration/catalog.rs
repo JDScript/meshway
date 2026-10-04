@@ -37,7 +37,8 @@ pub(crate) fn schema(id: RequestId) -> Result<ConfigurationSchemaResponse, super
     local_refs(&mut document);
     Ok(ConfigurationSchemaResponse {
         request_id: id,
-        schema_json: serde_json::to_string(&document).map_err(|_| super::Error::Storage)?,
+        schema_json: serde_json::to_string(&document)
+            .map_err(|_| super::Error::encode("configuration schema"))?,
     })
 }
 pub(crate) fn transports(id: RequestId) -> TransportCatalogResponse {

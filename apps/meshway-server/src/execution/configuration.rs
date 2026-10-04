@@ -1,6 +1,7 @@
 //! Configuration owner participant: final identity checks and durable effects.
+use crate::error::Error;
 use crate::{
-    configuration::{CommitParticipant, Error, PreparedConfiguration, Principal, Snapshot},
+    configuration::{CommitParticipant, PreparedConfiguration, Principal, Snapshot},
     enrollment::NodeAdmission,
     secrets::Sealer,
     store::{
@@ -38,29 +39,36 @@ impl CommitParticipant for Participant<'_> {
         current: &Snapshot,
         prepared: &PreparedConfiguration,
     ) -> Result<(), Error> {
-        let now = node_store::now().map_err(map_error)?;
+        let now = node_store::now()?;
         match principal {
             Principal::Session(digest) => {
-                let user = store::authorization::current_session(tx, digest, now)
-                    .map_err(|_| Error::InvalidSession)?
+                let user = store::authorization::current_session(tx, digest, now)?
                     .user
                     .id;
                 store::authorization::authorize_manager(tx, current.network_id, user)?;
             }
             Principal::Lifecycle(actor) => {
                 if let Some(sync) = &prepared.email_sync {
+                    let binding = meshway_configuration::UserBinding {
+                        user_id: sync.user,
+                        membership_id: sync.membership,
+                    };
                     if sync.user != *actor
-                        || (!current
-                            .bindings
-                            .users
-                            .get(&sync.old_email)
-                            .is_some_and(|b| b.user_id == *actor)
-                            && !current
-                                .bindings
-                                .node_users
-                                .values()
-                                .any(|b| b.user_id == *actor))
+                        || (current.bindings.users.get(&sync.old_email) != Some(&binding)
+                            && !current.bindings.node_users.values().any(|b| *b == binding))
                     {
+                        return Err(Error::PermissionDenied);
+                    }
+                    let active: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM memberships WHERE id=?1 AND network_id=?2 AND user_id=?3 AND revoked_at IS NULL)",
+                        params![
+                            sync.membership.as_uuid().as_bytes().as_slice(),
+                            current.network_id.as_uuid().as_bytes().as_slice(),
+                            actor.as_uuid().as_bytes().as_slice()
+                        ],
+                        |r| r.get(0),
+                    )?;
+                    if !active {
                         return Err(Error::PermissionDenied);
                     }
                     let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND email=?2 AND disabled_at IS NULL)",params![actor.as_uuid().as_bytes().as_slice(),sync.new_email],|r|r.get(0))?;
@@ -72,7 +80,7 @@ impl CommitParticipant for Participant<'_> {
                     crate::configuration::rename_bound_user_references(
                         &mut expected,
                         current,
-                        *actor,
+                        &binding,
                         &sync.old_email,
                         &sync.new_email,
                     );
@@ -106,8 +114,7 @@ impl CommitParticipant for Participant<'_> {
                     if admission.actor != *actor || admission.network != current.network_id {
                         return Err(Error::PermissionDenied);
                     }
-                    store::enrollment::verify_admission(tx, self.sealer, admission)
-                        .map_err(map_error)?;
+                    store::enrollment::verify_admission(tx, self.sealer, admission)?;
                 }
             }
         }
@@ -139,7 +146,12 @@ impl CommitParticipant for Participant<'_> {
                 }
             }
             node_store::identity_eligible(tx, target, &prepared.bindings, current.network_id, *id)
-                .map_err(map_error)?;
+                .map_err(|error| match error {
+                    // In a configuration commit an ineligible identity is a
+                    // dependency of the prepared document, not a caller credential.
+                    Error::InvalidCredentials => Error::DependencyUnavailable,
+                    other => other,
+                })?;
         }
         if let Some(a) = self.admission {
             // Admission can change one node, never carry unrelated edits under a
@@ -168,23 +180,12 @@ impl CommitParticipant for Participant<'_> {
             &current.document.configuration,
             &current.bindings,
             &prepared.document.configuration,
-            node_store::now().map_err(map_error)?,
-        )
-        .map_err(map_error)?;
+            node_store::now()?,
+        )?;
         Ok((
             vec![publication.publication],
             publication.nodes.keys().copied().collect(),
         ))
-    }
-}
-pub(crate) fn map_error(error: crate::execution::NodeError) -> Error {
-    match error {
-        crate::execution::NodeError::Unauthorized => Error::InvalidSession,
-        crate::execution::NodeError::Forbidden => Error::PermissionDenied,
-        crate::execution::NodeError::Conflict => Error::Conflict,
-        crate::execution::NodeError::NotFound => Error::NotFound,
-        crate::execution::NodeError::Storage => Error::Storage,
-        _ => Error::DependencyUnavailable,
     }
 }
 pub(crate) fn inventory_ids(
@@ -197,7 +198,7 @@ pub(crate) fn inventory_ids(
         .query_map([network.as_uuid().as_bytes().as_slice()], |r| {
             r.get::<_, Vec<u8>>(0)
         })?
-        .map(|row| node_store::id(row?).map_err(map_error))
+        .map(|row| node_store::id(row?))
         .collect()
 }
 pub(crate) fn members(
@@ -218,8 +219,8 @@ pub(crate) fn members(
             Ok((
                 email,
                 UserBinding {
-                    user_id: node_store::id(user).map_err(map_error)?,
-                    membership_id: node_store::id(member).map_err(map_error)?,
+                    user_id: node_store::id(user)?,
+                    membership_id: node_store::id(member)?,
                 },
             ))
         })

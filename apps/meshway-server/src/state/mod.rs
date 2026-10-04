@@ -4,6 +4,7 @@ pub mod service;
 pub mod stream;
 pub(crate) mod validation;
 
+use crate::error::Error;
 use crate::resources::GeoIp;
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{
@@ -18,40 +19,6 @@ pub const MAX_NETWORK_REPORTS: usize = 10_000;
 pub const MAX_STATE_BYTES: usize = 128 * 1024 * 1024;
 pub const REPORT_TTL_SECONDS: i64 = 60;
 pub const CLOCK_SKEW_SECONDS: i64 = 30;
-
-#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
-pub enum StateError {
-    #[error("identity is invalid or expired")]
-    Unauthorized,
-    #[error("resource is unavailable in the current scope")]
-    NotFound,
-    #[error("operation is not permitted")]
-    Forbidden,
-    #[error("invalid report or query")]
-    Invalid,
-    #[error("report sequence or event identifier conflicts")]
-    Conflict,
-    #[error("configured resource budget exceeded")]
-    Budget,
-    #[error("observation budget exceeded")]
-    ObservationLimit,
-    #[error("cursor is invalid or expired")]
-    Cursor,
-    #[error("state dependency is unavailable")]
-    Unavailable,
-    #[error("storage failed")]
-    Storage,
-}
-impl From<rusqlite::Error> for StateError {
-    fn from(_: rusqlite::Error) -> Self {
-        Self::Storage
-    }
-}
-impl From<crate::store::ExecutorError> for StateError {
-    fn from(_: crate::store::ExecutorError) -> Self {
-        Self::Unavailable
-    }
-}
 
 /// Constructed by the Node/execution owner after current transactional checks.
 /// It contains only already-published facts, never a client-supplied authorization map.
@@ -85,20 +52,17 @@ pub struct ConfigurationAdmission {
     pub profiles: BTreeSet<String>,
 }
 impl ReportAdmission {
-    pub fn context(
-        &self,
-        reference: &ConfigurationRef,
-    ) -> Result<&ConfigurationAdmission, StateError> {
+    pub fn context(&self, reference: &ConfigurationRef) -> Result<&ConfigurationAdmission, Error> {
         if !self.configurations.contains(reference) {
-            return Err(StateError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         self.contexts
             .iter()
             .find(|context| &context.configuration == reference)
-            .ok_or(StateError::Invalid)
+            .ok_or(Error::InvalidRequest)
     }
-    pub fn current(&self) -> Result<&ConfigurationAdmission, StateError> {
-        self.context(self.execution.as_ref().ok_or(StateError::Invalid)?)
+    pub fn current(&self) -> Result<&ConfigurationAdmission, Error> {
+        self.context(self.execution.as_ref().ok_or(Error::InvalidRequest)?)
     }
 }
 #[derive(Clone, Debug)]
@@ -184,10 +148,9 @@ impl StateHub {
             now,
         )
     }
-    pub fn new() -> Result<Self, StateError> {
-        let epoch =
-            StateEpoch::new(crate::accounts::random_uuid().map_err(|_| StateError::Unavailable)?)
-                .map_err(|_| StateError::Unavailable)?;
+    pub fn new() -> Result<Self, Error> {
+        let epoch = StateEpoch::new(crate::accounts::random_uuid()?)
+            .map_err(|_| Error::Internal("generated state epoch"))?;
         Ok(Self {
             epoch,
             sequences: BTreeMap::new(),
@@ -203,21 +166,21 @@ impl StateHub {
         admission: &ReportAdmission,
         report: StateReport,
         now: DateTime<Utc>,
-    ) -> Result<StateAccepted, StateError> {
+    ) -> Result<StateAccepted, Error> {
         validation::report(admission, &report, now)?;
         let key = (admission.network_id, admission.node_id);
         let report_bytes = serde_json::to_vec(&report)
-            .map_err(|_| StateError::Invalid)?
+            .map_err(|_| Error::encode("state report"))?
             .len();
         if let Some(previous) = self.reports.get_mut(&key)
             && previous.report.instance_id == report.instance_id
         {
             if report.sequence < previous.report.sequence {
-                return Err(StateError::Conflict);
+                return Err(Error::StateConflict);
             }
             if report.sequence == previous.report.sequence {
                 if report != previous.report {
-                    return Err(StateError::Conflict);
+                    return Err(Error::StateConflict);
                 }
                 previous.authenticated_at = now;
                 return Ok(StateAccepted {
@@ -235,21 +198,21 @@ impl StateHub {
                 .count()
                 >= MAX_NETWORK_REPORTS
         {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
         self.sequences
             .get(&admission.network_id)
             .copied()
             .unwrap_or(Sequence::MIN)
             .checked_next()
-            .map_err(|_| StateError::Budget)?;
+            .map_err(|_| Error::StateLimit)?;
         let previous_bytes = self.reports.get(&key).map_or(0, |stored| stored.bytes);
         let total_bytes = self
             .bytes
             .saturating_sub(previous_bytes)
             .saturating_add(report_bytes);
         if total_bytes > MAX_STATE_BYTES {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
         let sequence = report.sequence;
         let expires_at = (report.observed_at + Duration::seconds(REPORT_TTL_SECONDS))
@@ -268,7 +231,7 @@ impl StateHub {
             },
         );
         self.bytes = total_bytes;
-        self.publish_committed(stream::CommittedChange::State {
+        self.publish_committed(crate::effect::Effect::State {
             network_id: admission.network_id,
             node_id: admission.node_id,
         });
@@ -281,8 +244,8 @@ impl StateHub {
 
     /// Must run on the SQLite owner immediately after COMMIT, before releasing
     /// its accepted operation. It does not await a consumer or perform fallible IO.
-    pub fn publish_committed(&mut self, change: stream::CommittedChange) {
-        if let stream::CommittedChange::NodeRetired {
+    pub fn publish_committed(&mut self, change: crate::effect::Effect) {
+        if let crate::effect::Effect::NodeRetired {
             network_id,
             node_id,
         } = &change
@@ -293,7 +256,9 @@ impl StateHub {
                 self.bytes = self.bytes.saturating_sub(stored.bytes);
             }
         }
-        let network = change.network();
+        let Some(network) = change.network() else {
+            return;
+        };
         match self
             .sequences
             .get(&network)
@@ -314,7 +279,7 @@ impl StateHub {
     pub fn dataset_changed(&mut self) {
         let networks: BTreeSet<_> = self.reports.keys().map(|(network, _)| *network).collect();
         for network_id in networks {
-            self.publish_committed(stream::CommittedChange::Resource { network_id });
+            self.publish_committed(crate::effect::Effect::Resource { network_id });
         }
     }
 
@@ -324,12 +289,12 @@ impl StateHub {
         nodes: Option<&[NodeId]>,
         geoip: &mut GeoIp,
         now: DateTime<Utc>,
-    ) -> Result<StateView, StateError> {
+    ) -> Result<StateView, Error> {
         if scope.expires_at <= now {
-            return Err(StateError::Unauthorized);
+            return Err(Error::InvalidSession);
         }
         if self.exhausted.contains(&scope.network_id) {
-            return Err(StateError::Unavailable);
+            return Err(Error::Internal("state sequence exhausted"));
         }
         let mut expired = vec![];
         for ((network, node), stored) in &mut self.reports {
@@ -339,7 +304,7 @@ impl StateHub {
             }
         }
         for node_id in expired {
-            self.publish_committed(stream::CommittedChange::State {
+            self.publish_committed(crate::effect::Effect::State {
                 network_id: scope.network_id,
                 node_id,
             });
@@ -347,7 +312,7 @@ impl StateHub {
         if nodes.is_some_and(|nodes| {
             nodes.len() > MAX_NETWORK_REPORTS || nodes.iter().any(|id| !scope.visible.contains(id))
         }) {
-            return Err(StateError::NotFound);
+            return Err(Error::NotFound);
         }
         let selected = nodes
             .map(|ids| ids.iter().copied().collect())

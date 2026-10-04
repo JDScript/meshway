@@ -1,5 +1,5 @@
 //! Offline host-maintenance command. Shares normal App locking and key checks;
-//! the running Controller must release ownership before this can open storage.
+//! the running Server must release ownership before this can open storage.
 #![forbid(unsafe_code)]
 use clap::Parser;
 use meshway_server::{App, Settings};

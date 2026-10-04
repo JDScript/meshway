@@ -1,4 +1,5 @@
 //! Member removal participates in the one authoritative configuration commit.
+use crate::error::Error;
 use crate::{configuration::*, secrets::Sealer, store::authorization::current_session};
 use meshway_configuration::{NetworkConfigurationInput, parse_jsonc, rewrite_source};
 use meshway_model::{
@@ -26,8 +27,7 @@ pub(crate) fn remove_nodes(
     cache: &SnapshotCache,
 ) -> Result<CommitEffects, Error> {
     let (current_revision, _, _) =
-        crate::store::execution::current_configuration(tx, sealer, removal.network)
-            .map_err(super::configuration::map_error)?;
+        crate::store::execution::current_configuration(tx, sealer, removal.network)?;
     let current = cache.load(tx, removal.network, current_revision, sealer)?;
     let mut input = NetworkConfigurationInput::from(&current.document.configuration);
     input.nodes.retain(|id, _| {
@@ -64,8 +64,7 @@ pub(crate) fn remove_nodes(
             rule_sets,
         },
     )?;
-    let actor = current_session(tx, &removal.digest, chrono::Utc::now().timestamp_millis())
-        .map_err(|_| Error::InvalidSession)?
+    let actor = current_session(tx, &removal.digest, chrono::Utc::now().timestamp_millis())?
         .user
         .id;
     let effects = apply_in_transaction(
@@ -98,8 +97,7 @@ impl CommitParticipant for RemovalParticipant<'_> {
             tx,
             &self.removal.digest,
             chrono::Utc::now().timestamp_millis(),
-        )
-        .map_err(|_| Error::InvalidSession)?
+        )?
         .user
         .id;
         if !matches!(principal, Principal::Lifecycle(id) if *id == actor)
@@ -112,10 +110,9 @@ impl CommitParticipant for RemovalParticipant<'_> {
         let (target_role, version): (String, i64) = tx.query_row("SELECT role,version FROM memberships WHERE network_id=?1 AND id=?2 AND revoked_at IS NULL",
             params![current.network_id.as_uuid().as_bytes().as_slice(), self.removal.membership.as_uuid().as_bytes().as_slice()], |r| Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(Error::PermissionDenied)?;
         if version != self.removal.version.get() as i64 {
-            return Err(Error::Conflict);
+            return Err(Error::RevisionConflict);
         }
-        let caller_id =
-            crate::store::execution::id(caller_id).map_err(super::configuration::map_error)?;
+        let caller_id = crate::store::execution::id(caller_id)?;
         let owners: i64 = tx.query_row("SELECT count(*) FROM memberships WHERE network_id=?1 AND role='owner' AND revoked_at IS NULL", [current.network_id.as_uuid().as_bytes().as_slice()], |r|r.get(0))?;
         if !crate::store::authorization::member_actions(
             (caller_id, role(&caller_role)?),
@@ -159,6 +156,6 @@ fn role(value: &str) -> Result<MembershipRole, Error> {
         "owner" => Ok(MembershipRole::Owner),
         "admin" => Ok(MembershipRole::Admin),
         "member" => Ok(MembershipRole::Member),
-        _ => Err(Error::Storage),
+        _ => Err(Error::decode("memberships.role")),
     }
 }

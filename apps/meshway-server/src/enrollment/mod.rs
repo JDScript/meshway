@@ -1,14 +1,15 @@
 //! One-use admission requests and keys. Config commit is supplied by its owner
 //! and executes inside the enrollment transaction, never as a second commit.
+use crate::error::Error;
 pub(crate) mod configuration;
 pub(crate) mod settings;
 use crate::{
-    execution::NodeError,
     secrets::Sealer,
     store::{Handle, enrollment as store},
 };
 use meshway_model::*;
 use meshway_protocol::enrollment::*;
+use rusqlite::TransactionBehavior;
 use std::sync::Arc;
 /// Transaction participant supplied by the configuration owner. It normalizes
 /// and persists the complete source target, its stable bindings and publication.
@@ -17,7 +18,7 @@ pub(crate) trait EnrollmentCommit: Send + Sync {
         &self,
         tx: &rusqlite::Transaction<'_>,
         admission: &NodeAdmission,
-    ) -> Result<crate::configuration::CommitEffects, NodeError>;
+    ) -> Result<crate::configuration::CommitEffects, Error>;
 }
 pub struct NodeAdmission {
     pub(crate) proof: crate::store::enrollment::VerifiedEnrollmentProof,
@@ -34,138 +35,123 @@ pub struct Enrollment {
     handle: Handle,
     sealer: Arc<Sealer>,
     commit: Arc<dyn EnrollmentCommit>,
-    publisher: crate::state::service::CommitPublisher,
 }
 impl Enrollment {
     pub async fn redeem_key(
         &self,
         request: KeyEnrollmentRequest,
-    ) -> Result<EnrollmentResponse, NodeError> {
+    ) -> Result<EnrollmentResponse, Error> {
         let commit = self.commit.clone();
-        let publisher = self.publisher.clone();
         let id = request.request.intent.id;
         self.create_request(request.request).await?;
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| {
-                let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            .transact(TransactionBehavior::Immediate, move |tx| {
                 let (result, effects) = store::redeem_key_in_transaction(
-                    &tx,
+                    tx,
                     &sealer,
                     id,
                     request.enrollment_key,
                     request.verifier,
                     commit.as_ref(),
                 )?;
-                tx.commit()?;
-                for change in effects.map(|e| e.changes()).unwrap_or_default() {
-                    publisher.publish_committed(change);
-                }
-                Ok(result)
+                Ok((result, effects.map(|e| e.changes()).unwrap_or_default()))
             })
-            .await?
+            .await
     }
     pub async fn redeem(
         &self,
         id: EnrollmentRequestId,
         request: RedeemEnrollmentRequest,
-    ) -> Result<EnrollmentResponse, NodeError> {
+    ) -> Result<EnrollmentResponse, Error> {
         let commit = self.commit.clone();
-        let publisher = self.publisher.clone();
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| {
-                let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            .transact(TransactionBehavior::Immediate, move |tx| {
                 let (result, effects) =
-                    store::redeem_in_transaction(&tx, &sealer, id, request, commit.as_ref())?;
-                tx.commit()?;
-                for change in effects.map(|e| e.changes()).unwrap_or_default() {
-                    publisher.publish_committed(change);
-                }
-                Ok(result)
+                    store::redeem_in_transaction(tx, &sealer, id, request, commit.as_ref())?;
+                Ok((result, effects.map(|e| e.changes()).unwrap_or_default()))
             })
-            .await?
+            .await
     }
     pub(crate) fn new(
         handle: Handle,
         sealer: Arc<Sealer>,
         commit: Arc<dyn EnrollmentCommit>,
-        publisher: crate::state::service::CommitPublisher,
     ) -> Self {
         Self {
             handle,
             sealer,
             commit,
-            publisher,
         }
     }
     pub async fn create_request(
         &self,
         request: CreateEnrollmentRequest,
-    ) -> Result<EnrollmentRequestView, NodeError> {
+    ) -> Result<EnrollmentRequestView, Error> {
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::create_request(c, &sealer, request))
-            .await?
+            .write(move |tx| store::create_request(tx, &sealer, request))
+            .await
     }
     pub async fn inspect(
         &self,
         token: &str,
         id: EnrollmentRequestId,
-    ) -> Result<DeviceAuthorizationView, NodeError> {
+    ) -> Result<DeviceAuthorizationView, Error> {
         let token = crate::accounts::token_digest(token)?;
         self.handle
-            .execute(move |c| store::inspect(c, token, id))
-            .await?
+            .read(move |tx| store::inspect(tx, token, id))
+            .await
     }
     pub async fn approve(
         &self,
         token: &str,
         id: EnrollmentRequestId,
         request: ApproveEnrollmentRequest,
-    ) -> Result<DeviceAuthorizationView, NodeError> {
+    ) -> Result<DeviceAuthorizationView, Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::approve(c, &sealer, token, id, request))
-            .await?
+            .write(move |tx| store::approve(tx, &sealer, token, id, request))
+            .await
     }
-    pub async fn deny(&self, token: &str, id: EnrollmentRequestId) -> Result<(), NodeError> {
+    pub async fn deny(&self, token: &str, id: EnrollmentRequestId) -> Result<(), Error> {
         let token = crate::accounts::token_digest(token)?;
         self.handle
-            .execute(move |c| store::deny(c, token, id))
-            .await?
+            .write(move |tx| store::deny(tx, token, id))
+            .await
     }
     pub async fn poll(
         &self,
         id: EnrollmentRequestId,
         proof: EnrollmentDeviceProof,
-    ) -> Result<EnrollmentPollResponse, NodeError> {
+    ) -> Result<EnrollmentPollResponse, Error> {
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::poll(c, &sealer, id, proof))
-            .await?
+            .read(move |tx| store::poll(tx, &sealer, id, proof))
+            .await
     }
     pub async fn cancel(
         &self,
         id: EnrollmentRequestId,
         proof: EnrollmentDeviceProof,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), Error> {
         self.handle
-            .execute(move |c| store::cancel(c, id, proof))
-            .await?
+            .write(move |tx| store::cancel(tx, id, proof))
+            .await
     }
     pub async fn create_key(
         &self,
         token: &str,
         network: NetworkId,
         request: CreateEnrollmentKeyRequest,
-    ) -> Result<EnrollmentKeyResponse, NodeError> {
+    ) -> Result<EnrollmentKeyResponse, Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::create_key(c, &sealer, token, network, request))
-            .await?
+            .write(move |tx| store::create_key(tx, &sealer, token, network, request))
+            .await
     }
     pub async fn list_keys(
         &self,
@@ -173,25 +159,25 @@ impl Enrollment {
         network: NetworkId,
         limit: u16,
         cursor: Option<String>,
-    ) -> Result<EnrollmentKeysResponse, NodeError> {
+    ) -> Result<EnrollmentKeysResponse, Error> {
         if !(1..=200).contains(&limit) {
-            return Err(NodeError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::list_keys(c, token, network, limit, cursor, &sealer))
-            .await?
+            .read(move |tx| store::list_keys(tx, token, network, limit, cursor, &sealer))
+            .await
     }
     pub async fn revoke_key(
         &self,
         token: &str,
         network: NetworkId,
         key: EnrollmentKeyId,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), Error> {
         let token = crate::accounts::token_digest(token)?;
         self.handle
-            .execute(move |c| store::revoke_key(c, token, network, key))
-            .await?
+            .write(move |tx| store::revoke_key(tx, token, network, key))
+            .await
     }
 }

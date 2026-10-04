@@ -4,62 +4,15 @@ pub(crate) mod diagnostics;
 pub(crate) mod membership;
 pub mod proof;
 mod state;
+use crate::error::Error;
 use crate::{
     secrets::Sealer,
     store::{Handle, execution as store},
 };
 use meshway_model::*;
 use meshway_protocol::{execution::*, node::*};
+use rusqlite::TransactionBehavior;
 use std::sync::Arc;
-
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum NodeError {
-    #[error("invalid node credentials or proof")]
-    Unauthorized,
-    #[error("node operation is not permitted")]
-    Forbidden,
-    #[error("invalid node request")]
-    Invalid,
-    #[error("invalid initial node settings")]
-    InvalidSettings(Vec<meshway_configuration::ConfigurationIssue>),
-    #[error("node request conflicts with current generation or binding")]
-    Conflict,
-    #[error("node key version changed")]
-    VersionConflict,
-    #[error("enrollment lifecycle does not allow this operation")]
-    StateConflict,
-    #[error("invalid pagination cursor")]
-    InvalidCursor,
-    #[error("node resource not found")]
-    NotFound,
-    #[error("node operation budget exhausted")]
-    Busy,
-    #[error("node storage operation failed")]
-    Storage,
-}
-impl From<rusqlite::Error> for NodeError {
-    fn from(_: rusqlite::Error) -> Self {
-        Self::Storage
-    }
-}
-impl From<crate::store::ExecutorError> for NodeError {
-    fn from(_: crate::store::ExecutorError) -> Self {
-        Self::Storage
-    }
-}
-impl From<crate::accounts::AccountError> for NodeError {
-    fn from(_: crate::accounts::AccountError) -> Self {
-        Self::Unauthorized
-    }
-}
-impl From<meshway_configuration::compile::CompileError> for NodeError {
-    fn from(e: meshway_configuration::compile::CompileError) -> Self {
-        match e {
-            meshway_configuration::compile::CompileError::Budget => Self::Busy,
-            _ => Self::Invalid,
-        }
-    }
-}
 
 /// Created only by current credential validation. Never deserialize a principal.
 #[derive(Clone)]
@@ -90,10 +43,9 @@ pub struct Execution {
     handle: Handle,
     sealer: Arc<Sealer>,
     boot: InstanceId,
-    publisher: crate::state::service::CommitPublisher,
 }
 impl Execution {
-    /// Supplies C's report/view provider with actual current SQL facts. The
+    /// Supplies the State report/view provider with actual current SQL facts. The
     /// returned configuration is private execution material: providers project
     /// only resource identities/allowed endpoints and never broadcast it.
     pub fn current_node_execution(
@@ -106,7 +58,7 @@ impl Execution {
             InstanceLease,
             Option<meshway_configuration::execution::CompiledNode>,
         ),
-        NodeError,
+        Error,
     > {
         let now = store::now()?;
         let p = store::authorize_node(tx, &self.sealer, self.boot, proof::token_hash(token)?, now)?;
@@ -130,21 +82,15 @@ impl Execution {
         network: NetworkId,
         node: NodeId,
         request: RevokeNodeKeyRequest,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| {
-                let changed: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM node_keys WHERE network_id=?1 AND node_id=?2 AND id=?3 AND revoked_at IS NULL)", rusqlite::params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), request.key_id.as_uuid().as_bytes().as_slice()], |row| row.get(0))?;
-                store::revoke_key(c, &sealer, token, network, node, request)?;
-                if changed {
-                    publisher.publish_committed(crate::state::stream::CommittedChange::Authorization { network_id: network });
-                    publisher.publish_committed(crate::state::stream::CommittedChange::Progress { network_id: network });
-                }
-                Ok(())
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                let (_, effects) = store::revoke_key(tx, &sealer, token, network, node, request)?;
+                Ok(((), effects))
             })
-            .await?
+            .await
     }
     /// Atomic seam for State/observation storage. Every use rechecks the current
     /// session, Config identity, instance and (when requested) execution lease.
@@ -155,22 +101,22 @@ impl Execution {
         instance: &InstanceRequest,
         configuration: Option<&ConfigurationRef>,
         require_execution: bool,
-    ) -> Result<NodePrincipal, NodeError> {
+    ) -> Result<NodePrincipal, Error> {
         let now = store::now()?;
         let p = store::authorize_node(tx, &self.sealer, self.boot, proof::token_hash(token)?, now)?;
         store::current_instance(tx, self.boot, &p, instance, now)?;
         let lease = store::instance_lease(tx, &self.sealer, &p)?;
         if configuration.is_some_and(|c| lease.target.as_ref() != Some(c)) {
-            return Err(NodeError::Conflict);
+            return Err(Error::BindingConflict);
         }
         if require_execution {
             if lease
                 .execution_expires_at_ms
                 .is_none_or(|t| t <= now as u64)
             {
-                return Err(NodeError::Conflict);
+                return Err(Error::BindingConflict);
             }
-            let target = lease.target.ok_or(NodeError::Conflict)?;
+            let target = lease.target.ok_or(Error::BindingConflict)?;
             store::check_publication(
                 tx,
                 &self.sealer,
@@ -186,52 +132,53 @@ impl Execution {
         &self,
         token: &str,
         request: RoutingSelectionRequest,
-    ) -> Result<RoutingSelectionResponse, NodeError> {
+    ) -> Result<RoutingSelectionResponse, Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::select_profile(c, &sealer, boot, token, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::select_profile(tx, &sealer, boot, token, request)
+            })
+            .await
     }
     pub async fn settings(
         &self,
         token: &str,
         network: NetworkId,
         node: NodeId,
-    ) -> Result<(Revision, meshway_configuration::NodeSettingsView), NodeError> {
+    ) -> Result<(Revision, meshway_configuration::NodeSettingsView), Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |db| store::settings(db, &sealer, token, network, node))
-            .await?
+            .read(move |tx| store::settings(tx, &sealer, token, network, node))
+            .await
     }
     pub async fn inventory(
         &self,
         token: &str,
         network: NetworkId,
-    ) -> Result<NodeInventoryResponse, NodeError> {
+    ) -> Result<NodeInventoryResponse, Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::inventory(c, &sealer, token, network))
-            .await?
+            .read(move |tx| store::inventory(tx, &sealer, token, network))
+            .await
     }
     pub async fn progress(
         &self,
         token: &str,
         network: NetworkId,
         publication: PublicationId,
-    ) -> Result<PublicationProgress, NodeError> {
+    ) -> Result<PublicationProgress, Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
-            .execute({
+            .read({
                 let boot = self.boot;
-                move |c| store::progress(c, &sealer, boot, token, network, publication)
+                move |tx| store::progress(tx, &sealer, boot, token, network, publication)
             })
-            .await?
+            .await
     }
     /// State/observation owner obtains current identity and instance admission;
     /// callers requiring atomic report writes use the same store functions in
@@ -240,149 +187,141 @@ impl Execution {
         &self,
         principal: NodePrincipal,
         request: InstanceRequest,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), Error> {
         let sealer = self.sealer.clone();
         let boot = self.boot;
         self.handle
-            .execute(move |c| {
-                let tx = c.transaction()?;
+            .read(move |tx| {
                 let now = store::now()?;
-                let p = store::reauthorize(&tx, &sealer, boot, &principal, now)?;
-                store::current_instance(&tx, boot, &p, &request, now)
+                let p = store::reauthorize(tx, &sealer, boot, &principal, now)?;
+                store::current_instance(tx, boot, &p, &request, now)
             })
-            .await?
+            .await
     }
-    pub(crate) fn new(
-        handle: Handle,
-        sealer: Arc<Sealer>,
-        boot: InstanceId,
-        publisher: crate::state::service::CommitPublisher,
-    ) -> Self {
+    pub(crate) fn new(handle: Handle, sealer: Arc<Sealer>, boot: InstanceId) -> Self {
         Self {
             handle,
             sealer,
             boot,
-            publisher,
         }
     }
-    pub async fn challenge(
-        &self,
-        request: NodeChallengeRequest,
-    ) -> Result<NodeChallenge, NodeError> {
+    pub async fn challenge(&self, request: NodeChallengeRequest) -> Result<NodeChallenge, Error> {
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::challenge(c, &sealer, request))
-            .await?
+            .write(move |tx| store::challenge(tx, &sealer, request))
+            .await
     }
-    pub async fn session(
-        &self,
-        request: NodeSessionRequest,
-    ) -> Result<NodeSessionResponse, NodeError> {
+    pub async fn session(&self, request: NodeSessionRequest) -> Result<NodeSessionResponse, Error> {
         let sealer = self.sealer.clone();
         let boot = self.boot;
         self.handle
-            .execute(move |c| store::session(c, &sealer, boot, request))
-            .await?
+            .write(move |tx| store::session(tx, &sealer, boot, request))
+            .await
     }
-    pub async fn rotate(&self, request: NodeRotationRequest) -> Result<NodeKeyMetadata, NodeError> {
+    pub async fn rotate(&self, request: NodeRotationRequest) -> Result<NodeKeyMetadata, Error> {
         let sealer = self.sealer.clone();
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::rotate(c, &sealer, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::rotate(tx, &sealer, request)
+            })
+            .await
     }
-    pub async fn authenticate(&self, token: &str) -> Result<NodePrincipal, NodeError> {
+    pub async fn authenticate(&self, token: &str) -> Result<NodePrincipal, Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
         self.handle
-            .execute(move |c| {
-                let tx = c.transaction()?;
-                store::authorize_node(&tx, &sealer, boot, token, store::now()?)
-            })
-            .await?
+            .read(move |tx| store::authorize_node(tx, &sealer, boot, token, store::now()?))
+            .await
     }
     pub async fn acquire(
         &self,
         token: &str,
         request: AcquireInstanceRequest,
-    ) -> Result<InstanceLease, NodeError> {
+    ) -> Result<InstanceLease, Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::acquire(c, &sealer, boot, token, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::acquire(tx, &sealer, boot, token, request)
+            })
+            .await
     }
     pub async fn renew(
         &self,
         token: &str,
         request: InstanceRequest,
-    ) -> Result<InstanceLease, NodeError> {
+    ) -> Result<InstanceLease, Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::renew(c, &sealer, boot, token, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::renew(tx, &sealer, boot, token, request)
+            })
+            .await
     }
-    pub async fn release(&self, token: &str, request: InstanceRequest) -> Result<(), NodeError> {
+    pub async fn release(&self, token: &str, request: InstanceRequest) -> Result<(), Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::release(c, &sealer, boot, token, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::release(tx, &sealer, boot, token, request)
+            })
+            .await
     }
     pub async fn configuration(
         &self,
         token: &str,
         request: NodeConfigurationRequest,
-    ) -> Result<NodeConfigurationResponse, NodeError> {
+    ) -> Result<NodeConfigurationResponse, Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::configuration(c, &sealer, boot, token, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::configuration(tx, &sealer, boot, token, request)
+            })
+            .await
     }
-    pub async fn receipt(&self, token: &str, request: ReceiptRequest) -> Result<(), NodeError> {
+    pub async fn receipt(&self, token: &str, request: ReceiptRequest) -> Result<(), Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::receipt(c, &sealer, boot, token, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::receipt(tx, &sealer, boot, token, request)
+            })
+            .await
     }
     pub async fn demand(
         &self,
         token: &str,
         request: DemandRequest,
-    ) -> Result<DemandResponse, NodeError> {
+    ) -> Result<DemandResponse, Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::demand(c, &sealer, boot, token, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::demand(tx, &sealer, boot, token, request)
+            })
+            .await
     }
     pub async fn cancel_demand(
         &self,
         token: &str,
         request: CancelDemandRequest,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::cancel_demand(c, &sealer, boot, token, request, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::cancel_demand(tx, &sealer, boot, token, request)
+            })
+            .await
     }
 }

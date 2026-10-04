@@ -1,7 +1,8 @@
 # Console decisions
 
-The Meshway console: a pure Vite SPA served by the controller. Decisions are
-recorded as they are confirmed with the user.
+The Meshway console: a pure Vite SPA served by the controller. What its
+pages do and the interface rules they follow; how the source is organised
+is in `architecture.md`.
 
 ## V2 controller
 
@@ -68,7 +69,7 @@ its generated client only, and only what the controller delivers:
   tag owners, DNS, address pools and the defaults (access, topology,
   dialers); "nodes" lists each node's settings and opens its workspace,
   where they are edited. One
-  draft per sign-in and network (`features/configuration/draft.ts`), kept
+  draft per sign-in and network (`state/configuration-draft.ts`), kept
   across the network's pages, in memory only (the source holds secrets:
   never storage, the URL or the query cache), dropped when the sign-in
   changes. It holds one kind of input with the revision it was read at:
@@ -76,7 +77,7 @@ its generated client only, and only what the controller delivers:
   operations over the non-secret view of that revision, one `replace…` /
   `setAddressPools` per edited part holding its final value (a part set
   back to its base value drops its operation), and per node one operation
-  per target (`features/configuration/node-operations.ts`): settings with
+  per target (`lib/configuration/node-operations.ts`): settings with
   only the fields that differ, tags, addresses with only the families that
   differ, each listener (set, removed, or recreated: removed then set, so
   the controller makes new material), and `deleteNode`, which replaces the
@@ -90,11 +91,16 @@ its generated client only, and only what the controller delivers:
   dialer defaults, with only the fields that differ from the base (the
   controller keeps what is omitted), so changing the topology default
   alone sends only it, and checking against a newer revision replays only
-  it. The commit bar and review serve the configuration page
-  and the nodes page alike (`useConfigurationCommit`).
+  it. The commit bar serves the configuration page and the nodes page
+  alike (`useConfigurationCommit`); the check, the review and the apply are
+  one flow per network, shown by the network's shell, so they outlive the
+  page that started them.
   Applying always validates first and opens a review: the effective change
-  count, permanent node deletions and address changes on their own, every
-  change with its value before and after (non-secret views); only its
+  count, permanent node deletions and address changes on their own, the
+  material the controller generates on apply for new listeners
+  (`willGenerate`) and what it still has to complete (`requirements`, less
+  what generating covers), by listener, every change with its value before
+  and after (non-secret views); only its
   confirmation applies, against the draft's revision. A newer revision
   keeps the draft and its base; the bar offers to start over from it or to
   check the same text or operations against it (a new review). A restore
@@ -175,7 +181,7 @@ its generated client only, and only what the controller delivers:
   `denyDeviceAuthorization`). The path is the console's: neither the
   controller nor docs/v2 defines the browser link a device opens yet. The
   request ID is not a credential; the page signs in in place as `/join`
-  does (`entry/inline-sign-in.tsx`), shows what the device reported as
+  does (`components/entry/inline-sign-in.tsx`), shows what the device reported as
   untrusted text with its control key, and follows the request until it
   settles. A pending request has no user and is never denied: it is
   approved into one of the account's networks, or for a re-login
@@ -188,7 +194,7 @@ its generated client only, and only what the controller delivers:
   approver withdraws it (`denyDeviceAuthorization`) before the device
   redeems it. `withdrawn` and `cancelled` are told apart; a
   `state_conflict` reads the request again.
-- The event stream (`watchNetwork`, `features/live/`): SSE first, GET as
+- The event stream (`watchNetwork`, `api/live/`): SSE first, GET as
   the fallback. Each tab keeps one stream for the network it has open, from
   its pages' mount until the network changes or the sign-in ends. The
   snapshot batch is staged and installed at `sync.ready` in one step; then
@@ -200,11 +206,14 @@ its generated client only, and only what the controller delivers:
   settings (`memberConfigurationQuery`). Members, join links, activity,
   configuration reads and rule sets are invalidated instead (paged, or a
   GET adds what the event lacks); `configuration.changed` never touches a
-  draft, which sees the new revision through those reads. A member's
-  configuration change takes a new snapshot (no event carries their
-  settings). Reconnects back off (1 s doubling to 30 s), resuming from the
-  applied cursor; `sync.reset` and a refused frame sync afresh. 401 signs
-  out; 403/404 stops the stream and the network's reads say why. While it
+  draft, which sees the new revision through those reads. A member's own
+  settings, when they change, come in a new batch after the controller's
+  `sync.reset`. A `state.delta` replaces the State's `asOf`, `sequence` and
+  `configurationRevision` when it carries them. Reconnects back off (1 s
+  doubling to 30 s), resuming from the applied cursor; `sync.reset` and a
+  refused frame sync afresh. 401 and `stream.closed` for an expired
+  session sign out; 403/404 and a revoked membership stop the stream and
+  the network's reads say why. While it
   is not live, the reads it covers poll (`pollUnlessLive`), and leaving
   live reads them again. The toolbar's dot states it (live since,
   reconnecting since, stopped). Observation events write this sign-in's
@@ -275,13 +284,13 @@ its generated client only, and only what the controller delivers:
   mean range, probe counts and 未回应率 (timed out or failed over probes;
   not packet loss). Drawn with SVG by hand. The history reads records
   only; it never starts a measurement.
-- Live observation (above the node's latency history; `features/observation/`):
+- Live observation (above the node's latency history):
   `createObservation`, `getObservation`, `listObservations`,
   `renewObservation`, `cancelObservation`, and the stream's
   `observation.status`, `observation.sample`, `observation.removed`. Offered
   from the node to owners and admins, and to a member for their own
   User-identity device (the controller publishes no action for it, so its
-  rule is restated in `choices.ts`; it still decides). A target among the
+  rule is restated in `lib/observation/choices.ts`; it still decides). A target among the
   nodes this account sees, the exact service (ICMP echo, TCP or UDP with a
   port), automatic or explicit path, a period of 1 to 30 s; it asks for
   `rtt` and `probeLoss` (traffic is not offered: the controller returns it
@@ -300,7 +309,11 @@ its generated client only, and only what the controller delivers:
   probes apart). Renewal is at `renewAfter` (a little after, by this
   browser's clock), only while the tab is visible; a renewal refused as
   `observation_limit` is tried again each second while the lease lasts. A
-  lease past `subscriberExpiresAt` shows as ended and is read again.
+  lease past `subscriberExpiresAt` shows as ended and is read again. A
+  subscription the controller no longer holds for this sign-in (404, or
+  403 / 409 when the session lost its authority over it or the source's
+  instance or execution moved on: the controller drops the subscriber)
+  shows as ended; a 401 is the session's own end.
   Closing the panel or leaving the tab (another node tab, network or page)
   cancels; closing the browser leaves the lease to run out. This sign-in's
   other active subscriptions from the node (`listObservations`, another
@@ -316,7 +329,7 @@ its generated client only, and only what the controller delivers:
 - Changes the controller deduplicates (`createNetwork`, `renameNetwork`)
   carry a fresh `requestId` per distinct attempt; after an attempt whose
   outcome is unknown (no 4xx answer), the same input sends the same request
-  again (`lib/attempt.ts`). A rename sends `expectedName`, the name last
+  again (`state/attempts.ts`). A rename sends `expectedName`, the name last
   read; on `name_conflict` the network is read again and the typed name
   kept. A name is checked before sending by the rules the controller
   publishes (`networkNameRules`, `lib/network-name.ts`: raw UTF-8 bytes and
@@ -324,18 +337,10 @@ its generated client only, and only what the controller delivers:
   the controller checks again.
 - A network's name is entity metadata, not configuration: it is saved by
   its own button, with no draft or commit bar.
-- `lib/api.ts` holds the one `ControlClient` (same origin). `call` unwraps a
-  result and throws `ApiFailure`; `authed` adds this tab's session and turns a
-  401 into a sign-out. `lib/failure.ts` words a failure by its problem code,
-  else by its kind and status. Reads retry only a lost connection or a 5xx.
-- The shared components (`components/chrome`, the `components/ui` pieces
-  they use, `hooks/`) stay for the pages to come, though no page uses most
-  of them yet. Dependencies no page uses are removed; the pages that need
-  them re-add the versions they were tested with: `cmdk` ^1.1.1 (the
-  palette).
-  The JSONC editor's (CodeMirror 6, `jsonc-parser` 3.3.1) are back with the
-  configuration source; the editor chunk loads with the first source
-  opened (~111 kB gzip).
+- A failure is worded by its problem code, else by its kind and status
+  (`api/failure.ts`). Reads retry only a lost connection or a 5xx.
+- Dependencies no page uses are removed. The JSONC editor (CodeMirror 6,
+  `jsonc-parser` 3.3.1) loads with the first source opened (~111 kB gzip).
 - A change the controller makes to every session (changing the password,
   ending all sessions, a reset) ends this tab's too: it forgets the session
   and opens the sign-in with the reason (`/login?reason=`). A 401 that
@@ -343,11 +348,6 @@ its generated client only, and only what the controller delivers:
   the session: the controller checks the session first.
 - A tab signs out when its session reaches the controller's absolute expiry
   (`useSessionExpiry`), not only on its next request.
-- Development: start a controller on a private data directory with
-  `--listen 127.0.0.1:0`, then run the console with
-  `MESHWAY_CONTROLLER_URL=http://127.0.0.1:<port> pnpm dev`. Without it the
-  development server does not start, so it never proxies to another
-  controller.
 
 ## Foundation
 
@@ -357,9 +357,8 @@ its generated client only, and only what the controller delivers:
 | Stack | Vite, TanStack Router (file routes, typed params and search), TanStack Query, shadcn (Base UI, preset `b0` = `base-nova`, pointer; only the pieces in use are kept, the CLI adds others back), Paraglide (zh, en). |
 | BFF | None. The browser calls the controller through the generated `@meshway/control-client` with Zod validation. |
 | Origin | One origin. The controller serves the built `dist/` with an `index.html` fallback; development proxies `/api` to the controller named by `MESHWAY_CONTROLLER_URL`. |
-| Copy | Every string lives in `messages/{zh,en}.json` (shared) or `messages/<feature>/{zh,en}.json`; zh is the base locale, and `src/messages.test.ts` keeps both in step. Interface text states facts only: no explanations of what the display means or of how it was drawn. |
+| Copy | Every string lives in `messages/{zh,en}.json` (words several areas share: State values, activity, actors, common actions) or `messages/<area>/{zh,en}.json`; zh is the base locale, and `tests/messages.test.ts` keeps both locales in step, each message in one file and in use. One value has one wording everywhere it is shown. Interface text states facts only: no explanations of what the display means or of how it was drawn. |
 | Routes | Resources are nested and plural: `/networks/<network_id>/<page>`, e.g. `/networks/<id>/overview?node=<node_id>`. `/networks/<id>` redirects to its overview; `/` to the remembered or first network. Selection and filters live in validated search params. |
-| Source layout | `routes/` only validate params and search and mount a feature. `features/<feature>/` holds a feature's page, panel and workspace, its `navigation`, `url`, `queries`, `labels` and pure models, with tests beside them. `components/ui/` are shadcn originals (lightly adjusted), `components/chrome/` our shared components, `hooks/` shared React hooks, `lib/` helpers without React (a hook only beside the store it reads, as in `lib/locale`). |
 
 ## Sessions
 
@@ -387,23 +386,20 @@ its generated client only, and only what the controller delivers:
 
 ## Overview globe motion
 
-Motion only shows fresh evidence; nothing animates by default.
-
-| Element | Animated when | Otherwise |
-| --- | --- | --- |
-| Link flow | Both ends report the channel authenticated within its freshness window. Particles run both ways at a fixed speed: dial direction is not business direction. | One-sided: static amber. Unauthenticated: static red dashed. Configured with no report: static grey dotted. |
-| Node breathing | The agent's runtime report is current (within its TTL). | Recent control-plane contact only: solid, no breathing. Neither: dimmed. |
-| Rotation | Nothing on the globe is focused. | Stops on interaction or on focusing a placed node. |
-
-Speed and density are not tied to RTT or traffic. Traffic is not measured;
-when it is, flow may map to it. `prefers-reduced-motion` turns off rotation,
-flow and breathing; states stay distinguishable by stroke and text.
+Nothing on the globe animates to suggest activity: links and nodes are
+static, styled by their state (`lib/network-map.ts`, the evidence before
+the phase). Only the globe turns, slowly, while nothing on it is focused
+and motion is allowed; it stops on interaction or on focusing a placed
+node, and eases back in after a pause. `prefers-reduced-motion` stops it;
+states stay distinguishable by stroke and colour.
 
 ## Interaction rules
 
 - No layout shift, ever. Feedback that is not part of a component's own shape
   (sign-in failures, read failures, confirmations) goes to a toast; panels
   reserve every slot and only change values.
+- Times of what has happened (a report, `asOf`, a link's start) read "… ago"
+  and are never shown ahead of the clock, which ticks between reads.
 - Forms are real forms: named fields, `autocomplete`, Enter submits. Text
   fields bound to the URL are uncontrolled and never written during an IME
   composition.
@@ -420,18 +416,17 @@ controller supports today; the rest of each row is the target design.
 
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
-| Overview `/overview?node=` | the globe with located nodes and current links; the status corner (counts, 待定位, current links, the history layer) | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
-| Nodes `/nodes?view=nodes\|tags` | `?q=` with each node's report; a node's facts and State, settings, listeners with their runtime, links and paths, keys and deletion; adding one with an enrolment key | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|settings\|transport\|latency\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
+| Overview `/overview` | the globe with located nodes and current links; the status corner (counts, 待定位, current links, the history layer) and the node the pointer is on | none: the globe is its index | none (a node opens its workspace on the nodes page) | |
+| Nodes `/nodes?q=` | each node's report; a node's facts and State, settings, listeners with their runtime, links and paths, latency, keys and deletion; adding one with an enrolment key | nodes (search, state) | `/nodes/<id>?tab=overview\|settings\|transport\|latency\|manage`, `/nodes/add` | revoke, enrolment key |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
-| Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity, DNS | leave |
+| Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity | leave |
 | Account `/account` (from the account menu) | email, ID, email and password changes, sessions, activity | none | memberships | end a session, the others, all; change the password |
 
 Outside the shell, one card over the globe like the sign-in: `/login`,
 `/register` (offered only while the controller publishes registration as
 open), `/` with no network (creating the first), a network not found,
-`/join`, and later the password-reset and device-approval pages of the V2
-API.
+`/join`, `/reset-password` and `/authorize-device/<id>`.
 
 - Configuration is one page because it is one document with one revision:
   one draft, one commit bar, one review.
@@ -449,21 +444,22 @@ API.
 | Dialog | an irreversible confirmation, a secret shown once, a very short create | never in the URL |
 
 - Opening another thing at the same level replaces; a reference to another
-  page (a node in a policy rule) goes to that page's workspace and Back
+  page (a node in a configuration rule) goes to that page's workspace and Back
   returns. Detail below a workspace is tabs, inline expansion or a split
   inside it, never a second workspace.
 - Secrets (enrolment tokens, invitation and reset links) never enter the
   URL, the history or the query cache.
 - Editing happens in place. Drafts live in memory per sign-in and network,
   with the revision they were loaded at; polling never moves them. One
-  floating commit bar (bottom centre) serves every editor; a 409 or 422
-  keeps the draft. The dock marks pages holding a draft; closing or
-  reloading the tab with one asks first; signing out drops them.
+  commit bar, floating at the bottom of the workspace, serves every editor;
+  a 409 or 422 keeps the draft. The dock marks the configuration while
+  its draft holds edits, wherever they were made; closing or reloading the
+  tab with one asks first; signing out drops them.
 - Members read; owners and admins change (the controller's `Manage`).
   Controls a role cannot use are not offered; the controller still decides.
-- Pages own their surfaces (`features/<page>/page.tsx`) through
-  `PageFrame`, which frames them as surfaces on wide screens and drawers on
-  phones; the shell only places the chrome and drives the globe.
+- Each page's route draws its surfaces through `PageFrame`, which frames
+  them as surfaces on wide screens and drawers on phones; the shell only
+  places the chrome and drives the globe.
 
 ## Surfaces
 
@@ -474,114 +470,48 @@ surface kind has one slot, so nothing stacks:
 | --- | --- | --- |
 | Chrome | always | network card top left (switcher, counts, link bar), search, preferences and account top right, the dock; on phones a bottom bar on every page (the launcher, then the card without its link bar) and preferences top right |
 | Dock | left, under the network card | icon rail on wide screens; on phones a round launcher at the bottom left, under the thumb, that unfolds the pages upwards |
-| Page panel | left, beside the dock | one page's list (the node list today) |
-| Peek | right | the overview's quick look at one node (shadcn Drawer, not modal) |
-| Workspace | right of the page panel, covering the globe | one entity in full (a node: tabs, more to come); the globe dims and keeps its place |
-| Unplaced | the network card's far end, every page | a round count ringed by states; opens the list of nodes without a sourced location |
-| First run | the overview only, bottom centre of the room the peek leaves; on phones above the bottom bar | with no node (read, not unread or failed) a card with the three steps and, for owners and admins, Add node; with one, a one-line chip; never dismissed, gone once the condition ends |
+| Page panel | left, beside the dock | one page's index: a list or its sections |
+| Status corner | the overview only, bottom right; on phones above the bottom bar | counts, 待定位, current links, the history layer; the node the pointer is on above it |
+| Workspace | right of the page panel, covering the globe | one entity or one editor in full; the globe dims and keeps its place |
 
-- Unplaced nodes are not drawn on the globe (no location source exists yet);
-  links to them are listed in the node's surfaces only.
-- `features/shell/layout.ts` is the single source of geometry. The globe
+- Nodes without a location are not drawn on the globe; the status corner
+  lists them under 待定位, and links to them are counted and listed.
+- `components/surface/layout.ts` is the single source of geometry. The globe
   centres (and shrinks if needed) in the space the surfaces leave free, and the
   same numbers are published as CSS variables for class-placed surfaces.
-- The shell (`features/shell/network-shell.tsx`) is mounted once for all of a
-  network's pages, so changing pages only brings surfaces in and out; it alone
-  writes the globe's inputs (lists may highlight a node).
-- Surfaces appear in place with a fade and a short shift and keep their last
-  content while leaving (`Surface`); the peek slides as a drawer.
-- On phones the page panel, the peek and the workspace are glass drawers
+- The shell is mounted once for all of a network's pages, so the chrome
+  stays put while pages change; it alone writes the globe's frame and
+  scene (lists may highlight a node).
+- Surfaces appear in place with a fade and a short shift; a workspace
+  keeps its last content while leaving (`Surface`). Between pages a panel
+  is replaced at once.
+- On phones the page panel and the workspace are glass drawers
   (`GlassDrawer`) floating above the bottom bar: swiping one away, Escape,
   or a tap outside it (not on the chrome or its menus) steps back - the
   list to the overview, the workspace to the list.
 
-## URL and state
+## URL and history
 
-| State | Owner |
-| --- | --- |
-| What is open: page, entity, peek, tab, list search and filter | the URL (TanStack Router, Zod-validated; defaults left out) |
-| Server data | TanStack Query cache, filled by route loaders |
-| Globe inputs | `features/globe/store.ts` (zustand), written by the shell |
-| First-load sequence | `features/boot/boot-store.ts` |
-| Transient UI (a menu is open) | component state |
-| Preferences (theme, locale) | `localStorage` |
-
-Each page states its routes in `features/<page>/url.ts` and its moves in
-`features/<page>/navigation.ts`, built on `useSurfaceHistory`
-(`features/shell/history.ts`): opening a peek, a workspace or a page sheet
-from nothing pushes a history entry marked `opened`; switching entities
-replaces it; closing an `opened` entry goes back, so Back and the close
-button agree. Typing into a search replaces. Switching networks keeps the
-page and opens nothing. Routes say what they are through `staticData`
-(`page`, `workspace`), which the shell reads to place the chrome and the
-globe; `features/shell/pages.ts` lists the pages and the dock.
-
-| Draft state | Owner |
-| --- | --- |
-| A draft and its base revision | `useConfigurationDraft` (`features/configuration/draft.ts`); the dock's marks and the close warning in `features/shell/drafts.ts` |
-| Checking, the review, applying, conflicts | `useConfigurationApply` → `useCommit` → `CommitBar` |
-| Field validity | the generated schemas, before the controller's own checks |
-
-## Command palette
-
-- ⌘K (Ctrl+K off macOS), or the search button first in the top bar, on a
-  network's pages only (not the entry pages). A dialog: a 560px glass panel
-  in the top third on wide screens; full width under the top bar on phones,
-  above the bottom bar or the keyboard (never a bottom sheet). Escape
-  returns focus; a jump hands it to where it lands.
-- Groups: pages (layers and sections once something is typed), nodes, tags,
-  members, rules (connections, grants, Mesh routes by ID), other networks,
-  actions. Only what the role can use; read through the pages' own query
-  options, the ones the shell does not hold while the palette is open; no
-  endpoint of its own. A group being read or unreadable says so in place.
-- Matching is plain substrings over each entry's keywords (name first), as
-  the policy pickers match; fuzzy matching would find nearly anything inside
-  a hex ID. Six results per group, the rest counted.
-- Jumps use `history.jump`: a link on wide screens (a workspace marked
-  `opened`), the launcher's move on phones. A rule opens its layer at
-  `?rule=` and that row takes focus once (`requestRuleFocus`).
-
-## Adding a page
-
-1. `features/<page>/url.ts` (search schema, sections, tabs),
-   `navigation.ts` (the route read with typed `useMatch(…, shouldThrow:
-   false)`, the moves on `useSurfaceHistory`), `page.tsx` (`PageFrame`).
-   Surface content takes the URL state as props: it stays on screen while
-   it leaves, after its route has stopped matching.
-2. Routes under `routes/_authed/networks/$network/<page>…`, with
-   `staticData: { page }` on the page and `{ workspace: true }` on each
-   workspace.
-3. List it in `features/shell/pages.ts` (and the dock) and mount it in
-   `network-shell.tsx`.
-4. Copy in `messages/<feature>/{zh,en}.json`, keys prefixed by the feature.
-5. The panel: `PanelHeader` (title, the count of what it names, one
-   `PanelAction`) over a `PanelList` of `ListRow`s, `useListKeys` for the
-   arrow keys, `ListPlaceholders` / `ListNote` while unread or empty.
-6. The workspace: `SurfaceHeader size="lg"` with a `RevisionLine` under an
-   editor's title; content in `Section`s, `max-w-workspace` unless it is a
-   data-dense view; `EmptyLine` for an empty or unread section; `RefRow`
-   for anything with a page of its own; `DangerRow` before an
-   irreversible action.
-7. Editors: the configuration's draft (`useConfigurationDraft`) and
-   `useCommit`; the panel marks a row holding a draft with
-   `DraftMark`; members get the same view, read-only (`useCanManage`).
-8. Secrets: `useSecretMutation`, shown in a `GlassDialog` with
-   `SecretField` (`CopyField` for a command to copy). Irreversible actions:
-   `ConfirmDialog` with its `effects`.
-9. Popups inside the workspace body: wrap the body in `PopupBoundary` and
-   pass `usePopupPlacement()` to the popup, so it stays below the header
-   and clear of the commit bar.
+What is open (page, entity, tab, list search) is in the URL, validated,
+with defaults left out; the rest of the state's owners are listed in
+`architecture.md`. Opening a workspace or a page sheet from nothing pushes
+a history entry marked `opened`; switching entities replaces it; closing
+an `opened` entry goes back, so Back and the close button agree. Changes
+inside what is open (a tab, a search) replace. Switching networks keeps the
+page and opens nothing. On phones a page opened from the launcher
+remembers the overview it left, and leaving the pages returns there in one
+step.
 
 ## Shared components
 
-One implementation each, in `components/chrome` (and `features/shell` for
-what knows the shell's geometry):
+One implementation each, in `components/chrome` (and `components/surface`
+for what knows the surfaces' geometry):
 
 | Piece | What it fixes |
 | --- | --- |
 | `PanelHeader`, `PanelAction` | One 28px title row on `text-lead`; the count counts what the title names (per-view counts sit in the segment, `SegmentCount`); one action, an `IconAction` whose glyph meets the content edge. |
 | `PanelList`, `ListRow`, `StaticRow`, `ListPlaceholders`, `ListNote`, `useListKeys` | Panel rows 56px high, 2px apart (a hovered row never merges with the chosen one), a 16px lead slot (a status dot, a glyph, or a 16px initial avatar, `InitialAvatar`) so every list's text starts at the same x; one trailing column; no chevrons. |
-| `RefRow`, `RefList`, `RefStateHeading` | A row in a workspace naming a node or a network: its fill on the section's edges like a tile, the state in a fixed column under its heading, ↗ (or an `IconAction`) at its end. `NodeRef` is the node's. |
+| `RefRow`, `RefList`, `RefStateHeading` | A row in a workspace naming a node or a network: its fill on the section's edges like a tile, the state in a fixed column under its heading, ↗ (or an `IconAction`) at its end. |
 | `Section`, `EmptyLine`, `DangerRow` | A titled part with its count and action on a 32px line; the fixed-height empty or unread line (short facts: "没有节点"); the tile before an irreversible action, the fact it stands on and the action. |
 | `ConfirmDialog` | `effects`: what it does, one fact each, as a list. `tone`: `destructive` (takes something away) or `default` (cannot be reversed here, takes nothing). |
 | `CopyField`, `SecretField` | A value to copy; a command breaks at spaces and flags, only a secret anywhere. `SecretField` marks it as shown once. |
@@ -589,9 +519,9 @@ what knows the shell's geometry):
 | `FieldInput`, `FieldSelect` | One fill (`field`, on both themes and when disabled), corners and ring; sizes `default` (workspace, dialog) and `lg` (entry cards). |
 | `DraftMark`, `RevisionLine` | Unsaved edits in the one draft colour: a dot beside a title or the word; the editor's `r42`, or the draft and the revision it started from. |
 
-- Workspaces holding a form (a tag, a member, adding a node, the account,
+- Workspaces holding a form (a member, adding a node, the account,
   settings) are `max-w-workspace` (40rem) wide; data-dense views (a node's
-  tabs, the policy layers) take the full width.
+  tabs, the configuration's sections) take the full width.
 - A scrolling body under a fixed header keeps its spacing from the header
   outside itself (the header's padding, a margin under tabs), with only
   `pt-1` inside for focus rings; so its clip line sits 16px clear of the
@@ -607,8 +537,9 @@ what knows the shell's geometry):
   it: a new review, never an unreviewed overwrite). Its buttons keep
   minimum widths, so a state change only changes words.
 - Entry pages (`EntryPage`, `EntryCard`, `EntrySubmit`) share one 380px
-  card and one hand-off (`HANDOFF_MS`); while a secret is held the
-  language switch stays in place, disabled.
+  card and one hand-off (`HANDOFF_MS`), and one pair of sign-in and
+  registration forms (`components/entry/account-forms.tsx`); while a
+  secret is held the language switch stays in place, disabled.
 
 ## Design tokens
 
@@ -633,9 +564,9 @@ they need `motion`.
 ## Globe
 
 - One globe for the whole console, drawn with three.js directly: a small
-  stage (`features/globe/stage.ts`: renderer, camera, orbit controls, the
+  stage (`globe/stage.ts`: renderer, camera, orbit controls, the
   sphere, the atmosphere, DOM markers through `CSS2DRenderer`) under our own
-  shader layers (surface, land dots, links, pulses, the loader's comet).
+  shader layers (surface, land dots, links, the loader's comet).
   Points of view keep three-globe's conventions (radius 100, altitude in
   globe radii). Colours come only from theme tokens.
 - The camera and the offset follow critically damped springs, re-aimed

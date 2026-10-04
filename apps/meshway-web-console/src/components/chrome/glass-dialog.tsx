@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/drawer"
 import { Spinner } from "@/components/ui/spinner"
 import { useKeptWhile } from "@/hooks/use-kept"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "@/hooks/use-media-query"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
@@ -202,7 +202,7 @@ export function ConfirmDialog({
  * draws it when it should break other than anywhere (a command breaks at
  * its spaces and flags).
  */
-export function CopyField({
+function CopyField({
   label,
   value,
   once = false,
