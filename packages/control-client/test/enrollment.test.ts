@@ -57,7 +57,7 @@ test("pending browser dismissal cannot cancel a device and only its approver can
   assert.ok((await denyDeviceAuthorization(client, first.path, user)).ok);
   assert.ok((await denyDeviceAuthorization(client, first.path, user)).ok, "withdrawal retry is idempotent");
   const withdrawn = await queryEnrollmentRequest(client, first.path, first.proof("poll"));
-  assert.ok(withdrawn.ok && withdrawn.data.request.phase === "denied" && withdrawn.data.code === null);
+  assert.ok(withdrawn.ok && withdrawn.data.request.phase === "withdrawn" && withdrawn.data.code === null);
   const stale = await redeemEnrollmentRequest(client, first.path, { code: approved.data.code, proof: first.proof("redeem") });
   assert.ok(!stale.ok && stale.error.kind === "http" && stale.error.status === 401);
 
@@ -65,7 +65,7 @@ test("pending browser dismissal cannot cancel a device and only its approver can
   assert.ok((await createEnrollmentRequest(client, second.request)).ok);
   assert.ok((await cancelEnrollmentRequest(client, second.path, second.proof("cancel"))).ok);
   const cancelled = await queryEnrollmentRequest(client, second.path, second.proof("poll"));
-  assert.ok(cancelled.ok && cancelled.data.request.phase === "denied");
+  assert.ok(cancelled.ok && cancelled.data.request.phase === "cancelled");
 });
 
 test("enrollment keys validate initial settings before issuance without generating listener secrets", async t => {
@@ -94,7 +94,7 @@ test("enrollment keys validate initial settings before issuance without generati
     assert.ok(result.error.problem?.problem.code === "configuration_invalid");
     assert.equal(result.error.problem.problem.params.issues[0]?.path, pointer);
   }
-  const empty = await listEnrollmentKeys(client, path, user);
+  const empty = await listEnrollmentKeys(client, path, {}, user);
   assert.ok(empty.ok && empty.data.items.length === 0, "invalid settings never issue credentials");
   // Missing managed TLS/UUID material is intentionally prepared only when the
   // real Node joins; the key stores a valid initial declaration, not a fake Node.
@@ -102,4 +102,17 @@ test("enrollment keys validate initial settings before issuance without generati
     vless: { type: "vless", listenPort: 12345, stream: "websocket", tls: { serverName: "node.example.test" } },
   } }), user);
   assert.ok(valid.ok && valid.data.secretDelivery === "available");
+  assert.equal(valid.data.key.createdBy, owner.data.user.id);
+  assert.equal(valid.data.key.initialSettings.hostname, "server");
+  assert.equal(valid.data.key.initialSettings.listeners.vless?.credentialPresent, false);
+  assert.equal(valid.data.key.initialSettings.listeners.vless?.tls?.privateKeyPresent, false);
+  assert.equal(valid.data.key.nodeId, null);
+  assert.equal(valid.data.key.consumedAt, null);
+  assert.equal(valid.data.key.actions.revoke, true);
+  const listing = await listEnrollmentKeys(client, path, { limit: 1 }, user);
+  assert.ok(listing.ok);
+  assert.equal(listing.data.total, 1);
+  assert.equal(listing.data.nextCursor, null);
+  const invalidCursor = await listEnrollmentKeys(client, path, { cursor: "invalid" }, user);
+  assert.ok(!invalidCursor.ok && invalidCursor.error.kind === "http" && invalidCursor.error.problem?.problem.code === "invalid_cursor");
 });

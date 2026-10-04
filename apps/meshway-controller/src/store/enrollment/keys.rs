@@ -6,31 +6,40 @@ fn key_view(
     sealer: &Sealer,
     now: i64,
 ) -> Result<EnrollmentKeyView, NodeError> {
-    let row=tx.query_row("SELECT tags,created_at,expires_at,revoked_at,consumed_request_id FROM enrollment_keys WHERE network_id=?1 AND id=?2",params![network.as_uuid().as_bytes().as_slice(),key.as_uuid().as_bytes().as_slice()],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<i64>>(3)?,r.get::<_,Option<Vec<u8>>>(4)?))).optional()?.ok_or(NodeError::NotFound)?;
-    let (created_by, settings): (Vec<u8>, Vec<u8>) = tx.query_row(
-        "SELECT created_by,initial_settings FROM enrollment_keys WHERE id=?1",
-        [key.as_uuid().as_bytes().as_slice()],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
+    let row = tx
+        .query_row(
+            "SELECT k.tags,k.created_at,k.expires_at,k.revoked_at,k.consumed_request_id,
+                k.created_by,k.initial_settings,r.consumed_at,r.node_id
+         FROM enrollment_keys k LEFT JOIN enrollment_requests r ON r.id=k.consumed_request_id
+         WHERE k.network_id=?1 AND k.id=?2",
+            params![
+                network.as_uuid().as_bytes().as_slice(),
+                key.as_uuid().as_bytes().as_slice()
+            ],
+            |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                    r.get::<_, Option<Vec<u8>>>(4)?,
+                    r.get::<_, Vec<u8>>(5)?,
+                    r.get::<_, Vec<u8>>(6)?,
+                    r.get::<_, Option<i64>>(7)?,
+                    r.get::<_, Option<Vec<u8>>>(8)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(NodeError::NotFound)?;
     let settings: InitialNodeSettings = json(
         sealer
-            .open_enrollment(key.into_uuid(), &settings)
+            .open_enrollment(key.into_uuid(), &row.6)
             .map_err(|_| NodeError::Storage)?
             .as_bytes(),
     )?;
-    let consumed = row
-        .4
-        .as_ref()
-        .map(|request| {
-            tx.query_row(
-                "SELECT consumed_at,node_id FROM enrollment_requests WHERE id=?1",
-                [request],
-                |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<Vec<u8>>>(1)?)),
-            )
-        })
-        .transpose()?;
     Ok(EnrollmentKeyView {
-        created_by: id(created_by)?,
+        created_by: id(row.5)?,
         initial_settings: InitialNodeSettingsView {
             hostname: settings.hostname,
             listeners: settings
@@ -42,8 +51,8 @@ fn key_view(
         actions: EnrollmentKeyActions {
             revoke: row.3.is_none() && row.4.is_none() && row.2 > now,
         },
-        consumed_at_ms: consumed.as_ref().and_then(|c| c.0).map(|v| v as u64),
-        node_id: consumed.and_then(|c| c.1).map(id).transpose()?,
+        consumed_at_ms: row.7.map(|v| v as u64),
+        node_id: row.8.map(id).transpose()?,
         id: key,
         tags: json(&row.0)?,
         created_at_ms: row.1 as u64,
@@ -154,7 +163,8 @@ pub(crate) fn list_keys(
         window.last = window.upper - sequence + 1;
     }
     let result = EnrollmentKeysResponse {
-        total: total.try_into().map_err(|_| NodeError::Storage)?,
+        total: Count::new(total.try_into().map_err(|_| NodeError::Storage)?)
+            .map_err(|_| NodeError::Storage)?,
         as_of: window.as_of().map_err(|_| NodeError::Storage)?,
         next_cursor: if more {
             Some(

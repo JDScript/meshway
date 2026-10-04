@@ -53,7 +53,7 @@ wire_object! { pub struct JoinLinkListResponse {
     pub request_id:RequestId,pub items:Vec<JoinLinkView>,
     #[serde(deserialize_with="nullable")] pub next_cursor:Option<String> [required=true],
     pub as_of:DateTime<Utc>,
-    pub total:u64,
+    pub total:meshway_model::Count,
 } }
 wire_object! { pub struct JoinLinkRedeemed { pub request_id:RequestId,pub network_id:NetworkId,pub membership_id:MembershipId } }
 

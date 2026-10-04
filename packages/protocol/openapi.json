@@ -2656,7 +2656,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnrollmentRequestView"
+                  "$ref": "#/components/schemas/DeviceAuthorizationView"
                 }
               }
             }
@@ -2718,7 +2718,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnrollmentRequestView"
+                  "$ref": "#/components/schemas/DeviceAuthorizationView"
                 }
               }
             }
@@ -4246,6 +4246,26 @@
             "schema": {
               "$ref": "#/components/schemas/NetworkId"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
           }
         ],
         "responses": {
@@ -4254,6 +4274,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EnrollmentKeysResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -5831,6 +5860,66 @@
         ]
       }
     },
+    "/api/v1/networks/{networkId}/nodes/{nodeId}/settings": {
+      "get": {
+        "tags": [
+          "nodes"
+        ],
+        "operationId": "getNodeSettings",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeSettingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{networkId}/nodes/{nodeId}/state": {
       "get": {
         "tags": [
@@ -7283,9 +7372,17 @@
             "type": "object",
             "required": [
               "userId",
+              "email",
               "type"
             ],
             "properties": {
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Email at the time of the event; null means no historical snapshot exists."
+              },
               "type": {
                 "type": "string",
                 "enum": [
@@ -9413,9 +9510,6 @@
       },
       "DefaultsUpdate": {
         "type": "object",
-        "required": [
-          "dialers"
-        ],
         "properties": {
           "access": {
             "$ref": "#/components/schemas/AccessDefault"
@@ -9631,6 +9725,30 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeviceAuthorizationView": {
+        "type": "object",
+        "required": [
+          "request",
+          "approval"
+        ],
+        "properties": {
+          "approval": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnrollmentApprovalView",
+                "description": "Only the approving user or a current manager of the approved network sees this fragment."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/EnrollmentRequestView"
           }
         },
         "additionalProperties": false
@@ -10297,6 +10415,22 @@
           }
         ]
       },
+      "EnrollmentApprovalView": {
+        "type": "object",
+        "required": [
+          "userId",
+          "networkId"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "userId": {
+            "$ref": "#/components/schemas/UserId"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnrollmentDeviceProof": {
         "type": "object",
         "required": [
@@ -10353,6 +10487,18 @@
         },
         "additionalProperties": false
       },
+      "EnrollmentKeyActions": {
+        "type": "object",
+        "required": [
+          "revoke"
+        ],
+        "properties": {
+          "revoke": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnrollmentKeyId": {
         "type": "string",
         "format": "uuid",
@@ -10392,11 +10538,26 @@
         "required": [
           "id",
           "tags",
+          "createdBy",
+          "initialSettings",
+          "actions",
+          "nodeId",
+          "consumedAt",
           "createdAt",
           "expiresAt",
           "revokedAt"
         ],
         "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/EnrollmentKeyActions"
+          },
+          "consumedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "consumedRequestId": {
             "oneOf": [
               {
@@ -10411,12 +10572,28 @@
             "type": "string",
             "format": "date-time"
           },
+          "createdBy": {
+            "$ref": "#/components/schemas/UserId"
+          },
           "expiresAt": {
             "type": "string",
             "format": "date-time"
           },
           "id": {
             "$ref": "#/components/schemas/EnrollmentKeyId"
+          },
+          "initialSettings": {
+            "$ref": "#/components/schemas/InitialNodeSettingsView"
+          },
+          "nodeId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "revokedAt": {
             "type": [
@@ -10437,14 +10614,30 @@
       "EnrollmentKeysResponse": {
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "nextCursor",
+          "asOf"
         ],
         "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
           "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/EnrollmentKeyView"
             }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "$ref": "#/components/schemas/Count"
           }
         },
         "additionalProperties": false
@@ -10454,7 +10647,8 @@
         "enum": [
           "pending",
           "approved",
-          "denied",
+          "withdrawn",
+          "cancelled",
           "consumed",
           "expired"
         ]
@@ -10462,9 +10656,21 @@
       "EnrollmentPollResponse": {
         "type": "object",
         "required": [
-          "request"
+          "request",
+          "approval"
         ],
         "properties": {
+          "approval": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnrollmentApprovalView",
+                "description": "Available only after the device proves possession of this request."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "code": {
             "oneOf": [
               {
@@ -10505,12 +10711,24 @@
           "id",
           "hostname",
           "controlKey",
+          "existing",
+          "returnMethod",
           "phase",
           "expiresAt"
         ],
         "properties": {
           "controlKey": {
             "$ref": "#/components/schemas/NodePublicKey"
+          },
+          "existing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExistingNodeBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expiresAt": {
             "type": "string",
@@ -10524,6 +10742,9 @@
           },
           "phase": {
             "$ref": "#/components/schemas/EnrollmentPhase"
+          },
+          "returnMethod": {
+            "$ref": "#/components/schemas/EnrollmentReturnMethod"
           }
         },
         "additionalProperties": false
@@ -10551,6 +10772,12 @@
           }
         },
         "additionalProperties": false
+      },
+      "EnrollmentReturnMethod": {
+        "type": "string",
+        "enum": [
+          "poll"
+        ]
       },
       "EntityRemovals": {
         "type": "object",
@@ -11281,6 +11508,31 @@
         },
         "additionalProperties": false
       },
+      "InitialNodeSettingsView": {
+        "type": "object",
+        "required": [
+          "hostname",
+          "listeners"
+        ],
+        "properties": {
+          "hostname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "listeners": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ListenerView"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "InstanceId": {
         "type": "string",
         "format": "uuid",
@@ -11356,6 +11608,18 @@
           },
           "geoip": {
             "$ref": "#/components/schemas/LookupResult_GeoIpData"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JoinLinkActions": {
+        "type": "object",
+        "required": [
+          "revoke"
+        ],
+        "properties": {
+          "revoke": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -11439,9 +11703,13 @@
         "required": [
           "requestId",
           "link",
-          "networkName"
+          "networkName",
+          "alreadyMember"
         ],
         "properties": {
+          "alreadyMember": {
+            "type": "boolean"
+          },
           "link": {
             "$ref": "#/components/schemas/JoinLinkView"
           },
@@ -11460,7 +11728,8 @@
           "requestId",
           "items",
           "nextCursor",
-          "asOf"
+          "asOf",
+          "total"
         ],
         "properties": {
           "asOf": {
@@ -11481,6 +11750,9 @@
           },
           "requestId": {
             "$ref": "#/components/schemas/RequestId"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Count"
           }
         },
         "additionalProperties": false
@@ -11515,9 +11787,13 @@
           "expiresAt",
           "revokedAt",
           "consumedAt",
-          "consumedByUserId"
+          "consumedByUserId",
+          "actions"
         ],
         "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/JoinLinkActions"
+          },
           "consumedAt": {
             "type": [
               "string",
@@ -12777,11 +13053,18 @@
         "required": [
           "rename",
           "editConfiguration",
-          "manageMembers"
+          "manageMembers",
+          "joinLinkRoles"
         ],
         "properties": {
           "editConfiguration": {
             "type": "boolean"
+          },
+          "joinLinkRoles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MembershipRole"
+            }
           },
           "manageMembers": {
             "type": "boolean"
@@ -13998,7 +14281,12 @@
           "keys",
           "controlKeyRevokedAt",
           "dataplaneKeyRevokedAt",
-          "canDelete"
+          "canDelete",
+          "desiredExecution",
+          "canRevokeControlKey",
+          "canRevokeDataplaneKey",
+          "controlKeyCreatedAt",
+          "dataplaneKeyCreatedAt"
         ],
         "properties": {
           "addresses": {
@@ -14006,6 +14294,16 @@
           },
           "canDelete": {
             "type": "boolean"
+          },
+          "canRevokeControlKey": {
+            "type": "boolean"
+          },
+          "canRevokeDataplaneKey": {
+            "type": "boolean"
+          },
+          "controlKeyCreatedAt": {
+            "type": "string",
+            "format": "date-time"
           },
           "controlKeyRevokedAt": {
             "type": [
@@ -14015,12 +14313,27 @@
             "format": "date-time",
             "description": "Revocation of the displayed latest keys; revoked configured nodes remain manageable."
           },
+          "dataplaneKeyCreatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
           "dataplaneKeyRevokedAt": {
             "type": [
               "string",
               "null"
             ],
             "format": "date-time"
+          },
+          "desiredExecution": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef",
+                "description": "Current execution target, not a saved/applied receipt. May be a later refresh than the source apply."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "enabled": {
             "type": "boolean"
@@ -14299,6 +14612,34 @@
           },
           "remark": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeSettingsResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "networkId",
+          "nodeId",
+          "revision",
+          "settings"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/NodeSettingsView"
           }
         },
         "additionalProperties": false
@@ -16526,6 +16867,98 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "join_link_expired"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "join_link_used"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "join_link_revoked"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "join_link_issuer_unavailable"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
                   "revision_conflict"
                 ]
               },
@@ -17905,10 +18338,12 @@
         ],
         "properties": {
           "dialerSchema": {
-            "type": "string"
+            "type": "string",
+            "description": "Definition name in getConfigurationSchema.schemaJson.$defs (not schema text)."
           },
           "listenerSchema": {
-            "type": "string"
+            "type": "string",
+            "description": "Definition name in getConfigurationSchema.schemaJson.$defs (not schema text)."
           },
           "outerSocket": {
             "$ref": "#/components/schemas/OuterSocket"

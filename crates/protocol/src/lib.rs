@@ -30,9 +30,9 @@ pub use configuration::{
 };
 pub use enrollment::{
     ApproveEnrollmentRequest, CreateEnrollmentKeyRequest, CreateEnrollmentRequest,
-    EnrollmentDeviceProof, EnrollmentIntent, EnrollmentKeyResponse, EnrollmentKeysResponse,
-    EnrollmentPollResponse, EnrollmentRequestView, EnrollmentResponse, KeyEnrollmentRequest,
-    RedeemEnrollmentRequest,
+    DeviceAuthorizationView, EnrollmentDeviceProof, EnrollmentIntent, EnrollmentKeyResponse,
+    EnrollmentKeysResponse, EnrollmentPollResponse, EnrollmentRequestView, EnrollmentResponse,
+    KeyEnrollmentRequest, RedeemEnrollmentRequest,
 };
 pub use events::{NodeEvent, StreamEvent, UserEvent};
 pub use execution::{
@@ -56,7 +56,7 @@ pub use management::{
 pub use node::{
     DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,
     NodeInventoryView, NodeKeyMetadata, NodeRotationRequest, NodeSessionRequest,
-    NodeSessionResponse, RevokeNodeKeyRequest,
+    NodeSessionResponse, NodeSettingsResponse, RevokeNodeKeyRequest,
 };
 pub use observations::{
     CreateObservation, HistoryAccepted, HistoryPage, HistoryQuery, HistoryReport, ObservationList,

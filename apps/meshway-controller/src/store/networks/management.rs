@@ -573,7 +573,8 @@ pub(crate) fn links(
     drop(stmt);
     tx.commit()?;
     Ok(LinkPage {
-        total: total.try_into().map_err(|_| NetworkError::Storage)?,
+        total: meshway_model::Count::new(total.try_into().map_err(|_| NetworkError::Storage)?)
+            .map_err(|_| NetworkError::Storage)?,
         items,
         next_cursor,
         as_of,

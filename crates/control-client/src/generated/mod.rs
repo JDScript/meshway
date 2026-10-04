@@ -129,6 +129,12 @@ pub struct GetNodePath {
 }
 
 #[derive(Clone)]
+pub struct GetNodeSettingsPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#node_id: meshway_protocol::NodeId,
+}
+
+#[derive(Clone)]
 pub struct GetNodeStatePath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#node_id: meshway_protocol::NodeId,
@@ -176,6 +182,11 @@ pub struct ListConfigurationRevisionsQuery {
 #[derive(Clone)]
 pub struct ListEnrollmentKeysPath {
     pub r#network_id: meshway_protocol::NetworkId,
+}
+#[derive(Clone, Default)]
+pub struct ListEnrollmentKeysQuery {
+    pub r#cursor: Option<String>,
+    pub r#limit: Option<i32>,
 }
 
 #[derive(Clone)]
@@ -379,7 +390,7 @@ impl crate::Client {
         body: &meshway_protocol::ApproveEnrollmentRequest,
         token: &str,
     ) -> Result<
-        meshway_protocol::EnrollmentRequestView,
+        meshway_protocol::DeviceAuthorizationView,
         crate::ClientError<meshway_protocol::ErrorResponse>,
     > {
         let path_values = [("enrollmentRequestId", {
@@ -1411,7 +1422,7 @@ impl crate::Client {
         path: &GetDeviceAuthorizationPath,
         token: &str,
     ) -> Result<
-        meshway_protocol::EnrollmentRequestView,
+        meshway_protocol::DeviceAuthorizationView,
         crate::ClientError<meshway_protocol::ErrorResponse>,
     > {
         let path_values = [("enrollmentRequestId", {
@@ -1849,6 +1860,76 @@ impl crate::Client {
         let query_values = [];
         let url = self.parameter_url(
             "/api/v1/networks/{networkId}/nodes/{nodeId}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            401 | 404 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn get_node_settings(
+        &self,
+        path: &GetNodeSettingsPath,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeSettingsResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("nodeId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#node_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/nodes/{nodeId}/settings",
             &path_values,
             &query_values,
         )?;
@@ -2396,6 +2477,7 @@ impl crate::Client {
     pub async fn list_enrollment_keys(
         &self,
         path: &ListEnrollmentKeysPath,
+        query: &ListEnrollmentKeysQuery,
         token: &str,
     ) -> Result<
         meshway_protocol::EnrollmentKeysResponse,
@@ -2422,7 +2504,46 @@ impl crate::Client {
             }
             value.to_string()
         })];
-        let query_values = [];
+        let query_values = [
+            (
+                "cursor",
+                query
+                    .r#cursor
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if value.chars().count() > 4096 {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+            (
+                "limit",
+                query
+                    .r#limit
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if !(1..=200).contains(&value) {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+        ];
         let url = self.parameter_url(
             "/api/v1/networks/{networkId}/enrollment-keys",
             &path_values,
@@ -2433,7 +2554,7 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            401 | 403 => Err(response.problem()),
+            400 | 401 | 403 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

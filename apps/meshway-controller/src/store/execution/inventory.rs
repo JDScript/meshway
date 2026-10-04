@@ -63,14 +63,14 @@ pub(crate) fn settings(
     token: [u8; 32],
     network: NetworkId,
     node: NodeId,
-) -> Result<meshway_configuration::NodeSettingsView, NodeError> {
+) -> Result<(Revision, meshway_configuration::NodeSettingsView), NodeError> {
     let tx = connection.transaction()?;
     let user = crate::store::authorization::current_session(&tx, &token, now()?)?
         .user
         .id;
     let (member, role) = crate::store::authorization::membership(&tx, network, user)
         .map_err(|_| NodeError::NotFound)?;
-    let (_, cfg, bindings) = current_configuration(&tx, sealer, network)?;
+    let (revision, cfg, bindings) = current_configuration(&tx, sealer, network)?;
     let manager = matches!(role, MembershipRole::Owner | MembershipRole::Admin);
     if !manager
         && !user_binding(&cfg, &bindings, node)
@@ -78,7 +78,10 @@ pub(crate) fn settings(
     {
         return Err(NodeError::NotFound);
     }
-    Ok(cfg.nodes.get(&node).ok_or(NodeError::NotFound)?.into())
+    Ok((
+        revision,
+        cfg.nodes.get(&node).ok_or(NodeError::NotFound)?.into(),
+    ))
 }
 
 /// Same public inventory fragment for GET and SSE. The caller supplies a scope

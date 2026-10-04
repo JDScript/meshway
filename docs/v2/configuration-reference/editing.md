@@ -59,6 +59,8 @@ JSONC 输入使用 `type: "document"`、expectedRevision、requestId、sourceJso
 
 ListenerUpdate 使用明确的协议字段与更新语义：已有秘密省略为保持，显式值为修改，生成通过 rotateMaterial；首次创建按该协议规则补全／要求必要输入。服务端合成完整 Listener 再校验，不能要求表单提交它未读取的旧私钥，也不能把脱敏占位当值。
 
+**显式轮换的撤销语义已确认，操作尚待实现：** `rotateMaterial` 替换所选类别的材料时，同时永久吊销旧材料；历史仍保存，但不能通过回滚或复制到另一配置恢复旧材料。历史恢复遇到这类吊销要求替换。此决定仅针对显式轮换操作，不把普通字段编辑自动视为永久吊销；预览只展示计划，最终应用才生成材料并提交撤销依据。
+
 表单中的 `DefaultsUpdate.dialers` 与 `NodeSettingsPatch.dialers` 使用 `DialerSetUpdate`：协议集合显式 `{}` 表示禁用；保留的 VLESS 项内，`websocket` 省略保持此前 WebSocket 参数，显式 `null` 移除；`websocket.headers` 省略保持旧值，显式 `{}` 清空，显式非空对象替换整个 header 集合。这些是表单更新语义；整份 JSONC 仍提交完整文档值。提供的 TLS 证书／私钥同样允许在原 listener 资源内省略保持；删除再创建不继承旧材料。
 
 `replaceDefaults` 的 `DefaultsUpdate` 按明确字段修改：`access`、`topology`、`dialers` 均可省略，省略保持基准值，显式非 null 值覆盖。只改 topology 的操作不携带旧 dialers；用户选择新 revision 重检同一操作时，只重放明确修改的字段。服务端仍严格 CAS，不自动重基准提交，也不把新 Config 覆盖用户草稿。

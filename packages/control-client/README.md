@@ -148,6 +148,14 @@ configuration reads, demands, receipts, inventory and permanent deletion.
 The ordinary account registration/login operations do not substitute for a
 Node's proof of private-key possession.
 
+`getDeviceAuthorization` and `approveDeviceAuthorization` return
+`DeviceAuthorizationView { request, approval }`. `request` includes the existing
+binding and explicit `returnMethod: "poll"`; approval is disclosed only to its
+approver or a current manager of that network. Device-side signed query can read
+its approval. Terminal phases distinguish `cancelled` (device) from `withdrawn`
+(approver). Platform/version claims are not currently part of the enrollment
+intent and must not be fabricated by the Console.
+
 Signed `EnrollmentIntent` always contains `existing`: explicit `null` for initial
 enrollment, or the full existing binding for reauthentication. Include it in the
 canonical intent digest; omission is rejected by both generated validation and
@@ -159,6 +167,34 @@ Enrollment-key issuance validates the initial hostname/listeners and any supplie
 TLS materials. A 422 `configuration_invalid` response carries issue paths rooted
 at `/initialSettings`. Missing automatic materials are generated at actual Node
 admission; issuing a key does not create a Node or reserve its hostname.
+
+`listEnrollmentKeys(client, { networkId }, { limit, cursor }, { token })` now has
+an explicit query argument; pass `{}` for defaults. It and `listJoinLinks` return
+descending, creation-bounded pages with `total`, `nextCursor` and `asOf`. Each
+page rechecks the current identity. Key views include creator, consumption time,
+Node ID and non-secret initial-settings summaries; secret delivery remains
+one-time. Use `NetworkActions.joinLinkRoles` for role choices, and link/key
+`actions.revoke` for their current revocation eligibility.
+
+Node inventory separates `canDelete`, `canRevokeControlKey` and
+`canRevokeDataplaneKey`, includes key creation times and `desiredExecution`.
+That reference describes the current target, not an accepted receipt.
+`getNodeSettings(client, { networkId, nodeId }, { token })` returns
+`{ requestId, networkId, nodeId, revision, settings }`; the non-secret settings
+fragment is shared with SSE and bound to this exact revision. Ordinary members
+can read only their current User-identity devices. Creation history grants no
+read permission after a device switches to Tag identity; full configuration
+history remains restricted separately.
+
+`replaceDefaults` accepts omitted `access`, `topology` and `dialers` as keep.
+Submit only explicitly edited fields when revalidating against a new revision;
+the service still requires strict CAS. A config request ID reused with different
+input returns `request_id_conflict`; an old base returns `revision_conflict`.
+Key generation and invalid device transitions use `version_conflict` and
+`state_conflict` respectively. Join-link inspection distinguishes used, revoked,
+expired and unavailable-issuer errors, and supplies `alreadyMember` for a valid
+link. Activity/revision user actors include required nullable `email`, captured
+at event time; never fill a missing snapshot from the user's current address.
 
 HTTP time fields use RFC 3339 (`expiresAt`, `registeredAt`, `reportedAt`, etc.).
 Rust execution/crypto structs retain explicit `_ms` fields with a validated

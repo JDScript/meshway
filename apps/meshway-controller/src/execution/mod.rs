@@ -200,7 +200,7 @@ impl Execution {
         token: &str,
         network: NetworkId,
         node: NodeId,
-    ) -> Result<meshway_configuration::NodeSettingsView, NodeError> {
+    ) -> Result<(Revision, meshway_configuration::NodeSettingsView), NodeError> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle

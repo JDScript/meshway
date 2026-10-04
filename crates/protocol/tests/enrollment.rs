@@ -31,3 +31,29 @@ fn signed_intent_requires_explicit_nullable_existing_binding() {
             .contains(&json!("existing"))
     );
 }
+
+#[test]
+fn enrollment_pagination_and_approval_distinguish_null_from_missing() {
+    use meshway_protocol::enrollment::{DeviceAuthorizationView, EnrollmentKeysResponse};
+    let page = json!({"items": [], "total": 0, "nextCursor": null, "asOf": "2026-10-03T00:00:00Z"});
+    assert!(serde_json::from_value::<EnrollmentKeysResponse>(page.clone()).is_ok());
+    let mut missing_cursor = page.clone();
+    missing_cursor.as_object_mut().unwrap().remove("nextCursor");
+    assert!(serde_json::from_value::<EnrollmentKeysResponse>(missing_cursor).is_err());
+    let mut oversized = page;
+    oversized["total"] = json!(9_007_199_254_740_992_u64);
+    assert!(serde_json::from_value::<EnrollmentKeysResponse>(oversized).is_err());
+
+    let mut view = json!({
+        "request": {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "hostname": "device", "controlKey": {"algorithm": "ed25519", "bytes": "11".repeat(32)},
+            "existing": null, "returnMethod": "poll", "phase": "pending",
+            "expiresAt": "2026-10-03T01:00:00Z"
+        },
+        "approval": null
+    });
+    assert!(serde_json::from_value::<DeviceAuthorizationView>(view.clone()).is_ok());
+    view.as_object_mut().unwrap().remove("approval");
+    assert!(serde_json::from_value::<DeviceAuthorizationView>(view).is_err());
+}

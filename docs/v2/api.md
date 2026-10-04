@@ -23,7 +23,9 @@
 
 管理／配置候选现已扩展真实 HTTP／SQLite 操作：账户读取、邮箱／密码修改、会话分页及撤销、主机 CLI 密码恢复、角色变更、一次性加入链接、无 Node 依赖的移除／离网、配置普通视图与显式秘密 source、JSONC／强类型编辑校验及 CAS 保存、版本分页／对照／恢复、账户／网络活动、配置 schema 与承载目录。名称规则通过 `getAuthOptions.networkNameRules` 发布；成员 actions 由当前权限推导，网络／成员列表 total 在同一查询事务内按创建上界和当前权限计算。邮箱同步更新可读引用但保留稳定主体绑定；恢复历史版本不会把旧邮箱绑定到同名新账户。
 
-Node 控制流程已整合真实 HTTP／SQLite：签名接入、PKCE 批准与兑换、接入密钥、持钥会话与轮换恢复、实例／lease、完整执行目标与增量、demand、saved／applied／failed 回执、永久删除及成员删除联动。需求重试不重复扰动无关节点，回执按尝试／序号处理乱序；节点身份与策略引用使用独立的稳定绑定。当前生成物包含 81 个路径、87 个操作，精确方法、输入与错误以实际路由导出的 OpenAPI 为准。
+Node 控制流程已整合真实 HTTP／SQLite：签名接入、PKCE 批准与兑换、接入密钥、持钥会话与轮换恢复、实例／lease、完整执行目标与增量、demand、saved／applied／failed 回执、永久删除及成员删除联动。需求重试不重复扰动无关节点，回执按尝试／序号处理乱序；节点身份与策略引用使用独立的稳定绑定。当前生成物包含 82 个路径、88 个操作，精确方法、输入与错误以实际路由导出的 OpenAPI 为准。
+
+管理视图提供加入链接角色／撤销 actions、分密钥吊销资格和期望执行引用；接入密钥及加入链接支持按固定创建上界倒序分页和真实 total。设备授权页读取 `DeviceAuthorizationView`，与设备持钥查询分开；取消与撤回分别为 cancelled／withdrawn。活动及配置版本的 actor 邮箱为发生时快照。`getNodeSettings` 返回绑定 networkId／nodeId／revision 的非秘密 settings，普通成员只读自己的 User 身份设备。精确字段及 SDK 调用见 `packages/control-client/README.md`。
 
 State 查询／Node 上报、历史接纳／查询、按 revision 的配置进度，以及用户／Node SSE 已接入正常 Router 和真实权限 provider。固定 apply 目标随配置版本保存；配置、权限与进度变化在已接纳 SQLite job 的提交后进入统一 journal。用户首次完整同步及后续增量经过权限裁剪，正常配置变化保持通知连续，失权、期限和重放断档分别处理。
 

@@ -119,6 +119,7 @@ export const zAcquireInstanceRequest = z.strictObject({
 export const zActivityAction = z.enum(["account.register","session.login","session.logout","session.revoke","session.revokeOthers","session.revokeAll","account.password","account.passwordReset","account.resetIssued","account.email","network.create","network.rename","configuration.apply","membership.role","membership.join","membership.remove","joinLink.create","joinLink.revoke"]);
 
 export const zActivityActor = z.union([z.strictObject({
+  ["email"]: z.string().nullable(),
   ["type"]: z.enum(["user"]),
   ["userId"]: zUserId
 }), z.strictObject({
@@ -928,7 +929,7 @@ export const zTopologyDefault = z.enum(["allow","deny"]);
 
 export const zDefaultsUpdate = z.strictObject({
   ["access"]: zAccessDefault.exactOptional(),
-  ["dialers"]: zDialerSetUpdate,
+  ["dialers"]: zDialerSetUpdate.exactOptional(),
   ["topology"]: zTopologyDefault.exactOptional()
 });
 
@@ -1519,6 +1520,30 @@ export const zDerivedNodeState = z.strictObject({
   ["locationAbsent"]: zLocationAbsentReason.nullable().exactOptional()
 });
 
+export const zEnrollmentApprovalView = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["userId"]: zUserId
+});
+
+export const zEnrollmentPhase = z.enum(["pending","approved","withdrawn","cancelled","consumed","expired"]);
+
+export const zEnrollmentReturnMethod = z.enum(["poll"]);
+
+export const zEnrollmentRequestView = z.strictObject({
+  ["controlKey"]: zNodePublicKey,
+  ["existing"]: zExistingNodeBinding.nullable(),
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["hostname"]: z.string(),
+  ["id"]: zEnrollmentRequestId,
+  ["phase"]: zEnrollmentPhase,
+  ["returnMethod"]: zEnrollmentReturnMethod
+});
+
+export const zDeviceAuthorizationView = z.strictObject({
+  ["approval"]: zEnrollmentApprovalView.nullable(),
+  ["request"]: zEnrollmentRequestView
+});
+
 export const zDiagnosticDelta = z.strictObject({
   ["remove"]: z.array(zObservationId),
   ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zDiagnosticPermit, {})
@@ -1556,13 +1581,27 @@ export const zEnrollmentDeviceProof = z.strictObject({
   ["verifier"]: zWireSecret
 });
 
+export const zEnrollmentKeyActions = z.strictObject({
+  ["revoke"]: z.boolean()
+});
+
 export const zEnrollmentKeyId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
+export const zInitialNodeSettingsView = z.strictObject({
+  ["hostname"]: z.string().nullable(),
+  ["listeners"]: typedMap(z.string(), zListenerView, {})
+});
+
 export const zEnrollmentKeyView = z.strictObject({
+  ["actions"]: zEnrollmentKeyActions,
+  ["consumedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
   ["consumedRequestId"]: zEnrollmentRequestId.nullable().exactOptional(),
   ["createdAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["createdBy"]: zUserId,
   ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["id"]: zEnrollmentKeyId,
+  ["initialSettings"]: zInitialNodeSettingsView,
+  ["nodeId"]: zNodeId.nullable(),
   ["revokedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
   ["tags"]: z.array(z.string())
 });
@@ -1576,20 +1615,14 @@ export const zEnrollmentKeyResponse = z.strictObject({
 });
 
 export const zEnrollmentKeysResponse = z.strictObject({
-  ["items"]: z.array(zEnrollmentKeyView)
-});
-
-export const zEnrollmentPhase = z.enum(["pending","approved","denied","consumed","expired"]);
-
-export const zEnrollmentRequestView = z.strictObject({
-  ["controlKey"]: zNodePublicKey,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["hostname"]: z.string(),
-  ["id"]: zEnrollmentRequestId,
-  ["phase"]: zEnrollmentPhase
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["items"]: z.array(zEnrollmentKeyView),
+  ["nextCursor"]: z.string().nullable(),
+  ["total"]: zCount
 });
 
 export const zEnrollmentPollResponse = z.strictObject({
+  ["approval"]: zEnrollmentApprovalView.nullable(),
   ["code"]: zWireSecret.nullable().exactOptional(),
   ["nodeId"]: zNodeId.nullable().exactOptional(),
   ["request"]: zEnrollmentRequestView
@@ -1713,6 +1746,22 @@ export const zProblem = z.union([z.strictObject({
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
+  ["code"]: z.enum(["join_link_expired"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["join_link_used"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["join_link_revoked"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["join_link_issuer_unavailable"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
   ["code"]: z.enum(["revision_conflict"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams
@@ -1808,6 +1857,11 @@ export const zGetNetworkStatePath = z.strictObject({
 });
 
 export const zGetNodePath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId
+});
+
+export const zGetNodeSettingsPath = z.strictObject({
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId
 });
@@ -1987,7 +2041,12 @@ export const zInstanceLease = z.strictObject({
   ["target"]: zConfigurationRef.nullable().exactOptional()
 });
 
+export const zJoinLinkActions = z.strictObject({
+  ["revoke"]: z.boolean()
+});
+
 export const zJoinLinkView = z.strictObject({
+  ["actions"]: zJoinLinkActions,
   ["consumedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
   ["consumedByUserId"]: zUserId.nullable(),
   ["createdAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
@@ -2014,6 +2073,7 @@ export const zJoinLinkCredentialRequest = z.strictObject({
 });
 
 export const zJoinLinkInspection = z.strictObject({
+  ["alreadyMember"]: z.boolean(),
   ["link"]: zJoinLinkView,
   ["networkName"]: z.string(),
   ["requestId"]: zRequestId
@@ -2023,7 +2083,8 @@ export const zJoinLinkListResponse = z.strictObject({
   ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["items"]: z.array(zJoinLinkView),
   ["nextCursor"]: z.string().nullable(),
-  ["requestId"]: zRequestId
+  ["requestId"]: zRequestId,
+  ["total"]: zCount
 });
 
 export const zJoinLinkRedeemed = z.strictObject({
@@ -2076,6 +2137,11 @@ export const zListConfigurationRevisionsQuery = z.strictObject({
 
 export const zListEnrollmentKeysPath = z.strictObject({
   ["networkId"]: zNetworkId
+});
+
+export const zListEnrollmentKeysQuery = z.strictObject({
+  ["cursor"]: z.string().refine(value => [...value].length <= 4096, "maxLength 4096 Unicode code points").exactOptional(),
+  ["limit"]: z.int().gte(1).lte(200).exactOptional()
 });
 
 export const zListJoinLinksPath = z.strictObject({
@@ -2191,6 +2257,7 @@ export const zNativeUdpListener = z.strictObject({
 
 export const zNetworkActions = z.strictObject({
   ["editConfiguration"]: z.boolean(),
+  ["joinLinkRoles"]: z.array(zMembershipRole),
   ["manageMembers"]: z.boolean(),
   ["rename"]: z.boolean()
 });
@@ -2302,8 +2369,13 @@ export const zNodeConfigurationView = z.strictObject({
 export const zNodeInventoryView = z.strictObject({
   ["addresses"]: zNodeAddresses,
   ["canDelete"]: z.boolean(),
+  ["canRevokeControlKey"]: z.boolean(),
+  ["canRevokeDataplaneKey"]: z.boolean(),
+  ["controlKeyCreatedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["controlKeyRevokedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
+  ["dataplaneKeyCreatedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["dataplaneKeyRevokedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
+  ["desiredExecution"]: zConfigurationRef.nullable(),
   ["enabled"]: z.boolean(),
   ["hostname"]: z.string(),
   ["id"]: zNodeId,
@@ -2571,6 +2643,14 @@ export const zNodeSessionResponse = z.strictObject({
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId,
   ["token"]: zWireSecret
+});
+
+export const zNodeSettingsResponse = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId,
+  ["requestId"]: zRequestId,
+  ["revision"]: zRevision,
+  ["settings"]: zNodeSettingsView
 });
 
 export const zObservationList = z.strictObject({

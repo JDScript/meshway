@@ -18,6 +18,7 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyView 
     pub created_by: UserId,
     pub initial_settings: InitialNodeSettingsView,
     pub actions: EnrollmentKeyActions,
+    #[serde(deserialize_with="crate::object::required_nullable")]
     pub node_id: Option<NodeId> [required=true],
     #[serde(rename="consumedAt", with="meshway_model::timestamp::optional")]
     pub consumed_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
@@ -30,6 +31,7 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyView 
     pub consumed_request_id: Option<EnrollmentRequestId>,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InitialNodeSettingsView {
+    #[serde(deserialize_with="crate::object::required_nullable")]
     pub hostname: Option<String> [required=true],
     pub listeners: BTreeMap<String,meshway_configuration::ListenerView>,
 } }
@@ -44,21 +46,17 @@ pub enum SecretDelivery {
     Unavailable,
 }
 wire_object! { pub struct EnrollmentKeysResponse {
-    pub items: Vec<EnrollmentKeyView>, pub total: u64,
+    pub items: Vec<EnrollmentKeyView>, pub total: Count,
+    #[serde(deserialize_with="crate::object::required_nullable")]
     pub next_cursor: Option<String> [required=true], pub as_of: chrono::DateTime<chrono::Utc>,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentIntent {
     pub id: EnrollmentRequestId, pub control_key: NodePublicKey, pub dataplane_key: NodePublicKey,
     pub code_challenge: String, pub hostname: String,
     /// Always present in the signed intent; a first enrollment uses explicit null.
-    #[serde(deserialize_with="nullable_existing")]
+    #[serde(deserialize_with="crate::object::required_nullable")]
     pub existing: Option<ExistingNodeBinding> [required=true],
 } }
-fn nullable_existing<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<ExistingNodeBinding>, D::Error> {
-    Deserialize::deserialize(deserializer)
-}
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ExistingNodeBinding {
     pub network_id:NetworkId,pub node_id:NodeId,pub key_id:KeyId,pub key_generation:Version,
 } }
@@ -67,7 +65,7 @@ wire_object! { pub struct CreateEnrollmentRequest {
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentRequestView {
     pub id: EnrollmentRequestId, pub hostname: String, pub control_key: NodePublicKey,
-    #[serde(deserialize_with="nullable_existing")]
+    #[serde(deserialize_with="crate::object::required_nullable")]
     pub existing: Option<ExistingNodeBinding> [required=true],
     pub return_method: EnrollmentReturnMethod,
     pub phase: EnrollmentPhase,
@@ -82,6 +80,7 @@ pub enum EnrollmentReturnMethod {
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DeviceAuthorizationView {
     pub request: EnrollmentRequestView,
     /// Only the approving user or a current manager of the approved network sees this fragment.
+    #[serde(deserialize_with="crate::object::required_nullable")]
     pub approval: Option<EnrollmentApprovalView> [required=true],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentApprovalView {
@@ -103,6 +102,7 @@ wire_object! { pub struct EnrollmentDeviceProof {
 wire_object! { pub struct EnrollmentPollResponse {
     pub request: EnrollmentRequestView, pub code: Option<WireSecret>, pub node_id: Option<NodeId>,
     /// Available only after the device proves possession of this request.
+    #[serde(deserialize_with="crate::object::required_nullable")]
     pub approval: Option<EnrollmentApprovalView> [required=true],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ApproveEnrollmentRequest {

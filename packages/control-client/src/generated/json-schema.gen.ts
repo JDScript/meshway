@@ -184,9 +184,17 @@ export const schemaDocument = {
             "type": "object",
             "required": [
               "userId",
+              "email",
               "type"
             ],
             "properties": {
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Email at the time of the event; null means no historical snapshot exists."
+              },
               "type": {
                 "type": "string",
                 "enum": [
@@ -2314,9 +2322,6 @@ export const schemaDocument = {
       },
       "DefaultsUpdate": {
         "type": "object",
-        "required": [
-          "dialers"
-        ],
         "properties": {
           "access": {
             "$ref": "#/components/schemas/AccessDefault"
@@ -2532,6 +2537,30 @@ export const schemaDocument = {
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeviceAuthorizationView": {
+        "type": "object",
+        "required": [
+          "request",
+          "approval"
+        ],
+        "properties": {
+          "approval": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnrollmentApprovalView",
+                "description": "Only the approving user or a current manager of the approved network sees this fragment."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/EnrollmentRequestView"
           }
         },
         "additionalProperties": false
@@ -3198,6 +3227,22 @@ export const schemaDocument = {
           }
         ]
       },
+      "EnrollmentApprovalView": {
+        "type": "object",
+        "required": [
+          "userId",
+          "networkId"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "userId": {
+            "$ref": "#/components/schemas/UserId"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnrollmentDeviceProof": {
         "type": "object",
         "required": [
@@ -3254,6 +3299,18 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "EnrollmentKeyActions": {
+        "type": "object",
+        "required": [
+          "revoke"
+        ],
+        "properties": {
+          "revoke": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnrollmentKeyId": {
         "type": "string",
         "format": "uuid",
@@ -3293,11 +3350,26 @@ export const schemaDocument = {
         "required": [
           "id",
           "tags",
+          "createdBy",
+          "initialSettings",
+          "actions",
+          "nodeId",
+          "consumedAt",
           "createdAt",
           "expiresAt",
           "revokedAt"
         ],
         "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/EnrollmentKeyActions"
+          },
+          "consumedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "consumedRequestId": {
             "oneOf": [
               {
@@ -3312,12 +3384,28 @@ export const schemaDocument = {
             "type": "string",
             "format": "date-time"
           },
+          "createdBy": {
+            "$ref": "#/components/schemas/UserId"
+          },
           "expiresAt": {
             "type": "string",
             "format": "date-time"
           },
           "id": {
             "$ref": "#/components/schemas/EnrollmentKeyId"
+          },
+          "initialSettings": {
+            "$ref": "#/components/schemas/InitialNodeSettingsView"
+          },
+          "nodeId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "revokedAt": {
             "type": [
@@ -3338,14 +3426,30 @@ export const schemaDocument = {
       "EnrollmentKeysResponse": {
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "nextCursor",
+          "asOf"
         ],
         "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
           "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/EnrollmentKeyView"
             }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "$ref": "#/components/schemas/Count"
           }
         },
         "additionalProperties": false
@@ -3355,7 +3459,8 @@ export const schemaDocument = {
         "enum": [
           "pending",
           "approved",
-          "denied",
+          "withdrawn",
+          "cancelled",
           "consumed",
           "expired"
         ]
@@ -3363,9 +3468,21 @@ export const schemaDocument = {
       "EnrollmentPollResponse": {
         "type": "object",
         "required": [
-          "request"
+          "request",
+          "approval"
         ],
         "properties": {
+          "approval": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnrollmentApprovalView",
+                "description": "Available only after the device proves possession of this request."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "code": {
             "oneOf": [
               {
@@ -3406,12 +3523,24 @@ export const schemaDocument = {
           "id",
           "hostname",
           "controlKey",
+          "existing",
+          "returnMethod",
           "phase",
           "expiresAt"
         ],
         "properties": {
           "controlKey": {
             "$ref": "#/components/schemas/NodePublicKey"
+          },
+          "existing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExistingNodeBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expiresAt": {
             "type": "string",
@@ -3425,6 +3554,9 @@ export const schemaDocument = {
           },
           "phase": {
             "$ref": "#/components/schemas/EnrollmentPhase"
+          },
+          "returnMethod": {
+            "$ref": "#/components/schemas/EnrollmentReturnMethod"
           }
         },
         "additionalProperties": false
@@ -3452,6 +3584,12 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "EnrollmentReturnMethod": {
+        "type": "string",
+        "enum": [
+          "poll"
+        ]
       },
       "EntityRemovals": {
         "type": "object",
@@ -4182,6 +4320,31 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "InitialNodeSettingsView": {
+        "type": "object",
+        "required": [
+          "hostname",
+          "listeners"
+        ],
+        "properties": {
+          "hostname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "listeners": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ListenerView"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "InstanceId": {
         "type": "string",
         "format": "uuid",
@@ -4257,6 +4420,18 @@ export const schemaDocument = {
           },
           "geoip": {
             "$ref": "#/components/schemas/LookupResult_GeoIpData"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JoinLinkActions": {
+        "type": "object",
+        "required": [
+          "revoke"
+        ],
+        "properties": {
+          "revoke": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -4340,9 +4515,13 @@ export const schemaDocument = {
         "required": [
           "requestId",
           "link",
-          "networkName"
+          "networkName",
+          "alreadyMember"
         ],
         "properties": {
+          "alreadyMember": {
+            "type": "boolean"
+          },
           "link": {
             "$ref": "#/components/schemas/JoinLinkView"
           },
@@ -4361,7 +4540,8 @@ export const schemaDocument = {
           "requestId",
           "items",
           "nextCursor",
-          "asOf"
+          "asOf",
+          "total"
         ],
         "properties": {
           "asOf": {
@@ -4382,6 +4562,9 @@ export const schemaDocument = {
           },
           "requestId": {
             "$ref": "#/components/schemas/RequestId"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Count"
           }
         },
         "additionalProperties": false
@@ -4416,9 +4599,13 @@ export const schemaDocument = {
           "expiresAt",
           "revokedAt",
           "consumedAt",
-          "consumedByUserId"
+          "consumedByUserId",
+          "actions"
         ],
         "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/JoinLinkActions"
+          },
           "consumedAt": {
             "type": [
               "string",
@@ -5678,11 +5865,18 @@ export const schemaDocument = {
         "required": [
           "rename",
           "editConfiguration",
-          "manageMembers"
+          "manageMembers",
+          "joinLinkRoles"
         ],
         "properties": {
           "editConfiguration": {
             "type": "boolean"
+          },
+          "joinLinkRoles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MembershipRole"
+            }
           },
           "manageMembers": {
             "type": "boolean"
@@ -6899,7 +7093,12 @@ export const schemaDocument = {
           "keys",
           "controlKeyRevokedAt",
           "dataplaneKeyRevokedAt",
-          "canDelete"
+          "canDelete",
+          "desiredExecution",
+          "canRevokeControlKey",
+          "canRevokeDataplaneKey",
+          "controlKeyCreatedAt",
+          "dataplaneKeyCreatedAt"
         ],
         "properties": {
           "addresses": {
@@ -6907,6 +7106,16 @@ export const schemaDocument = {
           },
           "canDelete": {
             "type": "boolean"
+          },
+          "canRevokeControlKey": {
+            "type": "boolean"
+          },
+          "canRevokeDataplaneKey": {
+            "type": "boolean"
+          },
+          "controlKeyCreatedAt": {
+            "type": "string",
+            "format": "date-time"
           },
           "controlKeyRevokedAt": {
             "type": [
@@ -6916,12 +7125,27 @@ export const schemaDocument = {
             "format": "date-time",
             "description": "Revocation of the displayed latest keys; revoked configured nodes remain manageable."
           },
+          "dataplaneKeyCreatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
           "dataplaneKeyRevokedAt": {
             "type": [
               "string",
               "null"
             ],
             "format": "date-time"
+          },
+          "desiredExecution": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef",
+                "description": "Current execution target, not a saved/applied receipt. May be a later refresh than the source apply."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "enabled": {
             "type": "boolean"
@@ -7200,6 +7424,34 @@ export const schemaDocument = {
           },
           "remark": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeSettingsResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "networkId",
+          "nodeId",
+          "revision",
+          "settings"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/NodeSettingsView"
           }
         },
         "additionalProperties": false
@@ -9427,6 +9679,98 @@ export const schemaDocument = {
               "code": {
                 "type": "string",
                 "enum": [
+                  "join_link_expired"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "join_link_used"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "join_link_revoked"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "join_link_issuer_unavailable"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
                   "revision_conflict"
                 ]
               },
@@ -10806,10 +11150,12 @@ export const schemaDocument = {
         ],
         "properties": {
           "dialerSchema": {
-            "type": "string"
+            "type": "string",
+            "description": "Definition name in getConfigurationSchema.schemaJson.$defs (not schema text)."
           },
           "listenerSchema": {
-            "type": "string"
+            "type": "string",
+            "description": "Definition name in getConfigurationSchema.schemaJson.$defs (not schema text)."
           },
           "outerSocket": {
             "$ref": "#/components/schemas/OuterSocket"

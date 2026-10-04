@@ -171,12 +171,14 @@ async fn signed_device_lifecycle_own_settings_and_key_management_are_distinct() 
     .await;
     let node = enrolled.node_id;
     let settings_path = format!("nodes/{node}/settings");
-    let settings: meshway_configuration::NodeSettingsView = value(
+    let settings: NodeSettingsResponse = value(
         c.get(net(&s, n, &settings_path))
             .bearer_auth(member.token.expose()),
     )
     .await;
-    assert_eq!(settings.hostname, device.intent.hostname);
+    assert_eq!(settings.network_id, n);
+    assert_eq!(settings.node_id, node);
+    assert_eq!(settings.settings.hostname, device.intent.hostname);
     error(
         c.get(net(&s, n, "configuration"))
             .bearer_auth(member.token.expose())
@@ -432,7 +434,7 @@ async fn enrollment_keys_have_bounded_pages_safe_summaries_and_current_permissio
             .bearer_auth(admin.token.expose()),
     )
     .await;
-    assert_eq!(first.total, 1001);
+    assert_eq!(first.total.get(), 1001);
     assert_eq!(first.items.len(), 200);
     assert_eq!(first.items[0].id, issued.key.id);
     assert_eq!(first.items[0].created_by, owner.user.id);
@@ -504,7 +506,7 @@ async fn enrollment_keys_have_bounded_pages_safe_summaries_and_current_permissio
             .bearer_auth(owner.token.expose()),
     )
     .await;
-    assert_eq!(revoked.total, 1002);
+    assert_eq!(revoked.total.get(), 1002);
     assert!(!revoked.items[0].actions.revoke);
     assert!(revoked.items[0].revoked_at_ms.is_some());
     let second: EnrollmentKeysResponse = value(
@@ -512,7 +514,7 @@ async fn enrollment_keys_have_bounded_pages_safe_summaries_and_current_permissio
             .bearer_auth(admin.token.expose()),
     )
     .await;
-    assert_eq!(second.total, 1001);
+    assert_eq!(second.total.get(), 1001);
     assert!(second.items.iter().all(|item| item.id != issued.key.id));
     let _: MemberMutationResponse = value(
         c.post(net(&s, n, &format!("members/{admin_id}/role")))
@@ -629,7 +631,7 @@ async fn join_link_actions_pagination_inspection_and_issuer_permission_loss() {
             .bearer_auth(admin.token.expose()),
     )
     .await;
-    assert_eq!(first.total, 3);
+    assert_eq!(first.total.get(), 3);
     assert_eq!(first.items[0].id, admin_link.id);
     let cursor = first.next_cursor.unwrap();
     let _: JoinLinkCreated = value(make(owner.token.expose(), MembershipRole::Member)).await;
@@ -638,7 +640,7 @@ async fn join_link_actions_pagination_inspection_and_issuer_permission_loss() {
             .bearer_auth(admin.token.expose()),
     )
     .await;
-    assert_eq!(second.total, 3);
+    assert_eq!(second.total.get(), 3);
     assert_eq!(second.items[0].id, owner_link.id);
     assert!(!second.items[0].actions.revoke);
     error(

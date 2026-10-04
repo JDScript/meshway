@@ -1,6 +1,6 @@
 # 注册与认证
 
-**V2 注册与认证合同。** 新 Controller 的隔离开发基线已接通账户 options／register／login／session／logout；其余操作和 Node 持钥流程按下面的设计继续实现。用户使用不透明会话，Node 使用本地持久密钥身份；账户、网络成员身份和设备接入分别建立。
+**V2 注册与认证合同。** 新 Controller 的隔离开发基线已接通账户、会话管理与 Node 持钥／PKCE 接入；精确操作范围见 [API 索引](/v2/api)。用户使用不透明会话，Node 使用本地持久密钥身份；账户、网络成员身份和设备接入分别建立。
 
 ## Controller 注册设置
 
@@ -203,12 +203,12 @@ App 使用系统浏览器及受限制回调；CLI 无本地回调时领取同一
 - 永久吊销节点接入或密钥使相应认证及派生凭据失效，并撤回执行许可；重放旧注册、配置回滚均不能复活。普通业务停用使用配置 enabled。
 - 最新密钥被吊销但尚未删除的 Node 仍出现在管理库存，分别显示控制／数据面密钥吊销时间；业务 enabled 不冒充凭据有效性。成员移除与其当前 User 身份 Node 删除、地址退出和执行撤回在同一事务提交，Tag 身份 Node 保留。其他配置对被删 Node 的显式引用若无法通过校验，整个操作失败，不提交半套结果。
 
-Node 管理库存分别返回 `controlKeyCreatedAt`／`dataplaneKeyCreatedAt` 和 `canRevokeControlKey`／`canRevokeDataplaneKey`，与 `canDelete` 独立。`desiredExecution` 是当前期望执行引用，可能来自后续 refresh，不代表 saved／applied，也不把它的 receipt 纳入旧 apply 的目标计数。`GET /api/v1/networks/{networkId}/nodes/{nodeId}/settings` 返回相同的非秘密 `NodeSettingsView`：管理员读本网节点，普通成员只读当前自己的 User 身份设备；转为 Tag 后原创建者失去 own-only 权限。完整配置原文及管理历史权限保持独立。
+Node 管理库存分别返回 `controlKeyCreatedAt`／`dataplaneKeyCreatedAt` 和 `canRevokeControlKey`／`canRevokeDataplaneKey`，与 `canDelete` 独立。`desiredExecution` 是当前期望执行引用，可能来自后续 refresh，不代表 saved／applied，也不把它的 receipt 纳入旧 apply 的目标计数。`GET /api/v1/networks/{networkId}/nodes/{nodeId}/settings` 返回 `NodeSettingsResponse { requestId, networkId, nodeId, revision, settings }`，settings 复用 SSE 的非秘密 `NodeSettingsView`，revision 与设置来自同一读取事务。管理员读本网节点，普通成员只读当前自己的 User 身份设备；转为 Tag 后原创建者失去 own-only 权限。完整配置原文及管理历史权限保持独立。
 - 丢失私钥后不能靠公钥重新取得身份；恢复／轮换需要明确的再授权流程，不静默创建替代身份冒充恢复。
 
 ## 实现边界与参考
 
-当前实现仍为仅邀请账户注册、用户 `mws_` 会话、节点随机 bearer 加独立数据面公钥。本页确定下一版方向；现有 App 接入消费者的协调切换需单独安排。
+新 Controller 使用可关闭的开放注册、不透明用户会话及独立 Ed25519 持钥 Node 身份；短期 Node session 不替代持久密钥。已有 Agent／App 消费者的协调切换和实际隧道接入仍须单独验收。
 
 - [现行账户与会话](/local-accounts)
 - [现行 App PKCE 接入](/device-login)

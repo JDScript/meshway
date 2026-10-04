@@ -17,7 +17,7 @@ pub struct LinkInspection {
     pub already_member: bool,
 }
 pub struct LinkPage {
-    pub total: u64,
+    pub total: meshway_model::Count,
     pub items: Vec<JoinLinkView>,
     pub next_cursor: Option<String>,
     pub as_of: DateTime<Utc>,

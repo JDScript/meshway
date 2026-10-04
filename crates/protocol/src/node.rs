@@ -59,6 +59,7 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryView 
     pub dataplane_key_revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
     pub can_delete: bool,
     /// Current execution target, not a saved/applied receipt. May be a later refresh than the source apply.
+    #[serde(deserialize_with="crate::object::required_nullable")]
     pub desired_execution: Option<ConfigurationRef> [required=true],
     pub can_revoke_control_key: bool,
     pub can_revoke_dataplane_key: bool,
@@ -69,6 +70,10 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryView 
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryResponse {
     pub items: Vec<NodeInventoryView>,
+} }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeSettingsResponse {
+    pub request_id: RequestId, pub network_id: NetworkId, pub node_id: NodeId,
+    pub revision: Revision, pub settings: meshway_configuration::NodeSettingsView,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DeleteNodeRequest {
     pub request_id: RequestId, pub expected_revision: Revision,

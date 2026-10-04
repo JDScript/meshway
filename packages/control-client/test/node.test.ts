@@ -9,7 +9,7 @@ import {
   queryEnrollmentRequest, redeemEnrollmentRequest, createNodeChallenge, createNodeSession,
   acquireNodeInstance, queryNodeConfiguration, releaseNodeInstance, deleteNode, getNode,
   reportNodeState, queryPeerState, getNodeState, getNetworkState, watchNetwork,
-  getConfigurationProgress,
+  getConfigurationProgress, getNodeSettings,
   type EnrollmentIntent, type NodeSessionIntent,
 } from "../src/index.ts";
 
@@ -61,6 +61,18 @@ test("generated Node SDK completes signed PKCE admission, state reporting and pe
   assert.ok(configuration.ok && configuration.data.full);
   assert.equal(configuration.data.full.configuration.nodeId, enrolled.data.nodeId);
   const networkPath = { networkId: enrolled.data.networkId };
+  const settings = await getNodeSettings(client, { ...networkPath, nodeId: enrolled.data.nodeId }, user);
+  assert.ok(settings.ok);
+  assert.equal(settings.data.networkId, enrolled.data.networkId);
+  assert.equal(settings.data.nodeId, enrolled.data.nodeId);
+  assert.equal(settings.data.revision, configuration.data.full.configuration.revision);
+  assert.equal(settings.data.settings.hostname, intent.hostname);
+  const inventory = await getNode(client, { ...networkPath, nodeId: enrolled.data.nodeId }, user);
+  assert.ok(inventory.ok);
+  assert.equal(inventory.data.canRevokeControlKey, true);
+  assert.equal(inventory.data.canRevokeDataplaneKey, true);
+  assert.match(inventory.data.controlKeyCreatedAt, /T.*Z$/);
+  assert.equal(inventory.data.desiredExecution?.digest, configuration.data.full.digest);
   const progress = await getConfigurationProgress(client, { ...networkPath, revision: configuration.data.full.configuration.revision }, user);
   assert.ok(progress.ok);
   assert.equal(progress.data.scope, "full");

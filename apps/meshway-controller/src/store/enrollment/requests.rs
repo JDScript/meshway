@@ -69,7 +69,19 @@ pub(super) fn pending(
     tx: &Transaction<'_>,
     request: EnrollmentRequestId,
 ) -> Result<Pending, NodeError> {
-    let raw=tx.query_row("SELECT control_key,dataplane_key,request_digest,code_challenge,hostname,expires_at,approval,result_hash,delivery,denied_at,consumed_at,node_id,existing_binding FROM enrollment_requests WHERE id=?1",[request.as_uuid().as_bytes().as_slice()],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,Option<Vec<u8>>>(6)?,r.get::<_,Option<Vec<u8>>>(7)?,r.get::<_,Option<Vec<u8>>>(8)?,r.get::<_,Option<i64>>(9)?,r.get::<_,Option<i64>>(10)?,r.get::<_,Option<Vec<u8>>>(11)?,r.get::<_,Option<Vec<u8>>>(12)?))).optional()?.ok_or(NodeError::NotFound)?;
+    let raw = tx.query_row(
+        "SELECT control_key,dataplane_key,request_digest,code_challenge,hostname,expires_at,
+                approval,result_hash,delivery,denied_at,consumed_at,node_id,existing_binding,cancelled_at
+         FROM enrollment_requests WHERE id=?1",
+        [request.as_uuid().as_bytes().as_slice()],
+        |r| Ok((
+            r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, Vec<u8>>(2)?,
+            r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, i64>(5)?,
+            r.get::<_, Option<Vec<u8>>>(6)?, r.get::<_, Option<Vec<u8>>>(7)?, r.get::<_, Option<Vec<u8>>>(8)?,
+            r.get::<_, Option<i64>>(9)?, r.get::<_, Option<i64>>(10)?,
+            r.get::<_, Option<Vec<u8>>>(11)?, r.get::<_, Option<Vec<u8>>>(12)?, r.get::<_, Option<i64>>(13)?,
+        )),
+    ).optional()?.ok_or(NodeError::NotFound)?;
     Ok(Pending {
         id: request,
         control: raw.0.try_into().map_err(|_| NodeError::Storage)?,
@@ -82,11 +94,7 @@ pub(super) fn pending(
         result_hash: raw.7,
         delivery: raw.8,
         denied: raw.9,
-        cancelled: tx.query_row(
-            "SELECT cancelled_at FROM enrollment_requests WHERE id=?1",
-            [request.as_uuid().as_bytes().as_slice()],
-            |r| r.get(0),
-        )?,
+        cancelled: raw.13,
         consumed: raw.10,
         node: raw.11.map(id).transpose()?,
         existing: raw.12.map(|b| json(&b)).transpose()?,
