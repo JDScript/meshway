@@ -157,8 +157,18 @@ its generated client only, and only what the controller delivers:
   controller nor docs/v2 defines the browser link a device opens yet. The
   request ID is not a credential; the page signs in in place as `/join`
   does (`entry/inline-sign-in.tsx`), shows what the device reported as
-  untrusted text with its control key, approves for one of the account's
-  networks or denies, and follows the request until the device redeems it.
+  untrusted text with its control key, and follows the request until it
+  settles. A pending request has no user and is never denied: it is
+  approved into one of the account's networks, or for a re-login
+  (`existing`: the node signing in again, which then belongs to this
+  account) only into the node's network; "not now" only leaves the page
+  (the device cancels, or the request expires). Approved, the page shows
+  the `approval` when the controller gives it (by this account, else by
+  the member's email where this account manages the network, else the
+  user ID) and, by `returnMethod`, to go back to the device; only the
+  approver withdraws it (`denyDeviceAuthorization`) before the device
+  redeems it. `withdrawn` and `cancelled` are told apart; a
+  `state_conflict` reads the request again.
 - The event stream (`watchNetwork`, `features/live/`): SSE first, GET as
   the fallback. Each tab keeps one stream for the network it has open, from
   its pages' mount until the network changes or the sign-in ends. The
