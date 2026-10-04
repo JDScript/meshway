@@ -99,7 +99,7 @@ async function streamIo<T>(operation: () => Promise<T>, connection: AbortControl
   finally { clearTimeout(timer); }
 }
 
-async function readProgress(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<ReadableStreamReadResult<Uint8Array>> {
+async function readProgress(reader: ReadableStreamDefaultReader<Uint8Array>) {
   while (true) {
     const chunk = await reader.read();
     if (chunk.done || chunk.value.byteLength > 0) return chunk;

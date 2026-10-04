@@ -36,8 +36,15 @@ wire_object! { pub struct EnrollmentKeysResponse { pub items: Vec<EnrollmentKeyV
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentIntent {
     pub id: EnrollmentRequestId, pub control_key: NodePublicKey, pub dataplane_key: NodePublicKey,
     pub code_challenge: String, pub hostname: String,
-    pub existing: Option<ExistingNodeBinding>,
+    /// Always present in the signed intent; a first enrollment uses explicit null.
+    #[serde(deserialize_with="nullable_existing")]
+    pub existing: Option<ExistingNodeBinding> [required=true],
 } }
+fn nullable_existing<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ExistingNodeBinding>, D::Error> {
+    Deserialize::deserialize(deserializer)
+}
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ExistingNodeBinding {
     pub network_id:NetworkId,pub node_id:NodeId,pub key_id:KeyId,pub key_generation:Version,
 } }

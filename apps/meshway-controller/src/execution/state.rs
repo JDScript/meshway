@@ -437,7 +437,7 @@ fn state_error(error: NodeError) -> StateError {
     match error {
         NodeError::Unauthorized => StateError::Unauthorized,
         NodeError::Forbidden => StateError::Forbidden,
-        NodeError::Invalid => StateError::Invalid,
+        NodeError::Invalid | NodeError::InvalidSettings(_) => StateError::Invalid,
         NodeError::Conflict => StateError::Conflict,
         NodeError::NotFound => StateError::NotFound,
         NodeError::Busy => StateError::Budget,

@@ -137,7 +137,7 @@ session token／摘要不进入列表、URL 或活动记录。会话列表返回
 | `POST /networks/{networkId}/enrollment-keys/{keyId}/revoke` | Owner／Admin | 撤销未消费密钥，消费竞态在事务中处理 |
 | `GET /device-authorizations/{requestId}` | 用户会话 | 浏览器设备批准页所需的非秘密请求信息 |
 | `POST /device-authorizations/{requestId}/approve` | 用户会话 | 选择有效网络，绑定本人设备批准 |
-| `POST /device-authorizations/{requestId}/deny` | 用户会话 | 拒绝本次请求，不创建 Node |
+| `POST /device-authorizations/{requestId}/deny` | 本次批准者的用户会话 | 兑换前撤回自己的批准；未批准时仅退出网页，由设备自行取消或等待到期 |
 
 改名、listener、出站、出口、identity、addresses 等通过统一 configuration 的[强类型 ops](/v2/configuration-reference/editing)修改，不建立第二份 Node 设置源或重复管理写入路径。Tag→User／改绑 User 通过绑定当前 Node 的设备重新登录批准；完整配置和 ops 都不能绕过。
 

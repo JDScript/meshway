@@ -126,7 +126,7 @@ pub(super) async fn cancel(
         .map_err(|e| error(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/enrollment-keys",operation_id="createEnrollmentKey",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CreateEnrollmentKeyRequest,responses((status=200,body=EnrollmentKeyResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/enrollment-keys",operation_id="createEnrollmentKey",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CreateEnrollmentKeyRequest,responses((status=200,body=EnrollmentKeyResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse),(status=422,body=ErrorResponse)))]
 pub(super) async fn create_key(
     State(service): State<Enrollment>,
     Extension(id): Extension<RequestId>,

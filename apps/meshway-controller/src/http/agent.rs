@@ -25,6 +25,14 @@ pub(super) fn error(id: RequestId, e: NodeError) -> HttpError {
             },
         ),
         NodeError::Invalid => return HttpError::invalid_request(id),
+        NodeError::InvalidSettings(issues) => {
+            return HttpError::configuration(
+                id,
+                crate::configuration::Error::Invalid(
+                    meshway_configuration::ConfigurationError::Invalid(issues),
+                ),
+            );
+        }
         NodeError::Conflict => (
             StatusCode::CONFLICT,
             Problem::RequestConflict {

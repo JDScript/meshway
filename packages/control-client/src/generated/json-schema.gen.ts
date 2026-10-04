@@ -3087,7 +3087,8 @@ export const schemaDocument = {
           "controlKey",
           "dataplaneKey",
           "codeChallenge",
-          "hostname"
+          "hostname",
+          "existing"
         ],
         "properties": {
           "codeChallenge": {
@@ -3102,7 +3103,8 @@ export const schemaDocument = {
           "existing": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ExistingNodeBinding"
+                "$ref": "#/components/schemas/ExistingNodeBinding",
+                "description": "Always present in the signed intent; a first enrollment uses explicit null."
               },
               {
                 "type": "null"

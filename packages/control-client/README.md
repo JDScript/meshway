@@ -148,6 +148,18 @@ configuration reads, demands, receipts, inventory and permanent deletion.
 The ordinary account registration/login operations do not substitute for a
 Node's proof of private-key possession.
 
+Signed `EnrollmentIntent` always contains `existing`: explicit `null` for initial
+enrollment, or the full existing binding for reauthentication. Include it in the
+canonical intent digest; omission is rejected by both generated validation and
+Rust decoding. Closing an unapproved browser flow does not cancel the device's
+request. `denyDeviceAuthorization` withdraws only the caller's prior approval
+before redemption; the device can use signed `cancelEnrollmentRequest` itself.
+
+Enrollment-key issuance validates the initial hostname/listeners and any supplied
+TLS materials. A 422 `configuration_invalid` response carries issue paths rooted
+at `/initialSettings`. Missing automatic materials are generated at actual Node
+admission; issuing a key does not create a Node or reserve its hostname.
+
 HTTP time fields use RFC 3339 (`expiresAt`, `registeredAt`, `reportedAt`, etc.).
 Rust execution/crypto structs retain explicit `_ms` fields with a validated
 Serde adapter; fixed signing transcripts still encode exact Unix milliseconds.
@@ -236,6 +248,9 @@ version's original bindings. Cross-network or mismatched source publications
 are rejected. Current remote preparation uses an unreferenced declaration,
 explicit refresh, then configuration references. Single-apply preparation and
 periodic `updateInterval` updates are still being implemented.
+
+The SDK's TypeScript check covers both browser libraries and a Node-only
+`ES2022`/`@types/node` configuration; Node consumers do not need DOM types.
 
 ## Generation and verification
 

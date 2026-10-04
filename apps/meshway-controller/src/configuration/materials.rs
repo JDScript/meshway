@@ -42,68 +42,75 @@ pub(crate) fn prepare_materials(
             {
                 meshway_configuration::inherit_materials(listener, previous);
             }
-            match listener {
-                Listener::Vless(v) => {
-                    if v.uuid.is_none() && generate {
-                        v.uuid = Some(SecretString::new(
-                            random_uuid().map_err(|_| Error::Storage)?.to_string(),
-                        ));
-                    }
-                    prepare_tls(&mut v.tls, generate)?;
-                }
-                Listener::Trojan(v) => {
-                    if v.password.is_none() && generate {
-                        v.password = Some(SecretString::new(
-                            crate::accounts::issue_one_time("mwp_")
-                                .map_err(|_| Error::Storage)?
-                                .0
-                                .expose()
-                                .to_owned(),
-                        ));
-                    }
-                    prepare_tls(&mut v.tls, generate)?;
-                }
-                _ => {}
-            }
-            listener.normalize().map_err(|_| invalid())?;
-            match listener {
-                Listener::Vless(v) => {
-                    if let Some(value) = &v.uuid {
-                        check_revocation(
-                            tx,
-                            sealer,
-                            network,
-                            "vlessUuid",
-                            value.expose().as_bytes(),
-                        )?;
-                    }
-                    if v.tls.certificate.is_some() && v.tls.private_key.is_some() {
-                        let leaf = verify_tls(&v.tls)?;
-                        check_revocation(tx, sealer, network, "tlsCertificate", &leaf)?;
-                        verified.insert((*node_id, key.clone()), listener.clone());
-                    }
-                }
-                Listener::Trojan(v) => {
-                    if let Some(value) = &v.password {
-                        check_revocation(
-                            tx,
-                            sealer,
-                            network,
-                            "trojanPassword",
-                            value.expose().as_bytes(),
-                        )?;
-                    }
-                    if v.tls.certificate.is_some() && v.tls.private_key.is_some() {
-                        let leaf = verify_tls(&v.tls)?;
-                        check_revocation(tx, sealer, network, "tlsCertificate", &leaf)?;
-                        verified.insert((*node_id, key.clone()), listener.clone());
-                    }
-                }
-                _ => {}
+            if prepare_listener_materials(tx, network, listener, sealer, generate)? {
+                verified.insert((*node_id, key.clone()), listener.clone());
             }
         }
     }
     Ok(verified)
+}
+
+/// Shared by configuration application and enrollment-key preflight. With
+/// generation disabled, absent automatic material stays absent; supplied
+/// material still receives complete certificate and irreversible-revocation checks.
+pub(crate) fn prepare_listener_materials(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    listener: &mut Listener,
+    sealer: &Sealer,
+    generate: bool,
+) -> Result<bool, Error> {
+    match listener {
+        Listener::Vless(v) => {
+            if v.uuid.is_none() && generate {
+                v.uuid = Some(SecretString::new(
+                    random_uuid().map_err(|_| Error::Storage)?.to_string(),
+                ));
+            }
+            prepare_tls(&mut v.tls, generate)?;
+        }
+        Listener::Trojan(v) => {
+            if v.password.is_none() && generate {
+                v.password = Some(SecretString::new(
+                    crate::accounts::issue_one_time("mwp_")
+                        .map_err(|_| Error::Storage)?
+                        .0
+                        .expose()
+                        .to_owned(),
+                ));
+            }
+            prepare_tls(&mut v.tls, generate)?;
+        }
+        _ => {}
+    }
+    listener.normalize().map_err(|_| invalid())?;
+    let tls = match listener {
+        Listener::Vless(v) => {
+            if let Some(value) = &v.uuid {
+                check_revocation(tx, sealer, network, "vlessUuid", value.expose().as_bytes())?;
+            }
+            &v.tls
+        }
+        Listener::Trojan(v) => {
+            if let Some(value) = &v.password {
+                check_revocation(
+                    tx,
+                    sealer,
+                    network,
+                    "trojanPassword",
+                    value.expose().as_bytes(),
+                )?;
+            }
+            &v.tls
+        }
+        _ => return Ok(false),
+    };
+    if tls.certificate.is_some() && tls.private_key.is_some() {
+        let leaf = verify_tls(tls)?;
+        check_revocation(tx, sealer, network, "tlsCertificate", &leaf)?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn prepare_tls(tls: &mut ListenerTls, generate: bool) -> Result<(), Error> {

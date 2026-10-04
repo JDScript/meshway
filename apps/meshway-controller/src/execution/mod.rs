@@ -19,6 +19,8 @@ pub enum NodeError {
     Forbidden,
     #[error("invalid node request")]
     Invalid,
+    #[error("invalid initial node settings")]
+    InvalidSettings(Vec<meshway_configuration::ConfigurationIssue>),
     #[error("node request conflicts with current generation or binding")]
     Conflict,
     #[error("node resource not found")]

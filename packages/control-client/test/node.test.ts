@@ -1,55 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
-import type { KeyObject } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { hostname, platform, arch } from "node:os";
 import { controller } from "./support/controller.ts";
+import { digest, deviceProof, sessionProof, publicBytes } from "./support/proof.ts";
 import {
   register, createNetwork, getNetwork, createEnrollmentRequest, approveDeviceAuthorization,
   queryEnrollmentRequest, redeemEnrollmentRequest, createNodeChallenge, createNodeSession,
   acquireNodeInstance, queryNodeConfiguration, releaseNodeInstance, deleteNode, getNode,
   reportNodeState, queryPeerState, getNodeState, getNetworkState, watchNetwork,
   getConfigurationProgress,
-  type EnrollmentIntent, type NodeSessionIntent, type NodeChallenge,
+  type EnrollmentIntent, type NodeSessionIntent,
 } from "../src/index.ts";
-
-// Independent consumer encoding of the documented sorted typed-intent JSON.
-// These inputs use generated DTOs; no endpoint or request/response DTO is copied.
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) { const values: unknown[] = value; return `[${values.map(canonical).join(",")}]`; }
-  if (value !== null && typeof value === "object") {
-    const entries: [string, unknown][] = Object.entries(value);
-    return `{${entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
-  }
-  const text = JSON.stringify(value);
-  if (text === undefined) throw new Error("Intent must contain explicit JSON values");
-  return text;
-}
-function digest(value: EnrollmentIntent | NodeSessionIntent): Buffer {
-  return createHash("sha256").update("meshway/node-intent/v1\0").update(canonical(value)).digest();
-}
-function uuid(value: string): Buffer { return Buffer.from(value.replaceAll("-", ""), "hex"); }
-function integer(value: number): Buffer {
-  assert.ok(Number.isSafeInteger(value) && value >= 0);
-  const bytes = Buffer.alloc(8); bytes.writeBigUInt64BE(BigInt(value)); return bytes;
-}
-function deviceProof(intent: EnrollmentIntent, operation: string, key: KeyObject): string {
-  const op = Buffer.from(operation);
-  const bytes = Buffer.concat([Buffer.from("meshway/enrollment/ed25519/v1\0"), integer(op.length), op, uuid(intent.id), digest(intent)]);
-  return sign(null, bytes, key).toString("base64url");
-}
-function sessionProof(challenge: NodeChallenge, key: KeyObject): string {
-  const ids = [challenge.controllerId, challenge.networkId, challenge.nodeId, challenge.keyId, challenge.id].map(uuid);
-  const bytes = Buffer.concat([Buffer.from("meshway/node-proof/ed25519/v1\0"), Buffer.from([1]), ...ids,
-    integer(challenge.keyGeneration), Buffer.from(challenge.nonce, "hex"), integer(Date.parse(challenge.expiresAt)), Buffer.from(challenge.requestDigest, "hex")]);
-  return sign(null, bytes, key).toString("base64url");
-}
-function publicBytes(key: KeyObject, prefix: string): string {
-  const bytes = key.export({ format: "der", type: "spki" });
-  assert.equal(bytes.length, 44);
-  assert.equal(bytes.subarray(0, 12).toString("hex"), prefix);
-  return bytes.subarray(12).toString("hex");
-}
 
 test("generated Node SDK completes signed PKCE admission, state reporting and permanent deletion", async t => {
   const client = await controller(t);

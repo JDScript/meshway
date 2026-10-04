@@ -206,8 +206,14 @@ pub(crate) fn deny(
     let now = now()?;
     let session = current_session(&tx, &token, now)?;
     let p = pending(&tx, id)?;
-    if p.consumed.is_some() || p.approval.is_some_and(|a| a.user != session.user.id) {
+    // Before approval there is no bound user. Leaving the browser is local;
+    // only the device's signed cancel operation can cancel a pending request.
+    let approval = p.approval.ok_or(NodeError::Forbidden)?;
+    if approval.user != session.user.id {
         return Err(NodeError::Forbidden);
+    }
+    if p.consumed.is_some() || p.expires <= now {
+        return Err(NodeError::Conflict);
     }
     tx.execute(
         "UPDATE enrollment_requests SET denied_at=COALESCE(denied_at,?1),delivery=NULL WHERE id=?2",

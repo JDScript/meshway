@@ -651,7 +651,7 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            400 | 401 | 403 | 409 => Err(response.problem()),
+            400 | 401 | 403 | 409 | 422 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

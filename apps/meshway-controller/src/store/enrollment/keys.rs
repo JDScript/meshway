@@ -52,10 +52,12 @@ pub(crate) fn create_key(
             secret: None,
         });
     }
+    let mut initial_settings = request.initial_settings;
+    crate::enrollment::settings::normalize(&tx, network, &mut initial_settings, sealer)?;
     let key = EnrollmentKeyId::new(uuid()?).map_err(|_| NodeError::Storage)?;
     let secret = format!("mwek_{}", token()?);
     let settings = sealer
-        .seal_enrollment(key.into_uuid(), &bytes(&request.initial_settings)?)
+        .seal_enrollment(key.into_uuid(), &bytes(&initial_settings)?)
         .map_err(|_| NodeError::Storage)?;
     tx.execute("INSERT INTO enrollment_keys(id,network_id,token_hash,tags,initial_settings,created_by,membership_id,created_at,expires_at,creation_request_id,creation_request_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![key.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),hash(&secret).as_slice(),bytes(&request.tags)?,settings.as_bytes(),user.as_uuid().as_bytes().as_slice(),member.as_uuid().as_bytes().as_slice(),now,request.expires_at_ms as i64,request.request_id.as_uuid().as_bytes().as_slice(),digest.as_slice()])?;
     let view = key_view(&tx, network, key)?;

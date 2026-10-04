@@ -4117,6 +4117,15 @@
                 }
               }
             }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -9372,7 +9381,8 @@
           "controlKey",
           "dataplaneKey",
           "codeChallenge",
-          "hostname"
+          "hostname",
+          "existing"
         ],
         "properties": {
           "codeChallenge": {
@@ -9387,7 +9397,8 @@
           "existing": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ExistingNodeBinding"
+                "$ref": "#/components/schemas/ExistingNodeBinding",
+                "description": "Always present in the signed intent; a first enrollment uses explicit null."
               },
               {
                 "type": "null"

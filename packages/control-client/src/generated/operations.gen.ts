@@ -41,7 +41,7 @@ export function compareConfiguration(client: ControlClient, path: z.output<typeo
 }
 
 export function createEnrollmentKey(client: ControlClient, path: z.output<typeof zCreateEnrollmentKeyPath>, body: z.output<typeof zCreateEnrollmentKeyRequest>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/enrollment-keys", authenticated: true, successStatus: 200, success: zEnrollmentKeyResponse, errors: [400, 401, 403, 409], problem: zErrorResponse, pathParameters: { schema: zCreateEnrollmentKeyPath, value: path }, body: { schema: zCreateEnrollmentKeyRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/enrollment-keys", authenticated: true, successStatus: 200, success: zEnrollmentKeyResponse, errors: [400, 401, 403, 409, 422], problem: zErrorResponse, pathParameters: { schema: zCreateEnrollmentKeyPath, value: path }, body: { schema: zCreateEnrollmentKeyRequest, value: body } }, options);
 }
 
 export function createEnrollmentRequest(client: ControlClient, body: z.output<typeof zCreateEnrollmentRequest>, options: RequestOptions = {}) {

@@ -1314,7 +1314,7 @@ export const zEnrollmentIntent = z.strictObject({
   ["codeChallenge"]: z.string(),
   ["controlKey"]: zNodePublicKey,
   ["dataplaneKey"]: zNodePublicKey,
-  ["existing"]: zExistingNodeBinding.nullable().exactOptional(),
+  ["existing"]: zExistingNodeBinding.nullable(),
   ["hostname"]: z.string(),
   ["id"]: zEnrollmentRequestId
 });

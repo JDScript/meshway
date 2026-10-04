@@ -1,6 +1,7 @@
 //! One-use admission requests and keys. Config commit is supplied by its owner
 //! and executes inside the enrollment transaction, never as a second commit.
 pub(crate) mod configuration;
+pub(crate) mod settings;
 use crate::{
     execution::NodeError,
     secrets::Sealer,
