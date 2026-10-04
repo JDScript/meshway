@@ -50,7 +50,7 @@ inline 不接受 remote 字段，反之亦然。未知 key 引用、循环依赖
 
 Owner／Admin 可在一次配置 apply 中新增 remote 声明及引用它的路由规则，也可直接替换正在引用的来源。Server 先验证用户／网络与输入，在 SQLite 事务外进行有界下载和完整转换，最后同事务重验身份、源 revision、原 artifact 及完整配置权限，固定 artifact／源版本初始绑定并发布。失败保留原配置与已验证内容，不把缺失集合当成空集合或跳到后续 direct 规则。
 
-validate 走相同下载／转换与授权校验，但不保存 artifact、不预留配置版本。`ConfigurationPreviewResponse.preparedRuleSets` 按 key 返回暂定规范化内容的 `digest`／`entries`，不使用假 ArtifactId；缺失 listener 材料等仍返回类型化准备需求。最终 apply 独立重新准备／重验，不能将一次 preview 当作免 CAS 的承诺。单次配置最多准备 32 项远端集合、规范化内容合计不超过 8 MiB，下载准备总期限 30 秒；进程内最多 4 项配置准备，包括等待最终事务的输入。每张网络实际绑定的规则集执行内容合计最多 8 MiB／100000 条目，按 key 计入，不能通过多次提交绕过执行内存预算。
+validate 走相同下载／转换与授权校验，但不保存 artifact、不预留配置版本。`ConfigurationPreviewResponse.preparedRuleSets` 按 key 返回暂定规范化内容的 `digest`／`entries`，不使用假 ArtifactId；缺失 listener 材料等仍返回类型化准备需求。最终 apply 独立重新准备／重验，不能将一次 preview 当作免 CAS 的承诺。单次配置最多准备 32 项远端集合、规范化内容合计不超过 8 MiB，下载准备总期限 30 秒；超出这些限制和下载／转换失败一样是配置诊断：422 `configuration_invalid`，issue 挂在 `/ruleSets`（或具体 key），code 分别为 `rule_set_budget`（`params.maxSets`／`maxBytes`／`maxEntries`）、`rule_set_timeout`（`params.seconds`）、`rule_set_unavailable`（`params.reason` 为 `ResourceProblem`）。进程内最多 4 项配置准备，包括等待最终事务的输入；名额用满返回 503，这是服务端容量而不是配置问题。每张网络实际绑定的规则集执行内容合计最多 8 MiB／100000 条目，按 key 计入，不能通过多次提交绕过执行内存预算。
 
 接口相对 `/api/v1/networks/{networkId}`：
 
@@ -62,7 +62,7 @@ validate 走相同下载／转换与授权校验，但不保存 artifact、不�
 
 这些完整资源管理视图限本网络 Owner／Admin。普通成员与 Node 不取得整网来源／artifact 清单；Node 只消费已授权的执行计划。URL 不得含 userinfo、fragment；下载保留 HTTPS 证书／主机名校验，拒绝重定向及非公网解析结果，并固定已验证地址。
 
-`RuleSetView` 包括 `configurationRevision`、`definition`、`artifact`（不可变 ID／摘要／创建时间／条目数）、`publication`（选中该 artifact 的确切发布）、`problem`、`checkedAt`、`lastSuccessAt`。检查时间与 artifact 创建时间不同；失败更新检查时间和错误，保留最后成功 artifact 与成功检查时间。没有对应检查记录的时间为 null，不伪造新鲜度。相同绑定随普通配置版本延续时保留原检查时间。
+`RuleSetView` 包括 `configurationRevision`、`definition`、`artifact`（不可变 ID／摘要／创建时间／条目数）、`publication`（选中该 artifact 的确切发布）、`problem`、`checkedAt`、`lastSuccessAt`。检查时间与 artifact 创建时间不同；失败更新检查时间和错误，保留最后成功 artifact 与成功检查时间。没有对应检查记录的时间为 null，不伪造新鲜度。来源与绑定内容都不变时，检查记录（含失败的 problem、`checkedAt` 和退避次数）随普通配置版本延续；还没有任何成功内容的集合也一样，不会在新版本上回到 `not_ready`、`checkedAt: null`。
 
 转换支持 sing-box source v1–v3 的单类别 `ip_cidr`／`domain_suffix` 规则，以及 mihomo 的 IP CIDR payload／`+.domain` 后缀 payload。未知字段、逻辑组合、精确域名或无法保留语义的混合条件会使整次转换失败。错误为 `download_failed`、`invalid_source`、`too_large`、`conversion_failed` 或 `validation_failed`；首次没有内容为 `not_ready`。
 

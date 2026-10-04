@@ -30,7 +30,7 @@ async fn resource_scan_shutdown_releases_its_waiter_before_accepted_sql_drains()
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().canonicalize().unwrap().join("data");
     let app = App::open(Settings::new(path.clone())).await.unwrap();
-    let cache_owners = Arc::strong_count(&app.configuration_cache);
+    let cache_owners = Arc::strong_count(&app.committer.cache);
     let handle = app.executor.handle();
     let (entered, started) = tokio::sync::oneshot::channel();
     let (release, blocked) = std::sync::mpsc::channel();
@@ -50,7 +50,7 @@ async fn resource_scan_shutdown_releases_its_waiter_before_accepted_sql_drains()
     // The scanner clones its provider before awaiting the serial owner. The
     // extra cache reference proves it has entered a scan behind the blocked job.
     tokio::time::timeout(Duration::from_secs(3), async {
-        while Arc::strong_count(&app.configuration_cache) == cache_owners {
+        while Arc::strong_count(&app.committer.cache) == cache_owners {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
     })
@@ -489,7 +489,7 @@ async fn enroll(
             .bearer_auth(session.token.expose())
             .json(&AcquireInstanceRequest {
                 instance_id: InstanceId::new(*rid().as_uuid()).unwrap(),
-                capabilities: super::node_tests::caps(),
+                capabilities: super::node::caps(),
             }),
     )
     .await;
@@ -885,10 +885,46 @@ async fn configuration_prepares_new_and_replaced_references_in_one_cas_without_p
             params
                 .issues
                 .iter()
-                .any(|issue| issue.message.contains("network budget"))
+                .any(|issue| issue.code == IssueCode::RuleSetBudget
+                    && issue.path == "/ruleSets"
+                    && issue.params.contains_key("maxEntries"))
         );
         assert_eq!(resource_counts(&s, network).await, before);
     }
+    // Too many remote sets in one edit is the same kind of diagnostic, not a
+    // server outage.
+    let mut many = NetworkConfigurationInput::from(&current.configuration);
+    for index in 0..=crate::resources::MAX_REMOTE_RULE_SETS {
+        let mut definition = remote.definition();
+        if let RuleSet::Remote { url, .. } = &mut definition {
+            *url = remote.url(&format!("/many/{index}"));
+        }
+        many.rule_sets.insert(format!("many-{index}"), definition);
+    }
+    let response = s
+        .client
+        .post(s.network(network, "configuration/validate"))
+        .bearer_auth(token)
+        .json(&ConfigurationRequest::Document {
+            expected_revision: current.revision,
+            request_id: rid(),
+            source_jsonc: WireSecret::new(serde_json::to_string(&many).unwrap()),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let error: ErrorResponse = response.json().await.unwrap();
+    let Problem::ConfigurationInvalid { params, .. } = error.problem else {
+        panic!("typed budget error");
+    };
+    assert_eq!(params.issues.len(), 1);
+    assert_eq!(params.issues[0].code, IssueCode::RuleSetBudget);
+    assert_eq!(
+        params.issues[0].params["maxSets"],
+        crate::resources::MAX_REMOTE_RULE_SETS.to_string()
+    );
+    assert_eq!(resource_counts(&s, network).await, before);
     s.close().await;
 }
 
@@ -1506,7 +1542,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         .resource_service(CommitGate {
             provider: crate::resources::provider::Provider {
                 sealer: s.app.sealer(),
-                cache: s.app.configuration_cache.clone(),
+                cache: s.app.committer.cache.clone(),
             },
             entered: Mutex::new(Some(entered)),
             release: Mutex::new(gate),
@@ -1551,5 +1587,17 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         s.view(token, network).await.artifact.unwrap().id,
         committed_id
     );
+    // An unrelated edit keeps the failed check with the unchanged binding:
+    // the new version does not pretend the set was never checked.
+    let failed = s.view(token, network).await;
+    let current = s.source(token, network).await;
+    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    input.tags_owners.insert("tag:later".into(), vec![]);
+    s.apply(token, network, current.revision, &input).await;
+    let carried = s.view(token, network).await;
+    assert_eq!(carried.problem, Some(ResourceProblem::DownloadFailed));
+    assert_eq!(carried.checked_at, failed.checked_at);
+    assert_eq!(carried.last_success_at, failed.last_success_at);
+    assert_eq!(carried.artifact.unwrap().id, committed_id);
     s.close().await;
 }

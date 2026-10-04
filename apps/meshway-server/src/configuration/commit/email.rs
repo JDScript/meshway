@@ -6,8 +6,8 @@ use super::{Committer, Draft, Intent, Snapshot};
 use crate::configuration::{ChangeCause, CommitEffects};
 use crate::error::Error;
 use meshway_configuration::{NetworkConfigurationInput, UserBinding, rewrite_source};
-use meshway_model::{MembershipId, NetworkId, RequestId, UserId};
-use rusqlite::{Transaction, params};
+use meshway_model::{MembershipId, RequestId, UserId};
+use rusqlite::Transaction;
 use std::collections::BTreeMap;
 
 impl Committer {
@@ -20,20 +20,9 @@ impl Committer {
         new_email: &str,
         request: RequestId,
     ) -> Result<Vec<CommitEffects>, Error> {
-        let memberships = {
-            let mut stmt = tx.prepare(
-                "SELECT m.network_id, m.id FROM memberships m JOIN networks n ON n.id=m.network_id
-                 WHERE m.user_id=?1 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",
-            )?;
-            stmt.query_map([user.as_uuid().as_bytes().as_slice()], |r| {
-                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?
-        };
+        let memberships = crate::store::configuration::memberships::for_user(tx, user)?;
         let mut effects = Vec::new();
         for (network, membership) in memberships {
-            let network: NetworkId = crate::store::execution::id(network)?;
-            let membership: MembershipId = crate::store::execution::id(membership)?;
             let binding = UserBinding {
                 user_id: user,
                 membership_id: membership,
@@ -72,19 +61,12 @@ pub(super) fn authorize(
     membership: MembershipId,
     new_email: &str,
 ) -> Result<UserId, Error> {
-    let active: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM memberships WHERE id=?1 AND network_id=?2 AND user_id=?3 AND revoked_at IS NULL)",
-        params![
-            membership.as_uuid().as_bytes().as_slice(),
-            current.network_id.as_uuid().as_bytes().as_slice(),
-            user.as_uuid().as_bytes().as_slice()
-        ],
-        |r| r.get(0),
-    )?;
-    let valid: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND email=?2 AND disabled_at IS NULL)",
-        params![user.as_uuid().as_bytes().as_slice(), new_email],
-        |r| r.get(0),
+    let (active, valid) = crate::store::configuration::memberships::email_sync_status(
+        tx,
+        current.network_id,
+        user,
+        membership,
+        new_email,
     )?;
     if !active || !valid {
         return Err(Error::PermissionDenied);

@@ -22,7 +22,7 @@ pub struct App {
     executor: Executor,
     accounts: Accounts,
     sealer: Arc<Sealer>,
-    configuration_cache: Arc<crate::configuration::SnapshotCache>,
+    committer: crate::configuration::Committer,
     boot: meshway_model::InstanceId,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
@@ -148,12 +148,13 @@ impl App {
                 }
             }));
         let sealer = Arc::new(sealer);
-        let configuration_cache = Arc::default();
+        // The one owner of configuration versions and their snapshot cache.
+        let committer = crate::configuration::Committer::new(Arc::clone(&sealer), Arc::default());
         let resource_scheduler = crate::resources::scheduler::Scheduler::start(
             executor.handle(),
             crate::resources::provider::Provider {
                 sealer: Arc::clone(&sealer),
-                cache: Arc::clone(&configuration_cache),
+                cache: Arc::clone(&committer.cache),
             },
             downloads.clone(),
         );
@@ -163,7 +164,7 @@ impl App {
             executor,
             accounts,
             sealer,
-            configuration_cache,
+            committer,
             state_runtime,
             shutdown_hooks,
             observation_maintenance: std::sync::Mutex::default(),
@@ -181,15 +182,11 @@ impl App {
     }
 
     pub fn networks(&self) -> Networks {
-        Networks::new(
-            self.executor.handle(),
-            self.sealer(),
-            Arc::clone(&self.configuration_cache),
-        )
+        Networks::new(self.executor.handle(), self.sealer(), self.committer())
     }
 
     pub(crate) fn committer(&self) -> crate::configuration::Committer {
-        crate::configuration::Committer::new(self.sealer(), Arc::clone(&self.configuration_cache))
+        self.committer.clone()
     }
     pub(crate) fn configurations(&self) -> crate::configuration::Configurations {
         crate::configuration::Configurations::new(
@@ -245,7 +242,7 @@ impl App {
     ) -> crate::resources::service::ResourceService<crate::resources::provider::Provider> {
         self.resource_service(crate::resources::provider::Provider {
             sealer: self.sealer(),
-            cache: Arc::clone(&self.configuration_cache),
+            cache: Arc::clone(&self.committer.cache),
         })
     }
     /// Shared core handles are available before constructing any HTTP provider.
@@ -272,7 +269,7 @@ impl App {
         crate::state::provider::Projection {
             execution: self.execution(),
             sealer: self.sealer(),
-            cache: Arc::clone(&self.configuration_cache),
+            cache: Arc::clone(&self.committer.cache),
             boot: self.boot,
         }
     }
@@ -417,13 +414,5 @@ impl From<schema::SchemaError> for AppError {
     }
 }
 
-#[cfg(all(test, unix))]
-mod commit_tests;
-#[cfg(all(test, unix))]
-mod discovery_tests;
-#[cfg(all(test, unix))]
-mod node_tests;
-#[cfg(all(test, unix))]
-mod resource_tests;
 #[cfg(all(test, unix))]
 mod tests;

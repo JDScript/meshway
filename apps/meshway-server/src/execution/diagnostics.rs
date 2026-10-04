@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use meshway_configuration::execution::DiagnosticDemand;
 use meshway_model::*;
 use meshway_protocol::observations::{CreateObservation, ObservationPath};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::Transaction;
 use std::collections::BTreeMap;
 
 /// Node-store lookups made on behalf of an authenticated user. A Node credential
@@ -26,28 +26,7 @@ pub(crate) fn collect(
     network: NetworkId,
     now: i64,
 ) -> Result<BTreeMap<ObservationId, DiagnosticDemand>, Error> {
-    let mut statement = tx.prepare("SELECT t.payload,max(s.expires_at) FROM diagnostic_tasks t
-      JOIN diagnostic_subscriptions s ON s.task_id=t.id
-      JOIN user_sessions u ON u.id=s.session_id
-      JOIN users a ON a.id=u.user_id
-      JOIN memberships m ON m.id=s.membership_id AND m.network_id=t.network_id AND m.user_id=u.user_id
-      JOIN networks n ON n.id=t.network_id AND n.current_revision=t.revision
-      JOIN node_execution e ON e.network_id=t.network_id AND e.node_id=t.node_id AND e.instance_id=t.instance_id AND e.boot_id=t.boot_id
-      JOIN nodes node ON node.network_id=t.network_id AND node.id=t.node_id
-      WHERE t.network_id=?1 AND s.cancelled=0 AND s.expires_at>?2 AND u.revoked_at IS NULL AND u.expires_at>?2
-       AND a.disabled_at IS NULL AND a.credential_version=u.credential_version AND m.revoked_at IS NULL
-       AND n.deleted_at IS NULL AND node.credentials_revoked_at IS NULL AND e.instance_expires_at>?2
-      GROUP BY t.id ORDER BY t.id")?;
-    let rows = statement.query_map(params![network.as_uuid().as_bytes().as_slice(), now], |r| {
-        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?))
-    })?;
-    rows.map(|row| {
-        let (payload, expiry) = row?;
-        let mut demand: DiagnosticDemand = store::json(&payload)?;
-        demand.expires_at_ms = expiry as u64;
-        Ok((demand.id, demand))
-    })
-    .collect()
+    store::diagnostics::collect(tx, network, now)
 }
 
 impl Execution {
@@ -61,7 +40,7 @@ impl Execution {
         (
             crate::accounts::AuthenticatedSession,
             crate::state::VisibilityScope,
-            Vec<u8>,
+            MembershipId,
         ),
         Error,
     > {
@@ -76,14 +55,7 @@ impl Execution {
         {
             return Err(Error::PermissionDenied);
         }
-        let membership = tx.query_row(
-            "SELECT id FROM memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL",
-            params![
-                network.as_uuid().as_bytes().as_slice(),
-                user.user.id.as_uuid().as_bytes().as_slice()
-            ],
-            |r| r.get::<_, Vec<u8>>(0),
-        )?;
+        let membership = store::diagnostics::membership(tx, *network, user.user.id)?;
         Ok((user, scope, membership))
     }
 
@@ -102,15 +74,14 @@ impl Execution {
             return Err(Error::InvalidRequest);
         }
         let digest = super::proof::request_digest(request).map_err(node_dependency_error)?;
-        let existing: Option<(Vec<u8>, Vec<u8>)> = tx
-            .query_row(
-                "SELECT session_id,request_digest FROM diagnostic_subscriptions WHERE id=?1",
-                [request.subscription_id.as_uuid().as_bytes().as_slice()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        if let Some((session, previous)) = existing {
-            if session != user.session_id.as_uuid().as_bytes() || previous != digest.as_bytes() {
+        let existing = store::diagnostics::subscription_matches(
+            tx,
+            request.subscription_id,
+            user.session_id,
+            digest,
+        )?;
+        if let Some(matches) = existing {
+            if !matches {
                 return Err(Error::StateConflict);
             }
             return self.diagnostic_admission(tx, identity, request, now);
@@ -133,10 +104,12 @@ impl Execution {
             request.interval_ms,
         ))
         .map_err(node_dependency_error)?;
-        let existing:Option<Vec<u8>>=tx.query_row("SELECT t.id FROM diagnostic_tasks t WHERE t.network_id=?1 AND t.reuse_key=?2 AND EXISTS(SELECT 1 FROM diagnostic_subscriptions s WHERE s.task_id=t.id AND s.cancelled=0 AND s.expires_at>?3) LIMIT 1",params![scope.network_id.as_uuid().as_bytes().as_slice(),key.as_bytes().as_slice(),now.timestamp_millis()],|r|r.get(0)).optional()?;
+        let existing =
+            store::diagnostics::reusable_task(tx, scope.network_id, key, now.timestamp_millis())
+                .map_err(node_dependency_error)?;
         let new_task = existing.is_none();
         let task = match existing {
-            Some(id) => store::id(id).map_err(node_dependency_error)?,
+            Some(id) => id,
             None => ObservationId::new(store::uuid().map_err(node_dependency_error)?)
                 .map_err(|_| Error::Internal("generated observation ID"))?,
         };
@@ -159,23 +132,32 @@ impl Execution {
             },
             expires_at_ms: expires.timestamp_millis() as u64,
         };
-        let count:i64=tx.query_row("SELECT count(*) FROM diagnostic_subscriptions WHERE session_id=?1 AND cancelled=0 AND expires_at>?2",params![user.session_id.as_uuid().as_bytes().as_slice(),now.timestamp_millis()],|r|r.get(0))?;
-        let total: i64 =
-            tx.query_row("SELECT count(*) FROM diagnostic_subscriptions", [], |r| {
-                r.get(0)
-            })?;
+        let (count, total) =
+            store::diagnostics::subscription_counts(tx, user.session_id, now.timestamp_millis())?;
         if count >= crate::observations::MAX_TASKS_PER_SESSION as i64
             || total >= crate::observations::MAX_SUBSCRIPTIONS as i64
         {
             return Err(Error::ObservationLimit);
         }
         if new_task {
-            tx.execute("INSERT INTO diagnostic_tasks(id,network_id,node_id,instance_id,boot_id,revision,reuse_key,payload) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![task.as_uuid().as_bytes().as_slice(),scope.network_id.as_uuid().as_bytes().as_slice(),request.source_node_id.as_uuid().as_bytes().as_slice(),report.instance_id.as_uuid().as_bytes().as_slice(),self.boot.as_uuid().as_bytes().as_slice(),scope.configuration_revision.get() as i64,key.as_bytes().as_slice(),store::bytes(&demand).map_err(node_dependency_error)?])?;
+            store::diagnostics::insert_task(
+                tx,
+                scope.network_id,
+                self.boot,
+                scope.configuration_revision,
+                key,
+                &demand,
+            )
+            .map_err(node_dependency_error)?;
         }
-        tx.execute("INSERT INTO diagnostic_subscriptions(id,task_id,session_id,membership_id,request_digest,expires_at) VALUES(?1,?2,?3,?4,?5,?6)",params![request.subscription_id.as_uuid().as_bytes().as_slice(),task.as_uuid().as_bytes().as_slice(),user.session_id.as_uuid().as_bytes().as_slice(),membership,digest.as_bytes().as_slice(),expires.timestamp_millis()])?;
-        tx.execute(
-            "UPDATE diagnostic_tasks SET dirty=1 WHERE id=?1",
-            [task.as_uuid().as_bytes().as_slice()],
+        store::diagnostics::insert_subscription(
+            tx,
+            request.subscription_id,
+            task,
+            user.session_id,
+            membership,
+            digest,
+            expires.timestamp_millis(),
         )?;
         self.publish_diagnostics(tx, scope.network_id, now)?;
         self.diagnostic_admission(tx, identity, request, now)
@@ -189,8 +171,16 @@ impl Execution {
         now: DateTime<Utc>,
     ) -> Result<TaskAdmission, Error> {
         let (user, scope, _) = self.diagnostic_user(tx, identity, request, now)?;
-        let id:Vec<u8>=tx.query_row("SELECT t.id FROM diagnostic_subscriptions s JOIN diagnostic_tasks t ON t.id=s.task_id WHERE s.id=?1 AND s.session_id=?2 AND s.cancelled=0 AND s.expires_at>?3 AND t.network_id=?4 AND t.revision=?5 AND t.boot_id=?6",params![request.subscription_id.as_uuid().as_bytes().as_slice(),user.session_id.as_uuid().as_bytes().as_slice(),now.timestamp_millis(),scope.network_id.as_uuid().as_bytes().as_slice(),scope.configuration_revision.get() as i64,self.boot.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(Error::NotFound)?;
-        let id: ObservationId = store::id(id).map_err(node_dependency_error)?;
+        let id = store::diagnostics::admitted_task(
+            tx,
+            request.subscription_id,
+            user.session_id,
+            now.timestamp_millis(),
+            scope.network_id,
+            scope.configuration_revision,
+            self.boot,
+        )
+        .map_err(node_dependency_error)?;
         let report = self
             .node_admission(tx, scope.network_id, request.source_node_id, now)
             .map_err(node_dependency_error)?;
@@ -262,10 +252,7 @@ impl Execution {
     ) -> Result<(), Error> {
         store::publish(tx, &self.sealer, network, "refresh", now.timestamp_millis())
             .map_err(node_dependency_error)?;
-        tx.execute(
-            "UPDATE diagnostic_tasks SET dirty=0 WHERE network_id=?1",
-            [network.as_uuid().as_bytes().as_slice()],
-        )?;
+        store::diagnostics::mark_published(tx, network)?;
         Ok(())
     }
 
@@ -275,41 +262,30 @@ impl Execution {
         subscriptions: &[crate::observations::service::SubscriptionLease],
         now: DateTime<Utc>,
     ) -> Result<(), Error> {
-        let mut statement =
-            tx.prepare("SELECT id,expires_at FROM diagnostic_subscriptions WHERE cancelled=0")?;
-        let rows = statement
-            .query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))?
-            .collect::<Result<Vec<_>, _>>()?;
-        drop(statement);
+        let rows = store::diagnostics::active_subscriptions(tx).map_err(node_dependency_error)?;
         for (id, old_expiry) in rows {
-            let id: ObservationSubscriptionId = store::id(id).map_err(node_dependency_error)?;
             let lease = subscriptions
                 .iter()
                 .find(|s| s.id == id && s.expires_at > now);
             match lease {
                 Some(lease) if lease.expires_at.timestamp_millis() != old_expiry => {
-                    tx.execute("UPDATE diagnostic_subscriptions SET expires_at=?2 WHERE id=?1 AND cancelled=0",params![id.as_uuid().as_bytes().as_slice(),lease.expires_at.timestamp_millis()])?;
+                    store::diagnostics::update_subscription_expiry(
+                        tx,
+                        id,
+                        lease.expires_at.timestamp_millis(),
+                    )?;
                 }
                 None => {
-                    tx.execute("UPDATE diagnostic_subscriptions SET cancelled=1 WHERE id=?1 AND cancelled=0",[id.as_uuid().as_bytes().as_slice()])?;
+                    store::diagnostics::cancel_subscription(tx, id)?;
                 }
                 _ => {}
             }
         }
-        let mut stmt =
-            tx.prepare("SELECT DISTINCT network_id FROM diagnostic_tasks WHERE dirty=1")?;
-        let networks = stmt
-            .query_map([], |r| r.get::<_, Vec<u8>>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        drop(stmt);
+        let networks = store::diagnostics::dirty_networks(tx).map_err(node_dependency_error)?;
         for network in networks {
-            self.publish_diagnostics(tx, store::id(network).map_err(node_dependency_error)?, now)?;
+            self.publish_diagnostics(tx, network, now)?;
         }
-        tx.execute(
-            "DELETE FROM diagnostic_subscriptions WHERE cancelled=1 AND expires_at<?1",
-            [now.timestamp_millis() - 60_000],
-        )?;
-        tx.execute("DELETE FROM diagnostic_tasks WHERE NOT EXISTS(SELECT 1 FROM diagnostic_subscriptions WHERE task_id=diagnostic_tasks.id)",[])?;
+        store::diagnostics::prune(tx, now.timestamp_millis() - 60_000)?;
         Ok(())
     }
 }

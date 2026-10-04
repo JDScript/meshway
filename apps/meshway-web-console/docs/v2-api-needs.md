@@ -162,11 +162,11 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
   - 预览新增 `identityChangedNodeIds`、`changedListeners [{nodeId,key,kind}]`、`affectedNodeIds`（除非所有变化都限于 `hostname`／`remark`，否则是全部节点——定义见 editing.md）。`requirements` 与 `willGenerate` 不相交。
   - 托管证书改 `serverName` 时不再继承旧证书（会重新生成）；provided 材料继续按省略继承。你们的推断是对的——原来会继承旧名字的证书再被 `verify_tls` 拒掉。
   - **两项 breaking 的放在分支 `server/configuration-contract-break`（一个提交），等 console 适配后一起合**：① `EgressRule.action` 变为 `RuleAction { exit | direct }`，`RouteAction`（含 `unmanaged`）只剩 profile fallback；② `ListenerUpdate` 成为独立 tagged 类型，VLESS 变体的 `websocket` 和 `responseHeaders` 省略＝保持（同一资源），显式 `{}` 清空、`null` 删块。受影响的 console 文件：`lib/configuration/routing.ts`、`-sections/routing-egress.tsx`、`nodes/$node/-transport/listeners.tsx` 及两个测试。这两项不能只靠 fixture 补全过 check，所以没有随 main 合入。
-- **规则集**：随 resources 的 SQL 下沉处理。
-  - 准备失败只返回一条英文 issue，消息里是 Debug 枚举名（如 `InvalidSource`、`DownloadFailed`），没有 `ResourceProblem` code。
-  - 超出上限的处理不一致：超过 32 个、超过 8 MiB 或准备并发已满时返回 503，30 秒超时却作为 `/ruleSets` 上的 issue 返回。
-  - 检查失败的记录不跨版本保留，换到新版本后变成 `not_ready`、`checkedAt: null`；成功的绑定则会延续。
-  - `refreshRuleSet` 没有请求体，也就没有 `requestId`，重试会重新下载。
+- **规则集**（后端回复，`server/store-relayout`）：
+  - 准备失败：`rule_set_unavailable { reason: <ResourceProblem> }`，已随诊断契约合入。
+  - 超限统一：超过 32 个、规范化内容超过 8 MiB、超过网络执行预算都是 422 `rule_set_budget`（`params.maxSets`／`maxBytes`／`maxEntries`），30 秒超时是 `rule_set_timeout`；只有进程内 4 个准备名额用满仍是 503——那是服务端容量不是配置问题。见 rule-sets.md。
+  - 检查记录跨版本：`inherit_checks` 改为"来源与绑定内容都不变就延续记录"，包括还没有任何成功内容的集合。但我用"绑定成功 → 刷新失败 → 无关编辑出新版本"没有复现你们的 `not_ready`／`checkedAt: null`（原逻辑在这条路径上也延续）；如果还能复现，请给出能到 `not_ready` 的具体步骤（哪个版本首次声明该集合、中间有没有 restore／改 URL）。
+  - `refreshRuleSet` 的 `requestId`：要加请求体，是 breaking，和 `RuleAction`／`ListenerUpdate` 一样放到 `server/configuration-contract-break` 一起等 console 适配；还没做。
 - **主动观察与历史**：observations 模块冻结，待 Node 实现后按真实消费者重做。
   - 响应没有服务器时间（续租时机按浏览器时钟计算），没有观察权限的 `actions`（console 按"角色 + 身份"重述规则），也没有允许的目标和路径候选清单。
   - 429 `observation_limit` 同时表示续租过早、预算用满、已到终态和 4096 窗口满。

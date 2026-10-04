@@ -4,6 +4,7 @@ use super::{
     service::{ResourceProvider, RuleSetScope},
 };
 use crate::error::Error;
+use crate::store;
 use crate::{
     configuration::{Snapshot, SnapshotCache},
     secrets::Sealer,
@@ -13,7 +14,7 @@ use chrono::{DateTime, Utc};
 use meshway_configuration::{NetworkConfigurationInput, RuleSet};
 use meshway_model::{NetworkId, Revision};
 use meshway_protocol::resources::{ArtifactSummary, ResourceProblem, RuleSetView};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::Transaction;
 use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Clone)]
@@ -23,20 +24,7 @@ pub struct Provider {
 }
 impl Provider {
     fn snapshot(&self, tx: &Transaction<'_>, network: NetworkId) -> Result<Arc<Snapshot>, Error> {
-        let revision: i64 = tx
-            .query_row(
-                "SELECT current_revision FROM networks WHERE id=?1 AND deleted_at IS NULL",
-                [network.as_uuid().as_bytes().as_slice()],
-                |row| row.get(0),
-            )
-            .optional()?
-            .ok_or(Error::NotFound)?;
-        let revision = Revision::new(
-            revision
-                .try_into()
-                .map_err(|_| Error::decode("networks.current_revision"))?,
-        )
-        .map_err(|_| Error::decode("networks.current_revision"))?;
+        let revision = store::configuration::versions::current_revision(tx, network)?;
         self.cache.load(tx, network, revision, &self.sealer)
     }
 }
@@ -79,37 +67,11 @@ impl ResourceProvider for Provider {
                 .get(key)
                 .map(|id| summary(tx, *network, *id))
                 .transpose()?;
-            let check: Option<(Option<String>, i64, Option<i64>, i64)> = tx.query_row(
-                "SELECT problem,checked_at,last_success_at,check_version FROM rule_set_checks WHERE network_id=?1 AND revision=?2 AND rule_set_key=?3",
-                params![network.as_uuid().as_bytes().as_slice(), snapshot.revision.get() as i64, key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            ).optional()?;
-            check_versions.insert(
-                key.clone(),
-                check.as_ref().map_or(0, |(_, _, _, version)| *version),
-            );
-            let problem = check
-                .as_ref()
-                .and_then(|(problem, _, _, _)| problem.as_ref())
-                .map(|value| {
-                    serde_json::from_str(value)
-                        .map_err(|_| Error::decode("rule_set_checks.problem"))
-                })
-                .transpose()?;
-            let checked_at = check
-                .as_ref()
-                .map(|(_, at, _, _)| {
-                    DateTime::from_timestamp_millis(*at)
-                        .ok_or(Error::decode("rule_set_checks.checked_at"))
-                })
-                .transpose()?;
-            let last_success_at = check
-                .and_then(|(_, _, at, _)| at)
-                .map(|at| {
-                    DateTime::from_timestamp_millis(at)
-                        .ok_or(Error::decode("rule_set_checks.last_success_at"))
-                })
-                .transpose()?;
+            let check = store::resources::checks::load(tx, *network, snapshot.revision, key)?;
+            check_versions.insert(key.clone(), check.as_ref().map_or(0, |check| check.version));
+            let problem = check.as_ref().and_then(|check| check.problem);
+            let checked_at = check.as_ref().map(|check| check.checked_at);
+            let last_success_at = check.and_then(|check| check.last_success_at);
             views.insert(
                 key.clone(),
                 RuleSetView {
@@ -192,17 +154,11 @@ fn summary(
     id: meshway_model::ArtifactId,
 ) -> Result<ArtifactSummary, Error> {
     let data = super::load_artifact(tx, network, id)?;
-    let (digest, created): (String, i64) = tx.query_row(
-        "SELECT digest,created_at FROM dataset_artifacts WHERE network_id=?1 AND id=?2 AND kind='ruleSet'",
-        params![network.as_uuid().as_bytes().as_slice(), id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    let (digest, created_at) = store::resources::artifacts::metadata(tx, network, id)?;
     Ok(ArtifactSummary {
         id,
-        digest: digest
-            .parse()
-            .map_err(|_| Error::decode("dataset_artifacts.digest"))?,
-        created_at: DateTime::from_timestamp_millis(created)
-            .ok_or(Error::decode("dataset_artifacts.created_at"))?,
+        digest,
+        created_at,
         entries: (data.ip_cidr.len() + data.domain_suffix.len()) as u32,
     })
 }

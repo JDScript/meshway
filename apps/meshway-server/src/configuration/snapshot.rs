@@ -1,10 +1,9 @@
 use crate::configuration::ConfigurationBindings;
 use crate::error::Error;
-use crate::secrets::{Purpose, Sealer};
+use crate::secrets::Sealer;
 use meshway_configuration::ConfigurationDocument;
 use meshway_model::{NetworkId, Revision};
-use rusqlite::{OptionalExtension, Transaction, params};
-use sha2::{Digest as _, Sha256};
+use rusqlite::Transaction;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -35,17 +34,8 @@ impl SnapshotCache {
         revision: Revision,
         sealer: &Sealer,
     ) -> Result<Arc<Snapshot>, Error> {
-        let (source, configuration, bindings) = tx.query_row(
-            "SELECT source_jsonc,configuration,bindings FROM configuration_versions WHERE network_id=?1 AND revision=?2",
-            params![network.as_uuid().as_bytes().as_slice(), revision.get() as i64],
-            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?)),
-        ).optional()?.ok_or(Error::NotFound)?;
-        let mut hash = Sha256::new();
-        for bytes in [&source, &configuration, &bindings] {
-            hash.update((bytes.len() as u64).to_be_bytes());
-            hash.update(bytes);
-        }
-        let fingerprint: [u8; 32] = hash.finalize().into();
+        let sealed = crate::store::configuration::versions::load(tx, network, revision)?;
+        let fingerprint = sealed.fingerprint();
         if let Some(entry) = self
             .entries
             .lock()
@@ -55,28 +45,8 @@ impl SnapshotCache {
         {
             return Ok(Arc::clone(&entry.snapshot));
         }
-        let size = source.len() + configuration.len() + bindings.len();
-        let source = sealer.open(network, revision, Purpose::Source, &source)?;
-        let configuration =
-            sealer.open(network, revision, Purpose::Configuration, &configuration)?;
-        let bindings = sealer.open(network, revision, Purpose::Bindings, &bindings)?;
-        let source = std::str::from_utf8(source.as_bytes())
-            .map_err(|_| Error::decode("configuration_versions.source_jsonc"))?;
-        meshway_configuration::parse_jsonc(source)
-            .map_err(|_| Error::decode("configuration_versions.source_jsonc"))?;
-        let configuration = meshway_configuration::restore_canonical_json(
-            std::str::from_utf8(configuration.as_bytes())
-                .map_err(|_| Error::decode("configuration_versions.configuration"))?,
-        )
-        .map_err(|_| Error::decode("configuration_versions.configuration"))?;
-        let bindings: ConfigurationBindings = serde_json::from_slice(bindings.as_bytes())
-            .map_err(|_| Error::decode("configuration_versions.bindings"))?;
-        let snapshot = Arc::new(Snapshot {
-            network_id: network,
-            revision,
-            document: ConfigurationDocument::new(source.to_owned(), configuration),
-            bindings,
-        });
+        let size = sealed.encoded_size();
+        let snapshot = Arc::new(sealed.open(sealer)?);
         let mut entries = self.entries.lock().map_err(|_| Error::RUNTIME)?;
         const MAX_BYTES: usize = 64 * 1024 * 1024;
         if size <= MAX_BYTES {

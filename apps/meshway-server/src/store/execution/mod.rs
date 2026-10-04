@@ -1,8 +1,11 @@
 use crate::error::Error;
+pub(crate) mod admission;
 mod authentication;
+pub(crate) mod diagnostics;
 mod discovery;
 mod instances;
 mod inventory;
+pub(crate) mod progress;
 mod publications;
 use crate::configuration::ConfigurationBindings;
 use crate::{

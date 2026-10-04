@@ -47,7 +47,7 @@ impl Networks {
     ) -> Result<meshway_protocol::management::RemovalImpactResponse, Error> {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
-        let cache = Arc::clone(&self.configuration_cache);
+        let cache = Arc::clone(&self.committer.cache);
         self.handle
             .read(move |tx| {
                 store::removal_impact(tx, digest, network, member, request, &sealer, &cache)
@@ -64,10 +64,7 @@ impl Networks {
         request: RequestId,
     ) -> Result<Revision, Error> {
         let digest = token_digest(token)?;
-        let committer = crate::configuration::Committer::new(
-            Arc::clone(&self.sealer),
-            Arc::clone(&self.configuration_cache),
-        );
+        let committer = self.committer.clone();
         self.handle
             .transact(TransactionBehavior::Immediate, move |tx| {
                 store::remove_member(

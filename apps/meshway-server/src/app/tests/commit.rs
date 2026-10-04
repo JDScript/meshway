@@ -106,7 +106,7 @@ async fn account_revocation_cannot_be_blocked_by_the_replay_window_size() {
 #[tokio::test]
 async fn accepted_configuration_waiter_cancellation_noop_and_rollback_preserve_journal() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
-    let (_dir, app, network, a, b, _, _, _, _) = super::node_tests::fixture().await;
+    let (_dir, app, network, a, b, _, _, _, _) = super::node::fixture().await;
     let owner = app
         .accounts()
         .login(
@@ -276,7 +276,7 @@ async fn email_sync_commits_all_network_notices_or_none_and_keeps_fixed_targets(
             .await
             .unwrap();
         let signer = ed25519_dalek::SigningKey::from_bytes(&[index + 51; 32]);
-        let node = super::node_tests::enroll_user_node(
+        let node = super::node::enroll_user_node(
             &app,
             owner.token.expose(),
             network.id,
@@ -377,7 +377,7 @@ async fn email_sync_commits_all_network_notices_or_none_and_keeps_fixed_targets(
 async fn apply_targets_do_not_follow_instance_refresh_demands_or_retired_nodes() {
     use meshway_protocol::execution::*;
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
-    let (_dir, app, network, a, b, ak, bk, asigner, bsigner) = super::node_tests::fixture().await;
+    let (_dir, app, network, a, b, ak, bk, asigner, bsigner) = super::node::fixture().await;
     let owner = app
         .accounts()
         .login(
@@ -396,10 +396,10 @@ async fn apply_targets_do_not_follow_instance_refresh_demands_or_retired_nodes()
     let execution = app.execution();
     let mut admitted = Vec::new();
     for (node, keys, signer) in [(a, ak, asigner), (b, bk, bsigner)] {
-        let session = super::node_tests::session(&execution, network, node, &keys, &signer).await;
+        let session = super::node::session(&execution, network, node, &keys, &signer).await;
         let acquire = AcquireInstanceRequest {
             instance_id: InstanceId::new(random_uuid().unwrap()).unwrap(),
-            capabilities: super::node_tests::caps(),
+            capabilities: super::node::caps(),
         };
         let before = sequence(&app);
         let lease = execution
@@ -477,10 +477,10 @@ async fn account_revocations_remove_real_observation_subscriptions_at_commit() {
     use meshway_configuration::execution::{BusinessProtocol, BusinessTarget};
     use meshway_protocol::{execution::*, observations::*};
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
-    let (_dir, app, network, a, b, ak, bk, asigner, bsigner) = super::node_tests::fixture().await;
+    let (_dir, app, network, a, b, ak, bk, asigner, bsigner) = super::node::fixture().await;
     let execution = app.execution();
-    let at = super::node_tests::session(&execution, network, a, &ak, &asigner).await;
-    let bt = super::node_tests::session(&execution, network, b, &bk, &bsigner).await;
+    let at = super::node::session(&execution, network, a, &ak, &asigner).await;
+    let bt = super::node::session(&execution, network, b, &bk, &bsigner).await;
     let mut ai = None;
     for (index, session) in [&at, &bt].into_iter().enumerate() {
         let lease = execution
@@ -488,7 +488,7 @@ async fn account_revocations_remove_real_observation_subscriptions_at_commit() {
                 session.token.expose(),
                 AcquireInstanceRequest {
                     instance_id: InstanceId::new(random_uuid().unwrap()).unwrap(),
-                    capabilities: super::node_tests::caps(),
+                    capabilities: super::node::caps(),
                 },
             )
             .await

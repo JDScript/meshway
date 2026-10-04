@@ -8,7 +8,7 @@ use crate::resources::{
 };
 use meshway_configuration::{NetworkConfigurationInput, RuleSet};
 use meshway_protocol::resources::PreparedRuleSet;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::Transaction;
 use std::collections::BTreeMap;
 
 pub(crate) struct Preparation {
@@ -46,8 +46,11 @@ impl Preparation {
             })
             .map(|(key, definition)| (key.clone(), definition.clone()))
             .collect();
-        if definitions.len() > 32 {
-            return Err(Error::DependencyUnavailable);
+        if definitions.len() > crate::resources::MAX_REMOTE_RULE_SETS {
+            return Err(budget_exceeded(
+                "maxSets",
+                crate::resources::MAX_REMOTE_RULE_SETS,
+            ));
         }
         Ok(Self {
             base,
@@ -111,7 +114,10 @@ impl Preparation {
                     .len(),
             );
             if bytes > crate::resources::MAX_DATASET_BYTES {
-                return Err(Error::DependencyUnavailable);
+                return Err(budget_exceeded(
+                    "maxBytes",
+                    crate::resources::MAX_DATASET_BYTES,
+                ));
             }
             self.contents.insert(key.clone(), data);
         }
@@ -168,14 +174,12 @@ impl Preparation {
             let digest = crate::resources::content_digest(
                 &serde_json::to_vec(data).map_err(|_| Error::encode("rule set data"))?,
             );
-            let id: Option<String> = tx.query_row(
-                "SELECT id FROM dataset_artifacts WHERE network_id=?1 AND kind='ruleSet' AND digest=?2",
-                params![current.network_id.as_uuid().as_bytes().as_slice(),digest.to_string()], |row| row.get(0),
-            ).optional()?;
+            let id = crate::store::configuration::resources::artifact_by_digest(
+                tx,
+                current.network_id,
+                digest,
+            )?;
             if let Some(id) = id {
-                let id = id
-                    .parse()
-                    .map_err(|_| Error::decode("dataset_artifacts.id"))?;
                 if crate::resources::load_artifact(tx, current.network_id, id)? != *data {
                     return Err(Error::decode("dataset_artifacts.data"));
                 }
@@ -210,14 +214,26 @@ impl Preparation {
         revision: meshway_model::Revision,
     ) -> Result<(), Error> {
         for key in self.contents.keys() {
-            tx.execute(
-                "INSERT INTO rule_set_checks(network_id,revision,rule_set_key,checked_at,last_success_at,problem,failures)
-                 VALUES(?1,?2,?3,?4,?4,NULL,0) ON CONFLICT(network_id,revision,rule_set_key)
-                 DO UPDATE SET checked_at=excluded.checked_at,last_success_at=excluded.last_success_at,problem=NULL,failures=0,
-                     check_version=rule_set_checks.check_version+1",
-                params![network.as_uuid().as_bytes().as_slice(),revision.get() as i64,key,chrono::Utc::now().timestamp_millis()],
+            crate::store::configuration::resources::record_check(
+                tx,
+                network,
+                revision,
+                key,
+                chrono::Utc::now().timestamp_millis(),
             )?;
         }
         Ok(())
     }
+}
+
+/// Limits on what one edit may pull in are a property of the configuration,
+/// reported like any other rule-set diagnostic, not a server outage.
+fn budget_exceeded(limit: &'static str, value: usize) -> Error {
+    Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(vec![
+        meshway_configuration::ConfigurationIssue::new(
+            "/ruleSets",
+            meshway_configuration::IssueCode::RuleSetBudget,
+        )
+        .with(limit, value),
+    ]))
 }

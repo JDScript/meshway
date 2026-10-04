@@ -4,8 +4,8 @@ use crate::configuration::ChangeCause;
 use crate::error::Error;
 use crate::store::{self, authorization::current_session};
 use meshway_configuration::{NetworkConfigurationInput, parse_jsonc, rewrite_source};
-use meshway_model::{MembershipId, MembershipRole, UserId, Version};
-use rusqlite::{OptionalExtension, Transaction, params};
+use meshway_model::{MembershipId, UserId, Version};
+use rusqlite::Transaction;
 
 /// The caller may remove this membership at this version; returns the actor.
 pub(super) fn authorize(
@@ -17,37 +17,19 @@ pub(super) fn authorize(
     now: i64,
 ) -> Result<UserId, Error> {
     let actor = current_session(tx, session, now)?.user.id;
-    let network = current.network_id.as_uuid().as_bytes().as_slice();
-    let (caller_id, caller_role): (Vec<u8>, String) = tx
-        .query_row(
-            "SELECT id,role FROM memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL",
-            params![network, actor.as_uuid().as_bytes().as_slice()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?
-        .ok_or(Error::PermissionDenied)?;
-    let (target_role, actual): (String, i64) = tx
-        .query_row(
-            "SELECT role,version FROM memberships WHERE network_id=?1 AND id=?2 AND revoked_at IS NULL",
-            params![network, membership.as_uuid().as_bytes().as_slice()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?
-        .ok_or(Error::PermissionDenied)?;
-    if actual != version.get() as i64 {
+    let participants = store::configuration::memberships::removal_participants(
+        tx,
+        current.network_id,
+        actor,
+        membership,
+    )?;
+    if !participants.version_matches(version) {
         return Err(Error::VersionConflict);
     }
-    let owners: i64 = tx.query_row(
-        "SELECT count(*) FROM memberships WHERE network_id=?1 AND role='owner' AND revoked_at IS NULL",
-        [network],
-        |r| r.get(0),
-    )?;
-    let allowed = store::authorization::member_actions(
-        (store::execution::id(caller_id)?, role(&caller_role)?),
-        (membership, role(&target_role)?),
-        owners,
-    )
-    .remove;
+    let owners = store::configuration::memberships::owner_count(tx, current.network_id)?;
+    let (caller, target_role) = participants.roles()?;
+    let allowed =
+        store::authorization::member_actions(caller, (membership, target_role), owners).remove;
     if !allowed {
         return Err(Error::PermissionDenied);
     }
@@ -72,13 +54,4 @@ pub(super) fn author(
     draft.retain_rule_sets(tx, current)?;
     draft.cause = ChangeCause::MemberRemoved;
     Ok(draft)
-}
-
-fn role(value: &str) -> Result<MembershipRole, Error> {
-    match value {
-        "owner" => Ok(MembershipRole::Owner),
-        "admin" => Ok(MembershipRole::Admin),
-        "member" => Ok(MembershipRole::Member),
-        _ => Err(Error::decode("memberships.role")),
-    }
 }

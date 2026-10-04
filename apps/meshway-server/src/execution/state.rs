@@ -17,7 +17,7 @@ use meshway_configuration::{
 use meshway_model::state::{ResourceRef, SocketNetwork};
 use meshway_model::*;
 use meshway_transport_spec::{Endpoint, Listener};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::Transaction;
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::{IpAddr, SocketAddr},
@@ -75,10 +75,8 @@ impl Execution {
             }
             ReadIdentity::UserSession { digest, network } => {
                 let session = current_session(tx, digest, now.timestamp_millis())?;
-                let (membership, role): (Vec<u8>, String) = tx.query_row(
-                    "SELECT m.id,m.role FROM memberships m JOIN networks n ON n.id=m.network_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",
-                    params![network.as_uuid().as_bytes().as_slice(), session.user.id.as_uuid().as_bytes().as_slice()],
-                    |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::NotFound)?;
+                let (membership, role) =
+                    store::admission::membership_role(tx, *network, session.user.id)?;
                 let (_, cfg, bindings) = store::current_configuration(tx, &self.sealer, *network)?;
                 let manager = matches!(role.as_str(), "owner" | "admin");
                 let full = cfg
@@ -95,7 +93,12 @@ impl Execution {
                     *network,
                     full,
                     session.expires_at,
-                    super::proof::request_digest(&("user", session.user.id, membership, role))?,
+                    super::proof::request_digest(&(
+                        "user",
+                        session.user.id,
+                        membership.as_uuid().as_bytes().to_vec(),
+                        role,
+                    ))?,
                 )
             }
         };
@@ -146,11 +149,14 @@ impl Execution {
         let mut current = BTreeMap::new();
         let mut bindings = BTreeMap::new();
         for node in &visible {
-            let revoked: bool = tx.query_row(
-                "SELECT NOT EXISTS(SELECT 1 FROM nodes n JOIN node_keys c ON c.network_id=n.network_id AND c.node_id=n.id AND c.purpose='control' AND c.retired_at IS NULL AND c.revoked_at IS NULL JOIN node_keys d ON d.network_id=n.network_id AND d.node_id=n.id AND d.purpose='dataplane' AND d.retired_at IS NULL AND d.revoked_at IS NULL WHERE n.network_id=?1 AND n.id=?2 AND n.credentials_revoked_at IS NULL)",
-                params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice()], |r| r.get(0))?;
-            let live: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND boot_id=?3 AND instance_expires_at>?4)",
-                params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), self.boot.as_uuid().as_bytes().as_slice(), now.timestamp_millis()], |r| r.get(0))?;
+            let revoked = store::admission::credentials_revoked(tx, network, *node)?;
+            let live = store::admission::has_live_instance(
+                tx,
+                network,
+                *node,
+                self.boot,
+                now.timestamp_millis(),
+            )?;
             let lease = if live && !revoked {
                 Some(store::lease_for_node(tx, &self.sealer, network, *node)?)
             } else {
@@ -246,8 +252,13 @@ impl Execution {
         node: NodeId,
         now: DateTime<Utc>,
     ) -> Result<ReportAdmission, Error> {
-        let has_instance: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND boot_id=?3 AND instance_expires_at>?4)",
-            params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), self.boot.as_uuid().as_bytes().as_slice(), now.timestamp_millis()], |r| r.get(0))?;
+        let has_instance = store::admission::has_live_instance(
+            tx,
+            network,
+            node,
+            self.boot,
+            now.timestamp_millis(),
+        )?;
         if !has_instance {
             return Err(Error::StateConflict);
         }

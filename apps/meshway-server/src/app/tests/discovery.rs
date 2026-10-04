@@ -1,7 +1,7 @@
 //! Real admission, current configuration commits and Node bearer reads.
 use super::{
     App,
-    node_tests::{enroll_user_node, fixture, session},
+    node::{enroll_user_node, fixture, session},
 };
 use crate::{
     accounts::{Secret, random_uuid},

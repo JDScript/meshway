@@ -1,10 +1,11 @@
 //! Exact immutable contents selected for a source version and each publication.
 use crate::configuration::Snapshot;
 use crate::error::Error;
+use crate::store;
 use meshway_configuration::{NetworkConfigurationInput, RuleSet};
 use meshway_model::resources::RuleSetData;
 use meshway_model::{ArtifactId, NetworkId, Revision};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::Transaction;
 use std::collections::BTreeMap;
 
 pub(crate) type Bindings = BTreeMap<String, ArtifactId>;
@@ -73,26 +74,23 @@ pub(crate) fn inherit_checks(
         current.revision,
         &current.bindings.rule_sets,
     )?;
-    for (key, artifact) in &prepared.bindings.rule_sets {
-        if previous.get(key) == Some(artifact)
-            && current
-                .document
-                .configuration
-                .rule_sets
-                .get(key)
-                .zip(prepared.document.configuration.rule_sets.get(key))
-                .is_some_and(|(a, b)| same_source(a, b))
-        {
-            tx.execute(
-                "INSERT INTO rule_set_checks(network_id,revision,rule_set_key,problem,checked_at,last_success_at,failures,check_version)
-                 SELECT network_id,?1,rule_set_key,problem,checked_at,last_success_at,failures,check_version FROM rule_set_checks
-                 WHERE network_id=?2 AND revision=?3 AND rule_set_key=?4",
-                params![
-                    revision.get() as i64,
-                    current.network_id.as_uuid().as_bytes().as_slice(),
-                    current.revision.get() as i64,
-                    key,
-                ],
+    // A check record follows its rule set into the next version whenever the
+    // definition and the bound content are unchanged, including a set that has
+    // no content yet because every check so far failed.
+    for (key, definition) in &prepared.document.configuration.rule_sets {
+        let unchanged_source = current
+            .document
+            .configuration
+            .rule_sets
+            .get(key)
+            .is_some_and(|before| same_source(before, definition));
+        if unchanged_source && previous.get(key) == prepared.bindings.rule_sets.get(key) {
+            store::resources::checks::inherit(
+                tx,
+                current.network_id,
+                current.revision,
+                revision,
+                key,
             )?;
         }
     }
@@ -104,12 +102,7 @@ pub(crate) fn latest_publication(
     network: NetworkId,
     revision: Revision,
 ) -> Result<Option<meshway_model::PublicationId>, Error> {
-    let id: Option<Vec<u8>> = tx.query_row(
-        "SELECT id FROM execution_publications WHERE network_id=?1 AND revision=?2 ORDER BY sequence DESC LIMIT 1",
-        params![network.as_uuid().as_bytes().as_slice(), revision.get() as i64],
-        |row| row.get(0),
-    ).optional()?;
-    id.map(crate::store::execution::id).transpose()
+    store::resources::bindings::latest_publication(tx, network, revision)
 }
 
 pub(crate) fn at_publication(
@@ -118,17 +111,7 @@ pub(crate) fn at_publication(
     revision: Revision,
     publication: meshway_model::PublicationId,
 ) -> Result<Bindings, Error> {
-    let bytes: Vec<u8> = tx.query_row(
-        "SELECT rule_set_bindings FROM execution_publications WHERE network_id=?1 AND revision=?2 AND id=?3",
-        params![
-            network.as_uuid().as_bytes().as_slice(),
-            revision.get() as i64,
-            publication.as_uuid().as_bytes().as_slice(),
-        ],
-        |row| row.get(0),
-    ).optional()?.ok_or(Error::DependencyUnavailable)?;
-    serde_json::from_slice(&bytes)
-        .map_err(|_| Error::decode("execution_publications.rule_set_bindings"))
+    store::resources::bindings::at_publication(tx, network, revision, publication)
 }
 
 /// The latest publication for this exact source revision owns the current
