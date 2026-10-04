@@ -45,7 +45,7 @@ Server 决定许可和有界候选；Node 在获准集合内结合实时状态�
 - 首版动态插件边界是 transport providers；control、dataplane、connectivity、TUN/netstack 等作为独立 Rust 库由 daemon 链接。插件启动时加载，并随发行包一起安装、校验、升级。
 - UDP／TCP 实现必带不授予业务使用权限，VLESS-only 配置继续有效。
 
-运行语义见[模式与 IPC](/v2/node/runtime)，装载与能力见[插件](/v2/node/plugins)。默认模式、CLI flags、IPC 编码、权限细节和 native ABI 精确接口尚待对齐。
+运行语义见[模式与 IPC](/v2/node/runtime)，装载与能力见[插件](/v2/node/plugins)，数据 I/O 草案见[承载会话](/v2/node/transport)。默认模式、CLI flags、IPC 编码、权限细节和 native ABI 精确接口尚待对齐。
 
 ## 首个实现闭环
 

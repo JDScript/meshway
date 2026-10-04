@@ -14,6 +14,8 @@
 
 `meshway-plugin` 定义共同 SDK；plugin host 处理装载／生命周期；首版承载接口由 `meshway-transport` 定义。其余组件使用库内的领域接口，后续增加插件种类时再定义对应 ABI。公共描述建议包含 ID、版本、ABI 范围、平台、依赖、capabilities 和 schema 引用，精确编码待定。
 
+Stream／Datagram、发送所有权、背压、取消和连接复用的设计边界见[承载会话](/v2/node/transport)。
+
 Config／State 类型继续由共享库拥有，不用通用 `execute(name, arbitrary JSON)` 替代合同。依赖环和无选择规则的重复 provider 在启动检查中失败；组件不自行加载任意同名库。
 
 ## Native ABI
