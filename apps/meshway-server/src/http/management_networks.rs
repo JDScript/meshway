@@ -222,7 +222,7 @@ pub(super) async fn redeem_link(
     }))
 }
 
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/join-links/{linkId}/revoke",operation_id="revokeJoinLink",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("linkId"=JoinLinkId,Path)),responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/join-links/{linkId}/revoke",operation_id="revokeJoinLink",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("linkId"=JoinLinkId,Path)),responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn revoke_link(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,

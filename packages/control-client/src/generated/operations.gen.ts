@@ -153,7 +153,7 @@ export function getNode(client: ControlClient, path: z.output<typeof zGetNodePat
 }
 
 export function getNodeSettings(client: ControlClient, path: z.output<typeof zGetNodeSettingsPath>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/nodes/{nodeId}/settings", authenticated: true, successStatus: 200, success: zNodeSettingsResponse, errors: [401, 404], problem: zErrorResponse, pathParameters: { schema: zGetNodeSettingsPath, value: path } }, options);
+  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/nodes/{nodeId}/settings", authenticated: true, successStatus: 200, success: zNodeSettingsResponse, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zGetNodeSettingsPath, value: path } }, options);
 }
 
 export function getNodeState(client: ControlClient, path: z.output<typeof zGetNodeStatePath>, options: AuthenticatedRequestOptions) {
@@ -317,15 +317,15 @@ export function revokeAllAccountSessions(client: ControlClient, options: Authent
 }
 
 export function revokeEnrollmentKey(client: ControlClient, path: z.output<typeof zRevokeEnrollmentKeyPath>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "DELETE", path: "/api/v1/networks/{networkId}/enrollment-keys/{keyId}", authenticated: true, successStatus: 204, success: undefined, errors: [401, 403, 404], problem: zErrorResponse, pathParameters: { schema: zRevokeEnrollmentKeyPath, value: path } }, options);
+  return client.request({ method: "DELETE", path: "/api/v1/networks/{networkId}/enrollment-keys/{keyId}", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 404, 409, 503], problem: zErrorResponse, pathParameters: { schema: zRevokeEnrollmentKeyPath, value: path } }, options);
 }
 
 export function revokeJoinLink(client: ControlClient, path: z.output<typeof zRevokeJoinLinkPath>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/join-links/{linkId}/revoke", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zRevokeJoinLinkPath, value: path } }, options);
+  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/join-links/{linkId}/revoke", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 404, 409, 503], problem: zErrorResponse, pathParameters: { schema: zRevokeJoinLinkPath, value: path } }, options);
 }
 
 export function revokeNodeKey(client: ControlClient, path: z.output<typeof zRevokeNodeKeyPath>, body: z.output<typeof zRevokeNodeKeyRequest>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 409], problem: zErrorResponse, pathParameters: { schema: zRevokeNodeKeyPath, value: path }, body: { schema: zRevokeNodeKeyRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 409, 503], problem: zErrorResponse, pathParameters: { schema: zRevokeNodeKeyPath, value: path }, body: { schema: zRevokeNodeKeyRequest, value: body } }, options);
 }
 
 export function revokeOtherAccountSessions(client: ControlClient, options: AuthenticatedRequestOptions) {

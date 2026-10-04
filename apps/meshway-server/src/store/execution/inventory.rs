@@ -9,9 +9,10 @@ use meshway_model::{
 use meshway_protocol::{execution::*, node::*};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
-/// Marks one key generation as permanently revoked. Returns whether this call
-/// revoked a key that was still current; only then does the Node lose its
-/// execution. Revoking an already retired or revoked key records nothing new.
+/// Marks one key generation as permanently revoked. Returns whether the key
+/// was still current; only then does the Node lose its execution. A retired
+/// generation can still be revoked so old material can never be recovered;
+/// a generation that is already revoked reports `StateConflict`.
 pub(crate) fn revoke_key(
     tx: &Transaction<'_>,
     sealer: &Sealer,
@@ -46,7 +47,7 @@ pub(crate) fn revoke_key(
         return Err(Error::VersionConflict);
     };
     if !unrevoked {
-        return Ok((false, Vec::new()));
+        return Err(Error::StateConflict);
     }
     tx.execute(
         "UPDATE node_keys SET revoked_at=?1 WHERE network_id=?2 AND node_id=?3 AND id=?4 AND revoked_at IS NULL",

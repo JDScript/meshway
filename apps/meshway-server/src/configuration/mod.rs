@@ -14,20 +14,33 @@ pub(crate) use snapshot::{Snapshot, SnapshotCache};
 use crate::error::Error;
 use crate::{
     accounts::random_uuid,
-    networks::configuration::ConfigurationBindings,
     secrets::{Purpose, Sealer},
     store::authorization::{authorize_manager, current_session},
 };
 use meshway_configuration::{
-    ConfigurationChange, ConfigurationDocument, NetworkConfigurationInput, ValidationContext,
-    canonical_json, configuration_changes,
+    ConfigurationChange, ConfigurationDocument, NetworkConfigurationInput, UserBinding,
+    ValidationContext, canonical_json, configuration_changes,
 };
 use meshway_model::{
     ArtifactId, MembershipId, NetworkId, NodeId, PublicationId, RequestId, Revision, UserId,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use zeroize::Zeroizing;
+
+/// The stable subjects behind a configuration version's readable references.
+/// Persisted encrypted next to the version; never edited independently.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ConfigurationBindings {
+    /// Policy references only; retained inactive memberships stay inert.
+    pub(crate) users: BTreeMap<String, UserBinding>,
+    /// Resolution of each User Node's editable Config.identity.
+    pub(crate) node_users: BTreeMap<NodeId, UserBinding>,
+    pub(crate) listeners: BTreeMap<NodeId, BTreeMap<String, Revision>>,
+    pub(crate) rule_sets: BTreeMap<String, ArtifactId>,
+}
 
 pub(crate) struct TrustedContext<'a> {
     pub(crate) validation: ValidationContext<'a>,

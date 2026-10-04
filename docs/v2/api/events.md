@@ -41,7 +41,7 @@ Owner/Admin 获得本网络非秘密管理视图，成员获得其本人节点�
 
 | type | 用途 |
 | --- | --- |
-| entities.delta | baseCursor／cursor、configurationRevision、类型化 updated 和 removed |
+| entities.delta | baseCursor／cursor、类型化 updated 和 removed |
 | state.delta | stateEpoch、baseCursor／cursor、完整节点更新、删除项、links／paths，以及投影的 asOf／sequence／configurationRevision |
 | configuration.changed | 已提交 revision、previousRevision、cause、允许披露的 actor／requestId、changedPointers、changesComplete、sourceChanged |
 | configuration.progress | 与按 revision GET 相同的 ConfigurationApplyProgress |

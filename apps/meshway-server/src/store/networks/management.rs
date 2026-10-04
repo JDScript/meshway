@@ -500,10 +500,16 @@ pub(crate) fn revoke_link(
     if !grant(role, link.view.role) {
         return Err(Error::PermissionDenied);
     }
-    let count=tx.execute("UPDATE join_links SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL AND consumed_at IS NULL AND expires_at>?1",params![now,id.as_uuid().as_bytes().as_slice()])?;
-    if count > 0 {
-        record(tx, network, user, request, Activity::LinkRevoked(id), now)?;
+    // A link that was already used, expired or revoked has nothing left to
+    // revoke; no activity is recorded and the caller learns nothing changed.
+    let count = tx.execute(
+        "UPDATE join_links SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL AND consumed_at IS NULL AND expires_at>?1",
+        params![now, id.as_uuid().as_bytes().as_slice()],
+    )?;
+    if count == 0 {
+        return Err(Error::StateConflict);
     }
+    record(tx, network, user, request, Activity::LinkRevoked(id), now)?;
     Ok(())
 }
 pub(crate) fn links(

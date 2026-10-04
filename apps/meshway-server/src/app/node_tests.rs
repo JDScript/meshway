@@ -2145,8 +2145,8 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
         .await
         .unwrap();
     // Revoking the retired generation records the revocation but leaves the
-    // execution established with the current generation untouched, even when
-    // the same revocation is repeated.
+    // execution established with the current generation untouched; repeating
+    // it reports the key as already revoked.
     let current = session(&app.execution(), network, a, &recovered, &new).await;
     let lease = app
         .execution()
@@ -2160,20 +2160,20 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
         .await
         .unwrap();
     assert!(lease.target.is_some());
-    for _ in 0..2 {
+    let retired = || RevokeNodeKeyRequest {
+        key_id: keys.control.id,
+        expected_generation: keys.control.generation,
+    };
+    app.execution()
+        .revoke_key(owner.token.expose(), network, a, retired())
+        .await
+        .unwrap();
+    assert!(matches!(
         app.execution()
-            .revoke_key(
-                owner.token.expose(),
-                network,
-                a,
-                RevokeNodeKeyRequest {
-                    key_id: keys.control.id,
-                    expected_generation: keys.control.generation,
-                },
-            )
-            .await
-            .unwrap();
-    }
+            .revoke_key(owner.token.expose(), network, a, retired())
+            .await,
+        Err(Error::StateConflict)
+    ));
     let renewed = app
         .execution()
         .renew(
