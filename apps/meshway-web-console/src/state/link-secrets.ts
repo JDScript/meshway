@@ -1,10 +1,7 @@
 import { useStore } from "zustand"
 import { createStore } from "zustand/vanilla"
 
-import {
-  secretFromFragment,
-  type FragmentKind,
-} from "@/features/entry/fragment"
+import { secretFromFragment, type FragmentKind } from "@/lib/fragment"
 
 // The one-time secret of the join or reset link this tab opened, in memory
 // only. A page's route takes it from the fragment and replaces the address

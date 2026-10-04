@@ -1,7 +1,7 @@
 import { useStore } from "zustand"
 import { createStore } from "zustand/vanilla"
 
-import { EMPTY_SCENE, type Scene } from "@/features/globe/scene"
+import { EMPTY_SCENE, type Scene } from "@/globe/scene"
 
 // The globe is created once, above every route, and never re-created on
 // navigation. Routes describe what it should show through this store; what

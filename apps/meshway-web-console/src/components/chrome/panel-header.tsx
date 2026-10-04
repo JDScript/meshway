@@ -2,8 +2,8 @@ import type { LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
 import { IconAction } from "@/components/chrome/icon-action"
-import { surfaceTitleId } from "@/features/shell/page-frame"
-import type { PageId } from "@/features/shell/pages"
+import { surfaceTitleId } from "@/components/surface/page-frame"
+import type { PageId } from "@/components/surface/pages"
 
 /**
  * The head of a page panel: the title and how many of what it names, one

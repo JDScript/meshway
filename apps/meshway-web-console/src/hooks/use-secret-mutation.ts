@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query"
 import { useCallback } from "react"
 
-import { toastFailureWith, type FailureText } from "@/lib/failure"
+import { toastFailureWith, type FailureText } from "@/api/failure"
 
 /**
  * Creates something the controller answers with a secret (an enrolment

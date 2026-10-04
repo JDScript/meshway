@@ -5,7 +5,7 @@ import {
   historyWindow,
   type HistoryWindow,
   type WindowChoice,
-} from "@/features/history/window"
+} from "@/lib/history/window"
 
 import { onSessionChange } from "./session"
 

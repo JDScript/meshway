@@ -6,8 +6,8 @@ import type {
 } from "@meshway/control-client"
 import { test } from "vitest"
 
-import { canObserveFrom, pathChoices } from "@/features/observation/choices"
-import { leasePlan, retryPlan } from "@/features/observation/lease"
+import { canObserveFrom, pathChoices } from "@/lib/observation/choices"
+import { leasePlan, retryPlan } from "@/lib/observation/lease"
 import {
   emptyRecord,
   foldTask,
@@ -15,14 +15,14 @@ import {
   SAMPLE_LIMIT,
   standing,
   type ObservationRecord,
-} from "@/features/observation/record"
+} from "@/lib/observation/record"
 import {
   gapFor,
   replyRuns,
   seriesPoints,
   totals,
   unansweredRate,
-} from "@/features/observation/series"
+} from "@/lib/observation/series"
 
 // Typed test data only: the panel shows what the controller sent.
 

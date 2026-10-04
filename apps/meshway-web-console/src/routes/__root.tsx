@@ -1,9 +1,10 @@
 import type { QueryClient } from "@tanstack/react-query"
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router"
 
-import { BootScreen } from "@/features/boot/boot-screen"
-import { LayoutGuides } from "@/features/shell/layout-guides"
 import { useBootPhase } from "@/state/boot"
+
+import { BootScreen } from "./-boot/boot-screen"
+import { LayoutGuides } from "./-layout-guides"
 
 export type RouterContext = {
   queryClient: QueryClient

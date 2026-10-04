@@ -11,20 +11,20 @@ import { toast } from "sonner"
 import { useStore } from "zustand"
 import { createStore } from "zustand/vanilla"
 
-import type { DraftInput } from "@/features/configuration/draft-state"
-import {
-  configurationQuery,
-  configurationReads,
-} from "@/features/configuration/queries"
-import { networkKey, networksQuery } from "@/features/network/queries"
 import {
   ApiFailure,
   authed,
   client,
   problemCode,
   type Failure,
-} from "@/lib/api"
-import { failureText, type FailureText } from "@/lib/failure"
+} from "@/api/client"
+import { failureText, type FailureText } from "@/api/failure"
+import {
+  configurationQuery,
+  configurationReads,
+} from "@/api/queries/configuration"
+import { networkKey, networksQuery } from "@/api/queries/network"
+import type { DraftInput } from "@/lib/configuration/draft-state"
 import { m } from "@/paraglide/messages.js"
 
 import { attempts } from "./attempts"

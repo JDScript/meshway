@@ -18,8 +18,8 @@ import {
   type Checked,
   type DraftEntry,
   type DraftInput,
-} from "@/features/configuration/draft-state"
-import type { FormPart, FormValues } from "@/features/configuration/operations"
+} from "@/lib/configuration/draft-state"
+import type { FormPart, FormValues } from "@/lib/configuration/operations"
 
 import { onSessionChange } from "./session"
 

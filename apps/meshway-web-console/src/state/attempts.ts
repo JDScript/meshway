@@ -1,4 +1,4 @@
-import { ApiFailure } from "@/lib/api"
+import { ApiFailure } from "@/api/client"
 import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
 
 import { onSessionChange } from "./session"
