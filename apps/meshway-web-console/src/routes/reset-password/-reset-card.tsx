@@ -7,7 +7,7 @@ import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
-import { ApiFailure, call, client, problemCode } from "@/api/client"
+import { call, client, codeOf } from "@/api/client"
 import { failureText } from "@/api/failure"
 import { authOptionsQuery } from "@/api/queries/auth"
 import { signOut } from "@/api/sign-in"
@@ -41,7 +41,7 @@ type ResetLink =
 
 /** Why the controller no longer takes the link, or null when it did not refuse it. */
 function refusal(error: unknown): string | null {
-  const code = error instanceof ApiFailure ? problemCode(error.failure) : null
+  const code = codeOf(error)
   switch (code) {
     case "password_reset_used":
       return m.problem_password_reset_used()

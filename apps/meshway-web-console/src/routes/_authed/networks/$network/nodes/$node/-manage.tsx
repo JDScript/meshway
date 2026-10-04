@@ -11,7 +11,7 @@ import { BanIcon, Trash2Icon, Undo2Icon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import { toastFailureWith } from "@/api/failure"
 import {
   configurationQuery,
@@ -126,8 +126,7 @@ function NodeKey({
         permission_denied: () => m.nodes_manage_denied(),
       })(error)
       // A newer key generation: the dialog stays, over the key read again.
-      const code =
-        error instanceof ApiFailure ? problemCode(error.failure) : null
+      const code = codeOf(error)
       if (code !== "version_conflict") setConfirming(false)
     },
     onSettled: () =>
@@ -281,8 +280,7 @@ function Deletion({
         revision_conflict: () => m.nodes_delete_moved(),
         permission_denied: () => m.nodes_manage_denied(),
       })(error)
-      const code =
-        error instanceof ApiFailure ? problemCode(error.failure) : null
+      const code = codeOf(error)
       if (code === "revision_conflict") void configuration.refetch()
       else if (code !== null) setConfirming(false)
     },

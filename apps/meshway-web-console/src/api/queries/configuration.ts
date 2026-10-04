@@ -13,7 +13,7 @@ import {
   skipToken,
 } from "@tanstack/react-query"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import { readSchema } from "@/lib/configuration/schema-check"
 import { pollUnlessLive } from "@/state/live"
 
@@ -148,5 +148,4 @@ export async function readSource(networkId: string, signal: AbortSignal) {
 
 /** The controller refused the read for this account's role. */
 export const isDenied = (error: unknown) =>
-  error instanceof ApiFailure &&
-  problemCode(error.failure) === "permission_denied"
+  codeOf(error) === "permission_denied"

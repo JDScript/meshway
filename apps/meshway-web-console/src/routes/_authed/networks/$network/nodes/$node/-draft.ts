@@ -7,7 +7,7 @@ import type {
 import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo } from "react"
 
-import { ApiFailure, problemCode } from "@/api/client"
+import { codeOf } from "@/api/client"
 import {
   configurationQuery,
   isDenied,
@@ -83,8 +83,7 @@ export function useNodeConfiguration(
       if (fromStream) return { kind: "member", settings: fromStream }
       if (read.data) return { kind: "member", settings: read.data.settings }
       if (read.isError)
-        return read.error instanceof ApiFailure &&
-          problemCode(read.error.failure) === "not_found"
+        return codeOf(read.error) === "not_found"
           ? { kind: "unreadable" }
           : { kind: "failed", error: read.error }
       return { kind: "loading" }

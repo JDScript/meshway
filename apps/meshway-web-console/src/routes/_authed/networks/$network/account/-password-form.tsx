@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import { failureText } from "@/api/failure"
 import { authOptionsQuery } from "@/api/queries/auth"
 import { TextField } from "@/components/chrome/form"
@@ -93,8 +93,7 @@ export function PasswordForm({ email }: { email: string | null }) {
       setPending(false)
       setConfirming(false)
       setReady(null)
-      const code =
-        error instanceof ApiFailure ? problemCode(error.failure) : null
+      const code = codeOf(error)
       const text = failureText(error, {
         invalid_current_password: () => m.account_password_wrong(),
         password_weak: () => passwordRefusalText(error),

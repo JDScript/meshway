@@ -2,7 +2,7 @@ import { cancelObservation, renewObservation } from "@meshway/control-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import {
   endsSubscription,
   subscriptionQuery,
@@ -68,8 +68,7 @@ export function useSubscription(networkId: string, subscriptionId: string) {
         (error: unknown) => {
           if (!live) return
           setRenewFailure(error)
-          const code =
-            error instanceof ApiFailure ? problemCode(error.failure) : null
+          const code = codeOf(error)
           if (code === "observation_limit") setEarly((n) => n + 1)
           else if (endsSubscription(error))
             writeRemoved(queryClient, networkId, subscriptionId)

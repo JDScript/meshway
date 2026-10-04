@@ -16,8 +16,8 @@ import { LinkIcon, XIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
-import { toastFailure, toastFailureWith } from "@/api/failure"
+import { authed, client } from "@/api/client"
+import { toastFailureWith } from "@/api/failure"
 import { joinLinksQuery } from "@/api/queries/members"
 import { InitialAvatar } from "@/components/chrome/avatar"
 import { ConfirmDialog } from "@/components/chrome/glass-dialog"
@@ -37,6 +37,7 @@ import {
 import { surfaceTitleId } from "@/components/surface/page-frame"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { useLoadMore } from "@/hooks/use-load-more"
 import { calendarDate, dateTime } from "@/lib/format"
 import { joinLinkState, revocable, type JoinLinkState } from "@/lib/join-links"
 import { roleLabel } from "@/lib/roles"
@@ -56,19 +57,6 @@ const rowsOf = <T,>(read: Paged<{ items: T[] }>): T[] =>
 /** How many there are: the controller's `total`, as of its latest page; never the rows read. */
 const totalOf = (read: Paged<{ total: number }>) =>
   read.data?.pages.at(-1)?.total ?? null
-
-/** "Load more" for a paged list; an expired cursor reads the list again from its start. */
-function loadMore(read: Paged<unknown>) {
-  void read.fetchNextPage().then((result) => {
-    if (!result.isFetchNextPageError) return
-    if (
-      result.error instanceof ApiFailure &&
-      problemCode(result.error.failure) === "invalid_cursor"
-    )
-      void read.refetch()
-    else toastFailure(result.error)
-  })
-}
 
 /**
  * The members page's index: the network's members, or its join links
@@ -175,11 +163,12 @@ export function MemberList({
 }
 
 function MoreRow({ read }: { read: Paged<unknown> }) {
+  const loadMore = useLoadMore(read)
   if (!read.hasNextPage) return null
   return (
     <ListRow
       disabled={read.isFetchingNextPage}
-      onClick={() => loadMore(read)}
+      onClick={loadMore}
       lead={read.isFetchingNextPage ? <Spinner className="size-3.5" /> : null}
       title={
         <span className="truncate text-muted-foreground">

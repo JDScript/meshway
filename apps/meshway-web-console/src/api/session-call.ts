@@ -2,7 +2,7 @@ import type { ClientResult, ErrorResponse } from "@meshway/control-client"
 
 import { currentSession, endSession } from "@/state/session"
 
-import { ApiFailure, problemCode, SessionRejected } from "./client"
+import { ApiFailure, SessionRejected } from "./client"
 
 /**
  * A call with this tab's session that keeps the page: a rejected session
@@ -22,6 +22,3 @@ export async function withSession<T>(
   }
   throw new ApiFailure(settled.error)
 }
-
-export const codeOf = (error: unknown) =>
-  error instanceof ApiFailure ? problemCode(error.failure) : null

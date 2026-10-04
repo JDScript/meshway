@@ -45,6 +45,10 @@ export function problemCode(failure: Failure) {
     : null
 }
 
+/** The problem code of a call that failed with `error`, else null. */
+export const codeOf = (error: unknown) =>
+  error instanceof ApiFailure ? problemCode(error.failure) : null
+
 /** A 401 means the session is not (or no longer) valid. */
 const rejectsSession = (failure: Failure) =>
   failure.kind === "http" && failure.status === 401

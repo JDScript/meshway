@@ -1,8 +1,7 @@
 import type { ActivityEvent, NetworkSummary } from "@meshway/control-client"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 
-import { ApiFailure, problemCode } from "@/api/client"
-import { failureText, toastFailure } from "@/api/failure"
+import { failureText } from "@/api/failure"
 import { sessionQuery } from "@/api/queries/auth"
 import { membersQuery } from "@/api/queries/members"
 import { networkActivityQuery } from "@/api/queries/network"
@@ -10,6 +9,7 @@ import { EmptyLine } from "@/components/chrome/section"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { useLoadMore } from "@/hooks/use-load-more"
 import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import {
   activityActionLabel,
@@ -79,16 +79,7 @@ export function ActivitySection({ network }: { network: NetworkSummary }) {
     viewerId: session.data?.user.id ?? null,
   }
 
-  const loadMore = () =>
-    void activity.fetchNextPage().then((result) => {
-      if (!result.isFetchNextPageError) return
-      if (
-        result.error instanceof ApiFailure &&
-        problemCode(result.error.failure) === "invalid_cursor"
-      )
-        void activity.refetch()
-      else toastFailure(result.error)
-    })
+  const loadMore = useLoadMore(activity)
 
   return (
     <div className="flex flex-col gap-2">

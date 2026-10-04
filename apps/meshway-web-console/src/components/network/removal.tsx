@@ -13,7 +13,7 @@ import {
 import { useNavigate } from "@tanstack/react-router"
 import { toast } from "sonner"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import { failureText, toastFailureWith } from "@/api/failure"
 import { sessionQuery } from "@/api/queries/auth"
 import {
@@ -183,6 +183,6 @@ export function LeaveNetworkDialog({
 }
 
 const moved = (error: unknown) => {
-  const code = error instanceof ApiFailure ? problemCode(error.failure) : null
+  const code = codeOf(error)
   return code === "version_conflict" || code === "revision_conflict"
 }

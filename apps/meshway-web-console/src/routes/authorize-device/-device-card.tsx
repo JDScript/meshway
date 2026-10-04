@@ -21,9 +21,9 @@ import {
 } from "react"
 import { toast } from "sonner"
 
-import { client, SessionRejected } from "@/api/client"
+import { client, codeOf, SessionRejected } from "@/api/client"
 import { failureText } from "@/api/failure"
-import { codeOf, withSession } from "@/api/session-call"
+import { withSession } from "@/api/session-call"
 import { signOut } from "@/api/sign-in"
 import { FieldOption, FieldSelect } from "@/components/chrome/field-select"
 import { ConfirmDialog } from "@/components/chrome/glass-dialog"

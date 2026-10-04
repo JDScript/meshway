@@ -10,7 +10,7 @@ import {
   useQuery,
 } from "@tanstack/react-query"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 
 // Network reads. Every key here belongs to this tab's sign-in: signing out,
 // or the controller rejecting the session, clears the whole cache, and a
@@ -55,8 +55,7 @@ export const networkQuery = (networkId: string) =>
   })
 
 /** The controller says the network does not exist, or this account is not in it. */
-export const isNotFound = (error: unknown) =>
-  error instanceof ApiFailure && problemCode(error.failure) === "not_found"
+export const isNotFound = (error: unknown) => codeOf(error) === "not_found"
 
 /** The network as last read (its name, revision and this account's actions); null until read. */
 export const useNetworkSummary = (networkId: string): NetworkSummary | null =>

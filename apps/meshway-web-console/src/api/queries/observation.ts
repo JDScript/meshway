@@ -5,7 +5,7 @@ import {
 } from "@meshway/control-client"
 import { queryOptions, type QueryClient } from "@tanstack/react-query"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import {
   emptyRecord,
   foldTask,
@@ -44,7 +44,7 @@ export const observationListQuery = (networkId: string) =>
  * or the source's execution moved on (409); it drops the subscriber then.
  */
 export const endsSubscription = (error: unknown) => {
-  const code = error instanceof ApiFailure ? problemCode(error.failure) : null
+  const code = codeOf(error)
   return (
     code === "not_found" ||
     code === "permission_denied" ||

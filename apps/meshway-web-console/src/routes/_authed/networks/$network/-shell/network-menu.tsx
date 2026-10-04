@@ -1,8 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { CheckIcon, PlusIcon } from "lucide-react"
 
-import { ApiFailure, problemCode } from "@/api/client"
-import { failureText, toastFailure } from "@/api/failure"
+import { failureText } from "@/api/failure"
 import { networksQuery } from "@/api/queries/network"
 import {
   DropdownMenuGroup,
@@ -12,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { useLoadMore } from "@/hooks/use-load-more"
 import { roleLabel } from "@/lib/roles"
 import { m } from "@/paraglide/messages.js"
 
@@ -31,17 +31,7 @@ export function NetworkMenuItems({
   const networks = useInfiniteQuery(networksQuery())
   const items = networks.data?.pages.flatMap((page) => page.items) ?? []
 
-  const loadMore = () =>
-    void networks.fetchNextPage().then((result) => {
-      if (!result.isFetchNextPageError) return
-      // An expired cursor: read the list again from its start.
-      if (
-        result.error instanceof ApiFailure &&
-        problemCode(result.error.failure) === "invalid_cursor"
-      )
-        void networks.refetch()
-      else toastFailure(result.error)
-    })
+  const loadMore = useLoadMore(networks)
 
   return (
     <>

@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { authed, client, codeOf } from "@/api/client"
 import { failureText } from "@/api/failure"
 import { BusyLabel } from "@/components/chrome/busy-label"
 import { TextField } from "@/components/chrome/form"
@@ -60,8 +60,7 @@ export function EmailForm({ email }: { email: string | null }) {
       // The email shows across the console (the menu, member lists).
       void queryClient.invalidateQueries()
     } catch (error) {
-      const code =
-        error instanceof ApiFailure ? problemCode(error.failure) : null
+      const code = codeOf(error)
       const text = failureText(error, {
         invalid_request: () => m.entry_email_invalid(),
         invalid_current_password: () => m.account_password_wrong(),

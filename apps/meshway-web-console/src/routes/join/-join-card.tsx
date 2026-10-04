@@ -9,10 +9,10 @@ import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
-import { client, SessionRejected } from "@/api/client"
+import { client, codeOf, SessionRejected } from "@/api/client"
 import { failureText } from "@/api/failure"
 import { networksQuery } from "@/api/queries/network"
-import { codeOf, withSession } from "@/api/session-call"
+import { withSession } from "@/api/session-call"
 import { signOut } from "@/api/sign-in"
 import {
   EntryCard,
