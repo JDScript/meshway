@@ -29,7 +29,7 @@ pub use identity::{
     rebind_node_user_references, rebind_policy_user_references, rebind_user_references,
     rename_user_references,
 };
-pub use internet::{address_set_covers, internet_ranges};
+pub use internet::{AddressSet, address_set_covers, internet_ranges};
 pub use meshway_transport_spec as transport;
 pub use meshway_transport_spec::{OuterSocket, TransportProtocol};
 pub use types::*;

@@ -933,3 +933,51 @@ fn ipam_point_to_point_and_single_address_allocations_keep_their_boundaries() {
     c.nodes.insert(id(1), n);
     assert!(normalize(c, &context()).is_ok());
 }
+
+/// A large bound rule set must not make an unrelated edit quadratic. The
+/// Console measured ~40 s for 8 483 entries before destination coverage,
+/// retained-rule comparison and access permits were made linear.
+#[test]
+fn large_rule_set_validation_stays_linear() {
+    let entries = 8_500u32;
+    let cidrs: Vec<String> = (0..entries)
+        .map(|i| format!("1.{}.{}.0/24", (i >> 8) & 0xff, i & 0xff))
+        .collect();
+    let domains: Vec<String> = (0..entries).map(|i| format!("site{i}.example")).collect();
+    let mut input = egress_input(&["autogroup:internet"], "8.8.8.0/24");
+    input.access.push(AccessRule {
+        remark: String::new(),
+        src: vec![format!("node:{}", id(1))],
+        dst: domains.iter().map(|d| format!("domain:{d}")).collect(),
+        ip: vec!["*".into()],
+        bidirectional: false,
+    });
+    input.rule_sets.insert(
+        "big".into(),
+        RuleSet::Inline {
+            ip_cidr: cidrs,
+            domain_suffix: domains,
+        },
+    );
+    let rule = &mut input.routing.egress.profiles.get_mut("work").unwrap().rules[0];
+    rule.matcher.ip_cidr.clear();
+    rule.matcher.rule_sets.push("big".into());
+    let started = std::time::Instant::now();
+    let (old, bindings) = normalize(input, &context()).unwrap();
+    let first = started.elapsed();
+    let ctx = ValidationContext {
+        previous: Some(&old),
+        expected_user_bindings: bindings.clone(),
+        previous_user_bindings: bindings,
+        ..context()
+    };
+    let mut edited = NetworkConfigurationInput::from(&old);
+    edited
+        .groups
+        .insert("group:unrelated".into(), vec!["alice@example.com".into()]);
+    let started = std::time::Instant::now();
+    normalize_with_dependencies(edited, &ctx).unwrap();
+    let second = started.elapsed();
+    eprintln!("large rule set: first {first:?}, edit on previous {second:?}");
+    assert!(second < std::time::Duration::from_secs(2), "{second:?}");
+}

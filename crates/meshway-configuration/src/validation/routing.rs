@@ -1,4 +1,5 @@
 use super::{references::*, *};
+use crate::internet::{AddressSet, internet_ranges};
 use ipnet::IpNet;
 
 #[derive(Clone, Copy)]
@@ -34,6 +35,17 @@ fn retained_egress(
         if rule.action != old.action {
             return false;
         }
+        // Resolved rule sets are inline content here, so equal matchers with
+        // equal referenced content are the same grant without any expansion.
+        if rule.matcher == old.matcher
+            && rule
+                .matcher
+                .rule_sets
+                .iter()
+                .all(|key| config.rule_sets.get(key) == previous.configuration.rule_sets.get(key))
+        {
+            return true;
+        }
         match (
             expanded_match(&rule.matcher, config),
             expanded_match(&old.matcher, previous.configuration),
@@ -47,21 +59,18 @@ fn retained_egress(
                 else {
                     return false;
                 };
-                current.ip_cidr.iter().all(|s| {
-                    s.parse::<IpNet>()
-                        .is_ok_and(|net| address_set_covers(&grants, &net))
-                }) && current.domain_suffix.iter().all(|domain| {
-                    old.domain_suffix
+                let grants = AddressSet::new(grants);
+                let suffixes = SuffixSet::new(old.domain_suffix.iter().map(String::as_str));
+                current
+                    .ip_cidr
+                    .iter()
+                    .all(|s| s.parse::<IpNet>().is_ok_and(|net| grants.covers(&net)))
+                    && current
+                        .domain_suffix
                         .iter()
-                        .any(|suffix| domain_suffix_matches(domain, suffix))
-                })
+                        .all(|domain| suffixes.matches(domain))
             }
-            _ => {
-                rule.matcher == old.matcher
-                    && rule.matcher.rule_sets.iter().all(|key| {
-                        config.rule_sets.get(key) == previous.configuration.rule_sets.get(key)
-                    })
-            }
+            _ => false,
         }
     })
 }
@@ -550,48 +559,59 @@ fn https_authority(authority: &str) -> bool {
         && port.is_none_or(|p| p.parse::<u16>().is_ok_and(|p| p > 0))
 }
 
-// This is pure declared destination coverage, not path compilation or a grant
-// to any runtime. Remote resources need resolved content before publication.
-fn permitted(
-    config: &NetworkConfiguration,
-    id: NodeId,
-    subjects: &SubjectContext,
-    destination: &str,
-) -> bool {
-    let allowed: Vec<_> = config
-        .access
-        .iter()
-        .filter(|r| r.src.iter().any(|s| subjects.matches(config, s, id)))
-        .flat_map(|r| &r.dst)
-        .collect();
-    if let Some(domain) = destination.strip_prefix("domain:") {
-        return allowed.iter().any(|a| {
-            a.strip_prefix("domain:")
-                .is_some_and(|suffix| domain_suffix_matches(domain, suffix))
-        });
-    }
-    let mut ranges = Vec::new();
-    for value in allowed {
-        if value == "autogroup:internet" {
-            ranges.extend_from_slice(internet_ranges());
-        } else if let Ok(net) = value.parse::<IpNet>() {
-            ranges.push(net);
+/// Declared destination coverage for one Node: the union of every access
+/// grant whose source matches it. Pure declaration, not path compilation or a
+/// grant to any runtime; remote resources need resolved content before
+/// publication. Built once per Node and queried per destination.
+struct Permits {
+    domains: SuffixSet,
+    ranges: AddressSet,
+}
+
+impl Permits {
+    fn for_node(config: &NetworkConfiguration, id: NodeId, subjects: &SubjectContext) -> Self {
+        let allowed: Vec<&String> = config
+            .access
+            .iter()
+            .filter(|r| r.src.iter().any(|s| subjects.matches(config, s, id)))
+            .flat_map(|r| &r.dst)
+            .collect();
+        let domains = SuffixSet::new(
+            allowed
+                .iter()
+                .filter_map(|value| value.strip_prefix("domain:")),
+        );
+        let mut ranges = Vec::new();
+        for value in &allowed {
+            if *value == "autogroup:internet" {
+                ranges.extend_from_slice(internet_ranges());
+            } else if let Ok(net) = value.parse::<IpNet>() {
+                ranges.push(net);
+            }
+        }
+        Self {
+            domains,
+            ranges: AddressSet::new(ranges),
         }
     }
-    if destination == "autogroup:internet" {
-        internet_ranges()
-            .iter()
-            .all(|target| address_set_covers(&ranges, target))
-    } else {
+
+    fn covers(&self, destination: &str) -> bool {
+        if let Some(domain) = destination.strip_prefix("domain:") {
+            return self.domains.matches(domain);
+        }
+        if destination == "autogroup:internet" {
+            return internet_ranges()
+                .iter()
+                .all(|target| self.ranges.covers(target));
+        }
         destination
             .parse::<IpNet>()
-            .is_ok_and(|target| address_set_covers(&ranges, &target))
+            .is_ok_and(|target| self.ranges.covers(&target))
     }
 }
 fn verify_rules(
     config: &NetworkConfiguration,
-    id: NodeId,
-    subjects: &SubjectContext,
+    permits: &Permits,
     rules: &[EgressRule],
     path: &str,
     check: &mut Check,
@@ -621,10 +641,7 @@ fn verify_rules(
                 Some(RuleSet::Remote { .. }) | None => {}
             }
         }
-        if destinations
-            .iter()
-            .any(|d| !permitted(config, id, subjects, d))
-        {
+        if destinations.iter().any(|d| !permits.covers(d)) {
             check.dependency(
                 path,
                 "assigned exit destination is outside access grants",
@@ -659,10 +676,10 @@ fn validate_assignments_access(
             .collect();
         let path = format!("/nodes/{id}");
         let previous = context.previous.filter(|old| old.nodes.contains_key(id));
+        let permits = Permits::for_node(config, *id, &subjects);
         verify_rules(
             config,
-            *id,
-            &subjects,
+            &permits,
             &config.routing.egress.rules,
             &path,
             check,
@@ -689,9 +706,7 @@ fn validate_assignments_access(
                         && a.target.iter().any(|s| prior_subjects.matches(old, s, *id))
                 })
             });
-            if name.starts_with("global:")
-                && !permitted(config, *id, &subjects, "autogroup:internet")
-            {
+            if name.starts_with("global:") && !permits.covers("autogroup:internet") {
                 check.dependency(
                     &path,
                     "global exit requires internet access grant",
@@ -704,8 +719,7 @@ fn validate_assignments_access(
                     .and_then(|old| old.routing.egress.profiles.get(name));
                 verify_rules(
                     config,
-                    *id,
-                    &subjects,
+                    &permits,
                     &profile.rules,
                     &path,
                     check,
@@ -723,7 +737,7 @@ fn validate_assignments_access(
                     action(&profile.fallback, config, &path, check, false);
                 }
                 if matches!(profile.fallback, RouteAction::Exit { .. })
-                    && !permitted(config, *id, &subjects, "autogroup:internet")
+                    && !permits.covers("autogroup:internet")
                 {
                     check.dependency(
                         &path,

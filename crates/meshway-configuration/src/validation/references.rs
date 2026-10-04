@@ -371,6 +371,40 @@ pub fn domain_suffix_matches(name: &str, suffix: &str) -> bool {
     }
 }
 
+/// Normalized domain suffixes with label-wise lookup: matching a name costs one
+/// normalization plus one set probe per label, independent of the set size.
+#[derive(Clone, Debug, Default)]
+pub(super) struct SuffixSet {
+    suffixes: BTreeSet<String>,
+}
+
+impl SuffixSet {
+    pub(super) fn new<'a>(suffixes: impl IntoIterator<Item = &'a str>) -> Self {
+        Self {
+            suffixes: suffixes
+                .into_iter()
+                .filter_map(|suffix| domain_name(suffix).ok())
+                .collect(),
+        }
+    }
+
+    pub(super) fn matches(&self, name: &str) -> bool {
+        let Ok(name) = domain_name(name) else {
+            return false;
+        };
+        let mut rest = name.as_str();
+        loop {
+            if self.suffixes.contains(rest) {
+                return true;
+            }
+            match rest.split_once('.') {
+                Some((_, parent)) => rest = parent,
+                None => return false,
+            }
+        }
+    }
+}
+
 /// Pure topology decision only: block wins regardless of rule order.
 pub fn topology_allows(
     config: &NetworkConfiguration,
