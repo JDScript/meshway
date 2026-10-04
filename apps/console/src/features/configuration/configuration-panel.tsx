@@ -25,7 +25,10 @@ import { m } from "@/paraglide/messages.js"
 
 import { entryCount, SECTIONS, type SectionKey } from "./changes"
 import { useConfigurationDraft } from "./draft"
+import { holdsDocument, operationsOf } from "./draft-state"
+import { FORM_PARTS_OF, isFormSection } from "./forms"
 import { sectionLabel } from "./labels"
+import { edits } from "./operations"
 import { configurationQuery, isDenied } from "./queries"
 import type { ConfigurationViewId } from "./url"
 
@@ -93,6 +96,9 @@ export function ConfigurationPanel({
   })
   const draft = useConfigurationDraft(networkId)
   const editable = network?.actions.editConfiguration ?? false
+  // Source edits mark the source; form edits, the sections they change.
+  const document = holdsDocument(draft.entry)
+  const ops = operationsOf(draft.entry)
   const revision =
     configuration.data?.revision ?? network?.currentRevision ?? null
   const view = configuration.data?.configuration
@@ -115,11 +121,11 @@ export function ConfigurationPanel({
               title={
                 <>
                   <span className="truncate">{m.configuration_source()}</span>
-                  {draft.dirty ? <DraftMark /> : null}
+                  {document ? <DraftMark /> : null}
                 </>
               }
               subtitle={
-                draft.dirty && draft.entry ? (
+                document && draft.entry ? (
                   <span className="truncate text-draft">
                     {m.revision_draft({ revision: draft.entry.baseRevision })}
                   </span>
@@ -164,7 +170,13 @@ export function ConfigurationPanel({
               onClick={() => onOpen(section)}
               lead={<SectionGlyph section={section} />}
               title={
-                <span className="truncate">{sectionLabel[section]()}</span>
+                <>
+                  <span className="truncate">{sectionLabel[section]()}</span>
+                  {isFormSection(section) &&
+                  FORM_PARTS_OF[section].some((part) => edits(ops, part)) ? (
+                    <DraftMark />
+                  ) : null}
+                </>
               }
               subtitle={
                 view ? (

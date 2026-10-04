@@ -163,7 +163,7 @@ export function ConfigurationPage({
         networkId={networkId}
         network={network}
         section={view}
-        onEdit={(at) => nav.openView("source", at)}
+        onEditSource={(at) => nav.openView("source", at)}
         onClose={nav.closeView}
       />
     )
