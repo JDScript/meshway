@@ -59,6 +59,7 @@ pub use node::{
     NodeSessionResponse, RevokeNodeKeyRequest,
 };
 pub use observations::{HistoryAccepted, HistoryPage, HistoryQuery, HistoryReport};
+pub use resources::{RuleSetList, RuleSetView};
 pub use state::{StateAccepted, StateQuery, StateReport, StateView};
 
 pub use auth::{

@@ -2,6 +2,7 @@
 //! Preparation is in-memory work, not a two-phase publication protocol.
 pub(crate) mod catalog;
 pub(crate) mod materials;
+mod resources;
 mod service;
 mod snapshot;
 pub(crate) use service::Configurations;

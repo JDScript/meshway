@@ -28,8 +28,8 @@ Controller 管理和更新的 IP／域名规则集草案。节点接收编译结
 | `ipCIDR` | inline | 网段列表，建议默认 `[]` |
 | `domainSuffix` | inline | DNS 标签后缀，建议默认 `[]`；两项不能都为空 |
 | `url` | remote | HTTPS 数据来源，不含明文认证信息 |
-| `format` | remote | 提议支持 `sing-box-source`、`mihomo-domain`、`mihomo-ipcidr` 的可转换子集 |
-| `updateInterval` | remote | 建议默认 `24h`，具体范围待定 |
+| `format` | remote | 支持 `sing-box-source`、`mihomo-domain`、`mihomo-ipcidr` 的可转换子集，范围见下文 |
+| `updateInterval` | remote | 默认 `24h`，保存正 duration 原值；实际调度下界、预算与失败退避见下文 |
 
 inline 不接受 remote 字段，反之亦然。未知 key 引用、循环依赖和无法精确转换的条目必须报告，不能悄悄丢弃。
 
@@ -46,7 +46,9 @@ inline 不接受 remote 字段，反之亦然。未知 key 引用、循环依赖
 
 ## 新 Controller 候选用法
 
-Owner／Admin 通过正常配置 API 保存未引用的 remote 声明，调用 refresh 取得经过完整转换的内容，再提交引用该集合的路由规则。尚未准备的引用返回 `ruleSetContent` 准备需求（422），声明本身不阻止普通 Mesh 配置保存。替换已使用的来源时，可先移除引用、修改声明并刷新，再应用新引用；不会把缺失集合当成空集合或跳到后续 direct 规则。
+Owner／Admin 可在一次正常配置 apply 中新增 remote 声明及引用它的路由规则，也可直接替换正在引用的来源。Controller 先验证用户／网络与输入，释放 SQLite owner 后进行有界下载和完整转换，最后在同一事务重验身份、源 revision、原 artifact 及完整配置权限，固定 artifact／源版本初始绑定并发布。失败保留原配置与已验证内容，不把缺失集合当成空集合或跳到后续 direct 规则。
+
+validate 走相同下载／转换与授权校验，但不保存 artifact、不预留配置版本。`ConfigurationPreviewResponse.preparedRuleSets` 按 key 返回暂定规范化内容的 `digest`／`entries`，不使用假 ArtifactId；缺失 listener 材料等仍返回类型化准备需求。最终 apply 独立重新准备／重验，不能将一次 preview 当作免 CAS 的承诺。单次配置最多准备 32 项远端集合、规范化内容合计不超过 8 MiB，下载准备总期限 30 秒；进程内最多 4 项配置准备，包括等待最终事务的输入。每张网络实际绑定的规则集执行内容合计最多 8 MiB／100000 条目，按 key 计入，不能通过多次提交绕过执行内存预算。
 
 接口相对 `/api/v1/networks/{networkId}`：
 
@@ -64,4 +66,12 @@ Owner／Admin 通过正常配置 API 保存未引用的 remote 声明，调用 r
 
 刷新在同一配置 revision 下创建 `cause=refresh` 的执行发布，合并所有有效需求，保留未变化 Node 的目标／lease／回执；不覆盖 JSONC、历史源绑定或 artifact。变更通过 `resources.changed` 通知有权管理该网络的 SSE 客户端，客户端重新读取资源 GET。初始同步或 stream reset 后也重新读取 GET。
 
-当前候选提供显式 refresh；`updateInterval` 已保存，周期自动下载调度尚未接入。此闭环验证到真实 Controller 发布和 Node target，不代表 Agent／TUN 已实际访问出口。
+## 周期更新与生命周期
+
+普通 Controller 启动即运行 App 拥有的周期调度器，来源为当前网络配置、持久检查记录与确切 artifact，使用内部系统任务资格，不持有管理员会话。网络按轮转顺序检查，网内优先处理最久未检查的到期集合。当前工程下界为 1 秒；每轮检查间隔至少 100 ms，每个 App 同时执行一项周期下载，所有配置／手动／周期调用共用进程内 4 项实际下载预算。同一 URL／格式的并发下载合并，最多同时接纳 8 项刷新工作；负载、轮转和下载耗时会推迟实际检查，不保证逐毫秒执行。
+
+正常期限从 `checkedAt` 加 `max(updateInterval, 1s)` 计算。失败按连续次数从 5 秒指数退避、上限 5 分钟，次数和时间持久保存，重启不清除退避。只有调整间隔且来源／格式相同时，沿用可信内容与检查记录。历史恢复已有可信 artifact 但新版本没有检查记录时，以该配置提交时间作为首个周期起点，不伪造 State 检查时间；没有 artifact 则立即准备。时间运算饱和处理超大 duration。
+
+规范化内容不变时只更新检查时间／结果，不新建 artifact 或执行 publication；内容变化才进入同 revision 的刷新发布。最终事务还比较原检查截点，旧下载结果不能覆盖较新的刷新或配置提交。App shutdown／drop 取消网络工作，正常 shutdown join 调度器后释放存储；已接纳 SQLite 事务仍完成提交与事件发布。检查更新不会延长 Node lease 或制造连接／探测历史样本。
+
+此闭环验证到真实 Controller 发布和 Node target，不代表 Agent／TUN 已实际访问出口。

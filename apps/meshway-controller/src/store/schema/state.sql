@@ -24,6 +24,8 @@ CREATE TABLE rule_set_checks (
     problem TEXT,
     checked_at INTEGER NOT NULL,
     last_success_at INTEGER,
+    failures INTEGER NOT NULL DEFAULT 0 CHECK(failures BETWEEN 0 AND 16),
+    check_version INTEGER NOT NULL DEFAULT 1 CHECK(check_version BETWEEN 1 AND 9007199254740991),
     PRIMARY KEY(network_id, revision, rule_set_key),
     FOREIGN KEY(network_id, revision) REFERENCES configuration_versions(network_id, revision)
 ) STRICT;

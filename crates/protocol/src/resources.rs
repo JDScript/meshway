@@ -3,6 +3,9 @@ use chrono::{DateTime, Utc};
 use meshway_model::{ArtifactId, Digest, PublicationId, Revision};
 
 pub use meshway_model::resources::RuleSetData;
+wire_object! { #[derive(Clone, Debug)] pub struct PreparedRuleSet {
+    pub digest: Digest, pub entries: u32,
+} }
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ArtifactSummary {
     pub id: ArtifactId, pub digest: Digest, pub created_at: DateTime<Utc>, pub entries: u32,
 } }

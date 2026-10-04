@@ -6,12 +6,25 @@ use meshway_protocol::{WireSecret, configuration::*};
 use rusqlite::{Connection, TransactionBehavior};
 use std::sync::Arc;
 
+// Includes downloaded inputs waiting for the final accepted SQLite job. Its
+// permit moves into that job so cancelling an HTTP waiter cannot free it early.
+static PREPARATIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+enum ApplyStage {
+    Complete(ConfigurationAppliedResponse),
+    Download {
+        request: ConfigurationRequest,
+        resources: resources::Preparation,
+        permit: tokio::sync::SemaphorePermit<'static>,
+    },
+}
+
 #[derive(Clone)]
 pub(crate) struct Configurations {
     handle: Handle,
     sealer: Arc<Sealer>,
     cache: Arc<SnapshotCache>,
     publisher: crate::state::service::CommitPublisher,
+    downloads: Arc<crate::resources::downloads::Downloads>,
 }
 impl Configurations {
     pub(crate) fn new(
@@ -19,12 +32,14 @@ impl Configurations {
         sealer: Arc<Sealer>,
         cache: Arc<SnapshotCache>,
         publisher: crate::state::service::CommitPublisher,
+        downloads: Arc<crate::resources::downloads::Downloads>,
     ) -> Self {
         Self {
             handle,
             sealer,
             cache,
             publisher,
+            downloads,
         }
     }
     pub(crate) fn synchronize_email(
@@ -154,15 +169,28 @@ impl Configurations {
         request: ConfigurationRequest,
         id: RequestId,
     ) -> Result<ConfigurationPreviewResponse, Error> {
+        let permit = PREPARATIONS
+            .try_acquire()
+            .map_err(|_| Error::DependencyUnavailable)?;
         let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let (request, resources) = self
+            .prepare_resources(digest, network, request, false)
+            .await?;
         let service = self.clone();
         self.handle
             .execute(move |db| {
+                let _permit = permit;
                 let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
                 service.authorize(&tx, &digest, network)?;
                 let current = service.current(&tx, network)?;
-                let prepared = service.prepare_request(&tx, &current, &request, false)?;
+                let prepared =
+                    service.prepare_request(&tx, &current, &request, false, resources.as_ref())?;
                 let result = ConfigurationPreviewResponse {
+                    prepared_rule_sets: resources
+                        .as_ref()
+                        .map(|r| r.preview())
+                        .transpose()?
+                        .unwrap_or_default(),
                     unavailable_dependencies: prepared.unavailable_dependencies,
                     request_id: id,
                     base_revision: current.revision,
@@ -190,10 +218,50 @@ impl Configurations {
         request: ConfigurationRequest,
         id: RequestId,
     ) -> Result<ConfigurationAppliedResponse, Error> {
+        let permit = PREPARATIONS
+            .try_acquire()
+            .map_err(|_| Error::DependencyUnavailable)?;
         let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
         let service = self.clone();
+        let stage = self
+            .handle
+            .execute(move |db| {
+                let resources = {
+                    let tx = db.transaction()?;
+                    service.stage_resources(&tx, digest, network, &request, true)?
+                };
+                if let Some(resources) = resources.filter(|r| r.needs_download()) {
+                    Ok(ApplyStage::Download {
+                        request,
+                        resources,
+                        permit,
+                    })
+                } else {
+                    // No network preparation: retain the original single accepted
+                    // write-job cancellation semantics for ordinary configuration.
+                    let _permit = permit;
+                    service
+                        .apply_request(db, digest, network, request, id, None)
+                        .map(ApplyStage::Complete)
+                }
+            })
+            .await
+            .map_err(|_| Error::Storage)??;
+        let (request, mut resources, permit) = match stage {
+            ApplyStage::Complete(result) => return Ok(result),
+            ApplyStage::Download {
+                request,
+                resources,
+                permit,
+            } => (request, resources, permit),
+        };
+        resources.download(&self.downloads).await?;
+        let service = self.clone();
         self.handle
-            .execute(move |db| service.apply_request(db, digest, network, request, id))
+            .execute(move |db| {
+                let _permit = permit;
+                service.apply_request(db, digest, network, request, id, Some(&resources))
+            })
             .await
             .map_err(|_| Error::Storage)?
     }
@@ -204,6 +272,7 @@ impl Configurations {
         network: NetworkId,
         request: ConfigurationRequest,
         id: RequestId,
+        resources: Option<&resources::Preparation>,
     ) -> Result<ConfigurationAppliedResponse, Error> {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let user = self.authorize(&tx, &digest, network)?;
@@ -230,7 +299,7 @@ impl Configurations {
             return Ok(result);
         }
         let current = self.current(&tx, network)?;
-        let prepared = self.prepare_request(&tx, &current, &request, true)?;
+        let prepared = self.prepare_request(&tx, &current, &request, true, resources)?;
         let cause = if matches!(request, ConfigurationRequest::Restore { .. }) {
             ChangeCause::Restore
         } else {
@@ -254,6 +323,9 @@ impl Configurations {
                 },
             },
         )?;
+        if let Some(resources) = resources {
+            resources.record(&tx, network, effects.revision)?;
+        }
         let changes = effects.changes();
         let result = ConfigurationAppliedResponse {
             request_id: id,
@@ -343,6 +415,7 @@ impl Configurations {
         current: &Snapshot,
         request: &ConfigurationRequest,
         generate_materials: bool,
+        resources: Option<&resources::Preparation>,
     ) -> Result<PreparedConfiguration, Error> {
         if request.expected_revision() != current.revision {
             return Err(Error::Conflict);
@@ -409,8 +482,11 @@ impl Configurations {
             }
         };
         // Node inventory is transaction-backed. Remote artifacts still require
-        // the resources owner's binding adapter; never fabricate an empty set.
+        // exact prepared content and the final binding adapter, never empty sets.
         check_inputs(tx, current, &input)?;
+        if let Some(resources) = resources {
+            resources.revalidate(tx, current, &input)?;
+        }
         let members = members(tx, current.network_id)?;
         let mut recreated_listeners = BTreeSet::new();
         if let ConfigurationRequest::Operations { ops, .. } = request {
@@ -446,7 +522,7 @@ impl Configurations {
         validation.expected_node_user_bindings = expected_nodes;
         validation.verified_listeners = verified_listeners;
         validation.recreated_listeners = recreated_listeners;
-        let rule_sets = if let ConfigurationRequest::Restore {
+        let mut rule_sets = if let ConfigurationRequest::Restore {
             restore_from,
             resource_publication,
             ..
@@ -470,15 +546,90 @@ impl Configurations {
         } else {
             crate::resources::bindings::for_input(tx, current, &input)?.0
         };
+        let mut new_content = false;
+        if let Some(resources) = resources {
+            validation.rule_sets.extend(resources.contents.clone());
+            crate::resources::bindings::check_budget(&validation.rule_sets)?;
+            if generate_materials {
+                resources.bind(tx, current, &mut rule_sets)?;
+            } else {
+                new_content = resources.preview_bindings(tx, current, &mut rule_sets)?;
+            }
+        }
         let context = TrustedContext {
             validation,
             rule_sets,
         };
         let mut prepared = prepare(input, source, current, &context)?;
+        if new_content
+            && !prepared
+                .changes
+                .iter()
+                .any(|change| change.path == "/bindings/ruleSets")
+        {
+            prepared
+                .changes
+                .push(meshway_configuration::ConfigurationChange {
+                    path: "/bindings/ruleSets".into(),
+                    kind: meshway_configuration::ChangeKind::Changed,
+                });
+        }
         if let ConfigurationRequest::Restore { restore_from, .. } = request {
             prepared.rollback_from = Some(*restore_from);
         }
         Ok(prepared)
+    }
+    async fn prepare_resources(
+        &self,
+        digest: [u8; 32],
+        network: NetworkId,
+        request: ConfigurationRequest,
+        retry: bool,
+    ) -> Result<(ConfigurationRequest, Option<resources::Preparation>), Error> {
+        let service = self.clone();
+        let (request, mut resources) = self
+            .handle
+            .execute(move |db| {
+                let tx = db.transaction()?;
+                let preparation = service.stage_resources(&tx, digest, network, &request, retry)?;
+                Ok::<_, Error>((request, preparation))
+            })
+            .await
+            .map_err(|_| Error::Storage)??;
+        if let Some(resources) = &mut resources {
+            resources.download(&self.downloads).await?;
+        }
+        Ok((request, resources))
+    }
+    fn stage_resources(
+        &self,
+        tx: &Transaction<'_>,
+        digest: [u8; 32],
+        network: NetworkId,
+        request: &ConfigurationRequest,
+        retry: bool,
+    ) -> Result<Option<resources::Preparation>, Error> {
+        let user = self.authorize(tx, &digest, network)?;
+        if retry && tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM configuration_commits WHERE network_id=?1 AND user_id=?2 AND request_id=?3)",
+                params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),request.request_id().as_uuid().as_bytes().as_slice()],
+                |row| row.get::<_,bool>(0),
+            )? { return Ok(None); }
+        let current = self.current(tx, network)?;
+        if current.revision != request.expected_revision() {
+            return Err(Error::Conflict);
+        }
+        let input = match &request {
+            ConfigurationRequest::Document { source_jsonc, .. } => {
+                parse_jsonc(source_jsonc.expose())?
+            }
+            ConfigurationRequest::Operations { ops, .. } => {
+                edit_source(current.document.source_jsonc.expose(), ops)?.1
+            }
+            ConfigurationRequest::Restore { .. } => return Ok(None),
+        };
+        check_inputs(tx, &current, &input)?;
+        resources::Preparation::stage(tx, &current, &input).map(Some)
     }
 }
 

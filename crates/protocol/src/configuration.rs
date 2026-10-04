@@ -40,6 +40,9 @@ impl ConfigurationRequest {
 wire_object! {pub struct ConfigurationResponse {pub request_id:RequestId,pub network_id:NetworkId,pub revision:Revision,pub configuration:ConfigurationView} }
 wire_object! {pub struct ConfigurationSourceResponse {pub request_id:RequestId,pub network_id:NetworkId,pub revision:Revision,pub source_jsonc:WireSecret,pub configuration:NetworkConfiguration} }
 wire_object! {pub struct ConfigurationPreviewResponse {
+    /// Transient canonical content checked by validate; no artifact/version reservation.
+    #[serde(deserialize_with="meshway_serde::unique_map")]
+    pub prepared_rule_sets: std::collections::BTreeMap<String,crate::resources::PreparedRuleSet>,
     pub unavailable_dependencies: Vec<meshway_configuration::ConfigurationIssue>,
     pub request_id:RequestId,pub base_revision:Revision,pub preview:ConfigurationView,
     pub change_count:u32,pub changes:Vec<ConfigurationChange>,pub source_changed:bool,

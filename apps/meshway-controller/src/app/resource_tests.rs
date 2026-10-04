@@ -16,7 +16,7 @@ use std::{
     net::{SocketAddr, TcpListener},
     sync::{
         Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -26,6 +26,10 @@ fn rid() -> RequestId {
 }
 
 struct HttpsSource {
+    requests: Arc<AtomicUsize>,
+    hold_body: Arc<AtomicBool>,
+    body_entered: Arc<tokio::sync::Notify>,
+    peer_closed: Arc<AtomicBool>,
     address: SocketAddr,
     certificate: Vec<u8>,
     body: Arc<Mutex<(u16, String)>>,
@@ -65,6 +69,14 @@ impl HttpsSource {
         )));
         let stopped = Arc::new(AtomicBool::new(false));
         let server_body = body.clone();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let server_requests = requests.clone();
+        let hold_body = Arc::new(AtomicBool::new(false));
+        let held = hold_body.clone();
+        let body_entered = Arc::new(tokio::sync::Notify::new());
+        let entered = body_entered.clone();
+        let peer_closed = Arc::new(AtomicBool::new(false));
+        let closed = peer_closed.clone();
         let stop = stopped.clone();
         let thread = std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
@@ -95,6 +107,34 @@ impl HttpsSource {
                 if input.is_empty() {
                     continue;
                 }
+                server_requests.fetch_add(1, Ordering::SeqCst);
+                if held.load(Ordering::SeqCst) {
+                    entered.notify_one();
+                    tls.sock
+                        .set_read_timeout(Some(Duration::from_millis(100)))
+                        .unwrap();
+                    while held.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
+                        match tls.read(&mut buf) {
+                            Ok(0) => {
+                                closed.store(true, Ordering::SeqCst);
+                                break;
+                            }
+                            Err(error)
+                                if matches!(
+                                    error.kind(),
+                                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                                ) => {}
+                            Err(_) => {
+                                closed.store(true, Ordering::SeqCst);
+                                break;
+                            }
+                            Ok(_) => {}
+                        }
+                    }
+                    if closed.load(Ordering::SeqCst) {
+                        continue;
+                    }
+                }
                 let (status, body) = server_body.lock().unwrap().clone();
                 let header = format!(
                     "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nLocation: https://127.0.0.1/forbidden\r\nConnection: close\r\n\r\n",
@@ -107,6 +147,10 @@ impl HttpsSource {
             }
         });
         Arc::new(Self {
+            requests,
+            hold_body,
+            body_entered,
+            peer_closed,
             address,
             certificate,
             body,
@@ -184,8 +228,12 @@ struct Server {
 }
 impl Server {
     async fn open(path: &std::path::Path, source: Arc<HttpsSource>) -> Self {
-        let mut app = App::open(Settings::new(path)).await.unwrap();
-        app.resource_connector = Some(source);
+        let app = App::open_with_downloads(
+            Settings::new(path),
+            crate::resources::downloads::Downloads::with_connector(source),
+        )
+        .await
+        .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let router = crate::http::router(&app);
@@ -425,6 +473,461 @@ async fn publication_bindings(
         serde_json::from_slice(&bytes).unwrap()
     }).await.unwrap()
 }
+
+async fn resource_counts(s: &Server, network: NetworkId) -> (i64, i64, i64) {
+    s.app
+        .executor
+        .handle()
+        .execute(move |db| {
+            let count = |table: &str| {
+                db.query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE network_id=?1"),
+                    [network.as_uuid().as_bytes().as_slice()],
+                    |row| row.get(0),
+                )
+                .unwrap()
+            };
+            (
+                count("dataset_artifacts"),
+                count("configuration_versions"),
+                count("execution_publications"),
+            )
+        })
+        .await
+        .unwrap()
+}
+async fn wait_view(
+    s: &Server,
+    token: &str,
+    network: NetworkId,
+    predicate: impl Fn(&RuleSetView) -> bool,
+) -> RuleSetView {
+    tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            let view = s.view(token, network).await;
+            if predicate(&view) {
+                return view;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("resource scheduler made bounded progress")
+}
+
+#[tokio::test]
+async fn configuration_prepares_new_and_replaced_references_in_one_cas_without_preview_writes() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("data");
+    let remote = HttpsSource::new();
+    let s = Server::open(&path, remote.clone()).await;
+    let owner = s.register("apply-resources@example.com").await;
+    let token = owner.token.expose();
+    let network = s.create(token).await.id;
+    let current = s.source(token, network).await;
+    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    input.tags_owners.insert("tag:test".into(), vec![]);
+    s.apply(token, network, current.revision, &input).await;
+    let (a, at, ai) = enroll(&s, token, network, 41).await;
+    let (b, _, _) = enroll(&s, token, network, 42).await;
+    let current = s.source(token, network).await;
+    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    input.rule_sets.insert("remote".into(), remote.definition());
+    input.nodes.get_mut(&b.node_id).unwrap().exit_enabled = true;
+    input.access.push(AccessRule {
+        remark: String::new(),
+        src: vec!["*".into()],
+        dst: vec!["8.8.8.0/24".into()],
+        ip: vec!["*".into()],
+        bidirectional: false,
+    });
+    input.routing.egress.rules.push(EgressRule {
+        remark: String::new(),
+        matcher: RouteMatch {
+            rule_sets: vec!["remote".into()],
+            ..Default::default()
+        },
+        action: RouteAction::Exit {
+            nodes: vec![format!("node:{}", b.node_id)],
+            via: vec![],
+        },
+    });
+    let before = resource_counts(&s, network).await;
+    let preview: ConfigurationPreviewResponse = json(
+        s.client
+            .post(s.network(network, "configuration/validate"))
+            .bearer_auth(token)
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+            }),
+    )
+    .await;
+    assert_eq!(preview.prepared_rule_sets["remote"].entries, 1);
+    assert_eq!(resource_counts(&s, network).await, before);
+    assert_eq!(s.source(token, network).await.revision, current.revision);
+    let applied = s.apply(token, network, current.revision, &input).await;
+    assert_eq!(applied.revision.get(), current.revision.get() + 1);
+    let first = s.view(token, network).await.artifact.unwrap().id;
+    assert_eq!(
+        publication_bindings(&s, network, applied.publication_ids[0]).await["remote"],
+        first
+    );
+    let demand_id = rid();
+    let result: DemandResponse = json(
+        s.client
+            .post(format!("{}/agent-api/v1/demands", s.url))
+            .bearer_auth(&at)
+            .json(&DemandRequest {
+                instance: ai.clone(),
+                request_id: demand_id,
+                target: BusinessTarget::Ip {
+                    address: ExecutionAddress("8.8.8.200".parse().unwrap()),
+                },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 300,
+            }),
+    )
+    .await;
+    assert!(matches!(
+        result.decision,
+        DemandDecision::Unmanaged | DemandDecision::Direct
+    ));
+    let current = s.source(token, network).await;
+    let mut replacement = NetworkConfigurationInput::from(&current.configuration);
+    if let RuleSet::Remote { url, .. } = replacement.rule_sets.get_mut("remote").unwrap() {
+        *url = remote.url("/replacement");
+    }
+    remote.set(200, "payload:\n - 0.0.0.0/0\n");
+    let before = resource_counts(&s, network).await;
+    for endpoint in ["configuration/validate", "configuration"] {
+        let response = s
+            .client
+            .post(s.network(network, endpoint))
+            .bearer_auth(token)
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&replacement).unwrap()),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(resource_counts(&s, network).await, before);
+        assert_eq!(
+            s.source(token, network).await.source_jsonc.expose(),
+            current.source_jsonc.expose()
+        );
+    }
+    remote.set(200, "payload:\n - 8.8.8.0/24\n");
+    let replaced = s
+        .apply(token, network, current.revision, &replacement)
+        .await;
+    let second = s.view(token, network).await.artifact.unwrap().id;
+    assert_ne!(first, second);
+    let target = target(&s, &at, &ai).await.full.unwrap().configuration;
+    assert!(matches!(
+        target.decisions[&demand_id],
+        DemandDecision::Permitted { .. }
+    ));
+    assert_eq!(
+        publication_bindings(&s, network, target.publication).await["remote"],
+        second
+    );
+    assert_eq!(
+        publication_bindings(&s, network, applied.publication_ids[0]).await["remote"],
+        first
+    );
+
+    // A normal concurrent source edit wins its CAS; the downloaded candidate
+    // cannot overwrite that newer complete configuration.
+    let current = s.source(token, network).await;
+    let mut candidate = NetworkConfigurationInput::from(&current.configuration);
+    if let RuleSet::Remote { url, .. } = candidate.rule_sets.get_mut("remote").unwrap() {
+        *url = remote.url("/racing");
+    }
+    remote.pause();
+    let pending = tokio::spawn(
+        s.client
+            .post(s.network(network, "configuration"))
+            .bearer_auth(token)
+            .json(&ConfigurationRequest::Document {
+                expected_revision: replaced.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&candidate).unwrap()),
+            })
+            .send(),
+    );
+    remote.entered.notified().await;
+    let mut other = NetworkConfigurationInput::from(&current.configuration);
+    other.nodes.get_mut(&a.node_id).unwrap().remark = "concurrent edit".into();
+    s.apply(token, network, current.revision, &other).await;
+    let counts = resource_counts(&s, network).await;
+    remote.resume.notify_one();
+    assert_eq!(
+        pending.await.unwrap().unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(resource_counts(&s, network).await, counts);
+    assert_eq!(s.view(token, network).await.artifact.unwrap().id, second);
+
+    // Same source revision, newer bound content: the final transaction also
+    // rejects the stale base artifact rather than relying solely on source CAS.
+    let current = s.source(token, network).await;
+    let mut candidate = NetworkConfigurationInput::from(&current.configuration);
+    if let RuleSet::Remote { url, .. } = candidate.rule_sets.get_mut("remote").unwrap() {
+        *url = remote.url("/artifact-race");
+    }
+    remote.pause();
+    let pending = tokio::spawn(
+        s.client
+            .post(s.network(network, "configuration"))
+            .bearer_auth(token)
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&candidate).unwrap()),
+            })
+            .send(),
+    );
+    remote.entered.notified().await;
+    remote.set(200, "payload:\n - 8.8.8.128/25\n");
+    let refreshed = s.refresh(token, network).await.artifact.unwrap().id;
+    let counts = resource_counts(&s, network).await;
+    remote.resume.notify_one();
+    assert_eq!(
+        pending.await.unwrap().unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(resource_counts(&s, network).await, counts);
+    assert_eq!(s.view(token, network).await.artifact.unwrap().id, refreshed);
+    assert_eq!(
+        s.source(token, network).await.source_jsonc.expose(),
+        current.source_jsonc.expose()
+    );
+    // Both apply and validate recheck the actual manager role after shared I/O.
+    use meshway_protocol::management::*;
+    let admin = s.register("apply-resource-admin@example.com").await;
+    let link: JoinLinkCreated = json(
+        s.client
+            .post(s.network(network, "join-links"))
+            .bearer_auth(token)
+            .json(&CreateJoinLinkRequest {
+                request_id: rid(),
+                role: MembershipRole::Admin,
+                expires_in_seconds: 600,
+            }),
+    )
+    .await;
+    let JoinLinkCreated::Available { secret, .. } = link else {
+        panic!("join secret");
+    };
+    let joined: JoinLinkRedeemed = json(
+        s.client
+            .post(format!("{}/api/v1/join-links/redeem", s.url))
+            .bearer_auth(admin.token.expose())
+            .json(&JoinLinkCredentialRequest {
+                token: WireSecret::new(secret.expose().into()),
+            }),
+    )
+    .await;
+    let current = s.source(token, network).await;
+    let mut candidate = NetworkConfigurationInput::from(&current.configuration);
+    if let RuleSet::Remote { url, .. } = candidate.rule_sets.get_mut("remote").unwrap() {
+        *url = remote.url("/role-race");
+    }
+    remote.pause();
+    let pending = tokio::spawn(
+        s.client
+            .post(s.network(network, "configuration"))
+            .bearer_auth(admin.token.expose())
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&candidate).unwrap()),
+            })
+            .send(),
+    );
+    remote.entered.notified().await;
+    let preview = tokio::spawn(
+        s.client
+            .post(s.network(network, "configuration/validate"))
+            .bearer_auth(admin.token.expose())
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&candidate).unwrap()),
+            })
+            .send(),
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let response = s
+        .client
+        .post(s.network(network, &format!("members/{}/role", joined.membership_id)))
+        .bearer_auth(token)
+        .json(&ChangeMemberRoleRequest {
+            expected_version: Version::MIN,
+            role: MembershipRole::Member,
+        })
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let counts = resource_counts(&s, network).await;
+    remote.resume.notify_one();
+    assert_eq!(
+        pending.await.unwrap().unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        preview.await.unwrap().unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(resource_counts(&s, network).await, counts);
+    assert_eq!(
+        s.source(token, network).await.source_jsonc.expose(),
+        current.source_jsonc.expose()
+    );
+    // Per-file valid inputs cannot multiply into an unbounded execution input
+    // through aliases or successive configuration versions.
+    let mut body = String::from("payload:\n");
+    for index in 0..50_001u32 {
+        body.push_str(&format!(
+            " - {}/32\n",
+            std::net::Ipv4Addr::from(0x0b000000 + index)
+        ));
+    }
+    remote.set(200, &body);
+    let mut large = NetworkConfigurationInput::from(&current.configuration);
+    let mut definition = remote.definition();
+    if let RuleSet::Remote { url, .. } = &mut definition {
+        *url = remote.url("/large");
+    }
+    large.rule_sets.insert("large-a".into(), definition.clone());
+    large.rule_sets.insert("large-b".into(), definition);
+    let before = resource_counts(&s, network).await;
+    for endpoint in ["configuration/validate", "configuration"] {
+        let response = s
+            .client
+            .post(s.network(network, endpoint))
+            .bearer_auth(token)
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&large).unwrap()),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let error: ErrorResponse = response.json().await.unwrap();
+        let Problem::ConfigurationInvalid { params, .. } = error.problem else {
+            panic!("typed budget error");
+        };
+        assert!(
+            params
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("network budget"))
+        );
+        assert_eq!(resource_counts(&s, network).await, before);
+    }
+    s.close().await;
+}
+
+#[tokio::test]
+async fn startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("data");
+    let remote = HttpsSource::new();
+    let s = Server::open(&path, remote.clone()).await;
+    let owner = s.register("scheduler@example.com").await;
+    let token = owner.token.expose();
+    let network = s.create(token).await.id;
+    let current = s.source(token, network).await;
+    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    let mut definition = remote.definition();
+    if let RuleSet::Remote {
+        update_interval, ..
+    } = &mut definition
+    {
+        *update_interval = "1ms".parse().unwrap();
+    }
+    input.rule_sets.insert("remote".into(), definition);
+    s.apply(token, network, current.revision, &input).await;
+    let initial = s.view(token, network).await;
+    let first = initial.artifact.unwrap().id;
+    s.close().await;
+    remote.set(200, "payload:\n - 8.8.8.0/24\n");
+    // No explicit refresh or retained administrator session is passed to the
+    // worker: ordinary App startup resumes from persisted check deadlines.
+    let s = Server::open(&path, remote.clone()).await;
+    let updated = wait_view(&s, token, network, |v| {
+        v.artifact.as_ref().is_some_and(|a| a.id != first)
+    })
+    .await;
+    let counts = resource_counts(&s, network).await;
+    remote.set(200, "payload:\n - 8.8.8.9/24\n - 8.8.8.0/24\n");
+    let unchanged = wait_view(&s, token, network, |v| v.checked_at > updated.checked_at).await;
+    assert_eq!(unchanged.publication, updated.publication);
+    assert_eq!(resource_counts(&s, network).await, counts);
+    remote.set(503, "unavailable");
+    let failed = wait_view(&s, token, network, |v| {
+        v.problem == Some(ResourceProblem::DownloadFailed)
+    })
+    .await;
+    let requests = remote.requests.load(Ordering::SeqCst);
+    s.close().await;
+    let s = Server::open(&path, remote.clone()).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(s.view(token, network).await.checked_at, failed.checked_at);
+    assert_eq!(remote.requests.load(Ordering::SeqCst), requests);
+    let retried = wait_view(&s, token, network, |v| v.checked_at > failed.checked_at).await;
+    assert_eq!(retried.artifact, failed.artifact);
+    remote.set(200, "payload:\n - 8.8.8.0/24\n");
+    s.refresh(token, network).await;
+    remote.hold_body.store(true, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(3), remote.body_entered.notified())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), s.close())
+        .await
+        .expect("shutdown joins cancellation, not download timeout");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !remote.peer_closed.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("TLS socket closed by cancellation");
+    remote.hold_body.store(false, Ordering::SeqCst);
+    let s = Server::open(&path, remote.clone()).await;
+    remote.peer_closed.store(false, Ordering::SeqCst);
+    remote.hold_body.store(true, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(3), remote.body_entered.notified())
+        .await
+        .unwrap();
+    let Server {
+        app, stop, task, ..
+    } = s;
+    stop.send(()).unwrap();
+    task.await.unwrap();
+    drop(app);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !remote.peer_closed.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("App drop cancels owned network work");
+    remote.hold_body.store(false, Ordering::SeqCst);
+}
 async fn execution_facts(
     s: &Server,
     network: NetworkId,
@@ -503,10 +1006,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
     input.tags_owners.insert("tag:test".into(), vec![]);
     input.rule_sets.insert("remote".into(), remote.definition());
     s.apply(token, network, source.revision, &input).await;
-    assert_eq!(
-        s.view(token, network).await.problem,
-        Some(ResourceProblem::NotReady)
-    );
+    assert!(s.view(token, network).await.problem.is_none());
     let (a, at, ai) = enroll(&s, token, network, 31).await;
     let (b, bt, bi) = enroll(&s, token, network, 32).await;
     let (c, ct, ci) = enroll(&s, token, network, 33).await;
@@ -539,7 +1039,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
     });
     let response = s
         .client
-        .post(s.network(network, "configuration"))
+        .post(s.network(network, "configuration/validate"))
         .bearer_auth(token)
         .json(&ConfigurationRequest::Document {
             expected_revision: source.revision,
@@ -551,7 +1051,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
         .unwrap();
     assert_eq!(
         response.status(),
-        StatusCode::UNPROCESSABLE_ENTITY,
+        StatusCode::OK,
         "{}",
         response.text().await.unwrap()
     );
@@ -752,6 +1252,11 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
         publication_bindings(&s, network, restored.publication_ids[0]).await["remote"],
         second_id
     );
+    // A restored exact binding is not immediately replaced just because its
+    // new source version has no download check record. Its declared interval
+    // starts at this source commit without claiming a fresh download in State.
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(s.view(token, network).await.checked_at.is_none());
     assert_eq!(s.view(token, network).await.artifact.unwrap().id, second_id);
     let source = s.source(token, network).await;
     let mut disabled = NetworkConfigurationInput::from(&source.configuration);
@@ -822,6 +1327,32 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     input.rule_sets.insert("remote".into(), remote.definition());
     s.apply(token, network, source.revision, &input).await;
     let first = s.refresh(token, network).await.artifact.unwrap().id;
+    // Concurrent callers join one real TLS transfer; only the first final
+    // checker can update freshness, the stale waiter cannot overwrite it.
+    remote.pause();
+    let count = remote.requests.load(Ordering::SeqCst);
+    let one = tokio::spawn(
+        s.client
+            .post(s.network(network, "rule-sets/remote/refresh"))
+            .bearer_auth(token)
+            .send(),
+    );
+    remote.entered.notified().await;
+    let two = tokio::spawn(
+        s.client
+            .post(s.network(network, "rule-sets/remote/refresh"))
+            .bearer_auth(token)
+            .send(),
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    remote.resume.notify_one();
+    let mut statuses = [
+        one.await.unwrap().unwrap().status().as_u16(),
+        two.await.unwrap().unwrap().status().as_u16(),
+    ];
+    statuses.sort();
+    assert_eq!(statuses, [200, 409]);
+    assert_eq!(remote.requests.load(Ordering::SeqCst), count + 1);
     let cross = s
         .client
         .get(s.network(outside, "rule-sets/remote"))
@@ -852,8 +1383,8 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     );
     let pending = s.view(token, network).await;
     assert_eq!(pending.configuration_revision, changed.revision);
-    assert!(pending.artifact.is_none());
-    assert_eq!(pending.problem, Some(ResourceProblem::NotReady));
+    assert_eq!(pending.artifact.unwrap().id, first);
+    assert!(pending.problem.is_none());
     assert_eq!(s.refresh(token, network).await.artifact.unwrap().id, first);
 
     remote.pause();

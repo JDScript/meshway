@@ -15,6 +15,7 @@ use meshway_protocol::resources::{ArtifactSummary, ResourceProblem, RuleSetView}
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::{collections::BTreeMap, sync::Arc};
 
+#[derive(Clone)]
 pub struct Provider {
     pub(crate) sealer: Arc<Sealer>,
     pub(crate) cache: Arc<SnapshotCache>,
@@ -57,6 +58,15 @@ impl ResourceProvider for Provider {
         // receive compiled execution only, never source URLs or global catalogs.
         crate::store::authorization::authorize_manager(tx, *network, session.user.id)
             .map_err(|_| StateError::Forbidden)?;
+        self.system_rule_sets(tx, *network, now)
+    }
+    fn system_rule_sets(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        _now: DateTime<Utc>,
+    ) -> Result<RuleSetScope, StateError> {
+        let network = &network;
         let snapshot = self.snapshot(tx, *network)?;
         let selected = bindings::at_revision(
             tx,
@@ -68,27 +78,34 @@ impl ResourceProvider for Provider {
         let publication = bindings::latest_publication(tx, *network, snapshot.revision)
             .map_err(|_| StateError::Storage)?;
         let mut views = BTreeMap::new();
+        let mut check_versions = BTreeMap::new();
         for (key, definition) in &snapshot.document.configuration.rule_sets {
             let artifact = selected
                 .get(key)
                 .map(|id| summary(tx, *network, *id))
                 .transpose()?;
-            let check: Option<(Option<String>, i64, Option<i64>)> = tx.query_row(
-                "SELECT problem,checked_at,last_success_at FROM rule_set_checks WHERE network_id=?1 AND revision=?2 AND rule_set_key=?3",
+            let check: Option<(Option<String>, i64, Option<i64>, i64)> = tx.query_row(
+                "SELECT problem,checked_at,last_success_at,check_version FROM rule_set_checks WHERE network_id=?1 AND revision=?2 AND rule_set_key=?3",
                 params![network.as_uuid().as_bytes().as_slice(), snapshot.revision.get() as i64, key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             ).optional()?;
+            check_versions.insert(
+                key.clone(),
+                check.as_ref().map_or(0, |(_, _, _, version)| *version),
+            );
             let problem = check
                 .as_ref()
-                .and_then(|(problem, _, _)| problem.as_ref())
+                .and_then(|(problem, _, _, _)| problem.as_ref())
                 .map(|value| serde_json::from_str(value).map_err(|_| StateError::Storage))
                 .transpose()?;
             let checked_at = check
                 .as_ref()
-                .map(|(_, at, _)| DateTime::from_timestamp_millis(*at).ok_or(StateError::Storage))
+                .map(|(_, at, _, _)| {
+                    DateTime::from_timestamp_millis(*at).ok_or(StateError::Storage)
+                })
                 .transpose()?;
             let last_success_at = check
-                .and_then(|(_, _, at)| at)
+                .and_then(|(_, _, at, _)| at)
                 .map(|at| DateTime::from_timestamp_millis(at).ok_or(StateError::Storage))
                 .transpose()?;
             views.insert(
@@ -115,6 +132,7 @@ impl ResourceProvider for Provider {
             can_refresh: true,
             definitions: snapshot.document.configuration.rule_sets.clone(),
             views,
+            check_versions,
         })
     }
 
@@ -144,6 +162,7 @@ impl ResourceProvider for Provider {
         let mut selected =
             bindings::at_revision(tx, network, revision, &current.bindings.rule_sets)
                 .map_err(|_| StateError::Storage)?;
+        let unchanged = selected.get(key) == Some(&artifact.id);
         selected.insert(key.into(), artifact.id);
         let mut context =
             crate::execution::configuration::validation_context(tx, &current, &input, None, true)
@@ -163,6 +182,9 @@ impl ResourceProvider for Provider {
             .collect();
         meshway_configuration::normalize_with_dependencies(input, &context)
             .map_err(|_| StateError::Invalid)?;
+        if unchanged {
+            return Ok(());
+        }
         crate::store::execution::publish_with_rule_sets(
             tx,
             &self.sealer,

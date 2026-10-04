@@ -293,7 +293,7 @@ InitialNodeSettings 字段为 `hostname: string?`、`listeners: Map<ListenerKey,
 
 `PublicationDependencies` 字段：`userBindings: UserBinding[]`、`nodeIds: NodeId[]`、`keyIds: KeyId[]`、`ruleSets: Map<RuleSetKey,ArtifactId>`。地址与协议材料来自所引用的完整配置版本，编译进每个参与节点的确定切片；持续使用仍检查当前吊销／租约。改址时不能将旧地址许可拼接到新发布。
 
-新 Controller 候选将精确规则集 map 持久化于 `execution_publications.rule_set_bindings`，与不可变规范化 artifact 和发布负载在同一事务提交。同一源 revision 的最新成功发布决定当前绑定；重启直接还原，历史恢复按初始源绑定或请求中明确指定的 publication 读取，不猜用最新下载。`rule_set_checks` 按 network／revision／key 保存最后检查时间、最后成功时间和安全错误分类；它不拥有当前内容，也不能覆盖发布中的绑定。
+新 Controller 候选将精确规则集 map 持久化于 `execution_publications.rule_set_bindings`，与不可变规范化 artifact 和发布负载在同一事务提交。同一源 revision 的最新成功发布决定当前绑定；重启直接还原，历史恢复按初始源绑定或请求中明确指定的 publication 读取，不猜用最新下载。`rule_set_checks` 按 network／revision／key 保存最后检查时间、最后成功时间、安全错误分类和有界连续失败次数，供周期重试恢复退避；内部单调 `check_version` 对检查结果做 CAS，不依赖毫秒时间戳唯一性。该表不拥有当前内容，也不能覆盖发布中的绑定。配置 apply 在最终事务内记录实际下载准备成功后的检查，validate 不写这些记录。
 
 每份发布固定一致依赖和目标内容，各节点收到后独立应用。替换目标时创建新发布，通过 supersedes 关联，不在原 ID 下改 digest；同一有效目标的重试可复用内容。cause=configuration 的进度与后续 demand／refresh 分开展示。
 

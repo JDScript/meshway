@@ -1,6 +1,6 @@
 //! Exact immutable contents selected for a source version and each publication.
 use crate::configuration::{Error, Snapshot};
-use meshway_configuration::NetworkConfigurationInput;
+use meshway_configuration::{NetworkConfigurationInput, RuleSet};
 use meshway_model::resources::RuleSetData;
 use meshway_model::{ArtifactId, NetworkId, Revision};
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -8,6 +8,48 @@ use std::collections::BTreeMap;
 
 pub(crate) type Bindings = BTreeMap<String, ArtifactId>;
 pub(crate) type Contents = BTreeMap<String, RuleSetData>;
+#[derive(Default)]
+struct ContentBudget {
+    bytes: usize,
+    entries: usize,
+}
+impl ContentBudget {
+    fn include(&mut self, data: &RuleSetData) -> Result<(), Error> {
+        self.bytes = self
+            .bytes
+            .saturating_add(serde_json::to_vec(data).map_err(|_| Error::Storage)?.len());
+        self.entries = self
+            .entries
+            .saturating_add(data.ip_cidr.len())
+            .saturating_add(data.domain_suffix.len());
+        if self.bytes > super::MAX_DATASET_BYTES || self.entries > super::MAX_RULE_ENTRIES {
+            return Err(Error::Invalid(meshway_configuration::ConfigurationError::Invalid(vec![meshway_configuration::ConfigurationIssue {
+                path:"/ruleSets".into(),message:"execution rule set content exceeds the network budget (8 MiB / 100000 entries)".into(),
+            }])));
+        }
+        Ok(())
+    }
+}
+pub(crate) fn check_budget(contents: &Contents) -> Result<(), Error> {
+    let mut budget = ContentBudget::default();
+    for data in contents.values() {
+        budget.include(data)?;
+    }
+    Ok(())
+}
+pub(crate) fn same_source(a: &RuleSet, b: &RuleSet) -> bool {
+    match (a, b) {
+        (
+            RuleSet::Remote {
+                url: a, format: af, ..
+            },
+            RuleSet::Remote {
+                url: b, format: bf, ..
+            },
+        ) => a == b && af == bf,
+        _ => a == b,
+    }
+}
 
 pub(crate) fn inherit_checks(
     tx: &Transaction<'_>,
@@ -23,12 +65,17 @@ pub(crate) fn inherit_checks(
     )?;
     for (key, artifact) in &prepared.bindings.rule_sets {
         if previous.get(key) == Some(artifact)
-            && current.document.configuration.rule_sets.get(key)
-                == prepared.document.configuration.rule_sets.get(key)
+            && current
+                .document
+                .configuration
+                .rule_sets
+                .get(key)
+                .zip(prepared.document.configuration.rule_sets.get(key))
+                .is_some_and(|(a, b)| same_source(a, b))
         {
             tx.execute(
-                "INSERT INTO rule_set_checks(network_id,revision,rule_set_key,problem,checked_at,last_success_at)
-                 SELECT network_id,?1,rule_set_key,problem,checked_at,last_success_at FROM rule_set_checks
+                "INSERT INTO rule_set_checks(network_id,revision,rule_set_key,problem,checked_at,last_success_at,failures,check_version)
+                 SELECT network_id,?1,rule_set_key,problem,checked_at,last_success_at,failures,check_version FROM rule_set_checks
                  WHERE network_id=?2 AND revision=?3 AND rule_set_key=?4",
                 params![
                     revision.get() as i64,
@@ -93,11 +140,13 @@ pub(crate) fn contents(
     network: NetworkId,
     bindings: &Bindings,
 ) -> Result<Contents, Error> {
+    let mut budget = ContentBudget::default();
     bindings
         .iter()
         .map(|(key, id)| {
             let data =
                 super::load_artifact(tx, network, *id).map_err(|_| Error::DependencyUnavailable)?;
+            budget.include(&data)?;
             Ok((key.clone(), data))
         })
         .collect()
@@ -129,8 +178,11 @@ pub(crate) fn for_input(
         &current.bindings.rule_sets,
     )?;
     bindings.retain(|key, _| {
-        input.rule_sets.contains_key(key)
-            && input.rule_sets.get(key) == current.document.configuration.rule_sets.get(key)
+        input
+            .rule_sets
+            .get(key)
+            .zip(current.document.configuration.rule_sets.get(key))
+            .is_some_and(|(a, b)| same_source(a, b))
     });
     let data = contents(tx, current.network_id, &bindings)?;
     Ok((bindings, data))
@@ -144,16 +196,16 @@ pub(crate) fn compilation_contents(
     BTreeMap<String, meshway_configuration::execution::RuleSetContent>,
     crate::execution::NodeError,
 > {
-    bindings
-        .iter()
-        .map(|(key, id)| {
-            let data = super::load_artifact(tx, network, *id)
-                .map_err(|_| crate::execution::NodeError::Storage)?;
+    contents(tx, network, bindings)
+        .map_err(|_| crate::execution::NodeError::Storage)?
+        .into_iter()
+        .map(|(key, data)| {
+            let artifact = bindings[&key];
             Ok((
                 key.clone(),
                 meshway_configuration::execution::RuleSetContent {
                     network_id: network,
-                    artifact: *id,
+                    artifact,
                     ip_cidr: data.ip_cidr,
                     domain_suffix: data.domain_suffix,
                 },

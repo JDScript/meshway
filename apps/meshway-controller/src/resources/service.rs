@@ -6,9 +6,7 @@ use crate::state::{
 use chrono::{DateTime, Utc};
 use meshway_configuration::RuleSet;
 use meshway_model::{NetworkId, Revision};
-use meshway_protocol::resources::{
-    ArtifactSummary, ResourceProblem, RuleSetData, RuleSetList, RuleSetView,
-};
+use meshway_protocol::resources::{ArtifactSummary, ResourceProblem, RuleSetList, RuleSetView};
 use rusqlite::{Transaction, params};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -19,8 +17,19 @@ pub struct RuleSetScope {
     pub can_refresh: bool,
     pub definitions: BTreeMap<String, RuleSet>,
     pub views: BTreeMap<String, RuleSetView>,
+    /// Durable attempt CAS, independent of timestamp precision and artifact equality.
+    pub check_versions: BTreeMap<String, i64>,
 }
 pub trait ResourceProvider: Send + Sync + 'static {
+    /// Internal scheduler authority is network existence, never a user token.
+    fn system_rule_sets(
+        &self,
+        _tx: &Transaction<'_>,
+        _network: NetworkId,
+        _now: DateTime<Utc>,
+    ) -> Result<RuleSetScope, StateError> {
+        Err(StateError::Forbidden)
+    }
     fn rule_sets(
         &self,
         tx: &Transaction<'_>,
@@ -39,12 +48,40 @@ pub trait ResourceProvider: Send + Sync + 'static {
         now: DateTime<Utc>,
     ) -> Result<(), StateError>;
 }
-static DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+#[derive(Clone)]
+pub(crate) struct SystemTask {
+    pub network: NetworkId,
+    pub revision: Revision,
+    pub key: String,
+    pub definition: RuleSet,
+    pub artifact: Option<meshway_model::ArtifactId>,
+    pub checked_at: Option<DateTime<Utc>>,
+    pub check_version: i64,
+}
+static REFRESHES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
+#[derive(Clone)]
+enum Authority {
+    User(ReadIdentity),
+    System(NetworkId),
+}
+impl Authority {
+    fn scope<P: ResourceProvider>(
+        &self,
+        provider: &P,
+        tx: &Transaction<'_>,
+        now: DateTime<Utc>,
+    ) -> Result<RuleSetScope, StateError> {
+        match self {
+            Self::User(identity) => provider.rule_sets(tx, identity, now),
+            Self::System(network) => provider.system_rule_sets(tx, *network, now),
+        }
+    }
+}
 pub struct ResourceService<P: ResourceProvider> {
     handle: crate::store::Handle,
     provider: Arc<P>,
     runtime: Arc<Mutex<Runtime>>,
-    connector: Arc<dyn super::download::Connector>,
+    downloads: Arc<super::downloads::Downloads>,
 }
 impl<P: ResourceProvider> Clone for ResourceService<P> {
     fn clone(&self) -> Self {
@@ -52,7 +89,7 @@ impl<P: ResourceProvider> Clone for ResourceService<P> {
             handle: self.handle.clone(),
             provider: self.provider.clone(),
             runtime: self.runtime.clone(),
-            connector: self.connector.clone(),
+            downloads: self.downloads.clone(),
         }
     }
 }
@@ -61,17 +98,18 @@ impl<P: ResourceProvider> ResourceService<P> {
         handle: crate::store::Handle,
         provider: P,
         runtime: Arc<Mutex<Runtime>>,
+        downloads: Arc<super::downloads::Downloads>,
     ) -> Self {
         Self {
             handle,
             provider: Arc::new(provider),
             runtime,
-            connector: Arc::new(super::download::Https),
+            downloads,
         }
     }
     #[cfg(test)]
     pub(crate) fn with_connector(mut self, connector: Arc<dyn super::download::Connector>) -> Self {
-        self.connector = connector;
+        self.downloads = super::downloads::Downloads::with_connector(connector);
         self
     }
     pub async fn rule_sets(
@@ -125,15 +163,31 @@ impl<P: ResourceProvider> ResourceService<P> {
         identity: ReadIdentity,
         key: String,
     ) -> Result<RuleSetView, StateError> {
-        let permit = DOWNLOADS.try_acquire().map_err(|_| StateError::Budget)?;
+        self.refresh(Authority::User(identity), key, None).await
+    }
+    pub(crate) async fn refresh_system(&self, task: SystemTask) -> Result<RuleSetView, StateError> {
+        self.refresh(
+            Authority::System(task.network),
+            task.key.clone(),
+            Some(task),
+        )
+        .await
+    }
+    async fn refresh(
+        &self,
+        identity: Authority,
+        key: String,
+        expected: Option<SystemTask>,
+    ) -> Result<RuleSetView, StateError> {
+        let permit = REFRESHES.try_acquire().map_err(|_| StateError::Budget)?;
         let provider = self.provider.clone();
         let check_identity = identity.clone();
         let check_key = key.clone();
-        let (network, revision, definition, previous_artifact) = self
+        let (network, revision, definition, previous_artifact, previous_check_version) = self
             .handle
             .execute(move |connection| {
                 let tx = connection.transaction()?;
-                let scope = provider.rule_sets(&tx, &check_identity, Utc::now())?;
+                let scope = check_identity.scope(provider.as_ref(), &tx, Utc::now())?;
                 if !scope.can_refresh {
                     return Err(StateError::Forbidden);
                 }
@@ -147,32 +201,37 @@ impl<P: ResourceProvider> ResourceService<P> {
                     .get(&check_key)
                     .and_then(|view| view.artifact.as_ref())
                     .map(|artifact| artifact.id);
-                Ok::<_, StateError>((scope.network, scope.revision, definition, artifact))
+                let check_version = *scope.check_versions.get(&check_key).unwrap_or(&0);
+                if expected.is_some_and(|task| {
+                    task.revision != scope.revision
+                        || task.definition != definition
+                        || task.artifact != artifact
+                        || task.check_version != check_version
+                }) {
+                    return Err(StateError::Conflict);
+                }
+                Ok::<_, StateError>((
+                    scope.network,
+                    scope.revision,
+                    definition,
+                    artifact,
+                    check_version,
+                ))
             })
             .await??;
-        let converted = match &definition {
-            RuleSet::Inline {
-                ip_cidr,
-                domain_suffix,
-            } => super::normalize(RuleSetData {
-                ip_cidr: ip_cidr.clone(),
-                domain_suffix: domain_suffix.clone(),
-            }),
-            RuleSet::Remote { url, format, .. } => {
-                match super::download::download(url, self.connector.as_ref()).await {
-                    Ok(bytes) => super::convert(&bytes, format),
-                    Err(problem) => Err(problem),
-                }
-            }
+        let converted = match self.downloads.fetch(&definition).await {
+            Ok(data) => Ok(data),
+            Err(super::downloads::FetchError::Resource(problem)) => Err(problem),
+            Err(super::downloads::FetchError::Cancelled) => return Err(StateError::Unavailable),
         };
-        drop(permit);
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
         self.handle
             .execute(move |connection| {
+                let _permit = permit;
                 let tx = connection.transaction()?;
                 let now = Utc::now();
-                let scope = provider.rule_sets(&tx, &identity, now)?;
+                let scope = identity.scope(provider.as_ref(), &tx, now)?;
                 if !scope.can_refresh {
                     return Err(StateError::Forbidden);
                 }
@@ -183,6 +242,7 @@ impl<P: ResourceProvider> ResourceService<P> {
                     || scope.revision != revision
                     || scope.definitions.get(&key) != Some(&definition)
                     || current_artifact != previous_artifact
+                    || *scope.check_versions.get(&key).unwrap_or(&0) != previous_check_version
                 {
                     return Err(StateError::Conflict);
                 }
@@ -211,10 +271,12 @@ impl<P: ResourceProvider> ResourceService<P> {
                     .transpose()
                     .map_err(|_| StateError::Storage)?;
                 tx.execute(
-                    "INSERT INTO rule_set_checks(network_id,revision,rule_set_key,problem,checked_at,last_success_at)
-                     VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,revision,rule_set_key)
+                    "INSERT INTO rule_set_checks(network_id,revision,rule_set_key,problem,checked_at,last_success_at,failures)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(network_id,revision,rule_set_key)
                      DO UPDATE SET problem=excluded.problem,checked_at=excluded.checked_at,
-                        last_success_at=COALESCE(excluded.last_success_at,rule_set_checks.last_success_at)",
+                        last_success_at=COALESCE(excluded.last_success_at,rule_set_checks.last_success_at),
+                        failures=CASE WHEN excluded.problem IS NULL THEN 0 ELSE min(rule_set_checks.failures+1,16) END,
+                        check_version=rule_set_checks.check_version+1",
                     params![
                         network.as_uuid().as_bytes().as_slice(),
                         revision.get() as i64,
@@ -222,9 +284,10 @@ impl<P: ResourceProvider> ResourceService<P> {
                         stored_problem,
                         now.timestamp_millis(),
                         problem.is_none().then_some(now.timestamp_millis()),
+                        i64::from(problem.is_some()),
                     ],
                 )?;
-                let result = provider.rule_sets(&tx, &identity, now)?
+                let result = identity.scope(provider.as_ref(), &tx, now)?
                     .views.remove(&key).ok_or(StateError::Storage)?;
                 if result.artifact != artifact || result.problem != problem {
                     return Err(StateError::Storage);

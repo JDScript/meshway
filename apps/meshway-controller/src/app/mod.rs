@@ -16,6 +16,8 @@ static DIRECTORY_PREPARATIONS: Semaphore =
 /// the SQLite worker retains its process lock until accepted work has drained
 /// and the connection has closed. Use [`Self::shutdown`] to await that boundary.
 pub struct App {
+    resource_scheduler: crate::resources::scheduler::Scheduler,
+    downloads: Arc<crate::resources::downloads::Downloads>,
     executor: Executor,
     accounts: Accounts,
     sealer: Arc<Sealer>,
@@ -23,8 +25,6 @@ pub struct App {
     boot: meshway_model::InstanceId,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
-    #[cfg(test)]
-    resource_connector: Option<Arc<dyn crate::resources::download::Connector>>,
 }
 
 #[derive(Default)]
@@ -77,6 +77,12 @@ impl App {
     /// Opens a private, exclusively locked account-storage database.
     /// Existing unknown or damaged databases are rejected, never reset.
     pub async fn open(settings: Settings) -> Result<Self, AppError> {
+        Self::open_with_downloads(settings, crate::resources::downloads::Downloads::new()).await
+    }
+    async fn open_with_downloads(
+        settings: Settings,
+        downloads: Arc<crate::resources::downloads::Downloads>,
+    ) -> Result<Self, AppError> {
         let options = Options {
             queue_capacity: settings.database_queue_capacity,
             busy_timeout: settings.database_busy_timeout,
@@ -98,13 +104,14 @@ impl App {
         })
         .await
         .map_err(|_| AppError::Worker)??;
-        Self::open_directory(directory, options, account_options).await
+        Self::open_directory(directory, options, account_options, downloads).await
     }
 
     async fn open_directory(
         directory: Directory,
         options: Options,
         account_options: crate::accounts::Options,
+        downloads: Arc<crate::resources::downloads::Downloads>,
     ) -> Result<Self, AppError> {
         // No yield between taking the prepared directory and transferring it
         // to the SQLite worker. Dropping either future preserves lock ownership.
@@ -142,15 +149,26 @@ impl App {
                     runtime.close();
                 }
             }));
+        let sealer = Arc::new(sealer);
+        let configuration_cache = Arc::default();
+        let resource_scheduler = crate::resources::scheduler::Scheduler::start(
+            executor.handle(),
+            crate::resources::provider::Provider {
+                sealer: Arc::clone(&sealer),
+                cache: Arc::clone(&configuration_cache),
+            },
+            Arc::clone(&state_runtime),
+            downloads.clone(),
+        );
         Ok(Self {
+            resource_scheduler,
+            downloads,
             executor,
             accounts,
-            sealer: Arc::new(sealer),
-            configuration_cache: Arc::default(),
+            sealer,
+            configuration_cache,
             state_runtime,
             shutdown_hooks,
-            #[cfg(test)]
-            resource_connector: None,
             boot: meshway_model::InstanceId::new(
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
             )
@@ -179,6 +197,7 @@ impl App {
             self.sealer(),
             Arc::clone(&self.configuration_cache),
             self.commit_publisher(),
+            self.downloads.clone(),
         )
     }
     pub(crate) fn history(&self) -> crate::history::History {
@@ -202,6 +221,7 @@ impl App {
             self.executor.handle(),
             provider,
             Arc::clone(&self.state_runtime),
+            self.downloads.clone(),
         )
     }
     pub fn ip_datasets(&self) -> crate::resources::datasets::IpDatasets {
@@ -213,15 +233,10 @@ impl App {
     pub fn resources(
         &self,
     ) -> crate::resources::service::ResourceService<crate::resources::provider::Provider> {
-        let service = self.resource_service(crate::resources::provider::Provider {
+        self.resource_service(crate::resources::provider::Provider {
             sealer: self.sealer(),
             cache: Arc::clone(&self.configuration_cache),
-        });
-        #[cfg(test)]
-        if let Some(connector) = &self.resource_connector {
-            return service.with_connector(connector.clone());
-        }
-        service
+        })
     }
     /// Shared core handles are available before constructing any HTTP provider.
     pub fn state_reader(&self) -> crate::state::service::StateReader {
@@ -236,11 +251,13 @@ impl App {
     /// remain owned by the executor until `shutdown` completes.
     pub fn stream_shutdown(&self) -> impl FnOnce() + Send + 'static {
         let runtime = Arc::clone(&self.state_runtime);
+        let downloads = self.downloads.clone();
         move || {
             runtime
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
-                .close()
+                .close();
+            downloads.close();
         }
     }
 
@@ -335,6 +352,7 @@ impl App {
     /// Cancelling this future still leaves the process lock with the worker.
     pub async fn shutdown(self) -> Result<(), AppError> {
         self.shutdown_hooks.close();
+        self.resource_scheduler.shutdown().await;
         self.executor.shutdown().await?;
         Ok(())
     }

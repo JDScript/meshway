@@ -3,9 +3,11 @@
 pub(crate) mod bindings;
 pub mod datasets;
 pub(crate) mod download;
+pub(crate) mod downloads;
 mod geoip;
 pub mod provider;
 mod rulesets;
+pub(crate) mod scheduler;
 pub mod service;
 pub use geoip::GeoIp;
 pub use rulesets::{convert, normalize};
