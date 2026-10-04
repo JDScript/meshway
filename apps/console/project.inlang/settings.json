@@ -12,7 +12,8 @@
       "./messages/settings/{locale}.json",
       "./messages/account/{locale}.json",
       "./messages/configuration/{locale}.json",
-      "./messages/nodes/{locale}.json"
+      "./messages/nodes/{locale}.json",
+      "./messages/live/{locale}.json"
     ]
   }
 }

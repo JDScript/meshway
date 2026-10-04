@@ -9,6 +9,7 @@ import { useBootStore } from "@/features/boot/boot-store"
 import { ConfigurationPage } from "@/features/configuration/page"
 import { EMPTY_SCENE } from "@/features/globe/scene"
 import { setGlobe } from "@/features/globe/store"
+import { LiveIndicator } from "@/features/live/live-indicator"
 import { MembersPage } from "@/features/members/page"
 import { NodesPage } from "@/features/nodes/page"
 import { NetworkChip } from "@/features/overview/network-chip"
@@ -115,6 +116,9 @@ export function NetworkShell({
         className="enter absolute top-(--mobile-edge) right-(--mobile-edge) md:top-(--edge) md:right-(--edge)"
         style={{ "--enter-delay": "80ms" }}
       >
+        <span key="live" className="flex">
+          <LiveIndicator networkId={networkId} />
+        </span>
         <span key="language" className="flex">
           <LanguageSwitch />
         </span>

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "live_status": "Live update status",
+  "live_live": "Live",
+  "live_live_since": "Receiving the control plane's event stream since {time}; what this page shows follows it.",
+  "live_connecting": "Connecting",
+  "live_connecting_detail": "Until the event stream is ready, this page reads again at intervals.",
+  "live_reconnecting": "Reconnecting",
+  "live_reconnecting_since": "The event stream dropped at {time} and is reconnecting; meanwhile this page reads again at intervals.",
+  "live_stopped": "No events",
+  "live_stopped_detail": "Since {time} the control plane no longer streams this network's events to this account.",
+  "live_off": "Not connected"
+}
