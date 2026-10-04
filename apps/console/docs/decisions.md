@@ -207,7 +207,8 @@ its generated client only, and only what the controller delivers:
   out; 403/404 stops the stream and the network's reads say why. While it
   is not live, the reads it covers poll (`pollUnlessLive`), and leaving
   live reads them again. The toolbar's dot states it (live since,
-  reconnecting since, stopped). Observation events are only passed over.
+  reconnecting since, stopped). Observation events write this sign-in's
+  observation reads (below); a new sync reads them again.
 - A revision's deployment (`getConfigurationProgress`), in every
   revision's history entry: the controller's summary (targets once each,
   pending / saved / applied / failed), never recomputed here, and each
@@ -272,8 +273,41 @@ its generated client only, and only what the controller delivers:
   where probes timed out or failed; a bucket with no records is blank and
   one with no success has no step, never zero. The window's mean, bucket
   mean range, probe counts and 未回应率 (timed out or failed over probes;
-  not packet loss). Drawn with SVG by hand. It reads records only; it never
-  starts a measurement.
+  not packet loss). Drawn with SVG by hand. The history reads records
+  only; it never starts a measurement.
+- Live observation (above the node's latency history; `features/observation/`):
+  `createObservation`, `getObservation`, `listObservations`,
+  `renewObservation`, `cancelObservation`, and the stream's
+  `observation.status`, `observation.sample`, `observation.removed`. Offered
+  from the node to owners and admins, and to a member for their own
+  User-identity device (the controller publishes no action for it, so its
+  rule is restated in `choices.ts`; it still decides). A target among the
+  nodes this account sees, the exact service (ICMP echo, TCP or UDP with a
+  port), automatic or explicit path, a period of 1 to 30 s; it asks for
+  `rtt` and `probeLoss` (traffic is not offered: the controller returns it
+  unsupported). An explicit path is one the network has shown: the direct
+  one, the State's reported paths between the two, or one an observation of
+  this sign-in took; the controller publishes no allowed list. Each distinct
+  attempt has a fresh `subscriptionId`; an unknown outcome sends the same
+  again. A tab holds one subscription: its phase, selected path and segment,
+  lease and renewal, the controller's `unsupportedMetrics`, and the samples
+  it saw arrive (`[network, "observations", "subscription", id]`; the
+  controller sends only the latest, so a reload or take-over starts from
+  that one). Timed replies are points, joined while they share a path
+  segment and none is more than two periods apart; timeouts, unsent probes
+  and open windows are marks with no value; time without a sample is blank;
+  counts and 探测未回应率 (timed out over replied plus timed out; unsent
+  probes apart). Renewal is at `renewAfter` (a little after, by this
+  browser's clock), only while the tab is visible; a renewal refused as
+  `observation_limit` is tried again each second while the lease lasts. A
+  lease past `subscriberExpiresAt` shows as ended and is read again.
+  Closing the panel or leaving the tab (another node tab, network or page)
+  cancels; closing the browser leaves the lease to run out. This sign-in's
+  other active subscriptions from the node (`listObservations`, another
+  tab's or one from before a reload) can be taken over or cancelled.
+  Refusals are worded by code for the call (403, 409, 429, 404). Nothing is
+  measured by the console, and nothing is shown that the controller did not
+  send.
 - Not delivered by the controller: GeoIP data (no node has a location
   yet), the install script and Agent releases; nothing stands in for them.
   What the console needs from the V2 API is in `v2-api-needs.md`.
