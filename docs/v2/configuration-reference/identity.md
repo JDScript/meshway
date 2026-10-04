@@ -1,6 +1,6 @@
 # Groups 与 Tags
 
-配置草案；类型、默认值和限制供本轮确认。
+groups、tagsOwners 与 User／Tag 身份的配置语义。字段编码以生成 schema 为准。
 
 ## Structure
 

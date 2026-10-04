@@ -66,20 +66,51 @@ const currentSidebar: DefaultTheme.SidebarItem[] = [
 
 const v2Sidebar: DefaultTheme.SidebarItem[] = [
   {
-    text: "Meshway V2 · 设计中",
+    text: "总体",
     items: [
       { text: "概览", link: "/v2/" },
-      { text: "配置与状态模型", link: "/v2/network-configuration" },
+      { text: "项目结构与 Shared Crates", link: "/v2/architecture" },
       { text: "数据模型与权威来源", link: "/v2/entities" },
       { text: "操作权限", link: "/v2/permissions" },
       { text: "按需执行许可", link: "/v2/execution" },
     ],
   },
   {
-    text: "Configuration",
+    text: "Server · 控制面",
+    items: [
+      { text: "职责、能力与运行", link: "/v2/server" },
+      { text: "HTTP 与生成客户端", link: "/v2/api" },
+      { text: "注册与认证", link: "/v2/api/authentication" },
+      { text: "SSE 与初始同步", link: "/v2/api/events" },
+      { text: "版本与操作历史", link: "/v2/api/history" },
+      { text: "Actions 与 Problem", link: "/v2/api/problems" },
+      { text: "存储与查询", link: "/v2/storage" },
+      {
+        text: "存储字段参考",
+        collapsed: true,
+        items: [
+          { text: "持久数据库", link: "/v2/storage/database" },
+          { text: "内存容器", link: "/v2/storage/memory" },
+        ],
+      },
+    ],
+  },
+  {
+    text: "Node · 节点端",
+    items: [
+      { text: "Daemon、CLI 与组件", link: "/v2/node" },
+      { text: "网络模式与本机运行", link: "/v2/node/runtime" },
+      { text: "插件与能力", link: "/v2/node/plugins" },
+    ],
+  },
+  {
+    text: "共享 Configuration 参考",
+    collapsed: true,
     items: [
       { text: "结构与字段", link: "/v2/configuration-reference" },
       { text: "整网草稿与应用对照", link: "/v2/configuration-reference/editing" },
+      { text: "同步、应用与恢复", link: "/v2/configuration-reference/deployment" },
+      { text: "NodeConfiguration", link: "/v2/configuration-reference/node-configuration" },
       { text: "Addressing · 地址与分配", link: "/v2/configuration-reference/addressing" },
       { text: "Defaults", link: "/v2/configuration-reference/defaults" },
       { text: "字段复用与默认继承", link: "/v2/configuration-reference/inheritance" },
@@ -91,7 +122,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "Transport 与支持状态", link: "/v2/configuration-reference/transports" },
       {
         text: "通用字段",
-        collapsed: false,
+        collapsed: true,
         items: [
           { text: "Listen Fields", link: "/v2/configuration-reference/shared/listen" },
           { text: "Dial Fields", link: "/v2/configuration-reference/shared/dial" },
@@ -102,7 +133,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       {
         text: "Listeners",
         link: "/v2/configuration-reference/listeners",
-        collapsed: false,
+        collapsed: true,
         items: [
           { text: "Native UDP", link: "/v2/configuration-reference/listeners/native-udp" },
           { text: "Native TCP", link: "/v2/configuration-reference/listeners/native-tcp" },
@@ -113,7 +144,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       {
         text: "Dialers",
         link: "/v2/configuration-reference/dialers",
-        collapsed: false,
+        collapsed: true,
         items: [
           { text: "Native UDP", link: "/v2/configuration-reference/dialers/native-udp" },
           { text: "Native TCP", link: "/v2/configuration-reference/dialers/native-tcp" },
@@ -126,7 +157,8 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     ],
   },
   {
-    text: "State",
+    text: "共享 State 参考",
+    collapsed: true,
     items: [
       { text: "State Reference", link: "/v2/state-reference" },
       { text: "NodeState", link: "/v2/state-reference/node" },
@@ -140,38 +172,6 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "查询、裁剪与订阅", link: "/v2/state-reference/query" },
       { text: "Realtime Observation", link: "/v2/state-reference/realtime" },
       { text: "观测与历史", link: "/v2/state-reference/observations" },
-    ],
-  },
-  {
-    text: "分发与 API",
-    items: [
-      { text: "API 分区与操作", link: "/v2/api" },
-      { text: "注册与认证", link: "/v2/api/authentication" },
-      { text: "SSE 与初始同步", link: "/v2/api/events" },
-      { text: "配置版本与操作历史", link: "/v2/api/history" },
-      { text: "Actions 与 Problem", link: "/v2/api/problems" },
-      { text: "NodeConfiguration", link: "/v2/configuration-reference/node-configuration" },
-      { text: "配置应用与进度", link: "/v2/configuration-reference/deployment" },
-      { text: "同步与回滚", link: "/v2/configuration-reference/synchronization" },
-    ],
-  },
-  {
-    text: "Agent · 新设计",
-    items: [
-      { text: "Daemon、CLI 与组件", link: "/v2/agent" },
-      { text: "运行模式与本机 IPC", link: "/v2/agent/runtime" },
-      { text: "插件、装载与能力", link: "/v2/agent/plugins" },
-      { text: "Crates 与目录", link: "/v2/agent/structure" },
-    ],
-  },
-  {
-    text: "存储与工程",
-    items: [
-      { text: "持久数据库字段", link: "/v2/storage/database" },
-      { text: "Controller 内存字段", link: "/v2/storage/memory" },
-      { text: "存储与访问", link: "/v2/storage" },
-      { text: "配置查询与缓存", link: "/v2/configuration-reference/storage-api" },
-      { text: "技术栈与代码结构", link: "/v2/architecture" },
     ],
   },
 ];
@@ -193,7 +193,7 @@ export default defineConfig({
         text: "文档版本",
         items: [
           { text: "当前实现", link: "/" },
-          { text: "V2 · 设计中", link: "/v2/" },
+          { text: "V2 · Server / Node", link: "/v2/" },
         ],
       },
     ],

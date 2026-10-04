@@ -53,7 +53,7 @@
 
 Node 校验并保存后按有效许可直接安装，不等待其他节点完成。progress 为 null 表示当前无进度报告，不表示目标已经完成。阶段、组件和字节计量字段见[配置应用与进度](/v2/configuration-reference/deployment)。
 
-执行发布引用固定身份／材料／相关节点切片依赖，和源 revision、当前 Node digest 一起核对；不能仅凭 revision 相同将报告用于另一次执行发布。详见[发布与恢复](/v2/configuration-reference/synchronization#publication)。
+执行发布引用固定身份／材料／相关节点切片依赖，和源 revision、当前 Node digest 一起核对；不能仅凭 revision 相同将报告用于另一次执行发布。详见[发布与恢复](/v2/configuration-reference/deployment#publication)。
 
 ## 字段来源
 

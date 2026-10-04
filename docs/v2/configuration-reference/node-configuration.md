@@ -1,10 +1,10 @@
 # NodeConfiguration
 
-Controller 给某个节点的**完整执行配置**。它包含实际协议参数和所需材料；“不需要管理员重复手填”不等于“不属于 configuration”。以下为下一版结构提案。
+Server 为某个节点产生的完整执行配置，包含实际协议参数和所需材料。下面按参数来源说明其结构，精确载荷以生成类型为准。
 
 Node 收到完整目标后独立校验、持久保存并正常应用，执行仍核对确切快照、实例和有效许可。saved 不代表已安装；实际阶段和结果见[配置应用与进度](/v2/configuration-reference/deployment)。
 
-执行分工已确定为[按需许可、设备选择](/v2/execution)：下面生成的出站实例是获准候选，不是要求设备无条件拨号，更不是预生成全网所有节点对。容器名字仍在 API 阶段统一。
+执行遵守[按需许可、设备选择](/v2/execution)：出站实例是获准候选，按实际需求使用，不预生成全网节点对。
 
 ## 参数从哪里来 {#sources}
 
@@ -104,4 +104,4 @@ UUID／password／证书是完整配置的私有字段，既可以手工配置�
 
 Mesh 地址变更属于 Config 更新，不能用 endpoint State 改写。接收方继续以对应发布校验源／目的地址绑定；同一 IP 转交其他 Node 不继承旧会话资格，见[改址流程](/v2/configuration-reference/addressing#改址与安全切换)。
 
-下发顺序及 full／delta 处理见[同步与分发](/v2/configuration-reference/synchronization)。
+下发顺序及 full／delta 处理见[同步与应用](/v2/configuration-reference/deployment)。

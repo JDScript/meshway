@@ -1,300 +1,96 @@
-# Controller 内存字段
+# Server 内存容器
 
-**V2 逻辑对象提案。** 本页列内存字段；持久恢复依据在[数据库字段](/v2/storage/database)。`T?` 为可空，所有容器／队列有预算，重启后重建。
+本页列 Server 持有的容器、索引和投影职责。字段为逻辑结构参考，实际内部布局以源码为准；公开 State 字段只在 [State Reference](/v2/state-reference) 定义，持久恢复依据见[数据库](/v2/storage/database)。所有队列／缓存有预算。
 
 ## ConfigurationCache
 
-键：`(networkId, revision)`。当前版本指针来自数据库。
+键为 `(networkId, revision)`，当前指针来自数据库。
 
-| 字段 | 类型 | 含义 |
+| 字段 | 类型／作用 |
+| --- | --- |
+| networkId／revision | 绑定完整版本 |
+| configuration | 不可变的解密／校验后 NetworkConfiguration |
+| bindings | 稳定用户、listener 与数据集依据 |
+| digest | 本版本确定编码的摘要 |
+| addressIndex | 可重建的版本内地址占用索引 |
+| compiled | 按依赖 digest／compilerVersion 区分的有界内部编译缓存 |
+
+派生索引／编译缓存按需建立，不提供独立写入口。地址不存在于 RAM 索引不代表旧绑定已退出；分配还检查 AddressRetirement。内部编译图不作为 Node 自授权输入。
+
+## NetworkState 与接受报告
+
+| 容器 | 字段 | 含义 |
 | --- | --- | --- |
-| `networkId` | NetworkId | 网络 |
-| `revision` | Revision | 配置版本 |
-| `configuration` | Arc&lt;NetworkConfiguration&gt; | 解密／校验后的不可变完整值 |
-| `bindings` | Arc&lt;ConfigurationBindings&gt; | 稳定引用／默认值依据 |
-| `addressIndex` | Map&lt;IpAddress, NodeId&gt; | 从本版本 addresses 构造的网络内占用索引，可重建 |
-| `digest` | Digest | 加载后计算的内容摘要 |
-| `compiled` | Map&lt;CompilationKey, Arc&lt;CompiledConfiguration&gt;&gt; | 本版本有界编译缓存 |
+| NetworkState | networkId／stateEpoch／sequence | 作用域与当前变化顺序 |
+| NetworkState | configurationRevision | 解释该视图的配置版本 |
+| NetworkState | nodes | NodeId → 已接受报告，不为每个读者复制整网 |
+| StoredNodeState | instanceId／reportSequence | 来源实例／序号，未报告可为空 |
+| StoredNodeState | receivedAt／reportExpiresAt | 原接受时间和有效期 |
+| StoredNodeState | lastAuthenticatedAt | 真实认证联系，与报告新鲜度分开 |
+| StoredNodeState | report | NodeState 或明确未报告 |
 
-只有缓存，无独立编辑入口；User／Tag 身份从 configuration.nodes[id].identity 读取。CompilationKey 字段为 `dependencyDigest: Digest`、`compilerVersion: string`；动态依赖变化必须换 key，即使源 revision 没变。编译缓存嵌入版本缓存，容量有界，可随版本回收。
+freshness 结合当前时间、实例、配置和撤销计算。查询或重复报告不延长原期限；失去某个读者的可见性不删除全局报告。永久退休提交可释放大报告，持久认证仍拒绝旧身份。
 
-addressIndex 只代表该配置版本的期望占用；分配／激活还核对持久 AddressRetirement。不能从 RAM 索引中没有某地址推断旧绑定已安全退出。
+### 报告的共享类型 {#nodestate}
 
-CompiledConfiguration 是 `meshway-configuration` 的内部类型，不序列化成给 Node 自授许可的任意图。
+| 类型 | 唯一字段参考 |
+| --- | --- |
+| NodeState／ConfigurationState | [NodeState](/v2/state-reference/node) |
+| Capability | [能力](/v2/state-reference/capabilities) |
+| ListenerState／SocketState／LinkState／PathState | [资源与连接](/v2/state-reference/resources) |
+| EndpointCandidate | [候选](/v2/state-reference/endpoints) |
+| ProbeObservation／ObservationSample | [观测](/v2/state-reference/observations) · [实时观察](/v2/state-reference/realtime) |
 
-## NetworkState
+报告里的安装引用按精确配置上下文接纳；正在安装的资源不自动作为当前可用 peer 入口。UDP 观测不证明 TCP 可达，单侧报告不制造另一端的事实。
 
-| 字段 | 类型 | 含义 |
+## 派生投影
+
+由配置、已接受报告、使用选择和固定数据集计算，不是另一份可写 State。
+
+| 内容 | 输入与约束 |
+| --- | --- |
+| GeoIP／ASN／location | 合格 endpoint、观测期限和数据集版本；不刷新原时间、不补坐标 |
+| links／paths 聚合 | 保留真实报告者、通道／路径标识和证据阶段 |
+| 应用进度 | 固定提交目标、实际 receipt、当前实例与 lease |
+| Node／成员 actions | 当前用户、网络权限和配置身份 |
+| 方案／版本状态 | 真实选择、身份约束、能力与兼容规则；尚无输入时明确未知 |
+
+具体投影见[网络视图](/v2/state-reference/network)与[IP 信息](/v2/state-reference/ip-info)。缓存 key／失效规则必须包含所有权威输入；尚未实现的派生能力不靠字段占位表示已完成。
+
+## StreamSubscription 与 Journal
+
+| 对象 | 字段 | 含义 |
 | --- | --- | --- |
-| `networkId` | NetworkId | 网络 |
-| `stateEpoch` | StateEpoch | Controller 重建此状态集合时更新 |
-| `sequence` | u64 | 本 epoch 内变化顺序 |
-| `configurationRevision` | Revision | 当前解释视图的配置版本 |
-| `nodes` | Map&lt;NodeId, StoredNodeState&gt; | 每个 Node 的当前接受报告 |
+| Subscription | id／principal／networkId | 本进程订阅及已认证作用域 |
+| Subscription | filter／authorizationDigest | 服务端验证的选择与当前裁剪依据 |
+| Subscription | cursor／expiresAt | 发送位置和主体／订阅期限上界 |
+| Journal | epoch／events／oldestCursor | 有界变化记录与可重放下界 |
+| Delivery | pending／replay | 当前订阅可交付帧和恢复缓冲 |
 
-每网络只保留一份，查询按权限生成视图。
+principal 不由客户端声明权限，filter 不能扩权。同步截点、权限缩小和 cursor/reset 由 [SSE 合同](/v2/api/events)统一定义；客户端的已应用 cursor 与服务端发送位置不同。完整秘密配置不广播。
 
-### StoredNodeState
+## Observation 运行态
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `instanceId` | InstanceId? | 当前接受的报告实例 |
-| `reportSequence` | u64? | 当前报告序号；未收到为 null |
-| `receivedAt` | Timestamp? | 当前报告的接受时间 |
-| `reportExpiresAt` | Timestamp? | 当前报告联系期限 |
-| `lastAuthenticatedAt` | Timestamp? | 最近真实认证联系，与报告新鲜度分开 |
-| `report` | NodeState? | 最新已接受报告；未报告不是空对象 |
+公开任务／样本复用[实时观察类型](/v2/state-reference/realtime)，Server 额外持有：
 
-freshness 按当前时间／配置／实例从以上输入计算：current、awaiting_report、expired、superseded、config_mismatch、revoked。不能靠查询或重复报告延长原观测。
+| 字段 | 含义 |
+| --- | --- |
+| acceptedAt／network | 接纳时间与作用域 |
+| task／paths | 当前任务视图和获准候选完整路径 |
+| subscribers | 独立 ObservationSubscriptionId → 主体、授权依据、generation、expiresAt／renewAfter、终态 |
+| seen | measurementId → 内容摘要、版本与窗口完成状态 |
 
-### NodeState
+同会话多标签页独立续租和取消；共享任务不共享权限。到期／终态停止诊断依赖，短期保留结束视图后移除，不能从重放队列复活旧样本。任务／每会话／全局均有预算。
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `system.hostname` | string | OS hostname，非规范配置名称 |
-| `system.os` | string | 实际 OS |
-| `system.arch` | string | 实际架构 |
-| `system.agentVersion` | string | 构建版本 |
-| `capabilities` | Map&lt;CapabilityKey, Capability&gt; | 当前实际构建能力，value 为已知类型 |
-| `configuration.saved` | ConfigurationRef? | 本实例已持久保存配置 |
-| `configuration.applied` | ConfigurationRef? | 当前实际执行配置 |
-| `configuration.progress` | NodeConfigurationProgress? | 正在处理的目标／阶段／组件进度，完整字段见[配置应用](/v2/configuration-reference/deployment#字段提案) |
-| `listeners` | Map&lt;ListenerKey, ListenerState&gt; | 监听运行状态 |
-| `sockets` | Map&lt;SocketId, SocketState&gt; | 实际 socket 与候选 |
-| `links` | Map&lt;NodeId, LinkState[]&gt; | 自身与 peer 的认证通道 |
-| `paths` | Map&lt;PathId, PathState&gt; | 自身参与路径的观测 |
-| `selection.appliedProfile` | ProfileKey? | 当前实际方案 |
-| `probes` | ProbeObservation[] | 少量最新真实测量 |
-| `problems` | Problem[] | 有来源的类型化问题 |
+数据库与内存变化保持事务边界：仅对实际写集保存撤销信息，失败恢复原任务；无变化读取／扫描不复制全部测量索引。维护任务由 App 持有、停止和等待退出，已接纳 SQL 工作独立完成。
 
-`ConfigurationRef` 字段：`revision: Revision`、`executionPublication: PublicationId`、`digest: Digest`。Capability 的 roles／streams 等协议能力字段见[能力参考](/v2/state-reference/capabilities)。各实例报告只能由该 Node 身份更新。
+## 其他工作状态
 
-Controller 将 publication 目标／关键回执与这些实时字段组合为应用进度视图；按固定目标集合计数，不建立另一份可写部署状态。Node 失联时保留最后阶段并标过期，不能自行生成 failed／applied。
+| 内容 | 内存责任 |
+| --- | --- |
+| 编译需求 | 固定已认证源、目标、配置／依赖和期限；持久资格不因缓存而延长 |
+| 可信 DNS 关联 | 网络、源 Node、名称／CNAME、地址集合、执行上下文和 TTL |
+| 资源下载／转换 | 当前定义／revision／artifact 基准、预算、取消和实际结果 |
+| 限流／KDF／队列 | 明确作用域、容量与补充／释放依据 |
 
-## ListenerState
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `phase` | preparing \| listening \| stopped \| failed | 本机资源状态 |
-| `socketIds` | SocketId[] | 关联实际 sockets |
-| `loadedCertificateSha256` | Digest? | 实际加载证书指纹；非 TLS 为 null |
-| `problem` | Problem? | 失败原因 |
-| `configuration` | ConfigurationRef? | null 表示沿用报告 applied；首次／另版 preparing、failed、stopped 须显式填写目标，按该精确上下文检查资源 |
-
-key 来自 nodes[id].listeners，不能作为新的配置源。
-
-## SocketState / EndpointCandidate
-
-| 对象 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| Socket | `resource` | ResourceRef | listener／dial／协调资源 |
-| Socket | `configuration` | ConfigurationRef? | null 沿用报告 applied；安装中的 socket 显式引用 saved／target，不能作为现行执行的可用 peer 入口 |
-| Socket | `generation` | u64 | 该资源代际 |
-| Socket | `network` | udp \| tcp | 外层 socket 协议 |
-| Socket | `boundAddress` | SocketAddress | 内核实际 bind 地址 |
-| Socket | `endpoints` | EndpointCandidate[] | 带来源的候选 |
-| Endpoint | `address` | EndpointAddress | 配置域名或实际 IP＋端口 |
-| Endpoint | `source` | configured \| interface \| stun | 来源判别 |
-| Endpoint | `validation` | declared \| observed | 此来源的观测程度，不是 peer 认证 |
-| Endpoint | `observedAt` | Timestamp | 观测／配置资源关联核对时间 |
-| Endpoint | `expiresAt` | Timestamp | 本次观测期限 |
-| configured 分支 | `configPath` | JsonPointer | 当前配置引用 |
-| interface 分支 | `interface` | string | 本机接口标识 |
-| stun 分支 | `observer` | SocketAddress | 该 socket 使用的 STUN 观测端 |
-
-各来源只携带自己的分支字段。`ResourceRef` 字段：`kind: listener | dial | coordination`、`key: string`。peer 认证记录在实际 Link／probe 中；UDP 观测不证明 TCP 可达。
-
-## LinkState
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `linkId` | LinkId | 实际握手绑定的公开通道标识 |
-| `transport` | TransportKey | 真实承载 |
-| `initiatorNodeId` | NodeId | 实际发起端，不代表业务方向 |
-| `socketId` | SocketId | 本机 socket |
-| `phase` | preparing \| authenticated \| closed \| failed | 本端实际状态 |
-| `businessDependencies` | u32 | 当前业务依赖数，非包速率 |
-| `observationIds` | ObservationId[] | 临时诊断依赖 |
-| `observedAt` | Timestamp | 本次状态观测时间 |
-| `expiresAt` | Timestamp | 报告有效期 |
-
-authenticated 且无依赖可以是 idle。双侧匹配由 Controller 派生，不能由 A 的报告生成 B 的事实。
-
-## PathState
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `pathId` | PathId | 本次执行／观测路径标识 |
-| `nodes` | NodeId[] | 完整有序路径 |
-| `publicationId` | PublicationId | 对应许可 |
-| `reporterRole` | origin \| relay \| target \| exit | 本报告者角色 |
-| `evidence` | selected \| sent \| peerConfirmed \| delivered | 实际可证明阶段 |
-| `observedAt` | Timestamp | 原观测时间 |
-| `expiresAt` | Timestamp | 期限 |
-
-这是此前路径语义的字段提案。中转不能自行上报目标已明文交付；缺测量证据时不增加 RTT／流量字段假值。
-
-## ProbeObservation / Problem
-
-| 对象 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| Probe | `measurementId` | EventId | 与历史去重使用同一来源 ID |
-| Probe | `kind` | neighbor \| path \| connect \| controller | 测量类型 |
-| Probe | `path` | NodeId[] | 实际被测路径／端点 |
-| Probe | `publicationId` | PublicationId | 执行上下文 |
-| Probe | `startedAt` | Timestamp | 开始时间 |
-| Probe | `completedAt` | Timestamp? | 未完成为 null |
-| Probe | `outcome` | pending \| success \| timeout \| failed | 真实结果 |
-| Probe | `durationUs` | u64? | 有计时依据时填写；超时不填零 |
-| Problem | `code` | ProblemCode | 已知失败类型 |
-| Problem | `resource` | ResourceRef? | 涉及资源 |
-| Problem | `observedAt` | Timestamp | 发生时间 |
-| Problem | `detail` | ProblemDetail | 按 code 对应的封闭、脱敏字段 |
-
-精确 ProblemCode 分支由实际功能契约补齐，不保留任意 JSON 逃生字段。
-
-## DerivedNodeState（查询投影）
-
-以下字段由当前配置、已接受报告、RoutingSelection 和固定 GeoIP 数据集计算。它们是返回视图，不是另一份必须同步更新的 StoredNodeState 字段；内部性能缓存可重建，失效依据必须覆盖所有输入。
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `location` | GeoObservation? | 合格底层公网 IP 的地区推导 |
-| `locationAbsent` | LocationAbsentReason? | 无位置的明确原因，见[IP 信息](/v2/state-reference/ip-info) |
-| `ipInfo` | Map&lt;IpAddress, IpInfo&gt; | 可见 endpoint IP 的 GeoIP／ASN，Controller 查询派生 |
-| `versionStatus` | current \| outdated \| unsupported \| unknown | 真实版本／能力报告与兼容规则的结果 |
-| `requestedProfile` | ProfileKey | 持久使用选择经当前 identity／allowed／locked 校验后的目标，或当前配置默认 |
-| `selectedAutoProfile` | ProfileKey? | 根据当前有效观测选择；无观测用配置 fallback |
-| `linkEvidence` | Map&lt;LinkId, LinkEvidence&gt; | 单侧／双侧／冲突／过期聚合 |
-
-### GeoObservation / LinkEvidence
-
-| 对象 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| Geo | `address` | IpAddress | 合格 socket 观测的底层公网 IP |
-| Geo | `sourceSocketId` | SocketId | 本 Node 观测来源 |
-| Geo | `sourceGeneration` | u64 | socket 代际；实例沿用所属 StoredNodeState |
-| Geo | `datasetId` | ArtifactId | 地区数据版本 |
-| Geo | `country` | string? | 推导国家／地区；无法确定为 null |
-| Geo | `region` | string? | 数据集提供的地区 |
-| Geo | `city` | string? | 数据集提供的城市 |
-| Geo | `position` | GeoPosition? | 近似经纬度／精度；未提供不自行补坐标 |
-| Geo | `endpointSource` | interface \| stun | 用作节点位置的合格观测来源 |
-| Geo | `observedAt` | Timestamp | 输入观测时间 |
-| Geo | `expiresAt` | Timestamp | 推导结果有效期 |
-| LinkEvidence | `phase` | oneSided \| matched \| conflicting \| expired | 聚合结果 |
-| LinkEvidence | `reports` | ReportRef[] | 实际来源，最多对应两端 |
-
-`ReportRef` 字段：`nodeId: NodeId`、`instanceId: InstanceId`、`reportSequence: u64`。没有收到另一端报告时不构造第二条引用。
-
-GeoObservation 复用 ipInfo 中相同 IP／数据版本的结果；ASN 的 number／organization／prefix 和各查询状态见 [IP 信息](/v2/state-reference/ip-info)。缓存 key 包含 IP 与数据版本，不能刷新旧 endpoint 的 observedAt／expiresAt。
-
-Node／成员 actions、links／paths 聚合和 recentLinks 都是[查询投影](/v2/state-reference/network#console-组合视图)，不产生新的可编辑实体或历史样本。
-
-## StreamSubscription / EventBuffer
-
-| 对象 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| Subscription | `id` | SubscriptionId | 本进程订阅标识 |
-| Subscription | `principal` | PrincipalRef | 已认证用户会话或 Node 绑定 |
-| Subscription | `networkId` | NetworkId | 作用域 |
-| Subscription | `filter` | ViewFilter | 固定枚举和资源子集 |
-| Subscription | `authorizationDigest` | Digest | 当前裁剪上下文，权限变化重新授权 |
-| Subscription | `cursor` | ViewCursor | 已发送序列位置，不是客户端 applied ACK |
-| Subscription | `expiresAt` | Timestamp | 身份／订阅本身期限上界 |
-| Buffer | `epoch` | StateEpoch | 缓冲所属世代 |
-| Buffer | `events` | Deque&lt;StreamEvent&gt; | 有界事件与游标 |
-| Buffer | `oldestCursor` | ViewCursor? | 可补发下界 |
-
-PrincipalRef 为 user／node 判别联合：user 分支保存 userId／sessionHash，node 分支保存 nodeId／keyId／instanceId。ViewFilter 字段为 `nodes: NodeId[]?`、`include: StateField[]`、`observations: ObservationId[]`；null nodes 表示服务端计算的可见集合，空数组明确不选节点，不能通过 include 扩权。StreamEvent 类型见 [SSE 事件](/v2/api/events#事件结构)。
-
-按当前权限投影输出，不把有秘密的完整 Config 广播。客户端另存自己的最后成功应用 cursor；断档／范围变化 reset。
-
-## ObservationTask
-
-| 对象 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| Task | `id` | ObservationId | 测量任务 |
-| Task | `networkId` | NetworkId | 网络 |
-| Task | `sourceNodeId` | NodeId | 发起者 |
-| Task | `mode` | auto \| explicit | 自动按目标选路或固定指定路径 |
-| Task | `target` | ObservationTarget | 获准的测量目标，含必要协议／端口范围 |
-| Task | `path` | NodeId[]? | 实际选定路径；auto 尚未完成选择为 null |
-| Task | `pathSegment` | u64? | 首次选定后才有分段；换路径／实例时另起分段 |
-| Task | `publicationId` | PublicationId? | 已确定的获准发布；尚未完成目标规划时 null |
-| Task | `instanceId` | InstanceId? | 实际执行实例；尚未调度到当前实例为 null |
-| Task | `metrics` | MetricKind[] | rtt／traffic／probeLoss |
-| Task | `intervalMs` | u32 | 实际获准周期 |
-| Task | `phase` | preparing \| running \| completed \| failed \| unsupported \| expired \| cancelled | 实际阶段 |
-| Task | `expiresAt` | Timestamp | 下发节点的短租约 |
-| Task | `renewAfter` | Timestamp | 服务端建议的最早续租时刻 |
-| Task | `latest` | ObservationSample? | 最新真实样本 |
-| Task | `subscribers` | Map&lt;ObservationSubscriptionId, ObservationSubscriber&gt; | 任务内部的独立使用需求 |
-| Subscriber | `principal` | PrincipalRef | 每个订阅者独立鉴权 |
-| Subscriber | `authorizationDigest` | Digest | 当前网络／主体／范围的授权上下文，输出前重检 |
-| Subscriber | `expiresAt` | Timestamp | 该订阅者续租期限 |
-
-ObservationSubscriber 是上述 map 的嵌套值，任务关联由外层给出，不另维护反向关系表。每个订阅者的权限／租约仍独立；取消一项不取消别人的有效需求。任务不因 SSE 连接存在自动续期，最后需求离开后释放，崩溃后不恢复旧任务为 running。
-
-候选实现对任务、每任务订阅、每会话需求及全局订阅均设上限；终态仅短期保留，过期清理连同主体信息释放，不保留按 SessionId 无限增长的身份索引。报告退休由永久吊销／删除提交驱动：释放 Node 的大报告，持久认证存储继续阻止旧实例／凭据再入场，不能仅根据一个读者看不到 Node 就删除全局报告。
-
-### ObservationSample
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `measurementId` | EventId | 来源采样／窗口 ID，重复投递不累加 |
-| `windowStart` | Timestamp | 原始统计窗口开始 |
-| `windowEnd` | Timestamp | 原始统计窗口结束 |
-| `partial` | boolean | 窗口是否仍有未完成结果 |
-| `probe` | ProbeObservation? | 当次真实探测，无样本为 null |
-| `txBytes` | u64? | 源端业务提交字节；未测为 null |
-| `rxBytes` | u64? | 源端验证交付字节；未测为 null |
-| `counterGeneration` | u64? | 字节计数器重置／路径分段依据 |
-| `sent` | u32? | 实际发出的探测数 |
-| `repliedWithinDeadline` | u32? | 时限内最终成功数 |
-| `timeout` | u32? | 最终超时数 |
-| `pending` | u32? | 尚未到最终结果的数目 |
-
-方案字段建议使用窗口内字节量，由窗口时长推导速率；不能把累计计数当窗口字节。未回应率由 timeout／(repliedWithinDeadline＋timeout) 推导，无分母为 null；准备阶段不记一次发送。指标的精确测量口径见[测量参考](/v2/state-reference/realtime)。
-
-## 其他有界临时对象
-
-| 对象 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| Demand | `id` | RequestId | 合法业务需求标识 |
-| Demand | `networkId` | NetworkId | 网络 |
-| Demand | `nodeId` | NodeId | 请求者，来自认证 |
-| Demand | `target` | BusinessTarget | Mesh／外部目的的类型化输入，精确分支随执行 API 定版 |
-| Demand | `configurationRevision` | Revision | 求值基准 |
-| Demand | `expiresAt` | Timestamp | 有界需求期限 |
-| Demand | `result` | DemandResult | preparing、unavailable 或已提交 publication 引用 |
-| DnsAssociation | `networkId` | NetworkId | 网络 |
-| DnsAssociation | `publicationId` | PublicationId | 授权／解析上下文 |
-| DnsAssociation | `sourceNodeId` | NodeId | 关联的业务源 |
-| DnsAssociation | `name` | string | 可信查询名称 |
-| DnsAssociation | `cnameChain` | string[] | 验证的 CNAME 链 |
-| DnsAssociation | `addresses` | IpAddress[] | 真实解析地址集合 |
-| DnsAssociation | `expiresAt` | Timestamp | TTL 有效期 |
-| ResourceJob | `id` | JobId | 下载／转换任务 |
-| ResourceJob | `target` | DatasetTarget | 要更新的规则集或 GeoIP 来源 |
-| ResourceJob | `phase` | queued \| running \| failed \| ready | 运行阶段 |
-| ResourceJob | `problem` | Problem? | 真实失败 |
-| AuthChallenge（若采用） | `id` | ChallengeId | 唯一挑战 |
-| AuthChallenge（若采用） | `publicKey` | PublicKey | 证明对象 |
-| AuthChallenge（若采用） | `contextDigest` | Digest | 被证明的认证上下文 |
-| AuthChallenge（若采用） | `expiresAt` | Timestamp | 有效期 |
-| AuthChallenge（若采用） | `consumed` | boolean | 一次性消费 |
-| NodeControlSession（若采用） | `tokenHash` | Digest | 短期凭据摘要 |
-| NodeControlSession（若采用） | `nodeId` | NodeId | 认证节点 |
-| NodeControlSession（若采用） | `keyId` | KeyId | 签发依据，后续核对吊销 |
-| NodeControlSession（若采用） | `instanceId` | InstanceId | 实例绑定 |
-| NodeControlSession（若采用） | `expiresAt` | Timestamp | 短期认证上界 |
-| RateBudget | `scope` | BudgetScope | 账户／来源／节点／任务等封闭用途范围 |
-| RateBudget | `available` | u64 | 当前可用预算 |
-| RateBudget | `updatedAt` | MonotonicInstant | 补充预算依据 |
-
-DatasetTarget 为判别联合：ruleSet 分支携带 networkId／configurationRevision／ruleSetKey，geoip／asn 分支携带部署的 source 标识。Job 完成时核对目标仍有效，不能把旧下载发布到新配置。
-
-这些是内部算法／工作队列对象，不是新的公开 Entity 或自授权 API。AuthChallenge 的实际 nonce／证明编码随认证协议定版；扩展字段须有明确类型与生命周期。
-
-Agent 本地 socket、加密会话、conntrack、TUN I/O 和 DNS 缓存由对应 agent-*／dataplane 库拥有，Controller 只保存本页列出的报告／协调视图。
+持久认证 challenge／短期凭据仍属于[认证存储](/v2/storage/database)，不因字段看似临时就复制进内存权威。Node 本地 socket、协议栈、包会话、TUN 和 DNS 缓存由节点组件拥有，Server 仅接纳其报告／协调结果。

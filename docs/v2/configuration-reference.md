@@ -7,7 +7,7 @@ description: Meshway 网络配置、默认行为和协议字段参考。
 
 本参考描述**开发中的下一版配置格式**，按公开文档维护。尚未发布的字段不会因此成为现行 API；可用范围见[承载与支持状态](/v2/configuration-reference/transports)，现行接口见[协议](/protocol)。
 
-Config 相对静态，完整版本保存到数据库；State 随运行变化。[两者分开发送](/v2/configuration-reference/synchronization)。
+Config 相对静态，完整版本保存到数据库；State 随运行变化。[两者分开发送](/v2/configuration-reference/deployment)。
 
 | 配置 | 回答的问题 |
 | --- | --- |
@@ -113,5 +113,5 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
 - 字段怎样复用、默认值怎样覆盖：[字段复用与默认继承](/v2/configuration-reference/inheritance)。
 - 整网草稿、强类型操作、应用前数量／对照与严格 CAS：[编辑与应用对照](/v2/configuration-reference/editing)。
 - Agent 收到什么：[NodeConfiguration](/v2/configuration-reference/node-configuration) 与 [State Reference](/v2/state-reference)。
-- 版本、回滚、增量：[同步与分发](/v2/configuration-reference/synchronization)。
-- 配置变大、查询和外部 API：[存储与查询](/v2/configuration-reference/storage-api)。
+- 版本、回滚、增量：[同步与应用](/v2/configuration-reference/deployment)。
+- 配置变大、查询和外部 API：[存储与查询](/v2/storage)。

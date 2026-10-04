@@ -1,110 +1,95 @@
-# 配置应用与进度
+# 配置同步、应用与恢复
 
-**V2 设计，尚未实现。** Console 一次点击“应用”，Controller 保存并发布目标配置，Node 拉取后独立校验、保存、应用并回报结果。
+Console 一次提交，Server 保存完整目标和一致执行快照，各 Node 独立校验、保存、安装并回报结果。Server 侧发布／回执接口已接通；新 Node 的实际安装和包流按其实现验收。
 
-## 流程
+## Config 与 State
+
+| | Config／执行目标 | State |
+| --- | --- | --- |
+| 内容 | 管理期望、可信身份／材料、业务许可与参数 | 实际资源、能力、通道、观测与安装结果 |
+| 标识 | 源 revision、publication、节点 digest | instance、sequence、时间及执行引用 |
+| 更新 | 源编辑或执行依赖变化 | 真实事件／报告 |
+| 恢复 | 完整保存，历史恢复为新版本 | 不恢复旧观测为当前事实 |
+
+两者有独立载荷和处理规则，不要求两条物理连接。endpoint／测量更新不伪造配置编辑；State 不携带额外业务授权，也不续活旧 lease。
+
+## 普通 apply
 
 ```text
-Console：baseRevision + 本地草稿／patch
-  → 点击“应用”
-  → Controller 校验、CAS 保存完整目标版本及一致执行快照
-  → Node 拉取 full／delta，校验并持久保存
-  → Node 直接进行本机资源安装／代际切换
-  → 回报 applied 或 failed
-  → SSE 更新 Console 的整体及逐节点进度
+草稿／typed ops + expectedRevision
+  → Server 校验、准备材料／资源，最终事务重检
+  → CAS 保存完整源、绑定、current 指针与执行发布
+  → 提交后通知；Node 获取 full／delta
+  → 校验、私有保存（saved）→ 本机安装／代际切换
+  → applied／failed 与独立 State／SSE
 ```
 
-Console 的 patch 是编辑方式，服务端还原并校验完整 NetworkConfiguration。Node 的 full／delta 基于各自已保存 digest 生成；两者不是同一份补丁。
+编辑和影响对照见[整网草稿](/v2/configuration-reference/editing)。编辑 patch 与节点执行 delta 不是同一补丁。节点离线不阻塞其他节点，恢复后同步当前目标；关闭 Console 不取消已接纳的提交。
 
-每用户每网络一份跨页面草稿。最终提交前展示有效修改数量、前后对照及删除／改址／身份／材料影响，规则见[编辑与应用对照](/v2/configuration-reference/editing)；预览不生成材料或预留资源，仍是普通 apply。
+`currentRevision` 是期望，非全网 applied。失败默认修复／重试或显式恢复为新版本，不自动倒退整网配置；无需全体节点先 ready 的准备屏障或第二次激活命令。
 
-配置事务提交后返回 revision 和 publication 引用，各节点各自应用。Node 离线不阻塞其他节点；重新接入时同步当前目标，不依次执行所有历史版本。关闭 Console 或取消 HTTP 不撤销已受理配置。
+## Full 与 delta
 
-`Network.currentRevision` 表示已受理的期望配置。每个节点的 saved／applied 引用可能不同，Console 如实显示；失败不会偷偷退回旧的 currentRevision。
+先形成完整 NodeConfiguration，再计算强类型增量。Node 核对自身网络／身份、base 和目标引用，在临时值中还原，验证完整类型、材料、权限及 digest 后持久保存；不直接把部分 patch 写入运行路由表。
 
-## 节点阶段
+基准不存在或不匹配时重新获取 full。数组顺序、删除和清空分别表达，remark 不作主键。完整参数包含当前执行所需材料，不能将缺少材料的空壳保存为可执行目标。参数示例见[NodeConfiguration](/v2/configuration-reference/node-configuration)。
+
+## 执行发布与依赖 {#publication}
+
+publication 固定源 revision、相关身份／公钥、材料、规则集／解析依据以及参与节点的目标 digest。源不变的需求或资源变化可以形成新发布，参数／凭据值编辑则形成新源版本；不能仅凭 revision 相同拼接输入，也不要求不同 Node 的 digest 相等。
+
+需求先合并后联合编译，只替换实际改变的节点切片。无关节点保留仍有效的目标／lease／回执；有效重试不重复扰动它们。每条备用完整路径也满足授权和必经点，见[按需执行许可](/v2/execution)。
+
+接收方独立检查相容身份、地址、完整路径与许可；依赖未就绪时对应业务等待／拒绝。节点本机按 owner 顺序准备保护和资源，不以部分安装成功宣称整份应用成功。
+
+撤销、身份失效和 lease 到期独立于 HTTP／State 通道终止旧执行。改址同时更新 DNS、地址准入与路径，旧绑定按[地址退出条件](/v2/configuration-reference/addressing#改址与安全切换)保留；ACK 不表示旧流／NAT／缓存已退出。
+
+## 阶段与回执
 
 | 阶段 | 含义 |
 | --- | --- |
-| receiving | 正在接收实际 payload |
-| validating | 还原并检查完整 Schema、身份／材料、摘要及本机条件 |
-| saved | 完整配置已私有持久保存 |
-| applying | 正在安装资源、检查执行条件并切换运行代际 |
-| applied | 本节点要求的配置资源已实际完成切换 |
-| failed | 某个明确步骤失败，附带真实错误 |
+| receiving／validating | 接收并还原、校验实际目标 |
+| saved | 完整目标已私有持久保存 |
+| applying | 安装资源、检查条件并切换本机代际 |
+| applied | 本节点要求的资源完成切换 |
+| failed | 明确步骤失败，带真实错误 |
 
-**saved 只证明保存，applied 只证明本机配置应用，不等于端到端业务连通。** 业务路径验证使用实际连接证据或独立 observation。
+**saved ≠ applied ≠ 业务连通。** 同一节点按目标代际协调应用，迟到下载、安装和回执不覆盖新目标。
 
-同一 Node 按目标代际串行应用。执行前核对当前网络、实例、publication、digest 与有效许可；迟到的旧下载、回执或安装任务不能覆盖新目标。相同目标的重复投递／回报幂等，不重复安装。
+持久回执使用 `attempt: Version`、`sequence: Sequence`：同实例／目标的新尝试递增 attempt，每次尝试内递增 sequence；传输重发复用原值和完整内容，修改同一位置报冲突。applied 需同尝试内更早的 saved，新的尝试不继承旧 applied。历史保留迟到证据，当前投影不按到达顺序覆盖。
 
-## 执行依赖与安全边界
+instanceId 只用于同 boot 下仍有效实例的幂等 acquire。释放、过期或 Server 重启后使用新 instanceId；能力声明从认证后的 acquire 得到，普通 State 报告不能自行覆盖执行能力。
 
-Controller 仍从同一源版本和可信依赖生成完整执行快照，Node 只使用自己收到的许可。
+## 进度展示
 
-- 各节点完成安装的时间可以不同；接收方独立校验相容的身份、地址、完整路径与执行许可。
-- 对端尚未取得相容配置时，对应业务等待／拒绝；不能据此放宽权限或跳过必经节点。
-- 本机资源检查和切换顺序仍由资源 owner 处理，失败不能留下可执行的半份配置。
-- 改址／地址复用仍满足[旧绑定退出条件](/v2/configuration-reference/addressing#改址与安全切换)；此时显示具体等待原因。
-- 撤销和执行 lease 到期独立终止旧运行，SSE 保活、重复心跳或应用重试不能延长旧许可。
+按 revision 的 GET 与 `configuration.progress` SSE 共用 `ConfigurationApplyProgress`。目标固定于该次配置提交并按 NodeId 去重，后续 demand／refresh 不扩大原分母；无需 Console 拼合多个 publication 计数。
 
-ExecutionPublication 是一致快照和进度关联，不要求所有参与节点先给出准备票据。成功节点无需等待其他节点确认自己已完成本机应用。
+结果 phase 与 freshness 分开：历史 applied 可同时已过期或被替代，不是当前健康。返回 full／partial 范围，隐藏节点不进入成员可见计数；当前期望引用可由 Node 库存的 desiredExecution 对照。零目标返回 targetCount=0／空 publicationIds，离线节点不等于无目标。
 
-## 失败、恢复与回滚
+配置通知不覆盖本地草稿／CAS 基准。首次同步与重连可以恢复当前进度，不能依赖浏览器完整接收所有中间事件。
 
-| 场景 | 行为 |
+### 组件细节 {#字段提案}
+
+更细的组件／下载进度仍为设计字段；实际 wire 以生成 schema 为准：
+
+| 字段 | 含义 |
 | --- | --- |
-| Controller 校验／提交失败 | 保留 Console 草稿，不发布新目标 |
-| Node 下载／校验／保存失败 | 报告失败，清理本次临时资源，不执行不完整配置 |
-| Node 安装失败 | 报告失败步骤和仍有效的配置；保留拒绝边界，不伪称整份 applied |
-| Node 离线／控制请求失败 | 显示联系状态，按有界退避重连／同步；不阻塞其他节点 |
-| Node 重启 | 以缓存为基准，fresh 认证／实例确认后同步当前有效目标 |
-| applied 回报丢失 | 重新上报／查询；未确认不等于未应用，也不等于失败 |
-| Controller 重启 | 从持久目标／回执恢复，旧回执只作最后已知证据，等待当前报告 |
+| target、phase、observedAt、problem | 精确执行引用、真实阶段、原时间与安全错误 |
+| step／components | validate、storage、listeners、underlay、tun、dns、dataplane 等实际步骤 |
+| download.receivedBytes／totalBytes | 同一口径的实际字节；未知总量为 null，不估百分比 |
 
-默认失败后修复／重试，或显式回滚为新 revision／publication。临时资源可以自动清理；旧运行仅在资源和权限／lease 仍有效时维持，不能用本机回退复活已失效许可。
+组件 notApplicable 只表示本目标不需要它；组件 done、下载完成或联系丢失都不能被转换成整份 applied／failed。
 
-回滚仍检查当前身份、吊销、材料和地址退出条件，并走同一普通应用流程；不倒退版本号或恢复旧连接。
+## 恢复
 
-## Console 展示
+| 场景 | 处理 |
+| --- | --- |
+| 校验／提交失败 | 保留草稿，不发布目标 |
+| Node 下载／保存／安装失败 | 清理本次临时资源，保留有效拒绝边界，报告具体失败 |
+| Node 离线或回报丢失 | 标注最后已知状态与新鲜度，按有界重试同步；未确认不直接等于失败 |
+| Node 重启 | 缓存作为基准，重新认证、建立实例并取得有效执行资格 |
+| Server 重启 | 从持久目标／回执恢复，重建 State epoch，重新同步当前事实 |
 
-每个节点展示目标、当前阶段、实际 applied 引用、最后回报时间／新鲜度、等待或错误原因。离线与未报告是联系状态，不伪造成 Node 自报 failed。
+恢复历史配置仍形成新 revision，并检查当前身份、材料、精确资源版本和地址退出条件。缺失／吊销依赖明确失败要求替代；不换用最新数据或自动生成材料冒充历史恢复。
 
-整体显示“2/5 已应用”“1 节点失败”“2 节点未确认”等真实计数；没有目标节点时显示“无需节点部署”。人数按本次 publication 的固定目标集合计算，重复读取／重放不会加一，后续 demand／refresh 发布不混入原分母。
-
-一次提交可涉及多个 publication。`GET /configuration/revisions/{revision}/progress` 由服务端汇总该次配置应用目标，按 NodeId 去重并保留每个节点的精确目标／实际 applied 引用和替代关系；Console 不自行合并计数。重复／重试不增加分母，后续 demand／refresh 不凭相同源 revision 混入；无法证明旧目标已满足时标 superseded，不能仅凭 revision 相同算成功。
-
-configuration.progress SSE 携带相同 revision 的服务端 summary，与该 GET 复用类型和去重计算；节点变化使用相同片段类型。客户端直接替换汇总，不需要收到每条事件后再 GET 或自行相加。
-
-汇总带 `scope: full | partial`；已被后续目标替代的发布显示 superseded 和可见替代引用，不永久挂为未确认。联系状态由服务端按真实时间计算，不让 Console 自定在线阈值。
-
-配置变化通知保持草稿和 CAS 基准；`configuration.changed` 表示期望已提交，`configuration.progress` 才展示各节点处理结果。首次同步和重连查询能恢复当前进度，不依赖回放全部中间事件。
-
-## 字段提案
-
-### NodeConfigurationProgress
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `target` | ConfigurationRef | revision／publication／digest |
-| `phase` | ConfigurationApplyPhase | 上表节点阶段 |
-| `step` | ApplyComponent? | 当前步骤；无执行步骤为 null |
-| `components` | Map&lt;ApplyComponent, ComponentProgress&gt; | 各组件真实阶段／错误 |
-| `download` | DownloadProgress? | 实际 payload 字节计量，未计量为 null |
-| `observedAt` | Timestamp | 原观测时间，不因读取刷新 |
-| `problem` | Problem? | 类型化、脱敏的失败 |
-
-ApplyComponent 为 validate、storage、listeners、underlay、tun、dns、dataplane。ComponentProgress 字段为 `phase: pending | running | done | failed | notApplicable`、`problem: Problem?`；notApplicable 只表示本配置不需要该组件。
-
-DownloadProgress 字段为 `receivedBytes: u64`、`totalBytes: u64?`，使用同一字节口径；总量未知不估百分比。组件 done 或下载完成都不单独等于整份配置 applied。
-
-### 回执与 API
-
-saved／applied／failed 关键回执绑定目标、当前实例／代际和原结果时间，服务端核对后保存。连续细节进入 NodeState／SSE，两者来自同一应用状态机；异常目标、旧实例或过期许可的自报不推进当前进度。
-
-新 Controller 回执合同使用 `attempt: Version` 与 `sequence: Sequence`：在同一 instance／target 内，新的本机应用尝试递增 attempt（从 1 开始）；每次尝试内的结果递增 sequence（从 0 开始）。传输重发复用同一 attempt／sequence 和完整内容，修改同一位置的内容报冲突。applied 需要同一尝试内更早 sequence 的 saved；同 phase 的后续真实事件可以使用新 sequence。历史保留迟到证据，当前投影按 attempt／sequence 而非到达时间排序；新的尝试不会沿用旧尝试的 applied。
-
-执行需求重试恢复当前仍有效的决策，不重新发布或延长其他节点 lease。新增／取消需求先与全部有效需求联合编译，再只替换实际变化的节点切片；无关节点保留原 publication、lease 和回执。撤销仍使依赖该身份／密钥的目标失效，不恢复已撤回 publication。
-
-实例 acquire 的同一 instanceId 仅用于当前 boot 下仍有效实例的幂等重试，能力声明必须相同。释放、过期或 Controller 重启后重新 acquire 使用新 instanceId；历史 instanceId 不再成为新实例。acquire 使用共享 Capability 值（transport 的 roles／streams、feature 的 version）；它是认证后的执行能力声明，NodeState.capabilities 是观测来源，不能自行覆盖已编译能力或授权。
-
-Console 通过 publication 查询和 `configuration.progress` SSE 获取状态。Agent 拉取目标配置并正常应用，分别报告保存和应用结果；无需第二个激活命令。Owner／Admin 看本网络进度，普通成员看相关范围，统计明确标注范围。
+删除的 listener 同名重建是新资源，身份转换仍需设备证明，Node 永久删除不恢复。回滚不恢复旧会话／endpoint，也不清除地址退出限制；详见[历史合同](/v2/api/history)。

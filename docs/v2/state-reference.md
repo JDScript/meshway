@@ -5,7 +5,7 @@ description: 节点状态上报、网络聚合、按需查询与订阅更新。
 
 # State Reference
 
-本参考描述 **V2 State 模型**。新 Controller 已提供 Node 上报、按权限查询、用户／Node SSE 及主动观察任务；精确字段以实际路由生成的 OpenAPI 为准。Node 上报自身事实，Controller 按网络维护全局状态，Node 按需读取相关 peer 状态并订阅变化。GeoIP／可信 DNS 输入和真实 Agent 数据面仍有未完成接线，见[当前 API 范围](/v2/api#当前实现切片)。
+Node 上报自身事实，Server 按网络维护全局状态并按权限提供查询／订阅。精确字段以实际路由生成的 OpenAPI 为准；交付范围统一见 [Server](/v2/server#当前能力)。
 
 ## 数据流
 
@@ -50,4 +50,4 @@ Config 定义期望和许可，State 定义当前事实。上报 State 不会修
 - [节点查询、裁剪与订阅](/v2/state-reference/query)
 - [Realtime 路径观察](/v2/state-reference/realtime)：往返耗时、业务流量与探测未回应率。
 - [观测与历史上报](/v2/state-reference/observations)
-- [Config／State 同步关系](/v2/configuration-reference/synchronization)
+- [Config／State 同步关系](/v2/configuration-reference/deployment)

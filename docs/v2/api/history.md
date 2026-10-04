@@ -1,10 +1,10 @@
 # 配置版本与操作历史
 
-**V2 接口补全提案，尚未实现。** 配置历史记录“保存过哪些完整配置”，操作历史记录“谁完成了什么管理动作”，观测历史记录“节点实际报告过什么”。三者使用关联 ID，但不互相冒充。
+配置历史记录完整目标，操作历史记录已完成的管理动作，观测历史记录真实节点事件。三者使用关联 ID，权限和语义分别处理；具体字段以生成合同为准。
 
 ## 配置版本接口
 
-下面路径相对 `/api/v1/networks/{networkId}`，建议需要 Owner／Admin 管理读取权限。
+下面路径相对 `/api/v1/networks/{networkId}`，需要 Owner／Admin 管理读取权限。
 
 | 方法与路径 | 输入 | 返回 |
 | --- | --- | --- |
@@ -14,7 +14,7 @@
 | `POST /configuration/compare` | fromRevision、toRevision | 字段路径级变化摘要，区分语义／原文／绑定变化 |
 | `POST /configuration` | expectedRevision＋新草稿，或 restoreFrom 历史引用 | 按普通 apply 保存新版本，返回 revision／publication 引用 |
 
-沿用一个配置提交入口完成回滚，不增加预发布或二阶段。新 Controller 候选的 `type: "restore"` 请求使用 `restoreFrom: Revision`；可选 `resourcePublication: PublicationId` 指定该源版本后续某次数据集绑定，必须同网且对应这个源版本。省略或为 null 时使用该历史源版本提交时固定的绑定，不能默认换成最新规则集。资源 GET 的 `publication` 可作为这个精确引用；恢复仍在当前身份、材料／地址与授权上下文下重验并生成新版本。
+同一配置提交入口用 `type: "restore"` 和 `restoreFrom: Revision` 恢复历史。可选 resourcePublication 必须同网且对应该源版本，指定某次历史数据集绑定；省略／null 使用源版本初始绑定。恢复按当前身份、材料、地址与授权重验，不默认换成最新规则集。
 
 回滚输入由生成契约明确区分普通编辑和历史恢复。历史载入草稿后仍需保留恢复来源，稳定 UserId／MembershipId 和材料／数据集依据在服务端解析；不能仅复制旧邮箱字符串后按当前账户重新匹配。需要替代失效依赖或身份转换时按既有规则报出并处理，精确编辑编码随 DTO 定版。
 
@@ -30,7 +30,7 @@ Node 删除不可恢复；恢复目标含已删除 Node 时拒绝。最终差异
 | `cause` | ConfigurationChangeCause | edit／restore／enrollment／nodeDeleted／emailSync／memberRemoved／identityTransition 等明确来源 |
 | `rollbackFrom` | Revision? | 回滚来源；不是倒退后的版本号 |
 | `current` | boolean | 是否等于本次读取截点的期望版本 |
-| `changedSections` | ConfigurationSection[] | 与前序版本不同的顶层区段，不含秘密值 |
+| `changedSections`（扩展目标） | ConfigurationSection[] | 与前序版本不同的顶层区段，不含秘密值；尚未加入当前摘要 |
 
 列表不携带整份 JSONC 或秘密。节点是否应用从 publication／NodeState 查询，不能在 revision 列表写一个缺少范围与来源的全网 applied=true。
 

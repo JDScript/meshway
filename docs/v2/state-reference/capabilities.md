@@ -1,6 +1,6 @@
 # Capabilities
 
-节点实例实际支持的能力集合。key 使用命名空间，便于 transport 之外的能力继续扩展；下面是设计示例，现行编码以生成 OpenAPI 为准。新 Agent 将结合启动时实际加载的兼容插件形成声明，见[插件与能力](/v2/agent/plugins)。
+节点实例实际支持的能力集合。key 使用命名空间，便于 transport 之外的能力继续扩展；下面是设计示例，现行编码以生成 OpenAPI 为准。新 Node 将结合启动时实际加载的兼容插件形成声明，见[插件与能力](/v2/node/plugins)。
 
 ## Structure
 
@@ -57,7 +57,7 @@ key 存在表示节点声明支持这项能力；省略表示未声明支持。�
 - 能力绑定当前 Node 实例；实例更替／报告过期时不能沿用为当前可用证明。
 - 前缀只用于 capability key。配置中的 `type: 'vless'`、dialers 协议 key 和 LinkState.transport 不随之加前缀。
 
-## 新 Agent 插件对应关系
+## Node 插件对应关系
 
 首版正式插件随完整发行包安装，在 daemon 启动时装载。安装清单、加载结果、capabilities、配置许可及资源 State 分别表达：磁盘上存在动态库不证明可加载，加载实现不证明 listener 已绑定或网络模式已安装。
 
