@@ -122,15 +122,34 @@ its generated client only, and only what the controller delivers:
   does (`entry/inline-sign-in.tsx`), shows what the device reported as
   untrusted text with its control key, approves for one of the account's
   networks or denies, and follows the request until the device redeems it.
-- A configuration apply's deployment (`getExecutionPublication`): from the
-  applied revision's history entry, each publication on its own with its
-  nodes' saved / applied / failed state and freshness, read again every
-  3 s until it settles. The controller gives no per-revision totals and no
-  publication IDs after the apply response, so nothing is summed across
-  publications and a revision applied elsewhere says its progress is not
-  available here.
+- The event stream (`watchNetwork`, `features/live/`): SSE first, GET as
+  the fallback. Each tab keeps one stream for the network it has open, from
+  its pages' mount until the network changes or the sign-in ends. The
+  snapshot batch is staged and installed at `sync.ready` in one step; then
+  each delta must continue from the last applied cursor, else the view is
+  dropped and synced afresh. It writes only the reads it carries exactly:
+  State (`state.snapshot` / `state.delta`), nodes (entities, ordered by ID
+  as `listNodes`), the network summary (inside the read `getNetwork`
+  response), the current revision's progress and a member's own node
+  settings (`memberConfigurationQuery`). Members, join links, activity,
+  configuration reads and rule sets are invalidated instead (paged, or a
+  GET adds what the event lacks); `configuration.changed` never touches a
+  draft, which sees the new revision through those reads. A member's
+  configuration change takes a new snapshot (no event carries their
+  settings). Reconnects back off (1 s doubling to 30 s), resuming from the
+  applied cursor; `sync.reset` and a refused frame sync afresh. 401 signs
+  out; 403/404 stops the stream and the network's reads say why. While it
+  is not live, the reads it covers poll (`pollUnlessLive`), and leaving
+  live reads them again. The toolbar's dot states it (live since,
+  reconnecting since, stopped). Observation events are only passed over.
+- A revision's deployment (`getConfigurationProgress`), in every
+  revision's history entry: the controller's summary (targets once each,
+  pending / saved / applied / failed), never recomputed here, and each
+  target node's phase, freshness and last report time; `partial` scope says
+  only visible nodes count. A historical "applied" is not current health.
+  Another revision than the current one is read again every 3 s while shown.
 - Not delivered: node runtime state, the forms for routing, rule sets and
-  node settings, and the event stream. Their pages below are the target design; they return when their
+  node settings. Their pages below are the target design; they return when their
   operations exist, and nothing stands in for them. What the console needs
   from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
