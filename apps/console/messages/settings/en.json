@@ -13,9 +13,7 @@
   "activity_failed": "Could not read the activity",
   "activity_empty": "No activity",
   "activity_more": "Load more",
-  "activity_actor_you": "You",
   "activity_actor_system": "System",
-  "activity_actor_unlisted": "An account not in the member list",
   "activity_target_member": "a member",
   "activity_target_account": "an account",
   "activity_target_join_link": "join link",
@@ -38,5 +36,7 @@
   "activity_membership_join": "Joined with a join link",
   "activity_membership_remove": "Ended a membership (removed or left)",
   "activity_join_link_create": "Created a join link",
-  "activity_join_link_revoke": "Revoked a join link"
+  "activity_join_link_revoke": "Revoked a join link",
+  "activity_actor_user": "User {id}",
+  "activity_actor_self": "{name} (you)"
 }

@@ -439,5 +439,6 @@
   "configuration_nodes_problems": "{count} 项待修正",
   "configuration_nodes_disabled": "已停用",
   "configuration_nodes_exit": "可作出口",
-  "configuration_nodes_enabled": "已启用"
+  "configuration_nodes_enabled": "已启用",
+  "configuration_actor_self": "{name}（你）"
 }

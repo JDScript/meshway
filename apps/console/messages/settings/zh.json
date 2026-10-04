@@ -13,9 +13,7 @@
   "activity_failed": "无法读取活动",
   "activity_empty": "没有活动",
   "activity_more": "加载更多",
-  "activity_actor_you": "你",
   "activity_actor_system": "系统",
-  "activity_actor_unlisted": "不在成员列表中的账户",
   "activity_target_member": "一位成员",
   "activity_target_account": "一个账户",
   "activity_target_join_link": "加入链接",
@@ -38,5 +36,7 @@
   "activity_membership_join": "通过加入链接加入",
   "activity_membership_remove": "结束成员资格（移除或离开）",
   "activity_join_link_create": "生成加入链接",
-  "activity_join_link_revoke": "撤销加入链接"
+  "activity_join_link_revoke": "撤销加入链接",
+  "activity_actor_user": "用户 {id}",
+  "activity_actor_self": "{name}（你）"
 }

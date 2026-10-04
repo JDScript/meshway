@@ -14,6 +14,7 @@ import { EmptyLine } from "@/components/chrome/section"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { actorId, actorText, type ActorWords } from "@/features/account/actor"
 import { sessionQuery } from "@/features/auth/queries"
 import { membersQuery } from "@/features/members/queries"
 import { networkKey } from "@/features/network/queries"
@@ -73,12 +74,11 @@ type Names = {
   viewerId: string | null
 }
 
-/** Who did it: this account, a current member by email, the system, or an account no longer listed. */
-function actorName(event: ActivityEvent, names: Names): string {
-  if (event.actor.type === "system") return m.activity_actor_system()
-  const { userId } = event.actor
-  if (userId === names.viewerId) return m.activity_actor_you()
-  return names.byUser.get(userId) ?? m.activity_actor_unlisted()
+/** Who did it, by the email they had then (else their ID), or the system. */
+const actorWords: ActorWords = {
+  system: () => m.activity_actor_system(),
+  user: (id) => m.activity_actor_user({ id }),
+  self: (name) => m.activity_actor_self({ name }),
 }
 
 /** What it was done to, when that is more than the network itself. */
@@ -178,8 +178,11 @@ export function ActivitySection({ network }: { network: NetworkSummary }) {
                       </span>
                     ) : null}
                   </div>
-                  <div className="truncate text-meta text-muted-foreground">
-                    {actorName(event, names)}
+                  <div
+                    className="truncate text-meta text-muted-foreground"
+                    title={actorId(event.actor)}
+                  >
+                    {actorText(event.actor, names.viewerId, actorWords)}
                     {moved ? ` · ${moved}` : ""}
                   </div>
                 </div>

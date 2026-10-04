@@ -39,7 +39,6 @@
   "account_activity_failed": "无法读取账户活动",
   "account_activity_empty": "没有活动",
   "account_activity_more": "更多活动",
-  "account_activity_by_system": "{at} · 系统",
   "account_action_register": "注册账户",
   "account_action_login": "登录",
   "account_action_logout": "退出登录",
@@ -61,5 +60,8 @@
   "account_target_session": "登录 {id}",
   "account_target_network": "网络 {id}",
   "account_target_membership": "成员 {id}",
-  "account_target_join_link": "加入链接 {id}"
+  "account_target_join_link": "加入链接 {id}",
+  "account_activity_by": "{at} · {actor}",
+  "account_actor_system": "系统",
+  "account_actor_user": "用户 {id}"
 }

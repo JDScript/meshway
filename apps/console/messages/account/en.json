@@ -39,7 +39,6 @@
   "account_activity_failed": "Could not read the account activity",
   "account_activity_empty": "No activity",
   "account_activity_more": "More activity",
-  "account_activity_by_system": "{at} · system",
   "account_action_register": "Account registered",
   "account_action_login": "Signed in",
   "account_action_logout": "Signed out",
@@ -61,5 +60,8 @@
   "account_target_session": "Sign-in {id}",
   "account_target_network": "Network {id}",
   "account_target_membership": "Member {id}",
-  "account_target_join_link": "Join link {id}"
+  "account_target_join_link": "Join link {id}",
+  "account_activity_by": "{at} · {actor}",
+  "account_actor_system": "System",
+  "account_actor_user": "User {id}"
 }

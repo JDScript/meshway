@@ -21,8 +21,8 @@ import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { actorText, type ActorWords } from "@/features/account/actor"
 import { sessionQuery } from "@/features/auth/queries"
-import { membersQuery } from "@/features/members/queries"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { dateTime } from "@/lib/format"
@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { ChangeList, JsonBlock } from "./change-list"
-import { actorName, causeLabel } from "./labels"
+import { causeLabel } from "./labels"
 import type { HistorySelection } from "./navigation"
 import { ApplyProgress } from "./progress-section"
 import {
@@ -39,6 +39,13 @@ import {
   revisionQuery,
   revisionsQuery,
 } from "./queries"
+
+/** A revision's author by the email recorded with it (else their ID), or the system. */
+const actorWords: ActorWords = {
+  system: () => m.configuration_actor_system(),
+  user: (id) => m.configuration_actor_user({ id }),
+  self: (name) => m.configuration_actor_self({ name }),
+}
 
 /**
  * The configuration's revisions (Owner, Admin): who made each and why, one
@@ -72,19 +79,6 @@ export function HistoryWorkspace({
     enabled: editable,
   })
   const session = useQuery(sessionQuery())
-  const members = useInfiniteQuery({
-    ...membersQuery(networkId),
-    enabled: network?.actions.manageMembers ?? false,
-  })
-  const emails = useMemo(
-    () =>
-      new Map(
-        (members.data?.pages ?? []).flatMap((page) =>
-          page.items.map((member) => [member.userId, member.email] as const)
-        )
-      ),
-    [members.data]
-  )
   const items = useMemo(
     () => (revisions.data?.pages ?? []).flatMap((page) => page.items),
     [revisions.data]
@@ -95,7 +89,7 @@ export function HistoryWorkspace({
     null
   const selected = selection.revision ?? (mobile ? null : current)
   const actor = (summary: ConfigurationRevisionSummary) =>
-    actorName(summary.createdBy, session.data?.user.id ?? null, emails)
+    actorText(summary.createdBy, session.data?.user.id ?? null, actorWords)
 
   const list = (
     <PanelList

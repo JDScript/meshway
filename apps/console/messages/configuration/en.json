@@ -507,5 +507,6 @@
   "configuration_nodes_problems": "{count} to fix",
   "configuration_nodes_disabled": "Disabled",
   "configuration_nodes_exit": "May be an exit",
-  "configuration_nodes_enabled": "Enabled"
+  "configuration_nodes_enabled": "Enabled",
+  "configuration_actor_self": "{name} (you)"
 }

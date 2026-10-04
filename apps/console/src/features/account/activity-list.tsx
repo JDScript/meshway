@@ -12,6 +12,7 @@ import { dateTime } from "@/lib/format"
 import { currentSession } from "@/lib/session"
 import { m } from "@/paraglide/messages.js"
 
+import { actorId, actorText, type ActorWords } from "./actor"
 import { activityTarget, pagedCount, type ActivityTargetView } from "./model"
 import { accountActivityQuery } from "./queries"
 import { useLoadMore } from "./use-load-more"
@@ -54,6 +55,14 @@ function targetLabel(target: ActivityTargetView): string | null {
     case "configuration":
       return m.revision({ revision: String(target.revision) })
   }
+}
+
+// Every event here is the account's own, so the actor is not marked as this
+// account; its email is the one recorded then, which may not be today's.
+const actorWords: ActorWords = {
+  system: () => m.account_actor_system(),
+  user: (id) => m.account_actor_user({ id }),
+  self: (name) => name,
 }
 
 /** What happened to the account, newest first, as the controller recorded it. */
@@ -123,9 +132,12 @@ function ActivityRow({
       lead={<HistoryIcon className="size-4 text-muted-foreground" />}
       title={actionLabel[event.action]()}
       subtitle={
-        event.actor.type === "system"
-          ? m.account_activity_by_system({ at })
-          : at
+        <span title={actorId(event.actor)}>
+          {m.account_activity_by({
+            at,
+            actor: actorText(event.actor, null, actorWords),
+          })}
+        </span>
       }
       state={targetLabel(activityTarget(event.target, thisSession))}
     />
