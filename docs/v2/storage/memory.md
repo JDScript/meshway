@@ -1,35 +1,34 @@
 # Server 内存容器
 
-本页列 Server 持有的容器、索引和投影职责。字段为逻辑结构参考，实际内部布局以源码为准；公开 State 字段只在 [State Reference](/v2/state-reference) 定义，持久恢复依据见[数据库](/v2/storage/database)。所有队列／缓存有预算。
+本页列 Server 的内存容器和投影职责。内部字段使用源码命名；公开 State 字段只在 [State Reference](/v2/state-reference) 定义，持久恢复依据见[数据库](/v2/storage/database)。所有队列／缓存有预算。
 
-## ConfigurationCache
+## SnapshotCache
 
 键为 `(networkId, revision)`，当前指针来自数据库。
 
 | 字段 | 类型／作用 |
 | --- | --- |
-| networkId／revision | 绑定完整版本 |
-| configuration | 不可变的解密／校验后 NetworkConfiguration |
+| network_id／revision | 绑定完整版本 |
+| document | 不可变 ConfigurationDocument，含原文与完整规范值 |
 | bindings | 稳定用户、listener 与数据集依据 |
-| digest | 本版本确定编码的摘要 |
-| addressIndex | 可重建的版本内地址占用索引 |
-| compiled | 按依赖 digest／compilerVersion 区分的有界内部编译缓存 |
+| encoded_size | 缓存项的编码大小预算 |
+| ciphertext_digest | 确切 SQL 密文指纹；事务回滚后 revision 复用不能命中旧项 |
 
-派生索引／编译缓存按需建立，不提供独立写入口。地址不存在于 RAM 索引不代表旧绑定已退出；分配还检查 AddressRetirement。内部编译图不作为 Node 自授权输入。
+缓存最多 32 项、按编码大小合计 64 MiB。它不回答当前权限或 currentRevision；命中前仍读取确切 SQL 版本并核对密文。地址分配另检查 AddressRetirement，缓存缺少地址不证明旧绑定已退出。
 
-## NetworkState 与接受报告
+## StateHub 与接受报告
 
 | 容器 | 字段 | 含义 |
 | --- | --- | --- |
-| NetworkState | networkId／stateEpoch／sequence | 作用域与当前变化顺序 |
-| NetworkState | configurationRevision | 解释该视图的配置版本 |
-| NetworkState | nodes | NodeId → 已接受报告，不为每个读者复制整网 |
-| StoredNodeState | instanceId／reportSequence | 来源实例／序号，未报告可为空 |
-| StoredNodeState | receivedAt／reportExpiresAt | 原接受时间和有效期 |
-| StoredNodeState | lastAuthenticatedAt | 真实认证联系，与报告新鲜度分开 |
-| StoredNodeState | report | NodeState 或明确未报告 |
+| StateHub | epoch／sequences／exhausted | 当前状态世代、各网络顺序及耗尽边界 |
+| StateHub | reports | (NetworkId, NodeId) → StoredReport |
+| StateHub | events／bytes | 统一事件日志与报告总预算 |
+| StoredReport | report | 完整 StateReport，含来源实例／序号／NodeState |
+| StoredReport | received_at／expires_at | 原接受时间和有效期 |
+| StoredReport | authenticated_at | 真实认证联系，与报告新鲜度分开 |
+| StoredReport | bytes／next_expiration | 大小及下个子项失效时间 |
 
-freshness 结合当前时间、实例、配置和撤销计算。查询或重复报告不延长原期限；失去某个读者的可见性不删除全局报告。永久退休提交可释放大报告，持久认证仍拒绝旧身份。
+freshness 结合当前时间、实例、配置和撤销计算。单份报告最多 1 MiB、每网络最多 10000 份、进程报告预算 128 MiB。报告期限 60 秒，时钟偏差校验 30 秒；子项仍保留各自期限。查询或重复报告不延长原报告期限；永久退休提交可释放大报告，持久认证仍拒绝旧身份。
 
 ### 报告的共享类型 {#nodestate}
 
@@ -53,9 +52,9 @@ freshness 结合当前时间、实例、配置和撤销计算。查询或重复�
 | links／paths 聚合 | 保留真实报告者、通道／路径标识和证据阶段 |
 | 应用进度 | 固定提交目标、实际 receipt、当前实例与 lease |
 | Node／成员 actions | 当前用户、网络权限和配置身份 |
-| 方案／版本状态 | 真实选择、身份约束、能力与兼容规则；尚无输入时明确未知 |
+| 方案状态 | 真实选择和当前身份／allowed／locked 约束 |
 
-具体投影见[网络视图](/v2/state-reference/network)与[IP 信息](/v2/state-reference/ip-info)。缓存 key／失效规则必须包含所有权威输入；尚未实现的派生能力不靠字段占位表示已完成。
+具体投影见[网络视图](/v2/state-reference/network)与[IP 信息](/v2/state-reference/ip-info)。查询裁剪不产生另一份可编辑 State，也不补造缺失结果。
 
 ## StreamSubscription 与 Journal
 
@@ -64,10 +63,12 @@ freshness 结合当前时间、实例、配置和撤销计算。查询或重复�
 | Subscription | id／principal／networkId | 本进程订阅及已认证作用域 |
 | Subscription | filter／authorizationDigest | 服务端验证的选择与当前裁剪依据 |
 | Subscription | cursor／expiresAt | 发送位置和主体／订阅期限上界 |
-| Journal | epoch／events／oldestCursor | 有界变化记录与可重放下界 |
+| EventLog | epoch／sequence／entries | 有界变化记录与可重放下界 |
 | Delivery | pending／replay | 当前订阅可交付帧和恢复缓冲 |
 
 principal 不由客户端声明权限，filter 不能扩权。同步截点、权限缩小和 cursor/reset 由 [SSE 合同](/v2/api/events)统一定义；客户端的已应用 cursor 与服务端发送位置不同。完整秘密配置不广播。
+
+事件日志保留最多 512 项；单帧最多 2 MiB、批次最多 8 MiB。每次发帧重新校验当前权限，包括初始快照和重放缓冲中的帧。
 
 ## Observation 运行态
 

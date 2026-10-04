@@ -1,9 +1,10 @@
 # VLESS Listener
 
-**当前能力：TCP/TLS 与 WebSocket/TLS 已托管。** 新字段布局尚未发布；高级项按[支持状态](/v2/configuration-reference/transports)处理。
+VLESS TCP/TLS 或 WebSocket/TLS 监听配置。配置与能力匹配见[承载](/v2/configuration-reference/transports)。
 
 ## Structure
 
+<!-- schema: Listener -->
 ```json
 {
   "type": "vless",
@@ -54,11 +55,11 @@ TCP/TLS 示例只需将 stream 改为 tcp 并移除 websocket。禁用 listener 
 | --- | --- |
 | `users[].uuid` | 本 listener 的 uuid；可编辑，默认由平台生成 |
 | `users[].name` | 不创建独立代理用户；显示说明使用 remark |
-| `users[].flow = xtls-rprx-vision` | 尚未实现；不能作为空 flow 接受 |
+| `users[].flow = xtls-rprx-vision` | 不接受；不能作为空 flow 处理 |
 | `tls` | [TLS](/v2/configuration-reference/shared/tls) |
-| `transport` | 本版 stream + websocket；其他封装尚未实现 |
-| `multiplex` | 尚未实现，不复用为多路径聚合 |
+| `transport` | stream + websocket；不接受其他封装 |
+| `multiplex` | 不接受，不复用为多路径聚合 |
 
-REALITY、Vision、gRPC、HTTPUpgrade、QUIC、XUDP 等需要独立协议实现和能力协商，当前不列为可执行组合。
+REALITY、Vision、gRPC、HTTPUpgrade、QUIC、XUDP 不在此配置字段集合中。
 
 [sing-box VLESS inbound](https://sing-box.sagernet.org/configuration/inbound/vless/)

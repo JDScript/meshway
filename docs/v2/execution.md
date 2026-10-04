@@ -1,12 +1,12 @@
 # 按需执行许可
 
-**已确认：Controller 按需计算获准候选／完整路径并补齐一致配置，设备结合 State 做最终选择和拨号。** 不预展开全网节点对，也不让设备凭自己构造的图获得新许可。
+Server 按需计算获准候选／完整路径并补齐一致配置，Node 须在获准范围内结合 State 选择和拨号。不预展开全网节点对，也不让设备凭自构造图获得新许可。
 
 ## 需求与发现
 
 ```text
 Node 产生业务目标需求
-  → Controller 从凭据确定 source，检查当前身份与 access
+  → Server 从凭据确定 source，检查当前身份与 access
   → 根据 topology / routing / 允许方案计算有界候选及完整路径
   → 确定相关 peer / 中转 / 出口依赖与协议材料
   → 向参与节点发布相容的执行配置
@@ -15,15 +15,15 @@ Node 产生业务目标需求
   → 本地选择当前可用候选并认证建连
 ```
 
-请求者提交业务目标和必要协议／端口等输入，不通过自行填写中转列表或 Tag 来扩大可见范围。Controller 可以返回 preparing／unavailable；当前离线与永久未授权分别处理。
+请求者提交业务目标和必要协议／端口等输入，不通过自行填写中转列表或 Tag 扩大可见范围。Server 返回明确的需求决定，当前离线与未授权分别处理。
 
-例如 A 获准访问 B，但两者需经 C：Controller 决定 C 属于执行依赖，补齐 A/C/B 所需身份、材料和许可。A 不必先猜出 C 的 ID，更不能通过 State query 自授读取或使用 C 的权限。
+例如 A 获准访问 B，但两者需经 C：Server 决定 C 属于执行依赖，补齐 A/C/B 所需身份、材料和许可。A 不必先猜出 C 的 ID，更不能通过 State query 自授读取或使用 C 的权限。
 
 ## 各方负责什么
 
 | 参与方 | 职责 |
 | --- | --- |
-| Controller | 身份解析、业务授权、候选／完整路径计算、依赖闭包和一致发布 |
+| Server | 身份解析、业务授权、候选／完整路径计算、依赖闭包和一致发布 |
 | Source Node | 在获准集合内结合当前 State 选路、选 endpoint／承载并发起业务 |
 | 中转 Node | 验证自己被允许承担的完整路径角色，只转发对应流量 |
 | Target／Exit | 根据自身可信配置验证认证 origin、目的范围、完整 path 及流资格 |
@@ -38,7 +38,7 @@ Node 产生业务目标需求
 
 参与节点按[普通应用流程](/v2/configuration-reference/deployment)独立处理。若必要对端尚未应用相容配置，对应业务等待／拒绝；其他节点仍可完成自己的安装。用户配置应用与后续按需发布按各自 publication 跟踪进度。
 
-NodeConfiguration 中承载已解析计划的容器最终叫 connections 或其他名字，由 API 定义；这不改变“Controller 授权候选、设备最终选择”的职责。
+NodeConfiguration 使用 dialers 保存具体获准候选，permits 保存业务许可，diagnostics 保存独立测量许可，decisions 保存需求结果；字段见[节点配置](/v2/configuration-reference/node-configuration)。
 
 ## 路径与会话
 
@@ -49,10 +49,10 @@ NodeConfiguration 中承载已解析计划的容器最终叫 connections 或其�
 
 ## 规模与发布
 
-Controller 可复用同一源版本的编译事实，只对合法需求产生有界候选／切片。节点数增加不要求预计算所有简单路径，也不要求为每次实际探测重新保存管理员配置。
+Server 可复用同一源版本的编译事实，只对合法需求产生有界候选／切片。节点数增加不要求预计算所有简单路径，也不要求为每次实际探测重新保存管理员配置。
 
 一次需求可以影响少量参与节点；发布引用和相关依赖必须一致，不把无关节点的状态更新视为全网权限变更。持久顺序、各节点 digest、lease 和切换规则见[配置应用](/v2/configuration-reference/deployment#publication)。
 
-## 实现范围
+## 编译边界
 
-当前编译按网络合并有效需求，出口／每出口路径分别有界；TLS 不相容只排除对应候选，材料缺失不降级。可信 DNS 地址关联及其 TTL 参与域名与 IP 需求求值，独立诊断许可不产生普通业务 permit。实际接线与未完成项统一见 [Server](/v2/server#当前能力)，Node 包流另行验收。
+编译按网络合并有效需求，出口／每出口路径分别有界；TLS 不相容只排除对应候选，材料缺失不降级。可信 DNS 地址关联及 TTL 参与域名与 IP 需求求值，独立诊断许可不产生普通业务 permit。发布并不表示 Node 已安装或业务连通，运行范围见 [Server](/v2/server) 与 [Node](/v2/node)。

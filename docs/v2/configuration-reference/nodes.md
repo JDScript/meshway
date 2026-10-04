@@ -1,8 +1,10 @@
 # Nodes
 
-以已注册 Node ID 为 key 的静态设置草案。hostname 是配置的权威值；运行观测见 [State](/v2/state-reference)。
+以已注册 Node ID 为 key 的静态设置。hostname 是配置的权威值；运行观测见 [State](/v2/state-reference)。
 
 ## Structure
+
+配置节选；Node 和引用的 Tag 须在当前网络有效：
 
 ```json
 {
@@ -25,20 +27,20 @@
 
 ## Fields
 
-| 字段 | 类型 | 建议默认 | 说明 |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `hostname` | `string` | 首次接入时生成 | 网络内唯一的规范 DNS 名称 |
 | `remark` | `string` | `""` | 自由备注，不影响身份、DNS 或授权 |
 | `identity` | `NodeIdentity` | 接入时写入 | User／Tag 有效授权身份的唯一配置源 |
 | `enabled` | `boolean` | `true` | 是否启用本节点业务执行；停用可随配置回滚 |
-| `addresses` | `NodeAddresses` | 接入时自动分配并保存 | Mesh IPv4／IPv6 的期望分配；可显式修改或重新分配 |
+| `addresses` | `NodeAddresses` | 接入时自动分配并保存 | Mesh IPv4／IPv6 的期望分配；可显式修改 |
 | `listeners` | `Record<string, Listener>` | `{}` | [本节点入站配置](/v2/configuration-reference/listeners) |
 | `dialers` | `DialerSet` | 省略则继承 | 显式 `{}` 禁用主动建连；非空集合替换默认 |
 | `exitEnabled` | `boolean` | `false` | 管理员允许此节点承担出口；不是执行就绪状态 |
 
 ## hostname
 
-建议使用单个 DNS label：小写字母、数字及中间连字符，1–63 个字符，首尾为字母或数字。手工改名重名时拒绝保存；首次接入可规范化 OS hostname 并生成唯一后缀。
+使用单个 DNS label：小写字母、数字及中间连字符，1–63 个字符，首尾为字母或数字。手工改名重名时拒绝保存；首次接入规范化请求中的 hostname 并生成唯一后缀。
 
 ```text
 hostname: backend-1
@@ -46,22 +48,24 @@ dns.domain: mesh.example
 FQDN: backend-1.mesh.example
 ```
 
-Node 查询投影此名称，不再有第二个独立可写的显示名。Agent 上报的 OS hostname 留在 State；自动跟随 OS hostname 的行为尚待确认。
+Node 查询投影此名称，没有第二个独立可写的显示名。Node 上报的 OS hostname 留在 State，不改写配置名称。
 
 ## addresses
 
 `ipv4`／`ipv6` 分别为地址或 null，必须属于同版 addressPools，网络内唯一。已有节点省略时沿用，首次省略时自动分配；显式 null 清除该族地址。
 
-改址不改变 Node ID 或密钥身份。普通保存对越界／重复地址报错；显式重分配与池修改可以同一配置事务完成。旧地址退出和复用见 [Addressing](/v2/configuration-reference/addressing)。
+改址不改变 Node ID 或密钥身份。普通保存对越界／重复地址报错；显式新地址与池修改可以同一配置事务完成。旧地址退出和复用见 [Addressing](/v2/configuration-reference/addressing)。
 
 ## identity
 
 采用互斥判别对象：
 
+<!-- schema: NodeIdentity -->
 ```json
 { "type": "user", "user": "alice@example.com" }
 ```
 
+<!-- schema: NodeIdentity -->
 ```json
 { "type": "tag", "tags": ["tag:backend"] }
 ```
@@ -85,14 +89,12 @@ user 分支不接受 tags，tag 分支不接受 user。Node 数据库记录不�
 
 注册事务创建默认 `nodes[id]` 配置项、写入批准的 identity／地址并生成配置版本。JSON 中新增一个 key 不会创建节点凭据。
 
-**已确认：删除就是永久删除，不提供节点恢复。** 显式删除接口、deleteNode 操作或最终 JSONC 目标移除已有 nodes[id]，均在同一事务吊销凭据、移除配置项、记录旧地址退出并撤回相关执行许可。应用前对照列出永久删除项；不是仅移除配置的另一种管理模式。
+**删除是永久删除，不提供节点恢复。** 显式删除接口、deleteNode 操作或最终 JSONC 目标移除已有 nodes[id]，均在同一事务吊销凭据、移除配置项、记录旧地址退出并撤回相关执行许可。应用前对照列出永久删除项。
 
 最小吊销和历史关联保留以拒绝旧凭据，并非回收站。重新接入使用新 Node ID／密钥。引用删除节点的规则明确不可执行，不能自动绕过必经点；管理员可再清理这些规则。
 
-Node 长期认证已选定本地持久密钥身份。接入批准、公钥与实体绑定走[注册流程](/v2/api/authentication#node-的三层凭据)，私钥不进入这份静态配置。
+Node 使用本地持久密钥身份认证。接入批准、公钥与实体绑定走[注册流程](/v2/api/authentication#node-的三层凭据)，私钥不进入这份静态配置。
 
 Tag 身份不继承 User／Group 权限，原创建用户离网后仍保留；最后一个 Tag 不能直接清空，须经设备用户登录完成身份转换。详见[有效身份](/v2/configuration-reference/identity#有效授权身份)。默认初始化不写空 dialers，以采用网络默认出站集合。
 
 配置历史仍可读取；恢复目标中包含已删除 Node 时失败，不能复活凭据。恢复的最终目标若删除当前其他 Node，同样按永久删除语义在应用对照中展示；用户成员关系和身份切换证明仍按当前条件检查。
-
-`remark`、`exitEnabled` 及上述默认行为是本稿补充提案。

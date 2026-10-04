@@ -1,6 +1,6 @@
 # Listen Fields
 
-所有 listener 共享的字段。以下是目标配置格式；高级 socket 调优尚未接入现行管理 API。
+所有 listener 共享的字段。Server 校验配置值，Node 安装时还须检查平台支持、本机资源和系统限制。
 
 ## Structure
 
@@ -31,9 +31,9 @@
 | `listen` | IP 字符串 | `"0.0.0.0"` | IPv4／IPv6 bind 地址，不是域名 |
 | `listenPort` | `integer` | 必填 | 1–65535；端口冲突在执行时明确报告 |
 | `endpoints` | `Endpoint[]` | `[]` | 明确公告的外部 host／port，可与 bind 不同 |
-| `bindInterface` | `string` | `""` | 目标字段：空值由平台选择，否则在当前受控网络环境中校验接口 |
-| `socket.receiveBuffer` | `integer` | `0` | 目标字段：字节；0 使用系统值 |
-| `socket.sendBuffer` | `integer` | `0` | 同上；实际内核采用值由 State 报告 |
+| `bindInterface` | `string` | `""` | 空值由平台选择，否则在当前受控网络环境中校验接口 |
+| `socket.receiveBuffer` | `integer` | `0` | 字节；0 使用系统值 |
+| `socket.sendBuffer` | `integer` | `0` | 字节；0 使用系统值，不保证内核接受请求大小 |
 
 非零 buffer 受平台内存预算及系统限制，不能通过配置无限放大。接口绑定不能绕过用途、namespace 和路由保护。
 
@@ -52,7 +52,7 @@
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `tcp.noDelay` | `boolean` | `true` | TCP_NODELAY；配置覆盖是目标能力 |
+| `tcp.noDelay` | `boolean` | `true` | TCP_NODELAY |
 | `tcp.keepAlive.enabled` | `boolean` | `true` | 操作系统 TCP keepalive |
 | `tcp.keepAlive.idle` | duration | `"5m"` | 首次 keepalive 前空闲时间 |
 | `tcp.keepAlive.interval` | duration | `"75s"` | keepalive 间隔 |

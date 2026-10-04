@@ -4,7 +4,7 @@ Server 是账户、网络配置和执行许可的权威。它聚合 Node 报告�
 
 ## 功能与模块
 
-当前应用位于 `apps/meshway-controller`，内部按端到端职责分模块：
+应用位于 `apps/meshway-server`，内部按端到端职责分模块：
 
 | 模块 | 职责 |
 | --- | --- |
@@ -30,12 +30,12 @@ Server 是账户、网络配置和执行许可的权威。它聚合 Node 报告�
 | 未完成 | 完整类型化配置诊断／影响预览、地址重分配／材料轮换操作、非管理员 Tag owner 的局部入口 |
 | 未完成 | 可信 DNS／GeoIP 输入与自动方案闭环、规划 evaluate／部分管理执行视图、版本兼容展示和 Node 发布安装链 |
 
-Controller HTTP／SDK 和持钥测试 Node 的验证止于相应控制流程；新 Node 程序、真实网络安装与包流另行验收。网络删除／账户注销的生命周期仍待确定。具体可用操作只从实际路由生成的 OpenAPI／SDK 判断。
+Server HTTP／SDK 和持钥测试 Node 的验证止于相应控制流程；新 Node 程序、真实网络安装与包流另行验收。网络删除／账户注销的生命周期仍待确定。具体可用操作见[生成契约](/v2/contracts/openapi.json)。
 
 ## 运行与维护
 
 ```sh
-cargo run -p meshway-controller --bin meshway-controller --locked -- \
+cargo run -p meshway-server --bin meshway-server --locked -- \
   --data-dir /absolute/private/data-dir --listen 127.0.0.1:0 \
   --registration-enabled true --session-ttl-seconds 86400
 ```
@@ -45,7 +45,7 @@ cargo run -p meshway-controller --bin meshway-controller --locked -- \
 运维密码恢复使用 `reset-password` binary，须先停止占有同一 dataDir 的服务：
 
 ```sh
-cargo run -p meshway-controller --bin reset-password --locked -- \
+cargo run -p meshway-server --bin reset-password --locked -- \
   --data-dir /absolute/private/data-dir --email user@example.com \
   --console-origin https://console.example.com --expires-in-seconds 900
 ```

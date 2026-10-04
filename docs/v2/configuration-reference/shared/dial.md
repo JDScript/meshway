@@ -1,6 +1,6 @@
 # Dial Fields
 
-`nodes[id].dialers.<协议名>` 内的通用选项；协议由 key 确定，不重复填写 type。具体目标配置由 Controller 解析，见[完整下发例子](/v2/configuration-reference/node-configuration#example)。
+`nodes[id].dialers.<协议名>` 内的通用选项；协议由 key 确定，不重复填写 type。具体目标配置由 Server 解析，见[下发参数](/v2/configuration-reference/node-configuration#example)。
 
 ## Structure
 
@@ -20,7 +20,7 @@
 }
 ```
 
-TCP 字段只适用于外层 TCP 类型。除 enabled／priority 对应现有语义外，新增调优字段仍需执行接线。
+以上为通用字段节选；TCP 字段只适用于外层 TCP 类型。Node 安装时须校验平台支持和资源预算。
 
 ## Fields
 
@@ -39,7 +39,7 @@ TCP 字段只适用于外层 TCP 类型。除 enabled／priority 对应现有语
 
 ## Target binding
 
-Controller 为一次获准拨号提供 peer 身份、目标 listener／协调资源、公告 endpoint、凭据及信任绑定。它们都是完整 NodeConfiguration 的组成部分；字段来源统一见 [NodeConfiguration](/v2/configuration-reference/node-configuration#sources)。
+Server 为一次获准拨号提供 peer 身份、目标 listener／协调资源、公告 endpoint、凭据及信任绑定。它们都是完整 NodeConfiguration 的组成部分；字段来源统一见 [NodeConfiguration](/v2/configuration-reference/node-configuration#sources)。
 
 DNS 解析使用受保护的 bootstrap resolver；不允许把业务 DNS／出口规则反过来截获自身承载建连。选定本地接口或地址仍接受相同的 socket purpose／generation 校验。
 

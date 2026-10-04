@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vitepress dev . --host 127.0.0.1 --port 5173",
     "build": "vitepress build .",
+    "check": "pnpm run build && python3 ../scripts/check-docs.py && node --experimental-strip-types ../scripts/check-doc-examples.mjs",
     "preview": "vitepress preview . --host 127.0.0.1 --port 5173"
   },
   "devDependencies": {

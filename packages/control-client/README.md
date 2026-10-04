@@ -328,9 +328,9 @@ node scripts/generate-protocol.mjs
 node scripts/check-protocol.mjs
 node --test scripts/generate-protocol.test.mjs
 cargo test -p meshway-control-client --locked
-cargo build -p meshway-controller --bin meshway-controller --locked
+cargo build -p meshway-server --bin meshway-server --locked
 pnpm --filter @meshway/control-client typecheck
-MESHWAY_CONTROLLER_BINARY="$CARGO_TARGET_DIR/debug/meshway-controller" pnpm --filter @meshway/control-client test
+MESHWAY_SERVER_BINARY="$CARGO_TARGET_DIR/debug/meshway-server" pnpm --filter @meshway/control-client test
 ```
 
 The integration tests start a real Controller on loopback with private temporary

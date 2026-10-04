@@ -1,9 +1,10 @@
 # Native UDP Listener
 
-**当前能力：平台托管。** 以下为下一版字段格式。
+原生 UDP 监听配置。
 
 ## Structure
 
+<!-- schema: Listener -->
 ```json
 {
   "type": "native_udp",

@@ -1,4 +1,0 @@
-{
-  "extends": "../managed-connections/tsconfig.json",
-  "include": ["*.ts"]
-}

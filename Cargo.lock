@@ -1281,8 +1281,8 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
- "meshway-controller",
  "meshway-protocol",
+ "meshway-server",
  "reqwest",
  "reqwest-middleware",
  "serde",
@@ -1290,45 +1290,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-name = "meshway-controller"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "axum",
- "base64",
- "chacha20poly1305",
- "chrono",
- "clap",
- "ed25519-dalek",
- "futures-util",
- "getrandom 0.3.4",
- "hmac",
- "idna",
- "maxminddb",
- "meshway-configuration",
- "meshway-model",
- "meshway-protocol",
- "meshway-transport-spec",
- "rcgen",
- "reqwest",
- "rusqlite",
- "rustix",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "utoipa",
- "utoipa-axum",
- "uuid",
- "zeroize",
 ]
 
 [[package]]
@@ -1365,6 +1326,45 @@ dependencies = [
  "serde",
  "serde_json",
  "utoipa",
+]
+
+[[package]]
+name = "meshway-server"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "base64",
+ "chacha20poly1305",
+ "chrono",
+ "clap",
+ "ed25519-dalek",
+ "futures-util",
+ "getrandom 0.3.4",
+ "hmac",
+ "idna",
+ "maxminddb",
+ "meshway-configuration",
+ "meshway-model",
+ "meshway-protocol",
+ "meshway-transport-spec",
+ "rcgen",
+ "reqwest",
+ "rusqlite",
+ "rustix",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "utoipa",
+ "utoipa-axum",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]

@@ -4,6 +4,8 @@
 
 ## Structure
 
+以下为单个节点的 listeners 字段值；省略的自动材料在保存时补全：
+
 ```json
 {
   "public-ws": {
@@ -21,14 +23,14 @@
 
 ## Types
 
-| type | 协议参考 | 当前能力 |
+| type | 协议参考 | 外层 |
 | --- | --- | --- |
-| `native_udp` | [Native UDP](/v2/configuration-reference/listeners/native-udp) | 平台托管 |
-| `native_tcp` | [Native TCP](/v2/configuration-reference/listeners/native-tcp) | 平台托管 |
-| `vless` | [VLESS](/v2/configuration-reference/listeners/vless) | TCP/TLS、WebSocket/TLS 已托管 |
-| `trojan` | [Trojan](/v2/configuration-reference/listeners/trojan) | TCP/TLS 独立库；尚未接入平台托管 |
+| `native_udp` | [Native UDP](/v2/configuration-reference/listeners/native-udp) | UDP |
+| `native_tcp` | [Native TCP](/v2/configuration-reference/listeners/native-tcp) | TCP |
+| `vless` | [VLESS](/v2/configuration-reference/listeners/vless) | TCP/TLS、WebSocket/TLS |
+| `trojan` | [Trojan](/v2/configuration-reference/listeners/trojan) | TCP/TLS |
 
-以上页面描述下一版配置；“当前能力”不表示旧 API 接受新字段名。详见[支持状态](/v2/configuration-reference/transports)。
+Server 目录与 Node 能力共同约束可选承载，见[承载](/v2/configuration-reference/transports)。配置保存不表示节点已创建监听资源。
 
 ## Behavior
 

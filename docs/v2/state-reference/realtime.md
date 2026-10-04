@@ -1,29 +1,32 @@
 # Realtime Observation
 
-新 Controller 提供主动路径观察的 HTTP 调度、短租约诊断许可、Node 结果接纳、历史与网络 SSE。Agent 的实际探测与包计数消费尚未接入；Controller 接纳的 Node 报告不能单独证明已经完成真实包级测量。
+主动路径观察通过 HTTP 调度，使用短租约诊断许可，结果经网络 SSE 交付。Server 接纳报告不等于独立完成包级测量；采样来源与运行能力见 [Node](/v2/node)。
 
 它与普通 State 读取不同：query/watch State 订阅既有事实；Realtime Observation 可以明确请求节点产生新的测量。
 
-API 方向已确定为 HTTP 创建／续租／取消任务，结果经 Console 的网络 SSE 发送，按任务和订阅权限过滤。连接 SSE 本身不创建探测任务，见[事件流](/v2/api/events#path-observation)。
+HTTP 创建／续租／取消任务，网络 SSE 按任务和订阅权限发送结果。连接 SSE 本身不创建探测任务，见[事件流](/v2/api/events#path-observation)。
 
 ## Start
 
+完整创建请求结构示例。Node ID 须来自当前网络，源、目标服务与完整路径须获当前用户和配置授权：
+
+<!-- schema: CreateObservation -->
 ```json
 {
-  "subscriptionId": "<new-uuid-for-this-page-demand>",
-  "sourceNodeId": "<node-a>",
-  "targetNodeId": "<node-b>",
+  "subscriptionId": "00000000-0000-4000-8000-000000000001",
+  "sourceNodeId": "00000000-0000-4000-8000-000000000002",
+  "targetNodeId": "00000000-0000-4000-8000-000000000003",
   "service": { "type": "tcp", "port": 443 },
   "selection": {
     "mode": "explicit",
-    "path": ["<node-a>", "<node-c>", "<node-b>"]
+    "path": ["00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000003"]
   },
   "metrics": ["rtt", "traffic", "probeLoss"],
   "intervalMs": 1000
 }
 ```
 
-`ObservationSubscriptionId` 标识本页需求，`ObservationId` 标识可复用的节点测量任务。创建请求的重试沿用 subscriptionId；另开页面创建新 ID。返回任务 ID、subscriptionId、实际 intervalMs、任务及订阅各自的 expiresAt、renewAfter。正常 Controller Router 使用真实用户会话与 Node 持钥接入后的凭据。
+`ObservationSubscriptionId` 标识本页需求，`ObservationId` 标识可复用的节点测量任务。创建请求重试沿用 subscriptionId；另开页面创建新 ID。ObservationTask 返回 id、subscriptionId、实际 intervalMs、任务 expiresAt、订阅 subscriberExpiresAt 和 renewAfter。用户操作使用用户会话，Node 领取和上报使用自己的认证凭据。
 
 | 字段 | 含义 |
 | --- | --- |
@@ -36,9 +39,9 @@ API 方向已确定为 HTTP 创建／续租／取消任务，结果经 Console �
 | `metrics` | 请求 RTT、traffic、probeLoss；`unsupportedMetrics` 明确列出无法提供的项 |
 | `intervalMs` | 期望周期，示例为 1 秒；实际周期受节点／网络预算约束 |
 
-auto 可用于空闲网络：Controller 根据目标计算获准候选，执行端结合 State 选择／建立实际路径，未完成时为 preparing、path=null。首次选定后按该路径采样，发生重选时开启新分段，不能每个样本换路还画成同一序列。
+auto 可用于空闲网络：Server 根据目标计算获准候选，执行端须结合 State 选择／建立实际路径，未完成时为 preparing、path=null。首次选定后按该路径采样，发生重选时开启新分段，不能每个样本换路还画成同一序列。
 
-Controller 用相同的 access／topology／routing 与稳定 SubjectBindings 编译精确服务范围，然后只发布 `NodeConfiguration.diagnostics` 中的独立许可。该许可包含观察 ID、源实例、完整候选、服务范围、到期时间与认证原路回复语义；不会插入普通 `permits`、业务 `decisions` 或伪造 Node demand。source／中转／终点通过正常 Node configuration 拉取一致材料。源任务准备并不表示这些节点已安装，Node 结果仍须匹配真实实例、当前 publication 和执行 lease。
+Server 用相同的 access／topology／routing 与稳定 SubjectBindings 编译精确服务范围，然后只发布 `NodeConfiguration.diagnostics` 中的独立许可。该许可包含观察 ID、源实例、完整候选、服务范围、到期时间与认证原路回复语义；不会插入普通 `permits`、业务 `decisions` 或伪造 Node demand。source／中转／终点通过正常 Node configuration 拉取一致材料。源任务准备并不表示这些节点已安装，Node 结果仍须匹配真实实例、当前 publication 和执行 lease。
 
 explicit 固定指定路径，不因故障绕过必经点。跟随某条已有业务流是另一个模式，当前不隐式加入；同源／目的可能有多条并存路径。
 
@@ -46,22 +49,22 @@ explicit 固定指定路径，不因故障绕过必经点。跟随某条已有�
 
 ```text
 Console 创建 watch
-   → Controller 检查用户、源节点与路径权限，授予短租约
+   → Server 检查用户、源节点与路径权限，授予短租约
    → Source Node 校验当前配置，准备这条获准路径
    → Node 周期性回报实际测量／计数窗口
-   → Controller 向有权订阅者转发结果
+   → Server 向有权订阅者转发结果
    → Console 展示；可选写入历史
 ```
 
-Controller 负责鉴权、调度和转发，不用浏览器到 Controller 的耗时代替 Mesh RTT。请求不能让 source 执行其配置不允许的路径，也不能产生新的业务 access。
+Server 负责鉴权、调度和转发，不用浏览器到 Server 的耗时代替 Mesh RTT。请求不能让 source 执行其配置不允许的路径，也不能产生新的业务 access。
 
-已确认：普通成员仅可请求自己的 User 身份设备发起获准诊断，并只读取相关结果；Owner／Admin 可操作本网络。Tag owner 不因授 Tag 权限获得对其他 Tag 节点的诊断权。详见[操作权限](/v2/permissions)。
+普通成员仅可请求自己的 User 身份设备发起获准诊断，并只读取相关结果；Owner／Admin 可操作本网络。Tag owner 不因授 Tag 权限获得对其他 Tag 节点的诊断权。详见[操作权限](/v2/permissions)。
 
 相同网络／源／路径／指标的观察可合并成一个受控采样任务，多个用户订阅复用结果。底层实际探测器与历史采集共用事件来源，不因多开几张图就重复发包。
 
 同一登录会话的两个标签页也持有不同 subscriptionId。GET／renew／cancel 以订阅 ID 操作，只影响该需求；真正的会话吊销才撤销该会话的全部订阅。各订阅独立保存主体、网络、权限摘要和租约，不按 SessionId 覆盖当前网络。
 
-节点结果采用 `result.type=phase|sample` 联合。phase 可报告 preparing／failed／completed／unsupported，无需编造 path 或空样本；sample 必须包含实际路径分段和非空测量窗口。Controller 的 expired／cancelled 来自真实订阅生命周期。终态在当前权限下短期可读，随后以 `observation.removed` 或明确 reset 清理；取消／到期后的旧样本不能经排队或重放重新送达该订阅。
+节点结果采用 `result.type=phase|sample` 联合。phase 可报告 preparing／failed／completed／unsupported，无需编造 path 或空样本；sample 必须包含实际路径分段和非空测量窗口。Server 的 expired／cancelled 来自真实订阅生命周期。终态在当前权限下短期可读，随后以 `observation.removed` 或明确 reset 清理；取消／到期后的旧样本不能经排队或重放重新送达该订阅。
 
 任务复用还须绑定相容的授权／执行发布、测量模式和周期；每个订阅者独立验证权限。只可观察某服务的用户，不能因复用了管理员任务就读取路径上其他人的流量；结果必须有明确的业务／统计范围。
 
@@ -69,12 +72,12 @@ Controller 负责鉴权、调度和转发，不用浏览器到 Controller 的耗
 
 ## 连接状态
 
-Node 上报实际认证 link 是否仍存在，以及是否有业务／诊断依赖。可使用 LinkState.phase、inUse 和 observationRefs 等字段表达，具体字段待定。
+Node 上报实际认证 link 是否仍存在，以及是否有业务／诊断依赖。原始 LinkState 使用 phase、businessDependencies、observationIds，聚合视图另有可空 inUse，见[资源与连接](/v2/state-reference/resources#links)。
 
 - authenticated 但 idle：连接有效，业务流量可以为 0。
-- inUse：有业务依赖，不等于此刻一定有连续字节传输。
-- observationRefs：观察任务暂时使用此路径；不能把探测流量标成业务活跃。
-- Controller 报告过期：未知，不据此断言物理 socket 已关闭。
+- businessDependencies：业务依赖数量，不等于此刻一定有连续字节传输。
+- observationIds：诊断任务依赖，不能把探测流量标成业务活跃。
+- Server 报告过期：未知，不据此断言物理 socket 已关闭。
 
 显式 realtime watch 可以作为**临时诊断需求**准备／保持获准路径；没有必要要求平时全网常驻连接。普通历史查询本身不触发建连。
 
@@ -82,31 +85,32 @@ Node 上报实际认证 link 是否仍存在，以及是否有业务／诊断依
 
 由源节点向路径终点发带关联标识的认证探测，回复按约定路径返回，使用单调时钟测量往返。不是相邻边 RTT 求和，也不是 HTTP 上报时间。
 
-每条样本携带 watch／measurement 标识、源、实际路径、实例／配置引用、开始／完成时间和结果。超时不填 0；排队时间和内部重试是否包含必须明确。缺少纯网络计时边界时展示“探测往返耗时”，不虚称线速 RTT。
+ObservationTask 提供任务、源、实际路径、pathSegment 和实例／配置引用，latest 中的 ObservationSample 提供 measurementId、version、windowStart／windowEnd、partial 和测量内容。超时不填 0；排队时间和内部重试是否包含必须明确。缺少纯网络计时边界时展示“探测往返耗时”，不虚称线速 RTT。
 
 尚在发现／建连时显示 preparing，并单独记录建立耗时。只有实际进入探测发送的请求才参与 RTT／未回应率统计，不能将“还没有建立路径”记成一次已经发送的 probe 丢失。
 
-首版探测未回应率建议使用**每个测量请求只发送一次、不做应用层重试**的诊断模式。TCP／可靠承载自己的重传仍然可能发生，所以这个结果仍是观察到的探测结果，不是底层 wire 丢包率。
+探测未回应率必须有明确的请求和重试口径。TCP／可靠承载自己的重传仍然可能发生，所以探测结果不是底层 wire 丢包率。
 
 ## Traffic
 
-建议首版采用**源端口径**：
+TrafficWindow 定义**源端口径**。当前 traffic 为 unsupported，下面说明字段含义，不是已有测量结果：
 
 | 指标 | 含义 |
 | --- | --- |
 | `txBytes` | 源端从业务侧接入并提交给该路径的 Mesh IP 字节 |
 | `rxBytes` | 源端从该会话反向路径验证并交付本机的 Mesh IP 字节 |
-| `txBytesPerSecond` / `rxBytesPerSecond` | 同一实例／路径分段中的计数差除以实际窗口时长 |
+| `counterGeneration` | 计数代际，重置后不能沿用旧差分基线 |
+| 速率展示 | 用同一实例／路径分段中的真实字节数和窗口时长计算，不是额外 wire 字段 |
 
 tx 提交不等于目标已收到；若还需要目标交付字节，必须由目标实际计数独立回报。中转节点不重复计入端到端流量。
 
 握手、保活和诊断探测不计入业务字节。外层加密后的 wire bytes、transport 重传或各段负载可作为另一个指标，不能混入同一个“业务流量”数字。计数器重置／路径变更须重建基线；没有窗口数据时是未知，不补零速率。
 
-当前生产适配器没有已交付的精确服务范围业务计数能力，traffic 返回在 `unsupportedMetrics` 中，样本的 `traffic` 为 null；拒绝把未计数值上报成零。RTT／probeLoss 的源节点须在正常 acquire 声明 `feature:path-observation` version 1，否则任务为 unsupported。能力声明只表明构建支持，不是测量成功证据。
+Server 将 traffic 列入 `unsupportedMetrics`，样本的 `traffic` 为 null；未计数值不得上报成零。RTT／probeLoss 的源节点须在 acquire 声明 `feature:path-observation` version 1，否则任务为 unsupported。能力声明只表明构建支持，不是测量成功证据。
 
 ## Probe loss
 
-建议界面名称为 **探测未回应率**，按已经有最终结果的实际发送探测计算：
+**探测未回应率**按已有最终结果的实际发送探测计算：
 
 ```text
 timeout / (repliedWithinDeadline + timeout)
@@ -124,8 +128,8 @@ deadline 之后收到的回复仍记为迟到，本口径保留“未在期限�
 
 ## 租约与取消
 
-- Controller 为每个订阅授予最多 30 秒，且不超过用户会话与源实例期限；10 秒后可按当前权限续租。重试创建不续租。周期为 1000–30000 ms。
-- 返回适用于当前用户／网络的并发与频率预算，超出上限用 observation_limit 等结构化错误；renewAfter 给出续租节奏，页面后台不续租。
+- Server 为每个订阅授予最多 30 秒，且不超过用户会话与源实例期限；10 秒后可按当前权限续租。重试创建不续租。周期为 1000–30000 ms。
+- 超出并发／频率预算返回 observation_limit；renewAfter 给出续租节奏，页面后台停止续租。
 - 用户关闭／切换网络／退出登录、权限撤回或配置失效时停止订阅，并取消／停止续租节点任务。
 - 断开控制通道或丢失取消消息时，Node 仍按本地租约停止；结果不反过来续活任务。
 - 最后一个订阅者离开后释放诊断依赖，是否保留 link 回到普通业务／空闲回收策略。
@@ -136,4 +140,4 @@ deadline 之后收到的回复仍记为迟到，本口径保留“未在期限�
 
 State 给出最新事实；Realtime 是当前观察任务的结果流；History 保存选定的真实事件／窗口。三者使用相同来源标识，不互相制造样本。是否保存 watch 全部原始点、抽样或聚合，由保留预算决定。
 
-Controller 操作为 `createObservation`／`listObservations`／`getObservation`／`renewObservation`／`cancelObservation`、`getNodeTasks`／`reportTaskResult`。用户操作均以 subscriptionId 区分需求，Node 结果使用共享 taskId。状态、样本和移除分别经 `observation.status`／`observation.sample`／`observation.removed` 发送。实际 Agent 探测消费、精确业务流量计数和业务包丢包测量仍待后续实现；普通 State／History 读取不创建观察。
+Server 操作为 `createObservation`／`listObservations`／`getObservation`／`renewObservation`／`cancelObservation`、`getNodeTasks`／`reportTaskResult`。用户操作以 subscriptionId 区分需求，Node 结果使用共享 taskId。状态、样本和移除分别经 `observation.status`／`observation.sample`／`observation.removed` 发送；普通 State／History 读取不创建观察。

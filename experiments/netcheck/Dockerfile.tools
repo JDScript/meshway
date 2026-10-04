@@ -1,9 +1,0 @@
-# Main builds this dedicated image from a freshly built native Ubuntu Agent image.
-# Build context is the workspace root. The runner never builds or pulls images.
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE}
-USER 0:0
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    python3 iproute2 iptables conntrack \
-    && rm -rf /var/lib/apt/lists/*
-ENTRYPOINT ["sleep", "infinity"]

@@ -1,17 +1,14 @@
 [workspace]
 members = [
-    "apps/meshway-controller",
-    "crates/model",
-    "crates/configuration",
-    "crates/control-client",
-    "crates/protocol",
-    "crates/serde",
-    "crates/transport-spec",
+    "apps/meshway-server",
+    "crates/meshway-model",
+    "crates/meshway-configuration",
+    "crates/meshway-control-client",
+    "crates/meshway-protocol",
+    "crates/meshway-serde",
+    "crates/meshway-transport-spec",
 ]
 resolver = "3"
-# This isolated replacement baseline builds the new control plane only.
-# Existing Agent/runtime consumers join after their contract adaptation.
-exclude = ["apps/controller", "apps/agent", "apps/apple/core", "crates/vendor/socket2"]
 
 [workspace.package]
 version = "0.1.0"

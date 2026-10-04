@@ -1,9 +1,10 @@
 # Dialers
 
-定义节点允许使用哪些出站承载及其优先级。**简化后的下一版提案：key 就是协议名，不再另起名称、重复填写 type。**
+定义节点允许使用哪些出站承载及其优先级。key 是协议名，不另起名称或填写 type。
 
 ## Structure
 
+<!-- schema: DialerSet -->
 ```json
 {
   "native_udp": { "priority": 100 },
@@ -14,6 +15,7 @@
 
 只允许 VLESS 可以写：
 
+<!-- schema: DialerSet -->
 ```json
 { "vless": {} }
 ```
@@ -27,13 +29,13 @@
 | `native_udp` | 100 | [Native UDP](/v2/configuration-reference/dialers/native-udp) |
 | `native_tcp` | 200 | [Native TCP](/v2/configuration-reference/dialers/native-tcp) |
 | `vless` | 300 | [VLESS](/v2/configuration-reference/dialers/vless) |
-| `trojan` | 400 | [Trojan](/v2/configuration-reference/dialers/trojan)，当前只有库级实现 |
+| `trojan` | 400 | [Trojan](/v2/configuration-reference/dialers/trojan) |
 
 普通使用只需要协议与 priority。timeout、socket、TLS 等进阶选项见[通用 Dial 字段](/v2/configuration-reference/shared/dial)。
 
 ## 配置解析
 
-Controller 根据 access、topology、routing 和对端 listener，生成具体出站配置。目标地址、UUID／password、SNI、WS path 等**属于配置**，只是默认从目标 listener 解析，不要求在每个发起节点上重复手填。
+Server 根据 access、topology、routing 和对端 listener，生成具体出站配置。目标地址、UUID／password、SNI、WS path 等从目标 listener 解析，不要求在每个发起节点上重复手填。
 
 管理员可在 listener 配置中编辑这些字段；修改后，相应节点的入站／出站配置一起重新生成。完整例子见 [NodeConfiguration](/v2/configuration-reference/node-configuration#example)。
 

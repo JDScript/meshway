@@ -1,7 +1,0 @@
-[
-  {"label":"own proto invalid value","automatic":{"regions":{"__proto__":42},"fallback":"mesh-only"},"valid":false},
-  {"label":"own proto string preserved","automatic":{"regions":{"__proto__":"custom"},"fallback":"mesh-only"},"valid":true},
-  {"label":"own prototype-like keys preserved","automatic":{"regions":{"__proto__":"custom","constructor":"mesh-only","toString":"mesh-only","JP":"custom"},"fallback":"mesh-only"},"valid":true},
-  {"label":"empty regions","automatic":{"regions":{},"fallback":"mesh-only"},"valid":true},
-  {"label":"null value rejected","automatic":{"regions":{"__proto__":null},"fallback":"mesh-only"},"valid":false}
-]

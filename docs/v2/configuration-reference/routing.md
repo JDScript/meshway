@@ -1,12 +1,14 @@
 # Routing · 流量路由
 
-定义获准业务如何在允许的图上选择路径。access 管理业务权限，topology 定义允许的图；routing 分为 Mesh 内部和出口两部分。以下为下一版字段结构。
+定义获准业务如何在允许的图上选择路径。access 管理业务权限，topology 定义允许的图；routing 分为 Mesh 内部和出口两部分。
 
 ## 与 topology 的关系
 
 组网规则见 [Topology](/v2/configuration-reference/topology)。routing 只能使用其允许的边，不能因更快或可达而绕过 block／必经节点。运行时已选路径见 [State.paths](/v2/state-reference#paths)。
 
 ## routing.mesh
+
+以下为该字段的数组值示例，组、标签和中转 Node 须在本网络有效：
 
 ```json
 [
@@ -23,7 +25,7 @@
 | --- | --- | --- |
 | `remark` | `string` | 自由备注，省略补空字符串，可重复 |
 | `src` / `dst` | `string[]` | 源与目的节点选择器 |
-| `via` | `string[]` | 必须按顺序经过的节点；本稿先用具体 Node 选择器 |
+| `via` | `string[]` | 必须按顺序经过的节点，使用具体 Node 选择器 |
 
 从上到下 first-match；无匹配时自动选路。所有备选路径都必须保留必经点。已建立会话及回复固定原完整路径，切换承载不等于改逻辑路径。
 
@@ -31,6 +33,9 @@
 
 ## routing.egress
 
+以下为该字段的完整结构示例；引用的出口、用户组及方案还须通过网络上下文校验：
+
+<!-- schema: EgressRouting -->
 ```json
 {
   "rules": [],
@@ -40,7 +45,7 @@
         {
           "remark": "办公网",
           "match": { "ipCIDR": ["10.20.0.0/16"] },
-          "action": { "type": "exit", "nodes": ["node:<exit-id>"], "via": [] }
+          "action": { "type": "exit", "nodes": ["node:00000000-0000-4000-8000-000000000001"], "via": [] }
         }
       ],
       "fallback": { "type": "unmanaged" }
@@ -67,7 +72,7 @@
 
 有效规则 = 公共规则 → 当前方案规则 → 方案 fallback。空公共／方案规则不覆盖 fallback。
 
-**重叠分配已确定：** allowed 取并集；匹配项的 default 或 locked 不一致就拒绝保存，不按数组顺序覆盖。合并后 default 必须在 allowed 内，auto 的所有目标／fallback 也须在主体允许范围内。
+重叠分配的 allowed 取并集；匹配项的 default 或 locked 不一致就拒绝保存，不按数组顺序覆盖。合并后 default 必须在 allowed 内，auto 的所有目标／fallback 也须在主体允许范围内。
 
 ### Rule match
 
@@ -77,7 +82,7 @@
 | `ipCIDR` | `string[]` | 目的网段 |
 | `ruleSets` | `string[]` | [规则集](/v2/configuration-reference/rule-sets) key |
 
-建议这些目的条件取并集，至少一项非空；规则从上到下 first-match。域名匹配需要可信域名上下文，不能从普通 IP 包直接推断。
+目的条件取并集，至少一项非空；规则从上到下 first-match。域名匹配需要可信域名上下文，不能从普通 IP 包直接推断。
 
 ### Action
 
@@ -85,7 +90,7 @@
 | --- | --- |
 | `{ "type": "exit", "nodes": ["node:<id>"], "via": [] }` | 有序主备出口，可指定出口前的有序中转 |
 | `{ "type": "direct" }` | 匹配流量从源节点本地网络直接发出 |
-| `{ "type": "unmanaged" }` | 不接管；建议只用于方案 fallback |
+| `{ "type": "unmanaged" }` | 不接管 |
 
 出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
 
@@ -98,7 +103,7 @@
   ∩ topology / 完整路径约束
 ```
 
-Controller 为最终出口生成绑定 origin、实际目的范围、出口和完整 path 的许可，而不是只给它一条宽泛“源节点可上网”。公共规则抢先指定 E 的范围，不会又从 F 的 fallback 获得准入。
+Server 为最终出口生成绑定 origin、实际目的范围、出口和完整 path 的许可。公共规则抢先指定 E 的范围，不会又从 F 的 fallback 获得准入。
 
 新方案分配含主体未获授权的目标时拒绝保存。后续身份／access／出口撤销必须可以执行，不能被旧方案引用阻止；受影响执行变为拒绝／不可用，不偷偷恢复 direct 或其他更宽路径。
 
@@ -116,4 +121,4 @@ Controller 为最终出口生成绑定 origin、实际目的范围、出口和�
 
 域名授权采用地址集合语义；同 IP 服务隔离限制见 [Access](/v2/configuration-reference/access#domains)。域名/IP 规则混合时须保留正常客户端的域名上下文和 first-match，无法确定相容动作时报告冲突／不可执行，不静默选更宽路径。
 
-已确认的行为不代表出口主线已交付完整方案能力；精确输入／执行字段在 API 阶段按以上边界定版。
+配置与执行载荷见[生成契约](/v2/contracts/openapi.json)，运行范围见 [Node](/v2/node)。

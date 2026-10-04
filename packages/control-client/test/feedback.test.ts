@@ -2,12 +2,24 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { controller } from "./support/controller.ts";
+import { zDemandDecision, zLookupResult_AsnData } from "../src/generated/zod.gen.ts";
 import {
   register, createNetwork, getConfiguration, applyConfiguration,
   createJoinLink, inspectJoinLink, listJoinLinks, redeemJoinLink,
   changeAccountEmail, listNetworkActivity,
   type ConfigurationRequest,
 } from "../src/index.ts";
+
+test("generated execution and IP lookup failure schemas have independent vocabularies", () => {
+  for (const reason of ["unauthorized", "noPath", "missingCapability", "missingDependency", "missingDns", "invalidProfile", "inactiveNode"]) {
+    assert.ok(zDemandDecision.safeParse({ type: "unavailable", reason }).success);
+    assert.equal(zLookupResult_AsnData.safeParse({ status: "unavailable", reason }).success, false);
+  }
+  for (const reason of ["datasetUnavailable", "lookupFailed"]) {
+    assert.ok(zLookupResult_AsnData.safeParse({ status: "unavailable", reason }).success);
+    assert.equal(zDemandDecision.safeParse({ type: "unavailable", reason }).success, false);
+  }
+});
 
 test("generated defaults patches preserve concurrent dialer edits and classify both conflict kinds", async t => {
   const client = await controller(t);

@@ -8,7 +8,7 @@ import { integerBounds, parameterSchemas } from "./codegen/parameters.mjs";
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const artifactPaths = [
   "packages/protocol/openapi.json",
-  "crates/control-client/src/generated",
+  "crates/meshway-control-client/src/generated",
   "packages/control-client/src/generated",
 ];
 
@@ -22,7 +22,7 @@ function run(command, args) {
 export async function generate(outputRoot = root) {
   const schema = join(outputRoot, artifactPaths[0]);
   // Always export actual routes; the checked-in artifact is never an input.
-  const document = JSON.parse(run("cargo", ["run", "-p", "meshway-controller", "--bin", "export-openapi", "--locked", "--quiet"]));
+  const document = JSON.parse(run("cargo", ["run", "-p", "meshway-server", "--bin", "export-openapi", "--locked", "--quiet"]));
   const outputs = generatedFiles(document);
   await mkdir(dirname(schema), { recursive: true });
   await writeFile(schema, JSON.stringify(document, null, 2) + "\n");

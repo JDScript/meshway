@@ -1,9 +1,10 @@
 # Native UDP Dialer
 
-**当前能力：平台托管。** 以下选项放在 `nodes[id].dialers.native_udp`，为下一版字段格式。
+以下选项放在 `nodes[id].dialers.native_udp`。
 
 ## Structure
 
+<!-- schema: NativeUdpDialer -->
 ```json
 {
   "remark": "优先 UDP",

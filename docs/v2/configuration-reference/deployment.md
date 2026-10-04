@@ -1,6 +1,6 @@
 # 配置同步、应用与恢复
 
-Console 一次提交，Server 保存完整目标和一致执行快照，各 Node 独立校验、保存、安装并回报结果。Server 侧发布／回执接口已接通；新 Node 的实际安装和包流按其实现验收。
+Console 一次提交，Server 保存完整目标和一致执行快照，各 Node 独立校验、保存、安装并回报结果。Server 以真实回执展示进度；运行能力范围见 [Node](/v2/node)。
 
 ## Config 与 State
 
@@ -68,17 +68,9 @@ instanceId 只用于同 boot 下仍有效实例的幂等 acquire。释放、过�
 
 配置通知不覆盖本地草稿／CAS 基准。首次同步与重连可以恢复当前进度，不能依赖浏览器完整接收所有中间事件。
 
-### 组件细节 {#字段提案}
+### State 进度字段
 
-更细的组件／下载进度仍为设计字段；实际 wire 以生成 schema 为准：
-
-| 字段 | 含义 |
-| --- | --- |
-| target、phase、observedAt、problem | 精确执行引用、真实阶段、原时间与安全错误 |
-| step／components | validate、storage、listeners、underlay、tun、dns、dataplane 等实际步骤 |
-| download.receivedBytes／totalBytes | 同一口径的实际字节；未知总量为 null，不估百分比 |
-
-组件 notApplicable 只表示本目标不需要它；组件 done、下载完成或联系丢失都不能被转换成整份 applied／failed。
+`ConfigurationProgress` 包含 target、phase、observedAt 和可空 problem。它记录精确执行引用、实际阶段和原观测时间；不提供组件或下载字节百分比。持久 `ReceiptRequest` 则使用 saved／applied／failed 与明确 failure 分类，不能把联系丢失转换成安装失败。
 
 ## 恢复
 

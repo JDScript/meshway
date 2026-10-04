@@ -1,18 +1,18 @@
 # GeoIP 与 ASN
 
-**V2 新增方向，字段为提案。** Controller 使用已有 endpoint 中的 IP，在本地数据集查询 GeoIP／ASN，作为 State 的派生信息返回。Node 报告仍只包含实际地址和来源，不自行声明可信国家、位置或 ASN。
+Server 使用可见 endpoint 中的 IP，在本地数据集查询 GeoIP／ASN，作为 State 派生信息返回。Node 报告只包含实际地址和来源，不自行声明可信国家、位置或 ASN。
 
 ## State 位置
 
 ```text
-NetworkState.nodes[nodeId]
-  ├─ report.sockets[socketId].endpoints   # 原始候选及来源／代际／期限
+StateView.nodes[nodeId]
+  ├─ report                            # full NodeState 或裁剪后的 PeerState
   └─ derived
        ├─ ipInfo[ip]                     # 此节点可见 endpoint IP 的 GeoIP／ASN
        └─ location                       # 从合格本机观测选择的节点位置及来源
 ```
 
-`ipInfo` 按规范 IP 去重，多个 socket／端口共享同一次查询结果；来源和有效期仍取自各自 endpoint。Controller 先裁剪调用者可见的 endpoint，再返回对应 ipInfo，不通过元数据泄露隐藏接口。
+`ipInfo` 按规范 IP 去重，多个 socket／端口共享同一次查询结果；来源和有效期仍取自各自 endpoint。Server 先裁剪调用者可见的 endpoint，再返回对应 ipInfo，不通过元数据泄露隐藏接口。
 
 节点详情、网络 State snapshot／SSE 和相关 peer query 使用同一派生流程。需要轻量视图时可以不展开详细地理字段，展开与否有明确视图类型。
 
@@ -67,12 +67,12 @@ ASN 描述 IP 的网络归属，不是当前 BGP 路径／可达性测量，也�
 
 - 字面 IPv4／IPv6 公网地址可查询。私网、ULA、CGNAT、链路本地、loopback、多播、未指定、文档保留地址及本网络 Mesh 地址明确 notApplicable。
 - configured endpoint 的字面公网 IP 可以展示它自己的 GeoIP／ASN，但仅是“声明入口的 IP 信息”。它可能指向 NAT、CDN、代理或远端转发入口。
-- 域名型 endpoint 在没有实际解析 IP 观测时不产生 ipInfo 项。不能用 Controller 所在位置解析出的 CDN 地址冒充节点实际使用的地址；解析 IP 及其观测字段另按 endpoint 契约提供。
-- 查询数据库不代表 endpoint 已验证可达；原 endpoint.validation、source、socket 代际与过期规则继续保留。
+- 域名型 endpoint 不产生 IP 查询项。不能用 Server 所在位置解析出的 CDN 地址冒充节点实际使用的地址。
+- 查询数据库不代表 endpoint 已验证可达；原 endpoint.origin、socket 代际与过期规则继续保留。EndpointCandidate 没有 validation 字段。
 
 ## 节点位置与自动方案
 
-`derived.location` 只从有效的本机 underlay 公网 IP 观测选择，例如当前 socket 的 STUN 结果或合格公网 interface 候选。单纯 configured 声明不成为设备实测地区；Controller HTTP 来源 IP、Mesh 地址、所选 Meshway 出口地址和管理员 country 也不能替代。
+`derived.location` 只从有效的本机 underlay 公网 IP 观测选择，例如当前 socket 的 STUN 结果或合格公网 interface 候选。单纯 configured 声明不成为设备实测地区；Server HTTP 来源 IP、Mesh 地址、所选 Meshway 出口地址和管理员 country 也不能替代。
 
 位置返回所选 IP、socket／代际、endpoint source、原 observedAt／expiresAt，以及对应的 GeoIP 数据版本和结果。它引用同一 ipInfo 查询结果，Console 地图与自动路由方案共用这份依据，不各自计算国家。
 
@@ -81,7 +81,7 @@ ASN 描述 IP 的网络归属，不是当前 BGP 路径／可达性测量，也�
 | `location` | GeoObservation? | 有有效合格观测且地理结果可用时返回 |
 | `locationAbsent` | LocationAbsentReason? | location 为 null 时给出原因 |
 
-LocationAbsentReason 为 noObservation、observationExpired、datasetUnavailable、notInDataset、lookupFailed、ambiguousObservation。多个合格公网出口的结果冲突且未定义优选时，保留每个 IP 的元数据并明确 ambiguousObservation，不随 map 顺序随机选择地区。精确优选算法仍待定版。
+LocationAbsentReason 为 noObservation、observationExpired、datasetUnavailable、notInDataset、lookupFailed、ambiguousObservation。合格观测无法形成一致位置时，保留每个 IP 的元数据并返回 ambiguousObservation，不随 map 顺序随机选择地区。
 
 不能确定地区时，自动方案使用已定义 fallback。VPN／代理出口 IP 的 GeoIP 反映该 IP 的位置，不保证设备物理位置。
 
@@ -91,8 +91,4 @@ LocationAbsentReason 为 noObservation、observationExpired、datasetUnavailable
 
 endpoint 到期后，其 GeoIP／ASN 仍可能是正确的数据库映射，但不能继续作为当前节点位置／自动地区方案的有效依据。数据集更新重新查询仍有效的候选并推进派生 State，既不改管理员 Config revision，也不重写 Node 原报告。
 
-Controller 本地维护版本化数据集，更新走部署／运维配置；网络 Owner 不因管理网络获得实例数据集写权限。提供方和更新周期属于后续实现选型。
-
-## 实现边界
-
-GeoIP／ASN 字段及派生结果已随 State／SSE 契约提供，TypeScript 生成器按 Schema 校验有限 binary64 数值及其范围。正常部署的数据集更新／绑定和自动方案输入仍待接通；无数据集或有效观测时如实返回缺失原因，不伪造位置。
+数据集属于 Server 实例资源，网络 Owner 不因管理网络获得实例数据集写权限。部署范围见 [Server](/v2/server)。无数据集或有效观测时返回对应缺失原因，不伪造位置；数值遵守 Schema 的有限值与范围约束。

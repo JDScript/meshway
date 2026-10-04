@@ -1,6 +1,6 @@
 # HTTP、事件与生成客户端
 
-Rust DTO 和实际路由是合同权威，生成 `packages/protocol/openapi.json`、Rust 客户端以及 TypeScript 类型／运行时校验。本文定义接口组织和共同语义，不维护另一份逐 endpoint 清单；可用范围见 [Server](/v2/server)。
+下载 [OpenAPI 契约（JSON）](/v2/contracts/openapi.json) 查看完整操作、参数和类型。该文件由 Rust 类型与实际路由生成，本站在构建／预览时原样发布；Rust／TypeScript SDK 使用同一来源。本文定义共同语义，可用范围见 [Server](/v2/server)。
 
 ## 两类调用者
 
@@ -9,7 +9,7 @@ Rust DTO 和实际路由是合同权威，生成 `packages/protocol/openapi.json
 | `/api/v1` | Console／用户 API 客户端，不透明用户会话 | 账户、网络管理、配置、获准查询与诊断 |
 | `/agent-api/v1` | 接入中的设备或已认证 Node | 持钥接入、自身实例、执行目标、需求与报告 |
 
-Server／Node 的文档命名不更改这两个现行根路径。没有 `/user`、`/instance` 等并行 API 分区，也没有首用户认领入口。
+两个根路径分别承载用户与 Node 合同，没有首用户认领入口。
 
 ## 功能参考
 
@@ -36,7 +36,7 @@ Server／Node 的文档命名不更改这两个现行根路径。没有 `/user`�
 
 ## 查询、秘密与缓存
 
-普通 Config／Node settings 使用非秘密视图；整份 `configuration/source` 是显式秘密读取，不进通用缓存或 LocalStorage。表单秘密只保持／覆盖／轮换，JSONC 只编辑整份文档。
+普通 Config／Node settings 使用非秘密视图；整份 `configuration/source` 是显式秘密读取，不进通用缓存或 LocalStorage。表单秘密使用保持／覆盖语义，JSONC 编辑整份文档。
 
 单节点 settings 返回 networkId、nodeId、revision 与共享 settings 片段。库存中的 desiredExecution 是期望引用；实际回执和 State 独立。普通成员的本人读取不扩展为整网配置历史或原创建 Tag 设备的管理权限。
 
@@ -48,10 +48,4 @@ Rust 操作直接复用 `meshway-protocol` 的公开 DTO。TypeScript 对成功�
 
 JSON 与显式声明的 SSE 由同一路由导出。SSE 使用 `x-meshway-sse` 指向具体事件根类型；接收事件不自动推进调用者的已应用 cursor。用法和具体函数签名见 `packages/control-client/README.md`。
 
-生成／检查入口是 `scripts/generate-protocol.mjs` 与 `scripts/check-protocol.mjs`。修改合同同时重生成，不直接编辑产物；Controller Rust 构建不依赖 Console 构建。
-
-## 尚待补齐的接口范围
-
-规划 evaluate、部分管理执行／方案视图、完整预览与材料／地址操作、Node 发布目录和安装链仍有未完成项。网络删除、账户注销后的保留／恢复属于待定生命周期；不能从 Node 永久删除推导它们的语义。
-
-安装目标是公开的一行安装命令，加独立的浏览器接入或受保护凭据输入；密钥不进入 URL、argv、shell 历史或正在下载脚本的 stdin。下载／安装能力未实现前，不提供看似有效的虚构命令或版本。
+生成／检查入口是 `scripts/generate-protocol.mjs` 与 `scripts/check-protocol.mjs`。修改合同同时重生成，不直接编辑产物；Server Rust 构建不依赖 Console 构建。

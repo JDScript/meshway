@@ -5,7 +5,7 @@ description: Meshway 网络配置、默认行为和协议字段参考。
 
 # Configuration Reference
 
-本参考描述**开发中的下一版配置格式**，按公开文档维护。尚未发布的字段不会因此成为现行 API；可用范围见[承载与支持状态](/v2/configuration-reference/transports)，现行接口见[协议](/protocol)。
+本参考描述 Server 接受、校验并持久保存的网络配置。字段类型以[生成契约](/v2/contracts/openapi.json)为准；Server 的配置支持与 Node 的运行能力分别见 [Server](/v2/server)、[Node](/v2/node)。
 
 Config 相对静态，完整版本保存到数据库；State 随运行变化。[两者分开发送](/v2/configuration-reference/deployment)。
 
@@ -18,6 +18,8 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
 topology 是允许的图，不是当前连接状况；实际通道和路径分别由 [State.links / State.paths](/v2/state-reference) 表达。
 
 ## Structure
+
+以下是配置节选，展示字段之间的关系：
 
 ```jsonc
 {
@@ -81,7 +83,7 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
 }
 ```
 
-`<node-id>` 引用已注册 Node。示例以 IPv4 业务说明格式，不表示当前实现已支持完整草案。
+`<node-id>` 引用当前网络已注册的 Node，用户和标签也须在该网络中有效。结构示例不能直接提交到任意网络；保存还检查身份、地址、材料和稳定引用。
 
 ## Fields
 
@@ -112,6 +114,6 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
 - 通用字段：[Listen](/v2/configuration-reference/shared/listen)、[Dial](/v2/configuration-reference/shared/dial)、[TLS](/v2/configuration-reference/shared/tls)、[WebSocket](/v2/configuration-reference/shared/websocket)。
 - 字段怎样复用、默认值怎样覆盖：[字段复用与默认继承](/v2/configuration-reference/inheritance)。
 - 整网草稿、强类型操作、应用前数量／对照与严格 CAS：[编辑与应用对照](/v2/configuration-reference/editing)。
-- Agent 收到什么：[NodeConfiguration](/v2/configuration-reference/node-configuration) 与 [State Reference](/v2/state-reference)。
+- Node 收到什么：[NodeConfiguration](/v2/configuration-reference/node-configuration) 与 [State Reference](/v2/state-reference)。
 - 版本、回滚、增量：[同步与应用](/v2/configuration-reference/deployment)。
 - 配置变大、查询和外部 API：[存储与查询](/v2/storage)。

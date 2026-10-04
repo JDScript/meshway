@@ -94,7 +94,7 @@ console 已接入 `5cfa1b9c` 提供的全部 Console 操作（`/api/v1` 下共 6
 
 ### 影响功能或安全
 
-1. **OpenAPI 组件重名，生成物已经错了。** `crates/configuration` 和 `crates/model` 各有一个 `UnavailableReason`，导出时后者覆盖了前者。结果 Agent API 里 `DemandDecision` 的 `unavailable.reason` 只剩 `datasetUnavailable` 和 `lookupFailed`，原来的 `unauthorized`、`noPath` 等都没了，生成的客户端也跟着错。导出时应检测重名并直接失败。
+1. **OpenAPI 组件重名已在主线整合中修复。** 执行保留 `UnavailableReason`，IP 查询使用独立的 `LookupUnavailableReason`；路由、子 API 与 SSE schema 注册检查同名冲突并失败，生成 SDK 已区分两组词汇。其余反馈仍按下列原范围逐项核对。
 2. **成员的配置视图不会更新。** `configuration.changed` 之后不会重发成员的节点设置，console 只能断开重连做完整同步，或者重新调用 `getNodeSettings`。
 3. **SSE**
    - 从不发送 `stream.closed`：会话过期、被移除、角色变化时，连接都只是 EOF 结束。console 要靠重连拿到 401 或 404 才知道原因。

@@ -5,7 +5,7 @@ recorded as they are confirmed with the user.
 
 ## V2 controller
 
-The console consumes the V2 controller (`apps/meshway-controller`) through
+The console consumes the Server (`apps/meshway-server`) through
 its generated client only, and only what the controller delivers:
 
 - Delivered: registration (when the controller publishes it as open), sign-in,

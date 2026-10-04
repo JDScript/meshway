@@ -221,6 +221,7 @@ export type LogicalPath = z.output<typeof schemas.zLogicalPath>;
 export type LoginRequest = z.output<typeof schemas.zLoginRequest>;
 export type LookupResult_AsnData = z.output<typeof schemas.zLookupResult_AsnData>;
 export type LookupResult_GeoIpData = z.output<typeof schemas.zLookupResult_GeoIpData>;
+export type LookupUnavailableReason = z.output<typeof schemas.zLookupUnavailableReason>;
 export type MaterialRequirement = z.output<typeof schemas.zMaterialRequirement>;
 export type MemberActions = z.output<typeof schemas.zMemberActions>;
 export type MemberMutationResponse = z.output<typeof schemas.zMemberMutationResponse>;

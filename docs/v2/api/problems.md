@@ -1,48 +1,59 @@
 # Actions 与 Problem
 
-字段使用 camelCase，错误 code 使用稳定 snake_case。HTTP Problem 与资源 actions 已由服务端提供；配置诊断的完整 code／params／severity 整理仍待完成，精确合同以生成 schema 为准。
+字段使用 camelCase，错误 code 使用稳定 snake_case。精确枚举、参数和各操作状态码以[生成契约](/v2/contracts/openapi.json)为准。
 
 ## Actions
 
-资源视图提供服务端计算的固定字段，例如 NetworkActions.joinLinkRoles、成员的 assignableRoles／remove、加入链接和接入密钥的 actions.revoke，以及节点库存的 canDelete／分密钥吊销资格。不能从一个管理标志推导全部操作权限。
+资源视图返回 Server 计算的操作提示，例如 NetworkActions.joinLinkRoles、MemberActions.assignableRoles／remove、加入链接及接入密钥的 actions.revoke，Node 库存的 canDelete 和分密钥吊销资格。
 
-- 普通成员／Tag owner 的局部操作能力由真实用户、membership、Node identity 和当前配置计算。
-- actions 只驱动 UI，不是授权票据；每个 mutation 在服务端重新校验。
-- 权限变化使 actions、可见范围、订阅和草稿提交资格重新计算，旧 actions 不延长权限。
+- actions 只驱动界面，不是授权票据；mutation 在最终事务重检真实身份和权限。
+- 不能从一个管理标志推导全部权限。Tag owner、本人设备、目标角色和最后 Owner 约束分别计算。
+- 权限变化会重新裁剪 actions、视图和订阅，旧 actions 不延长提交资格。
 - 不返回秘密、任意服务器函数名或动态执行代码。
 
-## Problem 核心
+## HTTP ErrorResponse
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `code` | ProblemCode | 每个操作／场景的封闭枚举 |
-| `params` | 由 code 决定的类型 | 例如冲突 revision、节点或资源引用；无参数分支明确为空 |
-| `message` | string | 脱敏的后备文本，不用于程序分支或主要本地化 |
+| `requestId` | RequestId 或 null | 请求关联；仅安全 ID 生成不可用时为 null |
+| `status` | integer | HTTP 状态码 |
+| `problem` | Problem | 按 code 判别的错误 |
 
-外层保留各自上下文：
+Problem 的每个分支均有 code、params、message。params 由 code 决定，多数分支为 EmptyParams；message 是安全后备文本，不能用作程序分支。
 
-| 位置 | 额外内容 |
-| --- | --- |
-| HTTP ErrorResponse | requestId、HTTP status、可用的字段 pointer |
-| ConfigurationDiagnostic | severity、pointer、受影响的已授权资源 |
-| StateProblem | 资源／实例引用、observedAt、实际阶段 |
+<!-- schema: ErrorResponse -->
+```json
+{
+  "requestId": "00000000-0000-4000-8000-000000000001",
+  "status": 409,
+  "problem": { "code": "revision_conflict", "params": {}, "message": "Configuration revision conflict." }
+}
+```
 
-因此配置警告不会变成 HTTP 失败，历史运行错误也不会因读取刷新为当前事件。pointer 是特定配置 revision 内的位置，不能单独作为长期规则 ID。
+该例仅说明结构；错误文本不构成稳定合同。
 
-## 错误范围
-
-| 范围 | code 示例 | 参数边界 |
+| 范围 | code 示例 | 参数与行为 |
 | --- | --- | --- |
-| 身份 | `invalid_credentials`、`invalid_session`、`permission_denied` | 不回显凭据或隐藏对象是否存在 |
-| 注册 | `registration_disabled`、`password_weak`、`email_taken` | 密码规则可公开；不返回已有账户详情 |
-| 并发／生命周期 | `request_id_conflict`、`revision_conflict`、`version_conflict`、`state_conflict` | 分别表示幂等输入、配置基准、对象版本和状态冲突 |
-| 一次性链接 | `join_link_used`、`join_link_revoked`、`join_link_expired`、`join_link_issuer_unavailable` | 只在匹配真实 token 后区分，不输出原值 |
-| 配置 | `configuration_invalid` | issues／requirements；更细诊断类型另行完善 |
-| 查询 | `invalid_cursor` | 范围、期限或编码不合法的游标 |
-| 诊断预算 | `observation_limit` | 当前适用预算，不泄漏其他用户活动 |
+| 身份 | invalid_credentials、invalid_session、permission_denied | 不回显凭据或隐藏对象详情 |
+| 注册 | registration_disabled、password_weak、email_taken | password_weak 携带 PasswordRules；email_taken 不返回账户详情 |
+| 并发 | request_id_conflict、revision_conflict、version_conflict | 幂等内容、配置 CAS、对象版本分别冲突 |
+| 生命周期 | state_conflict、last_owner、already_member | 当前操作不符合资源或成员约束 |
+| 一次性链接 | join_link_used、join_link_revoked、join_link_expired、join_link_issuer_unavailable | 仅验证真实 token 后区分，不返回原值 |
+| 配置 | configuration_invalid | ConfigurationValidationParams：issues 和 requirements |
+| 查询／预算 | invalid_cursor、state_limit、observation_limit、busy | 不泄露其他用户的活动或隐藏范围 |
 
-`cursor_too_old`／`view_changed` 等是 SSE reset 原因，不能混作 HTTP Problem code。上表是语义示例，完整枚举及每个操作允许的状态由实际路由导出。
+revision_conflict 不携带当前配置差异；客户端重新读取基准后保留并验证原草稿。公开注册提供 email_taken，因此能得知邮箱占用；登录仍使用统一错误。
 
-精确枚举及参数由 Rust 定义、生成 schema 和 SDK，新增场景明确扩展。公开注册首版给出 email_taken，意味着注册端可以知道邮箱占用；登录错误仍统一。加入链接解决的是按邮箱找人／直接加人的流程，不宣称实例完全隐藏账户存在性。
+## 配置与运行问题
 
-SDK 校验错误 body 后返回结构化 Problem；无法解码时仍保留 HTTP status，丢弃原始 body。diagnostics／State 的文本同样不得包含密码、密钥、完整配置或原始内部异常。
+| 类型 | 结构与含义 |
+| --- | --- |
+| ConfigurationIssue | path、message：固定配置版本内的字段定位与安全文本 |
+| PreparationRequirement | path、kind：材料、地址或其他准备需求 |
+| StateProblem | 按 code 判别，携带相应 resource／target／measurementId 与 observedAt |
+
+这些类型不与 HTTP Problem 共用同一个 envelope。配置字段路径不是长期规则 ID；历史运行问题也不会因读取变成新事件。StateProblem 不接受任意内部异常文本。
+
+`cursor_too_old`／`view_changed` 属于 SSE reset 原因，见[事件流](/v2/api/events)，不混作 HTTP Problem code。
+
+SDK 先校验错误 body 再返回类型化结果。无法解码时保留 HTTP status 并丢弃原始 body；日志、配置问题和运行问题均不得回显密码、密钥、完整配置或内部异常。

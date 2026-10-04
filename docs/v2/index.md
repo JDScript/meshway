@@ -36,4 +36,4 @@ Server 管理账户、网络隔离、完整配置、授权和执行发布；Node
 
 Server 的主要控制面流程已有实现；新 Node 处于设计阶段。已实现能力与未完成项分别见两端入口页，字段的精确运行合同以 Rust 类型、实际路由及生成 OpenAPI／SDK 为准。
 
-文档采用 Server／Node 称呼。现行 `meshway-controller` 包名、`controllerId` 等字段和 `/agent-api/v1` 路径保持其实际含义，代码命名切换另行处理。V2 是本次设计分区，不引入运行时 policy-v2／policy-v3 双轨。
+Server 应用包名是 `meshway-server`。协议中的 `controllerId` 和 `/agent-api/v1` 等名称按生成契约使用。本文档分区描述当前唯一模型，不提供平行的旧策略合同。

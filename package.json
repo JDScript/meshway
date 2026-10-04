@@ -22,10 +22,10 @@
     "protocol:check": "pnpm --filter @meshway/control-client check:generated",
     "test:protocol": "pnpm --filter @meshway/control-client test",
     "test:codegen": "node --test scripts/generate-protocol.test.mjs",
-    "check:experiments": "node scripts/check-experiments.mjs",
     "test:console": "pnpm --filter @meshway/console test",
-    "typecheck": "pnpm -r --if-present typecheck && pnpm typecheck:apple-scripts",
-    "typecheck:apple-scripts": "tsc --noEmit -p apps/apple/scripts/tsconfig.json",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "check:docs": "pnpm --filter @meshway/docs check",
+    "test:scripts": "python3 -B -m unittest discover -s scripts -p 'test_*.py'",
     "lint": "pnpm -r --if-present lint"
   },
   "devDependencies": {

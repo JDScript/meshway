@@ -5414,7 +5414,7 @@ export const schemaDocument = {
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UnavailableReason"
+                "$ref": "#/components/schemas/LookupUnavailableReason"
               },
               "status": {
                 "type": "string",
@@ -5539,7 +5539,7 @@ export const schemaDocument = {
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UnavailableReason"
+                "$ref": "#/components/schemas/LookupUnavailableReason"
               },
               "status": {
                 "type": "string",
@@ -5569,6 +5569,13 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
+        ]
+      },
+      "LookupUnavailableReason": {
+        "type": "string",
+        "enum": [
+          "datasetUnavailable",
+          "lookupFailed"
         ]
       },
       "MaterialRequirement": {
@@ -11366,8 +11373,13 @@ export const schemaDocument = {
       "UnavailableReason": {
         "type": "string",
         "enum": [
-          "datasetUnavailable",
-          "lookupFailed"
+          "unauthorized",
+          "noPath",
+          "missingCapability",
+          "missingDependency",
+          "missingDns",
+          "invalidProfile",
+          "inactiveNode"
         ]
       },
       "UserConfigurationView": {

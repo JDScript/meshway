@@ -1,0 +1,20 @@
+[package]
+name = "meshway-model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared Meshway identity, reference, and observation value types"
+
+[dependencies]
+meshway-serde = { path = "../meshway-serde" }
+chrono.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

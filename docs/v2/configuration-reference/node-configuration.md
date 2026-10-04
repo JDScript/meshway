@@ -1,47 +1,63 @@
 # NodeConfiguration
 
-Server 为某个节点产生的完整执行配置，包含实际协议参数和所需材料。下面按参数来源说明其结构，精确载荷以生成类型为准。
+Server 为一个 Node 编译的完整执行配置，包含实际协议参数、所需材料、可信身份及获准业务范围。它是网络配置和固定依赖的产物，不由管理员单独编辑。
 
-Node 收到完整目标后独立校验、持久保存并正常应用，执行仍核对确切快照、实例和有效许可。saved 不代表已安装；实际阶段和结果见[配置应用与进度](/v2/configuration-reference/deployment)。
+Node 收到完整目标后独立校验、私有保存并安装。saved 不代表已安装；应用进度、实例和执行 lease 见[配置应用](/v2/configuration-reference/deployment)。运行能力范围见 [Node](/v2/node)。
 
-执行遵守[按需许可、设备选择](/v2/execution)：出站实例是获准候选，按实际需求使用，不预生成全网节点对。
+## Structure
 
-## 参数从哪里来 {#sources}
+精确结构见[生成契约](/v2/contracts/openapi.json)中的 `NodeConfiguration`、`NodeConfigurationResponse` 与 `NodeConfigurationDelta`。查询响应区分 full／delta／unchanged；完整配置先形成，再计算增量。
 
-| 参数 | NetworkConfiguration 中的来源 | 下发结果 |
+| 字段 | 含义 |
+| --- | --- |
+| `networkId`／`nodeId` | 配置的唯一接收网络和节点 |
+| `revision`／`publication`／`dependencyDigest` | 完整源版本、执行发布和编译依赖摘要 |
+| `enabled`／`hostname`／`identity`／`addresses` | 本节点的确定配置值 |
+| `selfKeys` | 本节点可信公钥绑定，不包含身份私钥 |
+| `listeners` | key → PreparedListener，本节点所需的完整监听参数 |
+| `dialers` | 候选 key → DialCandidate，已解析的获准出站参数 |
+| `peers` | NodeId → PeerConfiguration，必要对端的可信身份与配置 |
+| `permits` | 需求 ID → PathPermit，绑定业务范围与完整路径的执行许可 |
+| `diagnostics` | 观察 ID → DiagnosticPermit，独立的短期测量许可 |
+| `decisions` | 需求 ID → DemandDecision，获准、等待或不可用结果 |
+| `dns` | 编译后的 DNS 执行内容 |
+| `exitEnabled` | 本节点的配置出口资格，不表示转发已经就绪 |
+
+diagnostics 不进入普通业务 permits。没有对应许可时不能发起或接收新的业务流。所有候选完整路径都须满足 access、topology 和 routing，见[按需执行许可](/v2/execution)。
+
+## 参数来源 {#sources}
+
+| 参数 | NetworkConfiguration 或可信依赖中的来源 | 下发边界 |
 | --- | --- | --- |
-| 本机 bind／监听端口 | 本节点 listener | listener 的实际设置 |
-| 目标 host／port | 目标 listener 的公告 endpoints | 获准的出站候选 |
-| VLESS UUID／Trojan password | listener 显式值；省略时生成并保存 | 监听端与获准拨号端使用同一值 |
-| TLS 证书／私钥 | 管理员提供或平台生成 | 服务端获得私钥，客户端获得验证材料 |
-| SNI、WS path／Host | 目标 listener 设置 | 对应客户端参数 |
-| 拨号优先级／timeout | 本节点 dialers 或 defaults | 本地拨号参数 |
-| peer 公钥 | 已认证 Node 的公钥绑定 | 可信身份引用 |
-| 本机／peer Mesh 地址 | 同版 addressPools 与 nodes[id].addresses | 固定到本次发布的地址、源校验与 DNS／路由 |
-| access／paths／DNS | 整网配置编译 | 本节点可执行规则 |
+| 本机 bind／监听端口 | 本节点 listener | 本机监听参数 |
+| 目标 host／port | 对端 listener.endpoints | 获准出站候选 |
+| VLESS UUID／Trojan password | listener 显式值或已保存的生成值 | 监听端与获准拨号端使用相同材料 |
+| TLS 证书／私钥 | 管理员提供或平台生成 | 私钥只发给监听端；拨号端取得验证材料 |
+| SNI、WS path／Host | 对端 listener 设置 | 相容的客户端参数 |
+| 拨号优先级／timeout／额外 headers | 本节点 dialers 或 defaults | 本地拨号参数 |
+| peer 公钥 | 已认证 Node 的公钥绑定 | 固定用途与代际 |
+| Mesh 地址 | 同版 nodes[id].addresses | 地址准入、DNS 和路径使用同一绑定 |
+| 业务许可／路径／DNS | 完整配置及已验证的执行依赖 | 仅本节点所需范围 |
 
-管理员修改源配置中的协议参数，Controller 重新生成所有受影响的节点配置。生成值直接保存在完整源版本中，只读查询／重发不会重新生成密码，也不依赖可变的“当前材料”对象。
+管理员修改协议参数后，Server 重新生成受影响的切片。只读查询／重发不重新生成密码；完整源版本保存确定材料，发布固定运行依赖。
 
 ## 示例：A 拨 B 的 VLESS listener {#example}
 
-管理员配置节选：
+配置节选。A、B 必须已注册，且存在允许该业务与路径的 access／topology／routing：
 
 ```json
 {
   "nodes": {
     "<node-a>": {
-      "hostname": "a",
       "dialers": { "vless": {} }
     },
     "<node-b>": {
-      "hostname": "b",
       "listeners": {
         "public-ws": {
           "type": "vless",
           "listen": "0.0.0.0",
           "listenPort": 443,
           "endpoints": [{ "host": "edge.example.com", "port": 8443 }],
-          "uuid": "11111111-1111-4111-8111-111111111111",
           "stream": "websocket",
           "tls": { "serverName": "edge.example.com" },
           "websocket": { "path": "/meshway", "host": "edge.example.com" }
@@ -52,56 +68,12 @@ Node 收到完整目标后独立校验、持久保存并正常应用，执行仍
 }
 ```
 
-在 topology／access／routing 允许的前提下，A 收到的执行配置包含以下内容。这里只展开出站部分，参数和客户端所需材料直接内联：
+Server 补全并保存 B 的 UUID／TLS 材料，再向 A 编译对应的 DialCandidate。A 取得目标入口、UUID、TLS 验证材料和 WS path／Host；B 取得完整监听参数及服务端私钥。A 不取得 B 的私钥。
 
-```json
-{
-  "networkId": "<network-id>",
-  "nodeId": "<node-a>",
-  "configurationRevision": 42,
-  "executionPublication": "<consistent-publication-reference>",
-  "digest": "<node-a-config-digest>",
-  "configuration": {
-    "dialers": {
-      "<compiled-candidate-key>": {
-        "type": "vless",
-        "peerNodeId": "<node-b>",
-        "listenerKey": "public-ws",
-        "priority": 300,
-        "endpoints": [{ "host": "edge.example.com", "port": 8443 }],
-        "stream": "websocket",
-        "flow": "",
-        "uuid": "11111111-1111-4111-8111-111111111111",
-        "tls": {
-          "serverName": "edge.example.com",
-          "certificateChain": ["<certificate PEM>"],
-          "certificateSha256": "<certificate digest>"
-        },
-        "websocket": { "path": "/meshway", "host": "edge.example.com" }
-      }
-    }
-  }
-}
-```
-
-源配置的 dialers 按协议选择，**生成的 dialers 是具体获准出站实例**，因此有内部 candidate key。它不是管理员还要维护的一张连接表。
-
-B 的配置包含本机 listener、同一 UUID，以及对应服务端证书／私钥材料。A 不拿 B 的服务端私钥。两份切片从同一完整配置和固定依赖生成，属于同一次执行发布，各自 digest 不必相同。
-
-executionPublication 表示一致的许可／依赖发布，精确字段编码待接口定版。它将完整源 revision、相关身份／规则集依据及参与节点 digest 关联起来；协议材料已包含在配置中。digest 只比较内容，不能代替发布顺序。
-
-## 完整配置包含什么
-
-除了上例，完整切片还有本节点 hostname／地址、相关 peer 身份、公钥、授权规则、允许路径、出口方案和 DNS。示例省略这些部分不代表可以跳过校验或授权。
-
-UUID／password／证书是完整配置的私有字段，既可以手工配置，也可以自动生成。初版直接随所需 listener／dialer 参数下发；Agent 激活前验证完整材料、用途、可信绑定和吊销／有效期。只有后续实际大小需要时再引入包内去重，不增加独立材料实体。
+源配置的 dialers 以协议为 key；执行配置的 dialers 以具体候选为 key。候选由 Server 编译，不是需要管理员维护的连接表。两份切片属于一致发布，各自 digest 不必相同。
 
 ## Config 与 State
 
-管理员公告的 endpoint 和协议参数属于 Config。STUN 当前映射、一次协调 attempt、实际选中的通道、RTT 属于 State。
+管理员声明的 endpoint 和协议参数属于 Config。接口地址、STUN 映射、实际通道和 RTT 属于 State。动态 endpoint 只改变已获准 peer 的到达方式，不能替换身份、UUID、TLS 信任或业务许可。
 
-动态 endpoint 更新只改变本配置已经允许的目标如何到达，不能替换 peer 身份、UUID、TLS 信任或业务授权。State 引用确切配置版本／digest，失配时不用于执行。
-
-Mesh 地址变更属于 Config 更新，不能用 endpoint State 改写。接收方继续以对应发布校验源／目的地址绑定；同一 IP 转交其他 Node 不继承旧会话资格，见[改址流程](/v2/configuration-reference/addressing#改址与安全切换)。
-
-下发顺序及 full／delta 处理见[同步与应用](/v2/configuration-reference/deployment)。
+Mesh 地址修改属于 Config，不能用 endpoint State 改写。接收方须校验对应发布中的源／目的地址绑定；同一 IP 转交其他 Node 不继承旧会话资格，见[改址](/v2/configuration-reference/addressing#改址与安全切换)。

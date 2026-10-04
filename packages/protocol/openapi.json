@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Meshway Controller",
+    "title": "Meshway Server",
     "description": "Utoipa's axum bindings for seamless integration for the two",
     "contact": {
       "name": "Juha Kukkonen",
@@ -12602,7 +12602,7 @@
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UnavailableReason"
+                "$ref": "#/components/schemas/LookupUnavailableReason"
               },
               "status": {
                 "type": "string",
@@ -12727,7 +12727,7 @@
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UnavailableReason"
+                "$ref": "#/components/schemas/LookupUnavailableReason"
               },
               "status": {
                 "type": "string",
@@ -12757,6 +12757,13 @@
             },
             "additionalProperties": false
           }
+        ]
+      },
+      "LookupUnavailableReason": {
+        "type": "string",
+        "enum": [
+          "datasetUnavailable",
+          "lookupFailed"
         ]
       },
       "MaterialRequirement": {
@@ -18554,8 +18561,13 @@
       "UnavailableReason": {
         "type": "string",
         "enum": [
-          "datasetUnavailable",
-          "lookupFailed"
+          "unauthorized",
+          "noPath",
+          "missingCapability",
+          "missingDependency",
+          "missingDns",
+          "invalidProfile",
+          "inactiveNode"
         ]
       },
       "UserConfigurationView": {

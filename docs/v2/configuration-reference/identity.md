@@ -4,6 +4,8 @@ groups、tagsOwners 与 User／Tag 身份的配置语义。字段编码以生成
 
 ## Structure
 
+配置节选：
+
 ```json
 {
   "groups": {
@@ -17,14 +19,14 @@ groups、tagsOwners 与 User／Tag 身份的配置语义。字段编码以生成
 
 ## groups
 
-**类型：** `Record<string, string[]>` · **建议默认：** `{}`
+**类型：** `Record<string, string[]>` · **默认：** `{}`
 
 | 部分 | 说明 |
 | --- | --- |
 | key | 以 `group:` 开头的组名 |
 | value | 本网络 User 的邮箱列表；按集合处理 |
 
-建议首版只支持直接用户成员，不允许 group 嵌套。组成员匹配使用 User 身份的节点，不维护第二份“组里的节点列表”；已切换为 Tag 身份的节点不继承该用户的 Group 权限。
+组内只支持直接用户成员，不允许 group 嵌套。组成员匹配使用 User 身份的节点，不维护第二份“组里的节点列表”；已切换为 Tag 身份的节点不继承该用户的 Group 权限。
 
 未知用户／组引用在保存时报告。邮箱是可读输入，实际引用与历史版本绑定稳定 User ID。用户改邮箱后自动更新受影响配置中的可读引用并记录版本，不改变有效授权主体。
 
@@ -32,7 +34,7 @@ groups、tagsOwners 与 User／Tag 身份的配置语义。字段编码以生成
 
 ## tagsOwners
 
-**类型：** `Record<string, string[]>` · **建议默认：** `{}`
+**类型：** `Record<string, string[]>` · **默认：** `{}`
 
 | 部分 | 说明 |
 | --- | --- |
@@ -43,11 +45,9 @@ Tag 在这里定义，在 `nodes[id].identity.tags` 中分配。没有独立 Tag
 
 空 owner 列表只允许网络 Owner／Admin 赋予该标签。非管理员 Tag owner 只能给**本人的 User 身份设备**赋予自己拥有的 Tag；不能修改别人的设备，也不自动获得整网编辑、材料读取或带同 Tag 设备的管理权限。完整矩阵见[操作权限](/v2/permissions)。
 
-保留用户选用的 `tagsOwners` 拼写；Tailscale 的字段是 `tagOwners`，本稿不同时提供两个 alias。
-
 ## Selectors
 
-以下是 access、topology 和 routing 可复用的选择器提案；各字段可接受的子集由所属规则定义。
+access、topology 和 routing 复用以下选择器；各字段可接受的子集由所属规则定义。
 
 | 值 | 含义 |
 | --- | --- |
@@ -60,7 +60,7 @@ Tag 在这里定义，在 `nodes[id].identity.tags` 中分配。没有独立 Tag
 
 ## 有效授权身份
 
-**已确认：节点带 Tag 后改用标签授权身份，不再继承原 User／Group 的 access 权限。** 创建者信息可以保留用于追溯，不因此继续参与用户授权匹配。
+**节点带 Tag 后改用标签授权身份，不再继承原 User／Group 的 access 权限。** 接入来源不参与用户授权匹配。
 
 有效身份唯一来自 `nodes[id].identity`，格式见 [NodeIdentity](/v2/configuration-reference/nodes#identity)。Node 持久接入记录只负责凭据与网络绑定；配置版本的稳定用户引用是解析绑定，不是第二份可编辑 owner。
 
@@ -71,7 +71,7 @@ Tag 在这里定义，在 `nodes[id].identity.tags` 中分配。没有独立 Tag
 
 `node:<id>` 和网络内 `*` 仍按节点范围匹配。tagsOwners 只定义赋标签的权限，不让带该标签的节点继承标签 owner 的用户／组权限。
 
-**已确认：原创建用户被移出网络或账户停用时，Tag 身份节点继续存在并按标签策略运行；需要撤销时由管理员单独操作。** 创建者记录不再是此类节点的存续条件，也不提供额外 access 权限。
+**原创建用户被移出网络或账户停用时，Tag 身份节点继续存在并按标签策略运行；需要撤销时由管理员单独操作。** 接入来源不是此类节点的存续条件，也不提供额外 access 权限。
 
 ## 身份切换与生命周期
 
@@ -85,4 +85,4 @@ Tag 在这里定义，在 `nodes[id].identity.tags` 中分配。没有独立 Tag
 | 配置 enabled=false | 停止业务执行，仍可同步配置；有效凭据下可通过新配置／回滚重新启用 |
 | 永久吊销节点接入／密钥 | 停止相应认证及执行许可，配置回滚不能复活 |
 
-同一个 Node 实体可以切换有效授权身份，不按服务器／App 拆节点类型。创建者保留用于追溯，不自动成为恢复身份的依据；主体切换不能继承旧流权限。
+同一个 Node 实体可以切换有效授权身份，不按服务器／App 拆节点类型。历史接入来源不自动成为恢复身份的依据；主体切换不能继承旧流权限。

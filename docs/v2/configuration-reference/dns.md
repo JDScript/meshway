@@ -1,9 +1,10 @@
 # DNS
 
-网络 DNS 配置草案。节点名称来自 `nodes[id].hostname`，Mesh 记录地址来自同版 `nodes[id].addresses`。
+网络 DNS 配置。节点名称来自 `nodes[id].hostname`，Mesh 记录地址来自同版 `nodes[id].addresses`。
 
 ## Structure
 
+<!-- schema: DnsConfiguration -->
 ```json
 {
   "magicDNS": true,
@@ -21,7 +22,7 @@
 
 ## Fields
 
-| 字段 | 类型 | 建议默认 | 说明 |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `magicDNS` | `boolean` | `true` | 解析本网络 Node 名称 |
 | `domain` | `string` | 平台为网络分配 | 网络 DNS 后缀；必须可规范化且无冲突 |
@@ -33,14 +34,14 @@
 
 ### DnsServer
 
-本稿先定义 UDP／TCP，TLS／HTTPS 的具体字段后续按实际实现补充。
+解析器传输支持 UDP／TCP。
 
-| 字段 | 类型 | 建议默认 | 说明 |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `type` | `"udp" \| "tcp"` | 必填 | 上游 DNS 传输 |
 | `server` | IP 字符串 | 必填 | 避免解析器自身的引导依赖 |
 | `serverPort` | `integer` | `53` | 1–65535 |
-| `useWithExit` | `boolean` | `false` | 字段提案：使用出口时仍保留此明确解析器及其 DNS 分流规则 |
+| `useWithExit` | `boolean` | `false` | 使用出口时仍保留此明确解析器及其 DNS 分流规则 |
 
 ## Behavior
 
@@ -53,13 +54,13 @@
 
 ## 使用出口时
 
-**已确认：普通 DNS 默认随有效方案的出口解析，只有明确配置的例外解析器保留。** MagicDNS 仍按节点记录处理；useWithExit=true 的解析器保留其明确的 split/default 用途，不因为用了出口就丢失该规则。
+普通 DNS 须随有效方案的出口解析，只有明确配置的例外解析器保留。MagicDNS 仍按节点记录处理；useWithExit=true 的解析器保留其明确的 split/default 用途。
 
 例外不是目的地址的全局放行；解析器流量仍须走明确、获准的网络路径。没有有效出口／解析依赖时报告不可用，不静默落回另一路公共解析器。
 
-多出口方案必须在解析业务域名之前确定无循环的 DNS 路径：能由方案的默认出口唯一确定时直接使用；否则需要方案提供明确的 DNS 出口／路径。需要 DNS 结果才能确定的 IP 规则，不能反过来成为它自身唯一的解析器选择依据。具体方案字段在 API 阶段补齐，不能默认猜一个出口。
+多出口方案必须在解析业务域名之前确定无循环的 DNS 路径。需要 DNS 结果才能确定的 IP 规则，不能反过来成为它自身唯一的解析器选择依据；缺少可信解析依赖时，相关需求不可执行。
 
-Controller／transport／协调的 bootstrap DNS 始终使用受保护系统通路，和业务 DNS 分开。
+Server 通信／transport／协调的 bootstrap DNS 必须使用受保护系统通路，和业务 DNS 分开。运行实现范围见 [Node](/v2/node)。
 
 ## 域名执行关联
 

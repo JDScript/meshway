@@ -1,59 +1,35 @@
-# Transport 与支持状态
+# Transport
 
-## 文档版本
+transport 承载 Meshway 节点之间的数据。协议凭据匹配与 Meshway 节点身份、业务授权分别校验；业务方向与建连方向独立。
 
-本配置参考面向开发中的下一版 `NetworkConfiguration`。采用公开文档的结构、字段和默认值写法；在新契约发布前，示例不能直接交给现行 API。
+## 协议与 Server 配置支持
 
-| 状态 | 含义 |
-| --- | --- |
-| 平台托管 | 当前 Controller／Agent 已接通这项承载能力；现行字段见[托管 API](/managed-transports-api) |
-| 独立库 | 协议库有实现，但目录、材料或正常 Agent 执行尚未托管 |
-| 目标字段 | 本参考已定义格式，执行接线尚未完成；不允许保存后静默忽略 |
-| 未纳入 | 上游有此项，Meshway 当前没有对应公开配置能力 |
+| key | listener／dialer | 支持的声明 |
+| --- | --- | --- |
+| native_udp | [Listener](/v2/configuration-reference/listeners/native-udp)／[Dialer](/v2/configuration-reference/dialers/native-udp) | UDP 参数 |
+| native_tcp | [Listener](/v2/configuration-reference/listeners/native-tcp)／[Dialer](/v2/configuration-reference/dialers/native-tcp) | TCP 参数 |
+| vless | [Listener](/v2/configuration-reference/listeners/vless)／[Dialer](/v2/configuration-reference/dialers/vless) | TCP/TLS、WebSocket/TLS，空 flow、TCP CONNECT |
+| trojan | [Listener](/v2/configuration-reference/listeners/trojan)／[Dialer](/v2/configuration-reference/dialers/trojan) | TCP/TLS、TCP CONNECT |
 
-## 协议层次
+Server 接受并校验这些协议的类型化声明、TLS／WS 参数和材料。Node 运行支持由其实际 capability 与资源条件决定；Server 能保存配置不代表新 Node provider 已交付。
+
+## 数据层次
 
 ```text
-受保护的外层 socket
-  → 可选 TLS／WebSocket
-  → VLESS、Trojan 或原生承载
-  → Meshway 节点认证与加密
-  → 获准的 Mesh 包流
+受保护的外层 socket → 协议所需 TLS／WebSocket／封装
+  → Meshway 节点认证与端到端保护 → 获准的包流
 ```
 
-当前 VLESS 使用 TCP → TLS → 可选 WebSocket → VLESS → Noise。Trojan 独立库使用 TCP → TLS → Trojan，再交给 Meshway 认证层。
+TCP 业务可经 UDP 承载，UDP 业务也可经字节流承载。它们不代表 VLESS/Trojan 的原生 UDP command 或 TCP/UDP 外层打洞能力。多承载主备不能改变必经节点。
 
-业务 UDP 包可以在可靠字节流中传输；这不等于 VLESS/Trojan 的原生 UDP command，也不等于外层 UDP 打洞。协议 UUID/password 不替代 Node 身份。
+## 目录与 schema
 
-## 参考范围
+getTransportCatalog 返回 protocol、outerSocket、requiredCapability 和 schema 引用名。listenerSchema／dialerSchema 指向 getConfigurationSchema 返回的 schemaJson 文档 `$defs`，例如 `#/$defs/VlessListener`，不是内嵌 schema 文本。
 
-基础协议与配置模型如下：
+公共字段见 [Listen](/v2/configuration-reference/shared/listen)、[Dial](/v2/configuration-reference/shared/dial)、[TLS](/v2/configuration-reference/shared/tls)、[WebSocket](/v2/configuration-reference/shared/websocket)。默认／覆盖规则见[继承](/v2/configuration-reference/inheritance)。
 
-| 协议 | listener | dialer | 公开字段范围 |
-| --- | --- | --- | --- |
-| Native UDP | 已托管 | 已托管 | [Listen](/v2/configuration-reference/shared/listen)／[Dial](/v2/configuration-reference/shared/dial) 的 UDP 子集 |
-| Native TCP | 已托管 | 已托管 | TCP 子集 |
-| VLESS | TCP/TLS、WS/TLS 已托管 | TCP/TLS、WS/TLS 已托管 | 空 flow、TCP CONNECT、平台凭据、TLS、WS |
-| Trojan | Controller 声明／校验／编译 | Controller 声明／校验／编译 | 实际 Agent TCP/TLS 承载装配与部署验证独立跟踪，按 capability 交集执行 |
+## 边界
 
-通用 socket、TLS 版本／ALPN、WS 自定义 headers 等高级设置是目标字段，不因底层库可配置就宣称当前控制面已支持。
+协议账户字段不创建 Meshway User。目标 endpoint 来自目标 listener，拨号端不维护另一份服务端凭据。underlay 的 mark／namespace 由资源 owner 管理，不通过协议参数任意覆盖。
 
-本轮参考 sing-box 固定 checkout `927770c29f3e3698c711fc150e1066a4a78793a2` 的 listen／dial／TLS、VLESS、Trojan 字段。采用其通用／专用字段分层；字段命名保持本参考的 camelCase。
-
-`getTransportCatalog` 中的 `listenerSchema`／`dialerSchema` 是 `getConfigurationSchema.schemaJson` 文档 `$defs` 内的定义名称，例如 `VlessListener`；通过 `#/$defs/VlessListener` 引用，不是内嵌 schema 文本。目录表示 Controller 能声明与校验的协议，不保证具体 Agent 构建支持，也不代表隧道已经建立。
-
-## 不直接照搬的字段
-
-| 上游字段／能力 | Meshway 处理 |
-| --- | --- |
-| `tag` | listener 资源 key；dialers 按协议 key 选择，不是授权 Tag |
-| `users`、客户端 UUID/password | 协议凭据可在 listener 配置，默认生成并保存；拨号配置引用目标值，不创建代理账户实体 |
-| `server` / `server_port` | 从可编辑的目标 listener endpoints 解析到出站配置，避免双端重复填写 |
-| `routing_mark` / `netns` | underlay owner 的受限保护机制，不开放任意覆盖 |
-| `detour` | 不可绕过 Meshway 逻辑路径；使用连接／路由配置 |
-| sniff／旧 domain_strategy | 不将上游已废弃字段搬进新配置 |
-| REALITY、Vision、uTLS、ECH、mux、gRPC、HTTPUpgrade、QUIC 封装 | 在专页说明对应关系，但当前未纳入执行合同 |
-
-需要扩展时按协议逐项增加强类型字段和能力协商，不通过任意 JSON 透传到运行时。
-
-共用字段和配置继承集中见[字段复用与默认继承](/v2/configuration-reference/inheritance)，完整协议值如何下发见 [NodeConfiguration](/v2/configuration-reference/node-configuration)。
+Vision、REALITY、uTLS、ECH、mux、gRPC、HTTPUpgrade 和 QUIC 封装不在当前配置字段集合内。未知字段被拒绝，不能任意 JSON 透传。新 provider 的注册和代码装载见 [Node 插件](/v2/node/plugins)。

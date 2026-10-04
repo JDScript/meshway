@@ -26,10 +26,12 @@ User ──< Membership >── Network ──< Node
 
 Node 的有效身份唯一位于 `nodes[id].identity`：
 
+<!-- schema: NodeIdentity -->
 ```json
 { "type": "user", "user": "alice@example.com" }
 ```
 
+<!-- schema: NodeIdentity -->
 ```json
 { "type": "tag", "tags": ["tag:backend"] }
 ```

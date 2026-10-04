@@ -1,9 +1,10 @@
 # Trojan Listener
 
-**当前能力：新 Controller 已接入 Trojan 的声明目录、配置校验与执行编译。** TCP CONNECT over TLS 的实际 Agent 承载装配及部署验证独立跟踪；执行按 Controller 允许协议与节点上报 capability 的交集选择，目录声明不表示隧道可用。
+Trojan TCP CONNECT over TLS 监听配置。执行按 Server 允许协议与节点 capability 的交集选择；目录声明不表示隧道可用，运行范围见 [Node](/v2/node)。
 
 ## Structure
 
+<!-- schema: Listener -->
 ```json
 {
   "type": "trojan",
@@ -24,7 +25,7 @@
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `type` | literal | 必填 | `trojan` |
-| `stream` | literal | `"tcp"` | 当前库仅支持 TCP/TLS，不接受 websocket 等封装 |
+| `stream` | literal | `"tcp"` | 只接受 TCP/TLS，不接受 websocket 等封装 |
 | `password` | 非空字符串 | 平台生成并保存 | 管理员可指定；字节值不做 trim 或大小写归一化 |
 | `tls` | [TLS listener](/v2/configuration-reference/shared/tls#listener-structure) | 必填 | 托管目标使用平台材料 |
 
@@ -48,7 +49,7 @@ wire 中的 SHA-224 由配置 password 计算，不单独编辑；command 固定
 | `users[].name` | remark，不对应 User 实体 |
 | `fallback` / `fallback_for_alpn` | 不实现未认证流量转发／Web fallback；不是 Meshway 中继兜底 |
 | `tls` | [TLS](/v2/configuration-reference/shared/tls) |
-| `transport` | 库仅 TCP/TLS，WS／gRPC 等需后续实现 |
-| `multiplex` | 未实现 |
+| `transport` | 只接受 TCP/TLS |
+| `multiplex` | 不在配置字段集合中 |
 
 [sing-box Trojan inbound](https://sing-box.sagernet.org/configuration/inbound/trojan/)

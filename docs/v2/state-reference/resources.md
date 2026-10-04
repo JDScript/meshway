@@ -1,106 +1,89 @@
 # Resources 与 Links
 
-下一版 NodeState 的资源结构。**listener 是配置资源，socket 是运行资源，endpoint 是带来源的候选。** configured、interface、STUN 的含义和优先尝试规则见[Endpoint Candidates](/v2/state-reference/endpoints)。
-
-本页解释资源语义和示例，完整逐字段草案集中在[Controller 内存字段](/v2/storage/memory#listenerstate)。
+listener 是配置资源，socket 是运行资源，endpoint 是带来源的候选。以下类型属于 [NodeState](/v2/state-reference/node)，精确字段见[生成契约](/v2/contracts/openapi.json)。
 
 ## ListenerState
 
-```json
-{
-  "mesh-udp": {
-    "phase": "listening",
-    "socketIds": ["7"],
-    "loadedCertificateSha256": null,
-    "problem": null
-  }
-}
-```
+`listeners` 以配置中的 listener key 为索引。
 
 | 字段 | 含义 |
 | --- | --- |
-| map key | 对应本节点配置中的 listener key |
-| `phase` | `preparing`、`listening`、`stopped`、`failed` |
-| `socketIds` | 指向本次报告的 sockets；不得指向不存在的 socket |
-| `loadedCertificateSha256` | 实际加载证书的公开指纹；非 TLS 时 null |
-| `problem` | 明确失败原因或 null |
+| `phase` | preparing／listening／stopped／failed |
+| `socketIds` | 指向同一报告中的实际 sockets |
+| `loadedCertificateSha256` | 实际加载证书的公开指纹；非 TLS 或没有结果时为 null |
+| `problem` | 类型化失败原因或 null |
+| `configuration` | 显式配置引用；省略／null 继承报告的 configuration.applied |
 
-`listening` 只说明本机监听成功，不说明公网可达。
-
-资源默认关联本报告的 `configuration.applied`。如果要报告另一份 saved 配置的准备过程，资源须显式携带自己的配置引用并标记 preparing；这种记录供诊断，不能作为 peer 可用入口。切片／材料版本不匹配的旧资源不会因 listener key 相同而复用。
+listening 只说明本机监听成功，不证明公网可达。安装中资源须显式引用其目标，不能冒充当前 peer 可用入口。listener key 相同不代表材料、切片或运行代际相同。
 
 ## SocketState
 
+`sockets` 的 map key 是实例内 socket 标识。以下是完整 SocketState 的格式示例，地址与时间不代表实际测量；实际提交须有相容 applied 配置及真实资源：
+
+<!-- schema: SocketState -->
 ```json
 {
-  "7": {
-    "resource": { "kind": "listener", "key": "mesh-udp" },
-    "generation": 3,
-    "network": "udp",
-    "boundAddress": "0.0.0.0:8421",
-    "endpoints": [
-      {
-        "address": "198.51.100.42:40001",
-        "source": "stun",
-        "observer": "stun.example.net:3478",
-        "validation": "observed",
-        "observedAt": "2026-10-03T12:00:00Z",
-        "expiresAt": "2026-10-03T12:00:30Z"
-      }
-    ]
-  }
-}
-```
-
-| 字段 | 含义 |
-| --- | --- |
-| map key | 当前 Node 实例内的 socket 标识 |
-| `resource` | listener，或编译连接计划中的出站／协调资源 |
-| `generation` | 资源代际，不能只按相同端口判断同一个 socket |
-| `network` | 实际外层 `udp`／`tcp`，不由内层业务协议推测 |
-| `boundAddress` | 内核实际 bind 地址与端口 |
-| `endpoints` | 此 socket 的 configured／interface／stun 候选；[按来源校验](/v2/state-reference/endpoints)，保留验证程度与期限 |
-
-出站 socket 使用例如 `{ "kind": "dial", "key": "<connection-resource-key>" }`，不冒充 listener。标识绑定到实例＋资源＋generation＋socketId；任一更替都不能借用旧认证／观测。
-
-STUN 的 `observed` 表示得到映射，不等于对端已验证可达。认证探测得到的验证需要关联具体 peer 和通道，不能把某个 peer 的成功推广给所有节点。TCP／VLESS 的可达性不能使用另一个 UDP socket 的映射证明。
-
-上例仅展开 STUN 项；其他来源可出现在同一候选集合。初始尝试顺序建议 configured → interface → stun，实际仍先过滤不适用地址，再依据认证／运行结果选择，不作串行长等待。
-
-## LinkState {#links}
-
-```json
-{
-  "<node-b>": [
+  "resource": { "kind": "listener", "key": "mesh-udp" },
+  "configuration": null,
+  "generation": 3,
+  "network": "udp",
+  "boundAddress": "0.0.0.0:8421",
+  "endpoints": [
     {
-      "linkId": "<public-channel-id>",
-      "transport": "native_udp",
-      "initiatorNodeId": "<node-a>",
-      "socketId": "7",
-      "phase": "authenticated",
-      "observedAt": "2026-10-03T12:00:01Z",
-      "expiresAt": "2026-10-03T12:00:31Z"
+      "address": "198.51.100.42:40001",
+      "origin": { "source": "stun", "observer": "stun.example.net:3478" },
+      "observedAt": "2026-10-03T12:00:00Z",
+      "expiresAt": "2026-10-03T12:00:30Z"
     }
   ]
 }
 ```
 
-linkId 为非秘密的运行通道标识，需要有实际握手绑定才能关联两端；不是私钥、会话密钥，也不能用两个节点各自的 socketId 相同来配对。
+| 字段 | 含义 |
+| --- | --- |
+| `resource` | `{kind: listener | dial | coordination, key}`，关联准确资源 |
+| `configuration` | 显式目标；省略／null 继承 applied，安装阶段必须显式提供 |
+| `generation` | 本资源代际，不能只按相同端口认作同一 socket |
+| `network` | 实际外层 udp／tcp，不由内层业务协议推测 |
+| `boundAddress` | 内核实际 bind 地址与端口 |
+| `endpoints` | EndpointCandidate 数组，保留 origin 和原期限 |
 
-每条 link 必须以报告节点为一端。A 不能通过自己的报告替 B 声明一条 B—C link。
+标识绑定实例、资源、generation 和 socketId；任何更替都不能借用旧认证或观测。出站 socket 不冒充 listener。
 
-active 需要区分“认证通道仍存在”和“正在承载业务”。建议另报业务依赖／诊断依赖及流量计数；保持连接可以是 idle、速率为 0，诊断 probe 也不能冒充业务流量。具体实时指标见 [Realtime Observation](/v2/state-reference/realtime)。
+STUN 只表示映射观测。对某 peer 的认证成功不证明其他 peer 可达，UDP 映射不能证明 TCP／VLESS 可达。来源与 peer 裁剪见 [Endpoint Candidates](/v2/state-reference/endpoints)。
 
-Controller 聚合时区分单侧报告、双侧匹配、冲突、过期。双侧匹配要求同一通道、两端身份／承载与当前有效配置相容；收到 A 的报告不自动生成 B 的报告。
+## LinkState {#links}
 
-这些仍是有身份来源的 Agent 自报告，不是 Controller 独立重做握手的证明。业务准入由数据面实际身份和接收端配置执行。
+`links` 以 PeerNodeId 为 key，每个 peer 可有多个通道。
 
-link 默认建议按需求建立并复用，无活跃依赖时再空闲回收；不为保持历史曲线而常驻。生命周期与保活区别见[按需连接](/v2/state-reference/link-lifecycle)。
+| 字段 | 含义 |
+| --- | --- |
+| `linkId` | 实际握手绑定的非秘密通道标识 |
+| `transport` | 实际使用的承载 |
+| `initiatorNodeId` | 主动建连方，不代表业务发起方向 |
+| `socketId` | 本次报告中承载该 link 的 socket |
+| `phase` | preparing／authenticated／closed／failed |
+| `businessDependencies` | 当前业务依赖数量；不是字节计数或即时速率 |
+| `observationIds` | 使用该 link 的诊断任务，不计作业务依赖 |
+| `observedAt`／`expiresAt` | 原观测时间与期限 |
+| `since` | 已知的状态起始时间，未知为 null |
+
+报告节点必须是通道一端。A 不能报告 B—C 通道；两端 socketId 相同也不能用于配对。authenticated 可以空闲，businessDependencies 大于零不意味着此刻持续传输字节。
+
+Server 聚合为 [AggregatedLink](/v2/state-reference/network#links)，区分 oneSided／matched／conflicting／expired。双侧匹配要求同一通道、身份、承载与相容执行上下文；不自动生成另一端报告，也不把自报告当成 Server 独立完成握手的证明。
 
 ## PathState {#paths}
 
-包含运行时实际选定的有序节点路径、所针对的配置、使用／确认结果及观测时间。只有计划、只入发送队列、已到达目标，是不同证据，不能统一标为“路径已验证”。
+`paths` 以运行路径标识为 key。
 
-报告者必须参与该路径，并说明其来源角色／可观察阶段。中转 C 看到密文经过，不等于它能证明目标 B 已把明文交给应用；不能在聚合时抹掉这个区别。
+| 字段 | 含义 |
+| --- | --- |
+| `nodes` | 实际有序完整 Node 路径 |
+| `publicationId` | 本路径所属执行发布 |
+| `reporterRole` | origin／relay／target／exit |
+| `evidence` | selected／sent／peerConfirmed／delivered |
+| `observedAt`／`expiresAt` | 原观测时间与期限 |
 
-不从若干当前 links 拼出一条路径后冒称它正在承载业务，也不将各边 RTT 相加伪造端到端测量。全网查询只聚合有来源的报告。
+报告者必须参与路径，只报告自己能观察的阶段。中转看到密文不代表目标已交付明文；selected、sent 与 delivered 不能合为“路径已验证”。
+
+Server 保留原报告者并聚合为 AggregatedPath。不能从当前 links 拼出路径后称它正在承载业务，也不能相加邻接 RTT 伪造端到端测量。主动测量见[实时观察](/v2/state-reference/realtime)。

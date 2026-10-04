@@ -170,8 +170,8 @@ writeFixture(client, {text: 42}, {token: "secret"});
 `);
   const result = spawnSync(process.execPath, [require.resolve("typescript/bin/tsc"), "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess", "--skipLibCheck", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "Bundler", "--allowImportingTsExtensions", "consumer.ts"], { cwd: packageRoot, encoding: "utf8" });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(files["crates/control-client/src/generated/mod.rs"], /meshway_protocol::FixtureInput/);
-  assert.doesNotMatch(files["crates/control-client/src/generated/mod.rs"], /pub struct|pub enum|derive\(Debug/);
+  assert.match(files["crates/meshway-control-client/src/generated/mod.rs"], /meshway_protocol::FixtureInput/);
+  assert.doesNotMatch(files["crates/meshway-control-client/src/generated/mod.rs"], /pub struct|pub enum|derive\(Debug/);
   assert.deepEqual(generatedFiles(fixture()), files);
 });
 
@@ -442,9 +442,9 @@ test("generated Rust parameter methods compile and execute against HTTP with sha
   const { directory, files } = await generatedFixture(t, parameterFixture());
   const project = join(directory, "rust-fixture");
   await mkdir(join(project, "src"), { recursive: true });
-  await copyFile(join(root, "crates/control-client/src/runtime.rs"), join(project, "src/runtime.rs"));
-  await cp(join(root, "crates/control-client/src/sse"), join(project, "src/sse"), { recursive: true });
-  await writeFile(join(project, "src/generated.rs"), files["crates/control-client/src/generated/mod.rs"]);
+  await copyFile(join(root, "crates/meshway-control-client/src/runtime.rs"), join(project, "src/runtime.rs"));
+  await cp(join(root, "crates/meshway-control-client/src/sse"), join(project, "src/sse"), { recursive: true });
+  await writeFile(join(project, "src/generated.rs"), files["crates/meshway-control-client/src/generated/mod.rs"]);
   await writeFile(join(project, "Cargo.toml"), `[workspace]
 [package]
 name = "meshway-codegen-parameter-fixture"
@@ -452,7 +452,7 @@ version = "0.0.0"
 edition = "2024"
 [dependencies]
 bytes = "1"
-meshway-model = { path = ${JSON.stringify(join(root, "crates/model"))} }
+meshway-model = { path = ${JSON.stringify(join(root, "crates/meshway-model"))} }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 futures-util = "0.3"

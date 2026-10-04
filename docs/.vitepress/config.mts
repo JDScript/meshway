@@ -1,68 +1,5 @@
 import { defineConfig, type DefaultTheme } from "vitepress";
-
-const currentSidebar: DefaultTheme.SidebarItem[] = [
-  {
-    text: "产品",
-    items: [
-      { text: "概览、概念与使用流程", link: "/concepts" },
-      { text: "网络管理", link: "/network-management" },
-      { text: "访问授权（Access）", link: "/access-policy" },
-      { text: "Mesh 路由与出口方案", link: "/routing" },
-      { text: "控制台", link: "/web-product" },
-      { text: "Apple App", link: "/apple-app" },
-      { text: "产品要求", link: "/product-alignment" },
-      { text: "当前状态与剩余工作", link: "/milestones" },
-    ],
-  },
-  {
-    text: "架构",
-    items: [
-      { text: "总览与实现边界", link: "/architecture" },
-      { text: "控制面注册与持久化", link: "/enrollment" },
-      { text: "控制面发布与预算", link: "/controller-publication" },
-      { text: "浏览器登录与节点接入", link: "/device-login" },
-      { text: "本地账户领域与 SSO 接线", link: "/local-accounts" },
-      { text: "地址与配置分发", link: "/configuration" },
-      { text: "公钥与连接意图", link: "/connections" },
-      { text: "Agent 连接运行层", link: "/connection-runtime" },
-      { text: "托管 Mesh IPv4 数据面", link: "/managed-dataplane" },
-      { text: "Mesh 执行合同", link: "/mesh-execution" },
-      { text: "E2E 重启恢复", link: "/e2e-session-recovery" },
-      { text: "四层策略引擎", link: "/policy" },
-      { text: "出口数据面 RFC 与原型", link: "/exit-dataplane" },
-      { text: "系统 socket 保护通路", link: "/underlay-routing" },
-      { text: "DNS 与域名上下文", link: "/dns" },
-      { text: "Transport、插件与主备", link: "/transports" },
-      { text: "托管 listener 与材料", link: "/managed-transports-api" },
-      { text: "承载目录与协商边界", link: "/transport-registry" },
-      { text: "邻接延迟历史", link: "/latency-history" },
-      { text: "加密边界与真实追踪", link: "/security-and-tracing" },
-    ],
-  },
-  {
-    text: "开发",
-    items: [
-      { text: "本地联调", link: "/getting-started" },
-      { text: "统一开发入口", link: "/dev-services" },
-      { text: "环境、检查与验收", link: "/development" },
-      { text: "Linux 传输与性能实验", link: "/transport-lab" },
-      { text: "Linux 跨地域验收", link: "/linux-field-validation" },
-    ],
-  },
-  {
-    text: "参考",
-    items: [
-      { text: "CLI 与手动验证", link: "/cli" },
-      { text: "协议与类型安全", link: "/protocol" },
-      { text: "模型与 schema 按需导出", link: "/model-api-audit" },
-      { text: "SPA 会话、查询与轮询", link: "/spa-api-audit" },
-      { text: "Netcheck 底层观测", link: "/netcheck" },
-      { text: "真实承载 endpoint 观测", link: "/endpoint-discovery" },
-      { text: "Tailscale 对照", link: "/tailscale-alignment" },
-      { text: "参考源码", link: "/references" },
-    ],
-  },
-];
+import { contractAssets } from "./contracts.mts";
 
 const v2Sidebar: DefaultTheme.SidebarItem[] = [
   {
@@ -177,6 +114,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
 ];
 
 export default defineConfig({
+  vite: { plugins: [contractAssets()] },
   lang: "zh-CN",
   title: "Meshway",
   description: "以 Tailscale 为产品基线，扩展自定义承载与有序指定路径的 Rust mesh 网络。",
@@ -185,21 +123,14 @@ export default defineConfig({
   themeConfig: {
     logo: "/meshway.svg",
     nav: [
-      { text: "产品", link: "/concepts" },
-      { text: "架构", link: "/architecture" },
-      { text: "开发", link: "/getting-started" },
-      { text: "参考", link: "/cli" },
-      {
-        text: "文档版本",
-        items: [
-          { text: "当前实现", link: "/" },
-          { text: "V2 · Server / Node", link: "/v2/" },
-        ],
-      },
+      { text: "文档", link: "/v2/" },
+      { text: "Server", link: "/v2/server" },
+      { text: "Node", link: "/v2/node" },
+      { text: "API", link: "/v2/api" },
     ],
     sidebar: {
       "/v2/": v2Sidebar,
-      "/": currentSidebar,
+      "/": v2Sidebar,
     },
     search: {
       provider: "local",

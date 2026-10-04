@@ -4,15 +4,12 @@
 
 ## 应用与目录
 
-建议统一为下列目标结构，**本轮仅整理设计，不搬迁或删除源码**：
+当前源码结构：
 
 ```text
 apps/
-  meshway-server/           # 目标 Server 包；当前实现仍为 meshway-controller
-  meshway-daemon/           # binary: meshwayd
-  meshway-cli/              # binary: meshway
+  meshway-server/           # Rust Server
   console/                  # React pure SPA
-  apple/                    # 原生应用；新增开发暂停
 crates/
   meshway-model/
   meshway-transport-spec/
@@ -20,33 +17,26 @@ crates/
   meshway-protocol/
   meshway-control-client/
   meshway-serde/
-  meshway-ipc/
-  meshway-plugin/
-  meshway-plugin-host/
-  meshway-transport/
-  ...                       # Node 组件同样使用完整包名
-plugins/                    # native 导出／打包薄入口
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
-experiments/                # 隔离实验与验收工具
 scripts/                    # 生成、构建、开发与发布
 references/                 # 独立上游参考 checkout
 ```
 
 ## 命名规则
 
-**Rust 包根目录名与 `Cargo.toml` 的 package name 相同，统一使用 `meshway-xxx`。** 例如 `crates/meshway-model/Cargo.toml` 定义 `name = "meshway-model"`，不再同时维护目录短名和包名两套对应关系。
+**Rust 包根目录名与 `Cargo.toml` 的 package name 相同，统一使用 `meshway-xxx`。** 例如 `crates/meshway-model/Cargo.toml` 定义 `name = "meshway-model"`。
 
 Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名显式声明：`meshway-daemon` → `meshwayd`，`meshway-cli` → `meshway`；Server 目标名为 `meshway-server`。分类目录 `apps`／`crates`、包内 `src`／`tests` 和 Rust 模块仍按职责命名。非 Rust 应用／包遵循其自身包体系。
 
 同一包名在 workspace 中唯一。native 薄入口若是独立 Cargo 包，也使用相同目录／包名，例如 `plugins/meshway-plugin-transport-vless`；它不与实现库 `crates/meshway-transport-vless` 共用一个 Cargo 名称。
 
-本页展示目标名称。现行 Server／共享库仍在原目录，实际迁移时统一调整 workspace、path 依赖、生成／构建脚本和引用，不留旧目录重导出兼容层。
+新 Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，接口库和 provider 目录按同名规则建立；目前尚未实现，不在当前构建成员中。
 
 ## 跨端共享的契约库
 
-这些契约库已存在，是新实现的共同基础；以下列包名，也即迁移后的目录名：
+这些契约库是 Server 和 Node 的共同基础：
 
 | 包名＝目标目录名 | 消费者 | 唯一职责 |
 | --- | --- | --- |
@@ -97,11 +87,9 @@ meshway CLI ──► ipc
 
 库不反向依赖 App。provider 通过合同交互，不读取另一 provider 的私有容器；Rust 类型依赖不表示允许跨动态库直接传递 Rust 内部对象。
 
-## 旧实现退出与复用
+## 复用边界 {#旧实现退出与复用}
 
-合并前，**旧 Agent App 和未进入复用白名单的节点运行库整体退出活跃源码树**；不另留一个长期 `legacy/` 副本。旧实现、NAT／出口成果、失败反例和验收证据保留在明确的 Git 分支／提交及私有证据位置。
-
-新 Node 依据本分区设计。复用代码须说明职责、依赖和仍适用的回归；可以重新实现，也可以按白名单取回，不默认整包继承旧接口或状态机。源码清理、main 合并和运行服务切换分别执行，当前讨论没有触发这些操作。
+新 Node 依据本分区实现。引入组件须明确职责、依赖、协议／生命周期约束和行为回归。历史代码可作为经审查的复用材料，但不成为当前合同或目录的约束；运行验证须使用当前 Server 和正式节点生命周期。
 
 ## 工程约定
 

@@ -9,7 +9,7 @@ export async function controller(t: TestContext, registrationEnabled = true, use
   const parent = join(tmpdir(), "opencode");
   await mkdir(parent, { recursive: true });
   const directory = await mkdtemp(join(await realpath(parent), "meshway-ts-sdk-"));
-  const binary = process.env.MESHWAY_CONTROLLER_BINARY ?? resolve(import.meta.dirname, "../../../..", "target/debug/meshway-controller");
+  const binary = process.env.MESHWAY_SERVER_BINARY ?? resolve(import.meta.dirname, "../../../..", "target/debug/meshway-server");
   const child = spawn(binary, ["--data-dir", join(directory, "instance"), "--listen", "127.0.0.1:0", "--registration-enabled", String(registrationEnabled)], { stdio: ["ignore", "pipe", "pipe"] });
   const exited = new Promise<number | null>(resolveExit => child.once("close", resolveExit));
   child.stderr.resume();
@@ -21,7 +21,7 @@ export async function controller(t: TestContext, registrationEnabled = true, use
   const baseUrl = await new Promise<string>((ready, reject) => {
     const timeout = setTimeout(() => reject(new Error("Controller startup timed out")), 5000);
     let output = "";
-    child.once("error", () => { clearTimeout(timeout); reject(new Error("Build the real meshway-controller binary before SDK tests")); });
+    child.once("error", () => { clearTimeout(timeout); reject(new Error("Build the real meshway-server binary before SDK tests")); });
     child.once("exit", () => { clearTimeout(timeout); reject(new Error("Controller exited during startup")); });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {

@@ -462,7 +462,7 @@ export const zPathPermit = z.strictObject({
   ["target"]: zBusinessTarget
 });
 
-export const zUnavailableReason = z.enum(["datasetUnavailable","lookupFailed"]);
+export const zUnavailableReason = z.enum(["unauthorized","noPath","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
 
 export const zDemandDecision = z.union([z.strictObject({
   ["permit"]: zPathPermit,
@@ -1436,6 +1436,8 @@ export const zDenyDeviceAuthorizationPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
 });
 
+export const zLookupUnavailableReason = z.enum(["datasetUnavailable","lookupFailed"]);
+
 export const zNotApplicableReason = z.enum(["nonPublicAddress","meshAddress"]);
 
 export const zLookupResult_AsnData = z.union([z.strictObject({
@@ -1452,7 +1454,7 @@ export const zLookupResult_AsnData = z.union([z.strictObject({
   ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["status"]: z.enum(["notFound"])
 }), z.strictObject({
-  ["reason"]: zUnavailableReason,
+  ["reason"]: zLookupUnavailableReason,
   ["status"]: z.enum(["unavailable"])
 }), z.strictObject({
   ["reason"]: zNotApplicableReason,
@@ -1480,7 +1482,7 @@ export const zLookupResult_GeoIpData = z.union([z.strictObject({
   ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["status"]: z.enum(["notFound"])
 }), z.strictObject({
-  ["reason"]: zUnavailableReason,
+  ["reason"]: zLookupUnavailableReason,
   ["status"]: z.enum(["unavailable"])
 }), z.strictObject({
   ["reason"]: zNotApplicableReason,

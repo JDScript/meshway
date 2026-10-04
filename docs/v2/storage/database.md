@@ -1,424 +1,267 @@
 # 持久数据库字段
 
-**V2 精简记录提案。** 只为需要独立持久生命周期的数据建立记录；配置内容随完整版本保存，嵌套值不是独立实体。字段逐项列出，表名与物理拆分未定。`T?` 为可空；时间为 UTC，ID／Digest／Revision 是独立强类型。网络内关联使用 networkId 和复合约束。
+Server 使用 SQLite 保存私有身份、完整配置、执行恢复依据和历史。下表使用实际 SQL 列名，描述存储职责；它们不是 HTTP DTO，也不提供直接修改数据库的接口。对外字段以[生成契约](/v2/contracts/openapi.json)为准。
 
-新 Controller 已实现的账户存储切片中，User／UserSession／账户 ActivityEvent 的时间统一以 Unix 毫秒 INTEGER 保存，对外仍为 UTC RFC 3339。资源 ID 以非零的 16-byte UUID 保存，不把零值作为缺失身份；其他记录的物理布局仍随各领域实现确定。
+账户与执行表的 UUID 使用 16-byte BLOB，部分观测／资源表使用规范文本 UUID；时间使用 UTC Unix 毫秒 INTEGER，对外编码为 RFC 3339。秘密原文与完整配置使用认证加密，认证 token 保存摘要。主键、外键和不可逆约束由 schema 共同验证。
 
 ## User
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | UserId | 主键，稳定身份 |
-| `email` | string | 规范化、唯一的登录标识 |
-| `passwordHash` | string | Argon2id PHC，私有字段 |
-| `credentialVersion` | u64 | 密码／全会话撤销的版本 |
-| `createdAt` | Timestamp | 创建时间 |
-| `disabledAt` | Timestamp? | 账户停用时间；null 为有效 |
+`users`：
 
-邮箱不是已验证所有权凭证。修改邮箱不改变 ID，当前配置可读引用同步形成新版本。
+| 字段 | 含义 |
+| --- | --- |
+| `id` | 稳定 UserId |
+| `email` | 规范化、唯一登录标识，不证明邮箱所有权 |
+| `password_hash` | 私有 Argon2id PHC |
+| `credential_version` | 密码／全会话撤销版本 |
+| `created_at`／`disabled_at` | 创建时间与可空停用时间 |
+
+邮箱变化不改变主体 ID。当前配置中的可读引用随维护操作形成新版本，历史 actor 邮箱快照不改写。
 
 ## UserSession
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | SessionId | 非秘密资源 ID，用于会话管理 |
-| `tokenHash` | Digest | 唯一认证摘要，不作为对外 ID |
-| `userId` | UserId | 关联 User |
-| `credentialVersion` | u64 | 签发时版本，认证时与 User 核对 |
-| `createdAt` | Timestamp | 签发时间 |
-| `lastUsedAt` | Timestamp? | 最近实际会话使用；未记录为 null，不等于用户交互时间 |
-| `clientLabel` | string? | 粗粒度、脱敏的客户端摘要；仅展示，不参与认证 |
-| `expiresAt` | Timestamp | 绝对到期时间 |
-| `revokedAt` | Timestamp? | 单会话撤销 |
+`user_sessions`：
 
-用户退出／停用／密码重置也结束相关 SSE。session 原值只交付客户端，不在此保存。
+| 字段 | 含义 |
+| --- | --- |
+| `id`／`user_id` | 非秘密 SessionId 与账户绑定 |
+| `token_hash` | 唯一认证摘要，不作为对外 ID |
+| `credential_version` | 签发时的账户版本 |
+| `created_at`／`expires_at`／`revoked_at` | 签发、绝对到期、单会话撤销 |
+| `last_used_at` | 可空实际使用时间，不等于用户交互时间 |
+| `client_label` | 可空安全客户端摘要，不参与认证 |
 
-## Network
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | NetworkId | 主键，隔离作用域 |
-| `name` | string | 网络显示名；实体元数据提案 |
-| `createdBy` | UserId | 创建者，不替代当前 Owner membership |
-| `createdAt` | Timestamp | 创建时间 |
-| `creationRequestId` | RequestId | 建网幂等请求，与 createdBy 构成唯一键 |
-| `creationRequestDigest` | Digest | 原建网参数绑定，响应丢失重试返回本网络 |
-| `deletedAt` | Timestamp? | 删除标记；删除／保留流程仍待定版 |
-| `currentRevision` | Revision | 当前已受理的期望配置版本，非整网 applied 版本 |
-| `publicationSequence` | u64 | 本网络已分配执行发布的单调上界 |
-
-创建 Network、Owner membership、初始配置同事务。配置指针只由提交事务推进。同幂等键不同参数拒绝；网络已删除也不通过旧请求重建，删除保留期须覆盖幂等承诺。
-
-网络地址段属于当前 ConfigurationVersion.addressPools，可修改；Network 记录不保存另一份地址池。
-
-## Membership
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | MembershipId | 主键，一次加入关系 |
-| `networkId` | NetworkId | 所属网络 |
-| `userId` | UserId | 用户 |
-| `role` | owner \| admin \| member | 网络内角色 |
-| `version` | u64 | 成员修改的并发基准 |
-| `joinedAt` | Timestamp | 加入时间 |
-| `revokedAt` | Timestamp? | 离网／移除时间 |
-
-`(networkId,userId)` 至多一条有效记录；重新加入产生新 id。最后 Owner 保护在事务中执行。
-
-## JoinLink
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | JoinLinkId | 非秘密链接记录 ID |
-| `networkId` | NetworkId | 固定加入网络 |
-| `role` | owner \| admin \| member | 固定授予角色，须在签发者权限内 |
-| `tokenHash` | Digest | 唯一 token 摘要 |
-| `createdBy` | UserId | 签发者 |
-| `issuerMembershipId` | MembershipId | 当次签发权限关系，离网再加入不复活旧链接 |
-| `createdAt` | Timestamp | 创建时间 |
-| `expiresAt` | Timestamp | 首次消费期限 |
-| `revokedAt` | Timestamp? | 未消费链接的撤销时间 |
-| `consumedByUserId` | UserId? | 成功领取者 |
-| `consumedMembershipId` | MembershipId? | 唯一加入结果 |
-| `consumedAt` | Timestamp? | 消费时间 |
-| `creationRequestId` | RequestId | 签发幂等键 |
-| `creationRequestDigest` | Digest | 原创建请求绑定，私有字段 |
-
-消费字段同事务填写，与有效 membership 创建／活动记录一致。状态从消费、撤销、期限派生；已消费结果重试不恢复已撤销 membership。创建重试仅返回原资源元数据，原值交付规则见[认证](/v2/api/authentication#创建请求的幂等与秘密交付)。
-
-## Node
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | NodeId | 主键，持久接入身份 |
-| `networkId` | NetworkId | 不可任意切换的接入网络 |
-| `createdBy` | ActorRef | 原始接入来源，仅追溯 |
-| `registeredAt` | Timestamp | 注册时间 |
-| `credentialsRevokedAt` | Timestamp? | 永久吊销整个接入；所有旧／派生凭据拒绝 |
-
-**没有 owner、subject、tags、enabled、hostname、lastSeen、applied 字段。** 有效身份与启停从 Config 获取；运行观测从 RAM 获取。永久接入吊销不可通过配置、换钥或旧注册重试恢复。
-
-用户确认的删除操作在同一事务设置 credentialsRevokedAt、移除当前 nodes[id] 并记录旧地址退出／执行撤回；没有节点恢复入口。本行及公钥／历史关联可作为最小墓碑保留，阻止旧凭据和历史配置复活。
-
-节点期望地址唯一来自 `ConfigurationVersion.configuration.nodes[id].addresses`，允许显式修改／重分配。Node ID 与密钥不随改址变化。配置提交校验同网地址唯一性；地址索引只作为按 revision 绑定的派生数据，没有独立写入口。
-
-## AddressRetirement
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `networkId` | NetworkId | 地址退出的网络 |
-| `address` | IpAddress | 已从旧绑定撤下的地址 |
-| `previousNodeId` | NodeId | 旧绑定持有者，仅作为退出依据 |
-| `removedRevision` | Revision | 引发退出的配置版本，与 networkId／address 构成记录键 |
-| `releaseAfter` | Timestamp? | 覆盖旧许可／回复／NAT／DNS 窗口的安全复用下界；未知则 null、继续等待 |
-
-这是独立于当前分配的执行退出记录，不是另一份 IPAM 配置。配置改址／删除和退出依据同事务保存；旧发布停止相关续租后，依据所有已授予许可的最坏期限计算下界。不能用保存 ACK 或“现在没有连接报告”证明地址已释放。
-
-自动分配排除仍在退出的地址；显式目标可以等待激活。复用须满足同一地址全部未完成退出记录，回滚／Controller 重启不缩短窗口。记录可在退出完成且无恢复依赖后清理；旧前缀的系统资源回收仍由 Agent underlay journal 拥有。
-
-## NodeKey
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | KeyId | 公钥绑定 ID |
-| `networkId` | NetworkId | 关联作用域 |
-| `nodeId` | NodeId | 关联 Node |
-| `purpose` | control \| dataplane | 认证／数据面用途 |
-| `algorithm` | KeyAlgorithm | 已支持算法的封闭枚举，随握手定版 |
-| `publicKey` | bytes | 公钥，不保存私钥 |
-| `generation` | u64 | 同用途密钥代际 |
-| `createdAt` | Timestamp | 绑定时间 |
-| `retiredAt` | Timestamp? | 正常轮换后停止新用途，旧会话按既定边界退出 |
-| `revokedAt` | Timestamp? | 永久吊销该密钥 |
-
-`(nodeId,purpose,generation)` 唯一；公钥网络绑定不可被重新认领。实际允许的轮换窗口由认证／执行合同规定。
-
-## ConfigurationVersion
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `networkId` | NetworkId | 与 revision 构成主键 |
-| `revision` | Revision | 递增配置版本 |
-| `sourceJsonc` | Sealed&lt;string&gt; | 编辑原文，含注释／可能的协议秘密 |
-| `configuration` | Sealed&lt;NetworkConfiguration&gt; | 规范化完整配置，类型见配置参考 |
-| `bindings` | Sealed&lt;ConfigurationBindings&gt; | 本版本固定的用户／listener 代际／数据集绑定 |
-| `executionTargets` | Map&lt;NodeId, ConfigurationRef&gt; | 当前实现保存的本次配置应用固定目标；不含秘密，不随后续 demand／refresh 扩大分母 |
-| `createdBy` | ActorRef | 用户或系统修改来源 |
-| `createdAt` | Timestamp | 提交时间 |
-| `cause` | ConfigurationChangeCause | 配置版本的主触发来源，独立于 actor |
-| `requestId` | RequestId? | 幂等／事件关联 |
-| `rollbackFrom` | Revision? | 回滚来源；本记录仍是新 revision |
-
-NetworkConfiguration 的完整字段见[配置参考](/v2/configuration-reference)；其中 `nodes[id].identity`／`enabled` 是身份／业务启停的唯一源，addressPools／nodes[id].addresses 是地址期望的唯一源。历史原文、规范化值与绑定不可单独覆盖。
-
-`executionTargets` 对应当前 SQLite 的 `execution_targets` 列：在相同配置事务中，由实际 publication 切片填入并封存；删除节点不列为等待其 ACK 的目标。GET／SSE 进度依据这些固定引用读取真实回执，并单独给出当前新鲜度，不把旧 applied 当作当前数据面健康。
-
-规范化配置完整保存已补全的默认参数、UUID／password／证书／私钥；读取旧版本不会再运行当前默认补全。sourceJsonc 保留编辑意图和注释，configuration 保存确定结果，两者用途不同。线性完整历史可查得前序 revision；配置摘要需要时计算／缓存，CAS 使用 revision。
-
-### ConfigurationBindings
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `users` | Map&lt;Email, UserBinding&gt; | groups／tagsOwners／access／topology／routing 中的策略引用；原样保存保留其成员生命周期，不按当前邮箱重新绑定 |
-| `nodeUsers` | Map&lt;NodeId, UserBinding&gt; | 各 User 身份 Node 的 `Config.identity` 的稳定解析；只由已验证的设备接入／重新登录建立，Tag 身份没有该项 |
-| `listeners` | Map&lt;NodeId, Map&lt;ListenerKey, Revision&gt;&gt; | listener 此次创建所在 revision，更新沿用、删除后重建换新 |
-| `ruleSets` | Map&lt;RuleSetKey, ArtifactId&gt; | 此源版本提交时固定的数据集内容 |
-
-`UserBinding` 字段：`userId: UserId`、`membershipId: MembershipId`。listener 以 `(networkId,nodeId,key,createdRevision)` 标识资源代际；运行 socket 仍有自己的 generation。上述绑定嵌入配置版本，无独立资源 CRUD。
-
-两类用户绑定按用途独立。用户从 M1 离网后以 M2 重新加入，原策略引用仍绑定已失效的 M1；新设备经正常持钥／PKCE 接入只建立自己的 `nodeUsers[nodeId]=M2`，不重新激活旧 group 或 Tag owner。Node 身份、库存与离网删除读取 nodeUsers；编译 User／group selector 时须同时匹配稳定 User 和有效 Membership，`node`／`*` 仍按当前配置匹配。Node 表不增加 owner／subject 副本，用户可编辑的身份期望仍只在 Configuration.nodes[id].identity。
-
-邮箱维护分别依据两类绑定的 UserId 更新可读引用；仅有 Node.identity 引用的网络也同步。历史恢复分别映射当前名称并核对原 Membership 仍有效，不能借恢复重建永久删除的 Node。当前每个 email 只有一个策略用途绑定，不引入按任意 JSON pointer 编辑授权绑定的接口。
-
-材料值已在完整 configuration 内；初次省略时生成、已有 listener 省略时沿用旧值，新建代际生成新自动值。规则集后续自动更新由执行发布绑定确切 artifact，不覆盖这个历史版本。回滚明确选用源版本初始绑定或某次历史发布的绑定，不能猜用最新内容。
-
-历史 identity 回滚涉及 Tag→User／改绑 User 时仍须新的设备登录授权；保存了旧 UserBinding 不等于持有当前转换权限。
-
-## CredentialRevocation
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `networkId` | NetworkId | 吊销作用域 |
-| `kind` | ProtocolCredentialKind | 已支持协议凭据／证书类型 |
-| `fingerprint` | CredentialFingerprint | 被吊销的确切材料标识，与网络／类型构成键 |
-| `revokedAt` | Timestamp | 永久吊销时间 |
-| `revokedBy` | ActorRef | 操作来源 |
-
-这里只保存不可逆拒绝依据，材料值随配置历史保存。低熵密码不能用对外公开的普通散列做指纹；秘密指纹采用受保护的确定识别方式，算法随材料保护实现定版。相同凭据换 listener 名称或放入新配置也不能绕过吊销。保存、回滚、发布、执行续租均检查，并撤回受影响旧许可。
-
-Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录针对协议层材料。
-
-## DatasetArtifact
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | ArtifactId | 不可变数据版本 |
-| `networkId` | NetworkId? | 网络规则集所属网络；实例 GeoIP 可为 null |
-| `kind` | ruleSet \| geoip \| asn | 数据类型 |
-| `source` | string | 来源 URI／名称，不含凭据 |
-| `format` | DatasetFormat | 保存内容的明确格式／版本 |
-| `data` | bytes | 已校验规范化规则集／GeoIP／ASN 查询内容 |
-| `digest` | Digest | 规范化内容摘要 |
-| `createdAt` | Timestamp | 接受时间 |
-
-下载错误与进度在 RAM；只有完整校验通过的内容入库。永久保留的是执行需要的确定内容；原始下载属于有界临时输入，失败条目按转换合同报告。历史引用保留该内容和格式，不能重新下载最新 URL 冒充它。
-
-## EnrollmentRequest {#enrollmentrequest}
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | EnrollmentRequestId | 临时请求 ID，不是 bearer |
-| `publicKey` | PublicKey | 本次持钥接入绑定 |
-| `requestDigest` | Digest | 固定接入元数据／返回方式的摘要 |
-| `codeChallenge` | string | S256 PKCE challenge |
-| `returnChannel` | EnrollmentReturn | 受限制 callback 或持钥领取 |
-| `createdAt` | Timestamp | 创建时间 |
-| `expiresAt` | Timestamp | 首次批准／兑换期限 |
-| `approval` | EnrollmentApproval? | 网络、用户／接入密钥与本次授权依据 |
-| `resultHash` | Digest? | 一次性兑换结果的摘要 |
-| `delivery` | Sealed&lt;EnrollmentResult&gt;? | 需要响应丢失后重交付的短期密文 |
-| `deniedAt` | Timestamp? | 已拒绝时间 |
-| `consumedAt` | Timestamp? | 首次成功消费时间 |
-| `nodeId` | NodeId? | 消费绑定的 Node |
-| `bindingDigest` | Digest? | 最终持钥／PKCE／原元数据的恢复绑定 |
-
-`EnrollmentReturn`：`{type:callback, uri:string}` 或 `{type:poll}`。`EnrollmentResult`：`code:string`、`expiresAt:Timestamp`。具体传输仍待认证 API 定版。
-
-`EnrollmentApproval` 为判别联合：
-
-| 分支 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| user | `networkId` | NetworkId | 批准的网络 |
-| user | `userId` | UserId | 批准用户 |
-| user | `membershipId` | MembershipId | 当次有效入网关系 |
-| user | `sessionHash` | Digest | 批准会话绑定 |
-| user | `credentialVersion` | u64 | 批准时账户版本 |
-| user | `approvedAt` | Timestamp | 批准时间 |
-| key | `networkId` | NetworkId | 接入密钥所属网络 |
-| key | `keyId` | EnrollmentKeyId | 接入密钥记录 |
-
-每个分支均有对应的 `type: user | key`。批准是一次性写配置 identity 的依据，不是 Node 的第二份当前身份。消费字段原子绑定；成功后清理 delivery 密文，保留最小摘要／Node 绑定供幂等恢复。密码、verifier、设备私钥不入库。
-
-## EnrollmentKey
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | EnrollmentKeyId | 接入密钥 ID |
-| `networkId` | NetworkId | 不可改绑的网络 |
-| `tokenHash` | Digest | 唯一 token 摘要 |
-| `tags` | string[] | 该次接入获准写入配置的非空 Tag 集合 |
-| `initialSettings` | Sealed&lt;InitialNodeSettings&gt;? | 可选 hostname／listener 模板，可能包含管理员显式材料 |
-| `createdBy` | UserId | 签发者 |
-| `createdAt` | Timestamp | 创建时间 |
-| `expiresAt` | Timestamp | 首次使用期限 |
-| `revokedAt` | Timestamp? | 密钥撤销 |
-| `consumedRequestId` | EnrollmentRequestId? | 一次性消费绑定 |
-| `creationRequestId` | RequestId | 签发幂等键 |
-| `creationRequestDigest` | Digest | 原请求绑定，含秘密时采用受保护摘要 |
-
-消费时复核当前 Tag 授予资格。tags 是接入授权输入，设备注册后以 Configuration.identity 为唯一当前值。
-
-InitialNodeSettings 字段为 `hostname: string?`、`listeners: Map<ListenerKey,Listener>`；未提供使用平台接入默认。模板在注册事务落入真实节点配置，自动材料在对应配置准备流程生成并保存，原始 token 不入库。列表只返回安全摘要与消费 Node／时间。
+认证同时检查账户、版本与期限；会话失效也终止相应 SSE 和诊断订阅。
 
 ## PasswordReset
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | ResetId | 恢复记录 ID |
-| `tokenHash` | Digest | 一次性凭据摘要 |
-| `userId` | UserId | 目标用户 |
-| `credentialVersion` | u64 | 有效账户版本 |
-| `expiresAt` | Timestamp | 首次消费期限 |
-| `revokedAt` | Timestamp? | 撤销时间 |
-| `consumedAt` | Timestamp? | 消费时间 |
+`password_resets` 以 `token_hash` 为主键，保存 `user_id`、`credential_version`、`expires_at`、`revoked_at`、`consumed_at`。主机维护签发、一次性兑换，网络角色不获得全局密码重置权。消费推进账户版本并撤销旧会话。
 
-由主机运维 CLI 签发，公开兑换接口验证本次凭据；网络 Owner 无他人账户重置权。消费推进 User.credentialVersion 并撤销旧会话，响应丢失后用新密码正常登录。
+## Network
+
+`networks`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `sequence`／`id` | 内部分页顺序与公开 NetworkId |
+| `name` | 网络名称 |
+| `created_by`／`created_at` | 创建者与时间，不替代当前 Owner membership |
+| `creation_request_id`／`creation_request_digest` | 建网幂等键与原请求绑定 |
+| `deleted_at` | 可空内部生命周期标记，不代表公开网络删除 API |
+| `current_revision` | 当前期望配置，不是全网 applied |
+| `publication_sequence` | 本网络执行发布的单调上界 |
+
+网络、Owner membership 和初始配置同事务创建。地址池唯一来自配置，不在 Network 保存可写副本。
+
+## Membership
+
+`memberships` 保存 `sequence`、`id`、`network_id`、`user_id`、`role`、`version`、`joined_at`、`revoked_at`。role 为 owner／admin／member，version 用于并发校验。
+
+同网同用户至多一个有效关系；离网后重加产生新 MembershipId。最后 Owner 保护、成员删除影响与当前身份在最终事务检查。
+
+## JoinLink
+
+`join_links`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `sequence`／`id`／`network_id` | 分页顺序、非秘密链接 ID、固定网络 |
+| `role` | 固定授予角色 |
+| `token_hash` | 唯一凭据摘要 |
+| `created_by`／`issuer_membership_id` | 签发者及当次权限关系 |
+| `created_at`／`expires_at`／`revoked_at` | 创建、首次消费期限、撤销 |
+| `consumed_at`／`consumed_by_user_id`／`consumed_membership_id` | 同事务写入的唯一领取结果 |
+| `creation_request_id`／`creation_request_digest` | 幂等输入绑定 |
+
+签发者离网再加入不复活链接。成功领取重试只恢复仍有效的原 membership；创建重试不恢复 token 原值，见[秘密交付](/v2/api/authentication#创建请求的幂等与秘密交付)。
+
+## Node
+
+`nodes` 保存 `id`、`network_id`、`registered_at`、`credentials_revoked_at`。它不保存 owner、subject、tags、enabled、hostname、地址或运行状态副本。
+
+有效身份与静态设置从当前配置读取，运行事实从 State 读取。永久删除同事务吊销接入、移除配置、记录地址退出并撤回执行；最小记录保留以拒绝旧凭据和历史恢复。
+
+## AddressRetirement
+
+`address_retirements`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `network_id`／`address`／`removed_revision` | 退出记录键 |
+| `previous_node_id` | 旧绑定持有者 |
+| `release_after` | 可空安全复用下界；null 表示未知，继续阻止复用 |
+
+当前地址分配唯一来自配置。这些记录只保护旧许可／回复／NAT／受管 DNS 退出，不因 Server 重启或配置回滚清除。saved／applied 不能单独证明旧绑定已退出。
+
+## NodeKey
+
+`node_keys` 保存 `id`、`network_id`、`node_id`、`purpose`、`algorithm`、`public_key`、`generation`、`created_at`、`retired_at`、`revoked_at`。
+
+control 固定 Ed25519，dataplane 固定 X25519；公钥唯一，用途与代际分开。私钥不入库。已退休／吊销标记不可清除，公钥不能被另一个 Node 认领。
+
+### Challenge、session 与换钥恢复
+
+| 表 | 字段与用途 |
+| --- | --- |
+| `node_challenges` | id、controller_id、network_id、node_id、key_id、nonce、request_digest、operation、created_at、expires_at、consumed_at；固定签名 challenge 和一次消费 |
+| `node_sessions` | token_hash、network_id、node_id、key_id、boot_id、created_at、expires_at；短期 bearer 绑定当前 Server boot |
+| `node_rotations` | network_id、node_id、request_id、request_digest、challenge_id、challenge、control_key_id、dataplane_key_id、generation、result；保存原证明与公钥结果用于同次换钥恢复 |
+
+恢复不交付私钥或旧 session。证明格式与轮换重试见[认证](/v2/api/authentication#已注册-node-认证)。
+
+## ConfigurationVersion
+
+`configuration_versions`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `network_id`／`revision` | 完整版本主键 |
+| `source_jsonc` | 加密编辑原文，保留注释和输入意图 |
+| `configuration` | 加密的完整规范化 NetworkConfiguration |
+| `bindings` | 加密的稳定用户／listener／规则集绑定 |
+| `created_by`／`created_by_email` | 提交用户 ID 与可空历史邮箱快照 |
+| `created_at`／`cause`／`request_id` | 时间、触发来源与请求关联 |
+| `rollback_from` | 可空恢复来源；本行仍是新 revision |
+| `execution_targets` | 本次 apply 固定 NodeId → ConfigurationRef，按实际切片填入并封存 |
+
+完整历史不可覆盖。原文和规范值都可能含秘密，必须同样保护。读取旧版本不重新运行当前默认补全；Node identity、enabled、地址和协议参数没有另一份可编辑源。
+
+execution_targets 不随后续 demand／refresh 扩大分母；删除节点不列为等待其 ACK 的目标。进度根据这些引用读取真实回执，并另算 freshness。
+
+### ConfigurationBindings
+
+| 字段 | 内容 |
+| --- | --- |
+| `users` | Email → UserBinding，策略中的用户／组／Tag owner 引用 |
+| `nodeUsers` | NodeId → UserBinding，设备用户身份的稳定解析 |
+| `listeners` | NodeId → listener key → 创建 revision |
+| `ruleSets` | ruleSet key → ArtifactId，源版本初始资源绑定 |
+
+UserBinding 包含 userId 和 membershipId。策略 users 与设备 nodeUsers 分开：旧关系 M1 失效后，新接入设备建立 M2 不会重新激活旧策略引用。原样保存保留旧绑定，历史恢复检查原 membership，不将同邮箱新主体当成原主体。
+
+listener 同名重建使用新创建 revision；socket 另有运行 generation。协议材料直接保存在 configuration，规则集刷新固定到新 publication，不改写源历史。
+
+### ConfigurationCommit
+
+`configuration_commits` 保存 network_id、user_id、request_id、base_revision、加密 input 和 result。它固定提交幂等结果，同请求重试不再次生成材料、创建版本或发布事件。
+
+## CredentialRevocation
+
+`credential_revocations` 以 network_id、kind、fingerprint 为键，保存 revoked_at、revoked_by。kind 为 vlessUuid／trojanPassword／tlsCertificate。
+
+这些是不可逆拒绝依据，不能通过复制材料、更换 listener 名称或恢复配置绕过。秘密指纹不对外公开，完整材料值仍在受保护的配置历史中。Node 身份吊销独立由 nodes／node_keys 负责。
+
+## DatasetArtifact
+
+`dataset_artifacts` 保存 id、可空 network_id、kind、source、format、data、digest、created_at。kind 为 ruleSet／geoip／asn；规范化内容经过完整校验后不可变保存，原始下载为有界临时输入。
+
+资源引用精确 ArtifactId，不能重新下载最新 URL 冒充历史内容。来源与摘要不包含凭据。
+
+### RuleSetCheck
+
+`rule_set_checks` 以 network_id、revision、rule_set_key 为键，保存 problem、checked_at、last_success_at、failures、check_version。failures 有界，check_version 是内部 CAS，避免依赖毫秒时间戳唯一性。
+
+检查记录拥有刷新结果与退避，不拥有当前内容；实际 artifact 绑定来自配置／执行发布。失败保留最后成功内容和成功时间，validate 不保存检查结果。
+
+## EnrollmentRequest {#enrollmentrequest}
+
+`enrollment_requests`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `id` | 接入请求 ID，不是 bearer |
+| `control_key`／`dataplane_key` | 本次两类公钥 |
+| `request_digest`／`code_challenge`／`hostname` | 固定 intent 与 PKCE 绑定 |
+| `created_at`／`expires_at` | 创建与首次批准／兑换期限 |
+| `approval` | 批准网络、用户及当前会话／membership 依据 |
+| `result_hash`／`delivery` | 一次性结果摘要与短期受保护重交付内容 |
+| `denied_at`／`cancelled_at` | 批准者撤回与设备取消，互斥 |
+| `consumed_at`／`node_id`／`binding_digest` | 唯一消费结果及恢复绑定 |
+| `existing_binding` | 可空的已注册 Node 重新登录绑定 |
+
+返回方式固定 poll，不保存 callback 目标。消费和配置 identity 写入同事务；批准记录不是第二份当前 Node 身份。设备私钥、密码和 PKCE verifier 不入库。
+
+## EnrollmentKey
+
+`enrollment_keys` 保存 sequence、id、network_id、token_hash、tags、加密 initial_settings、created_by、membership_id、created_at、expires_at、revoked_at、consumed_request_id、creation_request_id、creation_request_digest。
+
+tags 是本次接入输入，注册后当前身份只来自 Configuration。模板支持 hostname 与 listeners；自动材料在真实注册时生成。消费重检签发资格与当前配置，列表仅返回安全摘要。
 
 ## ExecutionPublication
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | PublicationId | 不可变发布标识 |
-| `networkId` | NetworkId | 所属网络 |
-| `sequence` | u64 | 本网络单调发布顺序 |
-| `configurationRevision` | Revision | 源配置版本 |
-| `cause` | configuration \| demand \| refresh | 用户配置应用、按需执行或依赖刷新；进度按来源区分 |
-| `supersedes` | PublicationId[] | 被本次重规划／重试替代的发布，必须同网且顺序更早 |
-| `dependencies` | PublicationDependencies | 参与身份／密钥／材料／规则集的固定依据 |
-| `dependencyDigest` | Digest | 编译输入摘要 |
-| `compilerVersion` | string | 编译实现版本 |
-| `createdAt` | Timestamp | 提交时间 |
-| `withdrawnAt` | Timestamp? | 发布撤回时间 |
-| `nodes` | Map&lt;NodeId, PublishedNodeConfiguration&gt; | 实际参与节点的完整切片，嵌入同一发布 |
+`execution_publications`：
 
-`PublicationDependencies` 字段：`userBindings: UserBinding[]`、`nodeIds: NodeId[]`、`keyIds: KeyId[]`、`ruleSets: Map<RuleSetKey,ArtifactId>`。地址与协议材料来自所引用的完整配置版本，编译进每个参与节点的确定切片；持续使用仍检查当前吊销／租约。改址时不能将旧地址许可拼接到新发布。
+| 字段 | 含义 |
+| --- | --- |
+| `id`／`network_id`／`sequence` | 不可变发布 ID、网络及单调顺序 |
+| `revision`／`cause` | 源配置与 configuration／demand／refresh 来源 |
+| `supersedes` | 更早的被替代发布 |
+| `rule_set_bindings` | 本次精确 artifact map |
+| `dependency_digest` | 可信编译输入摘要 |
+| `payload` | 加密完整发布内容，包含实际节点切片 |
+| `created_at`／`withdrawn_at` | 创建与可空撤回时间 |
 
-新 Controller 候选将精确规则集 map 持久化于 `execution_publications.rule_set_bindings`，与不可变规范化 artifact 和发布负载在同一事务提交。同一源 revision 的最新成功发布决定当前绑定；重启直接还原，历史恢复按初始源绑定或请求中明确指定的 publication 读取，不猜用最新下载。`rule_set_checks` 按 network／revision／key 保存最后检查时间、最后成功时间、安全错误分类和有界连续失败次数，供周期重试恢复退避；内部单调 `check_version` 对检查结果做 CAS，不依赖毫秒时间戳唯一性。该表不拥有当前内容，也不能覆盖发布中的绑定。配置 apply 在最终事务内记录实际下载准备成功后的检查，validate 不写这些记录。
+同 revision 的新发布可改变动态依赖，不覆盖原 publication ID 下的内容。重启还原确切绑定；历史恢复使用源初始绑定或明确的同源历史发布，不猜用最新数据。
 
-每份发布固定一致依赖和目标内容，各节点收到后独立应用。替换目标时创建新发布，通过 supersedes 关联，不在原 ID 下改 digest；同一有效目标的重试可复用内容。cause=configuration 的进度与后续 demand／refresh 分开展示。
+### ExecutionReceipt
 
-发布持久提交后即可下发，当前实例／目标／执行 lease 和地址退出条件仍需检查。应用结果不改变已提交配置的含义；撤回独立使相关执行失效。流程见[配置应用](/v2/configuration-reference/deployment)。
+`execution_receipts` 保存 network_id、publication_id、node_id、instance_id、generation、attempt、sequence、digest、phase、reported_at、received_at、failure。
 
-### PublishedNodeConfiguration
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `digest` | Digest | 节点切片摘要 |
-| `configuration` | Sealed&lt;NodeConfiguration&gt; | 完整确定产物和所需材料 |
-| `application` | ApplicationReceipt? | 最后接受的应用成功／失败回执，保留来源与时间 |
-
-所属 network／publication 由外层给出，NodeId 是 map key。只保存实际发布／恢复所需切片，同一发布重发保持同 digest；按需发布有界参与集合，不预生成全网节点对。独立切片行／内容寻址去重留给实际容量优化。
-
-### ApplicationReceipt
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `instanceId` | InstanceId | 应用结果所属实例 |
-| `generation` | u64 | 应用时实例代际 |
-| `result` | applied \| failed | 本节点真实结果 |
-| `failedStage` | ConfigurationApplyPhase? | failed 时记录失败前所处阶段；applied 时为 null |
-| `reportedAt` | Timestamp | 原结果时间 |
-| `receivedAt` | Timestamp | Controller 接受时间 |
-| `problem` | Problem? | failed 时的类型化错误 |
-
-回执核对确切 publication／node／digest、当前实例和实际下发的有效目标；异常自报不能推进当前进度。failedStage 必须是合法的前序阶段。持久回执是最后接受的证据，当前新鲜度另算；Controller 重启或实例变化后不能只凭历史行断言当前 applied。连续下载／步骤进度存 RAM，不逐字节写数据库。
+主键固定网络／发布／节点／实例／attempt／sequence。phase 为 saved／applied／failed，failure 为明确组件类别或 null。applied 须有同次尝试更早的 saved；重复位置必须同内容。历史回执不等于当前 freshness 或连通。
 
 ## NodeExecution
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `networkId` | NetworkId | 网络 |
-| `nodeId` | NodeId | 键 |
-| `instanceId` | InstanceId? | 已确认运行实例；无实例为 null |
-| `generation` | u64 | 不回退的实例隔离代际 |
-| `targetPublicationId` | PublicationId? | 当前目标发布；无许可为 null |
-| `saved` | SavedReceipt? | 最后接受的保存回执 |
-| `leaseExpiresAt` | Timestamp? | 已授予执行许可期限，不是联系时效 |
+`node_execution` 保存 network_id、node_id、instance_id、generation、boot_id、instance_expires_at、target_publication_id、execution_expires_at、capabilities。
 
-`SavedReceipt` 字段：`instanceId: InstanceId`、`publicationId: PublicationId`、`digest: Digest`、`savedAt: Timestamp`。applied／lastSeen 不在本记录；Controller 重启后须 fresh 认证和当前实例确认才能续租／接受运行报告，不能用旧 ACK 恢复业务。
+实例期限、执行期限与 State 联系新鲜度分开。capabilities 来自已认证 acquire；普通 State 不自行替换执行能力。`node_instance_claims` 保存 network_id、node_id、instance_id、generation，拒绝释放／过期后的实例 ID 重新认领。
 
-targetPublicationId 是节点当前应同步／应用的目标；Node 校验并持久保存后，在当前实例和有效执行 lease 下直接安装。saved 不等于已执行，应用回执按 publication 保存，当前运行事实仍从 NodeState 读取。
+### Demand 与 RoutingSelection
 
-## RoutingSelection
+| 表 | 字段与用途 |
+| --- | --- |
+| `execution_demands` | network_id、node_id、id、instance_id、request_digest、payload、expires_at、cancelled_at；有界业务需求与重试绑定 |
+| `routing_selections` | network_id、node_id、identity_digest、profile、version、selected_at；受当前身份与 allowed／locked 约束的用户选择 |
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `networkId` | NetworkId | 网络 |
-| `nodeId` | NodeId | 键 |
-| `identityDigest` | Digest | 当时配置身份及稳定引用摘要，仅防跨身份复用 |
-| `profile` | ProfileKey | 用户请求的方案 |
-| `version` | u64 | 使用选择 CAS 版本 |
-| `selectedBy` | ActorRef | 选择来源 |
-| `selectedAt` | Timestamp | 选择时间 |
-
-当前身份仍从 Config 读取，identityDigest 不赋权；恢复需检查当前 identity、allowed／locked。实际使用方案由 State 报告。
+身份摘要不赋权，需求不绕过 access。重启恢复方案仍检查当前条件；实际方案由 NodeState 报告。
 
 ## ActivityEvent
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | ActivityId | 对外不透明 ID |
-| `sequence` | u64 | 内部提交顺序／固定分页上界，不直接暴露为 cursor |
-| `scope` | ActivityScope | network(networkId) 或 account(userId) 的封闭分支 |
-| `at` | Timestamp | 控制面动作完成时间 |
-| `actor` | ActorRef | 服务端确定的操作主体 |
-| `action` | ActivityAction | 固定操作枚举 |
-| `target` | ActivityTarget | 节点／成员／配置版本／链接等类型化引用 |
-| `beforeRevision` | Revision? | 涉及配置时的原版本 |
-| `afterRevision` | Revision? | 涉及配置时的新版本 |
-| `requestId` | RequestId | 同一次逻辑操作关联 |
+`activity_events`：
 
-成功管理 mutation 与记录同事务提交，幂等恢复不重复插入；scope 和 actor 不由请求者自报。原配置通过 revision 关联，不复制秘密、完整 diff、token 摘要或请求 body。Node apply 结果在 ApplicationReceipt，不能用它改写“配置已提交”的活动事实。
+| 字段 | 含义 |
+| --- | --- |
+| `sequence`／`id` | 内部提交顺序和公开 ActivityId |
+| `scope`／`account_user_id`／`network_id` | account 或 network 作用域 |
+| `at`／`actor_kind`／`actor_user_id`／`actor_email` | 完成时间与真实 user／system 主体，邮箱为历史快照 |
+| `action` | 固定管理动作枚举 |
+| `target_user_id`／`target_session_id`／`target_membership_id`／`target_join_link_id` | 按动作约束的目标关联 |
+| `before_revision`／`after_revision`／`request_id` | 配置变更与请求关联 |
 
-### ActivityCoverage
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `scope` | ActivityScope | 保留范围 |
-| `before` | Timestamp | 此时刻前记录可能已裁剪 |
-| `reason` | retention \| capacity | 裁剪原因 |
-
-按当前权限查询；账户 scope 仅本人，网络 scope 为管理读取。保留窗口之外明确缺口，不用空列表表示从未操作。字段与接口见[操作历史](/v2/api/history)。
+记录与对应成功动作同事务提交；幂等恢复不重复插入。不包含秘密、完整 diff 或原始请求 body。Node 应用结果在 execution_receipts，不能改写“配置已保存”的活动事实。HTTP 范围见[版本与操作历史](/v2/api/history)。
 
 ## ObservationEvent
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `rowId` | u64 | 稳定分页上界／游标依据 |
-| `networkId` | NetworkId | 网络 |
-| `source` | ObservationSource | Node 或 Controller 的明确来源分支 |
-| `eventId` | EventId | 源事件唯一 ID |
-| `occurredAt` | Timestamp | 事件发生时间 |
-| `receivedAt` | Timestamp | Controller 接受时间 |
-| `payload` | ObservationPayload? | 真实事件；保留期结束后可清空，留去重墓碑 |
-| `payloadDigest` | Digest | 重试内容一致性 |
-| `admissionExpiresAt` | Timestamp | 这条事件的重试接纳窗口上界 |
+`observation_events` 保存 row_id、network_id、source_node_id、instance_id、event_id、occurred_at、received_at、payload、payload_digest、admission_expires_at。
 
-`ObservationSource` 为判别联合：node 分支有 `nodeId: NodeId`、`instanceId: InstanceId`、`publicationId: PublicationId`；controller 分支有 `epoch: StateEpoch`，不伪造 Node 报告。双方都有对应 `type`。
+同网／来源 Node／eventId 唯一；payload 包含真实事件及配置上下文。正文裁剪后仍保留主键和摘要至完整接纳窗口结束，重试不恢复已裁剪正文。接纳窗口包含允许时钟偏差，不能因墓碑先清理而再次接纳旧点。
 
-Node 事件按 `(networkId,source.nodeId,eventId)` 唯一；Controller 事件按 `(networkId,source.epoch,eventId)` 唯一。payload 字段沿用[真实事件](/v2/state-reference/observations)与[测量](/v2/state-reference/realtime)，不存任意 metadata 或重复心跳制造的样本。
+### HistoryCoverage
 
-## HistoryCoverage
+`history_coverage` 保存 network_id、source_node_id、before_at、reason，reason 为 retention／capacity。它记录真实裁剪下界，不能由最早现存样本推断。
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `networkId` | NetworkId | 网络 |
-| `sourceNodeId` | NodeId | 来源 |
-| `before` | Timestamp | 此时刻前可能已裁剪 |
-| `reason` | retention \| capacity | 记录覆盖限制 |
+collection_gap 则来自 Node 真实事件，保留原始区间和 dropped，不按查询裁剪比例伪造数量。两类覆盖信息与查询权限一起过滤，见[观测历史](/v2/state-reference/observations)。
 
-ObservationEvent 同时承担去重：payload 清理后，保留原主键／摘要至接纳窗口结束；墓碑不返回成测量样本，重试不恢复已裁剪 payload。接纳窗口之外的旧上报拒绝，不因墓碑已清理重新计数；窗口不能被重试推进。实际采集缺口仍由事件／丢弃计数报告。
+## DiagnosticTask 与 Subscription
 
-墓碑保留上界必须覆盖原事件时间／实例仍可能被接纳的整个窗口，包括允许的时钟偏差；不能只定一个更短的清理 TTL，留下删除后再次接纳的空档。
-
-只保留正文也不足以说明历史是否完整，因此 Coverage 记录真实裁剪下界，不根据“最早现存样本”推测覆盖。全量历史清理仍保留必要覆盖信息。
-
-## 共用值类型
-
-| 类型 | 字段 |
+| 表 | 字段与用途 |
 | --- | --- |
-| `ActorRef` | 判别 `type`；user 分支有 `userId`，node 分支有 `nodeId`，enrollmentKey 分支有 `keyId`，system 分支无主体字段 |
-| `PublicKey` | `algorithm: KeyAlgorithm`、`bytes: bytes` |
-| `Sealed<T>` | `keyId: string`、`nonce: bytes`、`ciphertext: bytes`；解密后按 T 校验，认证标签由选定 AEAD 格式携带 |
+| `diagnostic_tasks` | id、network_id、node_id、instance_id、boot_id、revision、reuse_key、payload、dirty；固定执行上下文和共享任务 |
+| `diagnostic_subscriptions` | id、task_id、session_id、membership_id、request_digest、expires_at、cancelled；每个页面需求的独立权限与短租约 |
 
-SQL rows 含私有字段，不能整体复用为 Console DTO。不可逆吊销记录、完整配置和有效引用不随 RAM 或短期观察任务清理。
+会话、账户、membership 或配置失效在对应事务取消订阅。维护器撤回诊断发布；已安装许可另受本地短期限约束，Node 普通 renew 不能续活观察。
+
+## MasterKeyBinding
+
+`master_key_binding` 保存 singleton、key_id、key_check，绑定私有主密钥且不可修改／删除。私有密钥文件先持久发布，再与数据库绑定提交；丢失密钥不能生成替代来解密原库。
+
+SQL 行包含私有字段，不能整体作为 Console DTO。完整配置、永久吊销与有效恢复依据不随内存缓存或短期任务清理。
