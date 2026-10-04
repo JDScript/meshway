@@ -13,6 +13,7 @@ import {
   skipToken,
 } from "@tanstack/react-query"
 
+import { pollUnlessLive } from "@/features/live/status"
 import { networkKey } from "@/features/network/queries"
 import { ApiFailure, authed, client, problemCode } from "@/lib/api"
 
@@ -28,8 +29,9 @@ const configurationKey = (networkId: string) =>
 export const configurationReads = configurationKey
 
 /** The current configuration, non-secret, with its revision. */
-export const configurationQuery = (networkId: string) =>
-  queryOptions({
+export const configurationQuery = (networkId: string) => {
+  const poll = pollUnlessLive(networkId, 30_000)
+  return queryOptions({
     queryKey: [...configurationKey(networkId), "current"],
     queryFn: ({ signal }) =>
       authed((token) =>
@@ -37,8 +39,10 @@ export const configurationQuery = (networkId: string) =>
       ),
     staleTime: 10_000,
     // A role the controller refuses stays refused until the role changes.
-    refetchInterval: (query) => (isDenied(query.state.error) ? false : 30_000),
+    // The event stream says when a new revision makes it stale.
+    refetchInterval: (query) => (isDenied(query.state.error) ? false : poll()),
   })
+}
 
 /** The configuration a member sees: the settings of their own nodes. */
 export type MemberConfiguration = Extract<

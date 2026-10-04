@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { createFileRoute, notFound, Outlet } from "@tanstack/react-router"
 
 import { sessionQuery } from "@/features/auth/queries"
+import { useNetworkStream } from "@/features/live/use-network-stream"
 import {
   NetworkFailed,
   NetworkNotFound,
@@ -38,9 +39,10 @@ export const Route = createFileRoute("/_authed/networks/$network")({
   ),
 })
 
-/** One shell for every page of the network, so changing pages only moves panels. */
+/** One shell and one event stream for every page of the network, so changing pages only moves panels. */
 function NetworkLayout() {
   const { network: networkId } = Route.useParams()
+  useNetworkStream(networkId)
   const network = useQuery(networkQuery(networkId))
   // Removed from the network, or the network is gone, since it was opened.
   if (isNotFound(network.error)) return <NetworkNotFound />
