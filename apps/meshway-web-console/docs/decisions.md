@@ -96,8 +96,11 @@ its generated client only, and only what the controller delivers:
   one flow per network, shown by the network's shell, so they outlive the
   page that started them.
   Applying always validates first and opens a review: the effective change
-  count, permanent node deletions and address changes on their own, every
-  change with its value before and after (non-secret views); only its
+  count, permanent node deletions and address changes on their own, the
+  material the controller generates on apply for new listeners
+  (`willGenerate`) and what it still has to complete (`requirements`, less
+  what generating covers), by listener, every change with its value before
+  and after (non-secret views); only its
   confirmation applies, against the draft's revision. A newer revision
   keeps the draft and its base; the bar offers to start over from it or to
   check the same text or operations against it (a new review). A restore
@@ -203,11 +206,14 @@ its generated client only, and only what the controller delivers:
   settings (`memberConfigurationQuery`). Members, join links, activity,
   configuration reads and rule sets are invalidated instead (paged, or a
   GET adds what the event lacks); `configuration.changed` never touches a
-  draft, which sees the new revision through those reads. A member's
-  configuration change takes a new snapshot (no event carries their
-  settings). Reconnects back off (1 s doubling to 30 s), resuming from the
-  applied cursor; `sync.reset` and a refused frame sync afresh. 401 signs
-  out; 403/404 stops the stream and the network's reads say why. While it
+  draft, which sees the new revision through those reads. A member's own
+  settings, when they change, come in a new batch after the controller's
+  `sync.reset`. A `state.delta` replaces the State's `asOf`, `sequence` and
+  `configurationRevision` when it carries them. Reconnects back off (1 s
+  doubling to 30 s), resuming from the applied cursor; `sync.reset` and a
+  refused frame sync afresh. 401 and `stream.closed` for an expired
+  session sign out; 403/404 and a revoked membership stop the stream and
+  the network's reads say why. While it
   is not live, the reads it covers poll (`pollUnlessLive`), and leaving
   live reads them again. The toolbar's dot states it (live since,
   reconnecting since, stopped). Observation events write this sign-in's
@@ -303,7 +309,11 @@ its generated client only, and only what the controller delivers:
   probes apart). Renewal is at `renewAfter` (a little after, by this
   browser's clock), only while the tab is visible; a renewal refused as
   `observation_limit` is tried again each second while the lease lasts. A
-  lease past `subscriberExpiresAt` shows as ended and is read again.
+  lease past `subscriberExpiresAt` shows as ended and is read again. A
+  subscription the controller no longer holds for this sign-in (404, or
+  403 / 409 when the session lost its authority over it or the source's
+  instance or execution moved on: the controller drops the subscriber)
+  shows as ended; a 401 is the session's own end.
   Closing the panel or leaving the tab (another node tab, network or page)
   cancels; closing the browser leaves the lease to run out. This sign-in's
   other active subscriptions from the node (`listObservations`, another
@@ -388,6 +398,8 @@ states stay distinguishable by stroke and colour.
 - No layout shift, ever. Feedback that is not part of a component's own shape
   (sign-in failures, read failures, confirmations) goes to a toast; panels
   reserve every slot and only change values.
+- Times of what has happened (a report, `asOf`, a link's start) read "… ago"
+  and are never shown ahead of the clock, which ticks between reads.
 - Forms are real forms: named fields, `autocomplete`, Enter submits. Text
   fields bound to the URL are uncontrolled and never written during an IME
   composition.
