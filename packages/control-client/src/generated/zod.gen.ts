@@ -1162,6 +1162,17 @@ export const zConfigurationView = z.strictObject({
   ["topology"]: z.array(zTopologyRule)
 });
 
+export const zMaterialRequirement = z.enum(["uuid","password","certificate","privateKey","certificateValidation"]);
+
+export const zPreparationKind = z.union([z.enum(["addressPoolV4","addressPoolV6","addressV4","addressV6","identityProof","ruleSetContent"]), z.strictObject({
+  ["material"]: zMaterialRequirement
+})]);
+
+export const zPreparationRequirement = z.strictObject({
+  ["kind"]: zPreparationKind,
+  ["path"]: z.string()
+});
+
 export const zConfigurationPreviewResponse = z.strictObject({
   ["addressChangedNodeIds"]: z.array(zNodeId),
   ["baseRevision"]: zRevision,
@@ -1171,8 +1182,10 @@ export const zConfigurationPreviewResponse = z.strictObject({
   ["preparedRuleSets"]: typedMap(z.string(), zPreparedRuleSet, {}),
   ["preview"]: zConfigurationView,
   ["requestId"]: zRequestId,
+  ["requirements"]: z.array(zPreparationRequirement).exactOptional(),
   ["sourceChanged"]: z.boolean(),
-  ["unavailableDependencies"]: z.array(zConfigurationIssue)
+  ["unavailableDependencies"]: z.array(zConfigurationIssue),
+  ["willGenerate"]: z.array(zPreparationRequirement).exactOptional()
 });
 
 export const zResourceRef = z.union([z.strictObject({
@@ -1305,17 +1318,6 @@ export const zConfigurationState = z.strictObject({
   ["applied"]: zConfigurationRef.nullable().exactOptional(),
   ["progress"]: zConfigurationProgress.nullable().exactOptional(),
   ["saved"]: zConfigurationRef.nullable().exactOptional()
-});
-
-export const zMaterialRequirement = z.enum(["uuid","password","certificate","privateKey","certificateValidation"]);
-
-export const zPreparationKind = z.union([z.enum(["addressPoolV4","addressPoolV6","addressV4","addressV6","identityProof","ruleSetContent"]), z.strictObject({
-  ["material"]: zMaterialRequirement
-})]);
-
-export const zPreparationRequirement = z.strictObject({
-  ["kind"]: zPreparationKind,
-  ["path"]: z.string()
 });
 
 export const zConfigurationValidationParams = z.strictObject({

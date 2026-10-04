@@ -1,7 +1,7 @@
 use super::*;
 use crate::execution::configuration::{Participant, check_inputs, validation_context};
 use crate::{accounts::token_digest, store::Handle};
-use meshway_configuration::{ConfigurationView, UserBinding, edit_source, parse_jsonc};
+use meshway_configuration::{UserBinding, edit_source, parse_jsonc};
 use meshway_protocol::{WireSecret, configuration::*};
 use rusqlite::{Connection, TransactionBehavior};
 use std::sync::Arc;
@@ -183,28 +183,9 @@ impl Configurations {
                 let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
                 service.authorize(&tx, &digest, network)?;
                 let current = service.current(&tx, network)?;
-                let prepared =
+                let input =
                     service.prepare_request(&tx, &current, &request, false, resources.as_ref())?;
-                let result = ConfigurationPreviewResponse {
-                    prepared_rule_sets: resources
-                        .as_ref()
-                        .map(|r| r.preview())
-                        .transpose()?
-                        .unwrap_or_default(),
-                    unavailable_dependencies: prepared.unavailable_dependencies,
-                    request_id: id,
-                    base_revision: current.revision,
-                    preview: ConfigurationView::from(&prepared.document.configuration),
-                    change_count: u32::try_from(prepared.changes.len())
-                        .map_err(|_| Error::Storage)?,
-                    changes: prepared.changes,
-                    source_changed: prepared.source_changed,
-                    deleted_node_ids: prepared.deleted_node_ids.into_iter().collect(),
-                    address_changed_node_ids: prepared
-                        .address_changed_node_ids
-                        .into_iter()
-                        .collect(),
-                };
+                let result = preview::build(&current, input, resources.as_ref(), id)?;
                 tx.commit()?;
                 Ok(result)
             })
@@ -299,7 +280,11 @@ impl Configurations {
             return Ok(result);
         }
         let current = self.current(&tx, network)?;
-        let prepared = self.prepare_request(&tx, &current, &request, true, resources)?;
+        let input = self.prepare_request(&tx, &current, &request, true, resources)?;
+        let mut prepared = prepare(input.input, input.source, &current, &input.context)?;
+        if let ConfigurationRequest::Restore { restore_from, .. } = &request {
+            prepared.rollback_from = Some(*restore_from);
+        }
         let cause = if matches!(request, ConfigurationRequest::Restore { .. }) {
             ChangeCause::Restore
         } else {
@@ -413,14 +398,14 @@ impl Configurations {
         self.cache
             .load(tx, network, current_revision(tx, network)?, &self.sealer)
     }
-    fn prepare_request(
+    fn prepare_request<'a>(
         &self,
         tx: &Transaction<'_>,
-        current: &Snapshot,
+        current: &'a Snapshot,
         request: &ConfigurationRequest,
         generate_materials: bool,
         resources: Option<&resources::Preparation>,
-    ) -> Result<PreparedConfiguration, Error> {
+    ) -> Result<preview::RequestInput<'a>, Error> {
         if request.expected_revision() != current.revision {
             return Err(Error::Conflict);
         }
@@ -564,24 +549,12 @@ impl Configurations {
             validation,
             rule_sets,
         };
-        let mut prepared = prepare(input, source, current, &context)?;
-        if new_content
-            && !prepared
-                .changes
-                .iter()
-                .any(|change| change.path == "/bindings/ruleSets")
-        {
-            prepared
-                .changes
-                .push(meshway_configuration::ConfigurationChange {
-                    path: "/bindings/ruleSets".into(),
-                    kind: meshway_configuration::ChangeKind::Changed,
-                });
-        }
-        if let ConfigurationRequest::Restore { restore_from, .. } = request {
-            prepared.rollback_from = Some(*restore_from);
-        }
-        Ok(prepared)
+        Ok(preview::RequestInput {
+            input,
+            source,
+            context,
+            new_content,
+        })
     }
     async fn prepare_resources(
         &self,

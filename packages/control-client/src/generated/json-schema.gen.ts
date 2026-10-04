@@ -1625,6 +1625,13 @@ export const schemaDocument = {
           "requestId": {
             "$ref": "#/components/schemas/RequestId"
           },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreparationRequirement"
+            },
+            "description": "Pending material completion/verification; preview is never executable."
+          },
           "sourceChanged": {
             "type": "boolean"
           },
@@ -1633,6 +1640,13 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/ConfigurationIssue"
             }
+          },
+          "willGenerate": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreparationRequirement"
+            },
+            "description": "Values that apply will generate, after rechecking authorization and CAS."
           }
         },
         "additionalProperties": false

@@ -195,10 +195,68 @@ pub struct NormalizedConfiguration {
 }
 
 pub fn normalize_with_dependencies(
-    mut input: NetworkConfigurationInput,
+    input: NetworkConfigurationInput,
     context: &ValidationContext<'_>,
 ) -> Result<NormalizedConfiguration, ConfigurationError> {
+    normalize_inner(input, context, false).map(|(normalized, _, _)| normalized)
+}
+
+/// Checked, non-executable declarations for a read-only preview. Automatic
+/// material remains absent: this type cannot be passed to the execution compiler.
+pub struct ConfigurationPlan {
+    pub input: NetworkConfigurationInput,
+    pub view: ConfigurationView,
+    pub user_bindings: BTreeMap<String, UserBinding>,
+    pub node_user_bindings: BTreeMap<NodeId, UserBinding>,
+    pub unavailable_dependencies: Vec<ConfigurationIssue>,
+    pub requirements: Vec<PreparationRequirement>,
+}
+
+pub fn plan_configuration(
+    input: NetworkConfigurationInput,
+    context: &ValidationContext<'_>,
+) -> Result<ConfigurationPlan, ConfigurationError> {
+    let (normalized, pending, requirements) = normalize_inner(input, context, true)?;
+    let mut input = NetworkConfigurationInput::from(&normalized.configuration);
+    let mut view = ConfigurationView::from(&normalized.configuration);
+    for ((node, key), listener) in pending {
+        view.nodes
+            .get_mut(&node)
+            .expect("validated node")
+            .listeners
+            .insert(key.clone(), (&listener).into());
+        input
+            .nodes
+            .get_mut(&node)
+            .expect("validated node")
+            .listeners
+            .insert(key, listener);
+    }
+    Ok(ConfigurationPlan {
+        input,
+        view,
+        requirements,
+        user_bindings: normalized.user_bindings,
+        node_user_bindings: normalized.node_user_bindings,
+        unavailable_dependencies: normalized.unavailable_dependencies,
+    })
+}
+
+type PendingListeners = BTreeMap<(NodeId, String), Listener>;
+fn normalize_inner(
+    mut input: NetworkConfigurationInput,
+    context: &ValidationContext<'_>,
+    planning: bool,
+) -> Result<
+    (
+        NormalizedConfiguration,
+        PendingListeners,
+        Vec<PreparationRequirement>,
+    ),
+    ConfigurationError,
+> {
     let mut check = Check::default();
+    let mut pending = BTreeMap::new();
     let pools = addresses::pools(
         input.address_pools,
         context.previous.map(|p| &p.address_pools),
@@ -301,6 +359,7 @@ pub fn normalize_with_dependencies(
                 for kind in missing {
                     check.require(&lp, PreparationKind::Material(kind));
                 }
+                pending.insert((id, name), listener);
                 continue;
             }
             match PreparedListener::prepare(listener, verified) {
@@ -339,13 +398,29 @@ pub fn normalize_with_dependencies(
     addresses::nodes(&config, &mut check);
     references::rules(&mut config, context, &mut check);
     routing::validate(&mut config, context, &mut check);
+    // Only material completion may be deferred. Identity proof, addresses and
+    // immutable rule-set inputs remain mandatory for a meaningful preview.
+    let requirements = if planning
+        && check
+            .requirements
+            .iter()
+            .all(|r| matches!(r.kind, PreparationKind::Material(_)))
+    {
+        std::mem::take(&mut check.requirements)
+    } else {
+        Vec::new()
+    };
     check.finish()?;
-    Ok(NormalizedConfiguration {
-        configuration: config,
-        user_bindings: check.bindings,
-        node_user_bindings: check.node_bindings,
-        unavailable_dependencies: check.unavailable,
-    })
+    Ok((
+        NormalizedConfiguration {
+            configuration: config,
+            user_bindings: check.bindings,
+            node_user_bindings: check.node_bindings,
+            unavailable_dependencies: check.unavailable,
+        },
+        pending,
+        requirements,
+    ))
 }
 
 /// Rechecks a persisted complete value against current trusted dependencies.

@@ -84,6 +84,8 @@ Console 在最终应用前展示**有效修改数量、前后对照和影响范�
 | `addressChangedNodeIds` | 预计改址、会中断旧连接的节点 |
 | `preparedRuleSets` | 按 key 返回此次校验暂定的规则集 digest／entries；不预留 ArtifactId |
 | `unavailableDependencies` | 失效依赖；保留旧引用不等于恢复授权，也不表示运行时链路健康状态 |
+| `requirements` | 预览尚未完成的材料生成／证书验证步骤，包含 listener pointer 和类型 |
+| `willGenerate` | apply 将生成的 UUID、password、证书或私钥；不包含实际秘密值 |
 
 `unavailableDependencies` 列出保留但已撤销／失效的成员与路由依赖。这类依赖不阻止撤权保存，执行侧必须拒绝受影响流量。稳定绑定本身变化也进入 `changes`（策略引用 `/bindings/users`、Node 身份解析 `/bindings/nodeUsers`、`/bindings/listeners`、`/bindings/ruleSets`）并计入 `changeCount`；原样文档／ops 保存和新设备接入不会把已失效的策略成员引用重新绑定到同名的新入网关系。两类用户绑定的具体边界见[配置版本存储](/v2/storage/database)。
 
@@ -93,7 +95,9 @@ Console 在最终应用前展示**有效修改数量、前后对照和影响范�
 
 预览不落盘、不分配永久材料、不预留地址、不创建待激活版本。材料准备要求不能作为成功预览的真实材料；应用时重新准备并检查当前权限、依赖和 CAS。提交后读取同 revision 的配置取得最终值，预览失败保留草稿。
 
-规范化由 Rust 配置库完成，Console 不重复实现默认／继承／地址算法。缺少必要材料时返回 `configuration_invalid` 的 requirements，不能以伪造材料构造成功预览。preview 不写入当前配置／State 缓存，与当前 ConfigurationView 共用字段类型，但 envelope 明确本次预览基准及其非提交性质。
+规范化由 Rust 配置库完成，Console 不重复实现默认／继承／地址算法。首次创建或删除再创建 VLESS／Trojan listener 时，自动材料保持缺失，成功预览的 `credentialPresent`、`certificatePresent`、`privateKeyPresent` 如实为 false，生成计划单独列入 `willGenerate`；证书验证列入 `requirements`。这只是不可执行的声明计划，不使用占位 UUID／证书，也不创建 PreparedListener 或 publication。完整的已提供材料仍须通过密码／证书、名称、密钥一致性和永久吊销检查。
+
+不满足身份、地址或规则集等必要依赖，以及 provided TLS 缺失／无效材料，仍返回校验错误；生成计划不绕过这些检查。apply 在相同基准上重新准备真实材料并执行正常完整验证、CAS 和发布。preview 不写入当前配置／State 缓存，与当前 ConfigurationView 共用字段类型，但 envelope 明确本次预览基准及其非提交性质。
 
 ## 冲突
 

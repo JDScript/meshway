@@ -78,14 +78,14 @@ fn live_spec_closes_real_event_roots_and_resolves_every_dependency() {
     assert!(serde_json::from_str::<SystemState>(r#"["host","linux","x86","1"]"#).is_err());
 }
 
-async fn json<T: serde::de::DeserializeOwned>(request: reqwest::RequestBuilder) -> T {
+pub(super) async fn json<T: serde::de::DeserializeOwned>(request: reqwest::RequestBuilder) -> T {
     let response = request.send().await.unwrap();
     let status = response.status();
     let body = response.text().await.unwrap();
     assert!(status.is_success(), "{status}: {body}");
     serde_json::from_str(&body).unwrap_or_else(|error| panic!("{error}: {body}"))
 }
-async fn enroll(
+pub(super) async fn enroll(
     c: &Client,
     s: &Server,
     network: NetworkId,
