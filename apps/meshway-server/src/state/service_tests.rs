@@ -14,6 +14,10 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use std::{sync::Arc, time::Duration as StdDuration};
 use tokio::sync::oneshot;
 
+fn rid() -> meshway_model::RequestId {
+    meshway_model::RequestId::new(crate::accounts::random_uuid().unwrap()).unwrap()
+}
+
 struct SqlProvider {
     sealer: Arc<Sealer>,
 }
@@ -62,6 +66,11 @@ impl StateProvider for SqlProvider {
             authorization_digest: crate::resources::content_digest(&authorization),
             observation_authorization_digest: crate::resources::content_digest(&authorization),
             visible: configuration.nodes.keys().copied().collect(),
+            hostnames: configuration
+                .nodes
+                .iter()
+                .map(|(id, node)| (*id, node.hostname.clone()))
+                .collect(),
             full: configuration.nodes.keys().copied().collect(),
             observation_paths: Default::default(),
             mesh_addresses: Default::default(),
@@ -163,7 +172,10 @@ async fn pending_snapshot_is_discarded_on_role_change_and_shutdown_closes_stream
         digest: crate::accounts::token_digest(issued.token.expose()).unwrap(),
         network: network.id,
     };
-    let subscription = service.open_stream(identity.clone(), None).await.unwrap();
+    let subscription = service
+        .open_stream(identity.clone(), None, rid())
+        .await
+        .unwrap();
     assert!(matches!(
         service.poll(&subscription).await.unwrap(),
         StreamPoll::Frame(_)
@@ -185,10 +197,13 @@ async fn pending_snapshot_is_discarded_on_role_change_and_shutdown_closes_stream
         service.poll(&subscription).await.unwrap(),
         StreamPoll::Closed
     ));
-    let subscription = service.open_stream(identity.clone(), None).await.unwrap();
+    let subscription = service
+        .open_stream(identity.clone(), None, rid())
+        .await
+        .unwrap();
     app.shutdown().await.unwrap();
     assert!(service.poll(&subscription).await.is_err());
-    assert!(service.open_stream(identity, None).await.is_err());
+    assert!(service.open_stream(identity, None, rid()).await.is_err());
 }
 
 #[tokio::test]

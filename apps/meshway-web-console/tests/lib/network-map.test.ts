@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import type {
   AggregatedLink,
+  NodeInventoryView,
   NodeStateView,
   RecentLink,
   StateView,
@@ -9,18 +10,59 @@ import { test } from "vitest"
 
 import {
   countBy,
-  FRESHNESS_ORDER,
   linkLook,
   mapNodes,
   mergeRecentLinks,
   overviewScene,
 } from "@/lib/network-map"
+import { STATUS_ORDER } from "@/lib/nodes/status"
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001"
 const B = "bbbbbbbb-0000-4000-8000-000000000002"
 const C = "cccccccc-0000-4000-8000-000000000003"
 
+const T = "2026-10-01T00:00:00Z"
+
+/** A node as the inventory lists it, by its hostname. */
+const listed = (
+  id: string,
+  hostname: string,
+  enabled = true
+): [string, NodeInventoryView] => [
+  id,
+  {
+    id,
+    networkId: "eeeeeeee-0000-4000-8000-000000000005",
+    registeredAt: T,
+    hostname,
+    enabled,
+    identity: { type: "user", user: "owner@example.com" },
+    addresses: { ipv4: null, ipv6: null },
+    keys: {
+      control: {
+        id: "k1",
+        generation: 1,
+        publicKey: { algorithm: "ed25519", bytes: "00".repeat(32) },
+      },
+      dataplane: {
+        id: "k2",
+        generation: 1,
+        publicKey: { algorithm: "x25519", bytes: "00".repeat(32) },
+      },
+    },
+    controlKeyRevokedAt: null,
+    dataplaneKeyRevokedAt: null,
+    canDelete: true,
+    desiredExecution: null,
+    canRevokeControlKey: true,
+    canRevokeDataplaneKey: true,
+    controlKeyCreatedAt: T,
+    dataplaneKeyCreatedAt: T,
+  },
+]
+
 const located = (lat: number, lng: number): NodeStateView => ({
+  hostname: "located",
   freshness: "current",
   derived: {
     ipInfo: {},
@@ -73,10 +115,12 @@ test("only a node with the controller's coordinates is located; the others keep 
     state({
       [A]: located(35.7, 139.7),
       [B]: {
+        hostname: "b",
         freshness: "awaiting_report",
         derived: { ipInfo: {}, locationAbsent: "datasetUnavailable" },
       },
       [C]: {
+        hostname: "c",
         freshness: "current",
         derived: {
           ...located(0, 0).derived,
@@ -87,13 +131,19 @@ test("only a node with the controller's coordinates is located; the others keep 
         },
       },
     }),
-    new Map([[A, "tokyo"]])
+    new Map([listed(A, "tokyo"), listed(C, "seoul", false)])
   )
   const byId = new Map(nodes.map((node) => [node.id, node]))
   assert.equal(byId.get(A)?.unlocated, null)
   assert.equal(byId.get(A)?.name, "tokyo")
+  assert.equal(byId.get(A)?.status, "current")
   assert.equal(byId.get(B)?.unlocated, "datasetUnavailable")
-  assert.equal(byId.get(B)?.name, "bbbbbbbb")
+  // A peer the inventory does not list is named by the State.
+  assert.equal(byId.get(B)?.name, "b")
+  // A peer the inventory does not list: its report alone says its status.
+  assert.equal(byId.get(B)?.status, "awaiting_report")
+  // Turned off in the inventory, whatever its report says.
+  assert.equal(byId.get(C)?.status, "disabled")
   // A country without coordinates is not a place on the globe.
   assert.equal(byId.get(C)?.unlocated, "noPosition")
 })
@@ -103,7 +153,7 @@ test("a link is drawn only between two located nodes", () => {
     state({
       [A]: located(35.7, 139.7),
       [B]: located(37.5, 127),
-      [C]: { freshness: "current", derived: { ipInfo: {} } },
+      [C]: { hostname: "c", freshness: "current", derived: { ipInfo: {} } },
     }),
     new Map()
   )
@@ -133,13 +183,10 @@ test("a link's look follows its evidence before its phase", () => {
 })
 
 test("counts keep the given order and leave out empty values", () => {
-  assert.deepEqual(
-    countBy(["expired", "current", "current"], FRESHNESS_ORDER),
-    [
-      { value: "current", count: 2 },
-      { value: "expired", count: 1 },
-    ]
-  )
+  assert.deepEqual(countBy(["expired", "current", "current"], STATUS_ORDER), [
+    { value: "current", count: 2 },
+    { value: "expired", count: 1 },
+  ])
 })
 
 test("both ends' records of one link merge; the latest event decides open or closed", () => {
@@ -187,7 +234,7 @@ test("the scene draws history links apart from current ones, never both for one 
     state({
       [A]: located(35.7, 139.7),
       [B]: located(37.5, 127),
-      [C]: { freshness: "current", derived: { ipInfo: {} } },
+      [C]: { hostname: "c", freshness: "current", derived: { ipInfo: {} } },
     }),
     new Map()
   )

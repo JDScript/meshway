@@ -1,7 +1,6 @@
 import type {
   ApplyPhase,
   EndpointSource,
-  Freshness,
   LinkEvidence,
   LinkPhase,
   ListenerPhase,
@@ -12,18 +11,22 @@ import type {
   StateProblem,
 } from "@meshway/control-client"
 
+import type { NodeStatus } from "@/lib/nodes/status"
 import { m } from "@/paraglide/messages.js"
 
 // The words for runtime State, one per value the controller sends, the
 // same on every page that shows it.
 
-export const freshnessLabel: Record<Freshness, () => string> = {
-  current: () => m.state_freshness_current(),
-  awaiting_report: () => m.state_freshness_awaiting_report(),
-  expired: () => m.state_freshness_expired(),
-  superseded: () => m.state_freshness_superseded(),
-  config_mismatch: () => m.state_freshness_config_mismatch(),
-  revoked: () => m.state_freshness_revoked(),
+/** A node's status (`lib/nodes/status.ts`). */
+export const statusLabel: Record<NodeStatus, () => string> = {
+  current: () => m.state_status_current(),
+  awaiting_report: () => m.state_status_awaiting_report(),
+  superseded: () => m.state_status_superseded(),
+  config_mismatch: () => m.state_status_config_mismatch(),
+  expired: () => m.state_status_expired(),
+  revoked: () => m.state_status_revoked(),
+  disabled: () => m.state_status_disabled(),
+  unknown: () => m.state_status_unknown(),
 }
 
 export const listenerPhaseLabel: Record<ListenerPhase, () => string> = {

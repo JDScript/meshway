@@ -24,6 +24,7 @@ const NETWORK = "10000000-0000-4000-8000-000000000001"
 const EPOCH = "20000000-0000-4000-8000-000000000002"
 const NODE_A = "a0000000-0000-4000-8000-00000000000a"
 const NODE_B = "b0000000-0000-4000-8000-00000000000b"
+const REQUEST = "c0000000-0000-4000-8000-00000000000c"
 
 const VLESS = {
   enabled: true,
@@ -114,6 +115,7 @@ const entities = (
     membershipId: "60000000-0000-4000-8000-000000000006",
     role: "owner",
     actions: {
+      readConfiguration: true,
       editConfiguration: true,
       manageMembers: true,
       rename: true,
@@ -150,7 +152,7 @@ const snapshot = (
   batch: string,
   configuration: UserConfigurationView = manager
 ): [UserEvent, string?][] => [
-  [{ type: "config.snapshot", batch, configuration }],
+  [{ type: "config.snapshot", batch, requestId: REQUEST, configuration }],
   [{ type: "entities.snapshot", batch, entities: entities() }],
   [{ type: "state.snapshot", batch, state }],
   [
@@ -173,6 +175,11 @@ test("the snapshot is installed only at sync.ready, all at once", () => {
   const { model, effects } = run(snapshot("b1"))
   assert.equal(effects.length, 1)
   assert.equal(effects[0]?.type, "install")
+  // The snapshot's request ID: a manager's configuration is a GET's answer.
+  assert.equal(
+    effects[0]?.type === "install" ? effects[0].requestId : null,
+    REQUEST
+  )
   assert.equal(model.cursor, "b1")
   assert.equal(model.view?.revision, 3)
 })
@@ -243,6 +250,7 @@ test("an entities delta replaces and removes whole entries", () => {
       {
         type: "config.snapshot",
         batch: "b1",
+        requestId: REQUEST,
         configuration: manager,
       },
     ],

@@ -189,6 +189,7 @@ export type LeaveNetworkPath = z.output<typeof schemas.zLeaveNetworkPath>;
 export type LinkEvidence = z.output<typeof schemas.zLinkEvidence>;
 export type LinkPhase = z.output<typeof schemas.zLinkPhase>;
 export type LinkState = z.output<typeof schemas.zLinkState>;
+export type LinkUser = z.output<typeof schemas.zLinkUser>;
 export type ListAccountActivityQuery = z.output<typeof schemas.zListAccountActivityQuery>;
 export type ListAccountSessionsQuery = z.output<typeof schemas.zListAccountSessionsQuery>;
 export type ListConfigurationRevisionsPath = z.output<typeof schemas.zListConfigurationRevisionsPath>;

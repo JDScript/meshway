@@ -11,8 +11,8 @@ import {
   PanelList,
   useListKeys,
 } from "@/components/chrome/list"
+import { NodeStatusDot } from "@/components/chrome/node-status"
 import { PanelAction, PanelHeader } from "@/components/chrome/panel-header"
-import { StatusDot } from "@/components/chrome/status-dot"
 import { surfaceTitleId } from "@/components/surface/page-frame"
 import {
   InputGroup,
@@ -22,20 +22,14 @@ import {
 import { useNow } from "@/hooks/use-now"
 import { operationsOf } from "@/lib/configuration/draft-state"
 import { editsNode, isDeleted } from "@/lib/configuration/node-operations"
-import { agoTime } from "@/lib/format"
-import { keyRevoked, shownNodes } from "@/lib/nodes/model"
-import {
-  fullReport,
-  reportTime,
-  stateOf,
-  vitalityOf,
-} from "@/lib/nodes/state-model"
-import { freshnessLabel } from "@/lib/state-labels"
+import { shownNodes } from "@/lib/nodes/model"
+import { fullReport, stateOf } from "@/lib/nodes/state-model"
+import { lastSeen, nodeStatus } from "@/lib/nodes/status"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
-import { identityText } from "./-labels"
+import { identityText, statusText } from "./-labels"
 
 /** Typing settles this long before it is written to the address. */
 const SEARCH_SETTLE_MS = 150
@@ -108,10 +102,9 @@ function SearchField({
 
 /**
  * The nodes page's index: the nodes this account may see, by hostname,
- * with their identity, address, what stops them (disabled, a revoked
- * key) and their runtime report: lit while the controller holds a current
- * one, with when it arrived; else its freshness. The search lives in the
- * URL; choosing a row opens its workspace.
+ * with their identity, address and status (an offline one with when it was
+ * last seen). The search lives in the URL; choosing a row opens its
+ * workspace.
  */
 export function NodeList({
   networkId,
@@ -137,7 +130,7 @@ export function NodeList({
   const all = nodes.data?.items
   const rows = useMemo(() => shownNodes(all ?? [], q), [all, q])
   const unread = all === undefined
-  const now = useNow(15_000)
+  const now = useNow(1_000)
   const ops = operationsOf(useConfigurationDraft(networkId).entry)
   const { ref: list, onKeyDown } = useListKeys({
     ids: rows.map((node) => node.id),
@@ -193,30 +186,18 @@ export function NodeList({
           </ListNote>
         ) : null}
         {rows.map((node) => {
-          const stopped = !node.enabled || keyRevoked(node)
           const view = stateOf(state, node.id)
           const report = fullReport(view)
-          const at = reportTime(view)
+          const status = nodeStatus(node, view)
+          const stopped = status === "disabled" || status === "revoked"
           const deleting = isDeleted(ops, node.id)
-          const fact =
-            view === undefined
-              ? undefined
-              : view.freshness === "current" && at !== null
-                ? (agoTime(at, now) ?? freshnessLabel.current())
-                : freshnessLabel[view.freshness]()
           return (
             <ListRow
               key={node.id}
               rowId={node.id}
               current={node.id === openId}
               onClick={() => onOpen(node.id)}
-              lead={
-                vitalityOf(view?.freshness) === "live" ? (
-                  <StatusDot color="var(--vitality-live)" shape="live" />
-                ) : (
-                  <StatusDot color="var(--vitality-quiet)" shape="hollow" />
-                )
-              }
+              lead={<NodeStatusDot status={status} />}
               title={
                 <>
                   <span
@@ -245,11 +226,9 @@ export function NodeList({
                 </>
               }
               trail={
-                keyRevoked(node)
-                  ? m.nodes_key_revoked()
-                  : !node.enabled
-                    ? m.nodes_disabled()
-                    : fact
+                state === undefined
+                  ? undefined
+                  : statusText(status, lastSeen(view), now)
               }
             />
           )

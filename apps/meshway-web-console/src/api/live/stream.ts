@@ -1,5 +1,5 @@
 import { watchNetwork, type NetworkSummary } from "@meshway/control-client"
-import type { QueryClient, QueryKey } from "@tanstack/react-query"
+import { hashKey, type QueryClient, type QueryKey } from "@tanstack/react-query"
 
 import { client } from "@/api/client"
 import {
@@ -164,11 +164,32 @@ async function apply(
         touched.push(
           ...streamTouches(() => queryClient.setQueryData(key, configuration))
         )
-      } else if (
-        queryClient.getQueryData(configurationQuery(networkId).queryKey)
-          ?.revision !== configuration.revision
-      ) {
-        touched.push(...invalidate(queryClient, configurationReads(networkId)))
+      } else {
+        // The manager's snapshot is the GET's answer: write it, and read the
+        // other configuration reads (history) again when it moved on.
+        const key = configurationQuery(networkId).queryKey
+        const before = queryClient.getQueryData(key)?.revision
+        const { networkId: of, revision } = configuration
+        touched.push(
+          ...(await write(queryClient, key, () =>
+            queryClient.setQueryData(key, {
+              requestId: effect.requestId,
+              networkId: of,
+              revision,
+              configuration: configuration.configuration,
+            })
+          ))
+        )
+        if (before !== undefined && before !== revision)
+          touched.push(
+            ...streamTouches(
+              () =>
+                void queryClient.invalidateQueries({
+                  queryKey: configurationReads(networkId),
+                  predicate: (query) => query.queryHash !== hashKey(key),
+                })
+            )
+          )
       }
       if (
         !previous ||

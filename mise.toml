@@ -21,13 +21,22 @@ description = "Build Server, Web Console and documentation"
 run = [{ task = "build:server" }, { task = "build:node" }, { task = "build:console" }, { task = "build:docs" }]
 
 [tasks.check]
-description = "Run the complete CI checks in order (shared Cargo target)"
+description = "Run the complete CI checks: the Cargo chain and the web chain in parallel"
+depends = ["check:cargo", "check:web"]
+
+[tasks."check:cargo"]
+description = "Rust checks, tests, codegen, contract drift and SDK consumers in order (shared Cargo target)"
 run = [
   { task = "check:rust" },
   { task = "test:rust" },
   { task = "test:codegen" },
   { task = "check:protocol" },
   { task = "check:sdk" },
+]
+
+[tasks."check:web"]
+description = "Web Console checks, tests and build, scripts tests and docs in order (no Cargo)"
+run = [
   { task = "check:console" },
   { task = "test:console" },
   { task = "build:console" },

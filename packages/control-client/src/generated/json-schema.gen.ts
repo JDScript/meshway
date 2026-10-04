@@ -340,9 +340,17 @@ export const schemaDocument = {
             "type": "object",
             "required": [
               "userId",
+              "previousEmail",
               "type"
             ],
             "properties": {
+              "previousEmail": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "For `account.email`: the address before the change. Null otherwise."
+              },
               "type": {
                 "type": "string",
                 "enum": [
@@ -4611,9 +4619,10 @@ export const schemaDocument = {
           "role",
           "createdAt",
           "expiresAt",
+          "issuedBy",
           "revokedAt",
           "consumedAt",
-          "consumedByUserId",
+          "consumedBy",
           "actions"
         ],
         "properties": {
@@ -4627,10 +4636,10 @@ export const schemaDocument = {
             ],
             "format": "date-time"
           },
-          "consumedByUserId": {
+          "consumedBy": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/UserId"
+                "$ref": "#/components/schemas/LinkUser"
               },
               {
                 "type": "null"
@@ -4647,6 +4656,9 @@ export const schemaDocument = {
           },
           "id": {
             "$ref": "#/components/schemas/JoinLinkId"
+          },
+          "issuedBy": {
+            "$ref": "#/components/schemas/LinkUser"
           },
           "networkId": {
             "$ref": "#/components/schemas/NetworkId"
@@ -4771,6 +4783,22 @@ export const schemaDocument = {
           },
           "transport": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LinkUser": {
+        "type": "object",
+        "required": [
+          "userId",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "userId": {
+            "$ref": "#/components/schemas/UserId"
           }
         },
         "additionalProperties": false
@@ -5885,6 +5913,7 @@ export const schemaDocument = {
         "type": "object",
         "required": [
           "rename",
+          "readConfiguration",
           "editConfiguration",
           "manageMembers",
           "joinLinkRoles"
@@ -5901,6 +5930,10 @@ export const schemaDocument = {
           },
           "manageMembers": {
             "type": "boolean"
+          },
+          "readConfiguration": {
+            "type": "boolean",
+            "description": "Whether `GET /configuration` (the complete, management view) is\nreadable; otherwise the member view of own devices applies."
           },
           "rename": {
             "type": "boolean"
@@ -6624,6 +6657,7 @@ export const schemaDocument = {
             "type": "object",
             "required": [
               "batch",
+              "requestId",
               "configuration",
               "type"
             ],
@@ -6643,6 +6677,10 @@ export const schemaDocument = {
                     "type": "null"
                   }
                 ]
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/RequestId",
+                "description": "Correlation ID of the HTTP request carrying this stream, as in a\nGET response and the `x-request-id` header."
               },
               "type": {
                 "type": "string",
@@ -7645,6 +7683,7 @@ export const schemaDocument = {
       "NodeStateView": {
         "type": "object",
         "required": [
+          "hostname",
           "freshness",
           "derived"
         ],
@@ -7654,6 +7693,10 @@ export const schemaDocument = {
           },
           "freshness": {
             "$ref": "#/components/schemas/Freshness"
+          },
+          "hostname": {
+            "type": "string",
+            "description": "The configured hostname (display name), not the OS hostname a report carries."
           },
           "instanceId": {
             "oneOf": [
@@ -11541,6 +11584,7 @@ export const schemaDocument = {
             "type": "object",
             "required": [
               "batch",
+              "requestId",
               "configuration",
               "type"
             ],
@@ -11560,6 +11604,10 @@ export const schemaDocument = {
                     "type": "null"
                   }
                 ]
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/RequestId",
+                "description": "Correlation ID of the HTTP request carrying this stream, as in a\nGET response and the `x-request-id` header."
               },
               "type": {
                 "type": "string",

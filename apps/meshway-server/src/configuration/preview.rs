@@ -1,30 +1,24 @@
 //! Non-executable declaration planning. No generated credential, prepared
 //! listener attestation or persistent configuration is manufactured here.
-use super::{Snapshot, TrustedContext, binding_changes, listener_bindings, resources};
+use super::{Snapshot, binding_changes, commit::Draft, listener_bindings, resources};
 use crate::configuration::ConfigurationBindings;
 use crate::error::Error;
 use meshway_configuration::{
-    ChangeKind, ConfigurationChange, NetworkConfigurationInput, PreparationKind,
-    plan_configuration, planned_configuration_changes,
+    ChangeKind, ConfigurationChange, PreparationKind, ValidationContext, plan_configuration,
+    planned_configuration_changes,
 };
 use meshway_model::RequestId;
 use meshway_protocol::configuration::ConfigurationPreviewResponse;
 use meshway_transport_spec::MaterialRequirement;
 
-pub(super) struct RequestInput<'a> {
-    pub input: NetworkConfigurationInput,
-    pub source: String,
-    pub context: TrustedContext<'a>,
-    pub new_content: bool,
-}
-
 pub(super) fn build(
     current: &Snapshot,
-    input: RequestInput<'_>,
+    draft: Draft,
+    context: ValidationContext<'_>,
     resources: Option<&resources::Preparation>,
     request_id: RequestId,
 ) -> Result<ConfigurationPreviewResponse, Error> {
-    let plan = plan_configuration(input.input, &input.context.validation)?;
+    let plan = plan_configuration(draft.input, &context)?;
     let mut changes = planned_configuration_changes(&current.document.configuration, &plan.input)?;
     let will_generate: Vec<_> = plan
         .requirements
@@ -66,12 +60,12 @@ pub(super) fn build(
                 .nodes
                 .iter()
                 .map(|(id, node)| (*id, node.listeners.keys().cloned().collect())),
-            &input.context.validation.recreated_listeners,
+            &context.recreated_listeners,
         )?,
-        rule_sets: input.context.rule_sets,
+        rule_sets: draft.rule_sets,
     };
     changes.extend(binding_changes(&current.bindings, &bindings));
-    if input.new_content && !changes.iter().any(|c| c.path == "/bindings/ruleSets") {
+    if draft.new_content && !changes.iter().any(|c| c.path == "/bindings/ruleSets") {
         changes.push(ConfigurationChange {
             path: "/bindings/ruleSets".into(),
             kind: ChangeKind::Changed,
@@ -107,7 +101,7 @@ pub(super) fn build(
         change_count: u32::try_from(changes.len())
             .map_err(|_| Error::Internal("change count overflow"))?,
         changes,
-        source_changed: current.document.source_jsonc.expose() != input.source,
+        source_changed: current.document.source_jsonc.expose() != draft.source,
         deleted_node_ids,
         address_changed_node_ids,
     })

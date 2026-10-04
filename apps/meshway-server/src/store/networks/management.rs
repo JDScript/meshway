@@ -12,7 +12,7 @@ use crate::{
 use chrono::Utc;
 use meshway_model::{JoinLinkId, MembershipId, MembershipRole, Version};
 use meshway_model::{NetworkId, RequestId, UserId};
-use meshway_protocol::management::JoinLinkView;
+use meshway_protocol::management::{JoinLinkView, LinkUser};
 use rusqlite::{OptionalExtension, Transaction, params};
 use sha2::{Digest as _, Sha256};
 
@@ -111,9 +111,9 @@ pub(crate) fn remove_member(
     tx: &Transaction<'_>,
     digest: [u8; 32],
     command: crate::networks::management::MemberRemoval,
-    sealer: &Sealer,
-    cache: &crate::configuration::SnapshotCache,
+    committer: &crate::configuration::Committer,
 ) -> Result<(meshway_model::Revision, Vec<Effect>), Error> {
+    let (sealer, cache) = (committer.sealer.as_ref(), committer.cache.as_ref());
     let crate::networks::management::MemberRemoval {
         network,
         member,
@@ -138,17 +138,15 @@ pub(crate) fn remove_member(
     if role == "owner" {
         protect_owner(tx, network)?;
     }
-    let effects = crate::execution::membership::remove_nodes(
+    let effects = committer.commit(
         tx,
-        &crate::execution::membership::MembershipRemoval {
-            digest,
-            network,
+        network,
+        crate::configuration::Intent::MemberRemoval {
+            session: digest,
             membership: impact.membership_id,
             version: expected,
-            request,
         },
-        sealer,
-        cache,
+        request,
     )?;
     tx.execute(
         "UPDATE memberships SET revoked_at=?1,version=version+1 WHERE id=?2",
@@ -253,7 +251,7 @@ struct Link {
     created_by: UserId,
     consumed_member: Option<MembershipId>,
 }
-const LINK_SELECT: &str = "SELECT sequence,id,network_id,role,created_at,expires_at,revoked_at,consumed_at,consumed_by_user_id,issuer_membership_id,created_by,consumed_membership_id FROM join_links";
+const LINK_SELECT: &str = "SELECT j.sequence,j.id,j.network_id,j.role,j.created_at,j.expires_at,j.revoked_at,j.consumed_at,j.consumed_by_user_id,j.issuer_membership_id,j.created_by,j.consumed_membership_id,i.email,c.email FROM join_links j JOIN users i ON i.id=j.created_by LEFT JOIN users c ON c.id=j.consumed_by_user_id";
 fn read_link(r: &rusqlite::Row<'_>) -> rusqlite::Result<Link> {
     fn id<T>(
         r: &rusqlite::Row<'_>,
@@ -285,6 +283,15 @@ fn read_link(r: &rusqlite::Row<'_>) -> rusqlite::Result<Link> {
             })
             .transpose()
     }
+    let created_by = id(r, 10, UserId::new)?;
+    let consumed_by = match (
+        optional_id(r, 8, UserId::new)?,
+        r.get::<_, Option<String>>(13)?,
+    ) {
+        (Some(user_id), Some(email)) => Some(LinkUser { user_id, email }),
+        (None, None) => None,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
     Ok(Link {
         sequence: r.get(0)?,
         view: JoinLinkView {
@@ -293,17 +300,29 @@ fn read_link(r: &rusqlite::Row<'_>) -> rusqlite::Result<Link> {
             role: parse_role(&r.get::<_, String>(3)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
             created_at: time(r, 4)?,
             expires_at: time(r, 5)?,
+            issued_by: LinkUser {
+                user_id: created_by,
+                email: r.get(12)?,
+            },
             revoked_at: opttime(r, 6)?,
             consumed_at: opttime(r, 7)?,
-            consumed_by_user_id: optional_id(r, 8, UserId::new)?,
+            consumed_by,
             actions: meshway_protocol::management::JoinLinkActions { revoke: false },
         },
         issuer: id(r, 9, MembershipId::new)?,
-        created_by: id(r, 10, UserId::new)?,
+        created_by,
         consumed_member: optional_id(r, 11, MembershipId::new)?,
     })
 }
 fn valid(tx: &Transaction<'_>, link: &Link, now: i64) -> Result<(), Error> {
+    // The link's own lifecycle is reported before the issuer's standing, so a
+    // link revoked by an issuer's demotion reads as revoked here as in lists.
+    if link.view.revoked_at.is_some() {
+        return Err(Error::LinkRevoked);
+    }
+    if link.view.expires_at.timestamp_millis() <= now {
+        return Err(Error::LinkExpired);
+    }
     let (id, role) =
         membership(tx, link.view.network_id, link.created_by).map_err(|error| match error {
             Error::NotFound => Error::LinkIssuerUnavailable,
@@ -311,12 +330,6 @@ fn valid(tx: &Transaction<'_>, link: &Link, now: i64) -> Result<(), Error> {
         })?;
     if id != link.issuer || !grant(role, link.view.role) {
         return Err(Error::LinkIssuerUnavailable);
-    }
-    if link.view.revoked_at.is_some() {
-        return Err(Error::LinkRevoked);
-    }
-    if link.view.expires_at.timestamp_millis() <= now {
-        return Err(Error::LinkExpired);
     }
     Ok(())
 }
@@ -352,7 +365,7 @@ pub(crate) fn create_link(
         }
         let mut link = tx.query_row(
             &format!(
-                "{LINK_SELECT} WHERE network_id=?1 AND created_by=?2 AND creation_request_id=?3"
+                "{LINK_SELECT} WHERE j.network_id=?1 AND j.created_by=?2 AND j.creation_request_id=?3"
             ),
             params![
                 network.as_uuid().as_bytes().as_slice(),
@@ -381,7 +394,7 @@ pub(crate) fn create_link(
     )?;
     record(tx, network, user, request, Activity::LinkCreated(id), now)?;
     let mut link = tx.query_row(
-        &format!("{LINK_SELECT} WHERE id=?1"),
+        &format!("{LINK_SELECT} WHERE j.id=?1"),
         [id.as_uuid().as_bytes().as_slice()],
         read_link,
     )?;
@@ -400,7 +413,7 @@ pub(crate) fn inspect_link(
     let user = current_session(tx, &digest, now)?.user.id;
     let mut link = tx
         .query_row(
-            &format!("{LINK_SELECT} WHERE token_hash=?1"),
+            &format!("{LINK_SELECT} WHERE j.token_hash=?1"),
             [hash.as_slice()],
             read_link,
         )
@@ -433,14 +446,14 @@ pub(crate) fn redeem_link(
     let user = current_session(tx, &digest, now)?.user.id;
     let link = tx
         .query_row(
-            &format!("{LINK_SELECT} WHERE token_hash=?1"),
+            &format!("{LINK_SELECT} WHERE j.token_hash=?1"),
             [hash.as_slice()],
             read_link,
         )
         .optional()?
         .ok_or(Error::InvalidLink)?;
     if let Some(member) = link.consumed_member {
-        if link.view.consumed_by_user_id != Some(user)
+        if link.view.consumed_by.as_ref().map(|c| c.user_id) != Some(user)
             || membership(tx, link.view.network_id, user).ok().map(|m| m.0) != Some(member)
         {
             return Err(Error::LinkUsed);
@@ -488,7 +501,7 @@ pub(crate) fn revoke_link(
     require_manager(role)?;
     let link = tx
         .query_row(
-            &format!("{LINK_SELECT} WHERE id=?1 AND network_id=?2"),
+            &format!("{LINK_SELECT} WHERE j.id=?1 AND j.network_id=?2"),
             params![
                 id.as_uuid().as_bytes().as_slice(),
                 network.as_uuid().as_bytes().as_slice()
@@ -534,7 +547,7 @@ pub(crate) fn links(
         params![network.as_uuid().as_bytes().as_slice(), window.upper],
         |row| row.get(0),
     )?;
-    let mut stmt=tx.prepare(&format!("{LINK_SELECT} WHERE network_id=?1 AND sequence<=?2 AND sequence<=?3 ORDER BY sequence DESC LIMIT ?4"))?;
+    let mut stmt=tx.prepare(&format!("{LINK_SELECT} WHERE j.network_id=?1 AND j.sequence<=?2 AND j.sequence<=?3 ORDER BY j.sequence DESC LIMIT ?4"))?;
     let mut links = stmt
         .query_map(
             params![

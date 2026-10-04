@@ -30,7 +30,7 @@
 | nodes | NodeId → NodeStateView |
 | links／paths | 当前可见报告的聚合结果 |
 
-NodeStateView 包含 instanceId、reportSequence、observedAt、receivedAt、reportExpiresAt、lastAuthenticatedAt、freshness、report 和 derived。未报告时 report=null，不能用空对象伪造 NodeState。
+NodeStateView 包含 hostname、instanceId、reportSequence、observedAt、receivedAt、reportExpiresAt、lastAuthenticatedAt、freshness、report 和 derived。hostname 是当前配置里的规范主机名（显示名），对成员可见的依赖 peer 同样给出；它不是报告里的 OS hostname，也不扩大其他字段的裁剪范围。未报告时 report=null，不能用空对象伪造 NodeState。
 
 report 以 `view: full | peer` 区分，内部 report 分别是完整 NodeState 或裁剪的 PeerState。freshness 使用 current、awaiting_report、expired、superseded、config_mismatch、revoked；current 不等于每个 endpoint 已验证可达。
 

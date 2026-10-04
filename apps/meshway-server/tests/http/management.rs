@@ -994,11 +994,9 @@ async fn account_password_sessions_cli_recovery_and_private_history() {
             .iter()
             .any(|a| matches!(a.actor, ActivityActor::System {}))
     );
-    assert!(
-        activity.items.iter().all(
-            |a| !matches!(a.target,ActivityTarget::Account{user_id} if user_id==other.user.id)
-        )
-    );
+    assert!(activity.items.iter().all(
+        |a| !matches!(a.target,ActivityTarget::Account{user_id,..} if user_id==other.user.id)
+    ));
     s.close().await;
 }
 

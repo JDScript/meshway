@@ -40,6 +40,8 @@
   "members_link_used": "{at} 已使用",
   "members_link_revoked": "{at} 已撤销",
   "members_link_expired": "{at} 已过期",
+  "members_link_issued_by": "{email} 签发",
+  "members_link_used_by": "{email} 已加入",
   "members_link_create": "生成加入链接",
   "members_link_create_submit": "生成链接",
   "members_link_valid_for": "有效期",

@@ -112,21 +112,36 @@ its generated client only, and only what the controller delivers:
 - Nodes (`/nodes?q=`, every member: the controller lists owners and admins
   every node, a member their own User-identity devices). The list searches
   by hostname and shows each node's identity (its user's email or its
-  tags), first address, OS and Agent version when reported, whether it is
-  disabled or has a revoked key, else its report: a lit dot and when it
-  arrived while the controller calls it current, its freshness otherwise.
-  The State is the network's (`getNetworkState`, one read for every node).
-  A node's workspace (`/nodes/<id>?tab=overview|settings|transport|latency|manage`):
-  - overview: the registration facts; the report's freshness, times
-    (received, observed, expiry, last authenticated) and instance; from a
-    full report the system (reported hostname against the configured one,
-    OS, architecture, Agent version, routing profile), the configuration
-    saved / applied / in progress against the current revision, and the
-    problems the node reports; the inventory's `desiredExecution` (the
-    target the controller wants it to run: revision, publication, digest),
-    never itself saved or applied, said against the report's saved and
-    applied (same target applied, only saved, another target, no report); the controller's location (or why it has
-    none) and IP information.
+  tags), first address, OS and Agent version when reported, and its
+  status (below). The State is the network's (`getNetworkState`, one read
+  for every node).
+- A node's status (`lib/nodes/status.ts`), one word and one colour on every
+  page (the list, a node's header, the overview corner, the globe): turned
+  off or with a revoked key whatever its report says, else the
+  controller's freshness. Green 在线 (`current`); orange 等待上线
+  (`awaiting_report`), 刚重启 (`superseded`), 配置未同步
+  (`config_mismatch`); red 离线 (`expired`), 已吊销; grey 已停用, 状态未知
+  (not in the State). An online node shows no time: a report every few
+  seconds is not news. An offline one says 最后在线 … (its last report,
+  else its last sign-in), by this browser's clock, ticking every second.
+  A node's workspace (`/nodes/<id>?tab=overview|settings|transport|latency|diagnostics|manage`),
+  its status in the header:
+  - overview, what matters first: health (status, the configuration as one
+    fact — up to date, applying r…, r… failed, still on r… against the
+    latest, none applied —, its links connected of all with a way to the
+    transport tab, the problems it reports, listed in red); the node (owner
+    or tags, OS and architecture, Agent version, ID, reported hostname,
+    routing profile, joined); its addresses (IPv4, IPv6, the controller's
+    location or why it has none, and each observed IP with its GeoIP and
+    ASN).
+  - diagnostics, what the status rests on: the report's times (received,
+    recorded by the node, valid until, last sign-in), instance and report
+    number; the inventory's `desiredExecution` (the configuration the
+    server assigns: revision, publication, digest), never itself saved or
+    applied, said against the report's saved and applied (applied, only
+    saved, another one, no report); saved / applied / in progress against
+    the current revision; what the location was derived from (address,
+    source, observed, valid until, dataset).
   - settings: hostname, remark, enabled, exit, tags (a User identity given
     tags becomes a Tag identity; the last tag cannot be taken), Mesh
     addresses within the pools (empty: no address of that family), and the
@@ -150,8 +165,9 @@ its generated client only, and only what the controller delivers:
     with source edits it is refused; with no draft it is sent at once,
     against the revision read when it is asked (a `revision_conflict`
     reads it again and keeps the confirmation open).
-  Without `actions.editConfiguration` the settings read only; a member's
-  come from the event stream (`memberConfigurationQuery`) once it has sent
+  Without `actions.editConfiguration` the settings read only. Without
+  `actions.readConfiguration` (a member) the whole configuration is never
+  asked for: a member's settings come from the event stream (`memberConfigurationQuery`) once it has sent
   them, else from `getNodeSettings` (`nodeSettingsQuery`, key
   `[network, "nodes", id, "settings"]`, polled while the stream is not
   live).
@@ -202,10 +218,11 @@ its generated client only, and only what the controller delivers:
   dropped and synced afresh. It writes only the reads it carries exactly:
   State (`state.snapshot` / `state.delta`), nodes (entities, ordered by ID
   as `listNodes`), the network summary (inside the read `getNetwork`
-  response), the current revision's progress and a member's own node
-  settings (`memberConfigurationQuery`). Members, join links, activity,
-  configuration reads and rule sets are invalidated instead (paged, or a
-  GET adds what the event lacks); `configuration.changed` never touches a
+  response), the current revision's progress, a manager's configuration
+  (the snapshot with its request ID is the GET's answer) and a member's
+  own node settings (`memberConfigurationQuery`). Members, join links,
+  activity, the other configuration reads and rule sets are invalidated
+  instead (paged, or a GET adds what the event lacks); `configuration.changed` never touches a
   draft, which sees the new revision through those reads. A member's own
   settings, when they change, come in a new batch after the controller's
   `sync.reset`. A `state.delta` replaces the State's `asOf`, `sequence` and
@@ -261,7 +278,7 @@ its generated client only, and only what the controller delivers:
   never animated: nothing travels along a line, and `inUse` is a listed
   fact. Links with an unlocated end are counted and listed, not drawn. Links
   between the same nodes take successive arcs. The corner counts nodes by
-  freshness and links by phase and evidence, with the State's `asOf` and
+  status and links by phase and evidence, with the State's `asOf` and
   whether the stream keeps it live. A node opens its workspace from the
   globe or the list. More than 120 placed nodes show names only on the one
   pointed at, focused or selected.
@@ -359,7 +376,7 @@ its generated client only, and only what the controller delivers:
 | Stack | Vite, TanStack Router (file routes, typed params and search), TanStack Query, shadcn (Base UI, preset `b0` = `base-nova`, pointer; only the pieces in use are kept, the CLI adds others back), Paraglide (zh, en). |
 | BFF | None. The browser calls the controller through the generated `@meshway/control-client` with Zod validation. |
 | Origin | One origin. The controller serves the built `dist/` with an `index.html` fallback; development proxies `/api` to the controller named by `MESHWAY_CONTROLLER_URL`. |
-| Copy | Every string lives in `messages/{zh,en}.json` (words several areas share: State values, activity, actors, common actions) or `messages/<area>/{zh,en}.json`; zh is the base locale, and `tests/messages.test.ts` keeps both locales in step, each message in one file and in use. One value has one wording everywhere it is shown. Interface text states facts only: no explanations of what the display means or of how it was drawn. |
+| Copy | Every string lives in `messages/{zh,en}.json` (words several areas share: State values, activity, actors, common actions) or `messages/<area>/{zh,en}.json`; zh is the base locale, and `tests/messages.test.ts` keeps both locales in step, each message in one file and in use. One value has one wording everywhere it is shown, in the words a person would use (在线, 离线, 已连接), not the protocol's. Interface text states facts only: no explanations of what the display means or of how it was drawn. |
 | Routes | Resources are nested and plural: `/networks/<network_id>/<page>`, e.g. `/networks/<id>/overview?node=<node_id>`. `/networks/<id>` redirects to its overview; `/` to the remembered or first network. Selection and filters live in validated search params. |
 
 ## Sessions
@@ -401,7 +418,9 @@ states stay distinguishable by stroke and colour.
   (sign-in failures, read failures, confirmations) goes to a toast; panels
   reserve every slot and only change values.
 - Times of what has happened (a report, `asOf`, a link's start) read "… ago"
-  and are never shown ahead of the clock, which ticks between reads.
+  and are never shown ahead of the clock, which ticks between reads. What
+  recurs every few seconds (a node's reports while it is online) is a
+  status, not a time.
 - Forms are real forms: named fields, `autocomplete`, Enter submits. Text
   fields bound to the URL are uncontrolled and never written during an IME
   composition.
@@ -419,7 +438,7 @@ controller supports today; the rest of each row is the target design.
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
 | Overview `/overview` | the globe with located nodes and current links; the status corner (counts, 待定位, current links, the history layer) and the node the pointer is on | none: the globe is its index | none (a node opens its workspace on the nodes page) | |
-| Nodes `/nodes?q=` | each node's report; a node's facts and State, settings, listeners with their runtime, links and paths, latency, keys and deletion; adding one with an enrolment key | nodes (search, state) | `/nodes/<id>?tab=overview\|settings\|transport\|latency\|manage`, `/nodes/add` | revoke, enrolment key |
+| Nodes `/nodes?q=` | each node's status; a node's health, facts and addresses, settings, listeners with their runtime, links and paths, latency, what its status rests on, keys and deletion; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=overview\|settings\|transport\|latency\|diagnostics\|manage`, `/nodes/add` | revoke, enrolment key |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
 | Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity | leave |
@@ -552,7 +571,9 @@ inline`): surface radii (`surface` 22, `sheet` 28) and concentric inner radii
 `lib/ease.ts`); fills on glass (`fill-subtle`, `-hover`, `-selected`,
 `-raised`, `-tint`, `divider`); `draft`, the one colour of unsaved
 edits; the workspace measure (`--container-workspace`, `max-w-workspace`,
-40rem); vitality colours with distinct dot shapes (lit, solid, hollow).
+40rem); status colours (`--status-online`, `-attention`, `-offline`,
+`-inactive`: green, orange, red, grey) with distinct dot shapes (lit,
+solid, solid, hollow).
 Components use these instead of literal values.
 
 ## AgentUI

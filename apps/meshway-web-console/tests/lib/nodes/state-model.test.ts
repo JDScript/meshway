@@ -5,16 +5,15 @@ import { test } from "vitest"
 import {
   candidateExpired,
   configurationFacts,
+  configurationSync,
   desiredAgainst,
   listenerRuntime,
   nodeLinks,
   nodePaths,
   otherSockets,
   reportOf,
-  reportTime,
   stateOf,
   unconfiguredListeners,
-  vitalityOf,
 } from "@/lib/nodes/state-model"
 
 const A = "11111111-1111-4111-8111-111111111111"
@@ -81,13 +80,18 @@ const STATE: StateView = {
   networkId: INSTANCE,
   nodes: {
     [A]: {
+      hostname: "a",
       derived: { ipInfo: {} },
       freshness: "current",
       receivedAt: T1,
       observedAt: T0,
       report: { view: "full", report: REPORT },
     },
-    [B]: { derived: { ipInfo: {} }, freshness: "awaiting_report" },
+    [B]: {
+      hostname: "b",
+      derived: { ipInfo: {} },
+      freshness: "awaiting_report",
+    },
   },
   links: [link(B, A, "l2"), link(A, C, "l1"), link(B, C, "l3")],
   paths: [
@@ -110,11 +114,6 @@ test("a node's report, its view and time", () => {
   assert.equal(reportOf(stateOf(STATE, A)).view, "full")
   assert.equal(reportOf(stateOf(STATE, B)).view, "none")
   assert.equal(stateOf(STATE, C), undefined)
-  assert.equal(reportTime(stateOf(STATE, A)), T1)
-  assert.equal(reportTime(stateOf(STATE, B)), null)
-  assert.equal(vitalityOf("current"), "live")
-  assert.equal(vitalityOf("expired"), "quiet")
-  assert.equal(vitalityOf(undefined), "quiet")
 })
 
 test("configuration facts against the current revision", () => {
@@ -125,6 +124,48 @@ test("configuration facts against the current revision", () => {
     current: false,
   })
   assert.equal(configurationFacts({}, undefined).current, null)
+})
+
+test("where a node's configuration stands, as one fact", () => {
+  const progress = (
+    revision: number,
+    phase: "applying" | "failed" | "applied"
+  ) => ({
+    target: ref(revision),
+    phase,
+    observedAt: T1,
+  })
+  assert.deepEqual(configurationSync(null, 4), { kind: "unknown" })
+  assert.deepEqual(configurationSync({}, 4), { kind: "none" })
+  assert.deepEqual(configurationSync({ applied: ref(4) }, 4), {
+    kind: "current",
+    revision: 4,
+  })
+  assert.deepEqual(configurationSync({ applied: ref(3) }, 4), {
+    kind: "behind",
+    applied: 3,
+    current: 4,
+  })
+  assert.deepEqual(configurationSync({ applied: ref(3) }, undefined), {
+    kind: "applied",
+    revision: 3,
+  })
+  // A revision on its way, or refused, says more than the one applied.
+  assert.deepEqual(
+    configurationSync(
+      { applied: ref(3), progress: progress(4, "applying") },
+      4
+    ),
+    { kind: "applying", revision: 4 }
+  )
+  assert.deepEqual(
+    configurationSync({ applied: ref(3), progress: progress(4, "failed") }, 4),
+    { kind: "failed", revision: 4 }
+  )
+  assert.deepEqual(
+    configurationSync({ applied: ref(4), progress: progress(4, "applied") }, 4),
+    { kind: "current", revision: 4 }
+  )
 })
 
 test("listener runtime names its sockets; others are dial sockets", () => {

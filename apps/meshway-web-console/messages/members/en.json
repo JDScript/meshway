@@ -40,6 +40,8 @@
   "members_link_used": "Used {at}",
   "members_link_revoked": "Revoked {at}",
   "members_link_expired": "Expired {at}",
+  "members_link_issued_by": "Issued by {email}",
+  "members_link_used_by": "{email} joined",
   "members_link_create": "New join link",
   "members_link_create_submit": "Create link",
   "members_link_valid_for": "Valid for",

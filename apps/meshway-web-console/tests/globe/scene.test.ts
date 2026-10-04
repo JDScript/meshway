@@ -19,7 +19,7 @@ const node = (
   id,
   name,
   placement,
-  current: false,
+  status: "unknown",
 })
 
 const close = (p: readonly number[], q: readonly number[]) =>

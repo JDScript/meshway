@@ -64,8 +64,10 @@ impl Networks {
         request: RequestId,
     ) -> Result<Revision, Error> {
         let digest = token_digest(token)?;
-        let sealer = Arc::clone(&self.sealer);
-        let cache = Arc::clone(&self.configuration_cache);
+        let committer = crate::configuration::Committer::new(
+            Arc::clone(&self.sealer),
+            Arc::clone(&self.configuration_cache),
+        );
         self.handle
             .transact(TransactionBehavior::Immediate, move |tx| {
                 store::remove_member(
@@ -78,8 +80,7 @@ impl Networks {
                         revision,
                         request,
                     },
-                    &sealer,
-                    &cache,
+                    &committer,
                 )
             })
             .await

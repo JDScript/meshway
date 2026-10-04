@@ -17,6 +17,10 @@ pub enum StreamEvent<C, E, P> {
     #[serde(rename = "config.snapshot")]
     ConfigSnapshot {
         batch: String,
+        /// Correlation ID of the HTTP request carrying this stream, as in a
+        /// GET response and the `x-request-id` header.
+        #[serde(rename = "requestId")]
+        request_id: RequestId,
         configuration: C,
         progress: Option<P>,
     },

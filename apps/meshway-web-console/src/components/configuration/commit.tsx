@@ -34,7 +34,11 @@ export function useConfigurationCommit({
 }) {
   const queryClient = useQueryClient()
   const draft = useConfigurationDraft(networkId)
-  const configuration = useQuery(configurationQuery(networkId))
+  // Only an account that may read the whole configuration asks for it.
+  const configuration = useQuery({
+    ...configurationQuery(networkId),
+    enabled: network?.actions.readConfiguration === true,
+  })
   const current = configuration.data?.revision ?? network?.currentRevision
   const editable = network?.actions.editConfiguration ?? false
   const checking = useConfigurationApply(networkId).busy === "checking"

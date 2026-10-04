@@ -39,6 +39,7 @@
   "account_activity_failed": "无法读取账户活动",
   "account_activity_empty": "没有活动",
   "account_activity_more": "更多活动",
+  "account_target_previous_email": "原邮箱 {email}",
   "account_target_session": "登录 {id}",
   "account_target_network": "网络 {id}",
   "account_target_membership": "成员 {id}",

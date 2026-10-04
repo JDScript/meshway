@@ -126,9 +126,10 @@ pub(crate) fn record_management(
     request: RequestId,
     action: &str,
     target: Option<SessionId>,
+    previous_email: Option<&str>,
     now: i64,
 ) -> Result<(), Error> {
-    tx.execute("INSERT INTO activity_events (id,scope,account_user_id,at,actor_user_id,action,target_user_id,target_session_id,request_id,actor_kind,actor_email) VALUES (?1,'account',?2,?3,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE ?2 END,?4,?5,?6,?7,CASE WHEN ?4='account.resetIssued' THEN 'system' ELSE 'user' END,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE (SELECT email FROM users WHERE id=?2) END)",params![random_uuid()?.as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),now,action, target.is_none().then_some(user.as_uuid().as_bytes().as_slice()),target.map(|s|s.as_uuid().as_bytes().to_vec()),request.as_uuid().as_bytes().as_slice()])?;
+    tx.execute("INSERT INTO activity_events (id,scope,account_user_id,at,actor_user_id,action,target_user_id,target_session_id,request_id,actor_kind,actor_email,previous_email) VALUES (?1,'account',?2,?3,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE ?2 END,?4,?5,?6,?7,CASE WHEN ?4='account.resetIssued' THEN 'system' ELSE 'user' END,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE (SELECT email FROM users WHERE id=?2) END,?8)",params![random_uuid()?.as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),now,action, target.is_none().then_some(user.as_uuid().as_bytes().as_slice()),target.map(|s|s.as_uuid().as_bytes().to_vec()),request.as_uuid().as_bytes().as_slice(),previous_email])?;
     Ok(())
 }
 
@@ -186,7 +187,7 @@ pub(crate) fn revoke(
             ("session.revokeAll", None)
         }
     };
-    record_management(tx, session.user.id, request, action, target_id, now)?;
+    record_management(tx, session.user.id, request, action, target_id, None, now)?;
     Ok(((), revocation_effects(changes, revoked)))
 }
 
@@ -236,7 +237,7 @@ pub(crate) fn change_password(
     let sessions = active_sessions(tx, user, now)?;
     let changes = authorization_changes(tx, user)?;
     replace_password(tx, user, &hash, now)?;
-    record_management(tx, user, request, "account.password", None, now)?;
+    record_management(tx, user, request, "account.password", None, None, now)?;
     Ok(((), revocation_effects(changes, sessions)))
 }
 
@@ -246,7 +247,7 @@ pub(crate) fn change_email(
     verified: LoginCandidate,
     email: String,
     request: RequestId,
-    configurations: &crate::configuration::Configurations,
+    committer: &crate::configuration::Committer,
 ) -> Result<(User, Vec<Effect>), Error> {
     let now = now()?;
     let user = verified_user(tx, &digest, &verified, now)?;
@@ -268,10 +269,10 @@ pub(crate) fn change_email(
             "UPDATE users SET email=?1 WHERE id=?2",
             params![email, user.as_uuid().as_bytes().as_slice()],
         )?;
-        let effects = configurations.synchronize_email(tx, user, &old, &email, request)?;
+        let effects = committer.synchronize_email(tx, user, &old, &email, request)?;
         changes.extend(effects.iter().flat_map(|effect| effect.changes()));
         changes.extend(authorization_changes(tx, user)?);
-        record_management(tx, user, request, "account.email", None, now)?;
+        record_management(tx, user, request, "account.email", None, Some(&old), now)?;
     }
     Ok((User { id: user, email }, changes))
 }
@@ -298,7 +299,7 @@ pub(crate) fn issue_reset(
     let (token, digest) = crate::accounts::issue_one_time("mwr_")?;
     tx.execute("UPDATE password_resets SET revoked_at=?1 WHERE user_id=?2 AND consumed_at IS NULL AND revoked_at IS NULL",params![now,user.as_uuid().as_bytes().as_slice()])?;
     tx.execute("INSERT INTO password_resets(token_hash,user_id,credential_version,expires_at) VALUES(?1,?2,?3,?4)",params![digest.as_slice(),user.as_uuid().as_bytes().as_slice(),version,expires])?;
-    record_management(tx, user, request, "account.resetIssued", None, now)?;
+    record_management(tx, user, request, "account.resetIssued", None, None, now)?;
     Ok(IssuedReset {
         token,
         expires_at: timestamp(expires)?,
@@ -364,6 +365,6 @@ pub(crate) fn redeem_reset(
         "UPDATE password_resets SET consumed_at=?1 WHERE token_hash=?2",
         params![now, digest.as_slice()],
     )?;
-    record_management(tx, user, request, "account.passwordReset", None, now)?;
+    record_management(tx, user, request, "account.passwordReset", None, None, now)?;
     Ok(((), revocation_effects(changes, sessions)))
 }

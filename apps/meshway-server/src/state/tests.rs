@@ -110,6 +110,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         authorization_digest: content_digest(b"authorization"),
         observation_authorization_digest: content_digest(b"authorization"),
         visible: BTreeSet::from([node, peer]),
+        hostnames: BTreeMap::from([(node, "node".into()), (peer, "peer".into())]),
         full: BTreeSet::from([node]),
         observation_paths: BTreeSet::from([vec![node, peer]]),
         mesh_addresses: admission.mesh_addresses.clone(),

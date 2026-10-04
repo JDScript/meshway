@@ -61,6 +61,7 @@ async fn generated_rust_stream_decodes_production_snapshots_and_replays_only_una
     assert!(config.id.is_none());
     let StreamEvent::ConfigSnapshot {
         batch,
+        request_id,
         configuration,
         progress,
     } = config.data.0
@@ -77,6 +78,7 @@ async fn generated_rust_stream_decodes_production_snapshots_and_replays_only_una
     };
     assert_eq!(network_id, network.id);
     assert_eq!(revision, source.revision);
+    assert_ne!(request_id, source.request_id);
     assert_eq!(progress.unwrap().summary.target_count, 0);
     let entities = next(&mut stream).await;
     assert!(entities.id.is_none());

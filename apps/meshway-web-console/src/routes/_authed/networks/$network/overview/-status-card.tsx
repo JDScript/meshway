@@ -3,35 +3,31 @@ import { ChevronDownIcon } from "lucide-react"
 import { useState } from "react"
 
 import { failureText } from "@/api/failure"
-import { StatusDot } from "@/components/chrome/status-dot"
+import { NodeStatusDot } from "@/components/chrome/node-status"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
 import {
   countBy,
   EVIDENCE_ORDER,
-  FRESHNESS_ORDER,
   linkKey,
   linkLook,
   PHASE_ORDER,
   type MapNode,
 } from "@/lib/network-map"
-import {
-  evidenceLabel,
-  freshnessLabel,
-  linkPhaseLabel,
-} from "@/lib/state-labels"
+import { STATUS_ORDER } from "@/lib/nodes/status"
+import { evidenceLabel, linkPhaseLabel, statusLabel } from "@/lib/state-labels"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { highlightOnGlobe } from "@/state/globe"
 
 import { Group } from "./-group"
 import { HistoryLayer, type HistoryLayerProps } from "./-history-layer"
-import { freshnessColor, lookColor, unlocatedReason } from "./-labels"
+import { lookColor, unlocatedReason } from "./-labels"
 
 /**
  * The overview's corner: the State's time and how it is kept current, the
- * nodes by freshness and the links by phase and evidence, the nodes the
+ * nodes by status and the links by phase and evidence, the nodes the
  * controller did not locate (with its reason) and the current links, which
  * are drawn only between located ends. Every number is counted from the
  * State as read.
@@ -134,19 +130,15 @@ export function StatusCard({
             <dd className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <span className="font-medium tabular-nums">{nodes.length}</span>
               {countBy(
-                nodes.map((node) => node.freshness),
-                FRESHNESS_ORDER
+                nodes.map((node) => node.status),
+                STATUS_ORDER
               ).map(({ value, count }) => (
                 <span
                   key={value}
                   className="flex items-center gap-1.5 text-meta text-muted-foreground"
                 >
-                  <StatusDot
-                    size="sm"
-                    color={freshnessColor(value)}
-                    shape={value === "current" ? "live" : "hollow"}
-                  />
-                  {freshnessLabel[value]()}
+                  <NodeStatusDot size="sm" status={value} />
+                  {statusLabel[value]()}
                   <span className="text-foreground tabular-nums">{count}</span>
                 </span>
               ))}
@@ -189,10 +181,7 @@ export function StatusCard({
                       onClick={() => onOpenNode(node.id)}
                       className="list-row group/row flex h-12 w-full items-center gap-3 px-2.5 text-left"
                     >
-                      <StatusDot
-                        color={freshnessColor(node.freshness)}
-                        shape={node.freshness === "current" ? "live" : "hollow"}
-                      />
+                      <NodeStatusDot status={node.status} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-row font-medium">
                           {node.name}
@@ -202,7 +191,7 @@ export function StatusCard({
                         </span>
                       </span>
                       <span className="shrink-0 text-meta text-muted-foreground">
-                        {freshnessLabel[node.freshness]()}
+                        {statusLabel[node.status]()}
                       </span>
                     </button>
                   </li>

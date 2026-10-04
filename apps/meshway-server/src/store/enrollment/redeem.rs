@@ -1,5 +1,5 @@
 use super::{VerifiedEnrollmentProof, hash, pkce, requests::pending};
-use crate::enrollment::{EnrollmentCommit, NodeAdmission};
+use crate::enrollment::NodeAdmission;
 use crate::error::Error;
 use crate::secrets::Sealer;
 use crate::store::{
@@ -56,7 +56,7 @@ pub(crate) fn redeem_key_in_transaction(
     request: EnrollmentRequestId,
     secret: WireSecret,
     verifier: WireSecret,
-    commit: &dyn EnrollmentCommit,
+    commit: &crate::configuration::Committer,
 ) -> Result<
     (
         EnrollmentResponse,
@@ -163,8 +163,15 @@ pub(crate) fn redeem_key_in_transaction(
         actor,
         initial,
     };
-    verify_admission(tx, sealer, &admission)?;
-    let effects = commit.insert_node(tx, &admission)?;
+    let effects = commit.commit(
+        tx,
+        admission.network,
+        crate::configuration::Intent::Enrollment {
+            admission: &admission,
+        },
+        meshway_model::RequestId::new(admission.request.into_uuid())
+            .map_err(|_| Error::Internal("admission request ID"))?,
+    )?;
     tx.execute(
         "UPDATE enrollment_requests SET node_id=?1,consumed_at=?2,binding_digest=?3 WHERE id=?4",
         params![
@@ -190,7 +197,7 @@ pub(crate) fn redeem_in_transaction(
     sealer: &Sealer,
     id: EnrollmentRequestId,
     request: RedeemEnrollmentRequest,
-    commit: &dyn EnrollmentCommit,
+    commit: &crate::configuration::Committer,
 ) -> Result<
     (
         EnrollmentResponse,
@@ -299,8 +306,15 @@ pub(crate) fn redeem_in_transaction(
             listeners: Default::default(),
         },
     };
-    verify_admission(tx, sealer, &admission)?;
-    let effects = commit.insert_node(tx, &admission)?;
+    let effects = commit.commit(
+        tx,
+        admission.network,
+        crate::configuration::Intent::Enrollment {
+            admission: &admission,
+        },
+        meshway_model::RequestId::new(admission.request.into_uuid())
+            .map_err(|_| Error::Internal("admission request ID"))?,
+    )?;
     if p.existing.is_some() {
         // A re-login keeps the Node ID and keys but always ends the previous
         // control session and instance, even when the identity did not change.

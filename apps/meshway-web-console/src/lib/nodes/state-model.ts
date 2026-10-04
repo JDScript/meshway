@@ -5,7 +5,6 @@ import type {
   ConfigurationRef,
   ConfigurationState,
   EndpointCandidate,
-  Freshness,
   ListenerState,
   NodeState,
   NodeStateView,
@@ -46,16 +45,6 @@ export const fullReport = (view: NodeStateView | undefined) => {
   return report.view === "full" ? report.report : null
 }
 
-/** How a node's dot is drawn: lit only for a current report. */
-export type Vitality = "live" | "quiet"
-
-export const vitalityOf = (freshness: Freshness | undefined): Vitality =>
-  freshness === "current" ? "live" : "quiet"
-
-/** When the controller received the node's last report, else when the node observed it. */
-export const reportTime = (view: NodeStateView | undefined): string | null =>
-  view?.receivedAt ?? view?.observedAt ?? null
-
 /** `at` has passed. */
 export const isPast = (at: string | null | undefined, now: number) =>
   at !== null && at !== undefined && Date.parse(at) <= now
@@ -90,6 +79,39 @@ export function configurationFacts(
       : null,
     current: currentRevision === undefined ? null : applied === currentRevision,
   }
+}
+
+/**
+ * Where the node's configuration stands, as one fact: a revision it
+ * failed to apply or is applying, else the one it applied against the
+ * current one (unknown without a full report).
+ */
+export type ConfigurationSync =
+  | { kind: "failed" | "applying"; revision: number }
+  | { kind: "current" | "applied"; revision: number }
+  | { kind: "behind"; applied: number; current: number }
+  | { kind: "none" }
+  | { kind: "unknown" }
+
+export function configurationSync(
+  configuration: ConfigurationState | null,
+  currentRevision: number | undefined
+): ConfigurationSync {
+  if (!configuration) return { kind: "unknown" }
+  const { applied, progress } = configurationFacts(
+    configuration,
+    currentRevision
+  )
+  if (progress?.phase === "failed")
+    return { kind: "failed", revision: progress.revision }
+  if (progress && progress.phase !== "applied")
+    return { kind: "applying", revision: progress.revision }
+  if (applied === null) return { kind: "none" }
+  if (currentRevision === undefined)
+    return { kind: "applied", revision: applied }
+  return applied === currentRevision
+    ? { kind: "current", revision: applied }
+    : { kind: "behind", applied, current: currentRevision }
 }
 
 /** The same execution target: one publication's slice for the node, at one revision. */

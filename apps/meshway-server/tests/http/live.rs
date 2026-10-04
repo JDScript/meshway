@@ -358,7 +358,14 @@ async fn member_inventory_excludes_execution_peers_and_settings_refresh_in_strea
     .await;
     let mut events =
         Events::open(&c, net(&s, network, "events"), member.token.expose(), None).await;
-    events.user().await;
+    let stream_request_id = events.response.headers()["x-request-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let StreamEvent::ConfigSnapshot { request_id, .. } = events.user().await.1.0 else {
+        panic!("configuration")
+    };
+    assert_eq!(request_id.to_string(), stream_request_id);
     let StreamEvent::EntitiesSnapshot { entities, .. } = events.user().await.1.0 else {
         panic!("inventory")
     };
@@ -380,6 +387,14 @@ async fn member_inventory_excludes_execution_peers_and_settings_refresh_in_strea
         state.nodes.contains_key(&b.node_id),
         "authorized narrow peer State remains available"
     );
+    // The peer is named by its configured hostname, nothing more from its
+    // system report.
+    assert_eq!(state.nodes[&b.node_id].hostname, "node-32");
+    assert_eq!(state.nodes[&a.node_id].hostname, "node-31");
+    assert!(matches!(
+        state.nodes[&b.node_id].report,
+        None | Some(VisibleReport::Peer { .. })
+    ));
     events.ready().await;
     let mut node_events =
         Events::open(&c, format!("{}/agent-api/v1/events", s.url), &at, None).await;
@@ -718,7 +733,10 @@ async fn disconnected_streams_release_active_quota_and_keep_bounded_replay() {
     let identity = ReadIdentity::user_session(owner.token.expose(), network).unwrap();
     let mut last_cursor = None;
     for _ in 0..12 {
-        let id = service.open_stream(identity.clone(), None).await.unwrap();
+        let id = service
+            .open_stream(identity.clone(), None, request())
+            .await
+            .unwrap();
         for _ in 0..4 {
             let StreamPoll::Frame(frame) = service.poll(&id).await.unwrap() else {
                 panic!("initial batch")
@@ -731,20 +749,28 @@ async fn disconnected_streams_release_active_quota_and_keep_bounded_replay() {
     }
     let mut active = vec![];
     for _ in 0..4 {
-        active.push(service.open_stream(identity.clone(), None).await.unwrap());
+        active.push(
+            service
+                .open_stream(identity.clone(), None, request())
+                .await
+                .unwrap(),
+        );
     }
     assert!(matches!(
-        service.open_stream(identity.clone(), None).await,
+        service.open_stream(identity.clone(), None, request()).await,
         Err(Error::StateLimit)
     ));
     assert!(matches!(
         service
-            .open_stream(identity.clone(), last_cursor.clone())
+            .open_stream(identity.clone(), last_cursor.clone(), request())
             .await,
         Err(Error::StateLimit)
     ));
     service.cancel(&active.pop().unwrap());
-    let resumed = service.open_stream(identity, last_cursor).await.unwrap();
+    let resumed = service
+        .open_stream(identity, last_cursor, request())
+        .await
+        .unwrap();
     assert!(matches!(
         service.poll(&resumed).await.unwrap(),
         StreamPoll::Pending
@@ -1070,7 +1096,7 @@ async fn production_config_changes_and_scope_changes_do_not_become_identity_loss
     let service = s.app.user_state_service().unwrap();
     let identity = |token: &str| ReadIdentity::user_session(token, network).unwrap();
     let member_stream = service
-        .open_stream(identity(member.token.expose()), None)
+        .open_stream(identity(member.token.expose()), None, request())
         .await
         .unwrap();
     // Do not poll this initial batch: role loss must discard even its first
@@ -1095,11 +1121,11 @@ async fn production_config_changes_and_scope_changes_do_not_become_identity_loss
         StreamPoll::Closed
     ));
     let owner_stream = service
-        .open_stream(identity(owner.token.expose()), None)
+        .open_stream(identity(owner.token.expose()), None, request())
         .await
         .unwrap();
     let member_stream = service
-        .open_stream(identity(member.token.expose()), None)
+        .open_stream(identity(member.token.expose()), None, request())
         .await
         .unwrap();
     for stream in [&owner_stream, &member_stream] {
@@ -1205,7 +1231,7 @@ async fn production_config_changes_and_scope_changes_do_not_become_identity_loss
         }
     }
     let queued = service
-        .open_stream(identity(owner.token.expose()), None)
+        .open_stream(identity(owner.token.expose()), None, request())
         .await
         .unwrap();
     for _ in 0..4 {
@@ -1271,7 +1297,7 @@ async fn production_config_changes_and_scope_changes_do_not_become_identity_loss
     // A write during an unfinished full sync discards that batch and sends a
     // new authorized snapshot. The old cursor never becomes ready.
     let initial = service
-        .open_stream(identity(owner.token.expose()), None)
+        .open_stream(identity(owner.token.expose()), None, request())
         .await
         .unwrap();
     assert!(matches!(
@@ -1642,6 +1668,7 @@ async fn production_demand_receipts_peer_expansion_and_node_termination() {
                 authorization: bt.clone(),
             },
             None,
+            request(),
         )
         .await
         .unwrap();

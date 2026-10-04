@@ -38,12 +38,16 @@ wire_object! { pub struct MemberRemovedResponse { pub request_id:RequestId,pub r
 wire_object! { pub struct MemberMutationResponse { pub request_id: RequestId, pub member: crate::MemberSummary } }
 wire_object! { pub struct CreateJoinLinkRequest { pub request_id: RequestId, pub role: MembershipRole, pub expires_in_seconds: u32 [minimum=60,maximum=604800] } }
 wire_object! { pub struct JoinLinkCredentialRequest { pub token: WireSecret } }
+// A user named by a link. The email is the account's current address and
+// stays readable after the user leaves the network.
+wire_object! { #[derive(Debug,Clone,PartialEq,Eq)] pub struct LinkUser { pub user_id: UserId, pub email: String } }
 wire_object! { #[derive(Debug,Clone)] pub struct JoinLinkView {
     pub id: JoinLinkId, pub network_id: NetworkId, pub role: MembershipRole,
     pub created_at: DateTime<Utc>,pub expires_at: DateTime<Utc>,
+    pub issued_by: LinkUser,
     #[serde(deserialize_with="nullable")] pub revoked_at: Option<DateTime<Utc>> [required=true],
     #[serde(deserialize_with="nullable")] pub consumed_at: Option<DateTime<Utc>> [required=true],
-    #[serde(deserialize_with="nullable")] pub consumed_by_user_id: Option<UserId> [required=true],
+    #[serde(deserialize_with="nullable")] pub consumed_by: Option<LinkUser> [required=true],
     pub actions: JoinLinkActions,
 } }
 wire_object! { #[derive(Debug,Clone)] pub struct JoinLinkActions { pub revoke: bool } }

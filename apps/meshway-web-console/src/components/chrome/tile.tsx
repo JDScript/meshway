@@ -11,7 +11,7 @@ export function Tile({
 }: {
   label: string
   children: ReactNode
-  tone?: "warning"
+  tone?: "warning" | "destructive"
   action?: ReactNode
 }) {
   return (
@@ -21,7 +21,8 @@ export function Tile({
         <div
           className={cn(
             "mt-1 truncate text-row font-medium",
-            tone === "warning" && "text-warning"
+            tone === "warning" && "text-warning",
+            tone === "destructive" && "text-destructive"
           )}
         >
           {children}

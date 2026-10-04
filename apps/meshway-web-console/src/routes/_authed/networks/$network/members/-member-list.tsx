@@ -3,7 +3,6 @@ import {
   type JoinLinkListResponse,
   type JoinLinkView,
   type MembershipRole,
-  type MemberSummary,
   type NetworkMembersResponse,
 } from "@meshway/control-client"
 import {
@@ -144,12 +143,7 @@ export function MemberList({
           onOpen={onOpen}
         />
       ) : (
-        <Links
-          networkId={networkId}
-          links={links}
-          members={rowsOf(members)}
-          now={now}
-        />
+        <Links networkId={networkId} links={links} now={now} />
       )}
 
       <JoinLinkDialog
@@ -257,12 +251,10 @@ const stateLabel: Record<JoinLinkState, (at: string) => string> = {
 function Links({
   networkId,
   links,
-  members,
   now,
 }: {
   networkId: string
   links: LinksRead
-  members: readonly MemberSummary[]
   now: number
 }) {
   const queryClient = useQueryClient()
@@ -298,9 +290,6 @@ function Links({
     link,
     ...joinLinkState(link, now),
   }))
-  const emailOf = (userId: string | null) =>
-    members.find((member) => member.userId === userId)?.email
-
   return (
     <>
       <PanelList aria-labelledby={surfaceTitleId("members", "panel")}>
@@ -312,7 +301,11 @@ function Links({
           <ListNote>{m.members_links_empty()}</ListNote>
         ) : null}
         {rows.map(({ link, state, at }) => {
-          const user = state === "used" ? emailOf(link.consumedByUserId) : null
+          // A used link says who joined with it; any other, who issued it.
+          const who =
+            state === "used" && link.consumedBy
+              ? m.members_link_used_by({ email: link.consumedBy.email })
+              : m.members_link_issued_by({ email: link.issuedBy.email })
           return (
             <StaticRow
               key={link.id}
@@ -338,8 +331,7 @@ function Links({
               }
               subtitle={
                 <span className="truncate">
-                  {stateLabel[state](dateTime(at) ?? "—")}
-                  {user ? ` · ${user}` : ""}
+                  {stateLabel[state](dateTime(at) ?? "—")} · {who}
                 </span>
               }
               trail={

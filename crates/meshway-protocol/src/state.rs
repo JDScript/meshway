@@ -56,6 +56,8 @@ crate::object::wire_tagged! { tag="view"; #[derive(Clone, Debug, PartialEq, Eq)]
     Peer { report: Box<PeerState> },
 } }
 wire_object! { #[derive(Clone, Debug, PartialEq)] pub struct NodeStateView {
+    /// The configured hostname (display name), not the OS hostname a report carries.
+    pub hostname: String,
     pub instance_id: Option<InstanceId>, pub report_sequence: Option<Sequence>,
     pub observed_at: Option<DateTime<Utc>>,
     pub received_at: Option<DateTime<Utc>>, pub report_expires_at: Option<DateTime<Utc>>,

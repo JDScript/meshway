@@ -4,7 +4,7 @@
 
 ## Actions
 
-资源视图返回 Server 计算的操作提示，例如 NetworkActions.joinLinkRoles、MemberActions.assignableRoles／remove、加入链接及接入密钥的 actions.revoke，Node 库存的 canDelete 和分密钥吊销资格。
+资源视图返回 Server 计算的操作提示，例如 NetworkActions.readConfiguration／editConfiguration／joinLinkRoles、MemberActions.assignableRoles／remove、加入链接及接入密钥的 actions.revoke，Node 库存的 canDelete 和分密钥吊销资格。readConfiguration 为 false 时客户端直接读成员视图（本人节点设置），不用一次被拒的完整配置请求探测角色。
 
 - actions 只驱动界面，不是授权票据；mutation 在最终事务重检真实身份和权限。
 - 不能从一个管理标志推导全部权限。Tag owner、本人设备、目标角色和最后 Owner 约束分别计算。

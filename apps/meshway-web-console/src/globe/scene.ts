@@ -11,6 +11,8 @@
 //   topology and planned paths are not links. Nothing moves along a link:
 //   no traffic is measured here.
 
+import type { NodeStatus } from "@/lib/nodes/status"
+
 /** Where the controller's GeoIP places a node; approximate, never GPS. */
 export type GeoPlacement = {
   lat: number
@@ -23,8 +25,8 @@ export type SceneNode = {
   id: string
   name: string
   placement: GeoPlacement | null
-  /** The node's latest report is current (`freshness: "current"`). */
-  current: boolean
+  /** Its status (`lib/nodes/status.ts`), drawn in its tone's colour. */
+  status: NodeStatus
 }
 
 /**

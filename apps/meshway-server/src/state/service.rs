@@ -5,7 +5,7 @@ use crate::effect::Effect;
 use crate::error::Error;
 use crate::{observations::Observations, resources::GeoIp, store::Handle};
 use chrono::{DateTime, Duration, Utc};
-use meshway_model::{Digest, NetworkId, NodeId};
+use meshway_model::{Digest, NetworkId, NodeId, RequestId};
 use meshway_protocol::{
     events::{ClosedReason, ResetReason, StreamEvent},
     state::{StateAccepted, StateReport, StateView},
@@ -120,6 +120,7 @@ type ProviderEvent<P> = StreamEvent<
 >;
 struct Subscription<P: StateProvider> {
     identity: ReadIdentity,
+    request_id: RequestId,
     owner: Digest,
     authorization: Digest,
     last: ProviderView<P>,
@@ -306,6 +307,7 @@ impl<P: StateProvider> StateService<P> {
         &self,
         identity: ReadIdentity,
         cursor: Option<String>,
+        request_id: RequestId,
     ) -> Result<String, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
@@ -358,6 +360,7 @@ impl<P: StateProvider> StateService<P> {
                         }));
                         sub.pending = pending;
                         sub.disconnected_at = None;
+                        sub.request_id = request_id;
                         if sub.pending.len() <= MAX_REPLAY_EVENTS
                             && sub
                                 .pending
@@ -398,6 +401,7 @@ impl<P: StateProvider> StateService<P> {
                 let ready = random_id()?;
                 let mut sub = Subscription {
                     identity,
+                    request_id,
                     owner,
                     authorization,
                     last: view,
@@ -784,6 +788,7 @@ fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result
         None,
         &ProviderEvent::<P>::ConfigSnapshot {
             batch: batch.clone(),
+            request_id: sub.request_id,
             configuration: sub.last.configuration.clone(),
             progress: sub.last.progress.clone(),
         },

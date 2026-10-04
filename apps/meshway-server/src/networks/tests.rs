@@ -73,7 +73,10 @@ async fn real_creation_isolation_idempotency_sealed_complete_configuration_and_r
     assert_eq!(first.name, "Personal");
     assert_eq!(first.role, MembershipRole::Owner);
     assert!(
-        first.actions.rename && first.actions.edit_configuration && first.actions.manage_members
+        first.actions.rename
+            && first.actions.read_configuration
+            && first.actions.edit_configuration
+            && first.actions.manage_members
     );
     assert_eq!(first.current_revision, Revision::MIN);
     assert_eq!(
@@ -236,6 +239,7 @@ async fn current_roles_creator_revocation_rename_cas_and_transactional_activity(
         member.actions,
         NetworkActions {
             rename: false,
+            read_configuration: false,
             edit_configuration: false,
             manage_members: false,
             join_link_roles: vec![],

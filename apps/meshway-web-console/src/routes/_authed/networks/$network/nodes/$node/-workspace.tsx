@@ -9,39 +9,39 @@ import { useNavigate } from "@tanstack/react-router"
 import type { ReactNode } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
-import { CopyButton } from "@/components/chrome/copy-button"
 import { DraftMark } from "@/components/chrome/draft-mark"
-import { Section } from "@/components/chrome/section"
 import { SegmentedTabs } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
-import { Tile } from "@/components/chrome/tile"
 import { surfaceTitleId } from "@/components/surface/page-frame"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
-import { useNow } from "@/hooks/use-now"
 import { operationsOf } from "@/lib/configuration/draft-state"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { editsNode, isDeleted } from "@/lib/configuration/node-operations"
-import { agoTime, dateTime } from "@/lib/format"
+import { stateOf } from "@/lib/nodes/state-model"
+import { lastSeen, nodeStatus } from "@/lib/nodes/status"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
 import { identityText } from "../-labels"
 import { NODE_TABS, type NodeTab } from "../-search"
+import { NodeDiagnostics } from "./-diagnostics"
 import { LatencyTab } from "./-latency/latency-tab"
+import { LiveStatus } from "./-live-status"
 import { NodeManage } from "./-manage"
+import { NodeOverview } from "./-overview"
 import { NodeSettings } from "./-settings"
-import { NodeStateSections } from "./-state"
 import { NodeTransport } from "./-transport/transport-tab"
 
 const isTab = (value: unknown): value is NodeTab =>
   NODE_TABS.some((tab) => tab === value)
 
 /**
- * One node in full: what the controller registered for it and its runtime
- * State; its settings and listeners (edited into the configuration draft)
- * with what the node reports about its sockets, links and paths; its keys
- * and deletion.
+ * One node in full: its status in the header; what matters about it
+ * first (overview); its settings and listeners (edited into the
+ * configuration draft) with what it reports about its sockets, links and
+ * paths; its latency; what its status rests on (diagnostics); its keys and
+ * deletion.
  */
 export function NodeWorkspace({
   networkId,
@@ -137,6 +137,9 @@ function Body({
   const navigate = useNavigate()
   const ops = operationsOf(useConfigurationDraft(networkId).entry)
   const deleting = isDeleted(ops, node.id)
+  const view = stateOf(state.data, node.id)
+  const currentRevision =
+    state.data?.configurationRevision ?? network?.currentRevision
   const openSource = () =>
     void navigate({
       to: "/networks/$network/configuration/$view",
@@ -159,6 +162,14 @@ function Body({
         action={<CloseButton onClick={onClose} />}
         meta={
           <div className="flex h-5 min-w-0 items-center gap-3 text-row text-muted-foreground">
+            {state.data !== undefined ? (
+              <span className="shrink-0 text-foreground">
+                <LiveStatus
+                  status={nodeStatus(node, view)}
+                  seen={lastSeen(view)}
+                />
+              </span>
+            ) : null}
             <span className="shrink-0 font-mono text-meta">
               {node.addresses.ipv4 ?? node.addresses.ipv6 ?? "—"}
             </span>
@@ -189,12 +200,18 @@ function Body({
               { value: "settings", label: m.nodes_tab_settings() },
               { value: "transport", label: m.nodes_tab_transport() },
               { value: "latency", label: m.history_tab() },
+              { value: "diagnostics", label: m.nodes_tab_diagnostics() },
               { value: "manage", label: m.nodes_tab_manage() },
             ]}
           />
         </div>
         <Pane value="overview">
-          <Overview node={node} network={network} state={state} />
+          <NodeOverview
+            node={node}
+            state={state}
+            currentRevision={currentRevision}
+            onTransport={() => onTab("transport")}
+          />
         </Pane>
         <Pane value="settings">
           <NodeSettings
@@ -216,101 +233,18 @@ function Body({
         <Pane value="latency">
           <LatencyTab networkId={networkId} nodeId={node.id} />
         </Pane>
+        <Pane value="diagnostics">
+          <NodeDiagnostics
+            nodeId={node.id}
+            desired={node.desiredExecution}
+            state={state}
+            currentRevision={currentRevision}
+          />
+        </Pane>
         <Pane value="manage">
           <NodeManage networkId={networkId} node={node} onDeleted={onDeleted} />
         </Pane>
       </Tabs>
     </div>
-  )
-}
-
-function Overview({
-  node,
-  network,
-  state,
-}: {
-  node: NodeInventoryView
-  network: NetworkSummary | null
-  state: UseQueryResult<StateView>
-}) {
-  const now = useNow(10_000)
-  return (
-    <div className="flex flex-col gap-8">
-      <Section title={m.nodes_facts()}>
-        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-          <div className="col-span-2">
-            <Tile
-              label={m.nodes_id()}
-              action={<CopyButton value={node.id} label={m.nodes_id()} />}
-            >
-              <span className="font-mono font-normal">{node.id}</span>
-            </Tile>
-          </div>
-          <Tile label={m.nodes_hostname()}>{node.hostname}</Tile>
-          <Tile label={m.nodes_enabled()}>
-            {node.enabled ? m.nodes_enabled_on() : m.nodes_enabled_off()}
-          </Tile>
-          <div className="col-span-2">
-            <Tile
-              label={
-                node.identity.type === "tag"
-                  ? m.nodes_identity_tags()
-                  : m.nodes_identity_user()
-              }
-            >
-              {node.identity.type === "tag" ? (
-                <span className="font-mono font-normal">
-                  {node.identity.tags.join(", ")}
-                </span>
-              ) : (
-                node.identity.user
-              )}
-            </Tile>
-          </div>
-          <div className="col-span-2">
-            <Tile label={m.nodes_registered()}>
-              {dateTime(node.registeredAt) ?? "—"}
-              <span className="font-normal text-muted-foreground">
-                {" "}
-                · {agoTime(node.registeredAt, now)}
-              </span>
-            </Tile>
-          </div>
-          <div className="col-span-2">
-            <Address label="IPv4" value={node.addresses.ipv4} />
-          </div>
-          <div className="col-span-2">
-            <Address label="IPv6" value={node.addresses.ipv6} />
-          </div>
-        </div>
-      </Section>
-      <NodeStateSections
-        nodeId={node.id}
-        configuredHostname={node.hostname}
-        currentRevision={
-          state.data?.configurationRevision ?? network?.currentRevision
-        }
-        desired={node.desiredExecution}
-        state={state}
-        now={now}
-      />
-    </div>
-  )
-}
-
-function Address({ label, value }: { label: string; value: string | null }) {
-  return (
-    <Tile
-      label={label}
-      action={value ? <CopyButton value={value} label={label} /> : undefined}
-    >
-      {value ? (
-        <span className="font-mono font-normal">{value}</span>
-      ) : (
-        <span className="font-normal text-muted-foreground">
-          {m.nodes_address_none()}
-        </span>
-      )}
-    </Tile>
   )
 }
