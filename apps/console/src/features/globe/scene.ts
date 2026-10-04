@@ -1,43 +1,56 @@
 // What the globe shows, independent of how it is rendered.
 //
 // Position and connection evidence stay strictly apart:
-// - a node is on the globe only with a placement that names its source and
-//   observation time (no such source exists yet); every other node is left
-//   off the globe and listed as unplaced. Names, Mesh IPs and the legacy
-//   administrator country are never locations.
-// - links are configured channels with the agents' own fresh reports
-//   (features/topology). Grants and planned paths are not links.
+// - a node is on the globe only with the controller's derived location (a
+//   GeoIP result for an underlay IP the node observed); every other node is
+//   left off the globe and listed as unlocated. Names, Mesh IPs and an
+//   administrator's country are never locations.
+// - links are the channels the nodes' current State reports, styled by
+//   their reported phase and the controller's evidence; history links come
+//   from recorded link events and are drawn apart. Grants, allowed
+//   topology and planned paths are not links. Nothing moves along a link:
+//   no traffic is measured here.
 
-/** Region-level at best, always with provenance. */
+/** Where the controller's GeoIP places a node; approximate, never GPS. */
 export type GeoPlacement = {
   lat: number
   lng: number
-  /** e.g. "controller GeoIP of the STUN-observed underlay IP". */
-  source: string
-  observedAt: string
+  /** The dataset's estimate; null when it gives none. */
+  accuracyKm: number | null
 }
-
-/**
- * - `live`: the agent's runtime report is current (it breathes).
- * - `contact`: recent control-plane contact only; not data-plane evidence.
- * - `quiet`: neither.
- */
-export type Vitality = "live" | "contact" | "quiet"
 
 export type SceneNode = {
   id: string
   name: string
   placement: GeoPlacement | null
-  vitality: Vitality
+  /** The node's latest report is current (`freshness: "current"`). */
+  current: boolean
 }
 
-/** Only `confirmed` flows: both ends report a fresh authenticated probe. */
-export type LinkLook = "confirmed" | "one_sided" | "degraded" | "configured"
+/**
+ * - `matched`: authenticated, both ends report the same channel.
+ * - `one_sided`: authenticated, one end reports it.
+ * - `conflicting`: the two ends' reports disagree.
+ * - `expired`: a report it rests on is no longer current.
+ * - `preparing` / `failed` / `closed`: the reported phase.
+ * - `history`: seen in the chosen history window, not current.
+ */
+export type LinkLook =
+  | "matched"
+  | "one_sided"
+  | "conflicting"
+  | "expired"
+  | "preparing"
+  | "failed"
+  | "closed"
+  | "history"
 
 export type SceneLink = {
   key: string
   nodeIds: [string, string]
   look: LinkLook
+  /** Among links between the same two nodes: 0, 1, 2… (each arcs a little higher). */
+  lane: number
 }
 
 export type Scene = {
@@ -100,7 +113,12 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
  * have no single great circle; the path then runs over the pole side, so it
  * is still one smooth arc rather than an undefined one.
  */
-export function linkCurve(a: Anchor, b: Anchor, samples = 72): Vec3[] {
+export function linkCurve(
+  a: Anchor,
+  b: Anchor,
+  samples = 72,
+  lane = 0
+): Vec3[] {
   const da = unit(cartesian(a.lat, a.lng))
   const db = unit(cartesian(b.lat, b.lng))
   const omega = Math.acos(Math.min(1, Math.max(-1, dot(da, db))))
@@ -108,7 +126,7 @@ export function linkCurve(a: Anchor, b: Anchor, samples = 72): Vec3[] {
   // (or, for opposite ends, towards the north pole).
   const pole: Vec3 = Math.abs(da[1]) > 0.99 ? [1, 0, 0] : [0, 1, 0]
   const towards = unit(cross(cross(da, Math.PI - omega < 1e-3 ? pole : db), da))
-  const bulge = 0.03 + 0.34 * (omega / Math.PI)
+  const bulge = (0.03 + 0.34 * (omega / Math.PI)) * (1 + 0.22 * lane)
   const points: Vec3[] = []
   for (let i = 0; i <= samples; i += 1) {
     const t = i / samples
@@ -138,44 +156,23 @@ type LineStyle = {
   opacity: number
 }
 
-/** The steady line every link has; only its pattern tells the evidence apart. */
+/** A steady line for every link; its colour and pattern tell the evidence apart. */
 export function lineStyle(look: LinkLook): LineStyle {
   switch (look) {
-    case "confirmed":
-      return { dashed: false, dash: 0, gap: 0, opacity: 0.55 }
+    case "matched":
+      return { dashed: false, dash: 0, gap: 0, opacity: 0.8 }
     case "one_sided":
-      return { dashed: false, dash: 0, gap: 0, opacity: 0.75 }
-    case "degraded":
+      return { dashed: false, dash: 0, gap: 0, opacity: 0.7 }
+    case "conflicting":
       return { dashed: true, dash: 2.4, gap: 1.6, opacity: 0.85 }
-    case "configured":
+    case "failed":
+      return { dashed: true, dash: 1.2, gap: 1.4, opacity: 0.8 }
+    case "preparing":
       return { dashed: true, dash: 0.7, gap: 1.8, opacity: 0.7 }
+    case "expired":
+    case "closed":
+      return { dashed: true, dash: 0.5, gap: 2.6, opacity: 0.55 }
+    case "history":
+      return { dashed: false, dash: 0, gap: 0, opacity: 0.22 }
   }
-}
-
-/**
- * The light pulses on a confirmed link: one stream each way at a steady
- * pace, because the dialling direction is not the traffic direction and no
- * traffic is measured. Nothing flows without fresh two-sided evidence or
- * when reduced motion is requested.
- */
-export function pulseStreams(
-  look: LinkLook,
-  motion: boolean
-): { reverse: boolean; phase: number }[] {
-  if (look !== "confirmed" || !motion) return []
-  return [
-    { reverse: false, phase: 0 },
-    { reverse: true, phase: 0.5 },
-  ]
-}
-
-/** Arc length of a sampled curve, in globe units. */
-export function curveLength(points: readonly Vec3[]): number {
-  let total = 0
-  for (let i = 1; i < points.length; i += 1) {
-    const a = points[i - 1]
-    const b = points[i]
-    if (a && b) total += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])
-  }
-  return total
 }

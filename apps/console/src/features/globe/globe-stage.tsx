@@ -5,7 +5,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
 import type { GlobeEngine } from "./engine"
-import { selectFromGlobe, useGlobeStore } from "./store"
+import { hoverFromGlobe, selectFromGlobe, useGlobeStore } from "./store"
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)"
 
@@ -56,7 +56,12 @@ export function GlobeStage() {
     let observer: ResizeObserver | null = null
     void import("./engine").then(({ createGlobeEngine }) => {
       if (disposed) return
-      created = createGlobeEngine(element, selectFromGlobe, markRevealed)
+      created = createGlobeEngine(
+        element,
+        selectFromGlobe,
+        hoverFromGlobe,
+        markRevealed
+      )
       const instance = created
       observer = new ResizeObserver(([entry]) => {
         if (entry)

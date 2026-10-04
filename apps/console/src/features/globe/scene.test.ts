@@ -5,8 +5,8 @@ import {
   anchorsOf,
   cartesian,
   GLOBE_RADIUS,
+  lineStyle,
   linkCurve,
-  pulseStreams,
   type Anchor,
   type SceneNode,
 } from "./scene.ts"
@@ -19,19 +19,14 @@ const node = (
   id,
   name,
   placement,
-  vitality: "quiet",
+  current: false,
 })
 
 const close = (p: readonly number[], q: readonly number[]) =>
   p.every((value, i) => Math.abs(value - (q[i] ?? 0)) < 1e-6)
 
 test("only a sourced placement puts a node on the globe; unplaced nodes get no anchor", () => {
-  const placed = node("p", "tokyo", {
-    lat: 35.7,
-    lng: 139.7,
-    source: "test",
-    observedAt: "2026-10-02T00:00:00Z",
-  })
+  const placed = node("p", "tokyo", { lat: 35.7, lng: 139.7, accuracyKm: 50 })
   const anchors = anchorsOf([placed, node("u", "unknown")])
   assert.deepEqual(anchors.get("p"), { lat: 35.7, lng: 139.7, altitude: 0.01 })
   assert.equal(anchors.has("u"), false)
@@ -80,13 +75,28 @@ test("a link between opposite points is still one smooth arc", () => {
   )
 })
 
-test("only confirmed links carry pulses, both ways, and never with reduced motion", () => {
-  assert.equal(pulseStreams("one_sided", true).length, 0)
-  assert.equal(pulseStreams("degraded", true).length, 0)
-  assert.equal(pulseStreams("configured", true).length, 0)
-  assert.equal(pulseStreams("confirmed", false).length, 0)
-  assert.deepEqual(
-    pulseStreams("confirmed", true).map((stream) => stream.reverse),
-    [false, true]
+test("a second link between the same nodes arcs higher, ends unchanged", () => {
+  const a: Anchor = { lat: 35.7, lng: 139.7, altitude: 0.01 }
+  const b: Anchor = { lat: 37.5, lng: 127, altitude: 0.01 }
+  const first = linkCurve(a, b, 32, 0)
+  const second = linkCurve(a, b, 32, 1)
+  assert.ok(close(first[0] ?? [], second[0] ?? []))
+  assert.ok(close(first.at(-1) ?? [], second.at(-1) ?? []))
+  assert.ok(
+    Math.hypot(...(second[16] ?? [])) > Math.hypot(...(first[16] ?? []))
   )
+})
+
+test("history links are fainter than any current link", () => {
+  const history = lineStyle("history").opacity
+  for (const look of [
+    "matched",
+    "one_sided",
+    "conflicting",
+    "expired",
+    "preparing",
+    "failed",
+    "closed",
+  ] as const)
+    assert.ok(lineStyle(look).opacity > history, look)
 })

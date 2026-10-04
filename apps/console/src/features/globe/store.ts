@@ -89,3 +89,19 @@ export function onGlobeSelect(
 export function selectFromGlobe(nodeId: string | null) {
   selectHandler(nodeId)
 }
+
+let hoverHandler: (nodeId: string | null) => void = () => undefined
+
+/** The view that shows a network owns what pointing at a node on the globe shows. Returns the cleanup. */
+export function onGlobeHover(
+  handler: (nodeId: string | null) => void
+): () => void {
+  hoverHandler = handler
+  return () => {
+    if (hoverHandler === handler) hoverHandler = () => undefined
+  }
+}
+
+export function hoverFromGlobe(nodeId: string | null) {
+  hoverHandler(nodeId)
+}

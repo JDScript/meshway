@@ -396,11 +396,9 @@
     animation: globe-node-enter 900ms var(--ease-entrance) backwards;
     animation-delay: calc(var(--enter-delay, 0ms) + 150ms);
   }
-  .globe-node[data-vitality="live"] {
+  /* A node whose latest report is current; others stay quiet. No marker moves on its own. */
+  .globe-node[data-current="true"] {
     --node-color: var(--vitality-live);
-  }
-  .globe-node[data-vitality="contact"] {
-    --node-color: var(--vitality-contact);
   }
   .globe-node[data-behind="true"] {
     opacity: 0;
@@ -424,8 +422,7 @@
     outline: 2px solid var(--ring);
     outline-offset: -5px;
   }
-  .globe-node__dot,
-  .globe-node__halo {
+  .globe-node__dot {
     position: absolute;
     left: -4px;
     top: -4px;
@@ -442,7 +439,7 @@
       transform 400ms var(--ease-entrance),
       box-shadow 400ms ease;
   }
-  .globe-node[data-vitality="quiet"] .globe-node__dot {
+  .globe-node:not([data-current="true"]) .globe-node__dot {
     box-shadow: 0 0 0 1.5px var(--background);
     opacity: 0.7;
   }
@@ -455,16 +452,6 @@
       0 0 0 1.5px var(--background),
       0 0 0 3.5px var(--node-color),
       0 0 22px 4px color-mix(in oklab, var(--node-color) 60%, transparent);
-  }
-  .globe-node__halo {
-    border: 1px solid var(--node-color);
-    opacity: 0;
-  }
-  .globe-node[data-vitality="live"] .globe-node__halo {
-    animation: globe-breathe 3.6s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
-  }
-  .globe-node[data-vitality="live"] .globe-node__halo--late {
-    animation-delay: 1.8s;
   }
   .globe-node__label {
     position: absolute;
@@ -485,27 +472,20 @@
       color 300ms ease,
       background 300ms ease;
   }
-  .globe-node[data-vitality="quiet"] .globe-node__label {
+  .globe-node:not([data-current="true"]) .globe-node__label {
     color: var(--muted-foreground);
+  }
+  /* Many nodes: names only where one is pointed at, focused or selected (labels are costly to composite). */
+  .globe-stage[data-dense="true"]
+    .globe-node:not([data-selected="true"], :hover, :focus-visible)
+    .globe-node__label {
+    display: none;
   }
   .globe-node[data-selected="true"] .globe-node__label {
     color: var(--foreground);
     background: color-mix(in oklab, var(--background) 80%, transparent);
   }
 
-  @keyframes globe-breathe {
-    0% {
-      transform: scale(0.8);
-      opacity: 0;
-    }
-    20% {
-      opacity: 0.75;
-    }
-    100% {
-      transform: scale(3.8);
-      opacity: 0;
-    }
-  }
   @keyframes globe-node-enter {
     from {
       opacity: 0;
@@ -513,8 +493,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .globe-node,
-    .globe-node__halo {
+    .globe-node {
       animation: none !important;
     }
   }

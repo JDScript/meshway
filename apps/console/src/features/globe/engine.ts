@@ -1,5 +1,4 @@
 import {
-  AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -9,7 +8,6 @@ import {
   LineBasicMaterial,
   LineDashedMaterial,
   LineSegments,
-  NormalBlending,
   Points,
   ShaderMaterial,
 } from "three"
@@ -35,24 +33,22 @@ import { DEFAULT_LOOK } from "./look"
 import {
   anchorsOf,
   cartesian,
-  curveLength,
   GLOBE_RADIUS,
   lineStyle,
   linkCurve,
-  pulseStreams,
   type Anchor,
   type LinkLook,
   type SceneNode,
   type Vec3,
-  type Vitality,
 } from "./scene"
 import { createStage } from "./stage"
 import { sameInsets, type GlobeState } from "./store"
 
 // The stage (stage.ts) provides the camera, controls, atmosphere and the DOM
-// node markers. The surface, land dots, links, pulses and the loader's comet are
+// node markers. The surface, land dots, links and the loader's comet are
 // drawn here with small shaders, so motion and light can be soft rather than
-// stepped. Everything shown comes in through update().
+// stepped. Everything shown comes in through update(). Links are still
+// lines: nothing travels along them, because no traffic is measured.
 //
 // The camera (zoom, latitude, the focus longitude) and the globe's offset
 // follow critically damped springs: whenever panels open, close or resize,
@@ -101,16 +97,8 @@ const REVEAL_SPIN_MS = 1800
 /** The interface comes in this far into the reveal, while the globe settles. */
 const REVEAL_UI_MS = 850
 const COMET_FADE_MS = 900
-/** Points per pulse; dense enough that the tail reads as one tapered streak. */
-const TRAIL = 44
-const TRAIL_SPACING = 0.0032
-const PULSE_SPEED = 70 // globe units per second
-
-const vitalityText: Record<Vitality, () => string> = {
-  live: () => m.vitality_live(),
-  contact: () => m.vitality_contact(),
-  quiet: () => m.vitality_quiet(),
-}
+/** Above this many placed nodes, names show only on the node pointed at, focused or selected. */
+const DENSE_LABELS = 120
 
 const easeOut = (t: number) => 1 - (1 - t) ** 4
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
@@ -177,14 +165,19 @@ function jump(s: Spring, value: number) {
 
 function lookColor(colors: GlobeColors, look: LinkLook): Rgb {
   switch (look) {
-    case "confirmed":
+    case "matched":
       return colors.confirmed
     case "one_sided":
       return colors.oneSided
-    case "degraded":
+    case "conflicting":
+    case "failed":
       return colors.degraded
-    case "configured":
+    case "preparing":
+    case "expired":
+    case "closed":
       return colors.configured
+    case "history":
+      return colors.land
   }
 }
 
@@ -319,13 +312,12 @@ type LinkObject = {
   material: LineBasicMaterial | LineDashedMaterial
   baseOpacity: number
   curve: Vec3[]
-  duration: number
-  streams: { reverse: boolean; phase: number }[]
 }
 
 export function createGlobeEngine(
   container: HTMLElement,
   onSelect: (nodeId: string | null) => void,
+  onHover: (nodeId: string | null) => void,
   onRevealed: () => void
 ): GlobeEngine {
   const look = DEFAULT_LOOK
@@ -487,36 +479,10 @@ export function createGlobeEngine(
   cometPlane.add(comet)
   layer.add(cometPlane)
 
-  // Links and their pulses.
+  // Links.
   const linkGroup = new Group()
   layer.add(linkGroup)
   let links: LinkObject[] = []
-  const pulseMaterial = pointShader(false)
-  let pulseGeometry = new BufferGeometry()
-  const pulses = new Points(pulseGeometry, pulseMaterial)
-  pulses.frustumCulled = false
-  pulses.renderOrder = 4
-  layer.add(pulses)
-  /** Buffers sized once per set of links; frames only rewrite their values. */
-  const allocatePulses = (capacity: number) => {
-    pulseGeometry.dispose()
-    pulseGeometry = new BufferGeometry()
-    pulseGeometry.setAttribute(
-      "position",
-      new BufferAttribute(new Float32Array(capacity * 3), 3)
-    )
-    pulseGeometry.setAttribute(
-      "aAlpha",
-      new BufferAttribute(new Float32Array(capacity), 1)
-    )
-    pulseGeometry.setAttribute(
-      "aSize",
-      new BufferAttribute(new Float32Array(capacity), 1)
-    )
-    pulseGeometry.setDrawRange(0, 0)
-    pulses.geometry = pulseGeometry
-  }
-  allocatePulses(0)
 
   controls.minDistance = 150
   controls.maxDistance = Infinity
@@ -754,7 +720,6 @@ export function createGlobeEngine(
         : motion
           ? easeOut(clamp01((time - revealedAt) / 1000))
           : 1
-    pulseMaterial.uniforms.uOpacity = { value: extras }
     const dark = last?.colors.dark ?? true
     guides.quaternion.copy(camera.quaternion)
     guideMaterials.forEach((material, index) => {
@@ -774,12 +739,8 @@ export function createGlobeEngine(
     rotationSpeed += (target - rotationSpeed) * (1 - Math.exp(-dt / 0.7))
     controls.autoRotateSpeed = rotationSpeed
 
-    // Links draw in from their first end; pulses travel along them.
+    // Links draw in from their first end, one after another.
     const drawn = motion ? easeOut(clamp01((time - linksShownAt) / 1100)) : 1
-    const positionAttribute = pulseGeometry.getAttribute("position")
-    const alphaAttribute = pulseGeometry.getAttribute("aAlpha")
-    const sizeAttribute = pulseGeometry.getAttribute("aSize")
-    let count = 0
     links.forEach((link, index) => {
       link.line.visible = revealedAt !== null
       const local = motion
@@ -789,35 +750,7 @@ export function createGlobeEngine(
         0,
         Math.max(2, Math.round(local * link.curve.length))
       )
-      for (const stream of link.streams) {
-        const head =
-          (((time / 1000 / link.duration + stream.phase) % 1) + 1) % 1
-        for (let k = 0; k < TRAIL; k += 1) {
-          const along = head - k * TRAIL_SPACING
-          if (along < 0) continue
-          const position = stream.reverse ? 1 - along : along
-          if (count >= positionAttribute.count) continue
-          const [x, y, z] = sampleAt(link.curve, position)
-          const fade = Math.min(1, along / 0.06, (1 - along) / 0.06)
-          positionAttribute.setXYZ(count, x, y, z)
-          const tail = 1 - k / TRAIL
-          alphaAttribute.setX(
-            count,
-            local *
-              fade *
-              tail ** 2.2 *
-              0.55 *
-              (link.material.opacity / Math.max(link.baseOpacity, 0.01))
-          )
-          sizeAttribute.setX(count, k === 0 ? 8 : 4.6 * tail + 1)
-          count += 1
-        }
-      }
     })
-    positionAttribute.needsUpdate = true
-    alphaAttribute.needsUpdate = true
-    sizeAttribute.needsUpdate = true
-    pulseGeometry.setDrawRange(0, count)
   }
   stage.resume()
 
@@ -839,18 +772,11 @@ export function createGlobeEngine(
     element.type = "button"
     element.className = "globe-node"
     element.style.setProperty("--enter-delay", `${order * 70}ms`)
-    const parts = ["hit", "halo", "halo globe-node__halo--late", "dot"].map(
-      (name) => {
-        const span = document.createElement("span")
-        span.className = name
-          .split(" ")
-          .map((part) =>
-            part.startsWith("globe-node") ? part : `globe-node__${part}`
-          )
-          .join(" ")
-        return span
-      }
-    )
+    const parts = ["hit", "dot"].map((name) => {
+      const span = document.createElement("span")
+      span.className = `globe-node__${name}`
+      return span
+    })
     const label = document.createElement("span")
     label.className = "globe-node__label"
     element.append(...parts, label)
@@ -858,6 +784,12 @@ export function createGlobeEngine(
       event.stopPropagation()
       onSelect(node.id)
     })
+    const enter = () => onHover(node.id)
+    const leave = () => onHover(null)
+    element.addEventListener("pointerenter", enter)
+    element.addEventListener("pointerleave", leave)
+    element.addEventListener("focus", enter)
+    element.addEventListener("blur", leave)
     const datum: MarkerDatum = { lat: 0, lng: 0, altitude: 0, element, label }
     markers.set(node.id, datum)
     return datum
@@ -870,9 +802,6 @@ export function createGlobeEngine(
     graticuleMaterial.color = color(colors.graticule)
     starMaterial.uniforms.uColor = { value: color(colors.star) }
     for (const material of guideMaterials) material.color = color(colors.guide)
-    pulseMaterial.uniforms.uColor = { value: color(colors.pulse) }
-    pulseMaterial.blending = colors.dark ? AdditiveBlending : NormalBlending
-    pulseMaterial.needsUpdate = true
     cometMaterial.uniforms.uColor = { value: color(colors.pulse) }
     stage.setAtmosphereColor(css(colors.atmosphere))
   }
@@ -894,7 +823,7 @@ export function createGlobeEngine(
       const b = anchors.get(sceneLink.nodeIds[1])
       // Links to unplaced nodes are not drawn: they have no place to end.
       if (!a || !b) continue
-      const curve = linkCurve(a, b)
+      const curve = linkCurve(a, b, 72, sceneLink.lane)
       const style = lineStyle(sceneLink.look)
       const geometry = new BufferGeometry()
       geometry.setAttribute(
@@ -920,13 +849,8 @@ export function createGlobeEngine(
         material,
         baseOpacity: style.opacity,
         curve,
-        duration: Math.min(5, Math.max(1.6, curveLength(curve) / PULSE_SPEED)),
-        streams: pulseStreams(sceneLink.look, input.motion),
       })
     }
-    allocatePulses(
-      links.reduce((total, link) => total + link.streams.length * TRAIL, 0)
-    )
     linksShownAt = performance.now()
   }
 
@@ -972,18 +896,19 @@ export function createGlobeEngine(
           altitude: anchor.altitude,
         })
       datum.label.textContent = node.name
-      datum.element.dataset.vitality = node.vitality
+      datum.element.dataset.current = node.current ? "true" : "false"
       datum.element.dataset.selected =
         node.id === input.selectedNodeId ? "true" : "false"
       datum.element.setAttribute(
         "aria-label",
-        `${node.name} · ${vitalityText[node.vitality]()}`
+        `${node.name} · ${node.current ? m.globe_node_current() : m.globe_node_not_current()}`
       )
       datum.element.setAttribute(
         "aria-pressed",
         node.id === input.selectedNodeId ? "true" : "false"
       )
     })
+    container.dataset.dense = placed.length > DENSE_LABELS ? "true" : "false"
     const shown = new Set(placed.map((node) => node.id))
     for (const [id, datum] of markers) {
       if (!shown.has(id)) {
@@ -1050,7 +975,7 @@ export function createGlobeEngine(
       height = nextHeight
       stage.setSize(nextWidth, nextHeight)
       const pixelRatio = renderer.getPixelRatio()
-      for (const material of [landMaterial, pulseMaterial, starMaterial]) {
+      for (const material of [landMaterial, starMaterial]) {
         material.uniforms.uScale = { value: nextHeight * 0.5 }
         material.uniforms.uPixelRatio = { value: pixelRatio }
       }
@@ -1064,8 +989,6 @@ export function createGlobeEngine(
       for (const disposable of [
         landGeometry,
         landMaterial,
-        pulseGeometry,
-        pulseMaterial,
         surface,
         graticuleGeometry,
         graticuleMaterial,
@@ -1082,19 +1005,4 @@ export function createGlobeEngine(
       markers.clear()
     },
   }
-}
-
-/** Point at fraction `t` along a sampled curve. */
-function sampleAt(curve: readonly Vec3[], t: number): Vec3 {
-  const scaled = clamp01(t) * (curve.length - 1)
-  const index = Math.min(curve.length - 2, Math.floor(scaled))
-  const a = curve[index]
-  const b = curve[index + 1]
-  if (!a || !b) return a ?? [0, GLOBE_RADIUS, 0]
-  const f = scaled - index
-  return [
-    a[0] + (b[0] - a[0]) * f,
-    a[1] + (b[1] - a[1]) * f,
-    a[2] + (b[2] - a[2]) * f,
-  ]
 }
