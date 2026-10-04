@@ -3,7 +3,7 @@ mod authentication;
 mod instances;
 mod inventory;
 mod publications;
-use crate::networks::configuration::ConfigurationBindings;
+use crate::configuration::ConfigurationBindings;
 use crate::{
     execution::NodePrincipal,
     secrets::{Purpose, Sealer},

@@ -179,7 +179,7 @@ async fn real_creation_isolation_idempotency_sealed_complete_configuration_and_r
         .sealer
         .open(first.id, Revision::MIN, Purpose::Bindings, &bindings)
         .unwrap();
-    let typed: configuration::ConfigurationBindings =
+    let typed: crate::configuration::ConfigurationBindings =
         serde_json::from_slice(bindings.as_bytes()).unwrap();
     assert!(typed.users.is_empty() && typed.listeners.is_empty() && typed.rule_sets.is_empty());
     assert!(expected.nodes.is_empty());

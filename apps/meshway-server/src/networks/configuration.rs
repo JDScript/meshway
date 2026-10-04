@@ -1,29 +1,15 @@
-//! Complete typed initial configuration and its three protected persistence fields.
+//! The complete typed initial configuration of a new network, sealed for persistence.
 
+use crate::configuration::ConfigurationBindings;
 use crate::error::Error;
 use crate::{
     accounts::random_uuid,
     secrets::{ProtectedBytes, Purpose, Sealer},
 };
-use meshway_configuration::{
-    AddressPools, NetworkConfiguration, UserBinding, canonical_json, new_network,
-};
-use meshway_model::{ArtifactId, NetworkId, NodeId, Revision};
-use serde::{Deserialize, Serialize};
+use meshway_configuration::{AddressPools, NetworkConfiguration, canonical_json, new_network};
+use meshway_model::{NetworkId, Revision};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeMap;
 use zeroize::Zeroizing;
-
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ConfigurationBindings {
-    /// Policy references only; retained inactive memberships stay inert.
-    pub(crate) users: BTreeMap<String, UserBinding>,
-    /// Resolution of each User Node's editable Config.identity.
-    pub(crate) node_users: BTreeMap<NodeId, UserBinding>,
-    pub(crate) listeners: BTreeMap<NodeId, BTreeMap<String, Revision>>,
-    pub(crate) rule_sets: BTreeMap<String, ArtifactId>,
-}
 
 pub(crate) struct PreparedNetwork {
     pub(crate) id: NetworkId,

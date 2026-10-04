@@ -4,10 +4,10 @@ use super::{
     instances::{current_instance, grant_lease},
     json, now, subjects, user_binding, uuid,
 };
+use crate::configuration::ConfigurationBindings;
 use crate::effect::Effect;
 use crate::error::Error;
 use crate::execution::NodePrincipal;
-use crate::networks::configuration::ConfigurationBindings;
 use crate::secrets::Sealer;
 use meshway_configuration::NetworkConfiguration;
 use meshway_configuration::{

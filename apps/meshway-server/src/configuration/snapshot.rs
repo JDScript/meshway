@@ -1,5 +1,5 @@
+use crate::configuration::ConfigurationBindings;
 use crate::error::Error;
-use crate::networks::configuration::ConfigurationBindings;
 use crate::secrets::{Purpose, Sealer};
 use meshway_configuration::ConfigurationDocument;
 use meshway_model::{NetworkId, Revision};
