@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod live;
 mod management;
 static ACCOUNT_FLOW: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -49,6 +50,7 @@ impl Server {
     }
 
     async fn close(self) {
+        self.app.stream_shutdown()();
         self.stop.send(()).unwrap();
         self.task.await.unwrap();
         self.app.shutdown().await.unwrap();

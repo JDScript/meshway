@@ -46,18 +46,37 @@ pub(crate) fn inventory(
     let role:String=tx.query_row("SELECT role FROM memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(NodeError::NotFound)?;
     let manager = role == "owner" || role == "admin";
     let (_, cfg, bindings) = current_configuration(&tx, sealer, network)?;
+    let visible = cfg
+        .nodes
+        .keys()
+        .filter(|node| {
+            manager || user_binding(&cfg, &bindings, **node).is_some_and(|b| b.user_id == user)
+        })
+        .copied()
+        .collect();
+    inventory_in_transaction(&tx, network, &cfg, &visible, manager)
+}
+
+/// Same public inventory fragment for GET and SSE. The caller supplies a scope
+/// already authorized inside this transaction; this function grants no access.
+pub(crate) fn inventory_in_transaction(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    cfg: &meshway_configuration::NetworkConfiguration,
+    visible: &std::collections::BTreeSet<NodeId>,
+    manager: bool,
+) -> Result<NodeInventoryResponse, NodeError> {
     let mut items = Vec::new();
     for (node, settings) in &cfg.nodes {
-        let own = user_binding(&cfg, &bindings, *node).is_some_and(|b| b.user_id == user);
-        if !manager && !own {
+        if !visible.contains(node) {
             continue;
         }
         // Management inventory is not the execution-eligible inventory. A
         // revoked key must stay visible until its Node is explicitly deleted.
         let (control, control_key_revoked_at_ms) =
-            latest_key(&tx, network, *node, "control", KeyAlgorithm::Ed25519)?;
+            latest_key(tx, network, *node, "control", KeyAlgorithm::Ed25519)?;
         let (dataplane, dataplane_key_revoked_at_ms) =
-            latest_key(&tx, network, *node, "dataplane", KeyAlgorithm::X25519)?;
+            latest_key(tx, network, *node, "dataplane", KeyAlgorithm::X25519)?;
         let registered: i64 = tx.query_row(
             "SELECT registered_at FROM nodes WHERE network_id=?1 AND id=?2",
             params![

@@ -144,9 +144,6 @@ impl Execution {
             if let Some((publication, target)) =
                 store::target_for_node(tx, &self.sealer, network, *node).map_err(state_error)?
             {
-                if target.configuration.revision != revision {
-                    continue;
-                }
                 match store::check_publication(
                     tx,
                     &self.sealer,
@@ -236,9 +233,16 @@ impl Execution {
                 },
             );
         }
-        let authorization_digest =
-            super::proof::request_digest(&(network, revision, actor, &visible, &full, &bindings))
-                .map_err(state_error)?;
+        let authorization_digest = super::proof::request_digest(&(
+            network,
+            revision,
+            actor,
+            &visible,
+            &full,
+            &bindings,
+            &observation_paths,
+        ))
+        .map_err(state_error)?;
         Ok(VisibilityScope {
             network_id: network,
             configuration_revision: revision,

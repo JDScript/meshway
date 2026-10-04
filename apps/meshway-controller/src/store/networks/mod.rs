@@ -273,7 +273,7 @@ pub(crate) fn members(
     })
 }
 
-fn view(
+pub(crate) fn view(
     transaction: &Transaction<'_>,
     id: NetworkId,
     user: UserId,
@@ -295,6 +295,32 @@ fn view(
     let view = raw.into_view()?;
     check_configuration(transaction, &view, sealer, cache)?;
     Ok(view)
+}
+
+/// Complete bounded entity snapshot, using precisely the paged GET projection
+/// and action calculator. Members receive only their own membership fragment.
+/// Returns at most limit + 1; the caller must reject an oversized full snapshot.
+pub(crate) fn member_snapshot(
+    tx: &Transaction<'_>,
+    caller: &NetworkSummary,
+    limit: usize,
+) -> Result<Vec<meshway_model::MemberSummary>, NetworkError> {
+    let mut statement = tx.prepare("SELECT m.sequence,m.id,m.user_id,u.email,m.role,m.version,m.joined_at FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.revoked_at IS NULL AND (?2 OR m.id=?3) ORDER BY m.sequence LIMIT ?4")?;
+    let rows = statement
+        .query_map(
+            params![
+                caller.id.as_uuid().as_bytes().as_slice(),
+                caller.actions.manage_members,
+                caller.membership_id.as_uuid().as_bytes().as_slice(),
+                (limit + 1) as i64
+            ],
+            RawMember::read,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    let owners = crate::store::authorization::owner_count(tx, caller.id)?;
+    rows.into_iter()
+        .map(|row| row.into_view((caller.membership_id, caller.role), owners))
+        .collect()
 }
 
 fn check_configuration(

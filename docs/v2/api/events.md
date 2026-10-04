@@ -1,6 +1,6 @@
 # SSE 与初始同步
 
-**已确认：Console 建立 SSE 后先接收完整可见 Config／State，再接收变化。** 本页定义下一版交互；事件字段与客户端生成仍待实现。
+**已确认：Console 建立 SSE 后先接收完整可见 Config／State，再接收变化。** 本页说明 V2 同步语义，并保留尚未落地的扩展通知提案；当前事件字段以新 Controller 实际路由导出的 OpenAPI 为准。
 
 ## 连接结构
 
@@ -168,7 +168,11 @@ RTT、业务流量、探测未回应率沿用 [Realtime Observation](/v2/state-r
 
 当前使用 OpenAPI 3.1 的 operation 扩展 `x-meshway-sse: { format: "json-data", eventSchema: { $ref: "#/components/schemas/..." } }`。成功响应本身声明 `text/event-stream` 字符串字节，扩展声明每帧 JSON 数据的真实根类型；可省略的 `Last-Event-ID` 是字符串，不是 nullable JSON 字段。
 
-以上是生成器／传输层能力，具体 UserEvent／NodeEvent 与生产 State provider、主 Router 接线仍待完成。完整交付要求：
+新 Controller（`apps/meshway-controller`）的正常 Router 已绑定具体 `UserEvent`／`NodeEvent` 与分别重鉴权的生产 provider，共用 App 的 State core。初始 Config 使用 `UserConfigurationView`（管理员完整非秘密视图／成员自身节点视图）与 `NodeConfigurationView`（自身非秘密设置及真实 target）；Node 的可安装材料仍从 `configuration/query` 获取。Entities 复用 GET 的库存、成员、网络片段及服务端 actions。
+
+`ConfigurationApplyProgress` 同时用于按 revision 的 GET 与 SSE：分母来自版本内固定的 `execution_targets`，按原 target 的真实 receipt／attempt／sequence 投影。`phase` 与 summary 保留最后接纳结果，`freshness` 独立说明当前、过期、待新实例或已被替代；历史 applied 不等于当前健康，后续 demand／refresh 不扩大原分母。普通成员只统计当前相关范围，历史完整进度限 Owner／Admin。
+
+事件的公开字段以同一 Router 导出的 OpenAPI 为准；生成 SDK 与消费者仍须在联合提交中完成 drift 验证。完整交付检查包括：
 
 1. Rust 定义 UserEvent／NodeEvent 及各自权限视图，真实路由显式声明 stream、认证与 payload schema。
 2. 同一 Rust 路由声明导出上述 SSE 扩展元数据。不能将逐事件对象误写成整个响应就是一个 JSON 对象。

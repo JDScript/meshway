@@ -171,33 +171,34 @@ impl From<&NetworkConfiguration> for ConfigurationView {
             nodes: c
                 .nodes
                 .iter()
-                .map(|(id, n)| {
-                    (
-                        *id,
-                        NodeSettingsView {
-                            hostname: n.hostname.clone(),
-                            remark: n.remark.clone(),
-                            identity: n.identity.clone(),
-                            enabled: n.enabled,
-                            addresses: n.addresses.clone(),
-                            listeners: n
-                                .listeners
-                                .iter()
-                                .map(|(key, l)| (key.clone(), l.declaration().into()))
-                                .collect(),
-                            dialers: match &n.dialers {
-                                Input::Omitted => Input::Omitted,
-                                Input::Value(d) => Input::Value(d.into()),
-                            },
-                            exit_enabled: n.exit_enabled,
-                        },
-                    )
-                })
+                .map(|(id, n)| (*id, NodeSettingsView::from(n)))
                 .collect(),
             dns: c.dns.clone(),
             topology: c.topology.clone(),
             routing: c.routing.clone(),
             rule_sets: c.rule_sets.clone(),
+        }
+    }
+}
+
+impl From<&NodeSettings> for NodeSettingsView {
+    fn from(n: &NodeSettings) -> Self {
+        Self {
+            hostname: n.hostname.clone(),
+            remark: n.remark.clone(),
+            identity: n.identity.clone(),
+            enabled: n.enabled,
+            addresses: n.addresses.clone(),
+            listeners: n
+                .listeners
+                .iter()
+                .map(|(key, l)| (key.clone(), l.declaration().into()))
+                .collect(),
+            dialers: match &n.dialers {
+                Input::Omitted => Input::Omitted,
+                Input::Value(d) => Input::Value(d.into()),
+            },
+            exit_enabled: n.exit_enabled,
         }
     }
 }

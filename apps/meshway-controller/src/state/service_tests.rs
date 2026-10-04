@@ -523,7 +523,8 @@ async fn http_snapshot_cursor_replay_commit_cancellation_and_logout() {
         listener.local_addr().unwrap(),
         network.id
     );
-    let router = http::router(&app).merge(http::state::router(service.clone()));
+    let router =
+        http::state::user_router(service.clone()).merge(http::state::node_router(service.clone()));
     let (stop, stopped) = oneshot::channel();
     let server = tokio::spawn(async move {
         axum::serve(listener, router)

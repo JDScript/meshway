@@ -6,7 +6,7 @@ use meshway_protocol::{
     management::*,
 };
 
-fn request() -> RequestId {
+pub(super) fn request() -> RequestId {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     RequestId::new(uuid::Uuid::from_u128(u128::from(
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -14,7 +14,7 @@ fn request() -> RequestId {
     .unwrap()
 }
 
-async fn source(
+pub(super) async fn source(
     c: &Client,
     s: &Server,
     network: meshway_model::NetworkId,
@@ -382,7 +382,7 @@ async fn management_activities_identify_transactional_member_and_link_targets() 
     }
     s.close().await;
 }
-async fn create(c: &Client, s: &Server, token: &str, name: &str) -> NetworkResponse {
+pub(super) async fn create(c: &Client, s: &Server, token: &str, name: &str) -> NetworkResponse {
     let response = c
         .post(format!("{}/api/v1/networks", s.url))
         .bearer_auth(token)
@@ -396,7 +396,7 @@ async fn create(c: &Client, s: &Server, token: &str, name: &str) -> NetworkRespo
     assert_eq!(response.status(), StatusCode::CREATED);
     response.json().await.unwrap()
 }
-fn net(s: &Server, n: meshway_model::NetworkId, path: &str) -> String {
+pub(super) fn net(s: &Server, n: meshway_model::NetworkId, path: &str) -> String {
     format!("{}/api/v1/networks/{n}/{path}", s.url)
 }
 fn query(url: String, params: &[(&str, &str)]) -> reqwest::Url {
@@ -405,7 +405,7 @@ fn query(url: String, params: &[(&str, &str)]) -> reqwest::Url {
     url
 }
 
-async fn join(
+pub(super) async fn join(
     c: &Client,
     s: &Server,
     network: meshway_model::NetworkId,

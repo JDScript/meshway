@@ -11,6 +11,7 @@ pub mod enrollment;
 pub mod events;
 pub mod execution;
 pub mod history;
+pub mod live;
 pub mod management;
 mod management_rules;
 mod networks;
@@ -33,13 +34,17 @@ pub use enrollment::{
     EnrollmentPollResponse, EnrollmentRequestView, EnrollmentResponse, KeyEnrollmentRequest,
     RedeemEnrollmentRequest,
 };
-pub use events::StreamEvent;
+pub use events::{NodeEvent, StreamEvent, UserEvent};
 pub use execution::{
     AcquireInstanceRequest, CancelDemandRequest, DemandRequest, DemandResponse, InstanceLease,
     InstanceRequest, NodeConfigurationRequest, NodeConfigurationResponse, PublicationProgress,
     ReceiptRequest, RoutingSelectionRequest, RoutingSelectionResponse,
 };
 pub use history::{ActivityListResponse, ActivityResponse, ConfigurationRevisionList};
+pub use live::{
+    ConfigurationApplyProgress, NodeConfigurationView, NodeEntitiesView, UserConfigurationView,
+    UserEntitiesView,
+};
 pub use management::{
     AccountResponse, AccountSessionsResponse, ChangeEmailRequest, ChangeMemberRoleRequest,
     ChangePasswordRequest, CreateJoinLinkRequest, JoinLinkCreated, JoinLinkCredentialRequest,
@@ -53,6 +58,8 @@ pub use node::{
     NodeInventoryView, NodeKeyMetadata, NodeRotationRequest, NodeSessionRequest,
     NodeSessionResponse, RevokeNodeKeyRequest,
 };
+pub use observations::{HistoryAccepted, HistoryPage, HistoryQuery, HistoryReport};
+pub use state::{StateAccepted, StateQuery, StateReport, StateView};
 
 pub use auth::{
     AuthOptionsResponse, AuthSessionResponse, LoginRequest, PasswordLengthUnit, PasswordRules,

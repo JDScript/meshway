@@ -188,6 +188,224 @@ pub(super) fn caps() -> BTreeMap<String, Capability> {
         },
     )])
 }
+
+#[tokio::test]
+async fn live_configuration_progress_keeps_fixed_targets_and_orders_real_receipts() {
+    use crate::state::service::ReadIdentity;
+    use meshway_protocol::live::ApplicationPhase;
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, b, ak, bk, signer_a, signer_b) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let execution = app.execution();
+    let at = session(&execution, network, a, &ak, &signer_a).await;
+    let bt = session(&execution, network, b, &bk, &signer_b).await;
+    let ai = execution
+        .acquire(
+            at.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let bi = execution
+        .acquire(
+            bt.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let current = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    let mut input = NetworkConfigurationInput::from(&current.document.configuration);
+    for node in [a, b] {
+        input.nodes.get_mut(&node).unwrap().listeners =
+            serde_json::from_str(r#"{"udp":{"type":"native_udp","listenPort":23457}}"#).unwrap();
+    }
+    let applied = app
+        .configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let ai_request = InstanceRequest {
+        instance_id: ai.instance_id,
+        generation: ai.generation,
+    };
+    let bi_request = InstanceRequest {
+        instance_id: bi.instance_id,
+        generation: bi.generation,
+    };
+    let a_target = execution
+        .configuration(
+            at.token.expose(),
+            NodeConfigurationRequest {
+                instance: ai_request.clone(),
+                base: None,
+            },
+        )
+        .await
+        .unwrap()
+        .lease
+        .target
+        .unwrap();
+    let b_target = execution
+        .configuration(
+            bt.token.expose(),
+            NodeConfigurationRequest {
+                instance: bi_request,
+                base: None,
+            },
+        )
+        .await
+        .unwrap()
+        .lease
+        .target
+        .unwrap();
+    let targets = BTreeMap::from([(a, a_target.clone()), (b, b_target)]);
+    let revision = applied.revision;
+    let state = app.user_state_service().unwrap();
+    let read = |token: &str| {
+        let identity = ReadIdentity::user_session(token, network).unwrap();
+        let provider = Arc::clone(&state.provider);
+        state.handle.execute(move |db| {
+            let tx = db.transaction().unwrap();
+            provider.progress(&tx, &identity, revision, chrono::Utc::now())
+        })
+    };
+    let pending = read(owner.token.expose()).await.unwrap().unwrap();
+    assert_eq!(pending.summary.target_count, 2);
+    assert_eq!(pending.summary.pending, 2);
+    assert_eq!(
+        pending
+            .nodes
+            .iter()
+            .map(|(node, progress)| (*node, progress.target.clone()))
+            .collect::<BTreeMap<_, _>>(),
+        targets
+    );
+    let receipt = |attempt, sequence, phase, failure| ReceiptRequest {
+        instance: ai_request.clone(),
+        target: a_target.clone(),
+        phase,
+        attempt: Version::new(attempt).unwrap(),
+        sequence: Sequence::new(sequence).unwrap(),
+        reported_at_ms: store::execution::now().unwrap() as u64,
+        failure,
+    };
+    execution
+        .receipt(at.token.expose(), receipt(1, 0, ReceiptPhase::Saved, None))
+        .await
+        .unwrap();
+    execution
+        .renew(at.token.expose(), ai_request.clone())
+        .await
+        .unwrap();
+    execution
+        .receipt(
+            at.token.expose(),
+            receipt(1, 1, ReceiptPhase::Applied, None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        read(owner.token.expose()).await.unwrap().unwrap().nodes[&a].phase,
+        ApplicationPhase::Applied
+    );
+    execution
+        .receipt(at.token.expose(), receipt(2, 0, ReceiptPhase::Saved, None))
+        .await
+        .unwrap();
+    execution
+        .receipt(
+            at.token.expose(),
+            receipt(1, 2, ReceiptPhase::Applied, None),
+        )
+        .await
+        .unwrap();
+    let latest = read(owner.token.expose()).await.unwrap().unwrap();
+    assert_eq!(latest.nodes[&a].phase, ApplicationPhase::Saved);
+    assert_eq!(latest.nodes[&a].attempt.unwrap().get(), 2);
+    let failed = receipt(2, 1, ReceiptPhase::Failed, Some(ApplyFailure::Dns));
+    execution
+        .receipt(at.token.expose(), failed.clone())
+        .await
+        .unwrap();
+    execution.receipt(at.token.expose(), failed).await.unwrap();
+    let latest = read(owner.token.expose()).await.unwrap().unwrap();
+    assert_eq!(latest.summary.failed, 1);
+    assert_eq!(latest.summary.pending, 1);
+    execution
+        .demand(
+            at.token.expose(),
+            DemandRequest {
+                instance: ai_request,
+                request_id: rid(),
+                target: BusinessTarget::Mesh { node: b },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    let superseded = read(owner.token.expose()).await.unwrap().unwrap();
+    assert_eq!(superseded.summary.target_count, 2);
+    assert_eq!(superseded.nodes[&a].phase, ApplicationPhase::Failed);
+    assert_eq!(superseded.nodes[&a].freshness, ReceiptFreshness::Superseded);
+    let member = app
+        .accounts()
+        .register(
+            "progress-member@example.test".into(),
+            Secret::new("valid long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let link = app
+        .networks()
+        .create_join_link(
+            owner.token.expose(),
+            network,
+            MembershipRole::Member,
+            600,
+            rid(),
+        )
+        .await
+        .unwrap();
+    app.networks()
+        .redeem_join_link(member.token.expose(), link.secret.unwrap().expose(), rid())
+        .await
+        .unwrap();
+    let hidden = read(member.token.expose()).await.unwrap().unwrap();
+    assert_eq!(hidden.summary.target_count, 0);
+    assert!(hidden.nodes.is_empty());
+    app.shutdown().await.unwrap();
+}
 pub(super) async fn enroll_user_node(
     app: &App,
     token: &str,

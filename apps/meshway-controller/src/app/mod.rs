@@ -227,6 +227,35 @@ impl App {
         }
     }
 
+    fn state_projection(&self) -> crate::state::provider::Projection {
+        crate::state::provider::Projection {
+            execution: self.execution(),
+            sealer: self.sealer(),
+            cache: Arc::clone(&self.configuration_cache),
+            boot: self.boot,
+        }
+    }
+    pub fn user_state_service(
+        &self,
+    ) -> Result<
+        crate::state::service::StateService<crate::state::provider::UserProvider>,
+        crate::state::StateError,
+    > {
+        self.state_service(crate::state::provider::UserProvider(
+            self.state_projection(),
+        ))
+    }
+    pub fn node_state_service(
+        &self,
+    ) -> Result<
+        crate::state::service::StateService<crate::state::provider::NodeProvider>,
+        crate::state::StateError,
+    > {
+        self.state_service(crate::state::provider::NodeProvider(
+            self.state_projection(),
+        ))
+    }
+
     /// Compose State HTTP/SSE with the transactional management/Node providers.
     pub fn state_service<P: crate::state::service::StateProvider>(
         &self,

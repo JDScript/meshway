@@ -6,17 +6,20 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ObservationEvent {
+meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ObservationEvent {
     pub event_id: EventId,
     pub configuration: ConfigurationRef,
     pub occurred_at: DateTime<Utc>,
     pub payload: ObservationPayload,
-}
+} }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(
+    remote = "Self",
+    tag = "kind",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum ObservationPayload {
     DialStarted {
         #[serde(rename = "peerNodeId")]
@@ -59,6 +62,16 @@ pub enum ObservationPayload {
         to: DateTime<Utc>,
     },
 }
+impl<'de> Deserialize<'de> for ObservationPayload {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Self::deserialize(meshway_serde::MapOnly(d))
+    }
+}
+impl Serialize for ObservationPayload {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        Self::serialize(self, s)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -78,24 +91,18 @@ pub enum MetricKind {
     ProbeLoss,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TrafficWindow {
+meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct TrafficWindow {
     pub tx_bytes: Sequence,
     pub rx_bytes: Sequence,
     pub counter_generation: Sequence,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProbeWindow {
+} }
+meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ProbeWindow {
     pub sent: u32,
     pub replied_within_deadline: u32,
     pub timeout: u32,
     pub pending: u32,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ObservationSample {
+} }
+meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ObservationSample {
     pub measurement_id: EventId,
     /// Revisions replace a partial window rather than creating another sample.
     pub version: crate::Version,
@@ -105,4 +112,4 @@ pub struct ObservationSample {
     pub probe: Option<ProbeObservation>,
     pub traffic: Option<TrafficWindow>,
     pub probe_counts: Option<ProbeWindow>,
-}
+} }

@@ -205,7 +205,22 @@ fn routes() -> OpenApiRouter<HttpState> {
 }
 
 pub fn openapi() -> OpenApi {
+    use utoipa::OpenApi as _;
     let (_, mut spec) = routes().split_for_parts();
+    let mut state_spec = state::StateApi::openapi();
+    events::close_state_unions(&mut state_spec);
+    spec.merge(state_spec);
+    spec.merge(state::ProgressApi::openapi());
+    events::declare_sse::<meshway_protocol::UserEvent>(
+        &mut spec,
+        &<state::__path_user_events as utoipa::Path>::path(),
+    )
+    .expect("registered user stream");
+    events::declare_sse::<meshway_protocol::NodeEvent>(
+        &mut spec,
+        &<state::__path_node_events as utoipa::Path>::path(),
+    )
+    .expect("registered node stream");
     spec.info.title = "Meshway Controller".into();
     spec.components
         .get_or_insert_with(Default::default)
@@ -239,6 +254,15 @@ pub fn router(app: &App) -> Router {
             execution: app.execution(),
             enrollment: app.enrollment(),
         })
+        .merge(state::user_router(
+            app.user_state_service().expect("App state runtime"),
+        ))
+        .merge(state::node_router(
+            app.node_state_service().expect("App state runtime"),
+        ))
+        .merge(state::progress_router(
+            app.user_state_service().expect("App state runtime"),
+        ))
 }
 
 async fn context(mut request: Request, next: Next) -> Response {

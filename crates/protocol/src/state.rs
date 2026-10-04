@@ -27,7 +27,7 @@ pub enum Freshness {
 }
 
 wire_object! { #[derive(Clone, Debug, PartialEq)] pub struct DerivedNodeState {
-    pub ip_info: BTreeMap<String, IpInfo>, pub location: Option<GeoObservation>, pub location_absent: Option<LocationAbsentReason>,
+    #[serde(deserialize_with="meshway_serde::unique_map")] pub ip_info: BTreeMap<String, IpInfo>, pub location: Option<GeoObservation>, pub location_absent: Option<LocationAbsentReason>,
 } }
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerEndpoint {
     pub socket_id: String, pub resource: ResourceRef, pub generation: Sequence,
@@ -48,15 +48,13 @@ wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerCandidate {
 // Peer projection deliberately omits interfaces, system details, unrelated paths,
 // problems and local bind addresses. It is not the source report DTO.
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerState {
-    pub capabilities: BTreeMap<String, Capability>, pub configuration: ConfigurationState,
+    #[serde(deserialize_with="meshway_serde::unique_map")] pub capabilities: BTreeMap<String, Capability>, pub configuration: ConfigurationState,
     pub endpoints: Vec<PeerEndpoint>,
 } }
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[serde(tag = "view", rename_all = "camelCase", deny_unknown_fields)]
-pub enum VisibleReport {
+crate::object::wire_tagged! { tag="view"; #[derive(Clone, Debug, PartialEq, Eq)] pub enum VisibleReport {
     Full { report: Box<NodeState> },
     Peer { report: Box<PeerState> },
-}
+} }
 wire_object! { #[derive(Clone, Debug, PartialEq)] pub struct NodeStateView {
     pub instance_id: Option<InstanceId>, pub report_sequence: Option<Sequence>,
     pub observed_at: Option<DateTime<Utc>>,
@@ -66,7 +64,7 @@ wire_object! { #[derive(Clone, Debug, PartialEq)] pub struct NodeStateView {
 } }
 wire_object! { #[derive(Clone, Debug, PartialEq)] pub struct StateView {
     pub network_id: NetworkId, pub state_epoch: StateEpoch, pub sequence: Sequence,
-    pub configuration_revision: Revision, pub as_of: DateTime<Utc>, pub nodes: BTreeMap<NodeId, NodeStateView>,
+    pub configuration_revision: Revision, pub as_of: DateTime<Utc>, #[serde(deserialize_with="meshway_serde::unique_map")] pub nodes: BTreeMap<NodeId, NodeStateView>,
     pub links: Vec<AggregatedLink>, pub paths: Vec<AggregatedPath>,
 } }
 #[derive(

@@ -28,6 +28,12 @@ pub enum ReadIdentity {
     },
 }
 impl ReadIdentity {
+    /// Parse a session credential without granting authorization. Providers
+    /// still recheck the actual session and membership on every transaction.
+    pub fn user_session(token: &str, network: NetworkId) -> Result<Self, StateError> {
+        let digest = crate::accounts::token_digest(token).map_err(|_| StateError::Unauthorized)?;
+        Ok(Self::UserSession { digest, network })
+    }
     pub(crate) fn fingerprint(&self) -> Digest {
         let mut bytes = vec![];
         match self {
@@ -56,6 +62,28 @@ pub trait StateProvider: Send + Sync + 'static {
     type Configuration: Clone + PartialEq + Serialize + Send + Sync + 'static;
     type Entities: Clone + PartialEq + Serialize + Send + Sync + 'static;
     type Progress: Clone + PartialEq + Serialize + Send + Sync + 'static;
+    /// Scope of data that may remain in replay, separate from the evolving
+    /// execution/observation authorization digest used inside the State core.
+    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<Digest, StateError> {
+        Ok(view.scope.authorization_digest)
+    }
+    /// Managers may replay prior non-secret network views in order before the
+    /// next notice. Restricted readers must recheck target-dependent queues.
+    fn can_drain_configuration_changes(&self, _view: &ProviderView<Self>) -> bool {
+        false
+    }
+    /// Identity/role loss closes the connection. A still-authorized view change
+    /// clears replay/pending and synchronizes again instead.
+    fn same_authority(&self, previous: &ProviderView<Self>, current: &ProviderView<Self>) -> bool {
+        previous.scope.authorization_digest == current.scope.authorization_digest
+    }
+    fn filter_notice(
+        &self,
+        _view: &ProviderView<Self>,
+        notice: meshway_protocol::events::ConfigurationNotice,
+    ) -> meshway_protocol::events::ConfigurationNotice {
+        notice
+    }
     fn view(
         &self,
         tx: &Transaction<'_>,
@@ -93,6 +121,7 @@ struct Subscription<P: StateProvider> {
     observations: BTreeMap<meshway_model::ObservationSubscriptionId, Digest>,
     active_observations: BTreeMap<meshway_model::ObservationSubscriptionId, Digest>,
     journal_sequence: u64,
+    initial_batch: Option<String>,
 }
 pub(crate) struct Runtime {
     closed: bool,
@@ -283,6 +312,7 @@ impl<P: StateProvider> StateService<P> {
                 let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
                 let mut subscriptions =
                     subscriptions.lock().map_err(|_| StateError::Unavailable)?;
+                let authorization = provider.replay_scope(&view)?;
                 subscriptions.retain(|_, sub| {
                     sub.created_at + Duration::minutes(15) > now
                         && sub
@@ -297,7 +327,7 @@ impl<P: StateProvider> StateService<P> {
                 if let Some(cursor) = &cursor {
                     let previous = subscriptions.iter().find_map(|(id, sub)| {
                         (sub.owner == owner
-                            && sub.authorization == view.scope.authorization_digest
+                            && sub.authorization == authorization
                             && sub.replay.after(cursor).is_ok())
                         .then(|| id.clone())
                     });
@@ -343,7 +373,7 @@ impl<P: StateProvider> StateService<P> {
                 let mut sub = Subscription {
                     identity,
                     owner,
-                    authorization: view.scope.authorization_digest,
+                    authorization,
                     last: view,
                     state,
                     cursor: ready.clone(),
@@ -354,6 +384,7 @@ impl<P: StateProvider> StateService<P> {
                     observations: BTreeMap::new(),
                     active_observations: Default::default(),
                     journal_sequence: hub.events.sequence(),
+                    initial_batch: None,
                 };
                 if cursor.is_some() {
                     sub.pending.push_back(SseFrame::encode(
@@ -389,10 +420,11 @@ impl<P: StateProvider> StateService<P> {
                     Ok(view) => view,
                     Err(_) => return Ok(StreamPoll::Closed),
                 };
+                let authorization = provider.replay_scope(&view)?;
                 if view.scope.expires_at <= now
                     || runtime.closed
                     || sub.created_at + Duration::minutes(15) <= now
-                    || sub.authorization != view.scope.authorization_digest
+                    || !provider.same_authority(&sub.last, &view)
                 {
                     return Ok(StreamPoll::Closed);
                 }
@@ -411,10 +443,13 @@ impl<P: StateProvider> StateService<P> {
                     .events
                     .after(sub.journal_sequence, view.scope.network_id);
                 let journal_sequence = hub.events.sequence();
-                if journal.is_err()
+                if sub.authorization != authorization
+                    || journal.is_err()
                     || observation_scope_changed
                         && (!sub.pending.is_empty() || !sub.replay.is_empty())
                     || (!sub.pending.is_empty()
+                        && (sub.initial_batch.is_some()
+                            || !provider.can_drain_configuration_changes(&view))
                         && (view.configuration != sub.last.configuration
                             || view.entities != sub.last.entities
                             || view.scope.configuration_revision
@@ -434,6 +469,7 @@ impl<P: StateProvider> StateService<P> {
                         },
                     )?);
                     sub.last = view;
+                    sub.authorization = authorization;
                     sub.state = state;
                     let ready = random_id()?;
                     sub.cursor = ready.clone();
@@ -454,6 +490,7 @@ impl<P: StateProvider> StateService<P> {
                                     && notice.previous_revision == revision =>
                             {
                                 revision = notice.revision;
+                                let notice = provider.filter_notice(&view, notice);
                                 enqueue::<P>(
                                     &mut sub,
                                     ProviderEvent::<P>::ConfigurationChanged {
@@ -621,6 +658,9 @@ impl<P: StateProvider> StateService<P> {
                     }
                 }
                 let frame = sub.pending.pop_front().ok_or(StateError::Unavailable)?;
+                if frame.id.is_some() && frame.id == sub.initial_batch {
+                    sub.initial_batch = None;
+                }
                 if frame.id.is_some() {
                     sub.replay.push(frame.clone());
                 }
@@ -709,6 +749,7 @@ fn random_id() -> Result<String, StateError> {
         .to_string())
 }
 fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result<(), StateError> {
+    sub.initial_batch = Some(batch.clone());
     sub.pending.push_back(SseFrame::encode(
         None,
         &ProviderEvent::<P>::ConfigSnapshot {

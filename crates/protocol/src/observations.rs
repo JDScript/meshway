@@ -50,9 +50,7 @@ wire_object! { #[derive(Clone, Debug)] pub struct RecentLink {
     pub source_node_id: NodeId, pub peer_node_id: NodeId, pub link_id: String,
     pub transport: String, pub last_event_at: DateTime<Utc>, pub closed: bool,
 } }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
-pub enum HistoryCoverage {
+crate::object::wire_tagged! { #[derive(Clone, Debug)] pub enum HistoryCoverage {
     Pruned {
         #[serde(rename = "sourceNodeId")]
         source_node_id: NodeId,
@@ -70,7 +68,7 @@ pub enum HistoryCoverage {
         to: DateTime<Utc>,
         dropped: Sequence,
     },
-}
+} }
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
 )]
@@ -79,23 +77,19 @@ pub enum CoverageReason {
     Retention,
     Capacity,
 }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
-pub enum HistoryItems {
+crate::object::wire_tagged! { tag="mode"; #[derive(Clone, Debug)] pub enum HistoryItems {
     Raw { items: Vec<HistoricalEvent> },
     Buckets { items: Vec<HistoryBucket> },
     RecentLinks { items: Vec<RecentLink> },
-}
+} }
 wire_object! { #[derive(Clone, Debug)] pub struct HistoryPage {
     pub from: DateTime<Utc>, pub to: DateTime<Utc>, pub as_of: DateTime<Utc>, pub next_cursor: Option<String>,
     pub coverage: Vec<HistoryCoverage>, pub result: HistoryItems,
 } }
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
-pub enum ObservationPath {
+crate::object::wire_tagged! { tag="mode"; #[derive(Clone, Debug, PartialEq, Eq)] pub enum ObservationPath {
     Auto,
     Explicit { path: Vec<NodeId> },
-}
+} }
 wire_object! { #[derive(Clone, Debug)] pub struct CreateObservation {
     pub subscription_id: ObservationSubscriptionId,
     pub source_node_id: NodeId, pub target_node_id: NodeId, pub selection: ObservationPath,
@@ -127,9 +121,7 @@ wire_object! { #[derive(Clone, Debug)] pub struct ObservationList { pub items: V
 wire_object! { #[derive(Clone, Debug)] pub struct ObservationResult {
     pub instance_id: InstanceId, pub configuration: ConfigurationRef, pub result: ObservationUpdate,
 } }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
-pub enum ObservationUpdate {
+crate::object::wire_tagged! { #[derive(Clone, Debug)] pub enum ObservationUpdate {
     Phase {
         phase: ReportedObservationPhase,
     },
@@ -139,7 +131,7 @@ pub enum ObservationUpdate {
         path_segment: Sequence,
         sample: Box<ObservationSample>,
     },
-}
+} }
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ReportedObservationPhase {
