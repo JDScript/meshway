@@ -672,7 +672,7 @@ fn routing_references_exit_flags_and_assignment_conflicts_are_rejected() {
             rule_sets: vec!["absent".into()],
             ..Default::default()
         },
-        action: RouteAction::Direct,
+        action: RuleAction::Direct,
     });
     invalid(normalize(c, &context()), "unknown rule set");
 }
@@ -1235,4 +1235,75 @@ fn managed_certificates_are_reissued_per_server_name_and_provided_ones_are_kept(
         v.tls.certificate.as_ref().map(|s| s.expose()),
         Some("CERT-A")
     );
+}
+
+#[test]
+fn listener_updates_keep_omitted_websocket_response_headers_for_the_same_resource() {
+    let previous: Listener = serde_json::from_str(
+        r#"{"type":"vless","listenPort":443,"stream":"websocket","uuid":"11111111-1111-4111-8111-111111111111",
+            "tls":{"serverName":"a.example.test","alpn":["http/1.1"],"certificate":"CERT-A","privateKey":"KEY-A"},
+            "websocket":{"path":"/ws","responseHeaders":{"X-Keep":"yes"}}}"#,
+    )
+    .unwrap();
+    let update = |websocket: &str| -> ListenerUpdate {
+        serde_json::from_str(&format!(
+            r#"{{"type":"vless","listenPort":8443,"stream":"websocket","tls":{{"serverName":"a.example.test","alpn":["http/1.1"]}}{websocket}}}"#
+        ))
+        .unwrap()
+    };
+    let headers = |l: &Listener| match l {
+        Listener::Vless(v) => v
+            .websocket
+            .as_ref()
+            .map(|w| serde_json::to_value(&w.response_headers).unwrap()),
+        _ => None,
+    };
+    // Omitted websocket block: the previous block, headers included.
+    assert_eq!(
+        headers(&update("").apply(Some(&previous))),
+        headers(&previous)
+    );
+    // Websocket block without headers: the previous headers.
+    assert_eq!(
+        headers(&update(r#","websocket":{"path":"/new"}"#).apply(Some(&previous))),
+        headers(&previous)
+    );
+    // Explicitly empty headers clear them; an explicit null removes the block.
+    assert_eq!(
+        headers(
+            &update(r#","websocket":{"path":"/new","responseHeaders":{}}"#).apply(Some(&previous))
+        ),
+        Some(serde_json::json!({}))
+    );
+    assert_eq!(
+        headers(&update(r#","websocket":null"#).apply(Some(&previous))),
+        None
+    );
+    // A new resource has no predecessor to inherit from.
+    assert_eq!(
+        headers(&update(r#","websocket":{"path":"/new"}"#).apply(None)),
+        Some(serde_json::json!({}))
+    );
+    let Listener::Vless(v) = update("").apply(Some(&previous)) else {
+        panic!()
+    };
+    assert_eq!(
+        v.uuid.as_ref().map(|s| s.expose()),
+        Some("11111111-1111-4111-8111-111111111111")
+    );
+    assert_eq!(
+        v.tls.certificate.as_ref().map(|s| s.expose()),
+        Some("CERT-A")
+    );
+}
+
+#[test]
+fn unmanaged_is_only_a_fallback_by_type() {
+    let rule: Result<EgressRule, _> = serde_json::from_str(
+        r#"{"match":{"ipCIDR":["8.8.8.0/24"]},"action":{"type":"unmanaged"}}"#,
+    );
+    assert!(rule.is_err());
+    let profile: RoutingProfile =
+        serde_json::from_str(r#"{"rules":[],"fallback":{"type":"unmanaged"}}"#).unwrap();
+    assert_eq!(profile.fallback, RouteAction::Unmanaged);
 }

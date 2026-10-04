@@ -230,14 +230,8 @@ fn rules(
                 );
             }
         }
-        if rule.action == RouteAction::Unmanaged {
-            check.issue(ConfigurationIssue::new(
-                format!("{path}/action"),
-                IssueCode::UnmanagedNotFallback,
-            ));
-        }
         action(
-            &rule.action,
+            &rule.action.clone().into(),
             config,
             &format!("{path}/action"),
             check,
@@ -745,7 +739,7 @@ fn verify_rules(
     previous: Option<PriorRules<'_>>,
 ) {
     for (index, rule) in rules.iter().enumerate() {
-        if !matches!(rule.action, RouteAction::Exit { .. }) {
+        if !matches!(rule.action, RuleAction::Exit { .. }) {
             continue;
         }
         let mut destinations: Vec<_> = rule.matcher.ip_cidr.clone();
@@ -895,7 +889,7 @@ fn validate_assignments_access(
                     // dependencies live, not merely retained.
                     for (index, rule) in profile.rules.iter().enumerate() {
                         action(
-                            &rule.action,
+                            &rule.action.clone().into(),
                             config,
                             &format!("{profile_path}/rules/{index}/action"),
                             check,

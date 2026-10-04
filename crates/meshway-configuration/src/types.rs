@@ -122,14 +122,29 @@ object! { #[derive(Default)] pub struct RouteMatch {
     #[serde(default, rename = "ipCIDR")] pub ip_cidr: Vec<String>,
     #[serde(default)] pub rule_sets: Vec<String>,
 } }
+// What a matched egress rule does with the traffic.
+tagged! { pub enum RuleAction {
+    Exit { nodes: Vec<String>, #[serde(default)] via: Vec<String> },
+    Direct,
+} }
+// What a profile does with traffic no rule matched; `unmanaged` leaves it to
+// the local system and is only meaningful as a fallback.
 tagged! { pub enum RouteAction {
     Exit { nodes: Vec<String>, #[serde(default)] via: Vec<String> },
     Direct, Unmanaged,
 } }
+impl From<RuleAction> for RouteAction {
+    fn from(action: RuleAction) -> Self {
+        match action {
+            RuleAction::Exit { nodes, via } => Self::Exit { nodes, via },
+            RuleAction::Direct => Self::Direct,
+        }
+    }
+}
 object! { pub struct EgressRule {
     #[serde(default)] pub remark: String,
     #[serde(rename = "match")] pub matcher: RouteMatch,
-    pub action: RouteAction,
+    pub action: RuleAction,
 } }
 object! { pub struct RoutingProfile {
     #[serde(default)] pub rules: Vec<EgressRule>,

@@ -362,7 +362,7 @@ fn egress_first_match_no_fallback_on_revocation_and_dns_is_trusted() {
             domain_suffix: vec!["example.com".into()],
             ..Default::default()
         },
-        action: RouteAction::Exit {
+        action: RuleAction::Exit {
             nodes: vec![format!("node:{}", node(4))],
             via: vec![format!("node:{}", node(3))],
         },
@@ -516,7 +516,7 @@ fn backup_exit_survives_primary_path_budget() {
             ip_cidr: vec!["1.1.1.1/32".into()],
             ..Default::default()
         },
-        action: RouteAction::Exit {
+        action: RuleAction::Exit {
             nodes: vec![format!("node:{}", node(4)), format!("node:{}", node(2))],
             via: vec![],
         },
@@ -715,7 +715,7 @@ fn unavailable_rule_content_cannot_fall_through_to_direct() {
                 rule_sets: vec!["remote".into()],
                 ..Default::default()
             },
-            action: RouteAction::Exit {
+            action: RuleAction::Exit {
                 nodes: vec![format!("node:{}", node(4))],
                 via: vec![],
             },
@@ -726,7 +726,7 @@ fn unavailable_rule_content_cannot_fall_through_to_direct() {
                 ip_cidr: vec!["1.1.1.1/32".into()],
                 ..Default::default()
             },
-            action: RouteAction::Direct,
+            action: RuleAction::Direct,
         },
     ];
     let mut d = demand(1, 1, 4);

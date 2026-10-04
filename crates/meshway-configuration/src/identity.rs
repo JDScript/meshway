@@ -64,6 +64,12 @@ fn visit_policy(c: &mut NetworkConfigurationInput, f: &mut impl FnMut(&mut Strin
             many(via, f);
         }
     }
+    fn rule_action(a: &mut RuleAction, f: &mut impl FnMut(&mut String)) {
+        if let RuleAction::Exit { nodes, via } = a {
+            many(nodes, f);
+            many(via, f);
+        }
+    }
     for values in c.groups.values_mut().chain(c.tags_owners.values_mut()) {
         many(values, f);
     }
@@ -81,12 +87,12 @@ fn visit_policy(c: &mut NetworkConfigurationInput, f: &mut impl FnMut(&mut Strin
         many(&mut rule.via, f);
     }
     for rule in &mut c.routing.egress.rules {
-        action(&mut rule.action, f);
+        rule_action(&mut rule.action, f);
     }
     for profile in c.routing.egress.profiles.values_mut() {
         action(&mut profile.fallback, f);
         for rule in &mut profile.rules {
-            action(&mut rule.action, f);
+            rule_action(&mut rule.action, f);
         }
     }
     for assignment in &mut c.routing.egress.assignments {

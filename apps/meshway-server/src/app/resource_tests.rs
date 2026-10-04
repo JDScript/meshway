@@ -600,7 +600,7 @@ async fn configuration_prepares_new_and_replaced_references_in_one_cas_without_p
             rule_sets: vec!["remote".into()],
             ..Default::default()
         },
-        action: RouteAction::Exit {
+        action: RuleAction::Exit {
             nodes: vec![format!("node:{}", b.node_id)],
             via: vec![],
         },
@@ -1084,7 +1084,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
             rule_sets: vec!["remote".into()],
             ..Default::default()
         },
-        action: RouteAction::Exit {
+        action: RuleAction::Exit {
             nodes: vec![format!("node:{}", b.node_id)],
             via: vec![],
         },
