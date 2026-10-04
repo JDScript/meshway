@@ -5,9 +5,10 @@ use crate::configuration::ConfigurationBindings;
 use crate::error::Error;
 use meshway_configuration::{
     ChangeKind, ConfigurationChange, PreparationKind, PreparationRequirement, ValidationContext,
-    plan_configuration, planned_configuration_changes,
+    planned_configuration_changes,
 };
 use meshway_model::{NodeId, RequestId};
+use meshway_policy::plan_configuration;
 use meshway_protocol::configuration::{ConfigurationPreviewResponse, ListenerChange};
 use meshway_transport_spec::MaterialRequirement;
 use std::collections::{BTreeMap, BTreeSet};

@@ -1,0 +1,18 @@
+[package]
+name = "meshway-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared Meshway Access, routing, compilation and execution-permit decisions"
+
+[dependencies]
+meshway-configuration = { path = "../meshway-configuration" }
+meshway-model = { path = "../meshway-model" }
+meshway-transport-spec = { path = "../meshway-transport-spec" }
+ipnet.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -20,6 +20,7 @@ meshway-model = { path = "../../crates/meshway-model" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-private-storage = { path = "../../crates/meshway-private-storage" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
+meshway-policy = { path = "../../crates/meshway-policy" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
 meshway-transport-spec = { path = "../../crates/meshway-transport-spec" }
 meshway-tls = { path = "../../crates/meshway-tls" }

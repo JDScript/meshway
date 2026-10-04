@@ -1,5 +1,6 @@
 //! Identity-level Mesh Access. Execution availability is checked by the caller.
-use crate::{NetworkConfiguration, SubjectContext, execution::BusinessProtocol};
+use crate::SubjectContext;
+use meshway_configuration::{NetworkConfiguration, execution::BusinessProtocol};
 use meshway_model::NodeId;
 use meshway_transport_spec::Port;
 use std::ops::RangeInclusive;

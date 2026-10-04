@@ -4,11 +4,10 @@ mod diagnostics;
 mod matching;
 mod paths;
 mod transports;
-use crate::{execution::*, *};
+use crate::{SubjectContext, domain_suffix_matches, topology_allows};
 pub use matching::profile_allowed;
-use meshway_model::{Digest, NetworkId, NodeId, PublicationId, RequestId, Revision};
-use serde::Serialize;
-use sha2::{Digest as _, Sha256};
+use meshway_configuration::{execution::*, *};
+use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
 use std::collections::BTreeMap;
 
 pub const COMPILER_VERSION: &str = "meshway-demand-1";
@@ -47,11 +46,10 @@ pub enum CompileError {
     Serialization,
 }
 
-pub fn digest<T: Serialize>(value: &T) -> Result<Digest, CompileError> {
-    let bytes = zeroize::Zeroizing::new(
-        serde_json::to_vec(value).map_err(|_| CompileError::Serialization)?,
-    );
-    Ok(Digest::from_bytes(Sha256::digest(bytes.as_slice()).into()))
+impl From<meshway_configuration::SerializationError> for CompileError {
+    fn from(_: meshway_configuration::SerializationError) -> Self {
+        Self::Serialization
+    }
 }
 
 pub fn compile(input: CompilationInput<'_>) -> Result<CompiledPublication, CompileError> {

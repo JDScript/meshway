@@ -3,7 +3,7 @@ name = "meshway-configuration"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Meshway configuration values, normalization, validation, and compilation"
+description = "Meshway configuration contracts, normalization, serialization and execution deltas"
 
 [dependencies]
 chrono.workspace = true

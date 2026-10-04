@@ -1,0 +1,31 @@
+[package]
+name = "meshway-dataplane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared L3 packet admission and stateful path execution for Meshway nodes"
+
+[dependencies]
+meshway-configuration = { path = "../meshway-configuration" }
+meshway-policy = { path = "../meshway-policy" }
+meshway-model = { path = "../meshway-model" }
+meshway-transport-spec = { path = "../meshway-transport-spec" }
+meshway-control = { path = "../meshway-control" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+meshway-control-client = { path = "../meshway-control-client" }
+meshway-protocol = { path = "../meshway-protocol" }
+meshway-server = { path = "../../apps/meshway-server" }
+meshway-dns = { path = "../meshway-dns" }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+tempfile.workspace = true
+serde_json.workspace = true
+getrandom.workspace = true
+uuid.workspace = true
+hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

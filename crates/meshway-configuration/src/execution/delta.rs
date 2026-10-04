@@ -1,6 +1,14 @@
 use super::*;
-use crate::compile::{CompileError, digest};
+use crate::{SerializationError, digest};
 use meshway_model::ConfigurationRef;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum DeltaError {
+    #[error("inconsistent configuration delta")]
+    InvalidInput,
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
+}
 macro_rules! map_delta {
     ($name:ident,$key:ty,$value:ty) => {
         object! { pub struct $name {pub remove:Vec<$key>,pub upsert:BTreeMap<$key,$value>} }
@@ -43,7 +51,7 @@ fn difference<K: Clone + Ord, V: Clone + PartialEq>(
 pub fn configuration_delta(
     base: &CompiledNode,
     target: &CompiledNode,
-) -> Result<NodeConfigurationDelta, CompileError> {
+) -> Result<NodeConfigurationDelta, DeltaError> {
     let b = &base.configuration;
     let t = &target.configuration;
     if b.node_id != t.node_id
@@ -51,7 +59,7 @@ pub fn configuration_delta(
         || digest(b)? != base.digest
         || digest(t)? != target.digest
     {
-        return Err(CompileError::InvalidInput);
+        return Err(DeltaError::InvalidInput);
     }
     let (lr, lu) = difference(&b.listeners, &t.listeners);
     let (dr, du) = difference(&b.dialers, &t.dialers);
@@ -110,10 +118,10 @@ fn apply<K: Ord, V>(
     map: &mut BTreeMap<K, V>,
     remove: Vec<K>,
     upsert: BTreeMap<K, V>,
-) -> Result<(), CompileError> {
+) -> Result<(), DeltaError> {
     for key in remove {
         if map.remove(&key).is_none() || upsert.contains_key(&key) {
-            return Err(CompileError::InvalidInput);
+            return Err(DeltaError::InvalidInput);
         }
     }
     map.extend(upsert);
@@ -124,7 +132,7 @@ fn apply<K: Ord, V>(
 pub fn apply_configuration_delta(
     base: &CompiledNode,
     delta: NodeConfigurationDelta,
-) -> Result<CompiledNode, CompileError> {
+) -> Result<CompiledNode, DeltaError> {
     let b = &base.configuration;
     if delta.node_id != b.node_id
         || delta.network_id != b.network_id
@@ -133,7 +141,7 @@ pub fn apply_configuration_delta(
         || delta.base.execution_publication != b.publication
         || digest(b)? != base.digest
     {
-        return Err(CompileError::InvalidInput);
+        return Err(DeltaError::InvalidInput);
     }
     let mut t = b.clone();
     t.revision = delta.target.revision;
@@ -166,7 +174,7 @@ pub fn apply_configuration_delta(
     )?;
     let digest = digest(&t)?;
     if digest != delta.target.digest {
-        return Err(CompileError::InvalidInput);
+        return Err(DeltaError::InvalidInput);
     }
     Ok(CompiledNode {
         digest,

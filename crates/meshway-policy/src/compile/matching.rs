@@ -28,7 +28,7 @@ fn internet(address: IpAddr) -> bool {
     {
         return internet(v4.into());
     }
-    crate::internet_ranges()
+    meshway_configuration::internet_ranges()
         .iter()
         .any(|range| range.contains(&address))
 }

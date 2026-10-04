@@ -170,7 +170,7 @@ impl ResourceProvider for Provider {
             &current,
             bindings::contents(tx, network, &selected)?,
         )?;
-        meshway_configuration::normalize_with_dependencies(input, &context)?;
+        meshway_policy::normalize_with_dependencies(input, &context)?;
         if unchanged {
             return Ok(());
         }

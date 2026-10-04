@@ -1,0 +1,20 @@
+[package]
+name = "meshway-dns"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "DNS wire handling and published configuration selection for Node hosts"
+
+[dependencies]
+hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
+meshway-configuration = { path = "../meshway-configuration" }
+meshway-control = { path = "../meshway-control" }
+meshway-model = { path = "../meshway-model" }
+meshway-protocol = { path = "../meshway-protocol" }
+tokio = { workspace = true, features = ["io-util"] }
+thiserror.workspace = true
+bytes = "1"
+tokio-util = { version = "0.7", features = ["codec"] }
+
+[lints]
+workspace = true

@@ -1,5 +1,5 @@
 //! Trusted stable resolution, separate from editable selectors and Node claims.
-use crate::{NetworkConfiguration, NodeIdentity, UserBinding};
+use meshway_configuration::{NetworkConfiguration, NodeIdentity, UserBinding};
 use meshway_model::NodeId;
 use std::collections::BTreeMap;
 

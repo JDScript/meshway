@@ -1,9 +1,8 @@
 use super::{authorize_node, current_configuration, now, subjects};
 use crate::{error::Error, secrets::Sealer};
-use meshway_configuration::{
-    mesh_access_allows_any, node_dns_name, normalize_dns_name, valid_node_hostname,
-};
+use meshway_configuration::{node_dns_name, normalize_dns_name, valid_node_hostname};
 use meshway_model::{InstanceId, RequestId};
+use meshway_policy::mesh_access_allows_any;
 use meshway_protocol::node::{NodeDnsQueryRequest, NodeDnsQueryResponse, NodeDnsRecord};
 use rusqlite::{Transaction, params};
 

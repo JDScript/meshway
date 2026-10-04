@@ -17,6 +17,10 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `acquire_instance` | 使用宿主真实能力取得实例；同一次不确定请求保持原 instance ID |
 | `renew_instance` | 更新当前实例的期限，验证返回实例与代际 |
 | `sync_configuration` | 读取完整目标或用共享库应用 delta，检查 digest／身份／实例绑定，原子保存目标 |
+| `execution_snapshot` | 从当前有效实例、lease 和匹配的已保存目标取得不可变执行快照；不证明 installed／applied |
+| `create_demand` | 使用当前 Node 会话提交匹配当前 instance 的类型化需求；调用方保持重试 request ID，随后同步执行目标 |
+| `cancel_demand` | 取消当前实例的需求；成功确认后立即使本机旧执行快照失效，重新同步后取得新快照 |
+| `query_dns` | 按当前 Node 身份[精确查询名称](/v2/configuration-reference/dns#node-精确名称查询)，无需 instance，不延长任何 lease |
 | `acknowledge_saved` | 对已持久保存且仍属当前执行目标的配置发送 saved 回执；重试保持 attempt／sequence／时间 |
 | `report_control_state` | 上报宿主提供的系统信息、当前能力和已保存配置；applied、通道、包流和测量保持空值 |
 | `retry_state_report` | 重发同一不确定报告，保持 sequence 和观测时间，不制造新样本 |
@@ -43,6 +47,19 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 - 锁文件中的初始化标记先于身份写入持久化；已经初始化后丢失 `control.json` 返回错误，不能作为新安装自动生成身份。
 
 宿主可使用 `snapshot()` 在 HTTP 请求进行期间读取状态。快照复用控制组件的期限与失效标记；停止、身份上下文失效或销毁 driver 后，旧快照不再宣称具有有效实例。读取快照不产生报告或延长 lease。
+
+## 执行快照
+
+`ExecutionSnapshot` 只能由当前 `Control::execution_snapshot()` 取得。它绑定网络／节点、instance／generation、精确目标引用和本机失效代际，并保留原始 session、instance 与 execution 三个截止。缓存恢复、读取或 Clone 都不能延长期限。
+
+配置／需求改变后，Server 可能先撤回旧 execution lease。`sync_configuration` 只取得并保存新目标，不自动续租；宿主显式 `renew_instance` 获得匹配新目标的执行期限后，才能取得可用执行快照。已保存目标与当前可运行资格分别检查。
+
+- `configuration()`／`ensure_current()`：检查当前有效性；目标内容包含私有配置，只交给受信运行组件。
+- `now_ms()`／`expires_at()`：复用控制 owner 的 UTC 高水位和单调期限。
+- `invalidated()`／`invalidated_at(permit_deadline_ms)`：供宿主取消阻塞 I/O；没有额外后台任务，permit 截止只能进一步缩短快照寿命。
+- `same_execution()`：判断显式续租交接是否仍是相同 instance、目标和失效代际；调用组件仍须检查新旧快照有效性。
+
+输出排队时保留快照，在最终 I/O 边界再次检查，并在阻塞期间选择失效通知。换代、down、driver 销毁和不确定持久化会使旧快照失效；挂起的 HTTP 不阻止通知。已经失效的快照不会因重新上线或新 lease 恢复。各组件的安装、包流和 applied 仍由各自实际行为验收。
 
 ## 私有存储与传输
 

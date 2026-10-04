@@ -5,7 +5,10 @@
 //! saved targets and retry identities. It never reports a target as applied.
 #![forbid(unsafe_code)]
 
+mod authority;
 mod clock;
+pub use authority::ExecutionSnapshot;
+mod demand;
 mod dns;
 mod enrollment;
 mod execution;
@@ -76,6 +79,7 @@ pub struct Control {
     client: Client,
     clock: Arc<Clock>,
     validity: Arc<AtomicBool>,
+    invalidated: tokio_util::sync::CancellationToken,
     directory: Arc<meshway_private_storage::Directory>,
     record: Record,
     write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
@@ -127,6 +131,7 @@ impl Control {
             client,
             clock: Arc::new(Clock::new()?),
             validity: Arc::new(AtomicBool::new(true)),
+            invalidated: tokio_util::sync::CancellationToken::new(),
             directory,
             record,
             write: None,
@@ -206,7 +211,9 @@ impl Control {
 
     fn invalidate_snapshots(&mut self) {
         self.validity.store(false, Ordering::Release);
+        self.invalidated.cancel();
         self.validity = Arc::new(AtomicBool::new(true));
+        self.invalidated = tokio_util::sync::CancellationToken::new();
     }
 
     /// Private cached configuration, not an applied installation or a lease.
@@ -361,6 +368,7 @@ impl StatusSnapshot {
 impl Drop for Control {
     fn drop(&mut self) {
         self.validity.store(false, Ordering::Release);
+        self.invalidated.cancel();
     }
 }
 

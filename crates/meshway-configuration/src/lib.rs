@@ -5,10 +5,9 @@
 
 #![forbid(unsafe_code)]
 
-mod access;
-pub mod compile;
+mod digest;
+pub use digest::{SerializationError, digest};
 mod dns_name;
-pub use access::mesh_access_allows_any;
 pub use dns_name::{DnsNameError, MAX_DNS_NAME_INPUT_BYTES, node_dns_name, normalize_dns_name};
 mod document;
 mod editing;
@@ -23,8 +22,6 @@ mod validation;
 mod view;
 pub use source::{edit_source, rewrite_source};
 mod identity;
-mod subjects;
-pub use subjects::SubjectContext;
 mod internet;
 pub use document::*;
 pub use editing::*;

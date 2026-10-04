@@ -98,7 +98,7 @@ pub(crate) fn prepare(
     if context.previous != Some(&current.document.configuration) {
         return Err(Error::DependencyUnavailable);
     }
-    let normalized = meshway_configuration::normalize_with_dependencies(input, context)?;
+    let normalized = meshway_policy::normalize_with_dependencies(input, context)?;
     let configuration = normalized.configuration;
     let user_bindings = normalized.user_bindings;
     let mut changes = configuration_changes(&current.document.configuration, &configuration)?;

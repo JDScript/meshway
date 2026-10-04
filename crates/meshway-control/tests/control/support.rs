@@ -23,6 +23,28 @@ pub fn request() -> RequestId {
     RequestId::new(uuid::Builder::from_random_bytes(bytes).into_uuid()).unwrap()
 }
 impl Server {
+    pub async fn enroll(
+        &self,
+        owner: &Owner,
+        control: &mut meshway_control::Control,
+        hostname: &str,
+    ) -> meshway_protocol::EnrollmentResponse {
+        let pending = control.begin_enrollment(hostname).await.unwrap();
+        self.client
+            .approve_device_authorization(
+                &meshway_control_client::ApproveDeviceAuthorizationPath {
+                    enrollment_request_id: pending.id,
+                },
+                &meshway_protocol::ApproveEnrollmentRequest {
+                    network_id: owner.network,
+                },
+                owner.token.expose(),
+            )
+            .await
+            .unwrap();
+        control.poll_enrollment().await.unwrap();
+        control.redeem_enrollment().await.unwrap()
+    }
     pub async fn start() -> Self {
         let temp = tempfile::tempdir().unwrap();
         let app = App::open(Settings::new(

@@ -108,8 +108,8 @@ pub(crate) fn subjects(
     tx: &Transaction<'_>,
     network: NetworkId,
     bindings: &ConfigurationBindings,
-) -> Result<meshway_configuration::SubjectContext, Error> {
-    Ok(meshway_configuration::SubjectContext {
+) -> Result<meshway_policy::SubjectContext, Error> {
+    Ok(meshway_policy::SubjectContext {
         users: bindings.users.clone(),
         node_users: bindings.node_users.clone(),
         members: crate::configuration::context::members(tx, network)?,
@@ -126,14 +126,14 @@ pub(crate) fn identity_digest(
         .ok_or(Error::InvalidCredentials)?
         .identity
     {
-        NodeIdentity::User { .. } => Ok(meshway_configuration::compile::digest(&(
+        NodeIdentity::User { .. } => Ok(meshway_configuration::digest(&(
             "user",
             bindings
                 .node_users
                 .get(&node)
                 .ok_or(Error::InvalidCredentials)?,
         ))?),
-        NodeIdentity::Tag { tags } => Ok(meshway_configuration::compile::digest(&("tag", tags))?),
+        NodeIdentity::Tag { tags } => Ok(meshway_configuration::digest(&("tag", tags))?),
     }
 }
 /// The state owner calls this within the same report transaction, not on a

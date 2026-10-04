@@ -1,0 +1,16 @@
+[package]
+name = "meshway-tun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Linux TUN packet I/O and owned device lifecycle"
+
+[dependencies]
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tun-rs = { version = "=2.8.11", default-features = false, features = ["async_tokio"] }
+
+[lints]
+workspace = true

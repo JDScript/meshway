@@ -19,8 +19,7 @@ pub(super) fn validate_target(
         || cfg.node_id != binding.node_id
         || cfg.self_keys.control_key != binding.keys.control
         || cfg.self_keys.dataplane_key != binding.keys.dataplane
-        || meshway_configuration::compile::digest(cfg).map_err(|_| Error::Contract)?
-            != target.digest
+        || meshway_configuration::digest(cfg).map_err(|_| Error::Contract)? != target.digest
     {
         return Err(Error::Contract);
     }

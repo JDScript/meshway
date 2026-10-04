@@ -6,7 +6,10 @@
 //! paths or credentials. Converting one of these errors must never change its
 //! category: a storage failure is not an invalid session.
 
-use meshway_configuration::{ConfigurationError, ConfigurationIssue, compile::CompileError};
+use meshway_configuration::{
+    ConfigurationError, ConfigurationIssue, SerializationError, execution::DeltaError,
+};
+use meshway_policy::compile::CompileError;
 
 use crate::accounts::PasswordRules;
 use crate::secrets::SealError;
@@ -219,6 +222,21 @@ impl From<CompileError> for Error {
                 Self::DependencyUnavailable
             }
             CompileError::Serialization => Self::encode("compiled publication"),
+        }
+    }
+}
+
+impl From<SerializationError> for Error {
+    fn from(_: SerializationError) -> Self {
+        Self::encode("compiled publication")
+    }
+}
+
+impl From<DeltaError> for Error {
+    fn from(error: DeltaError) -> Self {
+        match error {
+            DeltaError::InvalidInput => Self::InvalidRequest,
+            DeltaError::Serialization(error) => error.into(),
         }
     }
 }

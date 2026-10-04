@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod authority;
 mod dns;
 mod faults;
 mod recovery;

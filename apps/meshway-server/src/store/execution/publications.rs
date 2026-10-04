@@ -10,14 +10,12 @@ use crate::error::Error;
 use crate::execution::NodePrincipal;
 use crate::secrets::Sealer;
 use meshway_configuration::NetworkConfiguration;
-use meshway_configuration::{
-    compile::{self, CompilationInput},
-    execution::*,
-};
+use meshway_configuration::execution::*;
 use meshway_model::{
     BoundNodeKey, ConfigurationRef, Digest, InstanceId, KeyAlgorithm, NetworkId, NodeId,
     NodePublicKey, PublicationId, Revision, Version,
 };
+use meshway_policy::compile::{self, CompilationInput};
 use meshway_protocol::execution::*;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
@@ -82,7 +80,7 @@ fn trusted_inventory(
     tx: &Transaction<'_>,
     network: NetworkId,
     cfg: &NetworkConfiguration,
-    subjects: &meshway_configuration::SubjectContext,
+    subjects: &meshway_policy::SubjectContext,
 ) -> Result<BTreeMap<NodeId, TrustedNode>, Error> {
     let mut out = BTreeMap::new();
     let mut stmt=tx.prepare("SELECT n.id,k.id,k.public_key,k.generation,d.id,d.public_key,d.generation,e.capabilities FROM nodes n JOIN node_keys k ON k.network_id=n.network_id AND k.node_id=n.id AND k.purpose='control' AND k.retired_at IS NULL AND k.revoked_at IS NULL JOIN node_keys d ON d.network_id=n.network_id AND d.node_id=n.id AND d.purpose='dataplane' AND d.retired_at IS NULL AND d.revoked_at IS NULL LEFT JOIN node_execution e ON e.network_id=n.network_id AND e.node_id=n.id WHERE n.network_id=?1 AND n.credentials_revoked_at IS NULL")?;

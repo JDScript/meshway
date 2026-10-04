@@ -9,10 +9,9 @@ mod addresses;
 mod allocation;
 mod issue;
 mod references;
-mod routing;
 pub use allocation::allocate_addresses;
 pub use issue::{ConfigurationIssue, IssueCode};
-pub use references::{domain_suffix_matches, topology_allows};
+pub use references::bind_user_reference;
 
 /// Canonical Node hostname accepted by configuration and signed enrollment.
 /// Callers which normalize user input do so before signing or validation.
@@ -134,32 +133,33 @@ pub enum ConfigurationError {
 }
 
 #[derive(Default)]
-struct Check {
-    issues: Vec<ConfigurationIssue>,
-    unavailable: Vec<ConfigurationIssue>,
-    warnings: Vec<ConfigurationIssue>,
-    requirements: Vec<PreparationRequirement>,
-    bindings: BTreeMap<String, UserBinding>,
-    node_bindings: BTreeMap<NodeId, UserBinding>,
+pub struct ValidationReport {
+    pub issues: Vec<ConfigurationIssue>,
+    pub unavailable: Vec<ConfigurationIssue>,
+    pub warnings: Vec<ConfigurationIssue>,
+    pub requirements: Vec<PreparationRequirement>,
+    pub bindings: BTreeMap<String, UserBinding>,
+    pub node_bindings: BTreeMap<NodeId, UserBinding>,
 }
-impl Check {
+type Check = ValidationReport;
+impl ValidationReport {
     /// A dependency the configuration needs. Retained from the previous
     /// version it is accepted as inert; newly introduced it is an error.
-    fn dependency(&mut self, issue: ConfigurationIssue, retained: bool) {
+    pub fn dependency(&mut self, issue: ConfigurationIssue, retained: bool) {
         if retained {
             self.unavailable.push(issue);
         } else {
             self.issues.push(issue);
         }
     }
-    fn issue(&mut self, issue: ConfigurationIssue) {
+    pub fn issue(&mut self, issue: ConfigurationIssue) {
         self.issues.push(issue);
     }
     /// Accepted configuration that is probably not what the author meant.
-    fn warn(&mut self, issue: ConfigurationIssue) {
+    pub fn warn(&mut self, issue: ConfigurationIssue) {
         self.warnings.push(issue);
     }
-    fn require(&mut self, path: impl Into<String>, kind: PreparationKind) {
+    pub fn require(&mut self, path: impl Into<String>, kind: PreparationKind) {
         self.requirements.push(PreparationRequirement {
             path: path.into(),
             kind,
@@ -189,14 +189,22 @@ fn transport_issue(
     ConfigurationIssue::new(path, IssueCode::InvalidTransport).with("reason", error.code())
 }
 
-/// Normalizes pure fields and validates references. Does not compile paths,
-/// authorize a transaction, allocate addresses, generate or verify TLS material.
-pub fn normalize(
-    input: NetworkConfigurationInput,
-    context: &ValidationContext<'_>,
-) -> Result<(NetworkConfiguration, BTreeMap<String, UserBinding>), ConfigurationError> {
-    let result = normalize_with_dependencies(input, context)?;
-    Ok((result.configuration, result.user_bindings))
+/// Policy hooks run within normalization, before final error/preparation
+/// selection. This preserves author-order field pointers and dependency binding
+/// while keeping rule semantics outside the typed configuration crate.
+pub trait ConfigurationSemantics {
+    fn access_and_topology(
+        &self,
+        configuration: &mut NetworkConfiguration,
+        context: &ValidationContext<'_>,
+        report: &mut ValidationReport,
+    );
+    fn routing(
+        &self,
+        configuration: &mut NetworkConfiguration,
+        context: &ValidationContext<'_>,
+        report: &mut ValidationReport,
+    );
 }
 
 /// Retained but withdrawn dependencies are accepted configuration, never
@@ -211,11 +219,12 @@ pub struct NormalizedConfiguration {
     pub warnings: Vec<ConfigurationIssue>,
 }
 
-pub fn normalize_with_dependencies(
+pub fn normalize_with_semantics(
     input: NetworkConfigurationInput,
     context: &ValidationContext<'_>,
+    semantics: &impl ConfigurationSemantics,
 ) -> Result<NormalizedConfiguration, ConfigurationError> {
-    normalize_inner(input, context, false).map(|(normalized, _, _)| normalized)
+    normalize_inner(input, context, false, semantics).map(|(normalized, _, _)| normalized)
 }
 
 /// Checked, non-executable declarations for a read-only preview. Automatic
@@ -230,11 +239,12 @@ pub struct ConfigurationPlan {
     pub requirements: Vec<PreparationRequirement>,
 }
 
-pub fn plan_configuration(
+pub fn plan_with_semantics(
     input: NetworkConfigurationInput,
     context: &ValidationContext<'_>,
+    semantics: &impl ConfigurationSemantics,
 ) -> Result<ConfigurationPlan, ConfigurationError> {
-    let (normalized, pending, requirements) = normalize_inner(input, context, true)?;
+    let (normalized, pending, requirements) = normalize_inner(input, context, true, semantics)?;
     let mut input = NetworkConfigurationInput::from(&normalized.configuration);
     let mut view = ConfigurationView::from(&normalized.configuration);
     for ((node, key), listener) in pending {
@@ -266,6 +276,7 @@ fn normalize_inner(
     mut input: NetworkConfigurationInput,
     context: &ValidationContext<'_>,
     planning: bool,
+    semantics: &impl ConfigurationSemantics,
 ) -> Result<
     (
         NormalizedConfiguration,
@@ -410,8 +421,9 @@ fn normalize_inner(
         rule_sets: input.rule_sets,
     };
     addresses::nodes(&config, &mut check);
-    references::rules(&mut config, context, &mut check);
-    routing::validate(&mut config, context, &mut check);
+    semantics.access_and_topology(&mut config, context, &mut check);
+    references::dns(&mut config, &mut check);
+    semantics.routing(&mut config, context, &mut check);
     // Only material completion may be deferred. Identity proof, addresses and
     // immutable rule-set inputs remain mandatory for a meaningful preview.
     let requirements = if planning
@@ -436,15 +448,6 @@ fn normalize_inner(
         pending,
         requirements,
     ))
-}
-
-/// Rechecks a persisted complete value against current trusted dependencies.
-/// Returns its stable user bindings; this is not an execution compiler.
-pub fn validate_configuration(
-    configuration: &NetworkConfiguration,
-    context: &ValidationContext<'_>,
-) -> Result<BTreeMap<String, UserBinding>, ConfigurationError> {
-    normalize(NetworkConfigurationInput::from(configuration), context).map(|(_, bindings)| bindings)
 }
 
 impl From<&NetworkConfiguration> for NetworkConfigurationInput {

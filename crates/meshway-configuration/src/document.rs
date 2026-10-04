@@ -1,6 +1,5 @@
 use crate::*;
 use meshway_transport_spec::SecretString;
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 
 /// Keeps editing text (including comments and secrets) separate from the
@@ -40,17 +39,6 @@ pub fn parse_jsonc(source: &str) -> Result<NetworkConfigurationInput, Configurat
         ])
     })
 }
-pub fn parse_document(
-    source: String,
-    context: &ValidationContext<'_>,
-) -> Result<ConfigurationDocument, ConfigurationError> {
-    let input = parse_jsonc(&source)?;
-    let (configuration, _) = normalize(input, context)?;
-    Ok(ConfigurationDocument {
-        source_jsonc: SecretString::new(source),
-        configuration,
-    })
-}
 /// Stable field order, sorted map keys, retained ordered routing arrays.
 pub fn canonical_json(
     configuration: &NetworkConfiguration,
@@ -62,7 +50,7 @@ pub fn canonical_json(
 
 /// Restore the exact canonical representation written by `canonical_json`.
 /// Refuses incomplete snapshots instead of silently supplying newly introduced
-/// defaults. Current inventory/revocation checks use `validate_configuration`.
+/// defaults. The caller must validate current dependencies with meshway-policy.
 pub fn restore_canonical_json(source: &str) -> Result<NetworkConfiguration, ConfigurationError> {
     let value: NetworkConfiguration =
         serde_json::from_str(source).map_err(|_| ConfigurationError::Parse)?;
@@ -77,10 +65,7 @@ pub fn restore_canonical_json(source: &str) -> Result<NetworkConfiguration, Conf
 pub fn configuration_digest(
     configuration: &NetworkConfiguration,
 ) -> Result<meshway_model::Digest, ConfigurationError> {
-    let json = canonical_json(configuration)?;
-    let bytes = Sha256::digest(json.expose().as_bytes());
-    let hex = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    hex.parse().map_err(|_| ConfigurationError::Serialization)
+    digest(configuration).map_err(|_| ConfigurationError::Serialization)
 }
 
 /// Initial complete network configuration, using only Controller-selected
@@ -118,5 +103,25 @@ pub fn new_network(
         routing: RoutingConfiguration::default(),
         rule_sets: BTreeMap::new(),
     };
-    normalize(input, &ValidationContext::default()).map(|(config, _)| config)
+    // This constructor has no editable policy: only the fixed initial defaults
+    // above. Editable configurations require the caller's semantic validator.
+    struct InitialPolicy;
+    impl ConfigurationSemantics for InitialPolicy {
+        fn access_and_topology(
+            &self,
+            _: &mut NetworkConfiguration,
+            _: &ValidationContext<'_>,
+            _: &mut ValidationReport,
+        ) {
+        }
+        fn routing(
+            &self,
+            _: &mut NetworkConfiguration,
+            _: &ValidationContext<'_>,
+            _: &mut ValidationReport,
+        ) {
+        }
+    }
+    normalize_with_semantics(input, &ValidationContext::default(), &InitialPolicy)
+        .map(|result| result.configuration)
 }
