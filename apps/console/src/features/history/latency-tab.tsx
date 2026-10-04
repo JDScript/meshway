@@ -7,6 +7,7 @@ import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { nodesQuery } from "@/features/nodes/queries"
+import { ObservationPanel } from "@/features/observation/observation-panel"
 import { failureText } from "@/lib/failure"
 import { m } from "@/paraglide/messages.js"
 
@@ -76,6 +77,7 @@ export function LatencyTab({
 
   return (
     <div className="flex flex-col gap-6">
+      <ObservationPanel networkId={networkId} nodeId={nodeId} />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <SegmentedControl
