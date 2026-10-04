@@ -8,6 +8,7 @@ import { type UseQueryResult } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 
 import { failureText } from "@/api/failure"
+import { NodeStatusDot } from "@/components/chrome/node-status"
 import { RefList, RefRow } from "@/components/chrome/ref-row"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { StatusDot } from "@/components/chrome/status-dot"
@@ -21,13 +22,12 @@ import {
   nodePaths,
   otherSockets,
   reportOf,
-  reportTime,
   stateOf,
   unconfiguredListeners,
 } from "@/lib/nodes/state-model"
+import { lastSeen, nodeStatus, type NodeStatus } from "@/lib/nodes/status"
 import {
   evidenceLabel,
-  freshnessLabel,
   linkPhaseLabel,
   pathEvidenceLabel,
   reporterRoleLabel,
@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { useNodeConfiguration } from "../-draft"
+import { statusText } from "../../-labels"
 import { ConfiguredListeners } from "./listeners"
 import { Runtime, SocketBlock } from "./runtime"
 
@@ -79,7 +80,7 @@ export function NodeTransport({
   state: UseQueryResult<StateView>
   nodes: NodeInventoryResponse | undefined
 }) {
-  const now = useNow(10_000)
+  const now = useNow(1_000)
   const configuration = useNodeConfiguration(networkId, nodeId, network)
   const view = stateOf(state.data, nodeId)
   const report = reportOf(view)
@@ -106,6 +107,10 @@ export function NodeTransport({
             : null
         }
         view={view}
+        status={nodeStatus(
+          nodes?.items.find((node) => node.id === nodeId) ?? null,
+          view
+        )}
         reportView={report.view}
         now={now}
       />
@@ -182,34 +187,25 @@ function ReportLine({
   loading,
   failed,
   view,
+  status,
   reportView,
   now,
 }: {
   loading: boolean
   failed: string | null
   view: ReturnType<typeof stateOf>
+  status: NodeStatus
   reportView: "full" | "peer" | "none"
   now: number
 }) {
   if (loading) return <Skeleton className="h-12 w-full rounded-tile" />
   if (failed !== null) return <EmptyLine>{failed}</EmptyLine>
   if (!view) return <EmptyLine>{m.nodes_state_absent()}</EmptyLine>
-  const at = reportTime(view)
   return (
     <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 rounded-tile bg-fill-subtle px-3.5 py-2 text-row">
-      <StatusDot
-        color={
-          view.freshness === "current"
-            ? "var(--vitality-live)"
-            : "var(--vitality-quiet)"
-        }
-        shape={view.freshness === "current" ? "live" : "hollow"}
-      />
-      <span className="font-medium">{freshnessLabel[view.freshness]()}</span>
-      <span className="text-muted-foreground">
-        {at
-          ? m.nodes_report_at({ at: agoTime(at, now) ?? at })
-          : m.nodes_report_none()}
+      <NodeStatusDot status={status} />
+      <span className="font-medium">
+        {statusText(status, lastSeen(view), now)}
       </span>
       <span className="ml-auto text-meta text-muted-foreground">
         {reportView === "full"
@@ -309,8 +305,8 @@ function Links({
                     color={
                       link.phase === "authenticated" &&
                       link.evidence === "matched"
-                        ? "var(--vitality-live)"
-                        : "var(--vitality-quiet)"
+                        ? "var(--status-online)"
+                        : "var(--status-inactive)"
                     }
                     shape={
                       link.phase === "authenticated" &&

@@ -107,6 +107,10 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - `revokeNodeKey` 重复吊销返回 409 `state_conflict`，已退休代际仍可吊销（204，不撤当前执行），generation 不匹配是 409 `version_conflict`。
 - 绑定大规则集（8483 条）后 validate 很慢的问题，在 `70f5e95f` 改为线性覆盖计算。
 
+### 需要修正
+
+- 节点停止上报、租约记录清掉以后，它的 `freshness` 从 `expired` 变成 `superseded`：`CurrentNode.instance_id` 为 `None` 时，`None != Some(上报的实例)` 先命中 superseded。结果一个已经停掉的节点在 console 里一直显示"刚重启"。应该只在有另一个当前实例时判 superseded，否则继续往下按租约判 expired（`apps/meshway-server/src/state/mod.rs` 的 freshness 判定）。用脚本节点复现：报一次后不再续租，约 1 分钟内是 `expired`，之后变成 `superseded`。
+
 ### 需要真实 Node 复核
 
 Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置、上报状态），下面几项可以用它复核，这一轮没有做：

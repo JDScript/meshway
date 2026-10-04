@@ -22,8 +22,9 @@ export function shownNodes(
 }
 
 /** Whether either of the node's current keys is revoked. */
-export const keyRevoked = (node: NodeInventoryView) =>
-  node.controlKeyRevokedAt !== null || node.dataplaneKeyRevokedAt !== null
+export const keyRevoked = (
+  node: Pick<NodeInventoryView, "controlKeyRevokedAt" | "dataplaneKeyRevokedAt">
+) => node.controlKeyRevokedAt !== null || node.dataplaneKeyRevokedAt !== null
 
 // Enrolment keys ---------------------------------------------------------
 

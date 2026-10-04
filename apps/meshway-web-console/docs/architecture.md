@@ -55,7 +55,7 @@ routes/
 | `api/queries/` | Query options and keys per resource. Every reader and the live stream use the same keys. |
 | `api/live/` | The network's SSE stream: a pure reducer (`reducer.ts`) and the runtime that applies its effects to the query cache (`stream.ts`), telling the debug mode which reads each event touched, and the controls the debug panel uses. |
 | `state/` | Client stores (below). |
-| `lib/` | Pure modules: the configuration model (`lib/configuration/`: draft, typed operations, JSONC, schema checks, form problems), nodes, observation, history series, addresses (`ip.ts`), labels for values the controller sends (`state-labels.ts`, `activity.ts`, `roles.ts`, `live-labels.ts`), the debug mode's clock offset and differences (`lib/debug/`). Message tables may live here; React does not. |
+| `lib/` | Pure modules: the configuration model (`lib/configuration/`: draft, typed operations, JSONC, schema checks, form problems), nodes (`lib/nodes/status.ts`: a node's one status and its tone), observation, history series, addresses (`ip.ts`), labels for values the controller sends (`state-labels.ts`, `activity.ts`, `roles.ts`, `live-labels.ts`), the debug mode's clock offset and differences (`lib/debug/`). Message tables may live here; React does not. |
 | `components/ui/` | shadcn originals, lightly adjusted. |
 | `components/chrome/` | Shared presentational pieces (`decisions.md`, Shared components). |
 | `components/surface/` | The floating surfaces of a network's pages: `PageFrame`, `Surface`, `GlassDrawer`, the commit bar, the geometry (`layout.ts`), the history rules (`history.ts`) and the page list (`pages.ts`). |

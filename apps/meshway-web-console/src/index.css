@@ -179,10 +179,11 @@
   --divider: color-mix(in oklab, var(--foreground) 12%, transparent);
   /* A chosen segment, raised off its track. */
   --fill-raised: var(--background);
-  /* A node's vitality: lit, contact only, quiet (shapes differ too, see .status-dot). */
-  --vitality-live: var(--brand);
-  --vitality-contact: oklch(0.6 0.01 270);
-  --vitality-quiet: oklch(0.7 0.008 270);
+  /* A node's status: online, needs a look, gone, off (shapes differ too, see .status-dot). */
+  --status-online: var(--success);
+  --status-attention: var(--warning);
+  --status-offline: var(--destructive);
+  --status-inactive: oklch(0.7 0.008 270);
 
   --globe-surface: oklch(0.997 0.001 270);
   --globe-rim: color-mix(in oklab, var(--signal) 10%, oklch(0.86 0.006 270));
@@ -240,8 +241,7 @@
   --fill-raised: oklch(0.32 0.009 270);
   /* A light ink on dark glass reads stronger: the chosen row needs a wider step over hover. */
   --fill-selected: color-mix(in oklab, var(--foreground) 14%, transparent);
-  --vitality-contact: oklch(0.64 0.01 270);
-  --vitality-quiet: oklch(0.5 0.01 270);
+  --status-inactive: oklch(0.5 0.01 270);
   --field: oklch(1 0 0 / 0.045);
 
   --glass-top: oklch(0.24 0.008 270 / 0.8);
@@ -378,7 +378,7 @@
 
   /* A zero-size anchor: CSS2DRenderer centres (and transforms) the element. */
   .globe-node {
-    --node-color: var(--vitality-quiet);
+    --node-color: var(--status-inactive);
     position: relative;
     width: 0;
     height: 0;
@@ -396,9 +396,15 @@
     animation: globe-node-enter 900ms var(--ease-entrance) backwards;
     animation-delay: calc(var(--enter-delay, 0ms) + 150ms);
   }
-  /* A node whose latest report is current; others stay quiet. No marker moves on its own. */
-  .globe-node[data-current="true"] {
-    --node-color: var(--vitality-live);
+  /* A node in its status's colour (`lib/nodes/status.ts`). No marker moves on its own. */
+  .globe-node[data-tone="online"] {
+    --node-color: var(--status-online);
+  }
+  .globe-node[data-tone="attention"] {
+    --node-color: var(--status-attention);
+  }
+  .globe-node[data-tone="offline"] {
+    --node-color: var(--status-offline);
   }
   .globe-node[data-behind="true"] {
     opacity: 0;
@@ -439,8 +445,11 @@
       transform 400ms var(--ease-entrance),
       box-shadow 400ms ease;
   }
-  .globe-node:not([data-current="true"]) .globe-node__dot {
+  /* Only an online node glows; one that is off or unknown also fades. */
+  .globe-node:not([data-tone="online"]) .globe-node__dot {
     box-shadow: 0 0 0 1.5px var(--background);
+  }
+  .globe-node[data-tone="inactive"] .globe-node__dot {
     opacity: 0.7;
   }
   .globe-node:hover .globe-node__dot,

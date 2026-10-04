@@ -4,9 +4,27 @@ import type {
   TransportProtocol,
 } from "@meshway/control-client"
 
+import { agoTime } from "@/lib/format"
 import type { Preset } from "@/lib/nodes/listener-model"
 import type { EnrollmentKeyState, KeyExpiry } from "@/lib/nodes/model"
+import type { NodeStatus } from "@/lib/nodes/status"
+import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
+
+/**
+ * A node's status in a row or a header: an offline node says when it was
+ * last seen (by this browser's clock, which ticks between reports); any
+ * other status, its word.
+ */
+export function statusText(
+  status: NodeStatus,
+  seen: string | null,
+  now: number
+): string {
+  if (status === "expired" && seen)
+    return m.nodes_last_seen({ time: agoTime(seen, now) ?? seen })
+  return statusLabel[status]()
+}
 
 /** The user's email, or the tags, as one line. */
 export const identityText = (identity: NodeIdentity) =>

@@ -1,10 +1,10 @@
-import { StatusDot } from "@/components/chrome/status-dot"
+import { NodeStatusDot } from "@/components/chrome/node-status"
 import { dateTime } from "@/lib/format"
 import type { MapNode } from "@/lib/network-map"
-import { freshnessLabel } from "@/lib/state-labels"
+import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
-import { freshnessColor, locationSourceLabel, placeText } from "./-labels"
+import { locationSourceLabel, placeText } from "./-labels"
 
 /**
  * A located node pointed at on the globe: where the controller's GeoIP
@@ -17,15 +17,12 @@ export function NodeCard({ node }: { node: MapNode }) {
   return (
     <div className="flex flex-col gap-3 p-4">
       <div className="flex min-w-0 items-center gap-2">
-        <StatusDot
-          color={freshnessColor(node.freshness)}
-          shape={node.freshness === "current" ? "live" : "hollow"}
-        />
+        <NodeStatusDot status={node.status} />
         <span className="min-w-0 flex-1 truncate text-row font-medium">
           {node.name}
         </span>
         <span className="shrink-0 text-meta text-muted-foreground">
-          {freshnessLabel[node.freshness]()}
+          {statusLabel[node.status]()}
         </span>
       </div>
       {location ? (

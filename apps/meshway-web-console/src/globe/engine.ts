@@ -12,7 +12,8 @@ import {
   ShaderMaterial,
 } from "three"
 
-import { m } from "@/paraglide/messages.js"
+import { statusTone } from "@/lib/nodes/status"
+import { statusLabel } from "@/lib/state-labels"
 import type { BootPhase } from "@/state/boot"
 import { sameInsets, type GlobeState } from "@/state/globe"
 
@@ -896,12 +897,12 @@ export function createGlobeEngine(
           altitude: anchor.altitude,
         })
       datum.label.textContent = node.name
-      datum.element.dataset.current = node.current ? "true" : "false"
+      datum.element.dataset.tone = statusTone[node.status]
       datum.element.dataset.selected =
         node.id === input.selectedNodeId ? "true" : "false"
       datum.element.setAttribute(
         "aria-label",
-        `${node.name} · ${node.current ? m.globe_node_current() : m.globe_node_not_current()}`
+        `${node.name} · ${statusLabel[node.status]()}`
       )
       datum.element.setAttribute(
         "aria-pressed",

@@ -1,16 +1,17 @@
 import type {
   AggregatedLink,
-  Freshness,
   GeoObservation,
   LinkEvidence,
   LinkPhase,
   LocationAbsentReason,
+  NodeInventoryView,
   RecentLink,
   StateView,
 } from "@meshway/control-client"
 
 import type { LinkLook, Scene, SceneLink, SceneNode } from "@/globe/scene"
 import { shortId } from "@/lib/format"
+import { nodeStatus, type NodeStatus } from "@/lib/nodes/status"
 
 // The overview's reading of the network's State: which nodes the
 // controller located, which it did not and why, and which links can be
@@ -27,7 +28,7 @@ export type Unlocated = LocationAbsentReason | "noPosition" | "unknown"
 export type MapNode = {
   id: string
   name: string
-  freshness: Freshness
+  status: NodeStatus
   /** The controller's derived location; set even without coordinates. */
   location: GeoObservation | null
   /** Set exactly when the node is not on the globe. */
@@ -35,16 +36,6 @@ export type MapNode = {
   receivedAt: string | null
   lastAuthenticatedAt: string | null
 }
-
-/** Freshness in the order the overview lists it. */
-export const FRESHNESS_ORDER: readonly Freshness[] = [
-  "current",
-  "awaiting_report",
-  "expired",
-  "config_mismatch",
-  "superseded",
-  "revoked",
-]
 
 export const PHASE_ORDER: readonly LinkPhase[] = [
   "authenticated",
@@ -60,24 +51,24 @@ export const EVIDENCE_ORDER: readonly LinkEvidence[] = [
   "expired",
 ]
 
-/** The first 8 characters of an ID, for a node the inventory does not name to this account. */
-
 /**
- * Every node in the State, named by the inventory (`names`); a node the
- * account cannot list (a peer of its own device) keeps its short ID.
+ * Every node in the State, named by the inventory; a node the account
+ * cannot list (a peer of its own device) keeps its short ID, and its
+ * status is its report's alone.
  */
 export function mapNodes(
   state: StateView,
-  names: ReadonlyMap<string, string>
+  inventory: ReadonlyMap<string, NodeInventoryView>
 ): MapNode[] {
   return Object.entries(state.nodes)
     .map(([id, view]): MapNode => {
       const location = view.derived.location ?? null
       const placed = location?.data.position != null
+      const listed = inventory.get(id) ?? null
       return {
         id,
-        name: names.get(id) ?? shortId(id),
-        freshness: view.freshness,
+        name: listed?.hostname ?? shortId(id),
+        status: nodeStatus(listed, view),
         location,
         unlocated: placed
           ? null
@@ -103,7 +94,7 @@ function sceneNode(node: MapNode): SceneNode {
           accuracyKm: position.accuracyRadiusKm ?? null,
         }
       : null,
-    current: node.freshness === "current",
+    status: node.status,
   }
 }
 

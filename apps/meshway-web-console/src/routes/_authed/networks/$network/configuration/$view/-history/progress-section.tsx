@@ -13,6 +13,7 @@ import {
 } from "@/api/queries/configuration-progress"
 import { nodesQuery } from "@/api/queries/nodes"
 import { EmptyLine, Section } from "@/components/chrome/section"
+import { StatusDot, type DotShape } from "@/components/chrome/status-dot"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
 import { clockTime, dateTime } from "@/lib/format"
@@ -40,11 +41,12 @@ const freshnessLabel: Record<ReceiptFreshness, () => string> = {
   superseded: () => m.configuration_progress_fresh_superseded(),
 }
 
-const phaseDot: Record<ApplicationPhase, string> = {
-  failed: "bg-destructive",
-  applied: "bg-foreground",
-  saved: "border border-foreground",
-  pending: "border border-muted-foreground",
+/** A node's phase in the status colours: applied green, only saved orange, failed red, not yet grey. */
+const phaseDot: Record<ApplicationPhase, { color: string; shape: DotShape }> = {
+  applied: { color: "var(--status-online)", shape: "live" },
+  saved: { color: "var(--status-attention)", shape: "solid" },
+  failed: { color: "var(--status-offline)", shape: "solid" },
+  pending: { color: "var(--status-inactive)", shape: "hollow" },
 }
 
 /**
@@ -175,10 +177,7 @@ function NodeRow({
       data-phase={phase}
       data-freshness={report.freshness}
     >
-      <span
-        aria-hidden="true"
-        className={cn("size-2 shrink-0 rounded-full", phaseDot[phase])}
-      />
+      <StatusDot {...phaseDot[phase]} />
       <span
         className={cn(
           "min-w-0 flex-1 truncate",
