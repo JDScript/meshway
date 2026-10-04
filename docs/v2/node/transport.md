@@ -81,7 +81,17 @@ publication 是执行目标引用，不直接充当所有连接、业务流或�
 
 性能测量通过专门脚本显式启动并输出机器可读结果及汇总报告，不进入常规单元／集成测试，也不由 `mise run check` 或 `cargo test --all-targets` 启动测量。常规测试验证编解码、截断、顺序、取消、权限和资源回收等正确性，不设置吞吐或耗时性能门槛。性能脚本及运行入口尚待实现。
 
-包装开销的基线使用同一 transport 实现、连接和负载，比较原生协议 I/O 与 Meshway 适配路径；认证、加密、转发和 TUN 的增量成本另行分层测量。其他项目的整机结果作为互通或外部参考，不直接计算为 Meshway 包装损失。
+每种正式协议及封装都必须提供成对的性能结果，使用同一 transport 实现、连接条件、业务 payload、批量策略与资源预算：
+
+| 协议／封装 | raw 基线 | Meshway datagram 对照 |
+| --- | --- | --- |
+| Native UDP | 原生 UDP 报文收发 | UDP 承载 Meshway datagram，并在对端恢复 |
+| Native TCP | 原生 TCP 字节流收发 | 公共 framing 封装／恢复 Meshway datagram |
+| VLESS TCP/TLS | 完整 VLESS＋TLS 协议 I/O | 同一协议栈承载并恢复 Meshway datagram |
+| VLESS WebSocket/TLS | 完整 VLESS＋WS＋TLS 协议 I/O | 同一协议栈承载并恢复 Meshway datagram |
+| Trojan TCP/TLS | 完整 Trojan＋TLS 协议 I/O | 同一协议栈承载并恢复 Meshway datagram |
+
+raw 保留该协议自身的正常握手、TLS／WS 和协议封装；统计对端实际收到的有效业务 payload，不把额外封装字节计为业务吞吐。每对结果同时比较吞吐／pps、CPU、延迟及分配／复制，测量层级和已启用的处理步骤随报告记录。认证、加密、转发和 TUN 的增量成本另行分层测量。新增协议须补齐同样的 raw／Meshway datagram 对照。其他项目的整机结果作为互通或外部参考，不直接计算为 Meshway 包装损失。
 
 | 对照轴 | 场景 |
 | --- | --- |
