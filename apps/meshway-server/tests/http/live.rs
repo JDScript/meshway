@@ -295,6 +295,166 @@ fn report(lease: &InstanceLease, sequence: u64) -> StateReport {
 }
 
 #[tokio::test]
+async fn member_inventory_excludes_execution_peers_and_settings_refresh_in_stream() {
+    use meshway_configuration::execution::{BusinessProtocol, BusinessTarget};
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("inventory"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "inventory-owner@example.test", "valid password").await;
+    let member = register(&c, &s, "inventory-member@example.test", "valid password").await;
+    let network = create(&c, &s, owner.token.expose(), "inventory")
+        .await
+        .network
+        .id;
+    join(
+        &c,
+        &s,
+        network,
+        owner.token.expose(),
+        member.token.expose(),
+        MembershipRole::Member,
+    )
+    .await;
+    let (a, at, ai) = enroll(&c, &s, network, member.token.expose(), 31).await;
+    let (b, _, _) = enroll(&c, &s, network, owner.token.expose(), 32).await;
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    let mut input = meshway_configuration::NetworkConfigurationInput::from(&current.configuration);
+    input
+        .tags_owners
+        .insert("tag:peer".into(), vec![owner.user.email.clone()]);
+    input.nodes.get_mut(&b.node_id).unwrap().identity =
+        serde_json::from_str(r#"{"type":"tag","tags":["tag:peer"]}"#).unwrap();
+    for node in input.nodes.values_mut() {
+        node.listeners =
+            serde_json::from_str(r#"{"udp":{"type":"native_udp","listenPort":23456}}"#).unwrap();
+    }
+    let _: ConfigurationAppliedResponse = json(
+        c.post(net(&s, network, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: request(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+            }),
+    )
+    .await;
+    let _: DemandResponse = json(
+        c.post(format!("{}/agent-api/v1/demands", s.url))
+            .bearer_auth(&at)
+            .json(&DemandRequest {
+                instance: InstanceRequest {
+                    instance_id: ai.instance_id,
+                    generation: ai.generation,
+                },
+                request_id: request(),
+                target: BusinessTarget::Mesh { node: b.node_id },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 60,
+            }),
+    )
+    .await;
+    let mut events =
+        Events::open(&c, net(&s, network, "events"), member.token.expose(), None).await;
+    events.user().await;
+    let StreamEvent::EntitiesSnapshot { entities, .. } = events.user().await.1.0 else {
+        panic!("inventory")
+    };
+    let inventory: NodeInventoryResponse = json(
+        c.get(net(&s, network, "nodes"))
+            .bearer_auth(member.token.expose()),
+    )
+    .await;
+    assert_eq!(
+        entities.nodes.values().cloned().collect::<Vec<_>>(),
+        inventory.items
+    );
+    assert_eq!(entities.nodes.len(), 1);
+    assert!(entities.nodes.contains_key(&a.node_id));
+    let StreamEvent::StateSnapshot { state, .. } = events.user().await.1.0 else {
+        panic!("state")
+    };
+    assert!(
+        state.nodes.contains_key(&b.node_id),
+        "authorized narrow peer State remains available"
+    );
+    events.ready().await;
+    let mut node_events =
+        Events::open(&c, format!("{}/agent-api/v1/events", s.url), &at, None).await;
+    node_events
+        .frame::<meshway_protocol::NodeEvent>()
+        .await
+        .unwrap();
+    let StreamEvent::EntitiesSnapshot { entities, .. } = node_events
+        .frame::<meshway_protocol::NodeEvent>()
+        .await
+        .unwrap()
+        .1
+        .0
+    else {
+        panic!("node inventory")
+    };
+    assert_eq!(entities.nodes[&b.node_id].keys.dataplane, b.keys.dataplane);
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    let mut input = meshway_configuration::NetworkConfigurationInput::from(&current.configuration);
+    input.nodes.get_mut(&a.node_id).unwrap().hostname = "updated-member-host".into();
+    let applied: ConfigurationAppliedResponse = json(
+        c.post(net(&s, network, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: request(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+            }),
+    )
+    .await;
+    let mut refreshed = false;
+    loop {
+        match events.user().await.1.0 {
+            StreamEvent::ConfigSnapshot {
+                configuration:
+                    UserConfigurationView::Member {
+                        nodes, revision, ..
+                    },
+                ..
+            } => {
+                assert_eq!(revision, applied.revision);
+                assert_eq!(nodes[&a.node_id].hostname, "updated-member-host");
+                assert_eq!(nodes.len(), 1);
+                refreshed = true;
+            }
+            StreamEvent::Ready { .. } => {
+                assert!(refreshed);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let mut manager =
+        Events::open(&c, net(&s, network, "events"), owner.token.expose(), None).await;
+    manager.user().await;
+    let StreamEvent::EntitiesSnapshot { entities, .. } = manager.user().await.1.0 else {
+        panic!("manager inventory")
+    };
+    assert_eq!(entities.nodes.len(), 2);
+    assert!(entities.nodes.values().all(|node| node.can_delete));
+    drop(events);
+    let mut reconnected =
+        Events::open(&c, net(&s, network, "events"), member.token.expose(), None).await;
+    let StreamEvent::ConfigSnapshot {
+        configuration: UserConfigurationView::Member { nodes, .. },
+        ..
+    } = reconnected.user().await.1.0
+    else {
+        panic!("reconnected settings")
+    };
+    assert_eq!(nodes[&a.node_id].hostname, "updated-member-host");
+    s.close().await;
+}
+
+#[tokio::test]
 async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     let _serial = ACCOUNT_FLOW.lock().await;
     let dir = tempfile::tempdir().unwrap();

@@ -37,6 +37,17 @@ impl StateProvider for UserProvider {
     type Configuration = UserConfigurationView;
     type Entities = UserEntitiesView;
     type Progress = ConfigurationApplyProgress;
+    fn configuration_refresh_required(
+        &self,
+        previous: &ProviderView<Self>,
+        current: &ProviderView<Self>,
+    ) -> bool {
+        matches!(
+            (&previous.configuration, &current.configuration),
+            (UserConfigurationView::Member { nodes: before, .. },
+             UserConfigurationView::Member { nodes: after, .. }) if before != after
+        )
+    }
     fn can_drain_configuration_changes(&self, view: &ProviderView<Self>) -> bool {
         matches!(view.configuration, UserConfigurationView::Manager { .. })
     }
@@ -95,7 +106,7 @@ impl StateProvider for UserProvider {
             &self.0.sealer,
             network.id,
             cfg,
-            &scope.visible,
+            &scope.full,
             manager,
         )
         .map_err(node_error)?
@@ -117,7 +128,7 @@ impl StateProvider for UserProvider {
             tx,
             network.id,
             snapshot.revision,
-            &scope.visible,
+            &scope.full,
             manager,
             self.0.boot,
             now,
@@ -196,7 +207,7 @@ impl UserProvider {
             tx,
             scope.network_id,
             revision,
-            &scope.visible,
+            &scope.full,
             manager,
             self.0.boot,
             now,

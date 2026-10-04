@@ -72,6 +72,15 @@ pub trait StateProvider: Send + Sync + 'static {
     fn can_drain_configuration_changes(&self, _view: &ProviderView<Self>) -> bool {
         false
     }
+    /// A restricted settings view has no management GET refresh. Replace its
+    /// complete batch when the authorized settings themselves change.
+    fn configuration_refresh_required(
+        &self,
+        _previous: &ProviderView<Self>,
+        _current: &ProviderView<Self>,
+    ) -> bool {
+        false
+    }
     /// Identity/role loss closes the connection. A still-authorized view change
     /// clears replay/pending and synchronizes again instead.
     fn same_authority(&self, previous: &ProviderView<Self>, current: &ProviderView<Self>) -> bool {
@@ -441,6 +450,7 @@ impl<P: StateProvider> StateService<P> {
                     .after(sub.journal_sequence, view.scope.network_id);
                 let journal_sequence = hub.events.sequence();
                 if sub.authorization != authorization
+                    || provider.configuration_refresh_required(&sub.last, &view)
                     || journal.is_err()
                     || observation_scope_changed
                         && (!sub.pending.is_empty() || !sub.replay.is_empty())

@@ -33,6 +33,8 @@ config.snapshot → entities.snapshot → state.snapshot → sync.ready
 
 Owner/Admin 获得本网络非秘密管理视图，成员获得其本人节点设置及获准 State，Node 获得自身设置和必要执行依赖。完整 source／私钥／协议凭据不广播，历史按需查询，订阅不会创建探测任务。
 
+用户实体库存与 `GET /nodes` 使用相同的本人／管理员范围；获准 peer 的窄 State 视图不授予库存或设置读取权。成员的已授权设置变化时，服务端通过 `sync.reset` 与新的完整批次替换设置，客户端无需自行断线刷新。
+
 服务端在一致读取截点建立事件捕获，缓冲截点之后的变化。超出帧／批次预算明确失败，不截断内容后发送 ready。
 
 ## 事件结构
