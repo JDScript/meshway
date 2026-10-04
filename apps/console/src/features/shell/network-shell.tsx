@@ -7,7 +7,6 @@ import { AccountPage } from "@/features/account/page"
 import { AccountMenu } from "@/features/auth/account-menu"
 import { useBootStore } from "@/features/boot/boot-store"
 import { ConfigurationPage } from "@/features/configuration/page"
-import { EMPTY_SCENE } from "@/features/globe/scene"
 import { setGlobe } from "@/features/globe/store"
 import { LiveIndicator } from "@/features/live/live-indicator"
 import { MembersPage } from "@/features/members/page"
@@ -34,8 +33,8 @@ import {
  * Everything around the globe on a network's pages, mounted once for all of
  * them: changing pages only brings surfaces in and out, while the chrome
  * stays put. Each page draws its own surfaces (`features/<page>/page.tsx`);
- * the shell places the chrome and is the only writer of the globe. This
- * controller reports no node locations or state, so the globe shows none.
+ * the shell places the chrome and frames the globe, and the overview
+ * writes what it shows (the network's located nodes and links).
  */
 export function NetworkShell({
   networkId,
@@ -65,19 +64,13 @@ export function NetworkShell({
     [mobile, ready, page, workspaceOpen, viewportHeight]
   )
   useEffect(() => {
-    setGlobe({
-      framing: "network",
-      scene: EMPTY_SCENE,
-      selectedNodeId: null,
-      insets,
-      recede,
-    })
+    setGlobe({ framing: "network", insets, recede })
   }, [insets, recede])
   useEffect(() => () => setGlobe({ hoveredNodeId: null, recede: false }), [])
 
   return (
     <>
-      <OverviewPage />
+      <OverviewPage networkId={networkId} />
       <NodesPage networkId={networkId} network={network} />
       <MembersPage networkId={networkId} network={network} />
       <ConfigurationPage networkId={networkId} network={network} />

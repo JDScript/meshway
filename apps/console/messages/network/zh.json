@@ -13,7 +13,6 @@
   "network_name_placeholder": "家庭网络",
   "network_name_missing": "请输入网络名称。",
   "network_name_invalid": "网络名称无效。",
-  "overview_no_state": "此控制面尚未报告节点的位置和状态。",
   "role_owner": "所有者",
   "role_admin": "管理员",
   "role_member": "成员",
