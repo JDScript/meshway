@@ -74,6 +74,7 @@ impl Control {
             }
         };
         let lease = instance.lease.clone();
+        self.invalidate_snapshots();
         self.instance = Some(instance);
         self.acquiring = None;
         Ok(lease)
@@ -288,6 +289,14 @@ impl Control {
             .clone();
         match instance(lease, started, capabilities) {
             Ok(instance) => {
+                if self.instance.as_ref().is_some_and(|old| {
+                    old.lease.target != instance.lease.target
+                        || instance.lease.expires_at_ms < old.lease.expires_at_ms
+                        || instance.lease.execution_expires_at_ms
+                            < old.lease.execution_expires_at_ms
+                }) {
+                    self.invalidate_snapshots();
+                }
                 self.instance = Some(instance);
                 Ok(())
             }

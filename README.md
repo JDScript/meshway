@@ -8,7 +8,7 @@ Rust Server、React Console 与节点网络架构。以 Tailscale 为常规产�
 
 - **Server**：账户、网络隔离、配置版本／CAS、持钥节点接入、执行发布、State／SSE、历史、规则集和观察任务。
 - **Console**：纯 SPA，消费生成 SDK；支持上述已交付管理与观测流程。
-- **Node**：`meshway-control` 已接通持钥接入、认证、实例／lease 与目标保存；`meshwayd`／`meshway`、插件与实际网络运行仍待实现。
+- **Node**：`meshwayd`／`meshway` 已接通持钥接入、认证、实例／lease、目标保存及状态上报；TUN／SOCKS5、插件与实际包流仍待实现。
 
 旧节点／Apple 实现和实验已移出活跃源码树。历史参考保留在 `archive/pre-consolidation-main-007e9deb`、`archive/node-runtime-8da83a7f`、`archive/apple-007e9deb`；复用须逐项审查，不把历史实现当成新合同。
 
@@ -17,6 +17,7 @@ Rust Server、React Console 与节点网络架构。以 Tailscale 为常规产�
 | 目录 | 职责 |
 | --- | --- |
 | `apps/meshway-server` | Server 应用与私有领域／存储模块 |
+| `apps/meshway-daemon`／`apps/meshway-cli` | Node daemon `meshwayd` 与本机 CLI `meshway` |
 | `apps/meshway-web-console` | Web Console（`@meshway/web-console`） |
 | `crates/meshway-*` | 共享契约／私有存储原语，以及 Node control 组件；职责见架构文档 |
 | `packages/protocol` | 生成 OpenAPI |
@@ -60,6 +61,8 @@ mise run dev:docs
 文档位于 `http://localhost:5173/v2/`。持久开发服务由 `mise run services <action> [service]` 管理：action 为 `start`／`status`／`stop`／`restart`／`update`，service 为 `server`／`docs`／`all`。例如 `mise run services start docs`。它核验进程／目录／端口归属，不接管其他实例。源码合并不自动迁移数据库或切换已运行服务。
 
 ## 检查
+
+Node 的构建、启动、批准接入和本机命令见 [Node 运行](docs/v2/node/runtime.md#启动与接入)。
 
 ```sh
 mise tasks

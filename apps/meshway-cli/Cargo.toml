@@ -1,0 +1,31 @@
+[package]
+name = "meshway-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+default-run = "meshway"
+
+[[bin]]
+name = "meshway"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+getrandom.workspace = true
+meshway-ipc = { path = "../../crates/meshway-ipc" }
+meshway-model = { path = "../../crates/meshway-model" }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+meshway-daemon = { path = "../meshway-daemon" }
+meshway-server = { path = "../meshway-server" }
+meshway-control-client = { path = "../../crates/meshway-control-client" }
+meshway-protocol = { path = "../../crates/meshway-protocol" }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

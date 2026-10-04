@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "apps/meshway-server",
+    "apps/meshway-daemon",
+    "apps/meshway-cli",
     "crates/meshway-model",
     "crates/meshway-configuration",
     "crates/meshway-control-client",
@@ -9,6 +11,7 @@ members = [
     "crates/meshway-transport-spec",
     "crates/meshway-private-storage",
     "crates/meshway-control",
+    "crates/meshway-ipc",
 ]
 resolver = "3"
 

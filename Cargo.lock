@@ -1255,6 +1255,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "meshway-cli"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "getrandom 0.3.4",
+ "meshway-control-client",
+ "meshway-daemon",
+ "meshway-ipc",
+ "meshway-model",
+ "meshway-protocol",
+ "meshway-server",
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "meshway-configuration"
 version = "0.1.0"
 dependencies = [
@@ -1318,6 +1338,48 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "meshway-daemon"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "clap",
+ "getrandom 0.3.4",
+ "meshway-configuration",
+ "meshway-control",
+ "meshway-control-client",
+ "meshway-ipc",
+ "meshway-model",
+ "meshway-private-storage",
+ "meshway-protocol",
+ "meshway-serde",
+ "meshway-server",
+ "reqwest",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "meshway-ipc"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "meshway-model",
+ "meshway-protocol",
+ "meshway-serde",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "utoipa",
 ]
 
 [[package]]

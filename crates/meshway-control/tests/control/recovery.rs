@@ -15,6 +15,13 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
     ));
     control.shutdown().await.unwrap();
     let saved = fs::read(path.join("control.json")).unwrap();
+    fs::remove_file(path.join("control.json")).unwrap();
+    assert!(matches!(
+        Control::open(&path, &server.origin, reqwest::Client::builder()),
+        Err(Error::Record)
+    ));
+    fs::write(path.join("control.json"), &saved).unwrap();
+    fs::set_permissions(path.join("control.json"), fs::Permissions::from_mode(0o600)).unwrap();
     assert!(matches!(
         Control::open(
             &path,
@@ -134,12 +141,14 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
         2
     );
     let old_instance = control.status().instance.unwrap().instance_id;
+    let retained = control.snapshot();
     proxy.fault("/instances/release", Fault::Hold);
     let mut stop = Box::pin(control.stop());
     tokio::select! {
         result = &mut stop => panic!("unexpected delivery: {}", result.is_ok()),
         _ = proxy.committed() => {},
     }
+    assert!(!retained.status().authenticated && retained.status().instance.is_none());
     drop(stop);
     assert!(!control.status().authenticated && control.status().instance.is_none());
     proxy.release();

@@ -20,7 +20,15 @@ use meshway_protocol::{
     AcquireInstanceRequest, EnrollmentResponse, ErrorResponse, InstanceLease, NodeSessionResponse,
     ReceiptRequest, StateReport, node::NodeSessionIntent,
 };
-use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use storage::Record;
 
 #[derive(Debug, thiserror::Error)]
@@ -64,6 +72,7 @@ pub struct Status {
 pub struct Control {
     client: Client,
     clock: Arc<Clock>,
+    validity: Arc<AtomicBool>,
     directory: Arc<meshway_private_storage::Directory>,
     record: Record,
     write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
@@ -99,7 +108,7 @@ impl Control {
     /// Remote origins require HTTPS; plaintext is limited to numeric loopback.
     /// The supplied builder retains the host's socket/resolver protection.
     pub fn open(path: &Path, origin: &str, http: reqwest::ClientBuilder) -> Result<Self, Error> {
-        let origin = origin_url(origin)?;
+        let origin = server_origin(origin)?;
         let client = Client::new(
             &origin,
             http.timeout(Duration::from_secs(20)),
@@ -114,6 +123,7 @@ impl Control {
         Ok(Self {
             client,
             clock: Arc::new(Clock::new()?),
+            validity: Arc::new(AtomicBool::new(true)),
             directory,
             record,
             write: None,
@@ -129,12 +139,18 @@ impl Control {
     }
 
     pub fn status(&self) -> Status {
+        self.snapshot().status()
+    }
+
+    /// Host projections remain bounded by the same clock and invalidation epoch
+    /// even while an HTTP operation holds the mutable control driver.
+    pub fn snapshot(&self) -> StatusSnapshot {
         let authenticated = !self.dirty
             && self
                 .session
                 .as_ref()
                 .is_some_and(|s| s.active && s.deadline.valid());
-        Status {
+        let status = Status {
             enrollment_request_id: if self.dirty {
                 None
             } else {
@@ -159,7 +175,35 @@ impl Control {
                 }),
             cached: self.cached_target().map(reference),
             reload_required: self.dirty,
+        };
+        StatusSnapshot {
+            status,
+            validity: Arc::clone(&self.validity),
+            session: self.session.as_ref().map(|s| s.deadline.clone()),
+            instance: self.instance.as_ref().map(|i| i.deadline.clone()),
+            execution: self
+                .instance
+                .as_ref()
+                .and_then(|i| i.execution_deadline.clone()),
         }
+    }
+
+    pub fn pending_hostname(&self) -> Option<&str> {
+        self.record
+            .enrollment
+            .as_ref()
+            .map(|e| e.intent.hostname.as_str())
+    }
+    pub fn can_redeem_enrollment(&self) -> bool {
+        self.record
+            .enrollment
+            .as_ref()
+            .is_some_and(|e| e.code.is_some())
+    }
+
+    fn invalidate_snapshots(&mut self) {
+        self.validity.store(false, Ordering::Release);
+        self.validity = Arc::new(AtomicBool::new(true));
     }
 
     /// Private cached configuration, not an applied installation or a lease.
@@ -203,6 +247,7 @@ impl Control {
     }
 
     fn fence(&mut self) {
+        self.invalidate_snapshots();
         self.instance = None;
         self.acquiring = None;
         self.receipt = None;
@@ -262,7 +307,7 @@ impl Control {
     }
 }
 
-fn origin_url(value: &str) -> Result<String, Error> {
+pub fn server_origin(value: &str) -> Result<String, Error> {
     let url = reqwest::Url::parse(value).map_err(|_| Error::Endpoint)?;
     let loopback = url
         .host_str()
@@ -284,6 +329,36 @@ fn origin_url(value: &str) -> Result<String, Error> {
         return Err(Error::Endpoint);
     }
     Ok(url.to_string())
+}
+
+#[derive(Clone)]
+pub struct StatusSnapshot {
+    status: Status,
+    validity: Arc<AtomicBool>,
+    session: Option<Deadline>,
+    instance: Option<Deadline>,
+    execution: Option<Deadline>,
+}
+impl StatusSnapshot {
+    pub fn status(&self) -> Status {
+        let mut value = self.status.clone();
+        value.authenticated &= self.validity.load(Ordering::Acquire)
+            && self.session.as_ref().is_some_and(Deadline::valid);
+        if !value.authenticated || !self.instance.as_ref().is_some_and(Deadline::valid) {
+            value.instance = None;
+        }
+        if let Some(instance) = &mut value.instance
+            && !self.execution.as_ref().is_some_and(Deadline::valid)
+        {
+            instance.execution_expires_at_ms = None;
+        }
+        value
+    }
+}
+impl Drop for Control {
+    fn drop(&mut self) {
+        self.validity.store(false, Ordering::Release);
+    }
 }
 
 #[cfg(test)]

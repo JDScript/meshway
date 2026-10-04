@@ -1,6 +1,6 @@
 # Node：节点端
 
-Node 的目标形状是长期运行的 **`meshwayd`** 和本机 CLI **`meshway`**，Linux 首版采用单机系统服务。当前已有 [Server 接入组件](/v2/node/control)，daemon／CLI 和真实网络运行仍待实现。旧节点源码已退出活跃树，复用通过[白名单与回归审查](/v2/architecture#旧实现退出与复用)进行。
+Node 由长期运行的 **`meshwayd`** 和本机 CLI **`meshway`** 组成，Linux 首版采用单机系统服务。当前可[启动并接入 Server](/v2/node/runtime#启动与接入)，自动认证、续租、保存配置与报告状态。TUN／SOCKS5、插件和真实包流仍待实现。旧节点源码已退出活跃树，复用通过[白名单与回归审查](/v2/architecture#旧实现退出与复用)进行。
 
 ## 运行形状
 
@@ -45,7 +45,7 @@ Server 决定许可和有界候选；Node 在获准集合内结合实时状态�
 - 首版动态插件边界是 transport providers；control、dataplane、connectivity、TUN/netstack 等作为独立 Rust 库由 daemon 链接。插件启动时加载，并随发行包一起安装、校验、升级。
 - UDP／TCP 实现必带不授予业务使用权限，VLESS-only 配置继续有效。
 
-运行语义见[模式与 IPC](/v2/node/runtime)，装载与能力见[插件](/v2/node/plugins)，数据 I/O 草案见[承载会话](/v2/node/transport)。默认模式、CLI flags、IPC 编码、权限细节和 native ABI 精确接口尚待对齐。
+运行与现有命令见[模式与 IPC](/v2/node/runtime)，装载与能力见[插件](/v2/node/plugins)，数据 I/O 草案见[承载会话](/v2/node/transport)。网络模式默认值、扩展的本机操作员授权和 native ABI 精确接口尚待对齐。
 
 ## 首个实现闭环
 

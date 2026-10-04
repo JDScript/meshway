@@ -9,6 +9,8 @@
 ```text
 apps/
   meshway-server/           # Rust Server
+  meshway-daemon/           # binary: meshwayd
+  meshway-cli/              # binary: meshway
   meshway-web-console/     # React pure SPA
 crates/
   meshway-model/
@@ -19,6 +21,7 @@ crates/
   meshway-serde/
   meshway-private-storage/
   meshway-control/
+  meshway-ipc/
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
@@ -36,7 +39,7 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 
 同一包名在 workspace 中唯一。native 薄入口若是独立 Cargo 包，也使用相同目录／包名，例如 `plugins/meshway-plugin-transport-vless`；它不与实现库 `crates/meshway-transport-vless` 共用一个 Cargo 名称。
 
-新 Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，接口库和 provider 目录按同名规则建立；目前尚未实现，不在当前构建成员中。
+Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，当前已进入 workspace 并提供控制接入。后续接口库和 provider 目录按同名规则建立。
 
 ## 跨端共享库 {#跨端共享的契约库}
 
@@ -56,7 +59,7 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 
 ## Node 内部共享的基础接口
 
-以下为新 Node 提案，不是跨整个项目的通用服务层：
+以下接口服务 Node 的实际消费者；其中 IPC 已实现，其余插件／承载接口仍为设计：
 
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |

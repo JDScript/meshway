@@ -54,6 +54,7 @@ impl Started {
         })
     }
 }
+#[derive(Clone)]
 pub(super) struct Deadline {
     wall: u64,
     monotonic: Instant,

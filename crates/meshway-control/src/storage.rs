@@ -13,6 +13,37 @@ use zeroize::Zeroizing;
 
 pub(super) const LIMIT: usize = 16 * 1024 * 1024;
 const RECORD: &str = "control.json";
+const MARKER: &[u8] = b"meshway-control/1\n";
+
+fn marker(directory: &meshway_private_storage::Directory) -> Result<bool, Error> {
+    let file = directory
+        .file("node-control.lock", false)?
+        .ok_or(Error::Record)?;
+    let mut bytes = Vec::new();
+    file.take((MARKER.len() + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| meshway_private_storage::Error::Io)?;
+    if bytes.is_empty() {
+        Ok(false)
+    } else if bytes == MARKER {
+        Ok(true)
+    } else {
+        Err(Error::Record)
+    }
+}
+fn ensure_marker(directory: &meshway_private_storage::Directory) -> Result<(), Error> {
+    let mut file = directory
+        .file("node-control.lock", false)?
+        .ok_or(Error::Record)?;
+    if !marker(directory)? {
+        file.write_all(MARKER)
+            .map_err(|_| meshway_private_storage::Error::Io)?;
+    }
+    file.sync_all()
+        .map_err(|_| meshway_private_storage::Error::Io)?;
+    directory.sync()?;
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,7 +75,11 @@ impl Record {
         directory: &meshway_private_storage::Directory,
         origin: &str,
     ) -> Result<Self, Error> {
+        let initialized = marker(directory)?;
         let Some(file) = directory.file(RECORD, false)? else {
+            if initialized {
+                return Err(Error::Record);
+            }
             // An absent identity record is only a new installation in an empty
             // domain directory. Preserve unknown files and crash staging data.
             for entry in std::fs::read_dir(directory.path())
@@ -67,6 +102,9 @@ impl Record {
                 saved: None,
             });
         };
+        file.sync_all()
+            .map_err(|_| meshway_private_storage::Error::Io)?;
+        directory.sync()?;
         let mut bytes = Zeroizing::new(Vec::with_capacity(LIMIT + 1));
         file.take((LIMIT + 1) as u64)
             .read_to_end(&mut bytes)
@@ -100,6 +138,7 @@ impl Record {
             }
             _ => return Err(Error::Record),
         }
+        ensure_marker(directory)?;
         Ok(record)
     }
 }
@@ -124,10 +163,12 @@ impl Control {
         // Mutations happen under the single driver. Until fsync is acknowledged,
         // neither this driver nor a cancelled caller may use the new identity.
         self.dirty = true;
+        self.invalidate_snapshots();
         let mut buffer = Buffer(Zeroizing::new(Vec::with_capacity(LIMIT)));
         serde_json::to_writer(&mut buffer, &self.record).map_err(|_| Error::Record)?;
         let directory = Arc::clone(&self.directory);
         self.write = Some(tokio::task::spawn_blocking(move || {
+            ensure_marker(&directory).map_err(|_| meshway_private_storage::Error::UnsafeStorage)?;
             directory.replace(RECORD, &buffer.0)
         }));
         let result = self

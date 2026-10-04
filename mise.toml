@@ -15,7 +15,7 @@ run = "pnpm install --frozen-lockfile"
 
 [tasks.build]
 description = "Build Server, Web Console and documentation"
-run = [{ task = "build:server" }, { task = "build:console" }, { task = "build:docs" }]
+run = [{ task = "build:server" }, { task = "build:node" }, { task = "build:console" }, { task = "build:docs" }]
 
 [tasks.check]
 description = "Run the complete CI checks in order (shared Cargo target)"
@@ -46,6 +46,10 @@ run = "cargo test --workspace --all-targets --all-features --locked -- --test-th
 [tasks."build:server"]
 description = "Build the Server binary used by local services and SDK tests"
 run = "cargo build -p meshway-server --bin meshway-server --locked"
+
+[tasks."build:node"]
+description = "Build meshwayd and the meshway local CLI"
+run = "cargo build -p meshway-daemon -p meshway-cli --bins --locked"
 
 [tasks."generate:protocol"]
 description = "Generate OpenAPI and Rust/TypeScript clients from actual routes"
