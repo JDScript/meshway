@@ -46,7 +46,7 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `c7b524af`）
+## 接入状态（后端 `ac4a1872`）
 
 console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
@@ -73,9 +73,9 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
 ## 待处理的问题
 
-以下按 `c7b524af` 核对（`c0f07f77` 只改服务端行为，未改契约），用隔离 Server 和脚本节点验证（脚本节点只接入、持有实例和上报 State，不应用配置、不执行任务）。
+以下按 main 上的 `ac4a1872` 核对（含提交事务与 effects 的重构；契约与 `c0f07f77` 相同），用隔离 Server 和脚本节点验证（脚本节点只接入、持有实例和上报 State，不应用配置、不执行任务）。凡是契约里能看出的，按 `packages/protocol/openapi.json` 核对。
 
-**`c7b524af` 已修复并已验证**（不再跟踪）：
+**已修复并已验证**（不再跟踪；`ac4a1872` 上重新确认过前几轮修复的项目没有回退）：
 
 - OpenAPI 组件重名：IP 查询改用 `LookupUnavailableReason`。
 - 成员的设置变化后，服务端发 `sync.reset` 并重发完整批次；console 不再自行断开重连。
@@ -86,6 +86,13 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - 成员的 SSE 库存与 `GET /nodes` 一致，只有自己的 User 身份设备。
 - 观察鉴权失败不再返回 401：源节点重新 acquire 后，订阅被移除（读取为 404），console 不会登出。
 - SDK 不再使用 DOM 类型 `ReadableStreamReadResult`。
+- 账户会话和账户活动的游标失效时返回 `invalid_cursor`，与网络列表一致。
+- `removeMember` 的 revision 不匹配时返回 `revision_conflict`。
+- 删除节点的预览不再把该节点列进 `addressChangedNodeIds`。
+
+提交事务重构后，配置变更、节点删除和成员移除的事件都在提交后立即送达（依次为 `configuration.changed`、`entities.delta`、`state.delta`、`configuration.progress`），被拒的提交不产生事件。
+
+下列问题在 `ac4a1872` 上实测仍然存在：撤销已失效的加入链接或接入密钥仍返回 204；降级 admin 后其链接的列表与 inspect 说法不一；`account.email` 的 actor 快照是新邮箱；VLESS 预览的 `requirements` 与 `willGenerate` 重叠；普通规则里的 `unmanaged` 被拒；`ConfigurationIssue` 只有 path 和 message；规则集准备失败仍是英文 Debug 名（如 `InvalidSource`、`DownloadFailed`）；观察目标没有可用路径时返回不带参数的 403；validate 响应的 `requestId` 不回显；成员读完整配置得到 403；GeoIP 数据集的 `install` 仍没有调用方。其余条目契约未变，或需要真实 Agent，这次没有重新实测。
 
 ### 影响功能或安全
 
@@ -104,15 +111,13 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
    - 路径只到集合一级，解析错误时 path 为空。节点级的出口授权问题挂在 `/nodes/<id>` 上，指不到具体的规则或方案。
    - 没有 warning 通道，无法提示被前面规则完全遮挡的规则。
    - 数组变化只按整体报告。
-   - 预览缺 `affectedNodeIds`、`identityChangedNodeIds` 和 `changedListeners`；删除节点时，该节点也会出现在 `addressChangedNodeIds` 里。
+   - 预览缺 `affectedNodeIds`、`identityChangedNodeIds` 和 `changedListeners`。
    - 新增 VLESS listener 时，`requirements` 同时列出 `willGenerate` 里的 UUID、证书和私钥，两者的边界需要说明；console 只把 `willGenerate` 之外的项显示为待完成。
 6. **配置操作**：`unmanaged` 在普通规则里会被拒绝，但 schema 允许它出现。
 7. **Listener**
    - `ListenerView` 只给出 WebSocket 响应头的名字，而 `ListenerUpdate` 整体替换、不继承旧值，所以表单没法在保留这些响应头的前提下修改监听。editing.md 写明 dialer 更新时省略 headers 表示保持，listener 是否同理需要确认。
    - 托管证书模式下修改 `serverName` 时，`inherit_materials` 可能沿用旧证书。这是读代码推断的，没有验证。
 8. **错误码与幂等**
-   - `removeMember` 的 version 或 revision 不匹配时一律返回 `version_conflict`；revision 不匹配应返回 `revision_conflict`。
-   - 账户会话、活动的游标失效时返回 `invalid_request`，应与网络列表一致，返回 `invalid_cursor`。
    - `refreshRuleSet` 没有请求体，也就没有 requestId，重试会重新下载。
    - 对已失效的对象执行撤销时也返回 204，客户端分不清"这次撤销成功"和"本来就已失效"，应返回 `state_conflict`。涉及 `revokeEnrollmentKey`（已使用或已过期的密钥）和 `revokeJoinLink`（已使用、已撤销或已过期的链接，这时也不记活动）。
    - `revokeNodeKey` 用已轮换的旧 generation 或重复撤销时，`c0f07f77` 起不再撤掉当前执行，但仍返回 204，不返回 `version_conflict`，客户端分不清是否真的撤销了。
@@ -132,6 +137,7 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
    - `JoinLinkView` 没有签发人；使用者的邮箱只能从当前成员列表里查，使用者离开网络后就无法显示。
    - 主动观察：没有观察权限的 `actions`（console 按"角色 + 身份"重述规则）；没有允许的目标和路径候选清单；响应里没有服务器时间，续租时机只能按浏览器时钟计算；样本只给 `latest`，重载或接管后看不到之前的序列。
    - `account.email` 活动的 actor 快照是修改后的新邮箱，需要确认是否有意如此。
+   - `docs/v2/api/events.md` 的事件表写着 `entities.delta` 带 `configurationRevision`，但契约和实际事件里都没有这个字段。要么补上字段，要么改文档。
 10. **历史**
     - `HistoryBucket` 没有 `peerNodeId`，而且按 instance 和 publication 拆开。每次 demand 都会重新发布，同一条曲线因此被切碎，console 端做了合并。
     - `RecentLink` 没有 RTT 和关闭原因。
