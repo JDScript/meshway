@@ -1,0 +1,334 @@
+import {
+  deleteNode,
+  revokeNodeKey,
+  type BoundNodeKey,
+  type ConfigurationAppliedResponse,
+  type NodeInventoryResponse,
+  type NodeInventoryView,
+} from "@meshway/control-client"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { BanIcon, Trash2Icon } from "lucide-react"
+import { useRef, useState } from "react"
+import { toast } from "sonner"
+
+import { CopyButton } from "@/components/chrome/copy-button"
+import { ConfirmDialog } from "@/components/chrome/glass-dialog"
+import { DangerRow, Section } from "@/components/chrome/section"
+import { Tile } from "@/components/chrome/tile"
+import { Button } from "@/components/ui/button"
+import { draftEntry } from "@/features/configuration/draft"
+import { isDirty } from "@/features/configuration/draft-state"
+import {
+  configurationQuery,
+  configurationReads,
+} from "@/features/configuration/queries"
+import { networkQuery } from "@/features/network/queries"
+import { ApiFailure, authed, client, problemCode } from "@/lib/api"
+import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
+import { toastFailureWith } from "@/lib/failure"
+import { dateTime } from "@/lib/format"
+import { m } from "@/paraglide/messages.js"
+
+import { algorithmLabel, purposeLabel, type KeyPurpose } from "./labels"
+import { nodesQuery } from "./queries"
+
+/** A public key's hex, shortened for a tile; the copy button holds it whole. */
+const shortKey = (hex: string) => `${hex.slice(0, 12)}…${hex.slice(-12)}`
+
+/**
+ * The node's two keys (each revocable for good) and its permanent deletion.
+ * Only those the controller lets delete the node (`canDelete`) see the
+ * controls; the controller checks again.
+ */
+export function NodeManage({
+  networkId,
+  node,
+  onDeleted,
+}: {
+  networkId: string
+  node: NodeInventoryView
+  onDeleted: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-8">
+      <NodeKey
+        networkId={networkId}
+        node={node}
+        purpose="control"
+        bound={node.keys.control}
+        revokedAt={node.controlKeyRevokedAt}
+      />
+      <NodeKey
+        networkId={networkId}
+        node={node}
+        purpose="dataplane"
+        bound={node.keys.dataplane}
+        revokedAt={node.dataplaneKeyRevokedAt}
+      />
+      {node.canDelete ? (
+        <Deletion networkId={networkId} node={node} onDeleted={onDeleted} />
+      ) : null}
+    </div>
+  )
+}
+
+function NodeKey({
+  networkId,
+  node,
+  purpose,
+  bound,
+  revokedAt,
+}: {
+  networkId: string
+  node: NodeInventoryView
+  purpose: KeyPurpose
+  bound: BoundNodeKey
+  revokedAt: string | null
+}) {
+  const queryClient = useQueryClient()
+  const [confirming, setConfirming] = useState(false)
+  const revoke = useMutation({
+    mutationFn: () =>
+      authed((token) =>
+        revokeNodeKey(
+          client,
+          { networkId, nodeId: node.id },
+          { keyId: bound.id, expectedGeneration: bound.generation },
+          { token }
+        )
+      ),
+    onSuccess: () => {
+      setConfirming(false)
+      toast.success(
+        m.nodes_key_revoke_done({
+          key: purposeLabel[purpose](),
+          name: node.hostname,
+        })
+      )
+    },
+    onError: (error) => {
+      setConfirming(false)
+      toastFailureWith({
+        request_id_conflict: () => m.nodes_key_changed(),
+        permission_denied: () => m.nodes_manage_denied(),
+      })(error)
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: nodesQuery(networkId).queryKey,
+      }),
+  })
+  const label = purposeLabel[purpose]()
+  const hex = bound.publicKey.bytes
+
+  return (
+    <Section
+      title={label}
+      action={
+        node.canDelete && revokedAt === null ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-mr-3 h-8 rounded-full px-3 text-destructive hover:text-destructive"
+            onClick={() => setConfirming(true)}
+          >
+            <BanIcon />
+            {m.nodes_key_revoke()}
+          </Button>
+        ) : null
+      }
+    >
+      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+        <Tile label={m.nodes_key_algorithm()}>
+          {algorithmLabel[bound.publicKey.algorithm]}
+        </Tile>
+        <Tile label={m.nodes_key_generation()}>
+          <span className="tabular-nums">{bound.generation}</span>
+        </Tile>
+        <div className="col-span-2">
+          <Tile
+            label={m.nodes_key_state()}
+            tone={revokedAt === null ? undefined : "warning"}
+          >
+            {revokedAt === null
+              ? m.nodes_key_valid()
+              : m.nodes_key_revoked_at({ at: dateTime(revokedAt) ?? "—" })}
+          </Tile>
+        </div>
+        <div className="col-span-2 xl:col-span-4">
+          <Tile
+            label={m.nodes_key_public()}
+            action={<CopyButton value={hex} label={m.nodes_key_public()} />}
+          >
+            <span className="font-mono font-normal">{shortKey(hex)}</span>
+          </Tile>
+        </div>
+      </div>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={(open) => {
+          if (!revoke.isPending) setConfirming(open)
+        }}
+        title={m.nodes_key_revoke_title({ key: label })}
+        confirmLabel={m.nodes_key_revoke()}
+        pending={revoke.isPending}
+        onConfirm={() => revoke.mutate()}
+        effects={[
+          m.nodes_key_revoke_effect({
+            key: label,
+            generation: String(bound.generation),
+            name: node.hostname,
+          }),
+          m.nodes_key_revoke_effect_execution(),
+          m.nodes_key_revoke_effect_final(),
+        ]}
+      />
+    </Section>
+  )
+}
+
+type DeleteBody = { expectedRevision: number }
+
+/** The draft holds edits not applied yet: deleting now would move its base under it. */
+const draftHeld = (networkId: string) => isDirty(draftEntry(networkId))
+
+function Deletion({
+  networkId,
+  node,
+  onDeleted,
+}: {
+  networkId: string
+  node: NodeInventoryView
+  onDeleted: () => void
+}) {
+  const queryClient = useQueryClient()
+  const [confirming, setConfirming] = useState(false)
+  // The revision the deletion is sent against: read again when it is asked.
+  const configuration = useQuery({
+    ...configurationQuery(networkId),
+    enabled: confirming,
+  })
+  const unsettled = useRef<Attempt<DeleteBody> | null>(null)
+
+  const refresh = () =>
+    Promise.all(
+      [
+        nodesQuery(networkId).queryKey,
+        configurationReads(networkId),
+        networkQuery(networkId).queryKey,
+      ].map((queryKey) => queryClient.invalidateQueries({ queryKey }))
+    )
+
+  const remove = useMutation({
+    mutationFn: async (
+      attempt: Attempt<DeleteBody>
+    ): Promise<ConfigurationAppliedResponse> => {
+      try {
+        const applied = await authed((token) =>
+          deleteNode(
+            client,
+            { networkId, nodeId: node.id },
+            { requestId: attempt.requestId, ...attempt.body },
+            { token }
+          )
+        )
+        unsettled.current = null
+        return applied
+      } catch (error) {
+        unsettled.current =
+          error instanceof ApiFailure && outcomeUnknown(error.failure)
+            ? attempt
+            : null
+        throw error
+      }
+    },
+    retry: false,
+    onSuccess: (applied) => {
+      setConfirming(false)
+      if (!applied.deletedNodeIds.includes(node.id)) {
+        toast.error(m.nodes_delete_not_reported({ name: node.hostname }))
+        void refresh()
+        return
+      }
+      queryClient.setQueryData<NodeInventoryResponse>(
+        nodesQuery(networkId).queryKey,
+        (list) =>
+          list && { items: list.items.filter((item) => item.id !== node.id) }
+      )
+      void refresh()
+      toast.success(m.nodes_delete_done({ name: node.hostname }))
+      onDeleted()
+    },
+    onError: (error) => {
+      toastFailureWith({
+        revision_conflict: () => m.nodes_delete_moved(),
+        permission_denied: () => m.nodes_manage_denied(),
+      })(error)
+      const code =
+        error instanceof ApiFailure ? problemCode(error.failure) : null
+      if (code === "revision_conflict") void configuration.refetch()
+      else if (code !== null) setConfirming(false)
+    },
+  })
+
+  const ask = () => {
+    if (draftHeld(networkId)) {
+      toast.error(m.nodes_delete_draft())
+      return
+    }
+    void queryClient.invalidateQueries({
+      queryKey: configurationQuery(networkId).queryKey,
+    })
+    setConfirming(true)
+  }
+
+  const read = configuration.data
+  const ready = read !== undefined && !configuration.isFetching
+
+  return (
+    <Section title={m.nodes_deletion()}>
+      <DangerRow
+        fact={m.nodes_delete_fact()}
+        action={
+          <Button
+            variant="destructive"
+            className="h-9 rounded-full px-4"
+            onClick={ask}
+          >
+            <Trash2Icon />
+            {m.nodes_delete()}
+          </Button>
+        }
+      />
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={(open) => {
+          if (!remove.isPending) setConfirming(open)
+        }}
+        title={m.nodes_delete_title({ name: node.hostname })}
+        confirmLabel={m.nodes_delete()}
+        pending={remove.isPending}
+        ready={ready}
+        onConfirm={() => {
+          if (!read) return
+          if (draftHeld(networkId)) {
+            setConfirming(false)
+            toast.error(m.nodes_delete_draft())
+            return
+          }
+          remove.mutate(
+            attemptFor(unsettled.current, `${read.revision}`, () => ({
+              expectedRevision: read.revision,
+            }))
+          )
+        }}
+        effects={[
+          m.nodes_delete_effect_permanent({ name: node.hostname }),
+          m.nodes_delete_effect_keys(),
+          m.nodes_delete_effect_addresses(),
+          m.nodes_delete_effect_again(),
+        ]}
+      />
+    </Section>
+  )
+}

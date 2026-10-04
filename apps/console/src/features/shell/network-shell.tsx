@@ -10,6 +10,7 @@ import { ConfigurationPage } from "@/features/configuration/page"
 import { EMPTY_SCENE } from "@/features/globe/scene"
 import { setGlobe } from "@/features/globe/store"
 import { MembersPage } from "@/features/members/page"
+import { NodesPage } from "@/features/nodes/page"
 import { NetworkChip } from "@/features/overview/network-chip"
 import { OverviewPage } from "@/features/overview/page"
 import { SettingsPage } from "@/features/settings/page"
@@ -33,7 +34,7 @@ import {
  * them: changing pages only brings surfaces in and out, while the chrome
  * stays put. Each page draws its own surfaces (`features/<page>/page.tsx`);
  * the shell places the chrome and is the only writer of the globe. This
- * controller reports no nodes, so the globe shows none.
+ * controller reports no node locations or state, so the globe shows none.
  */
 export function NetworkShell({
   networkId,
@@ -76,6 +77,7 @@ export function NetworkShell({
   return (
     <>
       <OverviewPage />
+      <NodesPage networkId={networkId} network={network} />
       <MembersPage networkId={networkId} network={network} />
       <ConfigurationPage networkId={networkId} network={network} />
       <SettingsPage networkId={networkId} network={network} />

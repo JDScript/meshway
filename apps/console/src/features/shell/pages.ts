@@ -3,6 +3,7 @@ import { useMatches, useNavigate } from "@tanstack/react-router"
 import {
   FileSlidersIcon,
   GlobeIcon,
+  ServerIcon,
   Settings2Icon,
   UsersIcon,
   type LucideIcon,
@@ -17,6 +18,7 @@ import { m } from "@/paraglide/messages.js"
 
 export const PAGES = {
   overview: { route: "/networks/$network/overview", panel: false },
+  nodes: { route: "/networks/$network/nodes", panel: true },
   members: { route: "/networks/$network/members", panel: true },
   configuration: { route: "/networks/$network/configuration", panel: true },
   settings: { route: "/networks/$network/settings", panel: true },
@@ -39,6 +41,7 @@ export type DockItem = {
 /** The dock, in order. Pages reached elsewhere (the account, from its menu) are not in it. */
 const DOCK: readonly DockItem[] = [
   { page: "overview", icon: GlobeIcon, label: () => m.nav_overview() },
+  { page: "nodes", icon: ServerIcon, label: () => m.nodes_title() },
   {
     page: "members",
     icon: UsersIcon,

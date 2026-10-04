@@ -13,7 +13,7 @@
   "network_name_placeholder": "Home network",
   "network_name_missing": "Enter a network name.",
   "network_name_invalid": "The network name is not valid.",
-  "overview_no_nodes": "This controller does not provide nodes yet.",
+  "overview_no_state": "This controller does not report node locations or state yet.",
   "role_owner": "Owner",
   "role_admin": "Admin",
   "role_member": "Member",

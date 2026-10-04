@@ -10,9 +10,10 @@ import { m } from "@/paraglide/messages.js"
 const OVERVIEW = "/_authed/networks/$network/overview" as const
 
 /**
- * The overview: the globe is its index. This controller reports no nodes,
- * so the globe is empty and one line at the bottom says so (on phones above
- * the bottom bar). It goes when nodes are delivered, not when dismissed.
+ * The overview: the globe is its index. This controller reports no node
+ * locations or state, so the globe is empty and one line at the bottom says
+ * so (on phones above the bottom bar). It goes when they are delivered, not
+ * when dismissed.
  */
 export function OverviewPage() {
   const mobile = useIsMobile()
@@ -36,7 +37,7 @@ export function OverviewPage() {
         className="glass pointer-events-auto flex h-(--bar-height) max-w-full items-center rounded-full px-4 max-md:w-full"
       >
         <p className="min-w-0 flex-1 truncate text-row text-muted-foreground">
-          {m.overview_no_nodes()}
+          {m.overview_no_state()}
         </p>
       </Surface>
     </div>
