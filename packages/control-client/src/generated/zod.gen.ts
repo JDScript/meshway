@@ -1637,6 +1637,7 @@ export const zEnrollmentPhase = z.enum(["pending","approved","withdrawn","cancel
 export const zEnrollmentReturnMethod = z.enum(["poll"]);
 
 export const zEnrollmentRequestView = z.strictObject({
+  ["authorizationUrl"]: z.string().nullable(),
   ["controlKey"]: zNodePublicKey,
   ["existing"]: zExistingNodeBinding.nullable(),
   ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
@@ -1952,6 +1953,12 @@ export const zGetLeaveImpactPath = z.strictObject({
 export const zGetMemberRemovalImpactPath = z.strictObject({
   ["networkId"]: zNetworkId,
   ["membershipId"]: zMembershipId
+});
+
+export const zGetMemberRoleChangeImpactPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["membershipId"]: zMembershipId,
+  ["role"]: zMembershipRole
 });
 
 export const zGetNetworkActivityPath = z.strictObject({
@@ -2955,6 +2962,15 @@ export const zRevokeNodeKeyPath = z.strictObject({
 export const zRevokeNodeKeyRequest = z.strictObject({
   ["expectedGeneration"]: zVersion,
   ["keyId"]: zKeyId
+});
+
+export const zRoleChangeImpactResponse = z.strictObject({
+  ["joinLinkCount"]: z.int().gte(0).lte(2147483647),
+  ["joinLinks"]: z.array(zJoinLinkView),
+  ["membershipId"]: zMembershipId,
+  ["requestId"]: zRequestId,
+  ["role"]: zMembershipRole,
+  ["version"]: zVersion
 });
 
 export const zRoutingSelectionRequest = z.strictObject({

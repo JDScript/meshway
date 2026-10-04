@@ -3646,9 +3646,17 @@ export const schemaDocument = {
           "existing",
           "returnMethod",
           "phase",
-          "expiresAt"
+          "expiresAt",
+          "authorizationUrl"
         ],
         "properties": {
+          "authorizationUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where a signed-in user authorizes this device, built by the Server from\nits Console origin; null when the deployment has not configured one."
+          },
           "controlKey": {
             "$ref": "#/components/schemas/NodePublicKey"
           },
@@ -11054,6 +11062,43 @@ export const schemaDocument = {
           },
           "keyId": {
             "$ref": "#/components/schemas/KeyId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoleChangeImpactResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "membershipId",
+          "version",
+          "role",
+          "joinLinks",
+          "joinLinkCount"
+        ],
+        "properties": {
+          "joinLinkCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "joinLinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JoinLinkView"
+            }
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
           }
         },
         "additionalProperties": false

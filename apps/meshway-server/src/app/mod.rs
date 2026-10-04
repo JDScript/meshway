@@ -26,6 +26,7 @@ pub struct App {
     boot: meshway_model::InstanceId,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
+    console_origin: Option<Arc<crate::settings::Url>>,
 }
 
 #[derive(Default)]
@@ -107,7 +108,14 @@ impl App {
         })
         .await
         .map_err(|_| AppError::Worker)??;
-        Self::open_directory(directory, options, account_options, downloads).await
+        Self::open_directory(
+            directory,
+            options,
+            account_options,
+            downloads,
+            settings.console_origin.map(Arc::new),
+        )
+        .await
     }
 
     async fn open_directory(
@@ -115,6 +123,7 @@ impl App {
         options: Options,
         account_options: crate::accounts::Options,
         downloads: Arc<crate::resources::downloads::Downloads>,
+        console_origin: Option<Arc<crate::settings::Url>>,
     ) -> Result<Self, AppError> {
         let state_runtime = Arc::new(std::sync::Mutex::new(
             crate::state::service::Runtime::new().map_err(|_| AppError::Worker)?,
@@ -176,6 +185,7 @@ impl App {
             committer,
             state_runtime,
             shutdown_hooks,
+            console_origin,
             observation_maintenance: std::sync::Mutex::default(),
             boot: meshway_model::InstanceId::new(
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
@@ -336,7 +346,12 @@ impl App {
         crate::execution::Execution::new(self.executor.handle(), self.sealer(), self.boot)
     }
     pub fn enrollment(&self) -> crate::enrollment::Enrollment {
-        crate::enrollment::Enrollment::new(self.executor.handle(), self.sealer(), self.committer())
+        crate::enrollment::Enrollment::new(
+            self.executor.handle(),
+            self.sealer(),
+            self.committer(),
+            self.console_origin.clone(),
+        )
     }
 
     /// Runs full, read-only schema, SQLite integrity, and foreign-key checks on

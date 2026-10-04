@@ -113,7 +113,7 @@ token 为随机不透明凭据，Server 只存摘要；HTTP 使用 `Authorizatio
 
 设备不收集用户密码或浏览器 session。PKCE 绑定本次请求，不替代长期密钥；批准和兑换均重检当前资格。
 
-返回方式为 `returnMethod: "poll"`。EnrollmentRequestView 包含 hostname、公钥、existing、phase 和期限，没有 callback 或系统版本字段。DeviceAuthorizationView 复用该 request，approval 仅向批准者、批准网络当前管理员或持有本次设备证明的 query 返回；其他主体为 null。读取不认领请求。
+返回方式为 `returnMethod: "poll"`。EnrollmentRequestView 包含 hostname、公钥、existing、phase、期限和 `authorizationUrl`，没有 callback 或系统版本字段。`authorizationUrl` 是用户批准该设备的浏览器入口，由 Server 按部署的 [Console origin](/v2/server) 生成为 `<origin>/authorize-device/<enrollmentRequestId>`；Console 在该路径提供批准页。未配置 Console origin 时为 null，设备不自行拼接。DeviceAuthorizationView 复用该 request，approval 仅向批准者、批准网络当前管理员或持有本次设备证明的 query 返回；其他主体为 null。读取不认领请求。
 
 未批准请求由设备凭证明取消或到期，网页返回不取消全局请求。denyDeviceAuthorization 只允许批准者在兑换前撤回自己的批准；cancelled 是设备取消，withdrawn 是批准撤回。非法状态操作返回 state_conflict，无效证明返回 401。
 

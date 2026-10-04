@@ -2,6 +2,7 @@ use super::{hash, pkce, redeem::validate_existing, token};
 use crate::error::Error;
 use crate::execution::proof;
 use crate::secrets::Sealer;
+use crate::settings::Url;
 use crate::store::{
     authorization::current_session,
     execution::{bytes, id, json, now},
@@ -47,8 +48,10 @@ pub(super) struct Pending {
     pub existing: Option<ExistingNodeBinding>,
 }
 impl Pending {
-    pub(super) fn view(&self, now: i64) -> EnrollmentRequestView {
+    pub(super) fn view(&self, now: i64, console: Option<&Url>) -> EnrollmentRequestView {
         EnrollmentRequestView {
+            authorization_url: console
+                .map(|origin| format!("{origin}authorize-device/{}", self.id)),
             id: self.id,
             hostname: self.hostname.clone(),
             existing: self.existing.clone(),
@@ -135,6 +138,7 @@ pub(crate) fn create_request(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     request: CreateEnrollmentRequest,
+    console: Option<&Url>,
 ) -> Result<EnrollmentRequestView, Error> {
     let i = request.intent;
     if i.control_key.algorithm != KeyAlgorithm::Ed25519
@@ -167,31 +171,33 @@ pub(crate) fn create_request(
         if p.digest != digest {
             return Err(Error::BindingConflict);
         }
-        return Ok(p.view(now));
+        return Ok(p.view(now, console));
     }
     let count:i64=tx.query_row("SELECT count(*) FROM enrollment_requests WHERE expires_at>?1 AND consumed_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL",[now],|r|r.get(0))?;
     if count >= 4096 {
         return Err(Error::Busy);
     }
     tx.execute("INSERT INTO enrollment_requests(id,control_key,dataplane_key,request_digest,code_challenge,hostname,created_at,expires_at,existing_binding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![i.id.as_uuid().as_bytes().as_slice(),i.control_key.bytes.as_bytes().as_slice(),i.dataplane_key.bytes.as_bytes().as_slice(),digest.as_bytes().as_slice(),i.code_challenge,i.hostname,now,now+600_000,i.existing.as_ref().map(bytes).transpose()?])?;
-    let view = pending(tx, i.id)?.view(now);
+    let view = pending(tx, i.id)?.view(now, console);
     Ok(view)
 }
 pub(crate) fn inspect(
     tx: &Transaction<'_>,
     token: [u8; 32],
     id: EnrollmentRequestId,
+    console: Option<&Url>,
 ) -> Result<DeviceAuthorizationView, Error> {
     let now = now()?;
     let user = current_session(tx, &token, now)?.user.id;
     let p = pending(tx, id)?;
-    user_view(tx, &p, user, now)
+    user_view(tx, &p, user, now, console)
 }
 fn user_view(
     tx: &Transaction<'_>,
     p: &Pending,
     user: UserId,
     now: i64,
+    console: Option<&Url>,
 ) -> Result<DeviceAuthorizationView, Error> {
     let approval = p
         .approval
@@ -205,7 +211,7 @@ fn user_view(
             network_id: a.network,
         });
     Ok(DeviceAuthorizationView {
-        request: p.view(now),
+        request: p.view(now, console),
         approval,
     })
 }
@@ -215,6 +221,7 @@ pub(crate) fn approve(
     token_hash: [u8; 32],
     id: EnrollmentRequestId,
     request: ApproveEnrollmentRequest,
+    console: Option<&Url>,
 ) -> Result<DeviceAuthorizationView, Error> {
     let now = now()?;
     let session = current_session(tx, &token_hash, now)?;
@@ -233,7 +240,7 @@ pub(crate) fn approve(
         if a.network != request.network_id || a.user != session.user.id {
             return Err(Error::StateConflict);
         }
-        return user_view(tx, &p, session.user.id, now);
+        return user_view(tx, &p, session.user.id, now, console);
     }
     let approval = Approval {
         network: request.network_id,
@@ -252,7 +259,7 @@ pub(crate) fn approve(
             id.as_uuid().as_bytes().as_slice()
         ],
     )?;
-    let view = user_view(tx, &pending(tx, id)?, session.user.id, now)?;
+    let view = user_view(tx, &pending(tx, id)?, session.user.id, now, console)?;
     Ok(view)
 }
 pub(crate) fn deny(
@@ -283,6 +290,7 @@ pub(crate) fn poll(
     sealer: &Sealer,
     id: EnrollmentRequestId,
     proof: EnrollmentDeviceProof,
+    console: Option<&Url>,
 ) -> Result<EnrollmentPollResponse, Error> {
     let now = now()?;
     let p = pending(tx, id)?;
@@ -308,7 +316,7 @@ pub(crate) fn poll(
             user_id: a.user,
             network_id: a.network,
         }),
-        request: p.view(now),
+        request: p.view(now, console),
         code,
         node_id: p.node,
     })

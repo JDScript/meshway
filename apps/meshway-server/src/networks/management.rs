@@ -82,6 +82,19 @@ impl Networks {
             })
             .await
     }
+    pub async fn role_change_impact(
+        &self,
+        token: &str,
+        network: NetworkId,
+        member: MembershipId,
+        role: MembershipRole,
+        request: RequestId,
+    ) -> Result<meshway_protocol::management::RoleChangeImpactResponse, Error> {
+        let digest = token_digest(token)?;
+        self.handle
+            .read(move |tx| store::role_change_impact(tx, digest, network, member, role, request))
+            .await
+    }
     pub async fn change_role(
         &self,
         token: &str,

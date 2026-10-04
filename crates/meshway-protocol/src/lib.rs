@@ -51,7 +51,7 @@ pub use management::{
     JoinLinkInspection, JoinLinkListResponse, JoinLinkRedeemed, JoinLinkResponse,
     MemberMutationResponse, MemberRemovedResponse, PasswordResetInspectRequest,
     PasswordResetInspection, PasswordResetRedeemRequest, RemovalImpactResponse,
-    RemoveMemberRequest,
+    RemoveMemberRequest, RoleChangeImpactResponse,
 };
 pub use node::{
     DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeDnsQueryRequest,

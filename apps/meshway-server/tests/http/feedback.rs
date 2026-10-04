@@ -104,10 +104,10 @@ async fn signed_device_lifecycle_own_settings_and_key_management_are_distinct() 
     )
     .await;
     let device = Device::new(41);
-    assert_eq!(
-        device.create(&c, &s).await.return_method,
-        EnrollmentReturnMethod::Poll
-    );
+    let created = device.create(&c, &s).await;
+    assert_eq!(created.return_method, EnrollmentReturnMethod::Poll);
+    // No Console origin configured: the Server hands the device no link.
+    assert_eq!(created.authorization_url, None);
     let inspect: DeviceAuthorizationView = value(
         c.get(device.user_url(&s, ""))
             .bearer_auth(stranger.token.expose()),
@@ -367,6 +367,67 @@ async fn signed_device_lifecycle_own_settings_and_key_management_are_distinct() 
         )
         .await;
     }
+    s.close().await;
+}
+
+#[tokio::test]
+async fn device_authorization_links_come_from_the_configured_console_origin() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut settings = Settings::new(dir.path().canonicalize().unwrap().join("controller"));
+    settings.console_origin =
+        Some(meshway_server::console_origin("https://console.example.test:8443").unwrap());
+    let s = Server::start_with(settings).await;
+    let c = client();
+    let owner = register(&c, &s, "link-owner@example.test", "valid password").await;
+    let n = create(&c, &s, owner.token.expose(), "device links")
+        .await
+        .network
+        .id;
+    let device = Device::new(43);
+    let expected = format!(
+        "https://console.example.test:8443/authorize-device/{}",
+        device.intent.id
+    );
+    let created = device.create(&c, &s).await;
+    assert_eq!(
+        created.authorization_url.as_deref(),
+        Some(expected.as_str())
+    );
+    // The same link on every view of the request: device poll, user inspect
+    // and approval. Idempotent creation returns it again.
+    assert_eq!(
+        device.create(&c, &s).await.authorization_url.as_deref(),
+        Some(expected.as_str())
+    );
+    let poll: EnrollmentPollResponse = value(
+        c.post(device.device_url(&s, "query"))
+            .json(&device.proof("poll")),
+    )
+    .await;
+    assert_eq!(
+        poll.request.authorization_url.as_deref(),
+        Some(expected.as_str())
+    );
+    let inspect: DeviceAuthorizationView = value(
+        c.get(device.user_url(&s, ""))
+            .bearer_auth(owner.token.expose()),
+    )
+    .await;
+    assert_eq!(
+        inspect.request.authorization_url.as_deref(),
+        Some(expected.as_str())
+    );
+    let approved: DeviceAuthorizationView = value(
+        c.post(device.user_url(&s, "/approve"))
+            .bearer_auth(owner.token.expose())
+            .json(&ApproveEnrollmentRequest { network_id: n }),
+    )
+    .await;
+    assert_eq!(
+        approved.request.authorization_url.as_deref(),
+        Some(expected.as_str())
+    );
     s.close().await;
 }
 
