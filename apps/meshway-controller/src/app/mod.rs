@@ -210,6 +210,19 @@ impl App {
         crate::state::service::CommitPublisher::new(Arc::clone(&self.state_runtime))
     }
 
+    /// An owned action for a server's 'static graceful-shutdown future. Close
+    /// long-lived streams before waiting for HTTP drain; accepted SQLite jobs
+    /// remain owned by the executor until `shutdown` completes.
+    pub fn stream_shutdown(&self) -> impl FnOnce() + Send + 'static {
+        let runtime = Arc::clone(&self.state_runtime);
+        move || {
+            runtime
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .close()
+        }
+    }
+
     /// Compose State HTTP/SSE with the transactional management/Node providers.
     pub fn state_service<P: crate::state::service::StateProvider>(
         &self,

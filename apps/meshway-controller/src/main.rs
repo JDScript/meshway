@@ -56,6 +56,7 @@ async fn run(arguments: Arguments) -> Result<(), &'static str> {
         writeln!(std::io::stdout().lock(), "Listening on {address}")
             .map_err(|_| "Controller status output failed.")?;
         let (signal_result, received_signal) = tokio::sync::oneshot::channel();
+        let stop_streams = app.stream_shutdown();
         let shutdown = async move {
             #[cfg(unix)]
             let signal_failed = tokio::select! {
@@ -64,6 +65,7 @@ async fn run(arguments: Arguments) -> Result<(), &'static str> {
             };
             #[cfg(not(unix))]
             let signal_failed = tokio::signal::ctrl_c().await.is_err();
+            stop_streams();
             let _ = signal_result.send(signal_failed);
         };
         axum::serve(listener, http::router(&app))
