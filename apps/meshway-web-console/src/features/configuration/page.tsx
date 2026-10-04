@@ -51,18 +51,11 @@ export function ConfigurationPage({
     },
     [view, openView]
   )
-  const { openRevision } = nav
-  const onShowProgress = useCallback(
-    (revision: number) => openRevision({ revision, against: null }),
-    [openRevision]
-  )
   const commit = useConfigurationCommit({
     networkId,
     network,
-    page: "configuration",
     active: route.current,
     onInvalid,
-    onShowProgress,
   })
   const { checkDraft } = commit
 
@@ -128,9 +121,9 @@ export function ConfigurationPage({
           />
         }
         workspace={workspace}
+        commit={commit.bar}
         onCloseWorkspace={nav.closeView}
       />
-      {commit.dialogs}
     </>
   )
 }

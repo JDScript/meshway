@@ -13,9 +13,9 @@ import {
   EntrySubmit,
   HANDOFF_MS,
 } from "@/features/entry/frame"
-import { showWelcomeGlobe } from "@/features/globe/store"
 import { failureText } from "@/lib/failure"
 import { m } from "@/paraglide/messages.js"
+import { showWelcomeGlobe } from "@/state/globe"
 
 import { NetworkNameField, useCreateNetwork } from "./create-network"
 

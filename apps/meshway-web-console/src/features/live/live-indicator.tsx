@@ -7,8 +7,7 @@ import {
 import { clockTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
-
-import { useConnection, type Connection } from "./connection"
+import { useConnection, type Connection } from "@/state/live"
 
 function words(connection: Connection | null): {
   title: string

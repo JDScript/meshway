@@ -32,8 +32,8 @@ import { roleLabel } from "@/features/network/roles"
 import { client, SessionRejected } from "@/lib/api"
 import { failureText } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
-import { currentSession } from "@/lib/session"
 import { m } from "@/paraglide/messages.js"
+import { currentSession } from "@/state/session"
 
 import {
   EntryCard,

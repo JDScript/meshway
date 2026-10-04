@@ -27,9 +27,9 @@ import { surfaceTitleId } from "@/features/shell/page-frame"
 import { failureText } from "@/lib/failure"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
+import { useConfigurationDraft } from "@/state/configuration-draft"
 
 import type { EditorHandle, EditorMark } from "./code-editor"
-import { useConfigurationDraft } from "./draft"
 import {
   holdsOperations,
   isOutdated,

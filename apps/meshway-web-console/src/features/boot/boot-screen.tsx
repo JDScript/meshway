@@ -2,8 +2,8 @@ import { useRouterState } from "@tanstack/react-router"
 import { useEffect } from "react"
 
 import { m } from "@/paraglide/messages.js"
+import { markRoutesReady, useBootPhase } from "@/state/boot"
 
-import { useBootStore } from "./boot-store"
 import { LoaderGlobe } from "./loader-globe"
 
 /**
@@ -14,13 +14,12 @@ import { LoaderGlobe } from "./loader-globe"
  * same place and pose and starts growing straight away.
  */
 export function BootScreen() {
-  const phase = useBootStore((state) => state.phase)
-  const markRoutesReady = useBootStore((state) => state.markRoutesReady)
+  const phase = useBootPhase()
   const routing = useRouterState({ select: (state) => state.status })
 
   useEffect(() => {
     if (routing === "idle") markRoutesReady()
-  }, [routing, markRoutesReady])
+  }, [routing])
 
   if (phase === "ready") return null
   return (

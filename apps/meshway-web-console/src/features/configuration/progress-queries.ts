@@ -1,9 +1,9 @@
 import { getConfigurationProgress } from "@meshway/control-client"
 import { queryOptions } from "@tanstack/react-query"
 
-import { pollUnlessLive } from "@/features/live/status"
 import { networkKey } from "@/features/network/queries"
 import { authed, client } from "@/lib/api"
+import { pollUnlessLive } from "@/state/live"
 
 /** How often a revision's deployment is read again while it is shown and not streamed. */
 export const PROGRESS_MS = 3_000

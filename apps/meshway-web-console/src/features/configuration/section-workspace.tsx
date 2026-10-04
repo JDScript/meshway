@@ -15,6 +15,7 @@ import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { m } from "@/paraglide/messages.js"
+import { useConfigurationDraft } from "@/state/configuration-draft"
 
 import { AccessForm } from "./access-form"
 import { AddressPoolsForm } from "./address-pools-form"
@@ -22,7 +23,6 @@ import { JsonBlock } from "./change-list"
 import { entryCount, sectionOf, type SectionKey } from "./changes"
 import { DefaultsForm } from "./defaults-form"
 import { DnsForm } from "./dns-form"
-import { useConfigurationDraft } from "./draft"
 import {
   checkedNow,
   holdsDocument,

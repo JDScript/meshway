@@ -1,9 +1,12 @@
-import { create } from "zustand"
+import { useStore } from "zustand"
+import { createStore } from "zustand/vanilla"
 
-import { EMPTY_SCENE, type Scene } from "./scene"
+import { EMPTY_SCENE, type Scene } from "@/features/globe/scene"
 
 // The globe is created once, above every route, and never re-created on
-// navigation. Routes describe what it should show through this store.
+// navigation. Routes describe what it should show through this store; what
+// a click or a pointer on the globe means is the view showing the network's
+// (`onGlobeSelect`, `onGlobeHover`), held as runtime handlers, not state.
 
 /**
  * - `welcome`: signed out; the globe sits to one side of the sign-in card.
@@ -39,7 +42,7 @@ export type GlobeState = {
   recede: boolean
 }
 
-export const useGlobeStore = create<GlobeState>(() => ({
+const globeStore = createStore<GlobeState>(() => ({
   framing: "welcome",
   scene: EMPTY_SCENE,
   selectedNodeId: null,
@@ -48,12 +51,15 @@ export const useGlobeStore = create<GlobeState>(() => ({
   recede: false,
 }))
 
+/** What the globe shows, for its stage. */
+export const useGlobe = (): GlobeState => useStore(globeStore)
+
 export function setGlobe(patch: Partial<GlobeState>) {
-  const current = useGlobeStore.getState()
+  const current = globeStore.getState()
   // Panels re-measure often; equal insets are not a change.
   if (patch.insets && sameInsets(patch.insets, current.insets))
     patch = { ...patch, insets: current.insets }
-  useGlobeStore.setState(patch)
+  globeStore.setState(patch)
 }
 
 /** The empty globe beside the sign-in card or a status card. */
@@ -70,8 +76,8 @@ export function showWelcomeGlobe() {
 
 /** Lists point at a node on the globe (or stop pointing). The shell writes everything else. */
 export function highlightOnGlobe(nodeId: string | null) {
-  if (useGlobeStore.getState().hoveredNodeId !== nodeId)
-    useGlobeStore.setState({ hoveredNodeId: nodeId })
+  if (globeStore.getState().hoveredNodeId !== nodeId)
+    globeStore.setState({ hoveredNodeId: nodeId })
 }
 
 let selectHandler: (nodeId: string | null) => void = () => undefined

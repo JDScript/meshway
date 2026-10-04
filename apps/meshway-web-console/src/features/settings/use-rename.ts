@@ -11,13 +11,16 @@ import { NAME_FAILURE } from "@/features/network/create-network"
 import { useNetworkNameCheck } from "@/features/network/network-name"
 import { networkQuery, networksQuery } from "@/features/network/queries"
 import { ApiFailure, authed, client, problemCode } from "@/lib/api"
-import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
 import { failureText } from "@/lib/failure"
 import { m } from "@/paraglide/messages.js"
+import { attempts } from "@/state/attempts"
 
 const TOAST = "network-rename"
 
 type RenameBody = Omit<RenameNetworkRequest, "requestId">
+
+/** By network. */
+const renames = attempts<RenameBody>()
 
 /**
  * Renaming the network: entity metadata, saved on its own (not part of the
@@ -29,7 +32,6 @@ type RenameBody = Omit<RenameNetworkRequest, "requestId">
 export function useRename(network: NetworkSummary) {
   const queryClient = useQueryClient()
   const checkName = useNetworkNameCheck()
-  const unsettled = useRef<Attempt<RenameBody> | null>(null)
   const sending = useRef(false)
   const [pending, setPending] = useState(false)
 
@@ -41,22 +43,23 @@ export function useRename(network: NetworkSummary) {
       return false
     }
     const { name } = checked
-    const attempt = attemptFor(unsettled.current, name, () => ({
-      name,
-      expectedName: network.name,
-    }))
     sending.current = true
     setPending(true)
     try {
-      const renamed = await authed((token) =>
-        renameNetwork(
-          client,
-          { networkId: network.id },
-          { requestId: attempt.requestId, ...attempt.body },
-          { token }
-        )
+      const renamed = await renames.send(
+        network.id,
+        name,
+        () => ({ name, expectedName: network.name }),
+        (attempt) =>
+          authed((token) =>
+            renameNetwork(
+              client,
+              { networkId: network.id },
+              { requestId: attempt.requestId, ...attempt.body },
+              { token }
+            )
+          )
       )
-      unsettled.current = null
       queryClient.setQueryData(networkQuery(network.id).queryKey, renamed)
       void queryClient.invalidateQueries({
         queryKey: networksQuery().queryKey,
@@ -65,7 +68,6 @@ export function useRename(network: NetworkSummary) {
       return true
     } catch (error) {
       const failure = error instanceof ApiFailure ? error.failure : null
-      unsettled.current = failure && outcomeUnknown(failure) ? attempt : null
       const text = failureText(error, NAME_FAILURE)
       if (text) toast.error(text, { id: TOAST })
       // Renamed meanwhile, or no longer allowed: read the network again.

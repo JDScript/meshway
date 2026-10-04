@@ -22,11 +22,11 @@ import {
   writeTask,
 } from "@/features/observation/queries"
 import { networkStateQuery } from "@/features/state/queries"
-import { client, rejectSession } from "@/lib/api"
+import { client } from "@/lib/api"
 import { sameData } from "@/lib/same-data"
-import { currentSession } from "@/lib/session"
+import { connectionOf, isLive, setConnection } from "@/state/live"
+import { currentSession, rejectSession } from "@/state/session"
 
-import { connectionOf, setConnection } from "./connection"
 import {
   closedAction,
   failureAction,
@@ -39,7 +39,6 @@ import {
   type FailureAction,
   type Model,
 } from "./reducer"
-import { liveStatus, setLiveStatus } from "./status"
 
 // "SSE first, GET as the fallback": one `watchNetwork` stream per tab for
 // the network it has open. Its snapshot and deltas write the reads they
@@ -53,8 +52,6 @@ function leaveLive(
   networkId: string,
   dropped: boolean
 ) {
-  const wasLive = liveStatus(networkId) === "live"
-  setLiveStatus(networkId, "connecting")
   const previous = connectionOf(networkId)
   if (previous?.phase !== "connecting" || (dropped && !previous.dropped))
     setConnection(networkId, {
@@ -62,7 +59,7 @@ function leaveLive(
       since: Date.now(),
       dropped,
     })
-  if (wasLive)
+  if (previous?.phase === "live")
     void queryClient.invalidateQueries({ queryKey: networkKey(networkId) })
 }
 
@@ -264,7 +261,6 @@ export async function runNetworkStream(
   let disconnectAfterMs: number | null = null
   /** A sync was ready at least once: a failure since is a drop. */
   let wasLive = false
-  setLiveStatus(networkId, "connecting")
   setConnection(networkId, {
     phase: "connecting",
     since: Date.now(),
@@ -311,7 +307,6 @@ export async function runNetworkStream(
             attempt = 0
             wasLive = true
             disconnectAfterMs = effect.disconnectAfterMs
-            setLiveStatus(networkId, "live")
             setConnection(networkId, { phase: "live", since: Date.now() })
           } else if (effect.type === "unsynced")
             leaveLive(queryClient, networkId, false)
@@ -331,7 +326,7 @@ export async function runNetworkStream(
     if (signal.aborted) return
     if (next === "stop") return stopNetworkStream(queryClient, networkId)
     if (next === "sign-out") {
-      setLiveStatus(networkId, "off")
+      setConnection(networkId, { phase: "stopped", since: Date.now() })
       rejectSession(session)
       return
     }
@@ -349,8 +344,7 @@ export async function runNetworkStream(
 
 /** The stream is gone: the reads poll again, read afresh if it was live. */
 export function stopNetworkStream(queryClient: QueryClient, networkId: string) {
-  if (liveStatus(networkId) === "live")
+  if (isLive(networkId))
     void queryClient.invalidateQueries({ queryKey: networkKey(networkId) })
-  setLiveStatus(networkId, "off")
   setConnection(networkId, null)
 }

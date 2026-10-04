@@ -1,5 +1,6 @@
 import type { PreparedRuleSet } from "@meshway/control-client"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useNavigate } from "@tanstack/react-router"
 
 import { GlassDialog } from "@/components/chrome/glass-dialog"
 import { EmptyLine, Section } from "@/components/chrome/section"
@@ -7,10 +8,17 @@ import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { m } from "@/paraglide/messages.js"
+import {
+  closeRefusal,
+  closeReview,
+  confirmConfiguration,
+  useConfigurationApply,
+  type Refusal,
+  type Review,
+} from "@/state/configuration-apply"
 
 import { ChangeList } from "./change-list"
 import { revisionQuery } from "./queries"
-import type { Refusal, Review } from "./use-apply"
 
 /** Nodes by hostname (as the base revision has them) and ID. */
 function NodeIds({
@@ -273,5 +281,38 @@ export function RefusalDialog({
         ))}
       </ul>
     </GlassDialog>
+  )
+}
+
+/**
+ * The network's review and refusal, wherever the check was asked from:
+ * mounted once by the network shell, so they outlive the page that asked.
+ */
+export function ConfigurationDialogs({ networkId }: { networkId: string }) {
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const apply = useConfigurationApply(networkId)
+  const showProgress = (revision: number) =>
+    void navigate({
+      to: "/networks/$network/configuration/$view",
+      params: { network: networkId, view: "history" },
+      search: { revision },
+    })
+  return (
+    <>
+      <ReviewDialog
+        networkId={networkId}
+        review={apply.review}
+        applying={apply.busy === "applying"}
+        onConfirm={() =>
+          void confirmConfiguration(queryClient, networkId, showProgress)
+        }
+        onClose={() => closeReview(networkId)}
+      />
+      <RefusalDialog
+        refusal={apply.refusal}
+        onClose={() => closeRefusal(networkId)}
+      />
+    </>
   )
 }

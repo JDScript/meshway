@@ -1,9 +1,9 @@
 import { getNetworkState } from "@meshway/control-client"
 import { queryOptions } from "@tanstack/react-query"
 
-import { pollUnlessLive } from "@/features/live/status"
 import { networkKey } from "@/features/network/queries"
 import { authed, client } from "@/lib/api"
+import { pollUnlessLive } from "@/state/live"
 
 /**
  * The network's State as the controller shows it to this account: each

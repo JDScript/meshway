@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router"
 
 import { useSessionExpiry } from "@/features/auth/use-session-expiry"
-import { currentSession } from "@/lib/session"
+import { currentSession } from "@/state/session"
 
 /** Every page below needs this tab's sign-in; the controller still checks each request. */
 export const Route = createFileRoute("/_authed")({

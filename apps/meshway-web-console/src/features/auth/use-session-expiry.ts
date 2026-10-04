@@ -1,7 +1,6 @@
 import { useEffect } from "react"
 
-import { rejectSession } from "@/lib/api"
-import { currentSession } from "@/lib/session"
+import { currentSession, rejectSession } from "@/state/session"
 
 /** setTimeout's longest delay; a session can outlive it (up to 30 days). */
 const MAX_DELAY_MS = 2 ** 31 - 1

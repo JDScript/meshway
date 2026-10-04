@@ -1,35 +1,43 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
 import { useCallback, useState } from "react"
 
-import { heldSecret } from "@/features/entry/fragment"
 import { EntryPage } from "@/features/entry/frame"
 import { JoinCard } from "@/features/entry/join/join-card"
 import { JoinInvalid } from "@/features/entry/join/join-invalid"
-
-/** This tab's join link, in memory only, across a sign-in on the card. */
-const held = heldSecret()
+import {
+  dropLinkSecret,
+  linkSecret,
+  takeLinkSecret,
+  useLinkTaken,
+} from "@/state/link-secrets"
 
 /**
  * `/join#token=mwj_…`. The secret is read once into memory and the entry is
  * replaced by one without it, so it is in neither the address nor the
- * history.
+ * history; it stays across a sign-in on the card.
  */
 export const Route = createFileRoute("/join")({
   beforeLoad: ({ location }) => {
     if (location.hash) {
-      held.take(location.hash)
+      takeLinkSecret("join", location.hash)
       throw redirect({ to: "/join", replace: true })
     }
   },
   component: JoinPage,
 })
 
+/** Drawn afresh for each link taken, as one opened over this page changes only the fragment. */
 function JoinPage() {
-  const [secret] = useState(held.current)
-  const [holding, setHolding] = useState(Boolean(secret))
+  const taken = useLinkTaken("join")
+  return <JoinLink key={taken} />
+}
+
+function JoinLink() {
+  const [secret] = useState(() => linkSecret("join") ?? null)
+  const [holding, setHolding] = useState(secret !== null)
   // Used up or refused: the card stays as it is, the language may change again.
   const drop = useCallback(() => {
-    held.drop()
+    dropLinkSecret("join")
     setHolding(false)
   }, [])
   return (

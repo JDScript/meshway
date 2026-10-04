@@ -2,21 +2,13 @@ import { useQuery } from "@tanstack/react-query"
 import { useMatch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 
-import { useBootStore } from "@/features/boot/boot-store"
 import { EMPTY_SCENE } from "@/features/globe/scene"
-import {
-  highlightOnGlobe,
-  onGlobeHover,
-  onGlobeSelect,
-  setGlobe,
-} from "@/features/globe/store"
 import { recentLinksOf, useHistory } from "@/features/history/use-history"
 import {
   historyWindow,
   type HistoryWindow,
   type WindowChoice,
 } from "@/features/history/window"
-import { useLiveStatus } from "@/features/live/status"
 import { useNodeNavigation, useNodesRoute } from "@/features/nodes/navigation"
 import { nodesQuery } from "@/features/nodes/queries"
 import {
@@ -28,6 +20,14 @@ import {
 import { Surface } from "@/features/shell/surface"
 import { networkStateQuery } from "@/features/state/queries"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useBooted } from "@/state/boot"
+import {
+  highlightOnGlobe,
+  onGlobeHover,
+  onGlobeSelect,
+  setGlobe,
+} from "@/state/globe"
+import { useLive } from "@/state/live"
 
 import {
   linkKey,
@@ -55,14 +55,14 @@ const HISTORY_FILTER = {
  */
 export function OverviewPage({ networkId }: { networkId: string }) {
   const mobile = useIsMobile()
-  const ready = useBootStore((store) => store.phase === "ready")
+  const ready = useBooted()
   const current =
     useMatch({ from: OVERVIEW, shouldThrow: false, select: () => true }) ??
     false
 
   const state = useQuery(networkStateQuery(networkId))
   const inventory = useQuery(nodesQuery(networkId))
-  const live = useLiveStatus(networkId)
+  const live = useLive(networkId)
 
   const names = useMemo(
     () =>

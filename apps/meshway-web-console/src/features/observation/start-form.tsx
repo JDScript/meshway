@@ -11,10 +11,10 @@ import { FieldOption, FieldSelect } from "@/components/chrome/field-select"
 import { FieldInput } from "@/components/chrome/form"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { Button } from "@/components/ui/button"
-import { ApiFailure, authed, client } from "@/lib/api"
-import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
+import { authed, client } from "@/lib/api"
 import { toastFailureWith, type FailureText } from "@/lib/failure"
 import { m } from "@/paraglide/messages.js"
+import { attempts } from "@/state/attempts"
 
 import { writeTask } from "./queries"
 
@@ -25,6 +25,12 @@ type Mode = "auto" | "explicit"
 const INTERVALS = [1, 2, 5, 10, 30] as const
 /** Measured: the controller provides no traffic counts (`traffic` comes back unsupported). */
 const METRICS: CreateObservation["metrics"] = ["rtt", "probeLoss"]
+
+/**
+ * By network and source node. The subscription ID is the attempt's: an
+ * outcome left unknown sends the same subscription again.
+ */
+const starts = attempts<Omit<CreateObservation, "subscriptionId">>()
 
 /** What the controller's refusals of a new observation mean here. */
 export const createFailureText: FailureText = {
@@ -73,9 +79,6 @@ export function StartForm({
     paths.find((path) => path.join(">") === pathKey) ?? paths[0] ?? null
   const [interval, setPeriod] = useState<(typeof INTERVALS)[number]>(1)
   const [busy, setBusy] = useState(false)
-  const [unsettled, setUnsettled] = useState<Attempt<CreateObservation> | null>(
-    null
-  )
 
   const portValue = service === "icmpEcho" ? null : portOf(port)
   const scope: ObservationServiceScope | null =
@@ -104,24 +107,27 @@ export function StartForm({
       metrics: METRICS,
       intervalMs: interval * 1000,
     }
-    const attempt = attemptFor(unsettled, JSON.stringify(input), () => ({
-      ...input,
-      subscriptionId: crypto.randomUUID(),
-    }))
     setBusy(true)
     try {
-      const task = await authed((token) =>
-        createObservation(client, { networkId }, attempt.body, { token })
+      const { task, subscriptionId } = await starts.send(
+        `${networkId}/${sourceId}`,
+        JSON.stringify(input),
+        () => input,
+        async (attempt) => ({
+          subscriptionId: attempt.requestId,
+          task: await authed((token) =>
+            createObservation(
+              client,
+              { networkId },
+              { ...attempt.body, subscriptionId: attempt.requestId },
+              { token }
+            )
+          ),
+        })
       )
-      setUnsettled(null)
       writeTask(queryClient, networkId, task)
-      onStarted(attempt.body.subscriptionId)
+      onStarted(subscriptionId)
     } catch (error) {
-      setUnsettled(
-        error instanceof ApiFailure && outcomeUnknown(error.failure)
-          ? attempt
-          : null
-      )
       toastFailureWith(createFailureText)(error)
     } finally {
       setBusy(false)

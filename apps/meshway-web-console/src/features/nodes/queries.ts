@@ -7,9 +7,9 @@ import {
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query"
 
 import { isDenied } from "@/features/configuration/queries"
-import { pollUnlessLive } from "@/features/live/status"
 import { networkKey } from "@/features/network/queries"
 import { authed, client } from "@/lib/api"
+import { pollUnlessLive } from "@/state/live"
 
 /**
  * The network's nodes as the controller lists them to this account: every

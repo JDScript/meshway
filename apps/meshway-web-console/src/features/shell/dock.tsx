@@ -18,12 +18,12 @@ import {
 import { SPRING_LAYOUT } from "@/lib/ease"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
+import { useDraftHeld } from "@/state/configuration-draft"
 
-import { useDraftPages } from "./drafts"
 import { CHROME } from "./glass-drawer"
 import { useSurfaceHistory } from "./history"
 import { DOCK_WIDTH } from "./layout"
-import { PAGES, type DockItem, type PageId } from "./pages"
+import { DRAFT_PAGE, PAGES, type DockItem, type PageId } from "./pages"
 
 const ITEM = 36
 const PADDING = (DOCK_WIDTH - ITEM) / 2
@@ -76,7 +76,7 @@ export function Dock({
 }) {
   const activeLayout = useId()
   const reduce = useReducedMotion()
-  const drafts = useDraftPages(networkId)
+  const draftHeld = useDraftHeld(networkId)
   return (
     <nav
       {...CHROME}
@@ -128,7 +128,7 @@ export function Dock({
                         />
                       ) : null}
                       <item.icon className="relative size-4.5" />
-                      {drafts[item.page] ? (
+                      {draftHeld && item.page === DRAFT_PAGE ? (
                         <span className="absolute top-1.5 right-1.5 flex">
                           <DraftMark />
                         </span>
@@ -163,7 +163,7 @@ export function DockLauncher({
   items: readonly DockItem[]
 }) {
   const [open, setOpen] = useState(false)
-  const drafts = useDraftPages(networkId)
+  const draftHeld = useDraftHeld(networkId)
   const history = useSurfaceHistory(networkId)
   const current = items.find((item) => item.page === page)
   const Icon = current?.icon ?? GlobeIcon
@@ -209,7 +209,7 @@ export function DockLauncher({
           >
             <item.icon className="size-4" />
             {item.label()}
-            {drafts[item.page] ? <DraftMark /> : null}
+            {draftHeld && item.page === DRAFT_PAGE ? <DraftMark /> : null}
           </PageLink>
         ))}
       </PopoverContent>

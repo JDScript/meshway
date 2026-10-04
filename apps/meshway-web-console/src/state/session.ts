@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { createStore } from "zustand/vanilla"
 
 // The browser credential is the controller's opaque `mws_` user session,
 // kept in localStorage and sent as a bearer header (docs/decisions.md). A
@@ -6,7 +7,8 @@ import { z } from "zod"
 //
 // Each tab copies the session into memory once, when it loads, and every
 // request uses that copy. If another tab replaces or removes it, this tab
-// reloads instead of silently continuing with a different sign-in.
+// reloads instead of silently continuing with a different sign-in
+// (`watchStoredSession`).
 
 const STORAGE_KEY = "meshway.session"
 
@@ -37,33 +39,33 @@ function read(): Session | null {
   }
 }
 
-let snapshot: Session | null = read()
-
-const listeners = new Set<() => void>()
-
-/**
- * Calls `listener` whenever this tab's sign-in starts or ends (what is kept
- * per sign-in, such as drafts, drops then). Returns the unsubscribe.
- */
-export function onSessionChange(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
+type SessionState = {
+  /** This tab's sign-in, as it loaded or as it last changed in this tab. */
+  session: Session | null
+  /** When the controller last rejected this tab's session (or a call found none); the router signs out on it. */
+  rejectedAt: number | null
 }
 
-function changed() {
-  for (const listener of listeners) listener()
-}
-
-window.addEventListener("storage", (event) => {
-  if (event.storageArea !== window.localStorage) return
-  if (event.key !== STORAGE_KEY && event.key !== null) return
-  if (read()?.id !== snapshot?.id) window.location.reload()
-})
+export const sessionStore = createStore<SessionState>(() => ({
+  session: read(),
+  rejectedAt: null,
+}))
 
 /** This tab's sign-in, or null when signed out or past its absolute expiry. */
 export function currentSession(): Session | null {
-  if (snapshot && snapshot.expiresAt <= Date.now()) return null
-  return snapshot
+  const { session } = sessionStore.getState()
+  return session && session.expiresAt > Date.now() ? session : null
+}
+
+/**
+ * Calls `listener` whenever this tab's sign-in starts, ends or changes:
+ * what is kept per sign-in (drafts, unsettled attempts) drops then.
+ * Returns the unsubscribe.
+ */
+export function onSessionChange(listener: () => void): () => void {
+  return sessionStore.subscribe((state, previous) => {
+    if (state.session?.id !== previous.session?.id) listener()
+  })
 }
 
 /** A session as the controller issued it; `expiresAt` is RFC 3339. */
@@ -75,8 +77,7 @@ export function startSession(issued: IssuedSession): boolean {
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false
   const next: Session = { v: 2, id: issued.id, token: issued.token, expiresAt }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  snapshot = next
-  changed()
+  sessionStore.setState({ session: next })
   return true
 }
 
@@ -86,8 +87,22 @@ export function startSession(issued: IssuedSession): boolean {
  */
 export function endSession(session: Session) {
   if (read()?.id === session.id) window.localStorage.removeItem(STORAGE_KEY)
-  if (snapshot?.id === session.id) {
-    snapshot = null
-    changed()
-  }
+  if (sessionStore.getState().session?.id === session.id)
+    sessionStore.setState({ session: null })
+}
+
+/** The controller no longer accepts `session` (or a call had none): it ends here, and the router opens the sign-in. */
+export function rejectSession(session: Session | null) {
+  if (session) endSession(session)
+  sessionStore.setState({ rejectedAt: Date.now() })
+}
+
+/** Reloads this tab when another one signs in or out; started once, by `main.tsx`. */
+export function watchStoredSession() {
+  window.addEventListener("storage", (event) => {
+    if (event.storageArea !== window.localStorage) return
+    if (event.key !== STORAGE_KEY && event.key !== null) return
+    if (read()?.id !== sessionStore.getState().session?.id)
+      window.location.reload()
+  })
 }

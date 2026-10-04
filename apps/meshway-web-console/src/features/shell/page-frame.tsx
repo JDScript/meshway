@@ -1,9 +1,9 @@
 import { useEffect, type ReactNode } from "react"
 
-import { useBootStore } from "@/features/boot/boot-store"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useBooted } from "@/state/boot"
 
-import { CommitBar } from "./commit-bar"
+import { CommitBar, type Commit } from "./commit-bar"
 import { GlassDrawer } from "./glass-drawer"
 import { useSurfaceHistory } from "./history"
 import {
@@ -36,6 +36,7 @@ export function PageFrame({
   current,
   panel,
   workspace,
+  commit = null,
   onCloseWorkspace,
 }: {
   networkId: string
@@ -46,10 +47,12 @@ export function PageFrame({
   panel?: ReactNode
   /** What the open workspace shows, headed by `surfaceTitleId(page, "workspace")`; null when none is open. */
   workspace: ReactNode | null
+  /** The configuration draft's bar, on the pages that edit it. */
+  commit?: Commit | null
   onCloseWorkspace: () => void
 }) {
   const mobile = useIsMobile()
-  const ready = useBootStore((store) => store.phase === "ready")
+  const ready = useBooted()
   const history = useSurfaceHistory(networkId)
   const panelShown = ready && current && panel !== undefined
   const workspaceShown = ready && current && workspace !== null
@@ -91,7 +94,7 @@ export function PageFrame({
           }}
         >
           {workspace}
-          <CommitBar page={page} workspaceShown={workspaceShown} mobile />
+          <CommitBar commit={commit} workspaceShown={workspaceShown} mobile />
         </GlassDrawer>
       </>
     )
@@ -128,7 +131,11 @@ export function PageFrame({
         }}
       >
         {workspace}
-        <CommitBar page={page} workspaceShown={workspaceShown} mobile={false} />
+        <CommitBar
+          commit={commit}
+          workspaceShown={workspaceShown}
+          mobile={false}
+        />
       </Surface>
     </>
   )

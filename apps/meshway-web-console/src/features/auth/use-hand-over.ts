@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback } from "react"
 
-import { currentSession, endSession } from "@/lib/session"
+import { currentSession, endSession } from "@/state/session"
 
 import type { LoginReason } from "./login-reasons"
 

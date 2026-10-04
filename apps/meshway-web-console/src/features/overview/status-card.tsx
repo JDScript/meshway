@@ -4,13 +4,12 @@ import { useState } from "react"
 
 import { StatusDot } from "@/components/chrome/status-dot"
 import { Skeleton } from "@/components/ui/skeleton"
-import { highlightOnGlobe } from "@/features/globe/store"
-import type { LiveStatus } from "@/features/live/status"
 import { useNow } from "@/hooks/use-now"
 import { failureText } from "@/lib/failure"
 import { dateTime, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
+import { highlightOnGlobe } from "@/state/globe"
 
 import { Group } from "./group"
 import { HistoryLayer, type HistoryLayerProps } from "./history-layer"
@@ -54,7 +53,8 @@ export function StatusCard({
   stateError: unknown
   nodes: readonly MapNode[]
   located: ReadonlySet<string>
-  live: LiveStatus
+  /** The event stream keeps the counts current (else they are polled). */
+  live: boolean
   nameOf: (id: string) => string
   onOpenNode: (nodeId: string) => void
   history: HistoryLayerProps
@@ -74,7 +74,7 @@ export function StatusCard({
       <span className="min-w-0 flex-1 truncate text-meta text-muted-foreground tabular-nums">
         {state ? (
           <span title={dateTime(state.asOf) ?? undefined}>
-            {live === "live" ? m.overview_live() : m.overview_polling()} ·{" "}
+            {live ? m.overview_live() : m.overview_polling()} ·{" "}
             {m.overview_as_of({
               time: relativeTime(state.asOf, now) ?? "—",
             })}

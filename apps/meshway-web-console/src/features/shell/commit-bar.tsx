@@ -1,5 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef } from "react"
-import { create } from "zustand"
+import { useEffect } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -7,7 +6,6 @@ import { useKeptWhile } from "@/hooks/use-kept"
 import { cn } from "@/lib/utils"
 
 import { COMMIT_BOTTOM, COMMIT_SHEET_INSET } from "./layout"
-import type { PageId } from "./pages"
 import { Surface } from "./surface"
 
 /**
@@ -16,7 +14,6 @@ import { Surface } from "./surface"
  * the draft's revision (`warning`); the editor words it and its buttons.
  */
 export type Commit = {
-  page: PageId
   tone: "plain" | "destructive" | "warning"
   text: string
   /** Names the bar for assistive tech. */
@@ -29,63 +26,6 @@ export type Commit = {
   primary: () => void
 }
 
-const useCommitStore = create<{ owner: string | null; commit: Commit | null }>(
-  () => ({ owner: null, commit: null })
-)
-
-/**
- * Offers a page's draft to the commit bar; null while there is none. One
- * page is on screen at a time, so the last one to offer owns the bar until
- * it stops.
- */
-export function useCommit(commit: Commit | null) {
-  const owner = useId()
-  // The actions close over the page's latest render; the bar calls through
-  // to them, so the store changes only when what it shows does.
-  const latest = useRef(commit)
-  useLayoutEffect(() => {
-    latest.current = commit
-  })
-  const shown = commit
-    ? {
-        page: commit.page,
-        tone: commit.tone,
-        text: commit.text,
-        label: commit.label,
-        secondaryLabel: commit.secondaryLabel,
-        primaryLabel: commit.primaryLabel,
-        primaryDisabled: commit.primaryDisabled,
-        busy: commit.busy,
-      }
-    : null
-  const key = shown ? JSON.stringify(shown) : null
-  const offered: Commit | null = useMemo(
-    () =>
-      shown === null
-        ? null
-        : {
-            ...shown,
-            secondary: () => latest.current?.secondary(),
-            primary: () => latest.current?.primary(),
-          },
-    // `key` is `shown`'s content.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key]
-  )
-  useEffect(() => {
-    if (offered) useCommitStore.setState({ owner, commit: offered })
-    else if (useCommitStore.getState().owner === owner)
-      useCommitStore.setState({ owner: null, commit: null })
-  }, [owner, offered])
-  useEffect(
-    () => () => {
-      if (useCommitStore.getState().owner === owner)
-        useCommitStore.setState({ owner: null, commit: null })
-    },
-    [owner]
-  )
-}
-
 /**
  * The bar inside a page's workspace frame (drawn by `PageFrame`): it rises
  * at the bottom of the workspace while the page holds a draft, and leaves
@@ -93,20 +33,20 @@ export function useCommit(commit: Commit | null) {
  * takes the primary action.
  */
 export function CommitBar({
-  page,
+  commit,
   workspaceShown,
   mobile,
 }: {
-  page: PageId
+  /** What the page's draft offers; null while there is none. */
+  commit: Commit | null
   workspaceShown: boolean
   mobile: boolean
 }) {
-  const commit = useCommitStore((store) => store.commit)
-  const shown = workspaceShown && commit !== null && commit.page === page
+  const shown = workspaceShown && commit !== null
   const current = useKeptWhile(shown, commit)
 
   useEffect(() => {
-    if (!shown) return
+    if (!workspaceShown || !commit) return
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "s" || !(event.metaKey || event.ctrlKey)) return
       event.preventDefault()
@@ -114,9 +54,9 @@ export function CommitBar({
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [shown, commit])
+  }, [workspaceShown, commit])
 
-  if (!current || current.page !== page) return null
+  if (!current) return null
   const busy = current.busy
   return (
     <div

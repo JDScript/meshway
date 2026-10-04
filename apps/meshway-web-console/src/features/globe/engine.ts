@@ -12,8 +12,9 @@ import {
   ShaderMaterial,
 } from "three"
 
-import type { BootPhase } from "@/features/boot/boot-store"
 import { m } from "@/paraglide/messages.js"
+import type { BootPhase } from "@/state/boot"
+import { sameInsets, type GlobeState } from "@/state/globe"
 
 import { css, type GlobeColors, type Rgb } from "./colors"
 import { landPoints } from "./land"
@@ -42,7 +43,6 @@ import {
   type Vec3,
 } from "./scene"
 import { createStage } from "./stage"
-import { sameInsets, type GlobeState } from "./store"
 
 // The stage (stage.ts) provides the camera, controls, atmosphere and the DOM
 // node markers. The surface, land dots, links and the loader's comet are

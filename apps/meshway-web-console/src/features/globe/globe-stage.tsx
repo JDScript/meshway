@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 
-import { useBootStore } from "@/features/boot/boot-store"
 import { m } from "@/paraglide/messages.js"
+import { markEngineReady, markRevealed, useBootPhase } from "@/state/boot"
+import { hoverFromGlobe, selectFromGlobe, useGlobe } from "@/state/globe"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
 import type { GlobeEngine } from "./engine"
-import { hoverFromGlobe, selectFromGlobe, useGlobeStore } from "./store"
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)"
 
@@ -41,10 +41,8 @@ function useGlobeColors(): GlobeColors {
 export function GlobeStage() {
   const host = useRef<HTMLDivElement>(null)
   const [engine, setEngine] = useState<GlobeEngine | null>(null)
-  const state = useGlobeStore()
-  const boot = useBootStore((store) => store.phase)
-  const markEngineReady = useBootStore((store) => store.markEngineReady)
-  const markRevealed = useBootStore((store) => store.markRevealed)
+  const state = useGlobe()
+  const boot = useBootPhase()
   const colors = useGlobeColors()
   const motion = usePrefersMotion()
 
@@ -77,7 +75,7 @@ export function GlobeStage() {
       created?.destroy()
       setEngine(null)
     }
-  }, [markRevealed])
+  }, [])
 
   useEffect(() => {
     if (!engine) return
@@ -92,7 +90,7 @@ export function GlobeStage() {
       frame = requestAnimationFrame(markEngineReady)
     })
     return () => cancelAnimationFrame(frame)
-  }, [engine, markEngineReady])
+  }, [engine])
 
   return (
     <>

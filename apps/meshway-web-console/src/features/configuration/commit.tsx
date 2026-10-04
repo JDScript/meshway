@@ -1,43 +1,42 @@
-import type {
-  ConfigurationValidationParams,
-  NetworkSummary,
-} from "@meshway/control-client"
-import { useQuery } from "@tanstack/react-query"
+import type { NetworkSummary } from "@meshway/control-client"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo } from "react"
 
-import { useCommit } from "@/features/shell/commit-bar"
-import type { PageId } from "@/features/shell/pages"
+import type { Commit } from "@/features/shell/commit-bar"
 import { m } from "@/paraglide/messages.js"
+import {
+  checkConfiguration,
+  useConfigurationApply,
+  type OnInvalid,
+  type Proposal,
+} from "@/state/configuration-apply"
+import { useConfigurationDraft } from "@/state/configuration-draft"
 
-import { useConfigurationDraft } from "./draft"
-import { isOutdated, type DraftInput } from "./draft-state"
+import { isOutdated } from "./draft-state"
 import { operationsProblems } from "./form-problems"
 import { parseJsonc } from "./jsonc"
 import { configurationQuery } from "./queries"
-import { RefusalDialog, ReviewDialog } from "./review-dialog"
-import { useConfigurationApply, type Proposal } from "./use-apply"
 
 /**
- * The configuration draft's commit bar, review and refusal, for whichever
- * page edits it (the configuration page, a node's workspace): one draft,
- * so one bar and one review wherever it was edited from. `active`: the
- * page is on screen and reads the configuration.
+ * The configuration draft's commit bar, for whichever page edits it (the
+ * configuration page, a node's workspace): one draft, so one bar and one
+ * review wherever it was edited from. The review and refusal are the
+ * network shell's (`ConfigurationDialogs`). `onInvalid` shows a refused
+ * draft where this page edits it. `active`: the page is on screen and
+ * reads the configuration.
  */
 export function useConfigurationCommit({
   networkId,
   network,
-  page,
   active,
   onInvalid,
-  onShowProgress,
 }: {
   networkId: string
   network: NetworkSummary | null
-  page: PageId
   active: boolean
-  onInvalid: (input: DraftInput, params: ConfigurationValidationParams) => void
-  onShowProgress: (revision: number) => void
+  onInvalid: OnInvalid
 }) {
+  const queryClient = useQueryClient()
   const draft = useConfigurationDraft(networkId)
   const configuration = useQuery({
     ...configurationQuery(networkId),
@@ -45,7 +44,7 @@ export function useConfigurationCommit({
   })
   const current = configuration.data?.revision ?? network?.currentRevision
   const editable = network?.actions.editConfiguration ?? false
-  const apply = useConfigurationApply(networkId, { onInvalid, onShowProgress })
+  const checking = useConfigurationApply(networkId).busy === "checking"
 
   const entry = draft.entry
   const outdated = isOutdated(entry, current)
@@ -58,20 +57,23 @@ export function useConfigurationCommit({
     const count = operationsProblems(input.ops, input.base).length
     return count === 0 ? null : m.configuration_commit_fields({ count })
   }, [input])
+
+  const check = (proposal: Proposal) =>
+    void checkConfiguration(queryClient, networkId, proposal, onInvalid)
   /** Checks the draft, against the controller's revision once it moved on (a new review). */
   const checkDraft = () => {
     if (!entry || blocked !== null) return
-    void apply.check({
+    check({
       type: "draft",
       input: entry.input,
       expectedRevision:
         outdated && current !== undefined ? current : entry.baseRevision,
     })
   }
-  useCommit(
+
+  const bar: Commit | null =
     active && editable && draft.dirty && entry
       ? {
-          page,
           label: m.configuration_commit_label(),
           tone: outdated ? "warning" : blocked ? "destructive" : "plain",
           text:
@@ -79,7 +81,7 @@ export function useConfigurationCommit({
               ? m.configuration_commit_outdated({ current })
               : blocked
                 ? blocked
-                : apply.checking
+                : checking
                   ? m.configuration_checking()
                   : m.configuration_commit_unsaved(),
           secondaryLabel:
@@ -91,31 +93,12 @@ export function useConfigurationCommit({
               ? m.configuration_commit_recheck({ current })
               : m.configuration_commit_apply(),
           primaryDisabled: blocked !== null,
-          busy: apply.checking,
+          busy: checking,
           // Starting over reads the current configuration; discarding keeps the base.
           secondary: outdated ? draft.reset : draft.discard,
           primary: checkDraft,
         }
       : null
-  )
 
-  const dialogs = (
-    <>
-      <ReviewDialog
-        networkId={networkId}
-        review={apply.review}
-        applying={apply.applying}
-        onConfirm={() => void apply.confirm()}
-        onClose={apply.closeReview}
-      />
-      <RefusalDialog refusal={apply.refusal} onClose={apply.closeRefusal} />
-    </>
-  )
-
-  return {
-    checking: apply.checking,
-    checkDraft,
-    check: (proposal: Proposal) => void apply.check(proposal),
-    dialogs,
-  }
+  return { bar, checking, checkDraft, check }
 }

@@ -50,12 +50,12 @@ import { membersQuery } from "@/features/members/queries"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { useNow } from "@/hooks/use-now"
 import { useSecretMutation } from "@/hooks/use-secret-mutation"
-import { ApiFailure, authed, client } from "@/lib/api"
-import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
+import { authed, client } from "@/lib/api"
 import { failureText, toastFailureWith } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
+import { attempts } from "@/state/attempts"
 
 import {
   expiryLabel,
@@ -95,6 +95,9 @@ const NONE = "none"
 type Choice = Preset | typeof NONE
 
 type Body = Omit<CreateEnrollmentKeyRequest, "requestId">
+
+/** By network. */
+const enrollmentKeys = attempts<Body>()
 
 const fieldLabelClass = cn("leading-snug font-medium", FIELD_SIZE.default.label)
 
@@ -153,7 +156,6 @@ export function AddNode({
     newListener("native_udp")
   )
   const [attempted, setAttempted] = useState(false)
-  const unsettled = useRef<Attempt<Body> | null>(null)
 
   // Tags that left the configuration are no longer chosen.
   const chosen = tagNames ? tags.filter((tag) => tagNames.includes(tag)) : tags
@@ -172,26 +174,21 @@ export function AddNode({
   )
 
   const secret = useSecretMutation(
-    async (attempt: Attempt<Body>): Promise<EnrollmentKeyResponse> => {
-      try {
-        const created = await authed((token) =>
-          createEnrollmentKey(
-            client,
-            { networkId },
-            { requestId: attempt.requestId, ...attempt.body },
-            { token }
+    ({ key, body }: { key: string; body: () => Body }) =>
+      enrollmentKeys.send(
+        networkId,
+        key,
+        body,
+        (attempt): Promise<EnrollmentKeyResponse> =>
+          authed((token) =>
+            createEnrollmentKey(
+              client,
+              { networkId },
+              { requestId: attempt.requestId, ...attempt.body },
+              { token }
+            )
           )
-        )
-        unsettled.current = null
-        return created
-      } catch (error) {
-        unsettled.current =
-          error instanceof ApiFailure && outcomeUnknown(error.failure)
-            ? attempt
-            : null
-        throw error
-      }
-    },
+      ),
     {
       permission_denied: () => m.nodes_manage_denied(),
       invalid_request: () => m.nodes_add_refused(),
@@ -232,8 +229,9 @@ export function AddNode({
       listener:
         choice === NONE ? null : { key: LISTENER_KEY[choice], listener },
     }
-    secret.create(
-      attemptFor(unsettled.current, JSON.stringify(input), () => ({
+    secret.create({
+      key: JSON.stringify(input),
+      body: () => ({
         tags: input.tags,
         initialSettings: {
           ...(name === "" ? {} : { hostname: name }),
@@ -243,8 +241,8 @@ export function AddNode({
               : {},
         },
         expiresAt: new Date(Date.now() + expiry * 1000).toISOString(),
-      }))
-    )
+      }),
+    })
   }
 
   const toggle = (tag: string) =>

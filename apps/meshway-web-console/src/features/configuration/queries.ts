@@ -13,9 +13,9 @@ import {
   skipToken,
 } from "@tanstack/react-query"
 
-import { pollUnlessLive } from "@/features/live/status"
 import { networkKey } from "@/features/network/queries"
 import { ApiFailure, authed, client, problemCode } from "@/lib/api"
+import { pollUnlessLive } from "@/state/live"
 
 import { readSchema } from "./schema-check"
 

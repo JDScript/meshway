@@ -8,7 +8,7 @@ import {
 } from "@meshway/control-client"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { BanIcon, Trash2Icon, Undo2Icon } from "lucide-react"
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { toast } from "sonner"
 
 import { CopyButton } from "@/components/chrome/copy-button"
@@ -16,10 +16,6 @@ import { ConfirmDialog } from "@/components/chrome/glass-dialog"
 import { DangerRow, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
-import {
-  draftEntry,
-  useConfigurationDraft,
-} from "@/features/configuration/draft"
 import {
   holdsDocument,
   holdsOperations,
@@ -36,10 +32,11 @@ import {
 } from "@/features/configuration/queries"
 import { networkQuery } from "@/features/network/queries"
 import { ApiFailure, authed, client, problemCode } from "@/lib/api"
-import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
 import { toastFailureWith } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
+import { attempts } from "@/state/attempts"
+import { draftOf, useConfigurationDraft } from "@/state/configuration-draft"
 
 import { algorithmLabel, purposeLabel, type KeyPurpose } from "./labels"
 import { nodesQuery } from "./queries"
@@ -217,8 +214,11 @@ function NodeKey({
 
 type DeleteBody = { expectedRevision: number }
 
+/** By network and node. */
+const deletions = attempts<DeleteBody>()
+
 /** The draft holds edits not applied yet: deleting now would move its base under it. */
-const draftHeld = (networkId: string) => isDirty(draftEntry(networkId))
+const draftHeld = (networkId: string) => isDirty(draftOf(networkId))
 
 function Deletion({
   networkId,
@@ -236,7 +236,6 @@ function Deletion({
     ...configurationQuery(networkId),
     enabled: confirming,
   })
-  const unsettled = useRef<Attempt<DeleteBody> | null>(null)
 
   const refresh = () =>
     Promise.all(
@@ -248,28 +247,21 @@ function Deletion({
     )
 
   const remove = useMutation({
-    mutationFn: async (
-      attempt: Attempt<DeleteBody>
-    ): Promise<ConfigurationAppliedResponse> => {
-      try {
-        const applied = await authed((token) =>
-          deleteNode(
-            client,
-            { networkId, nodeId: node.id },
-            { requestId: attempt.requestId, ...attempt.body },
-            { token }
+    mutationFn: (revision: number): Promise<ConfigurationAppliedResponse> =>
+      deletions.send(
+        `${networkId}/${node.id}`,
+        `${revision}`,
+        () => ({ expectedRevision: revision }),
+        (attempt) =>
+          authed((token) =>
+            deleteNode(
+              client,
+              { networkId, nodeId: node.id },
+              { requestId: attempt.requestId, ...attempt.body },
+              { token }
+            )
           )
-        )
-        unsettled.current = null
-        return applied
-      } catch (error) {
-        unsettled.current =
-          error instanceof ApiFailure && outcomeUnknown(error.failure)
-            ? attempt
-            : null
-        throw error
-      }
-    },
+      ),
     retry: false,
     onSuccess: (applied) => {
       setConfirming(false)
@@ -308,7 +300,7 @@ function Deletion({
    * draft it is sent now.
    */
   const ask = () => {
-    const entry = draftEntry(networkId)
+    const entry = draftOf(networkId)
     if (holdsDocument(entry)) {
       toast.error(m.nodes_delete_draft())
       return
@@ -393,11 +385,7 @@ function Deletion({
             toast.error(m.nodes_delete_draft())
             return
           }
-          remove.mutate(
-            attemptFor(unsettled.current, `${read.revision}`, () => ({
-              expectedRevision: read.revision,
-            }))
-          )
+          remove.mutate(read.revision)
         }}
         effects={[
           m.nodes_delete_effect_permanent({ name: node.hostname }),

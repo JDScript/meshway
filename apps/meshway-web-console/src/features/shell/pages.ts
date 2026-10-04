@@ -28,6 +28,9 @@ export const PAGES = {
   { route: `/networks/$network/${string}`; panel: boolean }
 >
 
+/** The page the configuration draft belongs to: the dock marks it while the draft holds edits, wherever they were made. */
+export const DRAFT_PAGE: PageId = "configuration"
+
 export type PageId = keyof typeof PAGES
 
 export type DockItem = {

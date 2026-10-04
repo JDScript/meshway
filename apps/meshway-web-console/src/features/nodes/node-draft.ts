@@ -7,7 +7,6 @@ import type {
 import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo } from "react"
 
-import { useConfigurationDraft } from "@/features/configuration/draft"
 import {
   checkedNow,
   holdsDocument,
@@ -24,6 +23,7 @@ import {
 } from "@/features/configuration/queries"
 import { ApiFailure, problemCode } from "@/lib/api"
 import { m } from "@/paraglide/messages.js"
+import { useConfigurationDraft } from "@/state/configuration-draft"
 
 import { nodeSettingsQuery } from "./queries"
 

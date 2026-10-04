@@ -1,7 +1,7 @@
 import type { ClientResult, ErrorResponse } from "@meshway/control-client"
 
 import { ApiFailure, problemCode, SessionRejected } from "@/lib/api"
-import { currentSession, endSession } from "@/lib/session"
+import { currentSession, endSession } from "@/state/session"
 
 /**
  * A call with this tab's session that keeps the page: a rejected session

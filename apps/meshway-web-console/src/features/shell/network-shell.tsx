@@ -5,9 +5,8 @@ import { GlassToolbar } from "@/components/chrome/glass-toolbar"
 import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
 import { AccountPage } from "@/features/account/page"
 import { AccountMenu } from "@/features/auth/account-menu"
-import { useBootStore } from "@/features/boot/boot-store"
 import { ConfigurationPage } from "@/features/configuration/page"
-import { setGlobe } from "@/features/globe/store"
+import { ConfigurationDialogs } from "@/features/configuration/review-dialog"
 import { LiveIndicator } from "@/features/live/live-indicator"
 import { MembersPage } from "@/features/members/page"
 import { NodesPage } from "@/features/nodes/page"
@@ -17,6 +16,8 @@ import { SettingsPage } from "@/features/settings/page"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useViewportHeight } from "@/hooks/use-viewport-height"
 import { cn } from "@/lib/utils"
+import { useBooted } from "@/state/boot"
+import { setGlobe } from "@/state/globe"
 
 import { Dock, DockLauncher } from "./dock"
 import { CHROME } from "./glass-drawer"
@@ -48,7 +49,7 @@ export function NetworkShell({
   const workspaceOpen = useWorkspaceOpen()
   const mobile = useIsMobile()
   const viewportHeight = useViewportHeight()
-  const ready = useBootStore((store) => store.phase === "ready")
+  const ready = useBooted()
   const switchNetwork = useSwitchNetwork(networkId, page)
   const dock = dockFor(network?.actions ?? null)
 
@@ -76,6 +77,7 @@ export function NetworkShell({
       <ConfigurationPage networkId={networkId} network={network} />
       <SettingsPage networkId={networkId} network={network} />
       <AccountPage networkId={networkId} />
+      <ConfigurationDialogs networkId={networkId} />
 
       {/* Desktop: the card top left, the dock below it. Phones: one bottom bar on every page, the launcher where the thumb is. */}
       <div

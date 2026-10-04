@@ -5,7 +5,7 @@ import {
   type ErrorResponse,
 } from "@meshway/control-client"
 
-import { currentSession, endSession, type Session } from "@/lib/session"
+import { currentSession, rejectSession } from "@/state/session"
 
 /** The controller serves this console, so the API is always same-origin. */
 export const client = new ControlClient({ baseUrl: window.location.origin })
@@ -50,24 +50,17 @@ export async function call<T>(
   throw new ApiFailure(settled.error)
 }
 
-let onRejected: () => void = () => undefined
-
-/** Where to go when the controller rejects this tab's session (set once by the router). */
-export function handleSessionRejected(callback: () => void) {
-  onRejected = callback
-}
-
 /**
  * Calls a generated operation with this tab's session. A 401 ends exactly
- * that session and hands over to the router; every other failure is thrown
- * as `ApiFailure`.
+ * that session (the router then opens the sign-in); every other failure is
+ * thrown as `ApiFailure`.
  */
 export async function authed<T>(
   operation: (token: string) => Promise<ClientResult<T, ErrorResponse>>
 ): Promise<T> {
   const session = currentSession()
   if (!session) {
-    onRejected()
+    rejectSession(null)
     throw new SessionRejected()
   }
   const settled = await operation(session.token)
@@ -77,10 +70,4 @@ export async function authed<T>(
     throw new SessionRejected()
   }
   throw new ApiFailure(settled.error)
-}
-
-/** Ends `session` here and hands over to the router, as a 401 does. */
-export function rejectSession(session: Session) {
-  endSession(session)
-  onRejected()
 }

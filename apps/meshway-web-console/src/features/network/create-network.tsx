@@ -10,16 +10,19 @@ import { BusyLabel } from "@/components/chrome/busy-label"
 import { TextField, type FieldSize } from "@/components/chrome/form"
 import { GlassDialog } from "@/components/chrome/glass-dialog"
 import { Button } from "@/components/ui/button"
-import { ApiFailure, authed, client } from "@/lib/api"
-import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
+import { authed, client } from "@/lib/api"
 import { failureText } from "@/lib/failure"
 import { formText } from "@/lib/form"
 import { m } from "@/paraglide/messages.js"
+import { attempts } from "@/state/attempts"
 
 import { useNetworkNameCheck } from "./network-name"
 import { networkQuery, networksQuery } from "./queries"
 
 const TOAST = "network-create"
+
+/** One scope: a network is created under no other. */
+const creations = attempts<Pick<CreateNetworkRequest, "name">>()
 
 /** The words for a name the controller refuses (its rules may be newer than the page's). */
 export const NAME_FAILURE = { invalid_request: () => m.network_name_invalid() }
@@ -32,9 +35,6 @@ export const NAME_FAILURE = { invalid_request: () => m.network_name_invalid() }
 export function useCreateNetwork(onCreated: (networkId: string) => void) {
   const queryClient = useQueryClient()
   const checkName = useNetworkNameCheck()
-  const unsettled = useRef<Attempt<Pick<CreateNetworkRequest, "name">> | null>(
-    null
-  )
   const sending = useRef(false)
   const [pending, setPending] = useState(false)
 
@@ -49,18 +49,22 @@ export function useCreateNetwork(onCreated: (networkId: string) => void) {
       return
     }
     const { name } = checked
-    const attempt = attemptFor(unsettled.current, name, () => ({ name }))
     sending.current = true
     setPending(true)
     try {
-      const created = await authed((token) =>
-        createNetwork(
-          client,
-          { requestId: attempt.requestId, ...attempt.body },
-          { token }
-        )
+      const created = await creations.send(
+        "",
+        name,
+        () => ({ name }),
+        (attempt) =>
+          authed((token) =>
+            createNetwork(
+              client,
+              { requestId: attempt.requestId, ...attempt.body },
+              { token }
+            )
+          )
       )
-      unsettled.current = null
       queryClient.setQueryData(
         networkQuery(created.network.id).queryKey,
         created
@@ -71,10 +75,6 @@ export function useCreateNetwork(onCreated: (networkId: string) => void) {
       toast.dismiss(TOAST)
       onCreated(created.network.id)
     } catch (error) {
-      unsettled.current =
-        error instanceof ApiFailure && outcomeUnknown(error.failure)
-          ? attempt
-          : null
       const text = failureText(error, NAME_FAILURE)
       if (text) toast.error(text, { id: TOAST })
     } finally {

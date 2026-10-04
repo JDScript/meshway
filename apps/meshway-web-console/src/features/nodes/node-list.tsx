@@ -18,7 +18,6 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group"
-import { useConfigurationDraft } from "@/features/configuration/draft"
 import { operationsOf } from "@/features/configuration/draft-state"
 import { editsNode, isDeleted } from "@/features/configuration/node-operations"
 import { surfaceTitleId } from "@/features/shell/page-frame"
@@ -26,6 +25,7 @@ import { useNow } from "@/hooks/use-now"
 import { relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
+import { useConfigurationDraft } from "@/state/configuration-draft"
 
 import { identityText } from "./labels"
 import { keyRevoked, shownNodes } from "./model"

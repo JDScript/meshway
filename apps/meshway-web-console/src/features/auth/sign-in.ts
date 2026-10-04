@@ -6,7 +6,7 @@ import {
 } from "@meshway/control-client"
 
 import { call, client } from "@/lib/api"
-import { currentSession, endSession, startSession } from "@/lib/session"
+import { currentSession, endSession, startSession } from "@/state/session"
 
 // Email and password go from the page to the controller only; neither is
 // kept. The controller normalises the email and applies its own rules.

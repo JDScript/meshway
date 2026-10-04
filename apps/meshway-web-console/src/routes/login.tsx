@@ -4,7 +4,7 @@ import { z } from "zod"
 import { LoginCard } from "@/features/auth/login-card"
 import { LOGIN_REASONS } from "@/features/auth/login-reasons"
 import { EntryPage } from "@/features/entry/frame"
-import { currentSession } from "@/lib/session"
+import { currentSession } from "@/state/session"
 
 const zSearch = z.object({
   reason: z.enum(LOGIN_REASONS).optional().catch(undefined),

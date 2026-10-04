@@ -10,7 +10,6 @@ import { useQueryClient } from "@tanstack/react-query"
 import {
   useEffect,
   useId,
-  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -25,11 +24,11 @@ import { fragmentLink } from "@/features/entry/fragment"
 import { roleLabel, ROLES } from "@/features/network/roles"
 import { useUnmountAfter } from "@/hooks/use-kept"
 import { useSecretMutation } from "@/hooks/use-secret-mutation"
-import { ApiFailure, authed, client } from "@/lib/api"
-import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
+import { authed, client } from "@/lib/api"
 import { toastFailure } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
+import { attempts } from "@/state/attempts"
 
 import {
   initialRole,
@@ -42,6 +41,9 @@ import { joinLinksQuery } from "./queries"
 const UNMOUNT_AFTER_MS = 400
 
 type Body = Omit<CreateJoinLinkRequest, "requestId">
+
+/** By network. */
+const issues = attempts<Body>()
 
 const expiryLabel: Record<JoinLinkExpiry, () => string> = {
   3_600: () => m.members_link_hour(),
@@ -85,29 +87,22 @@ function Issue({
   const [expiry, setExpiry] = useState<JoinLinkExpiry>(86_400)
   const [replacing, setReplacing] = useState(false)
   // An attempt whose outcome is unknown is sent again as itself.
-  const unsettled = useRef<Attempt<Body> | null>(null)
-
   const secret = useSecretMutation(
-    async (attempt: Attempt<Body>): Promise<JoinLinkCreated> => {
-      try {
-        const created = await authed((token) =>
-          createJoinLink(
-            client,
-            { networkId },
-            { requestId: attempt.requestId, ...attempt.body },
-            { token }
+    (body: Body) =>
+      issues.send(
+        networkId,
+        `${body.role}:${body.expiresInSeconds}`,
+        () => body,
+        (attempt): Promise<JoinLinkCreated> =>
+          authed((token) =>
+            createJoinLink(
+              client,
+              { networkId },
+              { requestId: attempt.requestId, ...attempt.body },
+              { token }
+            )
           )
-        )
-        unsettled.current = null
-        return created
-      } catch (error) {
-        unsettled.current =
-          error instanceof ApiFailure && outcomeUnknown(error.failure)
-            ? attempt
-            : null
-        throw error
-      }
-    },
+      ),
     { permission_denied: () => m.members_link_role_denied() }
   )
   const created = secret.result
@@ -124,14 +119,7 @@ function Issue({
     if (!next) secret.clear()
   }
 
-  const issue = (body: Body) =>
-    secret.create(
-      attemptFor(
-        unsettled.current,
-        `${body.role}:${body.expiresInSeconds}`,
-        () => body
-      )
-    )
+  const issue = (body: Body) => secret.create(body)
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()

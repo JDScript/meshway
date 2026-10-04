@@ -1,9 +1,14 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
-import { useCallback, useState, useSyncExternalStore } from "react"
+import { useCallback, useState } from "react"
 
 import { EntryPage } from "@/features/entry/frame"
 import { ResetCard } from "@/features/entry/reset-card"
-import { heldReset } from "@/features/entry/reset-secret"
+import {
+  dropLinkSecret,
+  linkSecret,
+  takeLinkSecret,
+  useLinkTaken,
+} from "@/state/link-secrets"
 
 /**
  * `/reset-password#token=…`: the secret is read once into memory and the
@@ -12,7 +17,7 @@ import { heldReset } from "@/features/entry/reset-secret"
 export const Route = createFileRoute("/reset-password")({
   beforeLoad: ({ location }) => {
     if (location.hash) {
-      heldReset.take(location.hash)
+      takeLinkSecret("reset", location.hash)
       throw redirect({ to: "/reset-password", replace: true })
     }
   },
@@ -21,15 +26,15 @@ export const Route = createFileRoute("/reset-password")({
 
 /** Drawn afresh for each link taken, as one opened over this page changes only the fragment. */
 function ResetPasswordPage() {
-  const taken = useSyncExternalStore(heldReset.subscribe, heldReset.taken)
+  const taken = useLinkTaken("reset")
   return <ResetPage key={taken} />
 }
 
 function ResetPage() {
-  const [secret] = useState(() => heldReset.current() ?? null)
+  const [secret] = useState(() => linkSecret("reset") ?? null)
   const [holds, setHolds] = useState(secret !== null)
   const forget = useCallback(() => {
-    heldReset.drop()
+    dropLinkSecret("reset")
     setHolds(false)
   }, [])
   return (

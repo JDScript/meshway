@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router"
 
 import { RegisterCard } from "@/features/auth/register-card"
 import { EntryPage } from "@/features/entry/frame"
-import { currentSession } from "@/lib/session"
+import { currentSession } from "@/state/session"
 
 export const Route = createFileRoute("/register")({
   beforeLoad: () => {

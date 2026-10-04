@@ -62,22 +62,11 @@ export function NodesPage({
     },
     [openNode]
   )
-  const onShowProgress = useCallback(
-    (revision: number) =>
-      void navigate({
-        to: "/networks/$network/configuration/$view",
-        params: { network: networkId, view: "history" },
-        search: { revision },
-      }),
-    [navigate, networkId]
-  )
   const commit = useConfigurationCommit({
     networkId,
     network,
-    page: "nodes",
     active: route.current,
     onInvalid,
-    onShowProgress,
   })
 
   useEffect(() => {
@@ -139,9 +128,9 @@ export function NodesPage({
             />
           ) : null
         }
+        commit={commit.bar}
         onCloseWorkspace={nav.closeWorkspace}
       />
-      {commit.dialogs}
     </>
   )
 }
