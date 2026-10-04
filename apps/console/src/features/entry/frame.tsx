@@ -158,3 +158,21 @@ export function EntryLink({
     </button>
   )
 }
+
+/** One fact on an entry card, on a tile the height of a field. */
+export function EntryFact({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div className="flex h-11 items-center justify-between gap-4 rounded-tile bg-fill-subtle px-3.5 text-row">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="flex min-w-0 justify-end truncate font-medium">
+        {children}
+      </span>
+    </div>
+  )
+}
