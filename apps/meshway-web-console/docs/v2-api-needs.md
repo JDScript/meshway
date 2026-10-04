@@ -15,6 +15,7 @@
 | D3 | 概览上，当前真实的 links 与历史淡线分开画。历史层默认关闭，时间窗口由用户选择，数据只来自真实的历史事件；不展开组网规则允许的 N² 连接，也不为画线额外探测。 |
 | D4 | 删除节点是永久的：提交时吊销凭据并移除 `nodes[id]`，没有回收站，也没有"仅从配置移除"。JSONC 或 ops 删去已有节点同样是删除。重新接入就是一个新节点。业务上的停用用 `enabled=false`，可以回滚。 |
 | D5 | 每个用户、每个网络一份草稿，跨页面保留，只有一个应用入口。应用前必须展示有效修改数量和前后对照，并把永久删除、改址、身份和材料变化单独列出。严格 CAS，不按"pointer 没变"自动合并。草稿里要么是 JSONC 整份文本，要么是强类型 ops，两者不互相转换。 |
+| D6 | 路径检测是节点详情里的"路径"标签：来源是当前节点，输入一个目的地，不填协议和端口；有草稿时并排检测当前版本和草稿，结果不同就标出。判定全部来自服务端，结果是规划，不是实测；console 不自行计算规则。保存检测用例和节点×节点矩阵以后再定。 |
 
 ## 已商定的接口约定
 
@@ -66,7 +67,23 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 ## 尚未提供的接口
 
 - 删除网络（含删除时节点凭据的处理和保留期）。
-- 策略验证 `configuration/evaluate`：给定源、目的、协议和端口，返回命中的 access、topology、routing 规则，以及规划的完整路径或出口；结果标明是规划，不是实测。
+- **路径检测 `configuration/evaluate`**：console 的"路径"标签（D6）只依赖它，是下一个要做的页面。
+  - 输入：
+    - 配置：当前 revision，或与 validate 相同的草稿输入（document／operations + expectedRevision）。
+    - 来源：NodeId。
+    - 目的：节点（NodeId）、IP 地址、域名，或"未命中任何规则的公网目的地"。Mesh 地址由服务端解析为对应节点。
+    - 不带协议和端口。出口方案可选，省略时按来源的默认方案（用户当前选择的方案现在读不到）。
+  - 输出（规则一律用 revision + JSON Pointer 定位）：
+    - 解析后的目的：节点；或地址类别（Mesh、私网、公网）；或域名。
+    - 访问：来源到目的允许的协议和端口集合，每项带授权它的 access 规则；没有授权时注明按 `defaults.access`。
+    - 走向：
+      - `mesh`：命中的 Mesh 路由，或自动选路；
+      - `exit`：命中的公共规则或方案规则、方案名及决定方案的 assignment、命中的规则集 key 和具体条目（例如 `geosite-telegram` 里的 `telegram.org`）、主备出口和 via，或方案 fallback；
+      - `direct`、`unmanaged`；
+      - `denied`，附类型化原因。
+    - 规划路径：主路径和备用路径的每一跳，以及每条边的组网判定（命中的 topology 规则，或默认）。不可用时给类型化原因，例如边被阻断、出口没有 `exitEnabled`、节点停用、凭据已吊销、出口目的不在访问授权内。
+    - 目的是域名、而前面有按 IP 匹配的规则时，说明结果取决于解析，并列出没有参与判定的规则。
+  - 权限：需要 `readConfiguration`。成员从自己设备出发能否检测以后再定，在此之前成员看不到这个标签。
 - 成员切换路由方案：`requestedProfile`、`appliedProfile`、允许的方案、`locked` 和自动方案的判断依据。
 - 节点的版本兼容状态 `versionStatus`（current、outdated、unsupported），由服务端按兼容门槛判定。
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
@@ -113,8 +130,13 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - 没有活实例的节点被判为 `superseded`，而不是 `expired`，console 里一直显示"刚重启"。
   - 原因：节点没有活实例（`node_execution` 过期或已释放）时，`CurrentNode.instance_id` 为 `None`（`execution/state.rs` 的 `live` 判定）；报告只在永久吊销时删除。freshness 判定（`state/mod.rs`）里 `None != Some(上报的实例)` 先命中 superseded，后面"没有租约判 expired"的分支在存有报告时走不到。
   - 进程退出或断网，不释放实例：最后一次报告后 60 秒（`REPORT_TTL_SECONDS`）变 `expired`，最后一次续租后 120 秒（`INSTANCE_TTL`）变 `superseded`，之后不再变化。已用脚本节点复现。
-  - `meshway down`，释放实例：释放时把 `instance_expires_at` 设为当前时间（`store/execution/instances.rs` 的 `release`），节点立刻是 `superseded`，从不出现 `expired`。按代码推断，未实测。
+  - `meshway down`，释放实例：释放时把 `instance_expires_at` 设为当前时间（`store/execution/instances.rs` 的 `release`），节点立刻是 `superseded`，从不出现 `expired`。已用真实 `meshwayd` 复现。
   - 应改为：没有活实例时判 `expired`；只有存在另一个活实例、且与报告的实例不同时才判 `superseded`。"没有活实例"要排在 `config_mismatch` 之前：没有租约时 `configurations` 为空，报告带 `applied` 的节点会被判成 `config_mismatch`（现在 Node 不报 `applied`，暂时看不到）。
+- 配置连续提交时，节点会停在 `blocked`（`problem: contract`），不再重试，直到手动 `meshway up`。
+  - 现象：约 2 秒内连续 apply 3 个 revision（17、18、19），9 个真实 `meshwayd` 里有 4 个停止上报，服务端 freshness 一直是 `superseded`；查看的两个都是已保存 r17、状态 `blocked`。`meshway up` 后 4 个都恢复到 r19。
+  - Server：报告里的 saved／applied／progress 引用不在当前准入的 configurations 里时返回 400 `invalid_request`（`state/validation.rs`）。节点刚保存 r17、r18 已发布时，它如实报告 r17 就会被拒。此前脚本节点在 revision 变化后报告旧引用也得到同一个 400。
+  - Node：daemon 把 401／403／404／409、429／5xx、网络和时钟以外的错误都归为 `Contract` 且不重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），所以一次 400 就让节点停住。
+  - 应改为：刚被替换的 saved 引用要么按事实接受，要么返回可重试、能让节点重新同步的明确错误；daemon 不把这类服务端拒绝当成永久的契约错误。
 - schema 改动后，旧数据库无法启动（`Server storage startup failed.`，没有更具体的原因）。`activity_events.previous_email` 这次让开发环境只能重置数据库、重新接入节点；至少启动错误应说明是哪张表或哪一列与当前 schema 不符。
 
 ### 需要真实 Node 复核
@@ -127,15 +149,13 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 后端排期中
 
-- **配置诊断与 Listener**：随提交流水线合并一并定义。
-  - `unmanaged` 在普通规则里 schema 允许、校验拒绝；egress 类型要拆成"规则可用"和"fallback 可用"两种，随这次重生成收紧。
-  - `ConfigurationIssue` 只有英文 message，没有 code 和 params，无法本地化。
-  - 路径只到集合一级，解析错误时 path 为空；节点级的出口授权问题挂在 `/nodes/<id>` 上，指不到具体的规则或方案。
-  - 没有 warning 通道，无法提示被前面规则完全遮挡的规则；数组变化只按整体报告。
-  - 预览缺 `affectedNodeIds`、`identityChangedNodeIds` 和 `changedListeners`。
-  - 新增 VLESS listener 时，`requirements` 同时列出 `willGenerate` 里的 UUID、证书和私钥；console 只把 `willGenerate` 之外的项显示为待完成。
-  - `ListenerView` 只给出 WebSocket 响应头的名字，而 `ListenerUpdate` 整体替换，表单没法在保留这些响应头的前提下修改监听。
-  - 托管证书模式下修改 `serverName` 时，`inherit_materials` 可能沿用旧证书（读代码推断，未验证）。
+- **配置诊断与 Listener**（后端回复，`server/configuration-pipeline`）。已在 main、SDK 已重生成，console 测试 fixture 只做了类型补全：
+  - `ConfigurationIssue { path, code, params, message }`：`code` 是封闭枚举 `IssueCode`（snake_case，约 60 个），`params` 始终存在，`message` 只是英文渲染。参数约定、`invalid_transport.reason`、`invalid_jsonc`／`invalid_shape` 的 `line`／`column`、`rule_set_unavailable.reason` 见 [problems.md](../../../docs/v2/api/problems.md#configuration-issue)。
+  - 路径精确到元素：`/access/1/src/0`、`.../match/ipCIDR/2`、`/dns/default/1`；下标按作者书写顺序（排序在定位之后）。节点级出口授权问题挂在规则／分配项／fallback 上，节点在 `params.node`。
+  - `warnings`（预览响应与 `NormalizedConfiguration`）：首个 warning 是 `shadowed_rule { by }`。数组按下标逐元素比较，变化定位到最深成员；中间插入会让其后每条下标都出现变化。
+  - 预览新增 `identityChangedNodeIds`、`changedListeners [{nodeId,key,kind}]`、`affectedNodeIds`（除非所有变化都限于 `hostname`／`remark`，否则是全部节点——定义见 editing.md）。`requirements` 与 `willGenerate` 不相交。
+  - 托管证书改 `serverName` 时不再继承旧证书（会重新生成）；provided 材料继续按省略继承。你们的推断是对的——原来会继承旧名字的证书再被 `verify_tls` 拒掉。
+  - **两项 breaking 的放在分支 `server/configuration-contract-break`（一个提交），等 console 适配后一起合**：① `EgressRule.action` 变为 `RuleAction { exit | direct }`，`RouteAction`（含 `unmanaged`）只剩 profile fallback；② `ListenerUpdate` 成为独立 tagged 类型，VLESS 变体的 `websocket` 和 `responseHeaders` 省略＝保持（同一资源），显式 `{}` 清空、`null` 删块。受影响的 console 文件：`lib/configuration/routing.ts`、`-sections/routing-egress.tsx`、`nodes/$node/-transport/listeners.tsx` 及两个测试。这两项不能只靠 fixture 补全过 check，所以没有随 main 合入。
 - **规则集**：随 resources 的 SQL 下沉处理。
   - 准备失败只返回一条英文 issue，消息里是 Debug 枚举名（如 `InvalidSource`、`DownloadFailed`），没有 `ResourceProblem` code。
   - 超出上限的处理不一致：超过 32 个、超过 8 MiB 或准备并发已满时返回 503，30 秒超时却作为 `/ruleSets` 上的 issue 返回。
@@ -157,6 +177,8 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 - 两端都报告自己是发起方时 link 的判定：现在判为 `conflicting`，`inUse` 变成 null。
 - `--listen` 的默认端口：仍是 `127.0.0.1:8420`。
 - 角色变更的影响预览（降级 admin 时哪些链接会被撤销）：现在没有角色变更预览接口。
+- 域名规则集经出口：远程规则集里的每个域名都要在 access 里有 `domain:` 授权（服务端按准备好的内容校验），而 access 不能引用规则集，`autogroup:internet` 也不覆盖域名。把 MetaCubeX 的 `geosite:telegram`、`geosite:twitter` 交给出口，需要在 access 里逐条列出这 45 个域名，规则集更新新增域名后也不会自动获得授权。
+- 规则集转换只接受 `+.` 后缀：MetaCubeX 的 geosite 列表大多含精确域名（google、github、openai、apple、microsoft 等），整份转换失败；`geosite:cn` 约 11 万条，超过 10 万的上限。现在可用的只有 geoip 各列表和 cloudflare、telegram、twitter 等少数 geosite。
 
 ### 其他
 

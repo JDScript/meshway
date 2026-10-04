@@ -63,10 +63,11 @@ impl Preparation {
         .await
         .map_err(|_| {
             Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(vec![
-                meshway_configuration::ConfigurationIssue {
-                    path: "/ruleSets".into(),
-                    message: "remote rule set preparation deadline exceeded (30s)".into(),
-                },
+                meshway_configuration::ConfigurationIssue::new(
+                    "/ruleSets",
+                    meshway_configuration::IssueCode::RuleSetTimeout,
+                )
+                .with("seconds", 30),
             ]))
         })?
     }
@@ -87,14 +88,18 @@ impl Preparation {
                             return Error::CLOSED;
                         }
                     };
+                    let reason = serde_json::to_value(problem)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                        .unwrap_or_default();
                     Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(
-                        vec![meshway_configuration::ConfigurationIssue {
-                            path: format!(
-                                "/ruleSets/{}",
-                                key.replace('~', "~0").replace('/', "~1")
-                            ),
-                            message: format!("remote rule set preparation failed: {problem:?}"),
-                        }],
+                        vec![
+                            meshway_configuration::ConfigurationIssue::new(
+                                format!("/ruleSets/{}", key.replace('~', "~0").replace('/', "~1")),
+                                meshway_configuration::IssueCode::RuleSetUnavailable,
+                            )
+                            .with("reason", reason),
+                        ],
                     ))
                 })?;
                 sources.push((definition, data.clone()));

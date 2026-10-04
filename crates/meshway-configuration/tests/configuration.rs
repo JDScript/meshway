@@ -1067,3 +1067,172 @@ fn large_rule_set_validation_stays_linear() {
     eprintln!("large rule set: first {first:?}, edit on previous {second:?}");
     assert!(second < std::time::Duration::from_secs(2), "{second:?}");
 }
+
+fn issues(value: Result<NormalizedConfiguration, ConfigurationError>) -> Vec<ConfigurationIssue> {
+    match value {
+        Err(ConfigurationError::Invalid(issues)) => issues,
+        Err(other) => panic!("expected validation issues, got {other:?}"),
+        Ok(_) => panic!("expected validation issues, got a normalized configuration"),
+    }
+}
+
+#[test]
+fn diagnostics_carry_closed_codes_parameters_and_precise_pointers() {
+    // A node-level exit authorization problem points at the rule and names the node.
+    let found = issues(normalize_with_dependencies(
+        egress_input(&["8.8.8.0/25"], "8.8.8.0/24"),
+        &context(),
+    ));
+    let outside = found
+        .iter()
+        .find(|i| i.code == IssueCode::ExitOutsideAccess)
+        .unwrap_or_else(|| panic!("{found:?}"));
+    assert_eq!(outside.path, "/routing/egress/profiles/work/rules/0");
+    assert_eq!(outside.params["node"], id(1).to_string());
+    assert_eq!(outside.params["destination"], "8.8.8.0/24");
+    assert_eq!(outside.message, IssueCode::ExitOutsideAccess.message());
+    // Selector problems point at the element, not the array.
+    let mut c = with_nodes();
+    c.access.push(AccessRule {
+        remark: String::new(),
+        src: vec![format!("node:{}", id(1)), "group:nobody".into()],
+        dst: vec!["mallory@example.com".into()],
+        ip: vec!["*".into()],
+        bidirectional: false,
+    });
+    let found = issues(normalize_with_dependencies(c, &context()));
+    let group = found
+        .iter()
+        .find(|i| i.code == IssueCode::UnknownGroup)
+        .unwrap();
+    assert_eq!(group.path, "/access/1/src/1");
+    assert_eq!(group.params["name"], "group:nobody");
+    let user = found
+        .iter()
+        .find(|i| i.code == IssueCode::UnknownUser)
+        .unwrap();
+    assert_eq!(user.path, "/access/1/dst/0");
+    assert_eq!(user.params["user"], "mallory@example.com");
+    // Transport declaration problems carry the declaration code.
+    let mut c = with_nodes();
+    c.nodes.get_mut(&id(1)).unwrap().listeners.insert(
+        "vless".into(),
+        serde_json::from_str(
+            r#"{"type":"vless","listenPort":443,"flow":"xtls","tls":{"serverName":"node.example.test"}}"#,
+        )
+        .unwrap(),
+    );
+    let found = issues(normalize_with_dependencies(c, &context()));
+    let transport = found
+        .iter()
+        .find(|i| i.code == IssueCode::InvalidTransport)
+        .unwrap();
+    assert_eq!(transport.path, format!("/nodes/{}/listeners/vless", id(1)));
+    assert_eq!(transport.params["reason"], "vless_flow");
+    // Serialized shape: code is snake_case, params always present.
+    let json = serde_json::to_value(transport).unwrap();
+    assert_eq!(json["code"], "invalid_transport");
+    assert!(json["params"].is_object());
+}
+
+#[test]
+fn source_parse_errors_report_position_without_echoing_text() {
+    let syntax = parse_jsonc("{\"dns\": {\"domain\": \"x.test\",}} trailing").unwrap_err();
+    let ConfigurationError::Invalid(found) = syntax else {
+        panic!("{syntax:?}")
+    };
+    assert_eq!(found[0].code, IssueCode::InvalidJsonc);
+    assert_eq!(found[0].params["line"], "1");
+    assert!(found[0].params.contains_key("column"));
+    let shape =
+        parse_jsonc("{\n  \"dns\": {\"domain\": \"x.test\"},\n  \"groups\": \"s3cret-value\"\n}")
+            .unwrap_err();
+    let ConfigurationError::Invalid(found) = shape else {
+        panic!("{shape:?}")
+    };
+    assert_eq!(found[0].code, IssueCode::InvalidShape);
+    assert_eq!(found[0].params["line"], "3");
+    assert!(!format!("{found:?}").contains("s3cret"));
+}
+
+#[test]
+fn a_rule_fully_covered_by_earlier_rules_is_a_warning_not_an_error() {
+    let mut c = with_nodes();
+    c.nodes.get_mut(&id(2)).unwrap().exit_enabled = true;
+    c.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec!["*".into()],
+        dst: vec!["autogroup:internet".into(), "domain:example.org".into()],
+        ip: vec!["*".into()],
+        bidirectional: false,
+    }];
+    let exit = serde_json::json!({"type":"exit","nodes":[format!("node:{}",id(2))],"via":[]});
+    c.routing = serde_json::from_value(serde_json::json!({
+        "egress": {"rules":[
+            {"match":{"ipCIDR":["8.8.0.0/16"]},"action":exit},
+            {"match":{"domainSuffix":["example.org"]},"action":{"type":"direct"}},
+            {"match":{"ipCIDR":["8.8.8.0/24"],"domainSuffix":["a.example.org"]},"action":exit},
+            {"match":{"ipCIDR":["9.9.9.0/24"]},"action":exit}
+        ]}
+    }))
+    .unwrap();
+    let normalized = normalize_with_dependencies(c, &context()).unwrap();
+    assert_eq!(normalized.warnings.len(), 1, "{:?}", normalized.warnings);
+    let warning = &normalized.warnings[0];
+    assert_eq!(warning.code, IssueCode::ShadowedRule);
+    assert_eq!(warning.path, "/routing/egress/rules/2");
+    assert_eq!(warning.params["by"], "1");
+}
+
+#[test]
+fn managed_certificates_are_reissued_per_server_name_and_provided_ones_are_kept() {
+    let previous: Listener = serde_json::from_str(
+        r#"{"type":"vless","listenPort":443,"uuid":"11111111-1111-4111-8111-111111111111",
+            "tls":{"serverName":"a.example.test","certificate":"CERT-A","privateKey":"KEY-A"}}"#,
+    )
+    .unwrap();
+    let update = |tls: &str| -> Listener {
+        serde_json::from_str(&format!(
+            r#"{{"type":"vless","listenPort":8443,"tls":{tls}}}"#
+        ))
+        .unwrap()
+    };
+    let mut same = update(r#"{"serverName":"A.example.test"}"#);
+    inherit_materials(&mut same, &previous);
+    let Listener::Vless(v) = &same else { panic!() };
+    assert_eq!(
+        v.uuid.as_ref().map(|s| s.expose()),
+        Some("11111111-1111-4111-8111-111111111111")
+    );
+    assert_eq!(
+        v.tls.certificate.as_ref().map(|s| s.expose()),
+        Some("CERT-A")
+    );
+    // A managed certificate is for one name; a new name gets a new one.
+    let mut renamed = update(r#"{"serverName":"b.example.test"}"#);
+    inherit_materials(&mut renamed, &previous);
+    let Listener::Vless(v) = &renamed else {
+        panic!()
+    };
+    assert_eq!(
+        v.uuid.as_ref().map(|s| s.expose()),
+        Some("11111111-1111-4111-8111-111111111111")
+    );
+    assert_eq!(v.tls.certificate, None);
+    assert_eq!(v.tls.private_key, None);
+    // Provided material is the author's: omission keeps it regardless of name.
+    let provided: Listener = serde_json::from_str(
+        r#"{"type":"vless","listenPort":443,"uuid":"11111111-1111-4111-8111-111111111111",
+            "tls":{"mode":"provided","serverName":"a.example.test","certificate":"CERT-A","privateKey":"KEY-A"}}"#,
+    )
+    .unwrap();
+    let mut renamed = update(r#"{"mode":"provided","serverName":"b.example.test"}"#);
+    inherit_materials(&mut renamed, &provided);
+    let Listener::Vless(v) = &renamed else {
+        panic!()
+    };
+    assert_eq!(
+        v.tls.certificate.as_ref().map(|s| s.expose()),
+        Some("CERT-A")
+    );
+}

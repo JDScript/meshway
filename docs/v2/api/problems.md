@@ -48,11 +48,24 @@ revision_conflict 不携带当前配置差异；客户端重新读取基准后�
 
 | 类型 | 结构与含义 |
 | --- | --- |
-| ConfigurationIssue | path、message：固定配置版本内的字段定位与安全文本 |
+| ConfigurationIssue | path、code、params、message：见下节 |
 | PreparationRequirement | path、kind：材料、地址或其他准备需求 |
 | StateProblem | 按 code 判别，携带相应 resource／target／measurementId 与 observedAt |
 
 这些类型不与 HTTP Problem 共用同一个 envelope。配置字段路径不是长期规则 ID；历史运行问题也不会因读取变成新事件。StateProblem 不接受任意内部异常文本。
+
+### ConfigurationIssue {#configuration-issue}
+
+| 字段 | 含义 |
+| --- | --- |
+| `path` | 指向**输入**的 JSON Pointer，精确到出错的元素（如 `/access/1/src/0`、`/routing/egress/profiles/work/rules/0`）；数组下标按作者书写顺序，规范化排序在定位之后进行。整份文档的问题为空串 |
+| `code` | 封闭枚举 `IssueCode`（snake_case），客户端按它本地化；完整列表见[生成契约](/v2/contracts/openapi.json) |
+| `params` | 该 code 文档声明的参数，始终存在（可为空对象），值均为字符串 |
+| `message` | `code` 的英文渲染，不含参数值，不供程序判断 |
+
+参数约定：引用类问题带被引用的名字（`user`、`name`、`node`、`key`、`profile`、`value`、`address`、`hostname`）；节点级的出口授权问题（`exit_outside_access`、`global_exit_requires_internet`、`exit_fallback_requires_internet`）挂在**规则／分配／fallback** 的 pointer 上，受影响节点在 `params.node`；传输声明问题 `invalid_transport` 的 `params.reason` 是传输层声明错误码（如 `invalid_host`、`websocket_alpn`）；源文本问题 `invalid_jsonc`／`invalid_shape` 带 1 起算的 `line`、`column`，不回显文本；远程规则集问题 `rule_set_unavailable` 的 `params.reason` 是 `ResourceProblem` code。
+
+同一类型也用于 `warnings`（接受但可能非本意的配置，如 `shadowed_rule`：该规则的全部目标已被前面的规则匹配，`params.by` 是补齐覆盖的那条规则下标）和 `unavailableDependencies`（保留但已失效的依赖）。
 
 `cursor_too_old`／`view_changed` 属于 SSE reset 原因，见[事件流](/v2/api/events)，不混作 HTTP Problem code。
 

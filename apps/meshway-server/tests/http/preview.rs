@@ -84,6 +84,36 @@ async fn generated_listener_preview_is_read_only_and_matches_real_apply() {
                 .iter()
                 .all(|r| r.path == format!("/nodes/{}/listeners/vless", node.node_id))
         );
+        // Generation is not an outstanding requirement; the two lists are disjoint.
+        assert!(
+            preview
+                .requirements
+                .iter()
+                .all(|r| !preview.will_generate.contains(r))
+        );
+        assert_eq!(preview.changed_listeners.len(), 1);
+        assert_eq!(preview.changed_listeners[0].node_id, node.node_id);
+        assert_eq!(preview.changed_listeners[0].key, "vless");
+        // Relative to the current version: delete+recreate in one batch is a
+        // change of the same key, with new materials.
+        assert_eq!(
+            preview.changed_listeners[0].kind,
+            if before.configuration.nodes[&node.node_id]
+                .listeners
+                .contains_key("vless")
+            {
+                meshway_configuration::ChangeKind::Changed
+            } else {
+                meshway_configuration::ChangeKind::Added
+            }
+        );
+        assert!(preview.identity_changed_node_ids.is_empty());
+        // A listener change reaches every peer that may dial it.
+        assert_eq!(
+            preview.affected_node_ids,
+            preview.preview.nodes.keys().copied().collect::<Vec<_>>()
+        );
+        assert!(preview.warnings.is_empty());
         let repeated: ConfigurationPreviewResponse = json(
             c.post(net(&s, network, "configuration/validate"))
                 .bearer_auth(owner.token.expose())
@@ -136,6 +166,31 @@ async fn generated_listener_preview_is_read_only_and_matches_real_apply() {
         .await;
         assert!(complete.will_generate.is_empty() && complete.requirements.is_empty());
         assert_eq!(complete.change_count, 0);
+        assert!(complete.affected_node_ids.is_empty() && complete.changed_listeners.is_empty());
+        // A remark is node-local: only that node is affected.
+        let cosmetic: ConfigurationPreviewResponse = json(
+            c.post(net(&s, network, "configuration/validate"))
+                .bearer_auth(owner.token.expose())
+                .json(&ConfigurationRequest::Operations {
+                    expected_revision: actual.revision,
+                    request_id: request(),
+                    ops: vec![ConfigurationOperation::SetNodeSettings {
+                        node_id: node.node_id,
+                        fields: meshway_configuration::NodeSettingsPatch {
+                            remark: meshway_configuration::Input::Value(format!(
+                                "recreate={recreate}"
+                            )),
+                            ..Default::default()
+                        },
+                    }],
+                }),
+        )
+        .await;
+        assert_eq!(cosmetic.affected_node_ids, vec![node.node_id]);
+        assert_eq!(
+            cosmetic.changes[0].path,
+            format!("/nodes/{}/remark", node.node_id)
+        );
     }
     let current = source(&c, &s, network, owner.token.expose()).await;
     let mut input = meshway_configuration::NetworkConfigurationInput::from(&current.configuration);

@@ -3,9 +3,56 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use utoipa::{PartialSchema, ToSchema};
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("invalid transport declaration: {0}")]
-pub struct DeclarationError(pub &'static str);
+/// Why a listener or dialer declaration is invalid. `code()` is the stable
+/// wire spelling clients localize; `Display` is the English rendering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum DeclarationError {
+    #[error("invalid host")]
+    InvalidHost,
+    #[error("keepAlive.count must be positive")]
+    KeepAliveCount,
+    #[error("TLS version order")]
+    TlsVersionOrder,
+    #[error("invalid ALPN")]
+    InvalidAlpn,
+    #[error("provided TLS requires certificate and privateKey")]
+    ProvidedTlsIncomplete,
+    #[error("empty TLS material")]
+    EmptyTlsMaterial,
+    #[error("VLESS flow must be empty")]
+    VlessFlow,
+    #[error("invalid VLESS UUID")]
+    InvalidVlessUuid,
+    #[error("TCP stream cannot use websocket")]
+    TcpStreamWebsocket,
+    #[error("WebSocket requires HTTP/1.1 ALPN")]
+    WebsocketAlpn,
+    #[error("empty Trojan password")]
+    EmptyTrojanPassword,
+    #[error("listener material preparation required")]
+    MaterialRequired,
+    #[error("localAddress must be an IP or empty")]
+    LocalAddress,
+}
+impl DeclarationError {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::InvalidHost => "invalid_host",
+            Self::KeepAliveCount => "keep_alive_count",
+            Self::TlsVersionOrder => "tls_version_order",
+            Self::InvalidAlpn => "invalid_alpn",
+            Self::ProvidedTlsIncomplete => "provided_tls_incomplete",
+            Self::EmptyTlsMaterial => "empty_tls_material",
+            Self::VlessFlow => "vless_flow",
+            Self::InvalidVlessUuid => "invalid_vless_uuid",
+            Self::TcpStreamWebsocket => "tcp_stream_websocket",
+            Self::WebsocketAlpn => "websocket_alpn",
+            Self::EmptyTrojanPassword => "empty_trojan_password",
+            Self::MaterialRequired => "material_required",
+            Self::LocalAddress => "local_address",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -23,7 +70,7 @@ pub fn normalize_host(host: &str) -> Result<String, DeclarationError> {
         return Ok(ip.to_string());
     }
     let ascii = idna::domain_to_ascii_strict(host.strip_suffix('.').unwrap_or(host))
-        .map_err(|_| DeclarationError("invalid host"))?
+        .map_err(|_| DeclarationError::InvalidHost)?
         .to_ascii_lowercase();
     let ascii = ascii.as_str();
     if ascii.is_empty()
@@ -36,25 +83,24 @@ pub fn normalize_host(host: &str) -> Result<String, DeclarationError> {
                 || s.ends_with('-')
         })
     {
-        return Err(DeclarationError("invalid host"));
+        return Err(DeclarationError::InvalidHost);
     }
     Ok(ascii.to_owned())
 }
 
 fn tcp(options: &TcpOptions) -> Result<(), DeclarationError> {
     if options.keep_alive.count == 0 {
-        return Err(DeclarationError("keepAlive.count must be positive"));
+        return Err(DeclarationError::KeepAliveCount);
     }
     Ok(())
 }
 fn tls(min: TlsVersion, max: TlsVersion, alpn: &[String]) -> Result<(), DeclarationError> {
-    crate::tls::validate_tls_versions(min, max)
-        .map_err(|_| DeclarationError("TLS version order"))?;
+    crate::tls::validate_tls_versions(min, max).map_err(|_| DeclarationError::TlsVersionOrder)?;
     if alpn
         .iter()
         .any(|s| s.is_empty() || s.len() > 255 || s.chars().any(char::is_control))
     {
-        return Err(DeclarationError("invalid ALPN"));
+        return Err(DeclarationError::InvalidAlpn);
     }
     Ok(())
 }
@@ -64,9 +110,7 @@ fn listener_tls(value: &mut ListenerTls) -> Result<(), DeclarationError> {
     if value.mode == TlsMode::Provided
         && (value.certificate.is_none() || value.private_key.is_none())
     {
-        return Err(DeclarationError(
-            "provided TLS requires certificate and privateKey",
-        ));
+        return Err(DeclarationError::ProvidedTlsIncomplete);
     }
     if value
         .certificate
@@ -77,7 +121,7 @@ fn listener_tls(value: &mut ListenerTls) -> Result<(), DeclarationError> {
             .as_ref()
             .is_some_and(|v| v.expose().is_empty())
     {
-        return Err(DeclarationError("empty TLS material"));
+        return Err(DeclarationError::EmptyTlsMaterial);
     }
     Ok(())
 }
@@ -93,7 +137,7 @@ impl Listener {
                 tcp(&v.tcp)?;
                 listener_tls(&mut v.tls)?;
                 if !v.flow.is_empty() {
-                    return Err(DeclarationError("VLESS flow must be empty"));
+                    return Err(DeclarationError::VlessFlow);
                 }
                 if let Some(uuid) = &v.uuid {
                     let s = uuid.expose();
@@ -106,16 +150,16 @@ impl Listener {
                             }
                         })
                     {
-                        return Err(DeclarationError("invalid VLESS UUID"));
+                        return Err(DeclarationError::InvalidVlessUuid);
                     }
                 }
                 match v.stream {
                     VlessStream::Tcp if v.websocket.is_some() => {
-                        return Err(DeclarationError("TCP stream cannot use websocket"));
+                        return Err(DeclarationError::TcpStreamWebsocket);
                     }
                     VlessStream::WebSocket => {
                         validate_websocket_alpn(&v.tls.alpn)
-                            .map_err(|_| DeclarationError("WebSocket requires HTTP/1.1 ALPN"))?;
+                            .map_err(|_| DeclarationError::WebsocketAlpn)?;
                         let ws = v.websocket.get_or_insert_with(ListenerWebSocket::default);
                         ws.host = Some(normalize_host(
                             ws.host.as_deref().unwrap_or(&v.tls.server_name),
@@ -129,7 +173,7 @@ impl Listener {
                 tcp(&v.tcp)?;
                 listener_tls(&mut v.tls)?;
                 if v.password.as_ref().is_some_and(|s| s.expose().is_empty()) {
-                    return Err(DeclarationError("empty Trojan password"));
+                    return Err(DeclarationError::EmptyTrojanPassword);
                 }
                 &mut v.endpoints
             }
@@ -205,7 +249,7 @@ impl PreparedListener {
             .iter()
             .any(|r| *r != MaterialRequirement::CertificateValidation)
         {
-            return Err(DeclarationError("listener material preparation required"));
+            return Err(DeclarationError::MaterialRequired);
         }
         Ok(Self(listener))
     }
@@ -218,7 +262,7 @@ impl DialerSet {
     pub fn validate(&self) -> Result<(), DeclarationError> {
         fn local(value: &str) -> Result<(), DeclarationError> {
             if !value.is_empty() && value.parse::<IpAddr>().is_err() {
-                return Err(DeclarationError("localAddress must be an IP or empty"));
+                return Err(DeclarationError::LocalAddress);
             }
             Ok(())
         }
@@ -234,11 +278,11 @@ impl DialerSet {
             tcp(&v.tcp)?;
             tls(v.tls.min_version, v.tls.max_version, &v.tls.alpn)?;
             if v.stream == DialerStream::Tcp && v.websocket.is_some() {
-                return Err(DeclarationError("TCP stream cannot use websocket"));
+                return Err(DeclarationError::TcpStreamWebsocket);
             }
             if v.stream == DialerStream::WebSocket || v.websocket.is_some() {
                 validate_websocket_alpn(&v.tls.alpn)
-                    .map_err(|_| DeclarationError("WebSocket requires HTTP/1.1 ALPN"))?;
+                    .map_err(|_| DeclarationError::WebsocketAlpn)?;
             }
         }
         if let Some(v) = &self.trojan {

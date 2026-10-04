@@ -74,10 +74,10 @@ pub fn apply_operations(
         id: NodeId,
     ) -> Result<&mut NodeSettingsInput, ConfigurationError> {
         input.nodes.get_mut(&id).ok_or_else(|| {
-            ConfigurationError::Invalid(vec![ConfigurationIssue {
-                path: format!("/nodes/{id}"),
-                message: "unknown Node".into(),
-            }])
+            ConfigurationError::Invalid(vec![
+                ConfigurationIssue::new(format!("/nodes/{id}"), IssueCode::UnknownNode)
+                    .with("node", id),
+            ])
         })
     }
     for op in ops {
@@ -176,7 +176,8 @@ pub enum ChangeKind {
 object! { pub struct ConfigurationChange { pub path: String, pub kind: ChangeKind } }
 
 /// Value comparison only; no raw before/after values escape this function.
-/// Arrays count as an ordered section and object addition/removal counts once.
+/// Objects and arrays are compared member by member, so a change is reported
+/// at the deepest pointer that differs; an added or removed member counts once.
 pub fn configuration_changes(
     before: &NetworkConfiguration,
     after: &NetworkConfiguration,
@@ -221,6 +222,10 @@ fn diff(
                 b.get(k),
                 out,
             );
+        }
+    } else if let (Some(serde_json::Value::Array(a)), Some(serde_json::Value::Array(b))) = (a, b) {
+        for index in 0..a.len().max(b.len()) {
+            diff(&format!("{path}/{index}"), a.get(index), b.get(index), out);
         }
     } else {
         out.push(ConfigurationChange {

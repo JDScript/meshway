@@ -13,11 +13,30 @@ use std::collections::{BTreeMap, BTreeSet};
 
 fn invalid() -> Error {
     Error::InvalidConfiguration(ConfigurationError::Invalid(vec![
-        meshway_configuration::ConfigurationIssue {
-            path: "/nodes".into(),
-            message: "listener credentials or TLS certificate/key/name/validity are invalid".into(),
-        },
+        meshway_configuration::ConfigurationIssue::new(
+            "",
+            meshway_configuration::IssueCode::InvalidListenerMaterials,
+        ),
     ]))
+}
+/// Places a listener's material diagnostics at that listener.
+pub(crate) fn at_listener(error: Error, path: &str) -> Error {
+    match error {
+        Error::InvalidConfiguration(ConfigurationError::Invalid(issues)) => {
+            Error::InvalidConfiguration(ConfigurationError::Invalid(
+                issues
+                    .into_iter()
+                    .map(|mut issue| {
+                        if issue.path.is_empty() {
+                            issue.path = path.to_owned();
+                        }
+                        issue
+                    })
+                    .collect(),
+            ))
+        }
+        other => other,
+    }
 }
 
 pub(crate) fn prepare_materials(
@@ -44,7 +63,17 @@ pub(crate) fn prepare_materials(
             {
                 meshway_configuration::inherit_materials(listener, previous);
             }
-            if prepare_listener_materials(tx, network, listener, sealer, generate)? {
+            let prepared = prepare_listener_materials(tx, network, listener, sealer, generate)
+                .map_err(|error| {
+                    at_listener(
+                        error,
+                        &format!(
+                            "/nodes/{node_id}/listeners/{}",
+                            key.replace('~', "~0").replace('/', "~1")
+                        ),
+                    )
+                })?;
+            if prepared {
                 verified.insert((*node_id, key.clone()), listener.clone());
             }
         }
@@ -82,7 +111,15 @@ pub(crate) fn prepare_listener_materials(
         }
         _ => {}
     }
-    listener.normalize().map_err(|_| invalid())?;
+    listener.normalize().map_err(|error| {
+        Error::InvalidConfiguration(ConfigurationError::Invalid(vec![
+            meshway_configuration::ConfigurationIssue::new(
+                "",
+                meshway_configuration::IssueCode::InvalidTransport,
+            )
+            .with("reason", error.code()),
+        ]))
+    })?;
     let tls = match listener {
         Listener::Vless(v) => {
             if let Some(value) = &v.uuid {

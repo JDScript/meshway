@@ -7,9 +7,11 @@ use utoipa::{PartialSchema, ToSchema};
 
 mod addresses;
 mod allocation;
+mod issue;
 mod references;
 mod routing;
 pub use allocation::allocate_addresses;
+pub use issue::{ConfigurationIssue, IssueCode};
 pub use references::{domain_suffix_matches, topology_allows};
 
 /// Canonical Node hostname accepted by configuration and signed enrollment.
@@ -118,15 +120,10 @@ pub struct PreparationRequirement {
     pub path: String,
     pub kind: PreparationKind,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ConfigurationIssue {
-    pub path: String,
-    pub message: String,
-}
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigurationError {
-    #[error("invalid JSONC configuration (input redacted)")]
+    /// Persisted canonical JSON that no longer restores; never user input.
+    #[error("persisted configuration is incomplete or noncanonical")]
     Parse,
     #[error("configuration serialization failed")]
     Serialization,
@@ -140,27 +137,27 @@ pub enum ConfigurationError {
 struct Check {
     issues: Vec<ConfigurationIssue>,
     unavailable: Vec<ConfigurationIssue>,
+    warnings: Vec<ConfigurationIssue>,
     requirements: Vec<PreparationRequirement>,
     bindings: BTreeMap<String, UserBinding>,
     node_bindings: BTreeMap<NodeId, UserBinding>,
 }
 impl Check {
-    fn dependency(&mut self, path: impl Into<String>, message: impl Into<String>, retained: bool) {
-        let issue = ConfigurationIssue {
-            path: path.into(),
-            message: message.into(),
-        };
+    /// A dependency the configuration needs. Retained from the previous
+    /// version it is accepted as inert; newly introduced it is an error.
+    fn dependency(&mut self, issue: ConfigurationIssue, retained: bool) {
         if retained {
             self.unavailable.push(issue);
         } else {
             self.issues.push(issue);
         }
     }
-    fn issue(&mut self, path: impl Into<String>, message: impl Into<String>) {
-        self.issues.push(ConfigurationIssue {
-            path: path.into(),
-            message: message.into(),
-        });
+    fn issue(&mut self, issue: ConfigurationIssue) {
+        self.issues.push(issue);
+    }
+    /// Accepted configuration that is probably not what the author meant.
+    fn warn(&mut self, issue: ConfigurationIssue) {
+        self.warnings.push(issue);
     }
     fn require(&mut self, path: impl Into<String>, kind: PreparationKind) {
         self.requirements.push(PreparationRequirement {
@@ -185,6 +182,12 @@ impl Check {
 fn pointer(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
+fn transport_issue(
+    path: impl Into<String>,
+    error: &meshway_transport_spec::DeclarationError,
+) -> ConfigurationIssue {
+    ConfigurationIssue::new(path, IssueCode::InvalidTransport).with("reason", error.code())
+}
 
 /// Normalizes pure fields and validates references. Does not compile paths,
 /// authorize a transaction, allocate addresses, generate or verify TLS material.
@@ -204,6 +207,8 @@ pub struct NormalizedConfiguration {
     pub user_bindings: BTreeMap<String, UserBinding>,
     pub node_user_bindings: BTreeMap<NodeId, UserBinding>,
     pub unavailable_dependencies: Vec<ConfigurationIssue>,
+    /// Accepted as written, but probably not intended (see `IssueCode`).
+    pub warnings: Vec<ConfigurationIssue>,
 }
 
 pub fn normalize_with_dependencies(
@@ -221,6 +226,7 @@ pub struct ConfigurationPlan {
     pub user_bindings: BTreeMap<String, UserBinding>,
     pub node_user_bindings: BTreeMap<NodeId, UserBinding>,
     pub unavailable_dependencies: Vec<ConfigurationIssue>,
+    pub warnings: Vec<ConfigurationIssue>,
     pub requirements: Vec<PreparationRequirement>,
 }
 
@@ -251,6 +257,7 @@ pub fn plan_configuration(
         user_bindings: normalized.user_bindings,
         node_user_bindings: normalized.node_user_bindings,
         unavailable_dependencies: normalized.unavailable_dependencies,
+        warnings: normalized.warnings,
     })
 }
 
@@ -275,7 +282,7 @@ fn normalize_inner(
         &mut check,
     );
     if let Err(e) = input.defaults.dialers.validate() {
-        check.issue("/defaults/dialers", e.to_string());
+        check.issue(transport_issue("/defaults/dialers", &e));
     }
     references::definitions(
         &mut input.groups,
@@ -287,7 +294,7 @@ fn normalize_inner(
     for (id, mut node) in input.nodes {
         let path = format!("/nodes/{id}");
         if !context.nodes.contains(&id) {
-            check.issue(&path, "unknown or revoked Node");
+            check.issue(ConfigurationIssue::new(&path, IssueCode::UnknownNode).with("node", id));
         }
         let old = context.previous.and_then(|p| p.nodes.get(&id));
         references::identity(
@@ -313,12 +320,15 @@ fn normalize_inner(
         }
         node.hostname.make_ascii_lowercase();
         if !valid_node_hostname(&node.hostname) {
-            check.issue(format!("{path}/hostname"), "expected a single DNS label");
+            check.issue(ConfigurationIssue::new(
+                format!("{path}/hostname"),
+                IssueCode::InvalidHostname,
+            ));
         }
         if let Input::Value(dialers) = &node.dialers
             && let Err(e) = dialers.validate()
         {
-            check.issue(format!("{path}/dialers"), e.to_string());
+            check.issue(transport_issue(format!("{path}/dialers"), &e));
         }
         let addresses = NodeAddresses {
             ipv4: addresses::resolve(
@@ -342,7 +352,7 @@ fn normalize_inner(
         for (name, mut listener) in node.listeners {
             let lp = format!("{path}/listeners/{}", pointer(&name));
             if name.is_empty() {
-                check.issue(&lp, "listener key must not be empty");
+                check.issue(ConfigurationIssue::new(&lp, IssueCode::EmptyListenerKey));
             }
             if !context.recreated_listeners.contains(&(id, name.clone()))
                 && let Some(previous) = old.and_then(|n| n.listeners.get(&name))
@@ -350,7 +360,7 @@ fn normalize_inner(
                 inherit_materials(&mut listener, previous.declaration());
             }
             if let Err(e) = listener.normalize() {
-                check.issue(&lp, e.to_string());
+                check.issue(transport_issue(&lp, &e));
                 continue;
             }
             let verified = context.verified_listeners.get(&(id, name.clone())) == Some(&listener);
@@ -370,7 +380,7 @@ fn normalize_inner(
                 Ok(value) => {
                     listeners.insert(name, value);
                 }
-                Err(e) => check.issue(&lp, e.to_string()),
+                Err(e) => check.issue(transport_issue(&lp, &e)),
             }
         }
         nodes.insert(
@@ -421,6 +431,7 @@ fn normalize_inner(
             user_bindings: check.bindings,
             node_user_bindings: check.node_bindings,
             unavailable_dependencies: check.unavailable,
+            warnings: check.warnings,
         },
         pending,
         requirements,
@@ -485,7 +496,12 @@ impl From<&NetworkConfiguration> for NetworkConfigurationInput {
 /// Callers must not pass a deleted/recreated resource as `previous`.
 pub fn inherit_materials(target: &mut Listener, previous: &Listener) {
     fn tls(t: &mut meshway_transport_spec::ListenerTls, p: &meshway_transport_spec::ListenerTls) {
-        if t.mode == p.mode {
+        // A managed certificate is issued for one server name; a different
+        // name gets a new one instead of inheriting a certificate that would
+        // not verify. Provided material is the author's to keep or replace.
+        let same_managed_name = t.mode != meshway_transport_spec::TlsMode::Managed
+            || t.server_name.eq_ignore_ascii_case(&p.server_name);
+        if t.mode == p.mode && same_managed_name {
             if t.certificate.is_none() {
                 t.certificate = p.certificate.clone();
             }

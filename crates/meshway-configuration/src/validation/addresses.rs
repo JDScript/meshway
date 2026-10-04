@@ -86,11 +86,13 @@ pub(super) fn pools(
                     .iter()
                     .any(|p| p.contains(&net.network()) || net.contains(&p.network()))
                 {
-                    check.issue(path, "overlapping address pools");
+                    check.issue(ConfigurationIssue::new(path, IssueCode::OverlappingPools));
                 }
                 v4.push(net);
             }
-            _ => check.issue(path, "expected a canonical unicast IPv4 pool"),
+            _ => check.issue(
+                ConfigurationIssue::new(path, IssueCode::InvalidPool).with("family", "ipv4"),
+            ),
         }
     }
     let mut v6 = Vec::<Ipv6Net>::new();
@@ -106,11 +108,13 @@ pub(super) fn pools(
                     .iter()
                     .any(|p| p.contains(&net.network()) || net.contains(&p.network()))
                 {
-                    check.issue(path, "overlapping address pools");
+                    check.issue(ConfigurationIssue::new(path, IssueCode::OverlappingPools));
                 }
                 v6.push(net);
             }
-            _ => check.issue(path, "expected a canonical unicast IPv6 pool"),
+            _ => check.issue(
+                ConfigurationIssue::new(path, IssueCode::InvalidPool).with("family", "ipv6"),
+            ),
         }
     }
     result.ipv4.sort();
@@ -152,7 +156,13 @@ pub(super) fn nodes(config: &NetworkConfiguration, check: &mut Check) {
     let mut hosts = BTreeSet::new();
     for (id, node) in &config.nodes {
         if !hosts.insert(&node.hostname) {
-            check.issue(format!("/nodes/{id}/hostname"), "duplicate hostname");
+            check.issue(
+                ConfigurationIssue::new(
+                    format!("/nodes/{id}/hostname"),
+                    IssueCode::DuplicateHostname,
+                )
+                .with("hostname", &node.hostname),
+            );
         }
         if let Some(ip) = node.addresses.ipv4 {
             let path = format!("/nodes/{id}/addresses/ipv4");
@@ -162,19 +172,29 @@ pub(super) fn nodes(config: &NetworkConfiguration, check: &mut Check) {
                         && (p.prefix_len() >= 31 || (ip != p.network() && ip != p.broadcast()))
                 })
             {
-                check.issue(&path, "address outside usable pool");
+                check.issue(
+                    ConfigurationIssue::new(&path, IssueCode::AddressOutsidePool)
+                        .with("address", ip),
+                );
             }
             if !used.insert(ip.into()) {
-                check.issue(path, "duplicate address");
+                check.issue(
+                    ConfigurationIssue::new(path, IssueCode::DuplicateAddress).with("address", ip),
+                );
             }
         }
         if let Some(ip) = node.addresses.ipv6 {
             let path = format!("/nodes/{id}/addresses/ipv6");
             if !ipv6_range_allowed(ip, ip) || !v6.iter().any(|p| p.contains(&ip)) {
-                check.issue(&path, "address outside usable pool");
+                check.issue(
+                    ConfigurationIssue::new(&path, IssueCode::AddressOutsidePool)
+                        .with("address", ip),
+                );
             }
             if !used.insert(ip.into()) {
-                check.issue(path, "duplicate address");
+                check.issue(
+                    ConfigurationIssue::new(path, IssueCode::DuplicateAddress).with("address", ip),
+                );
             }
         }
     }

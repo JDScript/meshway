@@ -26,8 +26,19 @@ impl ConfigurationDocument {
 /// JSONC is deserialized directly into typed fields; no intermediate JSON map
 /// can discard duplicate keys. Parser diagnostics never echo secret input.
 pub fn parse_jsonc(source: &str) -> Result<NetworkConfigurationInput, ConfigurationError> {
-    jsonc_parser::parse_to_serde_value(source, &Default::default())
-        .map_err(|_| ConfigurationError::Parse)
+    jsonc_parser::parse_to_serde_value(source, &Default::default()).map_err(|error| {
+        // Syntax errors and shape errors both carry a position. Neither echoes
+        // the text: a shape error at a secret field must not leak its value.
+        let code = match error.kind() {
+            jsonc_parser::errors::ParseErrorKind::Custom(_) => IssueCode::InvalidShape,
+            _ => IssueCode::InvalidJsonc,
+        };
+        ConfigurationError::Invalid(vec![
+            ConfigurationIssue::new("", code)
+                .with("line", error.line_display())
+                .with("column", error.column_display()),
+        ])
+    })
 }
 pub fn parse_document(
     source: String,
@@ -56,10 +67,10 @@ pub fn restore_canonical_json(source: &str) -> Result<NetworkConfiguration, Conf
     let value: NetworkConfiguration =
         serde_json::from_str(source).map_err(|_| ConfigurationError::Parse)?;
     if canonical_json(&value)?.expose() != source {
-        return Err(ConfigurationError::Invalid(vec![ConfigurationIssue {
-            path: String::new(),
-            message: "persisted configuration is incomplete or noncanonical".into(),
-        }]));
+        return Err(ConfigurationError::Invalid(vec![ConfigurationIssue::new(
+            "",
+            IssueCode::IncompleteVersion,
+        )]));
     }
     Ok(value)
 }

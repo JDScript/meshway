@@ -80,7 +80,9 @@ test("a newer revision never moves a draft with edits", () => {
 test("the same revision read again keeps what was checked", () => {
   const entry = withChecked(loadSource(null, SOURCE), {
     input: { kind: "document", text: SOURCE.text },
-    issues: [{ path: "/dns", message: "x" }],
+    issues: [
+      { path: "/dns", code: "invalid_dns_domain", params: {}, message: "x" },
+    ],
     requirements: [],
   })
   assert.equal(loadSource(entry, SOURCE), entry)
@@ -89,7 +91,14 @@ test("the same revision read again keeps what was checked", () => {
 test("discarding returns to the source and forgets the check", () => {
   const edited = withChecked(editText(loadSource(null, SOURCE), "{"), {
     input: { kind: "document", text: "{" },
-    issues: [{ path: "", message: "x" }],
+    issues: [
+      {
+        path: "",
+        code: "invalid_jsonc",
+        params: { line: "1", column: "2" },
+        message: "x",
+      },
+    ],
     requirements: [],
   })
   const discarded = discardEdits(edited)
@@ -102,7 +111,14 @@ test("discarding returns to the source and forgets the check", () => {
 test("a check is kept beside later edits, and only counts for its own input", () => {
   const entry = withChecked(editText(loadSource(null, SOURCE), "{ }"), {
     input: { kind: "document", text: "{ }" },
-    issues: [{ path: "/dns", message: "required" }],
+    issues: [
+      {
+        path: "/dns",
+        code: "invalid_dns_domain",
+        params: {},
+        message: "required",
+      },
+    ],
     requirements: [],
   })
   assert.equal(checkedNow(entry), entry.checked)

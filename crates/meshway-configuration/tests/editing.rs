@@ -56,7 +56,7 @@ fn edits_preserve_unmodified_comments_and_reject_duplicate_fields() {
 }
 
 #[test]
-fn final_diff_deduplicates_changes_and_ordered_arrays_count_once() {
+fn final_diff_points_at_the_deepest_changed_member_including_array_elements() {
     let config = new_network(
         AddressPools {
             ipv4: vec![],
@@ -65,11 +65,29 @@ fn final_diff_deduplicates_changes_and_ordered_arrays_count_once() {
         "example.test".into(),
     )
     .unwrap();
-    let mut changed = config.clone();
-    changed.access.clear();
-    let diff = configuration_changes(&config, &changed).unwrap();
+    assert!(!config.access.is_empty());
+    let mut cleared = config.clone();
+    cleared.access.clear();
+    let diff = configuration_changes(&config, &cleared).unwrap();
+    assert_eq!(diff.len(), config.access.len());
+    assert!(
+        diff.iter()
+            .enumerate()
+            .all(|(i, change)| change.path == format!("/access/{i}")
+                && change.kind == ChangeKind::Removed)
+    );
+    let mut remarked = config.clone();
+    remarked.access[0].remark = "annotated".into();
+    let diff = configuration_changes(&config, &remarked).unwrap();
     assert_eq!(diff.len(), 1);
-    assert_eq!(diff[0].path, "/access");
+    assert_eq!(diff[0].path, "/access/0/remark");
+    assert_eq!(diff[0].kind, ChangeKind::Changed);
+    let mut appended = config.clone();
+    appended.access.push(config.access[0].clone());
+    let diff = configuration_changes(&config, &appended).unwrap();
+    assert_eq!(diff.len(), 1);
+    assert_eq!(diff[0].path, format!("/access/{}", config.access.len()));
+    assert_eq!(diff[0].kind, ChangeKind::Added);
     assert!(configuration_changes(&config, &config).unwrap().is_empty());
 }
 

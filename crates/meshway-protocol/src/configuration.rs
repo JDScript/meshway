@@ -39,12 +39,18 @@ impl ConfigurationRequest {
 }
 wire_object! {pub struct ConfigurationResponse {pub request_id:RequestId,pub network_id:NetworkId,pub revision:Revision,pub configuration:ConfigurationView} }
 wire_object! {pub struct ConfigurationSourceResponse {pub request_id:RequestId,pub network_id:NetworkId,pub revision:Revision,pub source_jsonc:WireSecret,pub configuration:NetworkConfiguration} }
+wire_object! {pub struct ListenerChange {
+    pub node_id: NodeId, pub key: String, pub kind: meshway_configuration::ChangeKind,
+} }
 wire_object! {pub struct ConfigurationPreviewResponse {
     /// Transient canonical content checked by validate; no artifact/version reservation.
     #[serde(deserialize_with="meshway_serde::unique_map")]
     pub prepared_rule_sets: std::collections::BTreeMap<String,crate::resources::PreparedRuleSet>,
     pub unavailable_dependencies: Vec<meshway_configuration::ConfigurationIssue>,
-    /// Pending material completion/verification; preview is never executable.
+    /// Accepted as written but probably unintended, e.g. a shadowed rule.
+    pub warnings: Vec<meshway_configuration::ConfigurationIssue>,
+    /// Material the author still has to complete or that awaits verification.
+    /// Disjoint from `willGenerate`; preview is never executable.
     #[serde(default)]
     pub requirements: Vec<meshway_configuration::PreparationRequirement>,
     /// Values that apply will generate, after rechecking authorization and CAS.
@@ -53,6 +59,14 @@ wire_object! {pub struct ConfigurationPreviewResponse {
     pub request_id:RequestId,pub base_revision:Revision,pub preview:ConfigurationView,
     pub change_count:u32,pub changes:Vec<ConfigurationChange>,pub source_changed:bool,
     pub deleted_node_ids:Vec<NodeId>,pub address_changed_node_ids:Vec<NodeId>,
+    /// Nodes whose identity or its stable binding changes.
+    pub identity_changed_node_ids:Vec<NodeId>,
+    /// Listeners added, removed or changed, including material to be generated.
+    pub changed_listeners:Vec<ListenerChange>,
+    /// Nodes whose execution target may change: every node unless all changes
+    /// are confined to node-local display fields (`hostname`, `remark`) and
+    /// the bindings of unchanged values.
+    pub affected_node_ids:Vec<NodeId>,
 } }
 wire_object! {pub struct ConfigurationAppliedResponse {pub request_id:RequestId,pub network_id:NetworkId,pub revision:Revision,pub publication_ids:Vec<PublicationId>,pub target_count:u32,pub deleted_node_ids:Vec<NodeId>} }
 wire_object! {pub struct CompareConfigurationRequest {pub from_revision:Revision,pub to_revision:Revision} }

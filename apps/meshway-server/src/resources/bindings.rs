@@ -26,9 +26,16 @@ impl ContentBudget {
             .saturating_add(data.ip_cidr.len())
             .saturating_add(data.domain_suffix.len());
         if self.bytes > super::MAX_DATASET_BYTES || self.entries > super::MAX_RULE_ENTRIES {
-            return Err(Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(vec![meshway_configuration::ConfigurationIssue {
-                path:"/ruleSets".into(),message:"execution rule set content exceeds the network budget (8 MiB / 100000 entries)".into(),
-            }])));
+            return Err(Error::InvalidConfiguration(
+                meshway_configuration::ConfigurationError::Invalid(vec![
+                    meshway_configuration::ConfigurationIssue::new(
+                        "/ruleSets",
+                        meshway_configuration::IssueCode::RuleSetBudget,
+                    )
+                    .with("maxBytes", super::MAX_DATASET_BYTES)
+                    .with("maxEntries", super::MAX_RULE_ENTRIES),
+                ]),
+            ));
         }
         Ok(())
     }
