@@ -35,6 +35,7 @@ pub(crate) fn acquire(
     boot: InstanceId,
     token: [u8; 32],
     request: AcquireInstanceRequest,
+    publisher: &CommitPublisher,
 ) -> Result<InstanceLease, NodeError> {
     if request.capabilities.len() > 32
         || request.capabilities.iter().any(|(k, v)| {
@@ -108,7 +109,7 @@ pub(crate) fn acquire(
     publish(&tx, sealer, p.network, "refresh", now)?;
     grant_lease(&tx, sealer, &p, now)?;
     let result = lease(&tx, sealer, &p)?;
-    tx.commit()?;
+    commit_progress(tx, publisher, p.network, true)?;
     Ok(result)
 }
 pub(crate) fn renew(
@@ -117,12 +118,14 @@ pub(crate) fn renew(
     boot: InstanceId,
     token: [u8; 32],
     request: InstanceRequest,
+    publisher: &CommitPublisher,
 ) -> Result<InstanceLease, NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
     current_instance(&tx, boot, &p, &request, now)?;
-    refresh_expired_demands(&tx, sealer, p.network, now)?;
+    let before = lease(&tx, sealer, &p)?;
+    let refreshed = refresh_expired_demands(&tx, sealer, p.network, now)?;
     let old_execution_expiry: Option<i64> = tx.query_row(
         "SELECT execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",
         params![
@@ -146,7 +149,7 @@ pub(crate) fn renew(
     )?;
     grant_lease(&tx, sealer, &p, now)?;
     let result = lease(&tx, sealer, &p)?;
-    tx.commit()?;
+    commit_progress(tx, publisher, p.network, refreshed || before != result)?;
     Ok(result)
 }
 pub(crate) fn release(
@@ -155,6 +158,7 @@ pub(crate) fn release(
     boot: InstanceId,
     token: [u8; 32],
     request: InstanceRequest,
+    publisher: &CommitPublisher,
 ) -> Result<(), NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -169,7 +173,7 @@ pub(crate) fn release(
         ],
     )?;
     publish(&tx, sealer, p.network, "refresh", now)?;
-    tx.commit()?;
+    commit_progress(tx, publisher, p.network, true)?;
     Ok(())
 }
 pub(super) fn grant_lease(
@@ -270,12 +274,13 @@ pub(crate) fn configuration(
     boot: InstanceId,
     token: [u8; 32],
     request: NodeConfigurationRequest,
+    publisher: &CommitPublisher,
 ) -> Result<NodeConfigurationResponse, NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
     current_instance(&tx, boot, &p, &request.instance, now)?;
-    refresh_expired_demands(&tx, sealer, p.network, now)?;
+    let refreshed = refresh_expired_demands(&tx, sealer, p.network, now)?;
     let lease = lease(&tx, sealer, &p)?;
     let full = if request.base == lease.target {
         None
@@ -292,7 +297,7 @@ pub(crate) fn configuration(
         )?);
         full = None;
     }
-    tx.commit()?;
+    commit_progress(tx, publisher, p.network, refreshed)?;
     Ok(NodeConfigurationResponse { lease, full, delta })
 }
 pub(crate) fn receipt(
@@ -301,6 +306,7 @@ pub(crate) fn receipt(
     boot: InstanceId,
     token: [u8; 32],
     request: ReceiptRequest,
+    publisher: &CommitPublisher,
 ) -> Result<(), NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -365,6 +371,7 @@ pub(crate) fn receipt(
             request.attempt.get() as i64, request.sequence.get() as i64],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).optional()?;
+    let mut changed = false;
     if let Some(old) = old {
         if old
             != (
@@ -376,6 +383,13 @@ pub(crate) fn receipt(
             return Err(NodeError::Conflict);
         }
     } else {
+        // History accepts late evidence; only a new greatest attempt/sequence
+        // changes the current progress projection.
+        changed = !tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_receipts WHERE network_id=?1 AND publication_id=?2 AND node_id=?3 AND instance_id=?4 AND (attempt>?5 OR (attempt=?5 AND sequence>?6)))",
+            params![p.network.as_uuid().as_bytes().as_slice(), request.target.execution_publication.as_uuid().as_bytes().as_slice(), p.node.as_uuid().as_bytes().as_slice(), request.instance.instance_id.as_uuid().as_bytes().as_slice(), request.attempt.get() as i64, request.sequence.get() as i64],
+            |row| row.get::<_,bool>(0),
+        )?;
         tx.execute(
             "INSERT INTO execution_receipts(network_id,publication_id,node_id,instance_id,generation,
              digest,phase,reported_at,received_at,failure,attempt,sequence)
@@ -386,6 +400,6 @@ pub(crate) fn receipt(
                 request.reported_at_ms as i64, now, failure, request.attempt.get() as i64, request.sequence.get() as i64],
         )?;
     }
-    tx.commit()?;
+    commit_progress(tx, publisher, p.network, changed)?;
     Ok(())
 }

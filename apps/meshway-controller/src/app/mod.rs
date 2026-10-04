@@ -121,10 +121,14 @@ impl App {
             OpenError::Executor(error) => AppError::from(error),
             OpenError::Initialization(error) => error,
         })?;
-        let accounts = Accounts::new(executor.handle(), account_options);
         let state_runtime = Arc::new(std::sync::Mutex::new(
             crate::state::service::Runtime::new().map_err(|_| AppError::Worker)?,
         ));
+        let accounts = Accounts::new(
+            executor.handle(),
+            account_options,
+            crate::state::service::CommitPublisher::new(Arc::clone(&state_runtime)),
+        );
         let shutdown_hooks = ShutdownHooks::default();
         let shutdown_runtime = Arc::clone(&state_runtime);
         shutdown_hooks
@@ -243,7 +247,12 @@ impl App {
         Ok(service)
     }
     pub fn execution(&self) -> crate::execution::Execution {
-        crate::execution::Execution::new(self.executor.handle(), self.sealer(), self.boot)
+        crate::execution::Execution::new(
+            self.executor.handle(),
+            self.sealer(),
+            self.boot,
+            self.commit_publisher(),
+        )
     }
     pub fn enrollment(&self) -> crate::enrollment::Enrollment {
         crate::enrollment::Enrollment::new(
@@ -253,6 +262,7 @@ impl App {
                 sealer: self.sealer(),
                 cache: Arc::clone(&self.configuration_cache),
             }),
+            self.commit_publisher(),
         )
     }
 
@@ -334,6 +344,8 @@ impl From<schema::SchemaError> for AppError {
     }
 }
 
+#[cfg(all(test, unix))]
+mod commit_tests;
 #[cfg(all(test, unix))]
 mod node_tests;
 #[cfg(all(test, unix))]

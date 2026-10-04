@@ -180,14 +180,8 @@ impl CommitParticipant for Participant<'_> {
         )
         .map_err(map_error)?;
         Ok((
-            vec![publication],
-            prepared
-                .document
-                .configuration
-                .nodes
-                .keys()
-                .copied()
-                .collect(),
+            vec![publication.publication],
+            publication.nodes.keys().copied().collect(),
         ))
     }
 }

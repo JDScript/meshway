@@ -165,6 +165,7 @@ pub(crate) fn rotate(
     connection: &mut Connection,
     sealer: &Sealer,
     request: NodeRotationRequest,
+    publisher: &CommitPublisher,
 ) -> Result<NodeKeyMetadata, NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -286,7 +287,19 @@ pub(crate) fn rotate(
         ],
     )?;
     revoke_execution(&tx, sealer, c.network_id, c.node_id, now)?;
-    tx.commit()?;
+    publisher
+        .commit(
+            tx,
+            vec![
+                CommittedChange::Authorization {
+                    network_id: c.network_id,
+                },
+                CommittedChange::Progress {
+                    network_id: c.network_id,
+                },
+            ],
+        )
+        .map_err(|_| NodeError::Storage)?;
     Ok(keys)
 }
 pub(crate) fn insert_keys(

@@ -24,7 +24,7 @@ pub(crate) fn remove_nodes(
     removal: &MembershipRemoval,
     sealer: &Sealer,
     cache: &SnapshotCache,
-) -> Result<Revision, Error> {
+) -> Result<CommitEffects, Error> {
     let (current_revision, _, _) =
         crate::store::execution::current_configuration(tx, sealer, removal.network)
             .map_err(super::configuration::map_error)?;
@@ -82,7 +82,7 @@ pub(crate) fn remove_nodes(
             participant: &RemovalParticipant { removal, sealer },
         },
     )?;
-    Ok(effects.revision)
+    Ok(effects)
 }
 
 impl CommitParticipant for RemovalParticipant<'_> {

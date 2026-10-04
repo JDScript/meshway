@@ -99,11 +99,40 @@ pub(crate) struct CommitRuntime<'a> {
 }
 
 pub(crate) struct CommitEffects {
+    pub(crate) notice: Option<meshway_protocol::events::ConfigurationNotice>,
     pub(crate) network_id: NetworkId,
     pub(crate) revision: Revision,
     pub(crate) publication_ids: Vec<PublicationId>,
     pub(crate) target_node_ids: BTreeSet<NodeId>,
     pub(crate) deleted_node_ids: BTreeSet<NodeId>,
+}
+
+impl CommitEffects {
+    /// Consumed by the owner of the outer transaction, never by a participant.
+    pub(crate) fn changes(&self) -> Vec<crate::state::stream::CommittedChange> {
+        use crate::state::stream::CommittedChange;
+        let mut changes = Vec::new();
+        if let Some(notice) = &self.notice {
+            changes.push(CommittedChange::Configuration {
+                notice: notice.clone(),
+            });
+            changes.push(CommittedChange::Authorization {
+                network_id: self.network_id,
+            });
+            changes.push(CommittedChange::Progress {
+                network_id: self.network_id,
+            });
+        }
+        changes.extend(
+            self.deleted_node_ids
+                .iter()
+                .map(|node_id| CommittedChange::NodeRetired {
+                    network_id: self.network_id,
+                    node_id: *node_id,
+                }),
+        );
+        changes
+    }
 }
 
 /// B/C integration is mandatory for any Node/resource dependency. Both methods
@@ -285,10 +314,10 @@ pub(crate) fn apply_in_transaction(
     participant.revalidate(tx, principal, current, prepared)?;
     let changed = !prepared.changes.is_empty()
         || prepared.source_changed
-        || prepared.bindings != current.bindings
-        || prepared.rollback_from.is_some();
+        || prepared.bindings != current.bindings;
     if !changed {
         return Ok(CommitEffects {
+            notice: None,
             network_id: current.network_id,
             revision: current.revision,
             publication_ids: Vec::new(),
@@ -341,6 +370,29 @@ pub(crate) fn apply_in_transaction(
         ],
     )?;
     let (publication_ids, target_node_ids) = participant.apply(tx, current, prepared, revision)?;
+    let execution_targets = crate::store::execution::configuration_targets(
+        tx,
+        sealer,
+        current.network_id,
+        revision,
+        &publication_ids,
+    )
+    .map_err(|_| Error::DependencyUnavailable)?;
+    if execution_targets.keys().copied().collect::<BTreeSet<_>>() != target_node_ids {
+        return Err(Error::DependencyUnavailable);
+    }
+    for node in &target_node_ids {
+        if !prepared.document.configuration.nodes.contains_key(node)
+            || prepared.deleted_node_ids.contains(node)
+        {
+            return Err(Error::DependencyUnavailable);
+        }
+    }
+    tx.execute(
+        "UPDATE configuration_versions SET execution_targets=?3 WHERE network_id=?1 AND revision=?2",
+        params![current.network_id.as_uuid().as_bytes().as_slice(), revision.get() as i64,
+            serde_json::to_string(&execution_targets).map_err(|_| Error::Storage)?],
+    )?;
     tx.execute(
         "INSERT INTO activity_events(id,scope,network_id,at,actor_user_id,action,request_id,before_revision,after_revision) VALUES(?1,'network',?2,?3,?4,'configuration.apply',?5,?6,?7)",
         params![random_uuid().map_err(|_|Error::Storage)?.as_bytes().as_slice(),
@@ -349,6 +401,24 @@ pub(crate) fn apply_in_transaction(
             expected_revision.get() as i64, revision.get() as i64],
     )?;
     Ok(CommitEffects {
+        notice: Some(meshway_protocol::events::ConfigurationNotice {
+            network_id: current.network_id,
+            previous_revision: expected_revision,
+            revision,
+            changed_at: chrono::DateTime::from_timestamp_millis(now).ok_or(Error::Storage)?,
+            cause,
+            actor: meshway_protocol::events::EventActor::User { user_id: actor },
+            request_id: Some(request),
+            changed_pointers: prepared
+                .changes
+                .iter()
+                .map(|change| change.path.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            changes_complete: true,
+            source_changed: prepared.source_changed,
+        }),
         network_id: current.network_id,
         revision,
         publication_ids,

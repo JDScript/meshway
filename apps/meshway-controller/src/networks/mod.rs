@@ -115,9 +115,11 @@ impl Networks {
         }
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
+        let publisher = self.publisher.clone();
+        let changed = name != expected_name;
         self.handle
             .execute(move |connection| {
-                store::rename(
+                let result = store::rename(
                     connection,
                     digest,
                     network_id,
@@ -128,7 +130,13 @@ impl Networks {
                     },
                     &sealer,
                     &cache,
-                )
+                )?;
+                if changed {
+                    publisher.publish_committed(
+                        crate::state::stream::CommittedChange::Authorization { network_id },
+                    );
+                }
+                Ok(result)
             })
             .await?
     }

@@ -1,5 +1,55 @@
 use super::*;
 use crate::accounts::{AccountSession, IssuedReset, ResetInspection, RevokeSessions};
+use crate::state::{service::CommitPublisher, stream::CommittedChange};
+
+pub(super) fn authorization_changes(
+    tx: &Transaction<'_>,
+    user: UserId,
+) -> Result<Vec<CommittedChange>, AccountError> {
+    let mut statement =
+        tx.prepare("SELECT network_id FROM memberships WHERE user_id=?1 AND revoked_at IS NULL")?;
+    statement
+        .query_map([user.as_uuid().as_bytes().as_slice()], |r| {
+            r.get::<_, Vec<u8>>(0)
+        })?
+        .map(|row| {
+            Ok(CommittedChange::Authorization {
+                network_id: meshway_model::NetworkId::new(uuid(&row?)?)
+                    .map_err(|_| AccountError::Storage)?,
+            })
+        })
+        .collect()
+}
+
+fn active_sessions(
+    tx: &Transaction<'_>,
+    user: UserId,
+    now: i64,
+) -> Result<Vec<SessionId>, AccountError> {
+    let mut statement = tx.prepare("SELECT id FROM user_sessions WHERE user_id=?1 AND revoked_at IS NULL AND expires_at>?2 AND credential_version=(SELECT credential_version FROM users WHERE id=?1)")?;
+    statement
+        .query_map(params![user.as_uuid().as_bytes().as_slice(), now], |r| {
+            r.get::<_, Vec<u8>>(0)
+        })?
+        .map(|row| SessionId::new(uuid(&row?)?).map_err(|_| AccountError::Storage))
+        .collect()
+}
+
+fn commit_revocation(
+    tx: Transaction<'_>,
+    publisher: &CommitPublisher,
+    changes: Vec<CommittedChange>,
+    sessions: Vec<SessionId>,
+) -> Result<(), AccountError> {
+    tx.commit()?;
+    for change in changes {
+        publisher.publish_committed(change);
+    }
+    for session in sessions {
+        publisher.revoke_session(session);
+    }
+    Ok(())
+}
 
 pub(crate) fn sessions(
     db: &mut Connection,
@@ -100,10 +150,24 @@ pub(crate) fn revoke(
     digest: [u8; 32],
     target: RevokeSessions,
     request: RequestId,
+    publisher: &CommitPublisher,
 ) -> Result<(), AccountError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let session = current_session(&tx, &digest, now)?;
+    let revoked = active_sessions(&tx, session.user.id, now)?
+        .into_iter()
+        .filter(|id| match target {
+            RevokeSessions::One(target) => *id == target,
+            RevokeSessions::Others => *id != session.session_id,
+            RevokeSessions::All => true,
+        })
+        .collect::<Vec<_>>();
+    let changes = if revoked.is_empty() {
+        Vec::new()
+    } else {
+        authorization_changes(&tx, session.user.id)?
+    };
     let user = session.user.id.as_uuid().as_bytes().as_slice();
     let (action, target_id) = match target {
         RevokeSessions::One(id) => {
@@ -139,7 +203,7 @@ pub(crate) fn revoke(
         }
     };
     record_management(&tx, session.user.id, request, action, target_id, now)?;
-    tx.commit()?;
+    commit_revocation(tx, publisher, changes, revoked)?;
     Ok(())
 }
 
@@ -195,13 +259,16 @@ pub(crate) fn change_password(
     verified: LoginCandidate,
     hash: Zeroizing<String>,
     request: RequestId,
+    publisher: &CommitPublisher,
 ) -> Result<(), AccountError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = verified_user(&tx, &digest, &verified, now)?;
+    let sessions = active_sessions(&tx, user, now)?;
+    let changes = authorization_changes(&tx, user)?;
     replace_password(&tx, user, &hash, now)?;
     record_management(&tx, user, request, "account.password", None, now)?;
-    tx.commit()?;
+    commit_revocation(tx, publisher, changes, sessions)?;
     Ok(())
 }
 
@@ -212,6 +279,7 @@ pub(crate) fn change_email(
     email: String,
     request: RequestId,
     configurations: &crate::configuration::Configurations,
+    publisher: &CommitPublisher,
 ) -> Result<User, AccountError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -221,6 +289,7 @@ pub(crate) fn change_email(
         [user.as_uuid().as_bytes().as_slice()],
         |r| r.get::<_, String>(0),
     )?;
+    let mut changes = Vec::new();
     if old != email {
         if tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM users WHERE email=?1)",
@@ -233,12 +302,17 @@ pub(crate) fn change_email(
             "UPDATE users SET email=?1 WHERE id=?2",
             params![email, user.as_uuid().as_bytes().as_slice()],
         )?;
-        configurations
+        let effects = configurations
             .synchronize_email(&tx, user, &old, &email, request)
             .map_err(|_| AccountError::Unavailable)?;
+        changes.extend(effects.iter().flat_map(|effect| effect.changes()));
+        changes.extend(authorization_changes(&tx, user)?);
         record_management(&tx, user, request, "account.email", None, now)?;
     }
     tx.commit()?;
+    for change in changes {
+        publisher.publish_committed(change);
+    }
     Ok(User { id: user, email })
 }
 
@@ -324,16 +398,19 @@ pub(crate) fn redeem_reset(
     digest: [u8; 32],
     hash: Zeroizing<String>,
     request: RequestId,
+    publisher: &CommitPublisher,
 ) -> Result<(), AccountError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let (user, _) = reset(&tx, digest, now)?;
+    let sessions = active_sessions(&tx, user, now)?;
+    let changes = authorization_changes(&tx, user)?;
     replace_password(&tx, user, &hash, now)?;
     tx.execute(
         "UPDATE password_resets SET consumed_at=?1 WHERE token_hash=?2",
         params![now, digest.as_slice()],
     )?;
     record_management(&tx, user, request, "account.passwordReset", None, now)?;
-    tx.commit()?;
+    commit_revocation(tx, publisher, changes, sessions)?;
     Ok(())
 }

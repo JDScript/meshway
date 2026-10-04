@@ -128,7 +128,7 @@ pub(crate) fn remove_member(
     if role == "owner" {
         protect_owner(&tx, network)?;
     }
-    let revision = crate::execution::membership::remove_nodes(
+    let effects = crate::execution::membership::remove_nodes(
         &tx,
         &crate::execution::membership::MembershipRemoval {
             digest,
@@ -158,14 +158,17 @@ pub(crate) fn remove_member(
         Activity::MemberRemoved(impact.membership_id),
         now,
     )?;
-    tx.commit()?;
-    for node in impact.node_ids {
-        publisher.publish_committed(crate::state::stream::CommittedChange::NodeRetired {
+    let mut changes = effects.changes();
+    if effects.notice.is_none() {
+        changes.push(crate::state::stream::CommittedChange::Authorization {
             network_id: network,
-            node_id: node,
         });
     }
-    Ok(revision)
+    tx.commit()?;
+    for change in changes {
+        publisher.publish_committed(change);
+    }
+    Ok(effects.revision)
 }
 
 pub(crate) fn change_role(
@@ -176,7 +179,7 @@ pub(crate) fn change_role(
     expected: Version,
     role: MembershipRole,
     request: RequestId,
-) -> Result<crate::networks::MemberSummary, NetworkError> {
+) -> Result<(crate::networks::MemberSummary, bool), NetworkError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
@@ -201,7 +204,8 @@ pub(crate) fn change_role(
             NetworkError::PermissionDenied
         });
     }
-    if member.role != role {
+    let changed = member.role != role;
+    if changed {
         if member.role == MembershipRole::Owner {
             protect_owner(&tx, network)?;
         }
@@ -238,7 +242,7 @@ pub(crate) fn change_role(
         owner_count(&tx, network)?,
     );
     tx.commit()?;
-    Ok(member)
+    Ok((member, changed))
 }
 
 struct Link {
@@ -409,7 +413,7 @@ pub(crate) fn redeem_link(
     digest: [u8; 32],
     hash: [u8; 32],
     request: RequestId,
-) -> Result<(NetworkId, MembershipId), NetworkError> {
+) -> Result<((NetworkId, MembershipId), bool), NetworkError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
@@ -428,7 +432,7 @@ pub(crate) fn redeem_link(
             return Err(NetworkError::InvalidLink);
         }
         tx.commit()?;
-        return Ok((link.view.network_id, member));
+        return Ok(((link.view.network_id, member), false));
     }
     valid(&tx, &link, now)?;
     if membership(&tx, link.view.network_id, user).is_ok() {
@@ -456,7 +460,7 @@ pub(crate) fn redeem_link(
         now,
     )?;
     tx.commit()?;
-    Ok((link.view.network_id, member))
+    Ok(((link.view.network_id, member), true))
 }
 pub(crate) fn revoke_link(
     db: &mut Connection,

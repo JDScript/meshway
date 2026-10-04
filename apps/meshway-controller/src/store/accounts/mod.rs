@@ -159,6 +159,7 @@ pub(crate) fn logout(
     connection: &mut Connection,
     digest: [u8; 32],
     request: RequestId,
+    publisher: &crate::state::service::CommitPublisher,
 ) -> Result<(), AccountError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -174,7 +175,12 @@ pub(crate) fn logout(
         request,
         AccountActivity::Logout,
     )?;
+    let changes = management::authorization_changes(&transaction, session.user.id)?;
     transaction.commit()?;
+    for change in changes {
+        publisher.publish_committed(change);
+    }
+    publisher.revoke_session(session.session_id);
     Ok(())
 }
 

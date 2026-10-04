@@ -13,6 +13,7 @@ pub(crate) fn select_profile(
     boot: InstanceId,
     token: [u8; 32],
     request: RoutingSelectionRequest,
+    publisher: &CommitPublisher,
 ) -> Result<RoutingSelectionResponse, NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -51,7 +52,7 @@ pub(crate) fn select_profile(
         ],
     )?;
     let publication = publish(&tx, sealer, p.network, "refresh", now)?.publication;
-    tx.commit()?;
+    commit_progress(tx, publisher, p.network, true)?;
     Ok(RoutingSelectionResponse {
         version,
         profile: request.profile,
@@ -428,15 +429,16 @@ pub(super) fn refresh_expired_demands(
     sealer: &Sealer,
     network: NetworkId,
     now: i64,
-) -> Result<(), NodeError> {
+) -> Result<bool, NodeError> {
     if tx.execute(
         "UPDATE execution_demands SET cancelled_at=?2 WHERE network_id=?1 AND expires_at<=?2 AND cancelled_at IS NULL",
         params![network.as_uuid().as_bytes().as_slice(), now],
     )? > 0
     {
         publish(tx, sealer, network, "refresh", now)?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 pub(crate) fn revoke_execution(
     tx: &Transaction<'_>,
@@ -490,7 +492,7 @@ pub(crate) fn apply_configuration_effects(
     previous_bindings: &ConfigurationBindings,
     target: &NetworkConfiguration,
     now: i64,
-) -> Result<PublicationId, NodeError> {
+) -> Result<CompiledPublication, NodeError> {
     let (revision, committed, bindings) = current_configuration(tx, sealer, network)?;
     if &committed != target {
         return Err(NodeError::Conflict);
@@ -558,7 +560,42 @@ pub(crate) fn apply_configuration_effects(
         tx.execute("UPDATE nodes SET credentials_revoked_at=COALESCE(credentials_revoked_at,?1) WHERE network_id=?2 AND id=?3",params![now,network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()])?;
         revoke_execution(tx, sealer, network, *node, now)?;
     }
-    Ok(publish(tx, sealer, network, "configuration", now)?.publication)
+    publish(tx, sealer, network, "configuration", now)
+}
+
+/// Fixed apply participants include offline nodes present in the new slices;
+/// later demand/refresh publications must never change this version's targets.
+pub(crate) fn configuration_targets(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    revision: Revision,
+    publications: &[PublicationId],
+) -> Result<BTreeMap<NodeId, ConfigurationRef>, NodeError> {
+    let mut targets = BTreeMap::new();
+    for publication in publications {
+        let payload: Vec<u8> = tx.query_row(
+            "SELECT payload FROM execution_publications WHERE network_id=?1 AND id=?2 AND revision=?3 AND cause='configuration' AND withdrawn_at IS NULL",
+            params![network.as_uuid().as_bytes().as_slice(), publication.as_uuid().as_bytes().as_slice(), revision.get() as i64],
+            |row| row.get(0),
+        )?;
+        let compiled: CompiledPublication = json(
+            sealer
+                .open_execution(network, *publication, &payload)
+                .map_err(|_| NodeError::Storage)?
+                .as_bytes(),
+        )?;
+        for (node, slice) in compiled.nodes {
+            if slice.configuration.network_id != network || slice.configuration.node_id != node
+                || slice.configuration.revision != revision || slice.configuration.publication != *publication
+                || !tx.query_row("SELECT EXISTS(SELECT 1 FROM nodes WHERE network_id=?1 AND id=?2 AND credentials_revoked_at IS NULL)", params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice()], |row| row.get::<_,bool>(0))?
+                || targets.insert(node, ConfigurationRef { revision, execution_publication: *publication, digest: slice.digest }).is_some()
+            {
+                return Err(NodeError::Conflict);
+            }
+        }
+    }
+    Ok(targets)
 }
 pub(crate) fn demand(
     connection: &mut Connection,
@@ -566,6 +603,7 @@ pub(crate) fn demand(
     boot: InstanceId,
     token: [u8; 32],
     request: DemandRequest,
+    publisher: &CommitPublisher,
 ) -> Result<DemandResponse, NodeError> {
     if !(1..=300).contains(&request.duration_seconds) {
         return Err(NodeError::Invalid);
@@ -626,7 +664,7 @@ pub(crate) fn demand(
         .cloned()
         .ok_or(NodeError::Conflict)?;
     grant_lease(&tx, sealer, &p, now)?;
-    tx.commit()?;
+    commit_progress(tx, publisher, p.network, true)?;
     Ok(DemandResponse {
         publication: compiled.publication,
         decision,
@@ -638,22 +676,23 @@ pub(crate) fn cancel_demand(
     boot: InstanceId,
     token: [u8; 32],
     request: CancelDemandRequest,
+    publisher: &CommitPublisher,
 ) -> Result<(), NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
     current_instance(&tx, boot, &p, &request.instance, now)?;
-    if tx.execute(
+    let changed = tx.execute(
         "UPDATE execution_demands SET cancelled_at=?4 WHERE network_id=?1 AND node_id=?2 AND id=?3 AND cancelled_at IS NULL",
         params![
             p.network.as_uuid().as_bytes().as_slice(),
             p.node.as_uuid().as_bytes().as_slice(),
             request.request_id.as_uuid().as_bytes().as_slice(), now
         ],
-    )? > 0
-    {
+    )? > 0;
+    if changed {
         publish(&tx, sealer, p.network, "demand", now)?;
     }
-    tx.commit()?;
+    commit_progress(tx, publisher, p.network, changed)?;
     Ok(())
 }

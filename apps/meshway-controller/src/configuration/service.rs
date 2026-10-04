@@ -34,7 +34,8 @@ impl Configurations {
         old_email: &str,
         new_email: &str,
         request: RequestId,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<CommitEffects>, Error> {
+        let mut effects = Vec::new();
         let networks = {
             let mut stmt = tx.prepare("SELECT id FROM networks WHERE deleted_at IS NULL")?;
             stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?
@@ -100,7 +101,7 @@ impl Configurations {
                 old_email: old_email.into(),
                 new_email: new_email.into(),
             });
-            apply_in_transaction(
+            effects.push(apply_in_transaction(
                 tx,
                 &Principal::Lifecycle(user),
                 current.revision,
@@ -117,9 +118,9 @@ impl Configurations {
                         admission: None,
                     },
                 },
-            )?;
+            )?);
         }
-        Ok(())
+        Ok(effects)
     }
     pub(crate) async fn read(
         &self,
@@ -253,6 +254,7 @@ impl Configurations {
                 },
             },
         )?;
+        let changes = effects.changes();
         let result = ConfigurationAppliedResponse {
             request_id: id,
             network_id: effects.network_id,
@@ -272,15 +274,11 @@ impl Configurations {
                 request.request_id().as_uuid().as_bytes().as_slice(), current.revision.get() as i64,
                 input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::Storage)?],
         )?;
+        // One valid bulk deletion may exceed the replay window. The bounded
+        // journal evicts old entries; it must not cap the configuration commit.
         tx.commit()?;
-        // Still on the accepted SQLite job: cancelling the HTTP waiter cannot
-        // strand a permanently retired Node's volatile report allocation.
-        for node in &result.deleted_node_ids {
-            self.publisher
-                .publish_committed(crate::state::stream::CommittedChange::NodeRetired {
-                    network_id: network,
-                    node_id: *node,
-                });
+        for change in changes {
+            self.publisher.publish_committed(change);
         }
         Ok(result)
     }

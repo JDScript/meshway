@@ -55,9 +55,18 @@ impl Accounts {
         let verified = password::verify(current, Some(candidate))
             .await
             .map_err(current_password_error)?;
+        let publisher = self.publisher.clone();
         self.handle
             .execute(move |db| {
-                store::change_email(db, digest, verified, email, request, &configurations)
+                store::change_email(
+                    db,
+                    digest,
+                    verified,
+                    email,
+                    request,
+                    &configurations,
+                    &publisher,
+                )
             })
             .await?
     }
@@ -84,8 +93,9 @@ impl Accounts {
         request: RequestId,
     ) -> Result<(), AccountError> {
         let digest = secret::token_digest(token)?;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| store::revoke(db, digest, target, request))
+            .execute(move |db| store::revoke(db, digest, target, request, &publisher))
             .await?
     }
 
@@ -107,8 +117,11 @@ impl Accounts {
             .await
             .map_err(current_password_error)?;
         let hash = password::hash(replacement).await?;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| store::change_password(db, digest, verified, hash, request))
+            .execute(move |db| {
+                store::change_password(db, digest, verified, hash, request, &publisher)
+            })
             .await?
     }
 
@@ -151,8 +164,9 @@ impl Accounts {
             .execute(move |db| store::inspect_reset(db, digest))
             .await??;
         let hash = password::hash(password).await?;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| store::redeem_reset(db, digest, hash, request))
+            .execute(move |db| store::redeem_reset(db, digest, hash, request, &publisher))
             .await?
     }
 }

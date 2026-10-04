@@ -133,11 +133,20 @@ pub struct IssuedSession {
 pub struct Accounts {
     handle: Handle,
     options: Options,
+    publisher: crate::state::service::CommitPublisher,
 }
 
 impl Accounts {
-    pub(crate) fn new(handle: Handle, options: Options) -> Self {
-        Self { handle, options }
+    pub(crate) fn new(
+        handle: Handle,
+        options: Options,
+        publisher: crate::state::service::CommitPublisher,
+    ) -> Self {
+        Self {
+            handle,
+            options,
+            publisher,
+        }
     }
 
     pub fn options(&self) -> Options {
@@ -233,8 +242,9 @@ impl Accounts {
     /// successfully authenticated current session is revoked.
     pub async fn logout(&self, token: &str, request_id: RequestId) -> Result<(), AccountError> {
         let digest = secret::token_digest(token)?;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |connection| store::logout(connection, digest, request_id))
+            .execute(move |connection| store::logout(connection, digest, request_id, &publisher))
             .await?
     }
 }

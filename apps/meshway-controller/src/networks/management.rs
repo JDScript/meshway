@@ -87,9 +87,19 @@ impl Networks {
         request: RequestId,
     ) -> Result<MemberSummary, NetworkError> {
         let digest = token_digest(token)?;
+        let publisher = self.publisher.clone();
         self.handle
             .execute(move |db| {
-                store::change_role(db, digest, network, member, expected, role, request)
+                let (member, changed) =
+                    store::change_role(db, digest, network, member, expected, role, request)?;
+                if changed {
+                    publisher.publish_committed(
+                        crate::state::stream::CommittedChange::Authorization {
+                            network_id: network,
+                        },
+                    );
+                }
+                Ok(member)
             })
             .await?
     }
@@ -128,8 +138,19 @@ impl Networks {
     ) -> Result<(NetworkId, MembershipId), NetworkError> {
         let digest = token_digest(token)?;
         let link = one_time_digest("mwj_", link).map_err(|_| NetworkError::InvalidLink)?;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| store::redeem_link(db, digest, link, request))
+            .execute(move |db| {
+                let (result, changed) = store::redeem_link(db, digest, link, request)?;
+                if changed {
+                    publisher.publish_committed(
+                        crate::state::stream::CommittedChange::Authorization {
+                            network_id: result.0,
+                        },
+                    );
+                }
+                Ok(result)
+            })
             .await?
     }
     pub async fn revoke_join_link(

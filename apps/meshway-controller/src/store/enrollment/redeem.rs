@@ -32,7 +32,13 @@ pub(crate) fn redeem_key_in_transaction(
     secret: WireSecret,
     verifier: WireSecret,
     commit: &dyn EnrollmentCommit,
-) -> Result<EnrollmentResponse, NodeError> {
+) -> Result<
+    (
+        EnrollmentResponse,
+        Option<crate::configuration::CommitEffects>,
+    ),
+    NodeError,
+> {
     let now = now()?;
     let p = pending(tx, request)?;
     pkce(&p.challenge, verifier.expose())?;
@@ -62,12 +68,15 @@ pub(crate) fn redeem_key_in_transaction(
         let (_, cfg, bindings) =
             crate::store::execution::current_configuration(tx, sealer, network)?;
         crate::store::execution::identity_eligible(tx, &cfg, &bindings, network, node)?;
-        return Ok(EnrollmentResponse {
-            controller_id: sealer.installation_id(),
-            network_id: network,
-            node_id: node,
-            keys,
-        });
+        return Ok((
+            EnrollmentResponse {
+                controller_id: sealer.installation_id(),
+                network_id: network,
+                node_id: node,
+                keys,
+            },
+            None,
+        ));
     }
     if raw.6 <= now || raw.7.is_some() || p.expires <= now || p.node.is_some() {
         return Err(NodeError::Unauthorized);
@@ -133,7 +142,7 @@ pub(crate) fn redeem_key_in_transaction(
         initial,
     };
     verify_admission(tx, sealer, &admission)?;
-    commit.insert_node(tx, &admission)?;
+    let effects = commit.insert_node(tx, &admission)?;
     tx.execute(
         "UPDATE enrollment_requests SET node_id=?1,consumed_at=?2,binding_digest=?3 WHERE id=?4",
         params![
@@ -144,12 +153,15 @@ pub(crate) fn redeem_key_in_transaction(
         ],
     )?;
     tx.execute("UPDATE enrollment_keys SET consumed_request_id=?1 WHERE id=?2 AND consumed_request_id IS NULL",params![request.as_uuid().as_bytes().as_slice(),key.as_uuid().as_bytes().as_slice()])?;
-    Ok(EnrollmentResponse {
-        controller_id: sealer.installation_id(),
-        network_id: network,
-        node_id: node,
-        keys,
-    })
+    Ok((
+        EnrollmentResponse {
+            controller_id: sealer.installation_id(),
+            network_id: network,
+            node_id: node,
+            keys,
+        },
+        Some(effects),
+    ))
 }
 pub(crate) fn redeem_in_transaction(
     tx: &Transaction<'_>,
@@ -157,7 +169,13 @@ pub(crate) fn redeem_in_transaction(
     id: EnrollmentRequestId,
     request: RedeemEnrollmentRequest,
     commit: &dyn EnrollmentCommit,
-) -> Result<EnrollmentResponse, NodeError> {
+) -> Result<
+    (
+        EnrollmentResponse,
+        Option<crate::configuration::CommitEffects>,
+    ),
+    NodeError,
+> {
     let now = now()?;
     let p = pending(tx, id)?;
     p.device(&request.proof, "redeem")?;
@@ -179,12 +197,15 @@ pub(crate) fn redeem_in_transaction(
         let (_, cfg, bindings) =
             crate::store::execution::current_configuration(tx, sealer, approval.network)?;
         crate::store::execution::identity_eligible(tx, &cfg, &bindings, approval.network, node)?;
-        return Ok(EnrollmentResponse {
-            controller_id: sealer.installation_id(),
-            network_id: approval.network,
-            node_id: node,
-            keys,
-        });
+        return Ok((
+            EnrollmentResponse {
+                controller_id: sealer.installation_id(),
+                network_id: approval.network,
+                node_id: node,
+                keys,
+            },
+            None,
+        ));
     }
     if p.expires <= now {
         return Err(NodeError::Unauthorized);
@@ -256,14 +277,17 @@ pub(crate) fn redeem_in_transaction(
         },
     };
     verify_admission(tx, sealer, &admission)?;
-    commit.insert_node(tx, &admission)?;
+    let effects = commit.insert_node(tx, &admission)?;
     tx.execute("UPDATE enrollment_requests SET node_id=?1,consumed_at=?2,binding_digest=?3,delivery=NULL WHERE id=?4 AND consumed_at IS NULL",params![node.as_uuid().as_bytes().as_slice(),now,p.digest.as_bytes().as_slice(),id.as_uuid().as_bytes().as_slice()])?;
-    Ok(EnrollmentResponse {
-        controller_id: sealer.installation_id(),
-        network_id: approval.network,
-        node_id: node,
-        keys,
-    })
+    Ok((
+        EnrollmentResponse {
+            controller_id: sealer.installation_id(),
+            network_id: approval.network,
+            node_id: node,
+            keys,
+        },
+        Some(effects),
+    ))
 }
 pub(crate) fn verify_admission(
     tx: &Transaction<'_>,

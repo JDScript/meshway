@@ -81,6 +81,7 @@ pub struct Execution {
     handle: Handle,
     sealer: Arc<Sealer>,
     boot: InstanceId,
+    publisher: crate::state::service::CommitPublisher,
 }
 impl Execution {
     /// Supplies C's report/view provider with actual current SQL facts. The
@@ -123,8 +124,17 @@ impl Execution {
     ) -> Result<(), NodeError> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::revoke_key(c, &sealer, token, network, node, request))
+            .execute(move |c| {
+                let changed: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM node_keys WHERE network_id=?1 AND node_id=?2 AND id=?3 AND revoked_at IS NULL)", rusqlite::params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), request.key_id.as_uuid().as_bytes().as_slice()], |row| row.get(0))?;
+                store::revoke_key(c, &sealer, token, network, node, request)?;
+                if changed {
+                    publisher.publish_committed(crate::state::stream::CommittedChange::Authorization { network_id: network });
+                    publisher.publish_committed(crate::state::stream::CommittedChange::Progress { network_id: network });
+                }
+                Ok(())
+            })
             .await?
     }
     /// Atomic seam for State/observation storage. Every use rechecks the current
@@ -171,8 +181,9 @@ impl Execution {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::select_profile(c, &sealer, boot, token, request))
+            .execute(move |c| store::select_profile(c, &sealer, boot, token, request, &publisher))
             .await?
     }
     pub async fn inventory(
@@ -220,11 +231,17 @@ impl Execution {
             })
             .await?
     }
-    pub(crate) fn new(handle: Handle, sealer: Arc<Sealer>, boot: InstanceId) -> Self {
+    pub(crate) fn new(
+        handle: Handle,
+        sealer: Arc<Sealer>,
+        boot: InstanceId,
+        publisher: crate::state::service::CommitPublisher,
+    ) -> Self {
         Self {
             handle,
             sealer,
             boot,
+            publisher,
         }
     }
     pub async fn challenge(
@@ -248,8 +265,9 @@ impl Execution {
     }
     pub async fn rotate(&self, request: NodeRotationRequest) -> Result<NodeKeyMetadata, NodeError> {
         let sealer = self.sealer.clone();
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::rotate(c, &sealer, request))
+            .execute(move |c| store::rotate(c, &sealer, request, &publisher))
             .await?
     }
     pub async fn authenticate(&self, token: &str) -> Result<NodePrincipal, NodeError> {
@@ -271,8 +289,9 @@ impl Execution {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::acquire(c, &sealer, boot, token, request))
+            .execute(move |c| store::acquire(c, &sealer, boot, token, request, &publisher))
             .await?
     }
     pub async fn renew(
@@ -283,16 +302,18 @@ impl Execution {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::renew(c, &sealer, boot, token, request))
+            .execute(move |c| store::renew(c, &sealer, boot, token, request, &publisher))
             .await?
     }
     pub async fn release(&self, token: &str, request: InstanceRequest) -> Result<(), NodeError> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::release(c, &sealer, boot, token, request))
+            .execute(move |c| store::release(c, &sealer, boot, token, request, &publisher))
             .await?
     }
     pub async fn configuration(
@@ -303,16 +324,18 @@ impl Execution {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::configuration(c, &sealer, boot, token, request))
+            .execute(move |c| store::configuration(c, &sealer, boot, token, request, &publisher))
             .await?
     }
     pub async fn receipt(&self, token: &str, request: ReceiptRequest) -> Result<(), NodeError> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::receipt(c, &sealer, boot, token, request))
+            .execute(move |c| store::receipt(c, &sealer, boot, token, request, &publisher))
             .await?
     }
     pub async fn demand(
@@ -323,8 +346,9 @@ impl Execution {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::demand(c, &sealer, boot, token, request))
+            .execute(move |c| store::demand(c, &sealer, boot, token, request, &publisher))
             .await?
     }
     pub async fn cancel_demand(
@@ -335,8 +359,9 @@ impl Execution {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;
+        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |c| store::cancel_demand(c, &sealer, boot, token, request))
+            .execute(move |c| store::cancel_demand(c, &sealer, boot, token, request, &publisher))
             .await?
     }
 }

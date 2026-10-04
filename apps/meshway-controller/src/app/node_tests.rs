@@ -33,7 +33,7 @@ fn node_and_management_configuration_openapi_components_are_distinct() {
         "#/components/schemas/NodeConfigurationRequest"
     );
 }
-async fn fixture() -> (
+pub(super) async fn fixture() -> (
     tempfile::TempDir,
     App,
     NetworkId,
@@ -149,7 +149,7 @@ async fn enroll_tag_node(
         .await
         .unwrap()
 }
-async fn session(
+pub(super) async fn session(
     service: &crate::execution::Execution,
     network: NetworkId,
     node: NodeId,
@@ -179,7 +179,7 @@ async fn session(
         .await
         .unwrap()
 }
-fn caps() -> BTreeMap<String, Capability> {
+pub(super) fn caps() -> BTreeMap<String, Capability> {
     BTreeMap::from([(
         "transport:native_udp".into(),
         Capability::Transport {
@@ -188,7 +188,7 @@ fn caps() -> BTreeMap<String, Capability> {
         },
     )])
 }
-async fn enroll_user_node(
+pub(super) async fn enroll_user_node(
     app: &App,
     token: &str,
     network: NetworkId,
@@ -1076,20 +1076,25 @@ async fn actual_http_signatures_and_pkce_polling() {
             &self,
             _tx: &rusqlite::Transaction<'_>,
             _admission: &crate::enrollment::NodeAdmission,
-        ) -> Result<(), NodeError> {
+        ) -> Result<crate::configuration::CommitEffects, NodeError> {
             Err(NodeError::Invalid)
         }
     }
     assert!(matches!(
-        crate::enrollment::Enrollment::new(app.executor.handle(), app.sealer(), Arc::new(Reject))
-            .redeem(
-                id,
-                RedeemEnrollmentRequest {
-                    proof: proof("redeem"),
-                    code: poll.code.unwrap()
-                }
-            )
-            .await,
+        crate::enrollment::Enrollment::new(
+            app.executor.handle(),
+            app.sealer(),
+            Arc::new(Reject),
+            app.commit_publisher()
+        )
+        .redeem(
+            id,
+            RedeemEnrollmentRequest {
+                proof: proof("redeem"),
+                code: poll.code.unwrap()
+            }
+        )
+        .await,
         Err(NodeError::Invalid)
     ));
     let after = app.enrollment().poll(id, proof("poll")).await.unwrap();
@@ -1891,12 +1896,18 @@ async fn review_late_failed_receipt_does_not_override_newer_applied() {
     receipt.sequence = Sequence::new(2).unwrap();
     receipt.reported_at_ms += 1;
     s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
+    let latest = app.state_runtime.lock().unwrap().hub.events.sequence();
+    s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
     s.receipt(at.token.expose(), late.clone()).await.unwrap();
     s.receipt(at.token.expose(), late.clone()).await.unwrap();
     late.failure = Some(ApplyFailure::Dns);
     assert_eq!(
         s.receipt(at.token.expose(), late).await,
         Err(NodeError::Conflict)
+    );
+    assert_eq!(
+        app.state_runtime.lock().unwrap().hub.events.sequence(),
+        latest
     );
     let progress = s
         .progress(

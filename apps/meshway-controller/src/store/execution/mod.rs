@@ -3,6 +3,7 @@ mod instances;
 mod inventory;
 mod publications;
 use crate::networks::configuration::ConfigurationBindings;
+use crate::state::{service::CommitPublisher, stream::CommittedChange};
 use crate::{
     execution::{NodeError, NodePrincipal},
     secrets::{Purpose, Sealer},
@@ -14,6 +15,22 @@ use meshway_configuration::{NetworkConfiguration, NodeIdentity};
 use meshway_model::*;
 pub(crate) use publications::*;
 use rusqlite::{OptionalExtension, Transaction, params};
+
+fn commit_progress(
+    tx: Transaction<'_>,
+    publisher: &CommitPublisher,
+    network_id: NetworkId,
+    changed: bool,
+) -> Result<(), NodeError> {
+    let changes = if changed {
+        vec![CommittedChange::Progress { network_id }]
+    } else {
+        Vec::new()
+    };
+    publisher
+        .commit(tx, changes)
+        .map_err(|_| NodeError::Storage)
+}
 
 pub(crate) fn now() -> Result<i64, NodeError> {
     let now = chrono::Utc::now().timestamp_millis();

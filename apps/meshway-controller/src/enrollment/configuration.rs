@@ -24,7 +24,7 @@ impl EnrollmentCommit for ConfigurationAdmission {
         &self,
         tx: &Transaction<'_>,
         admission: &NodeAdmission,
-    ) -> Result<(), NodeError> {
+    ) -> Result<configuration::CommitEffects, NodeError> {
         let revision: i64 = tx.query_row(
             "SELECT current_revision FROM networks WHERE id=?1 AND deleted_at IS NULL",
             [admission.network.as_uuid().as_bytes().as_slice()],
@@ -140,8 +140,7 @@ impl EnrollmentCommit for ConfigurationAdmission {
                 participant: &participant,
             },
         )
-        .map_err(map_error)?;
-        Ok(())
+        .map_err(map_error)
     }
 }
 fn unique_hostname<'a>(

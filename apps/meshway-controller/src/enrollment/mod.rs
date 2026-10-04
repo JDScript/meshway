@@ -11,12 +11,12 @@ use meshway_protocol::enrollment::*;
 use std::sync::Arc;
 /// Transaction participant supplied by the configuration owner. It normalizes
 /// and persists the complete source target, its stable bindings and publication.
-pub trait EnrollmentCommit: Send + Sync {
+pub(crate) trait EnrollmentCommit: Send + Sync {
     fn insert_node(
         &self,
         tx: &rusqlite::Transaction<'_>,
         admission: &NodeAdmission,
-    ) -> Result<(), NodeError>;
+    ) -> Result<crate::configuration::CommitEffects, NodeError>;
 }
 pub struct NodeAdmission {
     pub(crate) proof: crate::store::enrollment::VerifiedEnrollmentProof,
@@ -33,6 +33,7 @@ pub struct Enrollment {
     handle: Handle,
     sealer: Arc<Sealer>,
     commit: Arc<dyn EnrollmentCommit>,
+    publisher: crate::state::service::CommitPublisher,
 }
 impl Enrollment {
     pub async fn redeem_key(
@@ -40,13 +41,14 @@ impl Enrollment {
         request: KeyEnrollmentRequest,
     ) -> Result<EnrollmentResponse, NodeError> {
         let commit = self.commit.clone();
+        let publisher = self.publisher.clone();
         let id = request.request.intent.id;
         self.create_request(request.request).await?;
         let sealer = self.sealer.clone();
         self.handle
             .execute(move |c| {
                 let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-                let result = store::redeem_key_in_transaction(
+                let (result, effects) = store::redeem_key_in_transaction(
                     &tx,
                     &sealer,
                     id,
@@ -55,6 +57,9 @@ impl Enrollment {
                     commit.as_ref(),
                 )?;
                 tx.commit()?;
+                for change in effects.map(|e| e.changes()).unwrap_or_default() {
+                    publisher.publish_committed(change);
+                }
                 Ok(result)
             })
             .await?
@@ -65,13 +70,17 @@ impl Enrollment {
         request: RedeemEnrollmentRequest,
     ) -> Result<EnrollmentResponse, NodeError> {
         let commit = self.commit.clone();
+        let publisher = self.publisher.clone();
         let sealer = self.sealer.clone();
         self.handle
             .execute(move |c| {
                 let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-                let result =
+                let (result, effects) =
                     store::redeem_in_transaction(&tx, &sealer, id, request, commit.as_ref())?;
                 tx.commit()?;
+                for change in effects.map(|e| e.changes()).unwrap_or_default() {
+                    publisher.publish_committed(change);
+                }
                 Ok(result)
             })
             .await?
@@ -80,11 +89,13 @@ impl Enrollment {
         handle: Handle,
         sealer: Arc<Sealer>,
         commit: Arc<dyn EnrollmentCommit>,
+        publisher: crate::state::service::CommitPublisher,
     ) -> Self {
         Self {
             handle,
             sealer,
             commit,
+            publisher,
         }
     }
     pub async fn create_request(

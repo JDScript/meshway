@@ -112,11 +112,19 @@ CREATE TABLE configuration_versions (
     cause TEXT NOT NULL CHECK (cause IN ('networkCreated','edit','restore','enrollment','nodeDeleted','emailSync','memberRemoved','identityTransition')),
     request_id BLOB NOT NULL CHECK (length(request_id) = 16 AND request_id != zeroblob(16)),
     rollback_from INTEGER,
+    execution_targets TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(execution_targets) AND json_type(execution_targets)='object'),
     PRIMARY KEY (network_id, revision),
     FOREIGN KEY(network_id,rollback_from) REFERENCES configuration_versions(network_id,revision)
 ) STRICT;
-CREATE TRIGGER configuration_versions_no_update BEFORE UPDATE ON configuration_versions
+CREATE TRIGGER configuration_versions_no_update BEFORE UPDATE OF network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from ON configuration_versions
 BEGIN SELECT RAISE(ABORT, 'immutable configuration version'); END;
+-- The apply transaction fills targets after compiling against its new source,
+-- then seals the version with its activity row before committing.
+CREATE TRIGGER configuration_targets_no_update BEFORE UPDATE OF execution_targets ON configuration_versions
+WHEN OLD.cause='networkCreated' OR OLD.execution_targets!='{}' OR EXISTS (
+    SELECT 1 FROM activity_events WHERE network_id=OLD.network_id AND after_revision=OLD.revision
+)
+BEGIN SELECT RAISE(ABORT, 'immutable configuration targets'); END;
 CREATE TRIGGER configuration_versions_no_delete BEFORE DELETE ON configuration_versions
 BEGIN SELECT RAISE(ABORT, 'immutable configuration version'); END;
 
