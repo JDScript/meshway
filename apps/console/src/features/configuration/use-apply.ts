@@ -22,10 +22,8 @@ import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
 import { failureText, type FailureText } from "@/lib/failure"
 import { m } from "@/paraglide/messages.js"
 
-import { recordApplied } from "./applied"
 import { useConfigurationDraft } from "./draft"
 import type { DraftInput } from "./draft-state"
-import { deploymentOf } from "./progress"
 import { configurationQuery, configurationReads } from "./queries"
 
 // Applying is always: validate, review what the controller says would
@@ -96,18 +94,11 @@ const wordsFor = (proposal: Proposal): FailureText =>
 
 /** The words for an apply's result, from what the controller returned. */
 export function appliedText(result: ConfigurationAppliedResponse): string {
-  const deployment = deploymentOf(result)
-  if (deployment === "none")
+  if (result.targetCount === 0)
     return m.configuration_applied_no_targets({ revision: result.revision })
-  if (deployment === "unpublished")
-    return m.configuration_applied_targets_unpublished({
-      revision: result.revision,
-      targets: result.targetCount,
-    })
   return m.configuration_applied_targets({
     revision: result.revision,
     targets: result.targetCount,
-    publications: result.publicationIds.length,
   })
 }
 
@@ -122,7 +113,7 @@ export function useConfigurationApply(
       input: DraftInput,
       params: ConfigurationValidationParams
     ) => void
-    /** Opens the deployment of a revision this tab applied. */
+    /** Opens a revision's deployment. */
     onShowProgress: (revision: number) => void
   }
 ) {
@@ -237,7 +228,6 @@ export function useConfigurationApply(
       unsettled.current = null
       if (proposal.type === "draft") draft.applied(proposal.input)
       setReview(null)
-      recordApplied(result)
       toast.success(appliedText(result), {
         id: TOAST,
         action: {

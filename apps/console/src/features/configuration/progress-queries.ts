@@ -1,38 +1,12 @@
-import {
-  getConfigurationProgress,
-  getExecutionPublication,
-} from "@meshway/control-client"
+import { getConfigurationProgress } from "@meshway/control-client"
 import { queryOptions } from "@tanstack/react-query"
 
 import { pollUnlessLive } from "@/features/live/status"
 import { networkKey } from "@/features/network/queries"
 import { authed, client } from "@/lib/api"
 
-import { publicationSettled } from "./progress"
-import { isDenied } from "./queries"
-
-/** How often an unsettled publication is read again while it is shown. */
-const PROGRESS_MS = 3_000
-
-/** One execution publication's per-node progress, read again until it settles. */
-export const publicationQuery = (networkId: string, publicationId: string) =>
-  queryOptions({
-    queryKey: [...networkKey(networkId), "publication", publicationId],
-    queryFn: ({ signal }) =>
-      authed((token) =>
-        getExecutionPublication(
-          client,
-          { networkId, publicationId },
-          { token, signal }
-        )
-      ),
-    staleTime: 0,
-    refetchInterval: (query) => {
-      const data = query.state.data
-      if (data) return publicationSettled(data) ? false : PROGRESS_MS
-      return isDenied(query.state.error) ? false : PROGRESS_MS
-    },
-  })
+/** How often a revision's deployment is read again while it is shown and not streamed. */
+export const PROGRESS_MS = 3_000
 
 /**
  * One revision's deployment: its fixed target nodes, counted once each by
