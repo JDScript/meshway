@@ -22,7 +22,11 @@ pub(super) fn user(email: &str, context: &ValidationContext<'_>, path: &str, che
                 .any(|old| old == expected))
     {
         if context.members.get(email) != Some(expected) {
-            check.dependency(path, "retained user membership is inactive", true);
+            check.dependency(
+                ConfigurationIssue::new(path, IssueCode::RetainedMembershipInactive)
+                    .with("user", email),
+                true,
+            );
         }
         check.bindings.insert(email.to_owned(), expected.clone());
         return;
@@ -36,7 +40,7 @@ pub(super) fn user(email: &str, context: &ValidationContext<'_>, path: &str, che
         {
             check.bindings.insert(email.to_owned(), binding.clone());
         }
-        _ => check.issue(path, "unknown, inactive, or rebound user reference"),
+        _ => check.issue(ConfigurationIssue::new(path, IssueCode::UnknownUser).with("user", email)),
     }
 }
 pub(super) fn definitions(
@@ -48,7 +52,9 @@ pub(super) fn definitions(
     for (key, values) in groups.iter_mut() {
         let path = format!("/groups/{}", pointer(key));
         if !named(key, "group:") {
-            check.issue(&path, "invalid group name");
+            check.issue(
+                ConfigurationIssue::new(&path, IssueCode::InvalidGroupName).with("name", key),
+            );
         }
         for email in values.iter() {
             user(email, context, &path, check);
@@ -59,12 +65,15 @@ pub(super) fn definitions(
     for (key, owners) in tags {
         let path = format!("/tagsOwners/{}", pointer(key));
         if !named(key, "tag:") {
-            check.issue(&path, "invalid tag name");
+            check
+                .issue(ConfigurationIssue::new(&path, IssueCode::InvalidTagName).with("name", key));
         }
         for owner in owners.iter() {
             if owner.starts_with("group:") {
                 if !groups.contains_key(owner) {
-                    check.issue(&path, "unknown group");
+                    check.issue(
+                        ConfigurationIssue::new(&path, IssueCode::UnknownGroup).with("name", owner),
+                    );
                 }
             } else {
                 user(owner, context, &path, check);
@@ -87,7 +96,10 @@ pub(super) fn identity(
             let current = context.members.get(email);
             let expected = context.expected_node_user_bindings.get(&id);
             if current.is_none() || expected.is_some_and(|expected| Some(expected) != current) {
-                check.issue(path, "Node identity requires an active bound membership");
+                check.issue(
+                    ConfigurationIssue::new(path, IssueCode::IdentityMembershipMissing)
+                        .with("user", email),
+                );
             } else if let Some(binding) = current {
                 check.node_bindings.insert(id, binding.clone());
                 if context.previous_node_user_bindings.get(&id) != Some(binding)
@@ -99,15 +111,19 @@ pub(super) fn identity(
         }
         NodeIdentity::Tag { tags: values } => {
             if values.is_empty() {
-                check.issue(path, "Tag identity must have at least one tag");
+                check.issue(ConfigurationIssue::new(path, IssueCode::EmptyTagIdentity));
             }
             let mut seen = BTreeSet::new();
             for tag in values {
                 if !tags.contains_key(tag) {
-                    check.issue(path, "unknown tag");
+                    check.issue(
+                        ConfigurationIssue::new(path, IssueCode::UnknownTag).with("name", tag),
+                    );
                 }
                 if !seen.insert(tag) {
-                    check.issue(path, "duplicate identity tag");
+                    check.issue(
+                        ConfigurationIssue::new(path, IssueCode::DuplicateTag).with("name", tag),
+                    );
                 }
             }
         }
@@ -127,13 +143,13 @@ pub(super) fn selector(
     }
     if value.starts_with("group:") {
         if !config.groups.contains_key(value) {
-            check.issue(path, "unknown group");
+            check.issue(ConfigurationIssue::new(path, IssueCode::UnknownGroup).with("name", value));
         }
         return;
     }
     if value.starts_with("tag:") {
         if !config.tags_owners.contains_key(value) {
-            check.issue(path, "unknown tag");
+            check.issue(ConfigurationIssue::new(path, IssueCode::UnknownTag).with("name", value));
         }
         return;
     }
@@ -146,7 +162,10 @@ pub(super) fn selector(
                 && context
                     .previous
                     .is_some_and(|old| retained_rule(config, old, path));
-            check.dependency(path, "unknown Node selector", retained);
+            check.dependency(
+                ConfigurationIssue::new(path, IssueCode::UnknownNodeSelector).with("node", id),
+                retained,
+            );
         }
         return;
     }
@@ -156,13 +175,18 @@ pub(super) fn selector(
         }
         if let Some(domain) = value.strip_prefix("domain:") {
             if domain_name(domain).is_err() {
-                check.issue(path, "invalid domain suffix");
+                check.issue(
+                    ConfigurationIssue::new(path, IssueCode::InvalidDomainSuffix)
+                        .with("value", domain),
+                );
             }
             return;
         }
         if let Ok(net) = value.parse::<IpNet>() {
             if net.addr() != net.network() {
-                check.issue(path, "noncanonical CIDR");
+                check.issue(
+                    ConfigurationIssue::new(path, IssueCode::NoncanonicalCidr).with("value", value),
+                );
             }
             return;
         }
@@ -174,10 +198,17 @@ fn retained_rule(config: &NetworkConfiguration, old: &NetworkConfiguration, path
     let at = |index: usize| parts.get(index).and_then(|s| s.parse::<usize>().ok());
     match parts.as_slice() {
         ["access", _, ..] => at(1).and_then(|i| config.access.get(i)).is_some_and(|r| {
+            // The new rule is not sorted yet at this point; compare as sets.
+            let sorted = |values: &[String]| {
+                let mut values = values.to_vec();
+                values.sort();
+                values.dedup();
+                values
+            };
             old.access.iter().any(|before| {
-                before.src == r.src
-                    && before.dst == r.dst
-                    && before.ip == r.ip
+                before.src == sorted(&r.src)
+                    && before.dst == sorted(&r.dst)
+                    && before.ip == sorted(&r.ip)
                     && before.bidirectional == r.bidirectional
             })
         }),
@@ -210,10 +241,17 @@ pub(super) fn selectors(
     check: &mut Check,
 ) {
     if values.is_empty() {
-        check.issue(path, "selector set must not be empty");
+        check.issue(ConfigurationIssue::new(path, IssueCode::EmptySelectorSet));
     }
-    for value in values {
-        selector(value, external, config, context, path, check);
+    for (index, value) in values.iter().enumerate() {
+        selector(
+            value,
+            external,
+            config,
+            context,
+            &format!("{path}/{index}"),
+            check,
+        );
     }
 }
 pub(super) fn is_external(value: &str) -> bool {
@@ -268,13 +306,8 @@ pub(super) fn rules(
                 *dst = net.to_string();
             }
         }
-        rule.src.sort();
-        rule.src.dedup();
-        rule.dst.sort();
-        rule.dst.dedup();
-        rule.ip.sort();
-        rule.ip.dedup();
     }
+    // Pointers refer to the author's element order; canonical sorting follows.
     for (i, rule) in config.access.iter().enumerate() {
         let path = format!("/access/{i}");
         selectors(
@@ -294,11 +327,25 @@ pub(super) fn rules(
             check,
         );
         if rule.bidirectional && rule.dst.iter().any(|v| is_external(v)) {
-            check.issue(&path, "bidirectional access requires Mesh endpoints");
+            check.issue(ConfigurationIssue::new(
+                &path,
+                IssueCode::BidirectionalRequiresMesh,
+            ));
         }
         if rule.ip.is_empty() || !rule.ip.iter().all(|s| protocol(s)) {
-            check.issue(format!("{path}/ip"), "invalid protocol/port set");
+            check.issue(ConfigurationIssue::new(
+                format!("{path}/ip"),
+                IssueCode::InvalidPortSet,
+            ));
         }
+    }
+    for rule in &mut config.access {
+        rule.src.sort();
+        rule.src.dedup();
+        rule.dst.sort();
+        rule.dst.dedup();
+        rule.ip.sort();
+        rule.ip.dedup();
     }
     for (i, rule) in config.topology.iter().enumerate() {
         selector(
@@ -321,41 +368,75 @@ pub(super) fn rules(
     let dns = &mut config.dns;
     match domain_name(&dns.domain) {
         Ok(domain) => dns.domain = domain,
-        Err(()) => check.issue("/dns/domain", "invalid DNS domain"),
+        Err(()) => check.issue(ConfigurationIssue::new(
+            "/dns/domain",
+            IssueCode::InvalidDnsDomain,
+        )),
     }
     if dns.override_local && dns.default.is_empty() {
-        check.issue("/dns/default", "overrideLocal requires default resolvers");
+        check.issue(ConfigurationIssue::new(
+            "/dns/default",
+            IssueCode::DnsOverrideRequiresDefault,
+        ));
     }
-    for key in &dns.default {
+    for (index, key) in dns.default.iter().enumerate() {
         if !dns.servers.contains_key(key) {
-            check.issue("/dns/default", "unknown resolver");
+            check.issue(
+                ConfigurationIssue::new(
+                    format!("/dns/default/{index}"),
+                    IssueCode::UnknownResolver,
+                )
+                .with("name", key),
+            );
         }
     }
     for (key, server) in &dns.servers {
         if key.is_empty() || server.server.is_unspecified() || server.server.is_multicast() {
-            check.issue(format!("/dns/servers/{}", pointer(key)), "invalid resolver");
+            check.issue(ConfigurationIssue::new(
+                format!("/dns/servers/{}", pointer(key)),
+                IssueCode::InvalidResolver,
+            ));
         }
     }
     let mut routes = BTreeMap::new();
     for (suffix, resolvers) in std::mem::take(&mut dns.routes) {
         let path = format!("/dns/routes/{}", pointer(&suffix));
-        if resolvers.is_empty() || resolvers.iter().any(|key| !dns.servers.contains_key(key)) {
-            check.issue(&path, "missing or unknown resolver");
+        if resolvers.is_empty() {
+            check.issue(ConfigurationIssue::new(&path, IssueCode::EmptyResolverSet));
+        }
+        for (index, key) in resolvers.iter().enumerate() {
+            if !dns.servers.contains_key(key) {
+                check.issue(
+                    ConfigurationIssue::new(format!("{path}/{index}"), IssueCode::UnknownResolver)
+                        .with("name", key),
+                );
+            }
         }
         match domain_name(&suffix) {
             Ok(suffix) => {
-                if routes.insert(suffix, resolvers).is_some() {
-                    check.issue(path, "duplicate normalized DNS suffix");
+                if routes.insert(suffix.clone(), resolvers).is_some() {
+                    check.issue(
+                        ConfigurationIssue::new(path, IssueCode::DuplicateDnsSuffix)
+                            .with("value", suffix),
+                    );
                 }
             }
-            Err(()) => check.issue(path, "invalid DNS suffix"),
+            Err(()) => check.issue(
+                ConfigurationIssue::new(path, IssueCode::InvalidDnsSuffix).with("value", &suffix),
+            ),
         }
     }
     dns.routes = routes;
-    for suffix in &mut dns.search_domains {
+    for (index, suffix) in dns.search_domains.iter_mut().enumerate() {
         match domain_name(suffix) {
             Ok(value) => *suffix = value,
-            Err(()) => check.issue("/dns/searchDomains", "invalid DNS suffix"),
+            Err(()) => check.issue(
+                ConfigurationIssue::new(
+                    format!("/dns/searchDomains/{index}"),
+                    IssueCode::InvalidDnsSuffix,
+                )
+                .with("value", &*suffix),
+            ),
         }
     }
 }

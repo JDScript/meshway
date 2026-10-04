@@ -212,7 +212,9 @@ test("management SDK exposes membership actions and applies versioned configurat
   const preview = await validateConfiguration(client, path, edit, options);
   assert.ok(preview.ok);
   assert.equal(preview.data.changeCount, 1);
-  assert.deepEqual(preview.data.changes, [{ path: "/access", kind: "changed" }]);
+  assert.deepEqual(preview.data.changes, [{ path: "/access/0", kind: "removed" }]);
+  assert.deepEqual(preview.data.warnings, []);
+  assert.deepEqual(preview.data.affectedNodeIds, []);
   assert.deepEqual(preview.data.preview.access, []);
   const applied = await applyConfiguration(client, path, edit, options);
   assert.ok(applied.ok);

@@ -834,8 +834,12 @@ export const zConfigurationComparison = z.strictObject({
   ["toRevision"]: zRevision
 });
 
+export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","noncanonical_cidr","invalid_dns_domain","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unmanaged_not_fallback","unknown_rule_set","invalid_rule_source","empty_rule_set_key","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","shadowed_rule"]);
+
 export const zConfigurationIssue = z.strictObject({
+  ["code"]: zIssueCode,
   ["message"]: z.string(),
+  ["params"]: typedMap(z.string(), z.string(), {}),
   ["path"]: z.string()
 });
 
@@ -1071,6 +1075,12 @@ export const zConfigurationOperation = z.union([z.strictObject({
   ["type"]: z.enum(["deleteNode"])
 })]);
 
+export const zListenerChange = z.strictObject({
+  ["key"]: z.string(),
+  ["kind"]: zChangeKind,
+  ["nodeId"]: zNodeId
+});
+
 export const zPreparedRuleSet = z.strictObject({
   ["digest"]: zDigest,
   ["entries"]: z.int().gte(0).lte(2147483647)
@@ -1176,16 +1186,20 @@ export const zPreparationRequirement = z.strictObject({
 
 export const zConfigurationPreviewResponse = z.strictObject({
   ["addressChangedNodeIds"]: z.array(zNodeId),
+  ["affectedNodeIds"]: z.array(zNodeId),
   ["baseRevision"]: zRevision,
   ["changeCount"]: z.int().gte(0).lte(2147483647),
+  ["changedListeners"]: z.array(zListenerChange),
   ["changes"]: z.array(zConfigurationChange),
   ["deletedNodeIds"]: z.array(zNodeId),
+  ["identityChangedNodeIds"]: z.array(zNodeId),
   ["preparedRuleSets"]: typedMap(z.string(), zPreparedRuleSet, {}),
   ["preview"]: zConfigurationView,
   ["requestId"]: zRequestId,
   ["requirements"]: z.array(zPreparationRequirement).exactOptional(),
   ["sourceChanged"]: z.boolean(),
   ["unavailableDependencies"]: z.array(zConfigurationIssue),
+  ["warnings"]: z.array(zConfigurationIssue),
   ["willGenerate"]: z.array(zPreparationRequirement).exactOptional()
 });
 

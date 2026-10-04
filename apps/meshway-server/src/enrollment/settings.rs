@@ -1,15 +1,12 @@
 //! Preflight user-supplied admission settings before issuing an enrollment key.
 use crate::{configuration, error::Error, secrets::Sealer};
-use meshway_configuration::ConfigurationIssue;
+use meshway_configuration::{ConfigurationIssue, IssueCode};
 use meshway_model::NetworkId;
 use meshway_protocol::enrollment::InitialNodeSettings;
 use rusqlite::Transaction;
 
-fn invalid(path: String, message: impl Into<String>) -> Error {
-    Error::invalid_configuration(vec![ConfigurationIssue {
-        path,
-        message: message.into(),
-    }])
+fn invalid(issue: ConfigurationIssue) -> Error {
+    Error::invalid_configuration(vec![issue])
 }
 
 pub(crate) fn normalize(
@@ -24,10 +21,10 @@ pub(crate) fn normalize(
             || hostname.contains('.')
             || meshway_transport_spec::normalize_host(hostname).as_ref() != Ok(hostname)
         {
-            return Err(invalid(
-                "/initialSettings/hostname".into(),
-                "expected a single DNS label",
-            ));
+            return Err(invalid(ConfigurationIssue::new(
+                "/initialSettings/hostname",
+                IssueCode::InvalidHostname,
+            )));
         }
     }
     for (key, listener) in &mut settings.listeners {
@@ -36,19 +33,19 @@ pub(crate) fn normalize(
             key.replace('~', "~0").replace('/', "~1")
         );
         if key.is_empty() {
-            return Err(invalid(path, "listener key must not be empty"));
+            return Err(invalid(ConfigurationIssue::new(
+                path,
+                IssueCode::EmptyListenerKey,
+            )));
         }
-        listener
-            .normalize()
-            .map_err(|error| invalid(path.clone(), error.0))?;
+        listener.normalize().map_err(|error| {
+            invalid(
+                ConfigurationIssue::new(&path, IssueCode::InvalidTransport)
+                    .with("reason", error.code()),
+            )
+        })?;
         configuration::materials::prepare_listener_materials(tx, network, listener, sealer, false)
-            .map_err(|error| match error {
-                Error::InvalidConfiguration(_) => invalid(
-                    path,
-                    "listener credentials or TLS certificate/key/name/validity are invalid",
-                ),
-                other => other,
-            })?;
+            .map_err(|error| configuration::materials::at_listener(error, &path))?;
     }
     Ok(())
 }

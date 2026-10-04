@@ -43,8 +43,11 @@ pub fn allocate_addresses(
     for (id, _) in reassign {
         if !input.nodes.contains_key(id) {
             check.issue(
-                format!("/nodes/{id}"),
-                "unknown address reassignment target",
+                ConfigurationIssue::new(
+                    format!("/nodes/{id}"),
+                    IssueCode::UnknownReassignmentTarget,
+                )
+                .with("node", id),
             );
         }
     }
@@ -64,8 +67,11 @@ pub fn allocate_addresses(
                 .find(|ip| !used.contains(&IpAddr::V4(*ip)));
             if selected.is_none() && !v4.is_empty() {
                 check.issue(
-                    format!("/nodes/{id}/addresses/ipv4"),
-                    "no other usable IPv4 address is available",
+                    ConfigurationIssue::new(
+                        format!("/nodes/{id}/addresses/ipv4"),
+                        IssueCode::NoAddressAvailable,
+                    )
+                    .with("family", "ipv4"),
                 );
             }
             used.extend(selected.map(IpAddr::V4));
@@ -79,8 +85,11 @@ pub fn allocate_addresses(
                 .find(|ip| !used.contains(&IpAddr::V6(*ip)));
             if selected.is_none() && !v6.is_empty() {
                 check.issue(
-                    format!("/nodes/{id}/addresses/ipv6"),
-                    "no other usable IPv6 address is available",
+                    ConfigurationIssue::new(
+                        format!("/nodes/{id}/addresses/ipv6"),
+                        IssueCode::NoAddressAvailable,
+                    )
+                    .with("family", "ipv6"),
                 );
             }
             used.extend(selected.map(IpAddr::V6));

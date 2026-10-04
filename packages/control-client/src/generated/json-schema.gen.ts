@@ -1175,14 +1175,31 @@ export const schemaDocument = {
         "type": "object",
         "required": [
           "path",
+          "code",
+          "params",
           "message"
         ],
         "properties": {
+          "code": {
+            "$ref": "#/components/schemas/IssueCode"
+          },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "English rendering of `code`; not for programmatic use."
+          },
+          "params": {
+            "type": "object",
+            "description": "Parameters named by the code's documentation. Always present.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "path": {
-            "type": "string"
+            "type": "string",
+            "description": "JSON pointer into the configuration input; empty for the document."
           }
         },
         "additionalProperties": false
@@ -1581,6 +1598,7 @@ export const schemaDocument = {
         "required": [
           "preparedRuleSets",
           "unavailableDependencies",
+          "warnings",
           "requestId",
           "baseRevision",
           "preview",
@@ -1588,7 +1606,10 @@ export const schemaDocument = {
           "changes",
           "sourceChanged",
           "deletedNodeIds",
-          "addressChangedNodeIds"
+          "addressChangedNodeIds",
+          "identityChangedNodeIds",
+          "changedListeners",
+          "affectedNodeIds"
         ],
         "properties": {
           "addressChangedNodeIds": {
@@ -1597,6 +1618,13 @@ export const schemaDocument = {
               "$ref": "#/components/schemas/NodeId"
             }
           },
+          "affectedNodeIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Nodes whose execution target may change: every node unless all changes\nare confined to node-local display fields (`hostname`, `remark`) and\nthe bindings of unchanged values."
+          },
           "baseRevision": {
             "$ref": "#/components/schemas/Revision"
           },
@@ -1604,6 +1632,13 @@ export const schemaDocument = {
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "changedListeners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ListenerChange"
+            },
+            "description": "Listeners added, removed or changed, including material to be generated."
           },
           "changes": {
             "type": "array",
@@ -1616,6 +1651,13 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/NodeId"
             }
+          },
+          "identityChangedNodeIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Nodes whose identity or its stable binding changes."
           },
           "preparedRuleSets": {
             "type": "object",
@@ -1638,7 +1680,7 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/PreparationRequirement"
             },
-            "description": "Pending material completion/verification; preview is never executable."
+            "description": "Material the author still has to complete or that awaits verification.\nDisjoint from `willGenerate`; preview is never executable."
           },
           "sourceChanged": {
             "type": "boolean"
@@ -1648,6 +1690,13 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/ConfigurationIssue"
             }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationIssue"
+            },
+            "description": "Accepted as written but probably unintended, e.g. a shadowed rule."
           },
           "willGenerate": {
             "type": "array",
@@ -4446,6 +4495,74 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "IssueCode": {
+        "type": "string",
+        "description": "Every diagnostic a configuration check can report. Clients localize by\ncode and parameters; `message` is the English rendering of the same.",
+        "enum": [
+          "invalid_jsonc",
+          "invalid_shape",
+          "incomplete_version",
+          "unknown_user",
+          "invalid_group_name",
+          "invalid_tag_name",
+          "unknown_group",
+          "unknown_tag",
+          "duplicate_tag",
+          "identity_membership_missing",
+          "empty_tag_identity",
+          "unknown_node",
+          "unknown_node_selector",
+          "retained_membership_inactive",
+          "empty_selector_set",
+          "bidirectional_requires_mesh",
+          "invalid_port_set",
+          "invalid_domain_suffix",
+          "noncanonical_cidr",
+          "invalid_dns_domain",
+          "dns_override_requires_default",
+          "unknown_resolver",
+          "invalid_resolver",
+          "empty_resolver_set",
+          "duplicate_dns_suffix",
+          "invalid_dns_suffix",
+          "invalid_hostname",
+          "duplicate_hostname",
+          "empty_listener_key",
+          "invalid_transport",
+          "invalid_listener_materials",
+          "overlapping_pools",
+          "invalid_pool",
+          "address_outside_pool",
+          "duplicate_address",
+          "unknown_reassignment_target",
+          "no_address_available",
+          "repeated_required_node",
+          "empty_exit_set",
+          "repeated_exit",
+          "exit_not_enabled",
+          "invalid_destination_cidr",
+          "empty_route_match",
+          "unmanaged_not_fallback",
+          "unknown_rule_set",
+          "invalid_rule_source",
+          "empty_rule_set_key",
+          "empty_inline_rule_set",
+          "rule_set_budget",
+          "rule_set_unavailable",
+          "rule_set_timeout",
+          "reserved_profile_name",
+          "unknown_profile",
+          "default_not_allowed",
+          "auto_target_not_allowed",
+          "auto_target_unknown",
+          "conflicting_assignments",
+          "invalid_country_code",
+          "exit_outside_access",
+          "global_exit_requires_internet",
+          "exit_fallback_requires_internet",
+          "shadowed_rule"
+        ]
+      },
       "JoinLinkActions": {
         "type": "object",
         "required": [
@@ -5001,6 +5118,26 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ]
+      },
+      "ListenerChange": {
+        "type": "object",
+        "required": [
+          "nodeId",
+          "key",
+          "kind"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChangeKind"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
       },
       "ListenerDelta": {
         "type": "object",

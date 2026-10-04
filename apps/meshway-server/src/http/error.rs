@@ -314,10 +314,10 @@ impl HttpError {
             ConfigurationError::Invalid(issues) => (issues, Vec::new()),
             ConfigurationError::PreparationRequired(requirements) => (Vec::new(), requirements),
             ConfigurationError::Parse => (
-                vec![meshway_configuration::ConfigurationIssue {
-                    path: "".into(),
-                    message: "Invalid JSONC document or configuration field shape.".into(),
-                }],
+                vec![meshway_configuration::ConfigurationIssue::new(
+                    "",
+                    meshway_configuration::IssueCode::IncompleteVersion,
+                )],
                 Vec::new(),
             ),
             ConfigurationError::Serialization => return Self::unavailable(Some(id)),
