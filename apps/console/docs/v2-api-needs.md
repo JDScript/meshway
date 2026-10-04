@@ -46,7 +46,7 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `ece13cfc`）
+## 接入状态（后端 `5cfa1b9c`）
 
 console 已接入：
 
@@ -60,13 +60,34 @@ console 已接入：
 - 规则集；
 - 观测历史（概览上的历史层和节点"延迟"页）。
 
-`ece13cfc` 带来的变化，console 还没有跟上：
+后端新增或修正、console 已跟上：
 
-- **主动观察**（`createObservation`、`getObservation`、`listObservations`、`renewObservation`、`cancelObservation` 及对应的 SSE 事件）尚未接入。
-- **规则集**：现在一次 apply 就能新增并引用远程规则集，validate 返回 `preparedRuleSets`。console 页面上写的"先保存不引用的定义，再刷新，最后引用"已经过时。
-- **设备授权**：`deny` 改为由批准者在设备兑换前撤回自己的批准。console 仍在待批准的请求上提供"拒绝"。
+- 默认值的修改只发送改动的字段。
+- 设备请求的结束状态区分 `withdrawn`（批准者撤回）和 `cancelled`（设备取消）。
+- 接入密钥列表的新查询参数。
+- 四个加入链接错误码的文案。
 
-后端在 `ece13cfc` 之后的提交（`f43ab25f` 起）console 尚未接入，下面的问题仍按 `ece13cfc` 记录。
+后端新增或修正、console 还没有跟上：
+
+- **主动观察**：`createObservation`、`getObservation`、`listObservations`、`renewObservation`、`cancelObservation`，以及对应的 SSE 事件。
+- **规则集**：一次 apply 就能新增并引用远程规则集，validate 返回 `preparedRuleSets`。页面上"先保存不引用的定义，再刷新，最后引用"的说明已经过时。
+- **设备授权**：
+  - 改用 `DeviceAuthorizationView`，其中 `approval` 只返回给批准者，以及所批准网络的现任管理员；
+  - `deny` 只用于批准者在兑换前撤回批准，待批准的请求不再提供拒绝；
+  - 请求带 `existing` 绑定（重新登录）和 `returnMethod`。
+- **加入链接**：
+  - 可签发的角色改用 `NetworkActions.joinLinkRoles`，撤销按钮改看 `actions.revoke`；
+  - 列表改为倒序并带 `total`；
+  - `inspect` 区分已使用、已撤销、已过期和签发者已失权，有效链接带 `alreadyMember`。
+- **接入密钥**：
+  - 分页，带 `total`；
+  - 显示 `createdBy`、`consumedAt`、`nodeId`、`initialSettings` 摘要；
+  - 撤销按钮改看 `actions.revoke`。
+- **节点**：
+  - 两把密钥分别有吊销权限，并带创建时间；
+  - `desiredExecution` 是当前的期望执行，不代表已应用；
+  - 成员可以用 `getNodeSettings` 读取自己的设备设置。
+- **活动**：actor 带发生时的邮箱快照。
 
 ## 尚未提供的接口
 
@@ -80,10 +101,29 @@ console 已接入：
 
 ## 待处理的问题
 
+以下按 `5cfa1b9c` 核对。
+
+**`5cfa1b9c` 已修复的问题**（不再跟踪）：
+
+- `DefaultsUpdate.dialers` 改为可省略。
+- 没有目标节点时，apply 返回 `publicationIds: []`。
+- `request_id_conflict`、`version_conflict`、`state_conflict` 各自返回。
+- 加入链接 `inspect` 区分各种失效状态。
+- 补齐了加入链接、接入密钥和节点密钥的 actions。
+- 补齐了字段：
+  - 设备请求的 `existing` 和 `returnMethod`；
+  - 批准信息；
+  - 接入密钥的创建人、使用时间、接入后的节点和预设摘要；
+  - 密钥的创建时间；
+  - 活动 actor 的邮箱快照。
+- 加入链接和接入密钥的列表带 `total`，并按倒序分页。
+- 成员可读自己设备的设置（`getNodeSettings`）。
+- 承载目录的 schema 名称说明。
+
 ### 影响功能或安全
 
 1. **OpenAPI 组件重名，生成物已经错了。** `crates/configuration` 和 `crates/model` 各有一个 `UnavailableReason`，导出时后者覆盖了前者。结果 Agent API 里 `DemandDecision` 的 `unavailable.reason` 只剩 `datasetUnavailable` 和 `lookupFailed`，原来的 `unauthorized`、`noPath` 等都没了，生成的客户端也跟着错。导出时应检测重名并直接失败。
-2. **成员读不到自己设备的配置。** `getConfiguration` 对成员仍返回 403，成员自己节点的设置只出现在 SSE 的 `config.snapshot` 里，没有对应的 GET。`configuration.changed` 之后也不会重发成员视图，console 只能断开重连，做一次完整同步。
+2. **成员的配置视图不会更新。** `configuration.changed` 之后不会重发成员的节点设置，console 只能断开重连做完整同步，或者重新调用 `getNodeSettings`。
 3. **SSE**
    - 从不发送 `stream.closed`：会话过期、被移除、角色变化时，连接都只是 EOF 结束。console 要靠重连拿到 401 或 404 才知道原因。
    - 每个会话每个网络最多 4 条流，已断开的订阅还要占名额 1 分钟。刷新几次或开多个标签页，就会连续收到约 1 分钟的 429。
@@ -92,59 +132,36 @@ console 已接入：
 4. **部署与执行**
    - 节点应用配置后如果重新 acquire instance，在原版本中它会被标为 `superseded`，并一直显示"未回报"，实际上它已经应用。
    - 任何节点发起 demand 都会重新发布整网配置。其他节点立刻变成 `config_mismatch`，links 变成 `expired`，直到它们重新上报。报告有效期只有 60 秒，概览上的状态因此反复跳动。
-   - 网络里没有节点时，apply 仍返回 1 个空 publication。
-5. **需要生成材料的配置无法预览。** 新增 VLESS listener，或者删除后重建（轮换）时，validate 直接返回 422 requirements（uuid、certificate、privateKey、certificateValidation），拿不到 preview。这与 editing.md 写的"预览中显示将生成"不一致，界面因此无法完成新增 VLESS。
-6. **`DefaultsUpdate.dialers` 是必填。** 只改 `defaults.topology` 也得把 dialers 原样带回，可能覆盖别人同时做的修改。建议改为可省略，省略即保持原值。
-7. **GeoIP/ASN 数据集没有部署入口。** `IpDatasets::install` 没有调用方，所以所有节点都没有位置。
-8. **设备授权的浏览器链接格式没有定义。** console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
+5. **需要生成材料的配置无法预览。** 新增 VLESS listener，或者删除后重建（轮换）时，validate 仍直接返回 422 requirements（uuid、certificate、privateKey、certificateValidation），拿不到 preview。这与 editing.md 写的"预览中显示将生成"不一致，界面因此无法完成新增 VLESS。
+6. **GeoIP/ASN 数据集没有部署入口。** `IpDatasets::install` 没有调用方，所以所有节点都没有位置。
+7. **设备授权的浏览器链接格式没有定义。** console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
 
 ### 契约和字段
 
-9. **配置诊断**
+8. **配置诊断**
    - `ConfigurationIssue` 只有英文 message，没有 code 和 params，无法本地化。
    - 路径只到集合一级，解析错误时 path 为空。节点级的出口授权问题挂在 `/nodes/<id>` 上，指不到具体的规则或方案。
    - 没有 warning 通道，无法提示被前面规则完全遮挡的规则。
    - 数组变化只按整体报告。
    - 预览缺 `affectedNodeIds`、`identityChangedNodeIds` 和 `changedListeners`；删除节点时，该节点也会出现在 `addressChangedNodeIds` 里。
-10. **配置操作**：`unmanaged` 在普通规则里会被拒绝，但 schema 允许它出现。
-11. **Listener**
-    - `ListenerView` 只给出 WebSocket 响应头的名字，而 `ListenerUpdate` 整体替换、不继承旧值，所以表单没法在保留这些响应头的前提下修改监听。
+9. **配置操作**：`unmanaged` 在普通规则里会被拒绝，但 schema 允许它出现。
+10. **Listener**
+    - `ListenerView` 只给出 WebSocket 响应头的名字，而 `ListenerUpdate` 整体替换、不继承旧值，所以表单没法在保留这些响应头的前提下修改监听。editing.md 现在写明 dialer 更新时省略 headers 表示保持，listener 是否同理需要确认。
     - 托管证书模式下修改 `serverName` 时，`inherit_materials` 可能沿用旧证书。这是读代码推断的，没有验证。
-    - 承载目录的 `listenerSchema` 只是一个类型名。目录里列了 trojan，但文档写的是尚未托管。
-12. **权限 actions**
-    - `NetworkActions` 没有"可以签发哪些角色的加入链接"。
-    - `JoinLinkView` 没有撤销权限。
-    - 节点只有 `canDelete`，吊销密钥没有单独的权限。
-    - 接入密钥没有 actions。console 暂按 `editConfiguration` 判断，而 controller 实际按 owner/admin 检查。
-13. **错误码与幂等**
-
-    | 场景 | 现在返回 | 应返回 |
-    | --- | --- | --- |
-    | 同一 requestId 带不同请求体提交配置 | `revision_conflict` | `request_id_conflict` |
-    | `revokeNodeKey` 代数不匹配 | `request_id_conflict` | 版本冲突类 |
-    | 设备批准时请求已不是待批准状态 | `request_id_conflict` | 状态冲突类 |
-    | `removeMember` 的 version 或 revision 不匹配 | 一律 `version_conflict` | 分别返回，revision 不匹配时用 `revision_conflict` |
-    | 账户会话、活动的游标失效 | `invalid_request` | `invalid_cursor`（与网络列表一致） |
-
-    另外两处：
-    - `inspectJoinLink` 不区分已使用、已撤销、已过期和签发者已失权；"已是成员"要到 redeem 时才报。
+11. **错误码与幂等**
+    - `removeMember` 的 version 或 revision 不匹配时一律返回 `version_conflict`；revision 不匹配应返回 `revision_conflict`。
+    - 账户会话、活动的游标失效时返回 `invalid_request`，应与网络列表一致，返回 `invalid_cursor`。
     - `refreshRuleSet` 没有请求体，也就没有 requestId，重试会重新下载。
-14. **缺少的字段**
-    - `EnrollmentRequestView`：缺 `existing` 绑定、批准者和批准进的网络、系统、Agent 版本、返回方式。设备取消和用户拒绝都写 `denied_at`，无法区分。
-    - `EnrollmentKeyView`：缺使用时间、创建人、接入后的节点 ID，以及 hostname 和 listener 摘要。
-    - `BoundNodeKey`：缺创建时间。
+12. **缺少的字段**
+    - 设备请求没有系统和 Agent 版本。后端说明这是有意不在 intent 里提供，console 不显示。如果以后需要，要加进签名的 intent。
     - 成员视角的 StateView 不给对端节点的主机名。
-    - 网络活动的 actor 只有 userId，已离开的成员无法显示为邮箱。
-    - 列表：加入链接列表没有 total，而且按创建时间正序；接入密钥列表没有分页，超过 1000 条返回 503 `busy`。
-15. **历史**
+13. **历史**
     - `HistoryBucket` 没有 `peerNodeId`，而且按 instance 和 publication 拆开。每次 demand 都会重新发布，同一条曲线因此被切碎，console 端做了合并。
     - `RecentLink` 没有 RTT 和关闭原因。
     - 一次查询最多 10000 行，计数在按 kind 或节点过滤之前做，繁忙的网络即使只查一个节点也会收到 429。
     - 窗口外的清理记录也会返回。bucket 把 `pending` 计入 `failed`，语义不明确。
-16. **规则集**：检查失败的记录不跨版本保留，换到新版本后变成 `not_ready`、`checkedAt: null`；成功的绑定则会延续。
-17. **双向同时拨号**：两端都报告自己是发起方时，link 被判为 `conflicting`，`inUse` 变成 null。这种情况需要定义。
-18. **给 Agent 实现方的提醒**
-    - 接入签名的 intent digest 必须包含 `existing: null`，而生成的 zod 把这个字段标为可省略。
-    - 每个节点最多 8 个会话、8 个 challenge。
-19. **SDK**：`transport.ts` 用了 DOM 类型 `ReadableStreamReadResult`，只带 Node 类型的 TS 项目编译不过。
-20. **部署**：`--listen` 的默认值仍是 `127.0.0.1:8420`，与现在运行的旧服务冲突。
+14. **规则集**：检查失败的记录不跨版本保留，换到新版本后变成 `not_ready`、`checkedAt: null`；成功的绑定则会延续。
+15. **双向同时拨号**：两端都报告自己是发起方时，link 被判为 `conflicting`，`inUse` 变成 null。这种情况需要定义。
+16. **给 Agent 实现方的提醒**：每个节点最多 8 个会话、8 个 challenge。
+17. **SDK**：`transport.ts` 用了 DOM 类型 `ReadableStreamReadResult`，只带 Node 类型的 TS 项目编译不过。
+18. **部署**：`--listen` 的默认值仍是 `127.0.0.1:8420`，与现在运行的旧服务冲突。
