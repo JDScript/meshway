@@ -84,6 +84,7 @@ test("the same revision read again keeps what was checked", () => {
       { path: "/dns", code: "invalid_dns_domain", params: {}, message: "x" },
     ],
     requirements: [],
+    warnings: [],
   })
   assert.equal(loadSource(entry, SOURCE), entry)
 })
@@ -100,6 +101,7 @@ test("discarding returns to the source and forgets the check", () => {
       },
     ],
     requirements: [],
+    warnings: [],
   })
   const discarded = discardEdits(edited)
   assert.ok(discarded)
@@ -120,6 +122,7 @@ test("a check is kept beside later edits, and only counts for its own input", ()
       },
     ],
     requirements: [],
+    warnings: [],
   })
   assert.equal(checkedNow(entry), entry.checked)
   const later = editText(entry, "{  }")

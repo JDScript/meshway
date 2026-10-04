@@ -1,5 +1,4 @@
 import type {
-  ResourceProblem,
   RuleSet,
   RuleSetFormat,
   RuleSetView,
@@ -21,10 +20,12 @@ import {
   notesWithin,
   refusedAt,
   RemoveButton,
+  setRefusal,
   type Note,
 } from "@/components/configuration/form-kit"
 import { Button } from "@/components/ui/button"
 import { useNow } from "@/hooks/use-now"
+import { RESOURCE_PROBLEM } from "@/lib/configuration/diagnostics"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { withEntry, without } from "@/lib/configuration/keyed"
 import {
@@ -43,18 +44,6 @@ import { m } from "@/paraglide/messages.js"
 
 import { AddKey, KeyInput, type KeyRule } from "./keyed-form"
 import { destinationChips } from "./route-kit"
-
-const PROBLEM: Record<ResourceProblem, () => string> = {
-  download_failed: () => m.configuration_ruleset_problem_download_failed(),
-  invalid_source: () => m.configuration_ruleset_problem_invalid_source(),
-  too_large: () => m.configuration_ruleset_problem_too_large(),
-  conversion_failed: () => m.configuration_ruleset_problem_conversion_failed(),
-  configuration_changed: () =>
-    m.configuration_ruleset_problem_configuration_changed(),
-  budget_exceeded: () => m.configuration_ruleset_problem_budget_exceeded(),
-  not_ready: () => m.configuration_ruleset_problem_not_ready(),
-  validation_failed: () => m.configuration_ruleset_problem_validation_failed(),
-}
 
 const FORMAT: Record<RuleSetFormat, () => string> = {
   "sing-box-source": () => m.configuration_ruleset_format_sing_box(),
@@ -250,7 +239,10 @@ function RuleSetCard({
           label={m.configuration_ruleset_entries()}
           addLabel={m.configuration_ruleset_entries_add()}
           editable={editable}
-          invalid={refusedAt(notes, at())}
+          invalid={setRefusal(notes, at(), [
+            ["domainSuffix", set.domainSuffix?.length ?? 0],
+            ["ipCIDR", set.ipCIDR?.length ?? 0],
+          ])}
           onChange={(values) => onChange(inlineOf(values))}
         />
       ) : (
@@ -463,7 +455,7 @@ function StatusBlock({
               : "text-destructive"
           )}
         >
-          {PROBLEM[view.problem]()}
+          {RESOURCE_PROBLEM[view.problem]()}
         </p>
       ) : null}
       {shownFacts.length > 0 ? (

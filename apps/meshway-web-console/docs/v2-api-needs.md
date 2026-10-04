@@ -49,11 +49,12 @@
 
 ## 接入状态（后端 `8823cbec`，含配置契约变更 `e988b669`）
 
-console 已接入 `/api/v1` 下全部 66 个 Console 操作：
+console 已接入 `/api/v1` 下全部 Console 操作：
 
 - 账户、会话和账户活动（邮箱修改显示原邮箱）；
 - 网络、成员、加入链接（签发人、使用者）和网络活动；
 - 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
 - 接入密钥和设备授权；
 - 按 revision 的部署进度；
@@ -63,13 +64,6 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - 主动路径观察。
 
 撤销已失效的加入链接、接入密钥，以及重复吊销节点密钥时的 409 `state_conflict`，console 提示"这次没有撤销"并重读列表。
-
-契约已提供、console 尚未接入（下一步）：
-
-- `ConfigurationIssue` 的 `code`／`params`：console 仍显示英文 `message`，规则集的 `rule_set_unavailable`、`rule_set_budget`、`rule_set_timeout` 也一样。
-- `warnings`（`shadowed_rule { by }`）：尚未显示。
-- 预览的 `identityChangedNodeIds`、`changedListeners`、`affectedNodeIds`：应用确认里尚未使用；`requirements` 与 `willGenerate` 已不相交，console 那边的去重可以去掉。
-- 精确到元素的 pointer：字段标红已包括其元素上的问题（`/access/1/src/0` 标红 `/access/1/src`），还没有标到单个值上。
 
 ## 尚未提供的接口
 

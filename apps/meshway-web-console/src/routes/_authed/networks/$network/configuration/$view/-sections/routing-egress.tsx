@@ -6,8 +6,8 @@ import { ChipSetField } from "@/components/configuration/chips"
 import {
   AddButton,
   notesWithin,
-  refusedAt,
   RuleRow,
+  setRefusal,
   type Note,
 } from "@/components/configuration/form-kit"
 import { pointerOf, type JsonPath } from "@/lib/configuration/jsonc"
@@ -35,6 +35,7 @@ function setNotes(
       path,
       message: m.configuration_routing_set_note_unknown({ key }),
       origin: "local" as const,
+      severity: "error" as const,
     }))
 }
 
@@ -111,9 +112,14 @@ export function EgressRules({
                   label={m.configuration_routing_match()}
                   addLabel={m.configuration_routing_match_add()}
                   editable={editable}
-                  invalid={refusedAt(
+                  invalid={setRefusal(
                     notes,
-                    pointerOf([...path, index, "match"])
+                    pointerOf([...path, index, "match"]),
+                    [
+                      ["domainSuffix", rule.match.domainSuffix?.length ?? 0],
+                      ["ipCIDR", rule.match.ipCIDR?.length ?? 0],
+                      ["ruleSets", rule.match.ruleSets?.length ?? 0],
+                    ]
                   )}
                   onChange={(values) =>
                     update(index, { ...rule, match: matchOf(values) })

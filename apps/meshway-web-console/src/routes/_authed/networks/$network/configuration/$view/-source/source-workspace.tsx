@@ -31,6 +31,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Skeleton } from "@/components/ui/skeleton"
+import { nodeNamer } from "@/lib/configuration/diagnostics"
 import {
   holdsOperations,
   isOutdated,
@@ -59,6 +60,7 @@ const SEVERITY = {
   syntax: "error",
   schema: "warning",
   controller: "error",
+  warning: "warning",
 } as const
 
 /**
@@ -129,8 +131,13 @@ export function SourceWorkspace({
     () =>
       text === null
         ? null
-        : readSource(text, schema.data ?? null, entry?.checked ?? null),
-    [text, schema.data, entry?.checked]
+        : readSource(
+            text,
+            schema.data ?? null,
+            entry?.checked ?? null,
+            nodeNamer(configuration.data?.configuration.nodes ?? {})
+          ),
+    [text, schema.data, entry?.checked, configuration.data]
   )
   const outdated = isOutdated(entry, current)
 
@@ -227,9 +234,12 @@ function SourceEditor({
   const [editor, setEditor] = useState<EditorHandle | null>(null)
   const all = useMemo(
     () =>
-      [...problems.syntax, ...problems.schema, ...problems.controller].sort(
-        (a, b) => a.from - b.from
-      ),
+      [
+        ...problems.syntax,
+        ...problems.schema,
+        ...problems.controller,
+        ...problems.warnings,
+      ].sort((a, b) => a.from - b.from),
     [problems]
   )
   const marks: EditorMark[] = useMemo(
@@ -238,7 +248,8 @@ function SourceEditor({
         from: problem.from,
         to: problem.to,
         severity:
-          problem.origin === "controller" && problems.stale
+          (problem.origin === "controller" || problem.origin === "warning") &&
+          problems.stale
             ? "info"
             : SEVERITY[problem.origin],
         message: problem.message,
@@ -384,9 +395,14 @@ function ProblemList({
   onJump: (problem: SourceProblem) => void
 }) {
   const [open, setOpen] = useState(false)
-  const listed = [...problems.controller, ...problems.schema]
+  const listed = [
+    ...problems.controller,
+    ...problems.warnings,
+    ...problems.schema,
+  ]
   const schemaCount = problems.schema.length
   const controllerCount = problems.controller.length
+  const warningCount = problems.warnings.length
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -406,6 +422,17 @@ function ProblemList({
                   count: controllerCount,
                 })
               : m.configuration_source_controller({ count: controllerCount })}
+          </span>
+        ) : null}
+        {warningCount > 0 ? (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1",
+              problems.stale ? "text-muted-foreground" : "text-warning"
+            )}
+          >
+            <CircleAlertIcon aria-hidden="true" className="size-3" />
+            {m.configuration_source_warnings({ count: warningCount })}
           </span>
         ) : null}
         {schemaCount > 0 ? (
@@ -445,7 +472,11 @@ function ProblemList({
                       aria-hidden="true"
                       className={cn(
                         "size-3 shrink-0",
-                        problems.stale ? undefined : "text-destructive"
+                        problems.stale
+                          ? undefined
+                          : problem.origin === "warning"
+                            ? "text-warning"
+                            : "text-destructive"
                       )}
                     />
                   )}

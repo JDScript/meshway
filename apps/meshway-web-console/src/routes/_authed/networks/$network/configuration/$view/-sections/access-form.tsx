@@ -7,11 +7,11 @@ import {
   NoneLine,
   notesWithin,
   protocolChips,
-  refusedAt,
   RemarkInput,
   RemoveButton,
   RuleRow,
   selectorChips,
+  setRefusal,
   type Names,
   type Note,
 } from "@/components/configuration/form-kit"
@@ -89,7 +89,7 @@ export function AccessForm({
                   label={m.configuration_access_src()}
                   addLabel={m.configuration_access_src_add()}
                   editable={editable}
-                  invalid={refusedAt(notes, at("src"))}
+                  invalid={setRefusal(notes, at("src"))}
                   onChange={(src) => update(index, { ...rule, src })}
                 />
                 {/* The direction keeps to the destinations when the row wraps. */}
@@ -107,7 +107,7 @@ export function AccessForm({
                     label={m.configuration_access_dst()}
                     addLabel={m.configuration_access_dst_add()}
                     editable={editable}
-                    invalid={refusedAt(notes, at("dst"))}
+                    invalid={setRefusal(notes, at("dst"))}
                     onChange={(dst) => update(index, { ...rule, dst })}
                   />
                 </span>
@@ -123,7 +123,7 @@ export function AccessForm({
                   label={m.configuration_access_ip()}
                   addLabel={m.configuration_access_ip_add()}
                   editable={editable}
-                  invalid={refusedAt(notes, at("ip"))}
+                  invalid={setRefusal(notes, at("ip"))}
                   onChange={(ip) => update(index, { ...rule, ip })}
                 />
               </RuleRow>

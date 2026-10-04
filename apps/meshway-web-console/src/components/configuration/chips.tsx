@@ -304,6 +304,9 @@ export function ChipField({
   )
 }
 
+/** A set refused as a whole (a note on it or in it), and by index the values a note is on. */
+export type SetRefusal = { set: boolean; values: ReadonlySet<number> }
+
 /** A set of values: each chip replaces or removes itself; one more is added at the end. */
 export function ChipSetField({
   values,
@@ -311,7 +314,7 @@ export function ChipSetField({
   label,
   addLabel,
   editable,
-  invalid = false,
+  invalid,
   onChange,
 }: {
   values: readonly string[]
@@ -319,17 +322,18 @@ export function ChipSetField({
   label: string
   addLabel: string
   editable: boolean
-  /** The set as a whole is refused. */
-  invalid?: boolean
+  /** How the set is refused: as a whole, and which of its values. */
+  invalid?: SetRefusal
   onChange: (values: string[]) => void
 }) {
+  const whole = invalid?.set ?? false
   return (
     <span
       role="group"
       aria-label={label}
       className={cn(
         "inline-flex min-h-7 min-w-0 flex-wrap items-center gap-1 rounded-full",
-        invalid && values.length === 0 && "ring-1 ring-destructive/60"
+        whole && values.length === 0 && "ring-1 ring-destructive/60"
       )}
     >
       {values.length === 0 && !editable ? (
@@ -339,7 +343,10 @@ export function ChipSetField({
       ) : null}
       {values.map((value, index) => {
         const shown = kind.show(value)
-        const bad = invalid && !kind.accepts(value)
+        // A value a note is on, or (the set refused) one of no kind.
+        const bad =
+          (invalid?.values.has(index) ?? false) ||
+          (whole && !kind.accepts(value))
         if (!editable)
           return (
             <span

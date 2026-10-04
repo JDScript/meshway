@@ -1,9 +1,9 @@
 import { ChipSetField, type ChipKind } from "@/components/configuration/chips"
 import {
   notesWithin,
-  refusedAt,
   RemoveButton,
   RuleRow,
+  setRefusal,
   type Note,
 } from "@/components/configuration/form-kit"
 import { pointerOf } from "@/lib/configuration/jsonc"
@@ -96,7 +96,7 @@ export function GroupsForm({
                       : m.configuration_tag_owners_add()
                   }
                   editable={editable}
-                  invalid={refusedAt(notes, at)}
+                  invalid={setRefusal(notes, at)}
                   onChange={(next) => onChange(withEntry(map, key, next))}
                 />
               </RuleRow>

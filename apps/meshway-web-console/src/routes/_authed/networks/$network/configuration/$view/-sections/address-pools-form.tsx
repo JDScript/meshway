@@ -6,7 +6,7 @@ import {
   Notes,
   notesWithin,
   prefixChips,
-  refusedAt,
+  setRefusal,
   type Note,
 } from "@/components/configuration/form-kit"
 import { within } from "@/lib/configuration/form-problems"
@@ -41,7 +41,7 @@ export function AddressPoolsForm({
               label={label}
               addLabel={m.configuration_pool_add({ family: label })}
               editable={editable}
-              invalid={refusedAt(notes, at)}
+              invalid={setRefusal(notes, at)}
               onChange={(next) => onChange({ ...pools, [family]: next })}
             />
             <Notes notes={notesWithin(notes, at)} />
