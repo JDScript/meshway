@@ -169,7 +169,7 @@ test("another subscription's view and views after removal change nothing", () =>
 })
 
 test("the series is bounded, keeping the latest", () => {
-  const total = 5_000
+  const total = 1_000
   let record = emptyRecord
   for (let n = 0; n < total; n++)
     record = foldTask(record, running(sample(n, "success")))

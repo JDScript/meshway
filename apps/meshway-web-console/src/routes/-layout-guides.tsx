@@ -10,7 +10,6 @@ import {
   PAGE_LEFT,
   PAGE_WIDTH,
   PANEL_TOP,
-  PEEK_WIDTH,
   WORKSPACE_LEFT,
 } from "@/components/surface/layout"
 import { useIsMobile } from "@/hooks/use-media-query"
@@ -55,7 +54,6 @@ export function LayoutGuides() {
         { at: PAGE_LEFT, label: "page", tone: "panel" },
         { at: PAGE_LEFT + PAGE_WIDTH, label: "page end", tone: "panel" },
         { at: WORKSPACE_LEFT, label: "workspace", tone: "panel" },
-        { at: width - EDGE - PEEK_WIDTH, label: "peek", tone: "panel" },
         { at: width - EDGE, label: "edge", tone: "edge" },
       ]
   const horizontal: Guide[] = mobile

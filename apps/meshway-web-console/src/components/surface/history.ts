@@ -8,7 +8,7 @@ import { useMemo } from "react"
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
-    /** On an entry pushed to open a peek, a workspace or a page sheet: closing it goes back. */
+    /** On an entry pushed to open a workspace or a page sheet: closing it goes back. */
     opened?: true
     /**
      * On phones, from the moment a page sheet opens over the overview: the

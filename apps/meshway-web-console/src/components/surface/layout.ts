@@ -8,7 +8,6 @@ import type { Insets } from "@/state/globe"
 //   chrome     always: network card top left, preferences top right, the dock
 //              (phones: preferences top right; the launcher and the card at the bottom)
 //   page       one at a time, left of the free space (a list)
-//   peek       the overview's quick look at one node, right
 //   workspace  one entity in full, covering the globe right of the page panel
 
 export const EDGE = 20
@@ -20,7 +19,6 @@ export const DOCK_WIDTH = 48
 export const PAGE_LEFT = EDGE + DOCK_WIDTH + GAP
 export const PAGE_WIDTH = 340
 export const WORKSPACE_LEFT = PAGE_LEFT + PAGE_WIDTH + GAP
-export const PEEK_WIDTH = 380
 
 /** On small screens one inset for everything: the top bar, the bottom bar and the sheets. */
 export const MOBILE_EDGE = 12
@@ -35,7 +33,6 @@ const MOBILE_BAR_SPACE = MOBILE_EDGE + BAR_HEIGHT
 export const MOBILE_SHEET_BOTTOM = MOBILE_BAR_SPACE + MOBILE_EDGE
 /** Share of the viewport height the bottom sheets take on small screens. */
 export const MOBILE_PAGE_HEIGHT = 0.52
-const MOBILE_PEEK_HEIGHT = 0.6
 
 /** A bottom sheet leaving through the screen's edge travels this much further, so its shadow goes too. */
 export const SHEET_EXIT_OVERSHOOT = 2
@@ -63,7 +60,6 @@ export const LAYOUT_VARIABLES: Record<`--${string}`, string> = {
 export type Arrangement = {
   mobile: boolean
   page: boolean
-  peek: boolean
   workspace: boolean
   viewportHeight: number
 }
@@ -72,20 +68,18 @@ export type Arrangement = {
 export function globeLayout({
   mobile,
   page,
-  peek,
   workspace,
   viewportHeight,
 }: Arrangement): { insets: Insets; recede: boolean } {
   if (mobile) {
-    const share = peek ? MOBILE_PEEK_HEIGHT : page ? MOBILE_PAGE_HEIGHT : 0
     return {
       insets: {
         top: 0,
         right: 0,
-        bottom:
-          share > 0
-            ? Math.round(share * viewportHeight) + MOBILE_SHEET_BOTTOM
-            : MOBILE_BAR_SPACE,
+        bottom: page
+          ? Math.round(MOBILE_PAGE_HEIGHT * viewportHeight) +
+            MOBILE_SHEET_BOTTOM
+          : MOBILE_BAR_SPACE,
         left: 0,
       },
       recede: workspace,
@@ -95,7 +89,7 @@ export function globeLayout({
     // Under a workspace the globe keeps the place it had beside the page panel.
     insets: {
       top: 0,
-      right: peek ? PEEK_WIDTH + EDGE + GAP : 0,
+      right: 0,
       bottom: 0,
       left: page ? WORKSPACE_LEFT : 0,
     },

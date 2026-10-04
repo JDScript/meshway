@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 const TITLE = { md: "text-xl", lg: "text-display" } as const
 
 /**
- * The head of a peek or a workspace: the title and the close control share
+ * The head of a workspace: the title and the close control share
  * one centred line; facts about the entity sit below. The header uses the
  * surface's own inset, the same as the content under it.
  */

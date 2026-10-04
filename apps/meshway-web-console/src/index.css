@@ -14,7 +14,7 @@
 @theme static {
   /* Page panels and popovers over the globe. */
   --radius-surface: 22px;
-  /* The peek, workspaces and the sign-in card. */
+  /* Workspaces and the sign-in card. */
   --radius-sheet: 28px;
   /* Rows 8px inside a 22px surface (22 − 8). */
   --radius-row: 14px;

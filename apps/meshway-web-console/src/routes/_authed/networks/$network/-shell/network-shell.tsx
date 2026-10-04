@@ -52,7 +52,6 @@ export function NetworkShell({
       globeLayout({
         mobile,
         page: ready && PAGES[page].panel,
-        peek: false,
         workspace: ready && workspaceOpen,
         viewportHeight,
       }),
