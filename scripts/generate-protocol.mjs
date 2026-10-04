@@ -226,6 +226,23 @@ export function validators(document) {
         const { minimum, maximum } = integerBounds(schema);
         return `z.int().gte(${minimum}).lte(${maximum})`;
       }
+      case "number": {
+        keys(schema, ["type", "format", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]);
+        if (schema.format !== undefined && schema.format !== "double") throw new Error("Only binary64 number schemas are supported");
+        for (const key of ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]) {
+          if (schema[key] !== undefined && !Number.isFinite(schema[key])) throw new Error(`Invalid number ${key}`);
+        }
+        const lower = Math.max(schema.minimum ?? -Infinity, schema.exclusiveMinimum ?? -Infinity);
+        const upper = Math.min(schema.maximum ?? Infinity, schema.exclusiveMaximum ?? Infinity);
+        if (lower > upper || (lower === upper && (schema.exclusiveMinimum === lower || schema.exclusiveMaximum === upper))) throw new Error("Empty number range");
+        // Zod numbers reject NaN/Infinity. JSON and Rust f64 use the same finite
+        // binary64 representation; integer schemas retain their separate safe bounds.
+        let code = "z.number()";
+        for (const [key, operation] of [["minimum", "gte"], ["maximum", "lte"], ["exclusiveMinimum", "gt"], ["exclusiveMaximum", "lt"]]) {
+          if (schema[key] !== undefined) code += `.${operation}(${schema[key]})`;
+        }
+        return code;
+      }
       case "boolean":
         keys(schema, ["type"]);
         return "z.boolean()";

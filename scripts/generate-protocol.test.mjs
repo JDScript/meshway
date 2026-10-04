@@ -126,6 +126,30 @@ test("integer schemas must prove a lossless JS-safe range before emission", () =
   ]) assert.doesNotThrow(() => validators({ $defs: { FixtureInteger: integer } }));
 });
 
+test("generated binary64 schemas retain measurement bounds and nullable absence", async t => {
+  const document = fixture();
+  document.components.schemas.FixtureLatitude = { type: "number", format: "double", minimum: -90, maximum: 90 };
+  document.components.schemas.FixturePositiveMeasurement = { type: "number", exclusiveMinimum: 0, exclusiveMaximum: 10 };
+  document.components.schemas.FixtureOptionalMeasurement = { type: ["number", "null"], format: "double", minimum: 0 };
+  const { packageRoot } = await generatedFixture(t, document);
+  const schemas = await import(pathToFileURL(join(packageRoot, "src/generated/zod.gen.ts")));
+  for (const value of [-90, -40.7128, 0, 89.999999, 90]) assert.equal(schemas.zFixtureLatitude.safeParse(value).success, true);
+  for (const value of [-90.0001, 90.0001, NaN, Infinity, -Infinity, "45", null]) assert.equal(schemas.zFixtureLatitude.safeParse(value).success, false);
+  assert.equal(schemas.zFixturePositiveMeasurement.safeParse(0.125).success, true);
+  for (const value of [0, 10]) assert.equal(schemas.zFixturePositiveMeasurement.safeParse(value).success, false);
+  assert.equal(schemas.zFixtureOptionalMeasurement.parse(null), null);
+  assert.equal(schemas.zFixtureOptionalMeasurement.parse(0), 0);
+  assert.equal(schemas.zFixtureOptionalMeasurement.safeParse(undefined).success, false);
+  for (const schema of [
+    { type: "number", minimum: NaN },
+    { type: "number", maximum: Infinity },
+    { type: "number", exclusiveMinimum: true },
+    { type: "number", minimum: 10, maximum: 1 },
+    { type: "number", minimum: 1, exclusiveMaximum: 1 },
+    { type: "number", format: "float" },
+  ]) assert.throws(() => validators({ $defs: { FixtureNumber: schema } }));
+});
+
 test("strict generated TypeScript and operation success/error result inference", async t => {
   const { packageRoot, files } = await generatedFixture(t);
   await writeFile(join(packageRoot, "consumer.ts"), `import { ControlClient } from "./src/transport.ts";
