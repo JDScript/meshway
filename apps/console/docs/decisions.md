@@ -22,7 +22,8 @@ its generated client only, and only what the controller delivers:
   links (`inspectPasswordReset`, `redeemPasswordReset`); nodes
   (`listNodes`, `deleteNode`, `revokeNodeKey`), enrolment keys
   (`listEnrollmentKeys`, `createEnrollmentKey`, `revokeEnrollmentKey`) and
-  the transport catalog (`getTransportCatalog`).
+  the transport catalog (`getTransportCatalog`); the network's State
+  (`getNetworkState`).
 - Pages now: `/login`, `/register`; `/` opens the remembered network (kept
   per account) or the first listed, else offers creating the first; a
   network's overview (the globe with the State's located nodes and links,
@@ -61,8 +62,9 @@ its generated client only, and only what the controller delivers:
   `getConfigurationRevision`, `compareConfiguration`. The whole document as
   JSONC (`actions.editConfiguration`), the revisions, and forms for access,
   topology (with `defaults.topology`), traffic routing, rule sets, groups,
-  tag owners, DNS and address pools; nodes and the other defaults read
-  only. One
+  tag owners, DNS, address pools and the defaults (access, topology,
+  dialers); "nodes" lists each node's settings and opens its workspace,
+  where they are edited. One
   draft per sign-in and network (`features/configuration/draft.ts`), kept
   across the network's pages, in memory only (the source holds secrets:
   never storage, the URL or the query cache), dropped when the sign-in
@@ -70,14 +72,22 @@ its generated client only, and only what the controller delivers:
   the source text as typed (invalid or with comments), or the forms' typed
   operations over the non-secret view of that revision, one `replace…` /
   `setAddressPools` per edited part holding its final value (a part set
-  back to its base value drops its operation). Never both, and one is never
+  back to its base value drops its operation), and per node one operation
+  per target (`features/configuration/node-operations.ts`): settings with
+  only the fields that differ, tags, addresses with only the families that
+  differ, each listener (set, removed, or recreated: removed then set, so
+  the controller makes new material), and `deleteNode`, which replaces the
+  node's other operations. Never both, and one is never
   rebuilt from the other: a form reads only while the source holds edits,
   and the source while the forms do; each says so and offers to apply or
   discard first. Values are checked in the form the configuration
   reference states before applying (the bar says how many fields will not
   save); the controller's refusals sit under the rules and fields at their
-  pointers. `DefaultsUpdate` restates the dialers, so changing the topology
-  default sends the view's dialers (WebSocket headers omitted: kept).
+  pointers. One `replaceDefaults` holds the topology default and the
+  dialer defaults; `DefaultsUpdate.dialers` is required, so changing the
+  topology default alone restates the view's dialers (WebSocket headers
+  omitted: kept). The commit bar and review serve the configuration page
+  and the nodes page alike (`useConfigurationCommit`).
   Applying always validates first and opens a review: the effective change
   count, permanent node deletions and address changes on their own, every
   change with its value before and after (non-secret views); only its
@@ -88,18 +98,41 @@ its generated client only, and only what the controller delivers:
 - Nodes (`/nodes?q=`, every member: the controller lists owners and admins
   every node, a member their own User-identity devices). The list searches
   by hostname and shows each node's identity (its user's email or its
-  tags), first address, and whether it is disabled or has a revoked key. A
-  node's workspace (`/nodes/<id>?tab=overview|transport|latency|manage`): the
-  registration facts and one line that this controller reports no node
-  state; the listeners its configuration holds (`getConfiguration`, read
-  only; owners and admins only, which the tab says to others); its two
-  keys (algorithm, generation, public key, revocation) and, where
-  `canDelete`, revoking a key (`expectedGeneration`) and permanent
-  deletion. Deletion reads the configuration's revision when it is asked
-  and sends it; a `revision_conflict` reads it again and keeps the
-  confirmation open. While the configuration draft holds edits not
-  applied, deletion is refused with a toast saying to apply or discard
-  them first (a `deleteNode` operation does not join the draft yet).
+  tags), first address, OS and Agent version when reported, whether it is
+  disabled or has a revoked key, else its report: a lit dot and when it
+  arrived while the controller calls it current, its freshness otherwise.
+  The State is the network's (`getNetworkState`, one read for every node).
+  A node's workspace (`/nodes/<id>?tab=overview|settings|transport|latency|manage`):
+  - overview: the registration facts; the report's freshness, times
+    (received, observed, expiry, last authenticated) and instance; from a
+    full report the system (reported hostname against the configured one,
+    OS, architecture, Agent version, routing profile), the configuration
+    saved / applied / in progress against the current revision, and the
+    problems the node reports; the controller's location (or why it has
+    none) and IP information.
+  - settings: hostname, remark, enabled, exit, tags (a User identity given
+    tags becomes a Tag identity; the last tag cannot be taken), Mesh
+    addresses within the pools (empty: no address of that family), and the
+    dialers: inherit the defaults (shown), a set of its own, or none (`{}`).
+  - transport: each configured listener with what the report says of it
+    (phase, problem, loaded certificate, sockets and their endpoint
+    candidates by origin, observed and expiry, expired ones marked), other
+    sockets, listeners reported but not configured, the node's links
+    (peer, evidence, transport, who dialed, business use, since, phase)
+    and paths. A listener is edited inline and enters the draft only when
+    valid; it restates the view's other fields; secrets are write-only (the
+    UUID and a provided certificate are kept unless written; recreating
+    generates new ones). Trojan listeners and listeners with WebSocket
+    response headers (shown by name only) are edited in the source.
+  - manage: the keys (revoking with `expectedGeneration`) and permanent
+    deletion where `canDelete`. With form edits in the draft, deletion
+    joins it as `deleteNode` (reviewed with the rest, listed as permanent);
+    with source edits it is refused; with no draft it is sent at once,
+    against the revision read when it is asked (a `revision_conflict`
+    reads it again and keeps the confirmation open).
+  Without `actions.editConfiguration` the settings read only; a member's
+  come only from the event stream (`memberConfigurationQuery`), and until
+  they do the tabs say so.
 - Adding a node (`/nodes/add`, for `actions.editConfiguration`): an
   enrolment key for a Tag-identity device: at least one tag among the
   configuration's `tagsOwners`, an optional hostname (one lowercase DNS
@@ -203,10 +236,9 @@ its generated client only, and only what the controller delivers:
   mean range, probe counts and 未回应率 (timed out or failed over probes;
   not packet loss). Drawn with SVG by hand. It reads records only; it never
   starts a measurement.
-- Not delivered: node runtime state and the node settings form. Their
-  pages below are the target design; they return when their operations
-  exist, and nothing stands in for them. What the console needs from the
-  V2 API is in `v2-api-needs.md`.
+- Not delivered by the controller: GeoIP data (no node has a location
+  yet), the install script and Agent releases; nothing stands in for them.
+  What the console needs from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
   them; the console never derives it from the role.
 - Changes the controller deduplicates (`createNetwork`, `renameNetwork`)
@@ -317,7 +349,7 @@ controller supports today; the rest of each row is the target design.
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
 | Overview `/overview?node=` | the globe with located nodes and current links; the status corner (counts, 待定位, current links, the history layer) | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
-| Nodes `/nodes?view=nodes\|tags` | `?q=`; a node's facts, configured listeners, keys and deletion; adding one with an enrolment key | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
+| Nodes `/nodes?view=nodes\|tags` | `?q=` with each node's report; a node's facts and State, settings, listeners with their runtime, links and paths, keys and deletion; adding one with an enrolment key | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|settings\|transport\|latency\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
 | Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity, DNS | leave |
