@@ -104,6 +104,22 @@ async fn removed_member_references_survive_email_maintenance_and_never_rebind_on
         .await
         .unwrap();
     assert_eq!(changed.user.id, member.user.id);
+    // The revoked membership's references keep the departed name; the former
+    // network never learns the new address and records no maintenance version.
+    let after_departure = source(&c, &s, n, owner.token.expose()).await;
+    assert_eq!(after_departure.revision, applied.revision);
+    assert!(
+        after_departure
+            .source_jsonc
+            .expose()
+            .contains("departing@example.test")
+    );
+    assert!(
+        !after_departure
+            .source_jsonc
+            .expose()
+            .contains("departed-new@example.test")
+    );
     let new_member = join(
         &c,
         &s,

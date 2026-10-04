@@ -88,11 +88,16 @@ impl Execution {
         let publisher = self.publisher.clone();
         self.handle
             .execute(move |c| {
-                let changed: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM node_keys WHERE network_id=?1 AND node_id=?2 AND id=?3 AND revoked_at IS NULL)", rusqlite::params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), request.key_id.as_uuid().as_bytes().as_slice()], |row| row.get(0))?;
-                store::revoke_key(c, &sealer, token, network, node, request)?;
+                let changed = store::revoke_key(c, &sealer, token, network, node, request)?;
                 if changed {
-                    publisher.publish_committed(crate::state::stream::CommittedChange::Authorization { network_id: network });
-                    publisher.publish_committed(crate::state::stream::CommittedChange::Progress { network_id: network });
+                    publisher.publish_committed(
+                        crate::state::stream::CommittedChange::Authorization {
+                            network_id: network,
+                        },
+                    );
+                    publisher.publish_committed(crate::state::stream::CommittedChange::Progress {
+                        network_id: network,
+                    });
                 }
                 Ok(())
             })

@@ -1033,11 +1033,111 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
         &signer,
     )
     .await;
+    // A second login with the same User identity changes no configuration but
+    // still ends the previous control session and its instance.
+    let stale_instance = app
+        .execution()
+        .acquire(
+            user_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let before_relogin = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    let again = make_intent(
+        Some(ExistingNodeBinding {
+            network_id: network,
+            node_id: enrolled.node_id,
+            key_id: enrolled.keys.control.id,
+            key_generation: enrolled.keys.control.generation,
+        }),
+        "same-identity",
+    );
+    let again_digest = proof::request_digest(&again).unwrap();
+    let again_proof = |operation| EnrollmentDeviceProof {
+        verifier: WireSecret::new(verifier.clone()),
+        signature: WireSecret::new(
+            URL_SAFE_NO_PAD.encode(
+                signer
+                    .sign(&enrollment_transcript(again.id, again_digest, operation))
+                    .to_bytes(),
+            ),
+        ),
+    };
+    app.enrollment()
+        .create_request(CreateEnrollmentRequest {
+            intent: again.clone(),
+            signature: again_proof("create").signature,
+        })
+        .await
+        .unwrap();
+    app.enrollment()
+        .approve(
+            owner.token.expose(),
+            again.id,
+            ApproveEnrollmentRequest {
+                network_id: network,
+            },
+        )
+        .await
+        .unwrap();
+    let pending = app
+        .enrollment()
+        .poll(again.id, again_proof("poll"))
+        .await
+        .unwrap();
+    let relogged = app
+        .enrollment()
+        .redeem(
+            again.id,
+            RedeemEnrollmentRequest {
+                proof: again_proof("redeem"),
+                code: pending.code.unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(relogged.node_id, enrolled.node_id);
+    assert_eq!(relogged.keys, enrolled.keys);
+    assert!(matches!(
+        app.execution()
+            .authenticate(user_session.token.expose())
+            .await,
+        Err(Error::InvalidCredentials)
+    ));
+    let user_session = session(
+        &app.execution(),
+        network,
+        enrolled.node_id,
+        &enrolled.keys,
+        &signer,
+    )
+    .await;
+    assert!(matches!(
+        app.execution()
+            .renew(
+                user_session.token.expose(),
+                InstanceRequest {
+                    instance_id: stale_instance.instance_id,
+                    generation: stale_instance.generation,
+                },
+            )
+            .await,
+        Err(Error::BindingConflict)
+    ));
     let current = app
         .configurations()
         .read(owner.token.expose(), network, None)
         .await
         .unwrap();
+    assert_eq!(current.revision, before_relogin.revision);
     let restored = &current.document.configuration.nodes[&enrolled.node_id];
     assert!(current.bindings.users.is_empty());
     assert_eq!(
@@ -2049,6 +2149,48 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
         )
         .await
         .unwrap();
+    // Revoking the retired generation records the revocation but leaves the
+    // execution established with the current generation untouched, even when
+    // the same revocation is repeated.
+    let current = session(&app.execution(), network, a, &recovered, &new).await;
+    let lease = app
+        .execution()
+        .acquire(
+            current.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(lease.target.is_some());
+    for _ in 0..2 {
+        app.execution()
+            .revoke_key(
+                owner.token.expose(),
+                network,
+                a,
+                RevokeNodeKeyRequest {
+                    key_id: keys.control.id,
+                    expected_generation: keys.control.generation,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let renewed = app
+        .execution()
+        .renew(
+            current.token.expose(),
+            InstanceRequest {
+                instance_id: lease.instance_id,
+                generation: lease.generation,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renewed.target, lease.target);
     app.execution()
         .revoke_key(
             owner.token.expose(),
@@ -2061,6 +2203,18 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
         )
         .await
         .unwrap();
+    assert!(matches!(
+        app.execution()
+            .renew(
+                current.token.expose(),
+                InstanceRequest {
+                    instance_id: lease.instance_id,
+                    generation: lease.generation,
+                },
+            )
+            .await,
+        Err(Error::InvalidCredentials)
+    ));
     assert_eq!(
         client
             .post(&url)

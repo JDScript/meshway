@@ -22,7 +22,9 @@ use meshway_configuration::{
     ConfigurationChange, ConfigurationDocument, NetworkConfigurationInput, ValidationContext,
     canonical_json, configuration_changes,
 };
-use meshway_model::{ArtifactId, NetworkId, NodeId, PublicationId, RequestId, Revision, UserId};
+use meshway_model::{
+    ArtifactId, MembershipId, NetworkId, NodeId, PublicationId, RequestId, Revision, UserId,
+};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
 use zeroize::Zeroizing;
@@ -43,8 +45,11 @@ pub(crate) struct PreparedConfiguration {
     pub(crate) rollback_from: Option<Revision>,
     pub(crate) email_sync: Option<EmailSync>,
 }
+/// Readable-name maintenance for one active membership. Bindings of revoked
+/// memberships keep their old name and are never told the new address.
 pub(crate) struct EmailSync {
     pub(crate) user: UserId,
+    pub(crate) membership: MembershipId,
     pub(crate) old_email: String,
     pub(crate) new_email: String,
 }

@@ -532,6 +532,40 @@ pub(crate) fn revoke_execution(
     )?;
     Ok(())
 }
+/// Ends every live control session, open demand and instance of one Node. The
+/// Node must authenticate again and acquire a new instance; its keys, target
+/// and publication references are untouched.
+pub(crate) fn retire_node_sessions(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+    now: i64,
+) -> Result<(), Error> {
+    tx.execute(
+        "DELETE FROM node_sessions WHERE network_id=?1 AND node_id=?2",
+        params![
+            network.as_uuid().as_bytes().as_slice(),
+            node.as_uuid().as_bytes().as_slice()
+        ],
+    )?;
+    tx.execute(
+        "UPDATE execution_demands SET cancelled_at=?3 WHERE network_id=?1 AND node_id=?2 AND cancelled_at IS NULL",
+        params![
+            network.as_uuid().as_bytes().as_slice(),
+            node.as_uuid().as_bytes().as_slice(),
+            now
+        ],
+    )?;
+    tx.execute(
+        "UPDATE node_execution SET instance_expires_at=?1,execution_expires_at=NULL WHERE network_id=?2 AND node_id=?3",
+        params![
+            now,
+            network.as_uuid().as_bytes().as_slice(),
+            node.as_uuid().as_bytes().as_slice()
+        ],
+    )?;
+    Ok(())
+}
 /// Config owner invokes within its source commit transaction after writing the
 /// authoritative target. Removed nodes are permanent revocations, including JSONC deletion.
 pub(crate) fn apply_configuration_effects(
@@ -564,21 +598,7 @@ pub(crate) fn apply_configuration_effects(
                 _ => new.identity != old.identity,
             })
         {
-            tx.execute(
-                "DELETE FROM node_sessions WHERE network_id=?1 AND node_id=?2",
-                params![
-                    network.as_uuid().as_bytes().as_slice(),
-                    node.as_uuid().as_bytes().as_slice()
-                ],
-            )?;
-            tx.execute(
-                "UPDATE execution_demands SET cancelled_at=?3 WHERE network_id=?1 AND node_id=?2 AND cancelled_at IS NULL",
-                params![
-                    network.as_uuid().as_bytes().as_slice(),
-                    node.as_uuid().as_bytes().as_slice(), now
-                ],
-            )?;
-            tx.execute("UPDATE node_execution SET instance_expires_at=?1,execution_expires_at=NULL WHERE network_id=?2 AND node_id=?3",params![now,network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()])?;
+            retire_node_sessions(tx, network, *node, now)?;
         }
     }
     for (node, old) in &previous.nodes {

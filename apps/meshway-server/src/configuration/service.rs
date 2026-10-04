@@ -10,7 +10,7 @@ use crate::store::authorization::{authorize_manager, current_session};
 use crate::{accounts::token_digest, store::Handle};
 use meshway_configuration::{NetworkConfigurationInput, configuration_changes};
 use meshway_configuration::{UserBinding, edit_source, parse_jsonc};
-use meshway_model::{NetworkId, RequestId, Revision, UserId};
+use meshway_model::{MembershipId, NetworkId, RequestId, Revision, UserId};
 use meshway_protocol::{WireSecret, configuration::*};
 use rusqlite::{Connection, TransactionBehavior};
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -54,6 +54,8 @@ impl Configurations {
             downloads,
         }
     }
+    /// Renames the user's readable references in every network where they hold
+    /// an active membership. Only bindings of that membership are renamed.
     pub(crate) fn synchronize_email(
         &self,
         tx: &Transaction<'_>,
@@ -63,46 +65,50 @@ impl Configurations {
         request: RequestId,
     ) -> Result<Vec<CommitEffects>, Error> {
         let mut effects = Vec::new();
-        let networks = {
-            let mut stmt = tx.prepare("SELECT id FROM networks WHERE deleted_at IS NULL")?;
-            stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?
-                .collect::<Result<Vec<_>, _>>()?
+        let memberships = {
+            let mut stmt = tx.prepare(
+                "SELECT m.network_id, m.id FROM memberships m JOIN networks n ON n.id=m.network_id
+                 WHERE m.user_id=?1 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",
+            )?;
+            stmt.query_map([user.as_uuid().as_bytes().as_slice()], |r| {
+                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
         };
-        for network in networks {
+        for (network, membership) in memberships {
             let network = NetworkId::new(
-                uuid::Uuid::from_slice(&network).map_err(|_| Error::decode("networks.id"))?,
+                uuid::Uuid::from_slice(&network)
+                    .map_err(|_| Error::decode("memberships.network_id"))?,
             )
-            .map_err(|_| Error::decode("networks.id"))?;
+            .map_err(|_| Error::decode("memberships.network_id"))?;
+            let membership = MembershipId::new(
+                uuid::Uuid::from_slice(&membership).map_err(|_| Error::decode("memberships.id"))?,
+            )
+            .map_err(|_| Error::decode("memberships.id"))?;
+            let binding = UserBinding {
+                user_id: user,
+                membership_id: membership,
+            };
             let current = self.current(tx, network)?;
-            if !current
-                .bindings
-                .users
-                .get(old_email)
-                .is_some_and(|binding| binding.user_id == user)
-                && !current
-                    .bindings
-                    .node_users
-                    .values()
-                    .any(|binding| binding.user_id == user)
+            if current.bindings.users.get(old_email) != Some(&binding)
+                && !current.bindings.node_users.values().any(|b| *b == binding)
             {
                 continue;
             }
             let mut input = NetworkConfigurationInput::from(&current.document.configuration);
-            rename_bound_user_references(&mut input, &current, user, old_email, new_email);
+            rename_bound_user_references(&mut input, &current, &binding, old_email, new_email);
             check_inputs(tx, &current, &input)?;
             let before =
                 meshway_configuration::parse_jsonc(current.document.source_jsonc.expose())?;
             let mut after = before.clone();
-            rename_bound_user_references(&mut after, &current, user, old_email, new_email);
+            rename_bound_user_references(&mut after, &current, &binding, old_email, new_email);
             let source = meshway_configuration::rewrite_source(
                 current.document.source_jsonc.expose(),
                 &before,
                 &after,
             )?;
             let mut expected = current.bindings.users.clone();
-            if expected
-                .get(old_email)
-                .is_some_and(|binding| binding.user_id == user)
+            if expected.get(old_email) == Some(&binding)
                 && let Some(binding) = expected.remove(old_email)
             {
                 expected.insert(new_email.into(), binding);
@@ -126,6 +132,7 @@ impl Configurations {
             let mut prepared = prepare(input, source, &current, &context)?;
             prepared.email_sync = Some(EmailSync {
                 user,
+                membership,
                 old_email: old_email.into(),
                 new_email: new_email.into(),
             });
@@ -635,19 +642,17 @@ pub(crate) fn current_revision(
 
 /// Readable names follow the stable subject for each binding purpose. An email
 /// reused by another account must not rename the old account's policy references.
+/// Readable names follow the stable subject of each binding. Only bindings of
+/// this exact user and membership are renamed: an email reused by another
+/// account, or a revoked membership of the same user, keeps its old name.
 pub(crate) fn rename_bound_user_references(
     input: &mut NetworkConfigurationInput,
     snapshot: &Snapshot,
-    user: UserId,
+    binding: &UserBinding,
     old: &str,
     new: &str,
 ) {
-    if snapshot
-        .bindings
-        .users
-        .get(old)
-        .is_some_and(|binding| binding.user_id == user)
-    {
+    if snapshot.bindings.users.get(old) == Some(binding) {
         meshway_configuration::rebind_policy_user_references(
             input,
             &BTreeMap::from([(old.to_owned(), new.to_owned())]),
@@ -657,7 +662,7 @@ pub(crate) fn rename_bound_user_references(
         .bindings
         .node_users
         .iter()
-        .filter(|(_, binding)| binding.user_id == user)
+        .filter(|(_, bound)| *bound == binding)
         .map(|(id, _)| (*id, new.to_owned()))
         .collect();
     meshway_configuration::rebind_node_user_references(input, &names);

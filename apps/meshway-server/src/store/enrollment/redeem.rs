@@ -301,6 +301,11 @@ pub(crate) fn redeem_in_transaction(
     };
     verify_admission(tx, sealer, &admission)?;
     let effects = commit.insert_node(tx, &admission)?;
+    if p.existing.is_some() {
+        // A re-login keeps the Node ID and keys but always ends the previous
+        // control session and instance, even when the identity did not change.
+        crate::store::execution::retire_node_sessions(tx, approval.network, node, now)?;
+    }
     tx.execute("UPDATE enrollment_requests SET node_id=?1,consumed_at=?2,binding_digest=?3,delivery=NULL WHERE id=?4 AND consumed_at IS NULL",params![node.as_uuid().as_bytes().as_slice(),now,p.digest.as_bytes().as_slice(),id.as_uuid().as_bytes().as_slice()])?;
     Ok((
         EnrollmentResponse {

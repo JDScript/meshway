@@ -9,6 +9,9 @@ use meshway_protocol::{execution::*, node::*};
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
+/// Marks one key generation as permanently revoked. Returns whether this call
+/// revoked a key that was still current; only then does the Node lose its
+/// execution. Revoking an already retired or revoked key records nothing new.
 pub(crate) fn revoke_key(
     c: &mut Connection,
     sealer: &Sealer,
@@ -16,7 +19,7 @@ pub(crate) fn revoke_key(
     network: NetworkId,
     node: NodeId,
     request: RevokeNodeKeyRequest,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = super::super::authorization::current_session(&tx, &token, now)?
@@ -28,14 +31,39 @@ pub(crate) fn revoke_key(
             other => other,
         },
     )?;
-    let found:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_keys WHERE network_id=?1 AND node_id=?2 AND id=?3 AND generation=?4)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),request.key_id.as_uuid().as_bytes().as_slice(),request.expected_generation.get() as i64],|r|r.get(0))?;
-    if !found {
+    let state: Option<(bool, bool)> = tx
+        .query_row(
+            "SELECT retired_at IS NULL, revoked_at IS NULL FROM node_keys WHERE network_id=?1 AND node_id=?2 AND id=?3 AND generation=?4",
+            params![
+                network.as_uuid().as_bytes().as_slice(),
+                node.as_uuid().as_bytes().as_slice(),
+                request.key_id.as_uuid().as_bytes().as_slice(),
+                request.expected_generation.get() as i64
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((current, unrevoked)) = state else {
         return Err(Error::VersionConflict);
+    };
+    if !unrevoked {
+        tx.commit()?;
+        return Ok(false);
     }
-    tx.execute("UPDATE node_keys SET revoked_at=COALESCE(revoked_at,?1) WHERE network_id=?2 AND node_id=?3 AND id=?4",params![now,network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),request.key_id.as_uuid().as_bytes().as_slice()])?;
-    revoke_execution(&tx, sealer, network, node, now)?;
+    tx.execute(
+        "UPDATE node_keys SET revoked_at=?1 WHERE network_id=?2 AND node_id=?3 AND id=?4 AND revoked_at IS NULL",
+        params![
+            now,
+            network.as_uuid().as_bytes().as_slice(),
+            node.as_uuid().as_bytes().as_slice(),
+            request.key_id.as_uuid().as_bytes().as_slice()
+        ],
+    )?;
+    if current {
+        revoke_execution(&tx, sealer, network, node, now)?;
+    }
     tx.commit()?;
-    Ok(())
+    Ok(current)
 }
 
 pub(crate) fn inventory(
