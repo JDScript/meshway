@@ -5,6 +5,7 @@ import type {
   RouteMatch,
   RoutingConfiguration,
   RoutingProfile,
+  RuleAction,
 } from "@meshway/control-client"
 
 import { isIpv4 } from "@/lib/ip"
@@ -287,17 +288,23 @@ export const sameRouting = (
 
 // Writing: what the form sends, with the defaults left out.
 
-const writtenAction = (action: RouteAction): RouteAction =>
-  action.type === "exit"
-    ? action.via && action.via.length > 0
-      ? { type: "exit", nodes: action.nodes, via: action.via }
-      : { type: "exit", nodes: action.nodes }
-    : { type: action.type }
+type ExitAction = Extract<RouteAction, { type: "exit" }>
+
+const writtenExit = (action: ExitAction): ExitAction =>
+  action.via && action.via.length > 0
+    ? { type: "exit", nodes: action.nodes, via: action.via }
+    : { type: "exit", nodes: action.nodes }
+
+const writtenRuleAction = (action: RuleAction): RuleAction =>
+  action.type === "exit" ? writtenExit(action) : { type: action.type }
+
+const writtenFallback = (action: RouteAction): RouteAction =>
+  action.type === "exit" ? writtenExit(action) : { type: action.type }
 
 const writtenRule = (rule: EgressRule): EgressRule => {
   const out: EgressRule = {
     match: matchOf(matchValues(rule.match)),
-    action: writtenAction(rule.action),
+    action: writtenRuleAction(rule.action),
   }
   if (rule.remark) out.remark = rule.remark
   return out
@@ -321,7 +328,7 @@ export function writtenRouting(
           key,
           {
             rules: (profile.rules ?? []).map(writtenRule),
-            fallback: writtenAction(profile.fallback),
+            fallback: writtenFallback(profile.fallback),
           },
         ])
       ),
@@ -350,7 +357,6 @@ export type RoutingCode =
   | "match"
   | "destination"
   | "exits"
-  | "unmanagedRule"
   | "country"
   | "profileName"
 
@@ -401,8 +407,6 @@ function rulesProblems(
       out.push({ path: pointerOf([...at, "match"]), code: "match" })
     else if (values.some(badDestination))
       out.push({ path: pointerOf([...at, "match"]), code: "destination" })
-    if (rule.action.type === "unmanaged")
-      out.push({ path: pointerOf([...at, "action"]), code: "unmanagedRule" })
     actionProblems(out, [...at, "action"], rule.action)
   })
 }

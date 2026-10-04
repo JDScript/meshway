@@ -173,7 +173,7 @@ test("problems sit at the controller's pointers", () => {
     mesh: [{ src: [], dst: ["bad selector"], via: ["tag:relay"] }],
     egress: {
       rules: [
-        { match: {}, action: { type: "unmanaged" } },
+        { match: {}, action: { type: "direct" } },
         {
           match: { ipCIDR: ["10.0.0.1/8"] },
           action: { type: "exit", nodes: [] },
@@ -192,7 +192,6 @@ test("problems sit at the controller's pointers", () => {
     { path: "/routing/mesh/0/dst", code: "selector" },
     { path: "/routing/mesh/0/via", code: "node" },
     { path: "/routing/egress/rules/0/match", code: "match" },
-    { path: "/routing/egress/rules/0/action", code: "unmanagedRule" },
     { path: "/routing/egress/rules/1/match", code: "destination" },
     { path: "/routing/egress/rules/1/action/nodes", code: "exits" },
     { path: "/routing/egress/profiles/mesh", code: "profileName" },

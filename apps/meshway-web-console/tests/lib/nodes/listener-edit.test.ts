@@ -6,10 +6,10 @@ import { listenerFromView } from "@/lib/configuration/listener-update"
 import {
   draftOfView,
   draftProblems,
+  editable,
   keepsCertificate,
   keepsUuid,
   newDraft,
-  uneditable,
   updateOf,
   type ListenerOrigin,
 } from "@/lib/nodes/listener-edit"
@@ -128,17 +128,28 @@ test("bad UUIDs and paths are problems; a new listener has nothing to keep", () 
   assert.equal(keepsUuid(fresh, none), false)
 })
 
-test("listeners the form cannot restate say why", () => {
-  assert.equal(uneditable(VLESS), null)
-  assert.equal(
-    uneditable({
-      ...VLESS,
-      websocket: { path: "/", responseHeaderNames: ["x-a"] },
-    }),
-    "response_headers"
+test("WebSocket response headers are kept by leaving them out; over TCP the block goes", () => {
+  const headed: ListenerView = {
+    ...VLESS,
+    websocket: { path: "/mesh", host: null, responseHeaderNames: ["x-a"] },
+  }
+  assert.equal(editable(headed), true)
+  const draft = draftOfView(headed)!
+  const update = updateOf({ ...draft, wsPath: "/other" }, origin(headed))
+  assert.ok(update?.type === "vless")
+  // No responseHeaders: the controller keeps the listener's own.
+  assert.deepEqual(update.websocket, { path: "/other" })
+  const tcp = updateOf(
+    { ...draft, fields: { ...draft.fields, preset: "vless_tcp" } },
+    origin(headed)
   )
-  assert.equal(
-    uneditable({ ...VLESS, protocol: "trojan", stream: "tcp" }),
-    "transport"
-  )
+  assert.ok(tcp?.type === "vless")
+  assert.equal(tcp.stream, "tcp")
+  // Left out, the block would be kept.
+  assert.equal(tcp.websocket, null)
+})
+
+test("a transport the form does not offer is edited in the source", () => {
+  assert.equal(editable(VLESS), true)
+  assert.equal(editable({ ...VLESS, protocol: "trojan", stream: "tcp" }), false)
 })

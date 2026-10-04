@@ -1,4 +1,4 @@
-import type { RouteAction } from "@meshway/control-client"
+import type { RouteAction, RuleAction } from "@meshway/control-client"
 import {
   AtSignIcon,
   GlobeIcon,
@@ -198,6 +198,7 @@ export function countryChips(): ChipKind {
 }
 
 type ActionType = RouteAction["type"]
+type ExitAction = Extract<RouteAction, { type: "exit" }>
 
 const ACTION_LABEL: Record<ActionType, () => string> = {
   exit: () => m.configuration_routing_action_exit(),
@@ -205,46 +206,96 @@ const ACTION_LABEL: Record<ActionType, () => string> = {
   unmanaged: () => m.configuration_routing_action_unmanaged(),
 }
 
-/** Where matched traffic goes: exits in priority order (with nodes before them), the source's own network, or not taken over. */
-export function ActionField({
-  action,
-  path,
-  fallback,
-  editable,
-  names,
-  exits,
-  notes,
-  onChange,
-}: {
-  action: RouteAction
+const RULE_ACTIONS: readonly RuleAction["type"][] = ["exit", "direct"]
+const FALLBACK_ACTIONS: readonly ActionType[] = ["exit", "direct", "unmanaged"]
+
+type ActionFieldProps = {
   path: JsonPath
-  /** A profile's fallback: it may also leave traffic unmanaged. */
-  fallback: boolean
   editable: boolean
   names: Names
   exits: ReadonlySet<string>
   notes: readonly Note[]
+}
+
+/** Where a rule's matched traffic goes: exits in priority order (with nodes before them), or the source's own network. */
+export function RuleActionField({
+  action,
+  onChange,
+  ...field
+}: ActionFieldProps & {
+  action: RuleAction
+  onChange: (action: RuleAction) => void
+}) {
+  return (
+    <ActionChoice
+      {...field}
+      types={RULE_ACTIONS}
+      type={action.type}
+      onType={(type) =>
+        onChange(type === "exit" ? { type, nodes: [] } : { type })
+      }
+      exit={action.type === "exit" ? action : null}
+      onExit={onChange}
+    />
+  )
+}
+
+/** Where a profile sends what its rules leave: as a rule's action, or not taken over. */
+export function FallbackActionField({
+  action,
+  onChange,
+  ...field
+}: ActionFieldProps & {
+  action: RouteAction
   onChange: (action: RouteAction) => void
 }) {
-  const types: ActionType[] = fallback
-    ? ["exit", "direct", "unmanaged"]
-    : ["exit", "direct"]
-  const choose = (type: ActionType) => {
-    if (type === action.type) return
-    onChange(type === "exit" ? { type, nodes: [] } : { type })
-  }
+  return (
+    <ActionChoice
+      {...field}
+      types={FALLBACK_ACTIONS}
+      type={action.type}
+      onType={(type) =>
+        onChange(type === "exit" ? { type, nodes: [] } : { type })
+      }
+      exit={action.type === "exit" ? action : null}
+      onExit={onChange}
+    />
+  )
+}
+
+function ActionChoice<T extends ActionType>({
+  types,
+  type,
+  onType,
+  exit,
+  onExit,
+  path,
+  editable,
+  names,
+  exits,
+  notes,
+}: ActionFieldProps & {
+  types: readonly T[]
+  type: T
+  /** A different action than the current one: its exits start empty. */
+  onType: (type: T) => void
+  exit: ExitAction | null
+  onExit: (action: ExitAction) => void
+}) {
   return (
     <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
       {editable ? (
         <SegmentedControl
           size="sm"
           label={m.configuration_routing_action()}
-          value={action.type}
-          options={types.map((type) => ({
-            value: type,
-            label: ACTION_LABEL[type](),
+          value={type}
+          options={types.map((option) => ({
+            value: option,
+            label: ACTION_LABEL[option](),
           }))}
-          onChange={choose}
+          onChange={(option) => {
+            if (option !== type) onType(option)
+          }}
         />
       ) : (
         <span
@@ -252,33 +303,33 @@ export function ActionField({
             "inline-flex h-6 shrink-0 items-center rounded-full bg-fill-subtle px-2.5 text-meta font-medium"
           )}
         >
-          {ACTION_LABEL[action.type]()}
+          {ACTION_LABEL[type]()}
         </span>
       )}
-      {action.type === "exit" ? (
+      {exit ? (
         <>
           <ChipSetField
-            values={action.nodes}
+            values={exit.nodes}
             kind={nodeChips(names, exits)}
             label={m.configuration_routing_exits()}
             addLabel={m.configuration_routing_exits_add()}
             editable={editable}
             invalid={refusedAt(notes, pointerOf([...path, "nodes"]))}
-            onChange={(nodes) => onChange({ ...action, nodes })}
+            onChange={(nodes) => onExit({ ...exit, nodes })}
           />
-          {editable || (action.via ?? []).length > 0 ? (
+          {editable || (exit.via ?? []).length > 0 ? (
             <>
               <span className="text-meta text-muted-foreground">
                 {m.configuration_routing_exit_via()}
               </span>
               <ChipSetField
-                values={action.via ?? []}
+                values={exit.via ?? []}
                 kind={nodeChips(names, null)}
                 label={m.configuration_routing_exit_via_label()}
                 addLabel={m.configuration_routing_via_add()}
                 editable={editable}
                 invalid={refusedAt(notes, pointerOf([...path, "via"]))}
-                onChange={(via) => onChange({ ...action, via })}
+                onChange={(via) => onExit({ ...exit, via })}
               />
             </>
           ) : null}

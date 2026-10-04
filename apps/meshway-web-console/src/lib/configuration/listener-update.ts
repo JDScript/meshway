@@ -1,19 +1,15 @@
 import type { ListenerUpdate, ListenerView } from "@meshway/control-client"
 
 // A listener's update (`setListener`) restates the whole listener: the
-// controller replaces it, keeping only the secret material an update
-// omits (VLESS UUID, Trojan password, a TLS certificate and key in the
-// same mode) from the listener of the same key. So a form edit starts
-// from the non-secret view restated as an update, secrets omitted (kept).
+// controller replaces it, keeping from the listener of the same key only
+// what an update omits of its secret material (VLESS UUID, Trojan
+// password, a TLS certificate and key in the same mode) and of a VLESS
+// WebSocket block (its response headers, which the view names only). So a
+// form edit starts from the non-secret view restated as an update, those
+// omitted (kept). A listener set anew (recreated) keeps none of them.
 
-/**
- * The view restated as an update the controller reads as the same
- * listener; null when the view cannot restate it: WebSocket response
- * headers are shown by name only, and an update that omits them clears them.
- */
+/** The view restated as an update the controller reads as the same listener; null without the TLS a VLESS or Trojan view must have. */
 export function listenerFromView(view: ListenerView): ListenerUpdate | null {
-  if (view.websocket && view.websocket.responseHeaderNames.length > 0)
-    return null
   const common = {
     listenPort: view.listenPort,
     listen: view.listen,

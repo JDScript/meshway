@@ -154,8 +154,11 @@ its generated client only, and only what the controller delivers:
     and paths. A listener is edited inline and enters the draft only when
     valid; it restates the view's other fields; secrets are write-only (the
     UUID and a provided certificate are kept unless written; recreating
-    generates new ones). Trojan listeners and listeners with WebSocket
-    response headers (shown by name only) are edited in the source.
+    generates new ones). WebSocket response headers are shown by name and
+    kept by leaving them out of the update; recreating clears them (said
+    under the switch), and a VLESS listener moved to TCP drops its
+    WebSocket block (`websocket: null`). Trojan listeners are edited in the
+    source.
   - manage: the keys with their creation times, each revoked (with
     `expectedGeneration`) where `canRevokeControlKey` /
     `canRevokeDataplaneKey`; a `version_conflict` reads the nodes again

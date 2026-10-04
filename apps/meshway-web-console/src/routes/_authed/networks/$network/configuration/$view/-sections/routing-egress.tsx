@@ -16,10 +16,10 @@ import { m } from "@/paraglide/messages.js"
 
 import { moveKeys, OrderedRules, useRowKeys } from "./ordered"
 import {
-  ActionField,
   destinationChips,
   replaceAt,
   RowEnd,
+  RuleActionField,
   type Common,
 } from "./route-kit"
 
@@ -124,10 +124,9 @@ export function EgressRules({
                   aria-label={m.configuration_routing_to()}
                   className="size-3.5 shrink-0 text-muted-foreground"
                 />
-                <ActionField
+                <RuleActionField
                   action={rule.action}
                   path={[...path, index, "action"]}
-                  fallback={false}
                   editable={editable}
                   names={names}
                   exits={exits}

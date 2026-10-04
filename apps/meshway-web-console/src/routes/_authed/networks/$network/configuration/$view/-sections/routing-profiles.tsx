@@ -38,8 +38,8 @@ import { m } from "@/paraglide/messages.js"
 import { AddKey, KeyInput, type KeyRule } from "./keyed-form"
 import { MoveButtons, moveKeys, OrderedRules, useRowKeys } from "./ordered"
 import {
-  ActionField,
   countryChips,
+  FallbackActionField,
   Hint,
   profileChips,
   profileLabel,
@@ -144,10 +144,9 @@ export function Profiles({
                     <span className="shrink-0">
                       {m.configuration_routing_fallback()}
                     </span>
-                    <ActionField
+                    <FallbackActionField
                       action={profile.fallback}
                       path={[...path, "fallback"]}
-                      fallback
                       editable={editable}
                       names={names}
                       exits={exits}

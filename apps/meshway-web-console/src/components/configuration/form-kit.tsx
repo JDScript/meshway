@@ -349,7 +349,6 @@ const LOCAL: Record<LocalCode, () => string> = {
   match: () => m.configuration_local_match(),
   destination: () => m.configuration_local_destination(),
   exits: () => m.configuration_local_exits(),
-  unmanagedRule: () => m.configuration_local_unmanaged_rule(),
   country: () => m.configuration_local_country(),
   profileName: () => m.configuration_local_profile_name(),
   url: () => m.configuration_local_url(),

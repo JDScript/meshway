@@ -324,7 +324,6 @@
   "configuration_local_match": "Needs at least one domain suffix, prefix or rule set",
   "configuration_local_destination": "Has a domain suffix or prefix that is not valid (a prefix must be its network address)",
   "configuration_local_exits": "Needs at least one exit node",
-  "configuration_local_unmanaged_rule": "“Not managed” is only for a profile's fallback",
   "configuration_local_country": "Countries and regions are two uppercase letters, at least one",
   "configuration_local_profile_name": "mesh, auto and names starting with global: are the built-in profiles'",
   "configuration_local_url": "Should be an HTTPS address without user name, password or #",

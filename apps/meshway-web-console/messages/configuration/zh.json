@@ -270,7 +270,6 @@
   "configuration_local_match": "至少需要一个域名后缀、网段或规则集",
   "configuration_local_destination": "有无法识别的域名后缀或网段（网段须为网络地址）",
   "configuration_local_exits": "至少需要一个出口节点",
-  "configuration_local_unmanaged_rule": "“不接管”只能用作方案兜底",
   "configuration_local_country": "国家／地区应为两位大写字母，且至少一个",
   "configuration_local_profile_name": "mesh、auto 和 global: 开头的名称留给内置方案",
   "configuration_local_url": "应为 HTTPS 地址，不含用户名、密码或 #",

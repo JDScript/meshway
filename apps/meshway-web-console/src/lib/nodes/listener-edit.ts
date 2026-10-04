@@ -1,10 +1,11 @@
 import type {
   Endpoint,
-  Listener,
+  ListenerUpdate,
   ListenerView,
+  SocketOptions,
   TlsMode,
 } from "@meshway/control-client"
-import { zListener } from "@meshway/control-client/schemas"
+import { zListenerUpdate } from "@meshway/control-client/schemas"
 
 import { listenerFromView } from "@/lib/configuration/listener-update"
 
@@ -21,7 +22,8 @@ import {
 // name) plus what an existing listener also shows (on or off, remark,
 // WebSocket path and Host, where its certificate comes from), turned into
 // a `setListener` update. Fields the form does not show are restated from
-// the view (listener-update.ts), so the update keeps them.
+// the view (listener-update.ts), so the update keeps them; WebSocket
+// response headers are left out, so the controller keeps them.
 //
 // Secrets are write-only (D5): the VLESS UUID and a provided certificate
 // and key are never read; empty keeps what the listener holds, a value
@@ -52,7 +54,7 @@ export type ListenerDraft = {
 /** What the draft is edited over: the configured listener, or none for a new one. */
 export type ListenerOrigin = {
   /** The view restated as an update; null for a new listener. */
-  restated: Listener | null
+  restated: ListenerUpdate | null
   /** The configured view; null for a new listener. */
   view: ListenerView | null
 }
@@ -69,22 +71,17 @@ export const presetOfView = (view: ListenerView): Preset | null => {
   }
 }
 
-/**
- * Why a configured listener cannot be edited in the form: a transport the
- * form does not offer (Trojan), or WebSocket response headers the view
- * shows by name only (restating it would clear them).
- */
-export type Uneditable = "transport" | "response_headers"
+/** A configured listener the form edits: a transport it offers (not Trojan), restated as an update. */
+export const editable = (view: ListenerView) =>
+  presetOfView(view) !== null && listenerFromView(view) !== null
 
-export function uneditable(view: ListenerView): Uneditable | null {
-  if (presetOfView(view) === null) return "transport"
-  if (listenerFromView(view) === null) return "response_headers"
-  return null
-}
+/** The response headers a VLESS listener's WebSocket block has, by name. */
+export const headerNames = (view: ListenerView): string[] =>
+  view.websocket?.responseHeaderNames ?? []
 
 export function draftOfView(view: ListenerView): ListenerDraft | null {
   const preset = presetOfView(view)
-  if (preset === null || uneditable(view) !== null) return null
+  if (preset === null || !editable(view)) return null
   const first = view.endpoints[0]
   return {
     fields: {
@@ -179,77 +176,97 @@ export function draftProblems(
 
 /**
  * The update for a draft without problems (null otherwise): the origin's
- * restated fields, with what the form shows over them.
+ * restated fields of the same transport, with what the form shows over them.
  */
 export function updateOf(
   draft: ListenerDraft,
   origin: ListenerOrigin
-): Listener | null {
+): ListenerUpdate | null {
   if (draftProblems(draft, origin).length > 0) return null
   const { fields } = draft
-  const protocol = protocolOf(fields.preset)
   const listenPort = Number(fields.port.trim())
   const host = fields.host.trim()
   const publicPort =
     fields.publicPort.trim() === "" ? listenPort : Number(fields.publicPort)
-  // Fields the form does not show come from the same transport only.
-  const kept =
-    origin.restated && origin.restated.type === protocol
-      ? origin.restated
-      : null
-  const extra: Endpoint[] = kept?.endpoints?.slice(1) ?? []
-  const common = {
-    ...(kept ?? {}),
+  const listen = fields.listen.trim()
+  const before = origin.restated
+  // What the form shows of every transport, over the fields it does not.
+  const placed = (
+    kept: {
+      endpoints?: Endpoint[]
+      bindInterface?: string
+      socket?: SocketOptions
+    } | null
+  ) => ({
     listenPort,
+    ...(listen === "" ? {} : { listen }),
+    ...(kept?.bindInterface === undefined
+      ? {}
+      : { bindInterface: kept.bindInterface }),
+    ...(kept?.socket === undefined ? {} : { socket: kept.socket }),
     enabled: draft.enabled,
     remark: draft.remark,
-    endpoints: host === "" ? extra : [{ host, port: publicPort }, ...extra],
-  }
-  const listen = fields.listen.trim()
-  if (listen === "") delete (common as { listen?: string }).listen
-  else (common as { listen?: string }).listen = listen
+    endpoints: [
+      ...(host === "" ? [] : [{ host, port: publicPort }]),
+      ...(kept?.endpoints?.slice(1) ?? []),
+    ],
+  })
 
-  let candidate: unknown
-  if (fields.preset === "native_udp" || fields.preset === "native_tcp")
-    candidate = { ...common, type: fields.preset }
-  else {
-    const keptTls = kept && "tls" in kept ? kept.tls : undefined
-    const certificate = draft.certificate.trim()
-    const tls = {
-      ...(keptTls ?? {}),
-      serverName: fields.serverName.trim() || host,
-      mode: draft.tlsMode,
-      ...(draft.tlsMode === "provided" && certificate !== ""
-        ? { certificate: draft.certificate, privateKey: draft.privateKey }
-        : {}),
+  let candidate: ListenerUpdate
+  switch (fields.preset) {
+    case "native_udp": {
+      const kept = before?.type === "native_udp" ? before : null
+      candidate = { type: "native_udp", ...placed(kept) }
+      break
     }
-    const websocket =
-      fields.preset === "vless_websocket"
-        ? {
-            websocket: {
-              ...(draft.wsPath.trim() === ""
-                ? {}
-                : { path: draft.wsPath.trim() }),
-              ...(draft.wsHost.trim() === ""
-                ? {}
-                : { host: draft.wsHost.trim() }),
-            },
-          }
-        : {}
-    const { websocket: _keptWebsocket, ...rest } = common as typeof common & {
-      websocket?: unknown
+    case "native_tcp": {
+      const kept = before?.type === "native_tcp" ? before : null
+      candidate = {
+        type: "native_tcp",
+        ...placed(kept),
+        ...(kept?.tcp === undefined ? {} : { tcp: kept.tcp }),
+      }
+      break
     }
-    void _keptWebsocket
-    candidate = {
-      ...rest,
-      type: "vless",
-      stream: fields.preset === "vless_websocket" ? "websocket" : "tcp",
-      tls,
-      ...websocket,
-      ...(draft.uuid.trim() === "" ? {} : { uuid: draft.uuid.trim() }),
+    case "vless_tcp":
+    case "vless_websocket": {
+      const kept = before?.type === "vless" ? before : null
+      const websocket = fields.preset === "vless_websocket"
+      const certificate = draft.certificate.trim()
+      const wsPath = draft.wsPath.trim()
+      const wsHost = draft.wsHost.trim()
+      candidate = {
+        type: "vless",
+        ...placed(kept),
+        ...(kept?.tcp === undefined ? {} : { tcp: kept.tcp }),
+        ...(kept?.flow ? { flow: kept.flow } : {}),
+        stream: websocket ? "websocket" : "tcp",
+        tls: {
+          ...(kept?.tls ?? {}),
+          serverName: fields.serverName.trim() || host,
+          mode: draft.tlsMode,
+          ...(draft.tlsMode === "provided" && certificate !== ""
+            ? { certificate: draft.certificate, privateKey: draft.privateKey }
+            : {}),
+        },
+        // An omitted block (or its omitted headers) is kept: over TCP, the
+        // block the listener had is removed.
+        ...(websocket
+          ? {
+              websocket: {
+                ...(wsPath === "" ? {} : { path: wsPath }),
+                ...(wsHost === "" ? {} : { host: wsHost }),
+              },
+            }
+          : kept?.websocket
+            ? { websocket: null }
+            : {}),
+        ...(draft.uuid.trim() === "" ? {} : { uuid: draft.uuid.trim() }),
+      }
+      break
     }
   }
-  const parsed = zListener.safeParse(candidate)
+  const parsed = zListenerUpdate.safeParse(candidate)
   return parsed.success ? parsed.data : null
 }
 

@@ -1,6 +1,6 @@
 import type {
   Endpoint,
-  Listener,
+  ListenerUpdate,
   ListenerView,
   NodeState,
 } from "@meshway/control-client"
@@ -27,9 +27,10 @@ import {
 } from "@/lib/configuration/node-operations"
 import {
   draftOfView,
+  editable as formEditable,
+  headerNames,
   newDraft,
   presetOfView,
-  uneditable,
   type ListenerDraft,
   type ListenerOrigin,
 } from "@/lib/nodes/listener-edit"
@@ -56,6 +57,8 @@ type Facts = {
   endpoints: Endpoint[]
   serverName: string | null
   websocket: string | null
+  /** The WebSocket block's response headers, by name. */
+  headers: string[]
   remark: string
   secret: string | null
 }
@@ -71,6 +74,7 @@ function factsOfView(view: ListenerView): Facts {
     websocket: view.websocket
       ? `${view.websocket.path}${view.websocket.host ? ` · ${view.websocket.host}` : ""}`
       : null,
+    headers: headerNames(view),
     remark: view.remark,
     secret:
       view.protocol === "vless" || view.protocol === "trojan"
@@ -92,11 +96,16 @@ function factsOfView(view: ListenerView): Facts {
   }
 }
 
-/** `fresh`: a listener the base does not hold (its material is generated). */
+/**
+ * `fresh`: a listener the base does not hold (its material is generated).
+ * `headers`: the configured listener's response headers, kept while it
+ * stays the same listener over WebSocket.
+ */
 function factsOfUpdate(
-  listener: Listener,
+  listener: ListenerUpdate,
   recreate: boolean,
-  fresh: boolean
+  fresh: boolean,
+  headers: string[]
 ): Facts {
   const kind =
     listener.type === "vless"
@@ -124,6 +133,14 @@ function factsOfUpdate(
       listener.type === "vless" && listener.stream === "websocket"
         ? `${listener.websocket?.path ?? m.nodes_listener_ws_path_default()}${listener.websocket?.host ? ` · ${listener.websocket.host}` : ""}`
         : null,
+    headers:
+      !recreate &&
+      !fresh &&
+      listener.type === "vless" &&
+      listener.stream === "websocket" &&
+      listener.websocket !== null
+        ? headers
+        : [],
     remark: listener.remark ?? "",
     secret:
       listener.type === "vless" || listener.type === "trojan"
@@ -282,7 +299,12 @@ export function ConfiguredListeners({
           if (editing === key) return <div key={key}>{editorFor(key)}</div>
           const facts =
             edit?.kind === "set"
-              ? factsOfUpdate(edit.listener, edit.recreate, !view)
+              ? factsOfUpdate(
+                  edit.listener,
+                  edit.recreate,
+                  !view,
+                  view ? headerNames(view) : []
+                )
               : view
                 ? factsOfView(view)
                 : null
@@ -297,7 +319,7 @@ export function ConfiguredListeners({
                   : edit.recreate
                     ? m.nodes_listener_mark_recreated()
                     : m.nodes_listener_mark_changed()
-          const why = view ? uneditable(view) : null
+          const offered = view ? formEditable(view) : true
           return (
             <ListenerBlock
               key={key}
@@ -325,14 +347,12 @@ export function ConfiguredListeners({
                       <>
                         <IconAction
                           label={
-                            why === null
+                            offered
                               ? m.nodes_listener_edit()
-                              : why === "transport"
-                                ? m.nodes_listener_uneditable_transport()
-                                : m.nodes_listener_uneditable_headers()
+                              : m.nodes_listener_uneditable_transport()
                           }
                           icon={PencilIcon}
-                          disabled={why !== null}
+                          disabled={!offered}
                           onClick={() => setEditing(key)}
                         />
                         <IconAction
@@ -358,7 +378,7 @@ export function ConfiguredListeners({
 
 /** A draft from an update the draft holds (secrets it writes are not shown again). */
 function draftOfUpdate(
-  listener: Listener,
+  listener: ListenerUpdate,
   recreate: boolean
 ): ListenerDraft | null {
   const view: ListenerView = {
@@ -480,6 +500,13 @@ function ListenerBlock({
         {facts.websocket !== null ? (
           <Tile label={m.nodes_listener_ws_path()}>
             <span className="font-mono font-normal">{facts.websocket}</span>
+          </Tile>
+        ) : null}
+        {facts.headers.length > 0 ? (
+          <Tile label={m.nodes_listener_ws_headers()}>
+            <span className="font-mono font-normal">
+              {facts.headers.join(", ")}
+            </span>
           </Tile>
         ) : null}
         {facts.secret !== null ? (

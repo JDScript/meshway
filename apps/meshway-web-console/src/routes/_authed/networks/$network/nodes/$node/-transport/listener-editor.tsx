@@ -1,4 +1,4 @@
-import type { Listener } from "@meshway/control-client"
+import type { ListenerUpdate } from "@meshway/control-client"
 import { useState, type ReactNode } from "react"
 
 import { FIELD_SIZE, SwitchRow, TextField } from "@/components/chrome/form"
@@ -8,6 +8,7 @@ import { Field, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
 import {
   draftProblems,
+  headerNames,
   isListenerKey,
   keepsCertificate,
   keepsUuid,
@@ -74,7 +75,11 @@ export function ListenerEditor({
   takenKeys: readonly string[]
   /** A new listener's suggested key for a transport; null when editing one. */
   newKey: ((preset: Preset) => string) | null
-  onDone: (key: string | null, listener: Listener, recreate: boolean) => void
+  onDone: (
+    key: string | null,
+    listener: ListenerUpdate,
+    recreate: boolean
+  ) => void
   onCancel: () => void
 }) {
   const [draft, setDraft] = useState(initial)
@@ -308,12 +313,21 @@ export function ListenerEditor({
       ) : null}
 
       {existing && vless ? (
-        <SwitchRow
-          id={field("recreate")}
-          label={m.nodes_listener_recreate()}
-          checked={draft.recreate}
-          onCheckedChange={(recreate) => set({ recreate })}
-        />
+        <div className="flex flex-col gap-1.5">
+          <SwitchRow
+            id={field("recreate")}
+            label={m.nodes_listener_recreate()}
+            checked={draft.recreate}
+            onCheckedChange={(recreate) => set({ recreate })}
+          />
+          {origin.view && headerNames(origin.view).length > 0 ? (
+            <p className="px-3.5 text-meta text-muted-foreground">
+              {m.nodes_listener_recreate_clears_headers({
+                names: headerNames(origin.view).join(", "),
+              })}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
