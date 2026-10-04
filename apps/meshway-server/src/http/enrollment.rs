@@ -163,7 +163,7 @@ pub(super) async fn list_keys(
         .map(Json)
         .map_err(|e| HttpError::domain(id, e))
 }
-#[utoipa::path(delete,path="/api/v1/networks/{networkId}/enrollment-keys/{keyId}",operation_id="revokeEnrollmentKey",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("keyId"=EnrollmentKeyId,Path)),responses((status=204),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse)))]
+#[utoipa::path(delete,path="/api/v1/networks/{networkId}/enrollment-keys/{keyId}",operation_id="revokeEnrollmentKey",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("keyId"=EnrollmentKeyId,Path)),responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn revoke_key(
     State(service): State<Enrollment>,
     Extension(id): Extension<RequestId>,

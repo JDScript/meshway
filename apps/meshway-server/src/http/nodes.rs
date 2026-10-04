@@ -9,7 +9,7 @@ use axum::{
 };
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId};
 use meshway_protocol::{ErrorResponse, execution::PublicationProgress, node::*};
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}/settings",operation_id="getNodeSettings",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=NodeSettingsResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}/settings",operation_id="getNodeSettings",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=NodeSettingsResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn settings(
     State(service): State<Execution>,
     Extension(id): Extension<RequestId>,
@@ -58,7 +58,7 @@ pub(super) async fn delete(
         .map(Json)
         .map_err(|e| HttpError::domain(id, e))
 }
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke",operation_id="revokeNodeKey",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=RevokeNodeKeyRequest,responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke",operation_id="revokeNodeKey",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=RevokeNodeKeyRequest,responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn revoke_key(
     State(service): State<Execution>,
     Extension(id): Extension<RequestId>,

@@ -1938,7 +1938,7 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            401 | 404 => Err(response.problem()),
+            400 | 401 | 403 | 404 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -3785,7 +3785,7 @@ impl crate::Client {
             .await?;
         match response.status {
             204 => response.empty(),
-            401 | 403 | 404 => Err(response.problem()),
+            400 | 401 | 403 | 404 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -3852,7 +3852,7 @@ impl crate::Client {
             .await?;
         match response.status {
             204 => response.empty(),
-            400 | 401 | 403 | 404 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 404 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -3920,7 +3920,7 @@ impl crate::Client {
             .await?;
         match response.status {
             204 => response.empty(),
-            400 | 401 | 403 | 409 => Err(response.problem()),
+            400 | 401 | 403 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

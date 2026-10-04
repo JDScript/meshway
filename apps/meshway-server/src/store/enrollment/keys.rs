@@ -204,6 +204,18 @@ pub(crate) fn revoke_key(
     if !exists {
         return Err(Error::NotFound);
     }
-    tx.execute("UPDATE enrollment_keys SET revoked_at=COALESCE(revoked_at,?1) WHERE network_id=?2 AND id=?3 AND consumed_request_id IS NULL AND expires_at>?1",params![now,network.as_uuid().as_bytes().as_slice(),key.as_uuid().as_bytes().as_slice()])?;
+    // A key that was already used, expired or revoked has nothing left to
+    // revoke; the caller learns that this call changed nothing.
+    let changed = tx.execute(
+        "UPDATE enrollment_keys SET revoked_at=?1 WHERE network_id=?2 AND id=?3 AND revoked_at IS NULL AND consumed_request_id IS NULL AND expires_at>?1",
+        params![
+            now,
+            network.as_uuid().as_bytes().as_slice(),
+            key.as_uuid().as_bytes().as_slice()
+        ],
+    )?;
+    if changed == 0 {
+        return Err(Error::StateConflict);
+    }
     Ok(())
 }

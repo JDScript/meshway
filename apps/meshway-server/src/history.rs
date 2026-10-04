@@ -30,7 +30,7 @@ impl History {
         id: RequestId,
     ) -> Result<ActivityListResponse, Error> {
         if !(1..=200).contains(&limit) {
-            return Err(Error::InvalidCursor);
+            return Err(Error::InvalidRequest);
         }
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
@@ -137,7 +137,7 @@ impl History {
         id: RequestId,
     ) -> Result<ConfigurationRevisionList, Error> {
         if !(1..=200).contains(&limit) {
-            return Err(Error::InvalidCursor);
+            return Err(Error::InvalidRequest);
         }
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);

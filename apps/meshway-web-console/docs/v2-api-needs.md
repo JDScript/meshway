@@ -149,3 +149,33 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 12. **双向同时拨号**：两端都报告自己是发起方时，link 被判为 `conflicting`，`inUse` 变成 null。这种情况需要定义。
 13. **给 Agent 实现方的提醒**：每个节点最多 8 个会话、8 个 challenge。
 14. **部署**：`--listen` 的默认值仍是 `127.0.0.1:8420`，与现在运行的旧服务冲突。
+
+## 后端回复（`server/cleanup`，基于 `ac4a1872` 之后）
+
+### 已处理
+
+- **8 · 撤销已失效对象**：`revokeEnrollmentKey`、`revokeJoinLink` 对已使用／已过期／已撤销的对象返回 409 `state_conflict`，不再记活动；两个操作的 OpenAPI 补充声明 409 和 503。
+- **8 · `revokeNodeKey`**：已退休代际仍可吊销（204，不撤当前执行，防止旧材料被恢复）；重复吊销返回 409 `state_conflict`；generation 不匹配仍是 409 `version_conflict`。
+- **8 · `getNodeSettings`** 的 OpenAPI 补充声明 400、403、503。
+- 历史列表 `limit` 越界统一返回 `invalid_request`（原为 `invalid_cursor`）。
+- **8 · `entities.delta` 的 `configurationRevision`**：契约是对的，文档多写了；已从 `docs/v2/api/events.md` 删去。
+- `c0f07f77` 之后基础设施错误不再伪装成 401／404／400：`current_session`、`membership` 等查询的存储故障统一 503；Node 凭据无效在 State 上报为 `invalid_credentials`；非成员读取 rule-sets 返回 404（与其他网络路由一致）；enrollment 里的配置校验失败返回 422 `configuration_invalid`。
+
+### 核对后的说明
+
+- **8 · validate 的 `requestId`**：所有响应（含 `ErrorResponse`）的 `requestId` 都是服务端为本次 HTTP 请求生成的关联 ID，与 `x-request-id` 一致，不回显请求体里的 `requestId`。按设计。
+- **9 · `account.email` 活动的 actor 快照**：活动记录提交时刻的身份，所以是新邮箱；旧邮箱在同一活动的目标字段里没有保留。若页面需要"从 A 改为 B"，要给活动加字段，请列入契约增补。
+
+### 纳入后续步骤
+
+- **5 · 配置诊断**（code／params、精确 path、warning 通道、`affectedNodeIds`／`identityChangedNodeIds`／`changedListeners`、删除节点不进 `addressChangedNodeIds`、`willGenerate` 与 `requirements` 的边界）和 **7 · Listener**（`ListenerUpdate` 省略 headers 表示保持、托管证书改 `serverName` 时不沿用旧证书）：都在配置提交流水线里，服务端下一步正要把四份重复的提交路径合成一条，这些一并定义，完成后在此回复。
+- **8／11 · 规则集**（失败 issue 带 `ResourceProblem` code、超限行为一致、检查记录跨版本保留、大集合 validate 耗时）：随 resources 的 SQL 下沉处理。
+- **8 · 主动观察的错误码、10 · 历史桶**：observations 模块当前冻结，待 Node 实现后按真实消费者重做；`observation_limit` 拆分、`DemandDecision` 原因带出、`HistoryBucket.peerNodeId` 已记录为输入。
+
+### 需要产品决定（服务端不单方面定）
+
+- **2** GeoIP／ASN 数据集的部署入口（CLI 还是管理 API）。
+- **3** 设备授权的浏览器链接格式。
+- **4／6／9** 契约增补：`NetworkActions` 读完整配置的动作、`unmanaged` 在普通规则里的 schema 收紧、`JoinLinkView` 签发人、成员视角对端 hostname、SSE 配置快照带 `requestId`、观察的 `actions`／候选清单／服务器时间。建议 console 按优先级列一次，服务端一次性加并重生成 SDK。
+- **12** 双向同时拨号时 link 的判定。
+- **14** `--listen` 默认端口。

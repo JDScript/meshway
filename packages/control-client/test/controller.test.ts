@@ -289,9 +289,13 @@ test("SDK preserves retired references across email changes and rejoin without a
   const session = await login(client, { email, password });
   assert.ok(session.ok);
   assert.notEqual(await join(session.data.token), membershipId);
+  // The revoked membership's reference keeps the name it was bound under: the
+  // former network is never told the departed user's new address, and the
+  // rejoined membership does not inherit the retired binding.
   const source = await getConfigurationSource(client, path, {}, options);
   assert.ok(source.ok);
-  assert.deepEqual(source.data.configuration.groups?.["group:team"], [email]);
+  assert.deepEqual(source.data.configuration.groups?.["group:team"], [member.data.user.email]);
+  assert.ok(!source.data.sourceJsonc.includes(email));
   const inputs: ConfigurationRequest[] = [
     { type: "operations", expectedRevision: source.data.revision, requestId: randomUUID(), ops: [] },
     { type: "document", expectedRevision: source.data.revision, requestId: randomUUID(), sourceJsonc: source.data.sourceJsonc },
