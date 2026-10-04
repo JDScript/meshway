@@ -205,6 +205,26 @@ test("a delta applies only on top of the last applied cursor", () => {
   const applied = run([[delta, "c2"]], ready)
   assert.equal(applied.model.cursor, "c2")
   assert.equal(applied.effects[0]?.type, "state")
+  // Without its projection metadata the State keeps what it had.
+  assert.equal(applied.model.view?.state.asOf, "2026-10-03T00:00:00Z")
+
+  const projected = run(
+    [
+      [
+        {
+          ...delta,
+          asOf: "2026-10-03T00:01:00Z",
+          sequence: 7,
+          configurationRevision: 4,
+        },
+        "c2",
+      ],
+    ],
+    ready
+  ).model.view?.state
+  assert.equal(projected?.asOf, "2026-10-03T00:01:00Z")
+  assert.equal(projected?.sequence, 7)
+  assert.equal(projected?.configurationRevision, 4)
 
   const gap = run([[{ ...delta, baseCursor: "c1" }, "c2"]], ready)
   assert.deepEqual(gap.effects, [{ type: "resync" }])
@@ -283,7 +303,7 @@ test("notices move the cursor; a revision out of sequence resyncs", () => {
   assert.deepEqual(noId.effects, [{ type: "resync" }])
 })
 
-test("a member's configuration change takes a new snapshot", () => {
+test("a member's configuration change moves the cursor; new settings come after a reset", () => {
   const ready = run(snapshot("b1", member)).model
   const { model, effects } = run(
     [
@@ -305,11 +325,9 @@ test("a member's configuration change takes a new snapshot", () => {
     ],
     ready
   )
-  assert.deepEqual(effects, [
-    { type: "configuration", revision: 4 },
-    { type: "resync" },
-  ])
-  assert.equal(model.cursor, null)
+  assert.deepEqual(effects, [{ type: "configuration", revision: 4 }])
+  assert.equal(model.cursor, "c2")
+  assert.equal(model.view?.revision, 4)
 })
 
 test("a reset drops the view; the snapshot that follows installs again", () => {

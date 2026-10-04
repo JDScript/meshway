@@ -87,7 +87,11 @@ function replaceEntries<Value>(
   return Object.assign(next, updated)
 }
 
-/** `state.delta`: each updated node replaced whole, removed ones dropped, links and paths replaced. */
+/**
+ * `state.delta`: each updated node replaced whole, removed ones dropped,
+ * links and paths replaced; the projection's time, sequence and revision
+ * replaced when the delta carries them (an older one may not).
+ */
 function applyStateDelta(
   state: StateView,
   delta: Extract<UserEvent, { type: "state.delta" }>
@@ -95,6 +99,10 @@ function applyStateDelta(
   return {
     ...state,
     stateEpoch: delta.stateEpoch,
+    asOf: delta.asOf ?? state.asOf,
+    sequence: delta.sequence ?? state.sequence,
+    configurationRevision:
+      delta.configurationRevision ?? state.configurationRevision,
     nodes: replaceEntries(state.nodes, delta.updated, delta.removed),
     links: delta.links,
     paths: delta.paths,
@@ -241,17 +249,11 @@ export function step(model: Model, event: UserEvent, id?: string): Step {
     }
     case "configuration.changed": {
       if (event.previousRevision !== view.revision) return resync()
-      const effects: Effect[] = [
-        { type: "configuration", revision: event.revision },
-      ]
-      // A member's settings come only in a snapshot: take a new one.
-      if (view.configuration.type === "member") effects.push({ type: "resync" })
+      // A member's own settings, when they change, come in a new batch
+      // after `sync.reset`; the controller sends it.
       return {
-        model:
-          view.configuration.type === "member"
-            ? initialModel
-            : at({ ...view, revision: event.revision }),
-        effects,
+        model: at({ ...view, revision: event.revision }),
+        effects: [{ type: "configuration", revision: event.revision }],
       }
     }
     case "configuration.progress":
