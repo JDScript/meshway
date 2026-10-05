@@ -2,6 +2,8 @@
 
 三个常驻 Node 共用已构建的 Linux 二进制，各自持有独立状态卷。Docker Compose 只运行程序；Rust 编译由宿主机的固定工具链执行。
 
+常规检查、隔离包流验收、开发服务重置和各类环境的归属／回收入口统一见[开发服务、测试与环境](/v2/development)。
+
 ## 节点与持久状态
 
 | 容器 | hostname | Named volume |

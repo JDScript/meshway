@@ -133,7 +133,11 @@ run = "pnpm --filter @meshway/docs build"
 
 [tasks."test:scripts"]
 description = "Test local service ownership and lifecycle helpers"
-run = "python3 -B -m unittest discover -s scripts -p 'test_*.py'"
+run = [
+  "python3 -B -m unittest discover -s scripts -p 'test_*.py'",
+  "pnpm exec tsc -p scripts/dev/tsconfig.json",
+  "node --experimental-strip-types --test scripts/dev/seed.test.ts",
+]
 
 [tasks."dev:console"]
 description = "Run Web Console; requires MESHWAY_CONTROLLER_URL"
@@ -144,5 +148,5 @@ description = "Run the documentation dev server in the foreground"
 run = "pnpm --filter @meshway/docs dev"
 
 [tasks.services]
-description = "Manage persistent Server/docs: start|status|stop|restart|update [server|docs|all]"
+description = "Manage Server/docs: start|status|stop|restart|update [server|docs|all], or reset server"
 run = "python3 scripts/dev.py"

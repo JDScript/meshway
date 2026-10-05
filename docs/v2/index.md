@@ -23,6 +23,7 @@ Server 管理账户、网络隔离、完整配置、授权和执行发布；Node
 | 章节 | 回答的问题 |
 | --- | --- |
 | [总体结构与 Crates](/v2/architecture) | 有哪些程序、哪些库真正共享，旧实现如何退出？ |
+| [开发服务、测试与环境](/v2/development) | 如何运行、验证、更新、重置和清理开发环境？ |
 | [Server](/v2/server) | 控制面负责什么，当前实现到哪里？ |
 | [Node](/v2/node) | meshwayd／CLI、网络模式和插件如何组织？ |
 | [数据模型](/v2/entities) | Entity、Config、State 的权威来源分别是什么？ |
@@ -34,6 +35,6 @@ Server 管理账户、网络隔离、完整配置、授权和执行发布；Node
 
 ## 范围与命名
 
-Server 的主要控制面流程已有实现；新 Node 处于设计阶段。已实现能力与未完成项分别见两端入口页，字段的精确运行合同以 Rust 类型、实际路由及生成 OpenAPI／SDK 为准。
+Server 的主要控制面流程和 Linux Node 的 Mesh-only TUN、系统 DNS、认证承载及协调 UDP 穿透已有实现与分项验收。已实现能力与未完成项分别见两端入口页，字段的精确运行合同以 Rust 类型、实际路由及生成 OpenAPI／SDK 为准。
 
 Server 应用包名是 `meshway-server`。协议中的 `controllerId` 和 `/agent-api/v1` 等名称按生成契约使用。本文档分区描述当前唯一模型，不提供平行的旧策略合同。
