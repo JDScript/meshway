@@ -155,12 +155,9 @@ async fn local_route_preflight_and_live_address_conflicts_preserve_foreign_resou
             let peer: IpAddr = if ipv6 { "fd12:3456::2" } else { "100.96.0.2" }
                 .parse()
                 .unwrap();
-            let loopback = collect(
-                kernel.handle.link().get().match_name("lo").execute(),
-                1024,
-            )
-            .await
-            .unwrap()[0]
+            let loopback = collect(kernel.handle.link().get().match_name("lo").execute(), 1024)
+                .await
+                .unwrap()[0]
                 .header
                 .index;
             let foreign = foreign_local(peer, loopback);
