@@ -389,6 +389,7 @@ impl Upstream {
             "initial",
             "revoked",
             "restored",
+            "recovered",
         ] {
             for (suffix, protocol) in [
                 ("office.example.", "udp"),
@@ -421,6 +422,7 @@ impl Upstream {
                 "initial",
                 "revoked",
                 "restored",
+                "recovered",
                 "down",
             ] {
                 if !evidence

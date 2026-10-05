@@ -1,3 +1,5 @@
+mod reconnect;
+
 use crate::{
     Cli, Error, IO, Result, STARTUP,
     application::{self, Counts, Echo, Subscription, SubscriptionEvidence, Traffic},
@@ -10,7 +12,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     process::Stdio,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tokio::{
     io::AsyncReadExt,
@@ -96,10 +98,7 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
 
 fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result<Child> {
     let mut daemon_command = Command::new(cli.binaries.join("meshwayd"));
-    let mut filter = "info,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug".to_owned();
-    if cli.traversal_fallback {
-        filter.push_str(",meshway_daemon::runtime::network::circuit_packet=trace");
-    }
+    let filter = "info,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug,meshway_daemon::runtime::network::circuit_packet=debug";
     if cli.dns_backend.enabled() {
         daemon_command.args([
             "--dns-backend",
@@ -113,7 +112,7 @@ fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result
             "--log-format",
             "json",
             "--log-filter",
-            &filter,
+            filter,
             "--server",
             meshway_packet_fixture::CONTROLLER_ORIGIN,
             "--network-mode",
@@ -214,7 +213,7 @@ async fn exercise(
         )
         .await?;
     }
-    let tun = owned_tun().await?;
+    let mut tun = owned_tun().await?;
     let tun_index = tun_index(&tun).await?;
     save(cli, "tun-identity", &(&tun, tun_index)).await?;
     let initial_rx = tun_received(&tun).await?;
@@ -436,48 +435,11 @@ async fn exercise(
         &(initial_rx, initial_rx + received),
     )
     .await?;
-    let pre_outage = command(cli, "status").await?;
+    let pre_outage = running(cli, revision).await?;
     save(cli, "before-outage-status", &pre_outage).await?;
     signals
         .write(&format!("lease-ready-{}", role.name()), &Signal::Ready)
         .await?;
-    signals.ready("offline").await?;
-    let fresh = command(cli, "status").await?;
-    let lease = fresh
-        .instance
-        .as_ref()
-        .or(pre_outage.instance.as_ref())
-        .ok_or("no actual instance lease at Server stop")?;
-    let expiry = lease
-        .execution_expires_at_ms
-        .ok_or("no execution lease at Server stop")?
-        .min(lease.expires_at_ms);
-    save(cli, "lease-at-outage", &fresh).await?;
-    let now = now_ms()?;
-    if expiry <= now || expiry.saturating_sub(now) > 70_000 {
-        return Err("unexpected actual lease deadline".into());
-    }
-    let wait = Duration::from_millis(expiry - now + 500);
-    if crate::remaining(wait)? < wait {
-        return Err("lease expiry exceeds fixture deadline".into());
-    }
-    tokio::time::sleep(wait).await;
-    let suspended = wait_status(cli, |status| {
-        status.data_plane == DataPlane::Suspended && status.desired_up
-    })
-    .await?;
-    save(cli, "lease-expired-status", &suspended).await?;
-    if let Some(dns) = dns {
-        dns.expired(cli, role, &dns_domain).await?;
-    }
-    // Prove the unmarked destination still cannot escape via Docker's default
-    // route. A held TUN or an unreachable policy route is acceptable here.
-    route_proof(cli, &addresses[&Role::B], &tun, true, "suspended").await?;
-    if let Some(traffic) = &mut traffic {
-        traffic.blocked().await?;
-    }
-    application::underlay_probe(underlay.actors[&Role::B]).await?;
-    echo.as_mut().ok_or("missing echo owner")?.check()?;
     let counts = traffic.as_ref().map_or_else(
         || echo.as_ref().map_or(Counts::default(), Echo::counts),
         |traffic| traffic.counts,
@@ -491,14 +453,24 @@ async fn exercise(
     {
         return Err("relay delivered business plaintext to its TUN/application".into());
     }
-    // Coordinate after all outage probes so B cannot tear down its underlay
-    // application while A/R still need their independent reachability check.
-    signals
-        .write(&format!("outage-{}", role.name()), &Signal::Ready)
-        .await?;
-    for actor in Role::ALL {
-        signals.ready(&format!("outage-{}", actor.name())).await?;
-    }
+    let (recovery, recovered_tun) = reconnect::run(reconnect::Context {
+        cli,
+        role,
+        signals,
+        addresses: &addresses,
+        dns_domain: &dns_domain,
+        revision,
+        before: pre_outage,
+        old_tun: &tun,
+        echo: echo.as_mut().ok_or("missing echo owner")?,
+        traffic: &mut traffic,
+        dns,
+    })
+    .await?;
+    tun = recovered_tun;
+    // The real listener/database owner stops only after all recovered packet
+    // and State checks. Explicit down is therefore still exercised offline.
+    signals.ready("offline").await?;
     let private_identity = cli.state.join("node/identity/control.json");
     let before = tokio::fs::read(&private_identity).await?;
     command(cli, "down").await?;
@@ -545,6 +517,7 @@ async fn exercise(
                 identity_preserved: true,
                 dns: dns_evidence,
                 fallback: fallback_evidence,
+                recovery: Box::new(recovery),
             },
         )
         .await?;
@@ -1079,11 +1052,4 @@ async fn save(cli: &Cli, name: &str, value: &impl Serialize) -> Result<()> {
     )
     .await?;
     Ok(())
-}
-
-fn now_ms() -> Result<u64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis()
-        .try_into()?)
 }

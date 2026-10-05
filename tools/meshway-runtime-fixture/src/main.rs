@@ -4,9 +4,11 @@
 mod actor;
 mod application;
 mod controller;
+mod diagnostics;
 mod dns;
 mod fallback;
 mod peer;
+mod recovery;
 mod signals;
 mod traversal;
 
@@ -18,7 +20,7 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
 const IO: Duration = Duration::from_secs(10);
 const STARTUP: Duration = Duration::from_secs(45);
-const DEADLINE: Duration = Duration::from_secs(420);
+const DEADLINE: Duration = Duration::from_secs(480);
 static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 fn remaining(limit: Duration) -> Result<Duration> {
@@ -147,7 +149,8 @@ async fn main() -> std::process::ExitCode {
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            // Authenticated errors can contain secrets; only static stages are logged.
+            // Authenticated errors can contain secrets; ordinary logs use only
+            // typed/static failure metadata, never arbitrary Display messages.
             record_error(&cli, "error.txt", error.as_ref());
             let role = match cli.command {
                 Command::Controller => Some("controller"),
@@ -159,7 +162,7 @@ async fn main() -> std::process::ExitCode {
                     .write(&format!("abort-{role}"), &signals::Signal::Ready)
                     .await;
             }
-            tracing::error!("runtime fixture failed; inspect last stage and private evidence");
+            diagnostics::log(error.as_ref());
             std::process::ExitCode::FAILURE
         }
     }
