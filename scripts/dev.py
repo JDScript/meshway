@@ -2,6 +2,7 @@
 """Repository-local Server/docs services with verified tmux ownership."""
 import argparse
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import fcntl
 import json
 import os
@@ -21,6 +22,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = {"server": (8420, "/api/v1/auth/options"), "docs": (5173, "/v2/")}
 CONSOLE_ORIGIN = "http://127.0.0.1:3001"
+SERVER_ORIGIN = "https://meshway-dev-api.jdscript.dev"
 
 
 class DevError(RuntimeError):
@@ -28,7 +30,7 @@ class DevError(RuntimeError):
 
 
 def private(path, directory=False, create=False):
-    if create and not path.exists():
+    if create and not path.exists() and not path.is_symlink():
         if directory:
             path.mkdir(mode=0o700)
         else:
@@ -36,7 +38,9 @@ def private(path, directory=False, create=False):
             os.close(descriptor)
     info = path.lstat()
     kind = stat.S_ISDIR if directory else stat.S_ISREG
-    if not kind(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != (0o700 if directory else 0o600):
+    if (not kind(info.st_mode) or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != (0o700 if directory else 0o600)
+            or not directory and info.st_nlink != 1):
         raise DevError("invalid private path ownership or permissions: " + str(path))
 
 
@@ -49,7 +53,7 @@ def save(path, value):
             output.write("\n")
             output.flush()
             os.fsync(output.fileno())
-        if path.exists():
+        if path.exists() or path.is_symlink():
             private(path)
         os.replace(temporary, path)
         descriptor = os.open(path.parent, os.O_RDONLY)
@@ -79,7 +83,7 @@ def command(service, root):
     return ["pnpm", "--filter", "@meshway/docs", "dev"]
 
 
-def known_start(raw, service, root, log):
+def known_start(raw, launch, root, log):
     try:
         tokens = shlex.split(raw)
         if len(tokens) == 1 and tokens[0].startswith("exec "):
@@ -91,7 +95,7 @@ def known_start(raw, service, root, log):
             tail = tokens.pop()
             if not tail.startswith(">>") or (root / tail[2:]).resolve() != log:
                 return False
-        return tokens == command(service, root)
+        return tokens == launch
     except (ValueError, IndexError):
         return False
 
@@ -114,16 +118,34 @@ def descendants(table, pid):
         owned |= added
 
 
-def actual_command(raw, service, root):
+def actual_command(raw, service, launch):
     if service == "server":
-        return raw == " ".join(command(service, root))
+        return raw == " ".join(launch)
     try:
         args = shlex.split(raw)
         if args and Path(args[0]).name in ("node", "nodejs"):
             args.pop(0)
-        return len(args) == 4 and Path(args[0]).name in ("pnpm", "pnpm.cjs") and args[1:] == command(service, root)[1:]
+        return len(args) == len(launch) and Path(args[0]).name in ("pnpm", "pnpm.cjs") and args[1:] == launch[1:]
     except ValueError:
         return False
+
+
+def process_identity(pid, root):
+    # PID alone can be reused. Exec preserves this kernel start time and UID.
+    result = run(["ps", "-p", str(pid), "-o", "uid=,lstart="], cwd=root, check=False, env=dict(os.environ, LC_ALL="C", TZ="UTC"))
+    fields = result.stdout.strip().split(None, 1)
+    if result.returncode or len(fields) != 2 or fields[0] != str(os.getuid()):
+        raise DevError("process identity is unavailable or foreign")
+    return fields[1]
+
+
+def private_tree(path):
+    private(path, directory=True)
+    for child in path.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            private_tree(child)
+        else:
+            private(child)
 
 
 class LocalServices:
@@ -145,6 +167,28 @@ class LocalServices:
         finally:
             os.close(descriptor)
 
+    def state(self, service):
+        path = self.directory / (service + ".json")
+        if not path.exists() and not path.is_symlink():
+            raise DevError(service + ": missing launch identity; explicit migration required")
+        private(self.root / ".meshway", directory=True)
+        private(self.directory, directory=True)
+        private(path)
+        saved = json.loads(path.read_text())
+        if (not isinstance(saved, dict) or saved.get("version") != 2
+                or saved.get("root") != str(self.root) or saved.get("service") != service
+                or saved.get("port") != SERVICES[service][0]
+                or not isinstance(saved.get("launchCommand"), list)
+                or not saved["launchCommand"]
+                or not all(isinstance(arg, str) and arg for arg in saved["launchCommand"])
+                or not isinstance(saved.get("processIdentity"), str)
+                or not isinstance(saved.get("startCommand"), str)
+                or type(saved.get("pid")) is not int or saved["pid"] <= 0
+                or not isinstance(saved.get("pane"), str)
+                or ("processCommand" in saved and not isinstance(saved["processCommand"], str))):
+            raise DevError(service + ": ownership state differs; explicit migration required")
+        return saved
+
     def pane(self, service):
         session = "meshway-" + service
         query = run(["tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_path}\t#{pane_start_command}"], cwd=self.root, check=False)
@@ -158,19 +202,20 @@ class LocalServices:
         if len(matches) != 1 or len(matches[0]) != 5:
             raise DevError(service + ": foreign or multi-pane session")
         _, pane, pid, cwd, raw = matches[0]
-        if not pid.isdigit() or Path(cwd).resolve() != self.root or not known_start(raw, service, self.root, self.directory / (session + ".log")):
+        saved = self.state(service)
+        if (not pid.isdigit() or Path(cwd).resolve() != self.root
+                or saved.get("pane") != pane or saved.get("pid") != int(pid)
+                or not known_start(raw, saved["launchCommand"], self.root, self.directory / (session + ".log"))
+                or not known_start(saved.get("startCommand", ""), saved["launchCommand"], self.root, self.directory / (session + ".log"))):
             raise DevError(service + ": foreign session (cwd/command differs)")
         table = process_table(self.root)
         pid = int(pid)
-        if pid not in table or not actual_command(table[pid][2], service, self.root):
+        if pid not in table or process_identity(pid, self.root) != saved["processIdentity"]:
+            raise DevError(service + ": process identity differs")
+        if (not actual_command(table[pid][2], service, saved["launchCommand"])
+                or saved.get("processCommand", table[pid][2]) != table[pid][2]):
             raise DevError(service + ": process command is not the expected service")
-        state_path = self.directory / (service + ".json")
-        if state_path.exists():
-            private(state_path)
-            saved = json.loads(state_path.read_text())
-            if not isinstance(saved, dict) or saved.get("root") != str(self.root) or saved.get("service") != service:
-                raise DevError(service + ": ownership state differs")
-        return {"pane": pane, "pid": pid, "processes": descendants(table, pid)}
+        return {"pane": pane, "pid": pid, "processes": descendants(table, pid), "processCommand": table[pid][2]}
 
     def listeners(self, service):
         result = run(["lsof", "-nP", "-iTCP:" + str(SERVICES[service][0]), "-sTCP:LISTEN", "-t"], cwd=self.root, check=False)
@@ -187,10 +232,10 @@ class LocalServices:
                     listeners = self.listeners(service)
                     if not listeners:
                         raise DevError(service + ": port responds without provable ownership")
-        if listeners and (pane is None or not listeners <= pane["processes"]):
-            table = process_table(self.root) if pane else {}
-            pid = pane["pid"] if pane else None
-            if pid not in table or not actual_command(table[pid][2], service, self.root) or not listeners <= descendants(table, pid):
+        if listeners:
+            fresh = self.pane(service) if pane else None
+            if (fresh is None or fresh["pid"] != pane["pid"] or fresh["pane"] != pane["pane"]
+                    or not listeners <= fresh["processes"]):
                 raise DevError(service + ": foreign listener on port " + str(SERVICES[service][0]))
         return bool(listeners)
 
@@ -218,8 +263,14 @@ class LocalServices:
             result["session"] = "running" if pane else "stopped"
             result["listening"] = self.port(service, pane)
             result["ready"] = bool(pane and result["listening"] and self.health(service))
+            if service == "server":
+                reset = self.reset_state()
+                result["reset"] = reset
+                if reset and reset["phase"] != "complete":
+                    result["ready"] = False
+                    result["error"] = "server: reset incomplete; inspect private reset journal"
         except (DevError, OSError, ValueError):
-            result.update(session="unverified", error=service + ": ownership/inspection failed")
+            result.update(session="unverified", ready=False, error=service + ": ownership/inspection failed")
         return result
 
     def build(self):
@@ -239,10 +290,20 @@ class LocalServices:
                 raise DevError("dependencies missing; run pnpm install --frozen-lockfile")
             log = self.directory / ("meshway-" + service + ".log")
             private(log, create=True)
-            shell = "exec " + shlex.join(command(service, self.root)) + " >>" + shlex.quote(str(log)) + " 2>&1"
+            launch = command(service, self.root)
+            shell = "exec " + shlex.join(launch) + " >>" + shlex.quote(str(log)) + " 2>&1"
             # tmux may predate the current mise environment; new services must
             # resolve tools from this invocation rather than its global PATH.
-            run(["tmux", "new-session", "-d", "-s", "meshway-" + service, "-c", str(self.root), "-e", "PATH=" + os.environ["PATH"], shell], cwd=self.root)
+            created = run(["tmux", "new-session", "-d", "-P", "-F", "#{pane_id}\t#{pane_pid}", "-s", "meshway-" + service, "-c", str(self.root), "-e", "PATH=" + os.environ["PATH"], shell], cwd=self.root)
+            fields = created.stdout.strip().split("\t")
+            if len(fields) != 2 or not fields[0].startswith("%") or not fields[1].isdigit():
+                raise DevError(service + ": launch identity unavailable; inspect tmux manually")
+            pid = int(fields[1])
+            save(self.directory / (service + ".json"), {
+                "version": 2, "root": str(self.root), "service": service, "port": SERVICES[service][0],
+                "pane": fields[0], "pid": pid, "processIdentity": process_identity(pid, self.root),
+                "launchCommand": launch, "startCommand": shell, "launchedAt": time.time(),
+            })
         deadline = time.monotonic() + self.wait
         while True:
             try:
@@ -252,9 +313,12 @@ class LocalServices:
                     raise
                 time.sleep(.1)
                 continue
-            if pane and self.port(service, pane) and self.health(service):
-                save(self.directory / (service + ".json"), {"version": 1, "root": str(self.root), "service": service, "pane": pane["pane"], "pid": pane["pid"], "verified_at": time.time()})
-                return
+            if pane:
+                saved = self.state(service)
+                if "processCommand" not in saved:
+                    save(self.directory / (service + ".json"), {**saved, "processCommand": pane["processCommand"]})
+                if self.port(service, pane) and self.health(service):
+                    return
             if time.monotonic() >= deadline:
                 raise DevError(service + ": readiness deadline exceeded; inspect private service log")
             time.sleep(.25)
@@ -268,7 +332,15 @@ class LocalServices:
         if fresh is None or fresh["pid"] != pane["pid"] or fresh["pane"] != pane["pane"]:
             raise DevError(service + ": ownership changed before stop")
         pids = fresh["processes"]
+        identities = {pid: process_identity(pid, self.root) for pid in pids}
         for pid in sorted(pids - {fresh["pid"]}) + [fresh["pid"]]:
+            current = self.pane(service)
+            if current is None:
+                break
+            if pid not in current["processes"]:
+                continue
+            if process_identity(pid, self.root) != identities[pid]:
+                raise DevError(service + ": process identity changed before signal")
             try:
                 os.kill(pid, signal.SIGINT)
             except ProcessLookupError:
@@ -280,6 +352,7 @@ class LocalServices:
             if not alive:
                 if self.pane(service) is not None:
                     raise DevError(service + ": unexpected process remains")
+                self.port(service, None)
                 path = self.directory / (service + ".json")
                 if path.exists():
                     private(path)
@@ -289,15 +362,107 @@ class LocalServices:
                 raise DevError(service + ": graceful SIGINT timeout; session retained")
             time.sleep(.25)
 
+    def reset_state(self):
+        path = self.directory / "server-reset.json"
+        if not path.exists() and not path.is_symlink():
+            return None
+        private(path)
+        value = json.loads(path.read_text())
+        if not isinstance(value, dict) or not all(isinstance(value.get(key), str) for key in ("runId", "phase", "backup")):
+            raise DevError("invalid reset journal")
+        return {key: value[key] for key in ("runId", "phase", "backup")}
+
+    def data_users(self, path):
+        result = run(["lsof", "-t", "+D", str(path)], cwd=self.root, check=False)
+        if result.returncode not in (0, 1) or result.stderr.strip():
+            raise DevError("server: cannot inspect data directory users")
+        if any(not line.isdigit() for line in result.stdout.splitlines()):
+            raise DevError("server: invalid data directory inspection")
+        return {int(line) for line in result.stdout.splitlines()}
+
+    def seed(self, backup):
+        # The helper reads/writes private files. Neither argv nor output contains credentials.
+        run(["node", "--experimental-strip-types", "scripts/dev/seed.ts", str(self.root), str(backup)], cwd=self.root, timeout=120)
+
+    def reset(self):
+        data = self.root / ".meshway/server"
+        login = self.root / ".meshway/dev-login.json"
+        backups = self.root / ".meshway/backups"
+        private(self.root / ".meshway", directory=True)
+        if data.exists() or data.is_symlink():
+            private_tree(data)
+            private(data / "controller.lock")
+        if login.exists() or login.is_symlink():
+            private(login)
+        private(backups, directory=True, create=True)
+        pane = self.pane("server")
+        self.port("server", pane)
+        if data.exists() and not self.data_users(data) <= (pane["processes"] if pane else set()):
+            raise DevError("server: foreign process uses data directory")
+        # Fail missing toolchain/SDK before interrupting a service or moving data.
+        run(["node", "--experimental-strip-types", "scripts/dev/seed.ts", "--check", str(self.root)], cwd=self.root)
+        if not (self.root / "target/debug/meshway-server").is_file():
+            self.build()
+        identity = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
+        backup = backups / ("server-" + identity)
+        private(backup, directory=True, create=True)
+        journal = {"version": 1, "runId": identity, "backup": str(backup), "phase": "stopping",
+                   "server": SERVER_ORIGIN, "console": CONSOLE_ORIGIN}
+
+        def phase(name):
+            journal["phase"] = name
+            save(self.directory / "server-reset.json", journal)
+            save(backup / "reset.json", journal)
+
+        try:
+            phase("stopping")
+            self.stop("server")
+            self.port("server", None)
+            phase("archiving")
+            if data.exists():
+                private_tree(data)
+                if self.data_users(data):
+                    raise DevError("server: data directory still active after stop")
+                descriptor = os.open(data / "controller.lock", os.O_RDWR | os.O_NOFOLLOW)
+                try:
+                    # Same flock as private-storage's Directory owner; held across rename.
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    os.rename(data, backup / "server")
+                finally:
+                    os.close(descriptor)
+            if login.exists():
+                private(login)
+                os.rename(login, backup / "dev-login.json")
+            # Persist both directory renames before launching the fresh owner.
+            for directory in (self.root / ".meshway", backup):
+                descriptor = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+            phase("starting")
+            self.start("server")
+            phase("seeding")
+            self.seed(backup)
+            private(login)
+            phase("complete")
+        except (DevError, OSError, ValueError):
+            failed_at = journal["phase"]
+            journal["failedAt"] = failed_at
+            phase("failed")
+            raise DevError(f"server: reset failed during {failed_at}; backup retained at {backup}; inspect server-reset.json (no automatic retry)") from None
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("start", "status", "stop", "restart", "update"))
+    parser.add_argument("action", choices=("start", "status", "stop", "restart", "update", "reset"))
     parser.add_argument("service", nargs="?", default="all", choices=(*SERVICES, "all"))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     if args.json and args.action != "status":
         raise DevError("--json is supported only for status")
+    if args.action == "reset" and args.service != "server":
+        raise DevError("reset requires the explicit server selection")
     local = LocalServices()
     selected = list(SERVICES) if args.service == "all" else [args.service]
     if args.action == "status":
@@ -309,6 +474,10 @@ def main(argv=None):
                 print(f"{row['service']}: {row['session']}, ready={row['ready']}, port={row['port']}" + ("; " + row["error"] if row["error"] else ""))
         return int(any(not row["ready"] for row in rows))
     with local.lock():
+        if args.action == "reset":
+            local.reset()
+            print("server: reset complete; private credentials saved to .meshway/dev-login.json")
+            return 0
         if args.action == "update" and "server" in selected:
             local.port("server", local.pane("server"))
             local.build()
@@ -317,6 +486,10 @@ def main(argv=None):
                 local.stop(service)
             if args.action in ("start", "restart", "update"):
                 local.start(service)
+            if service == "server" and args.action != "stop":
+                reset = local.reset_state()
+                if reset and reset["phase"] != "complete":
+                    raise DevError("server: running, but previous reset is incomplete; inspect private reset journal")
             print(service + (": stopped" if args.action == "stop" else ": ready"))
     return 0
 
@@ -326,4 +499,7 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except DevError as error:
         print(str(error), file=sys.stderr)
+        raise SystemExit(1)
+    except (OSError, ValueError):
+        print("service inspection or private filesystem operation failed", file=sys.stderr)
         raise SystemExit(1)

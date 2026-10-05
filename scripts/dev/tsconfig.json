@@ -1,0 +1,5 @@
+{
+  "extends": "../../packages/control-client/tsconfig.node.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["./*.ts"]
+}
