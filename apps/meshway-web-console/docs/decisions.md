@@ -13,7 +13,8 @@ its generated client only, and only what the controller delivers:
   session restore and sign-out (`getAuthOptions`, `register`, `login`,
   `getAuthSession`, `logout`); networks (`listNetworks`, `createNetwork`,
   `getNetwork`, `renameNetwork`); members and join links
-  (`listNetworkMembers`, `changeMemberRole`, `getMemberRemovalImpact`,
+  (`listNetworkMembers`, `getMemberRoleChangeImpact`, `changeMemberRole`,
+  `getMemberRemovalImpact`,
   `removeMember`, `getLeaveImpact`, `leaveNetwork`, `listJoinLinks`,
   `createJoinLink`, `revokeJoinLink`, `inspectJoinLink`, `redeemJoinLink`);
   the network's activity (`listNetworkActivity`); the account (`getAccount`,
@@ -40,8 +41,10 @@ its generated client only, and only what the controller delivers:
   among `assignableRoles`, removal; for oneself removal is leaving). Removal
   and leaving first read their impact (the User-identity devices deleted,
   Tag devices kept) and send its `version` and `revision`; a
-  `version_conflict` reads the members again. A role change sends the
-  member's `version`.
+  `version_conflict` reads the members again. A role change is confirmed
+  the same way: its impact (the join links the member issued, nobody used
+  and the new role may not issue, revoked; none on a promotion) is read
+  when the confirmation opens, and the change sends that read's `version`.
 - Join links: a role and an expiry (1 hour to 7 days); the link
   (`/join#token=…`) is shown once in its dialog, which unmounts on close. A
   repeated request (`secretDelivery: "unavailable"`) says the value cannot
@@ -263,9 +266,13 @@ its generated client only, and only what the controller delivers:
   Alt+↑/↓; via nodes and exits are concrete nodes in priority order, an
   exit not `exitEnabled` is marked; profiles name the built-ins (Mesh
   only, `global:<exit>` per exit node, automatic when configured) and the
-  configuration's own. A match is one chip set: domain suffixes, prefixes
-  and rule sets (`set:<key>`); a rule every destination of which earlier
-  rules already match is a warning under it. Rule sets: inline content, or a remote HTTPS source
+  configuration's own. A match is one chip set: domain suffixes as typed
+  (`example.com`: the name and the names under it, as in access's
+  `domain:`), exact names after `=` (`=login.example.com`: that name alone,
+  the chip marked `=`), prefixes and rule sets (`set:<key>`); a rule every
+  destination of which earlier rules already match is a warning under it.
+  Rule sets: inline content (the same suffixes, exact names and prefixes),
+  or a remote HTTPS source
   with its format and interval. A remote set that is new or has a new
   source (URL or format; the interval alone is not) is downloaded and
   converted by the controller when the draft is checked and again when it

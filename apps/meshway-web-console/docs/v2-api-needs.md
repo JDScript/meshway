@@ -30,10 +30,13 @@
   - 历史版本有提交时间、cause 和 actor。系统写入（接入、邮箱同步、删除、身份转换）也会产生新 revision。草稿基于旧版本时，用同一批 ops 在新版本上重新 validate，展示新的对照，由用户应用。
   - `validate` 返回诊断、修改数量与对照，以及规范化后的脱敏 `preview`；它不生成材料、不预留地址。
   - 表单里的秘密只写：保持、覆盖或轮换。读取秘密只有整份 `configuration/source` 一条路。
-- **成员移除和离开网络**：永久删除该成员当前的 User 身份设备，保留 Tag 设备。确认前先读 `removalImpact` 或 `leaveImpact`。
+- **成员移除、离开网络和改角色**：
+  - 移除和离开永久删除该成员当前的 User 身份设备，保留 Tag 设备。确认前先读 `removalImpact` 或 `leaveImpact`。
+  - 改角色前读 `role-change-impact/{role}`：降级吊销该成员签发、未使用、未到期且新角色不能签发的加入链接（已到期的保持到期）；变更按读到的 `version` 提交。
 - **接入**：
   - 标准安装命令只含公开信息，接入密钥不进进程参数或 shell 历史。
   - 首次接入时，`initialSettings.hostname` 只是建议名，重名时自动加后缀。之后改名若重名，直接报错。
+  - 设备授权链接由服务端按启动参数 `--console-origin` 生成：`EnrollmentRequestView.authorizationUrl` = `<origin>/authorize-device/<enrollmentRequestId>`，未配置时为 null。这个路径是 console 的契约，Node 只显示该字段，不自行拼接。
 - **部署进度**：按 revision 由服务端去重计数，标明 full 还是 partial 范围；GET 和 SSE 用同一类型。
 - **SSE**：
   - 首次同步发送完整可见的 Config、实体和 State 快照，之后是增量。实体和 `actions` 有 `entities.delta`。
@@ -42,22 +45,23 @@
   - SSE 与 GET 复用同一组片段类型。
 - **State 与历史**：
   - 位置由 Controller 根据 endpoint IP 用 GeoIP 推导，带来源和时间；拿不到时给出缺失原因。
-  - links 和 paths 的聚合保留每个报告者的证据。
+  - links 和 paths 的聚合保留每个报告者的证据。两端都报告自己是发起方时判为 `conflicting`，`inUse` 为 null；等 Node 数据面定义 linkId 协商后再调整。
   - 历史层通过 `history/query` 的 `recentLinks` 模式读取，不进入默认的实时流。
+- **域名经出口**：`autogroup:internet` 覆盖域名目的地（路由规则和规则集里的名称），与执行期按解析地址判定一致；只有 CIDR 授权的来源仍需 `domain:`。access 不引用规则集。
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `1f4efbbd`）
+## 接入状态（后端 `01da4515`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
 - 账户、会话和账户活动（邮箱修改显示原邮箱）；
-- 网络、成员、加入链接（签发人、使用者）和网络活动；
-- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 网络、成员（改角色前确认要撤销的加入链接）、加入链接（签发人、使用者）和网络活动；
+- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
 - 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
 - GeoIP／ASN：数据集由服务端主机的 `ip-datasets` 导入；console 显示 `derived.location`（地球与节点概况）和 `derived.ipInfo`（运营商、各地址、传输页 endpoint 的国家与 AS 号）。现在的 Node 还不上报 endpoint，所以真实节点仍没有位置；脚本节点上报 STUN endpoint 已验证整条链路（DB-IP Lite 数据集）。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
-- 接入密钥和设备授权；
+- 接入密钥和设备授权（`authorizationUrl` 打开的就是 console 的授权页）；
 - 按 revision 的部署进度；
 - 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；管理者的配置快照按 GET 响应写入缓存；续传不重发初始批次，console 以 SDK 的 `onOpen`（连接被接受）确认服务端接受了 cursor；
 - 规则集；
@@ -94,7 +98,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ## 待处理的问题
 
-以下按 `1f4efbbd` 核对：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
+以下按 `01da4515` 核对：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
 
 **已修复并已验证**（不再跟踪）：
 
@@ -119,6 +123,11 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 没有活实例的节点判为 `expired`：`meshway down` 后读到 `expired`，`up` 后回到 `current`。判定顺序见 `network.md`。
 - 节点报告刚被替换的已保存配置时按事实接受：1 秒内连续 3 次 apply，节点保持 `controlReady`，保存到最新 revision。
 - schema 不符时，启动错误指出对象：用旧库副本启动得到 `table activity_events is defined differently from the current schema`。仍然没有迁移，开发环境 schema 变更后要重新初始化数据目录。
+- `ip-datasets`／`reset-password` 给相对路径时报 `data directory must be an absolute path without parent traversal`，只有存储确实被占用时才说"Stop the Server first"。
+- 域名出口：只有 `autogroup:internet` 授权、没有 `domain:` 的来源，经出口的域名后缀和精确域名规则都能应用。
+- 规则集转换接受精确域名：MetaCubeX `geosite` 的 google（1075 条）和 cn（111224 条）都能准备。
+- 精确域名的诊断：`invalid_domain` 指到 `…/match/domain/<i>`；被前面后缀覆盖的精确域名规则报 `shadowed_rule`。
+- 改角色的影响预览：降级 admin 时只计入未到期的链接，确认后这些链接变为已撤销，已到期的保持到期。
 - 出口规则动作改为 `RuleAction`，`ListenerUpdate` 省略即继承 WebSocket 块和响应头：在界面上修改带响应头的 VLESS 监听后响应头保留，改成 TCP 后 WebSocket 块删除。
 
 **按设计，不再跟踪**：
@@ -135,7 +144,6 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ### 需要修正
 
-- ~~`ip-datasets --data-dir` 给相对路径时报"Stop the Server first"~~：已修。`ip-datasets` 和 `reset-password` 只在存储确实被占用时说这句，其他原因与 Server 启动一致报 `Server storage startup failed: <cause>.`；相对路径的原因是 `data directory must be an absolute path without parent traversal`。数据目录仍要求绝对路径（与 Server 相同）。
 - Node：daemon 把 400 等未分类的服务端拒绝归为 `Contract` 且不再重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），节点停在 `blocked`，直到手动 `meshway up`。服务端现在接受 15 分钟内（最多 8 次发布）该节点的旧引用，超出后仍是 400；这时应重新同步而不是永久停住。后端已转给 Node。
 
 ### 需要真实 Node 复核
@@ -157,15 +165,6 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
   - `HistoryBucket` 没有 `peerNodeId`，而且按 instance 和 publication 拆开，同一条曲线因每次重新发布被切碎，console 端做了合并。
   - `RecentLink` 没有 RTT 和关闭原因。
   - 一次查询最多 10000 行，计数在按 kind 或节点过滤之前做，繁忙的网络即使只查一个节点也会收到 429；窗口外的清理记录也会返回；bucket 把 `pending` 计入 `failed`。
-
-### 需要产品决定
-
-- ~~设备授权的浏览器链接格式~~：已定。Server 启动参数 `--console-origin`（`MESHWAY_CONSOLE_ORIGIN`）给出 Console origin，`EnrollmentRequestView.authorizationUrl`（required nullable）= `<origin>/authorize-device/<enrollmentRequestId>`，create／query／getDeviceAuthorization／approve 都带；未配置时 null。console 的 `/authorize-device/<id>` 路径就是契约，写进 authentication.md。Node 改为显示该字段（转 Node 会话）。
-- ~~两端都报告自己是发起方时 link 的判定~~：维持 `conflicting`／`inUse: null`，不猜。linkId 协商和发起方语义等 Node 数据面定义后再调整聚合。
-- ~~`--listen` 的默认端口~~：保持 `127.0.0.1:8420`，共存期用 `--listen`／`MESHWAY_LISTEN` 指定。
-- ~~角色变更的影响预览~~：新增 `GET members/{membershipId}/role-change-impact/{role}` → `RoleChangeImpactResponse { requestId, membershipId, version, role, joinLinks (≤100 JoinLinkView), joinLinkCount }`，与 changeMemberRole 同样的权限／可分配角色检查（403／409 `last_owner`），只读。降级只吊销未到期的链接（已到期保持 expired）。见 permissions.md。
-- ~~域名规则集经出口~~：已定并实现。`autogroup:internet` 在声明期覆盖域名目的地（路由规则和规则集里的名称），与执行期"按解析地址判定"一致；access 仍不引用规则集。只有 CIDR 授权的源仍需 `domain:`。见 access.md「域名授权」、routing.md「Action」。
-- ~~规则集转换只接受 `+.` 后缀；10 万条上限~~：已定并实现。新增精确域名：`RouteMatch.domain`、inline 规则集 `domain`（都是 `string[]`，默认 `[]`），mihomo 裸条目和 sing-box `domain` 字段转成它；`*.`／`.` 开头的条目仍使整份失败。上限提到 250000 条（8 MiB 不变）。新 IssueCode `invalid_domain`（`params.value`，pointer 到 `…/domain/<i>`）。**console 需要**：路由规则和 inline 规则集表单显示／编辑 `domain`，JSONC 诊断本地化 `invalid_domain`。
 
 ### 其他
 
