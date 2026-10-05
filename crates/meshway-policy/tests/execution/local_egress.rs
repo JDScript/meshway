@@ -23,6 +23,120 @@ fn direct_rule() -> EgressRule {
 }
 
 #[test]
+fn locked_auto_resolves_allowed_fallbacks_without_allowing_user_profile_switches() {
+    let mut c = configuration();
+    c.routing.egress.assignments = vec![ProfileAssignment {
+        target: vec!["*".into()],
+        allowed: vec!["auto".into(), "mesh".into(), "work".into()],
+        default: "auto".into(),
+        locked: true,
+    }];
+    c.routing.egress.profiles.insert(
+        "work".into(),
+        RoutingProfile {
+            rules: vec![],
+            fallback: RouteAction::Direct,
+        },
+    );
+    let context = ValidationContext {
+        nodes: c.nodes.keys().copied().collect(),
+        approved_identities: c
+            .nodes
+            .iter()
+            .map(|(id, node)| (*id, node.identity.clone()))
+            .collect(),
+        ..Default::default()
+    };
+    let d = Demand {
+        profile: "auto".into(),
+        ..external()
+    };
+    for (fallback, action, decision) in [
+        (
+            "mesh",
+            LocalEgressAction::Unmanaged,
+            DemandDecision::Unmanaged,
+        ),
+        ("work", LocalEgressAction::Direct, DemandDecision::Direct),
+    ] {
+        c.routing.egress.auto = Input::Value(AutoProfile {
+            rules: vec![],
+            fallback: fallback.into(),
+        });
+        let (normalized, _) = meshway_policy::normalize((&c).into(), &context).unwrap();
+        let publication = run(
+            &normalized,
+            &inventory(),
+            &BTreeMap::from([(d.id, d.clone())]),
+            &[],
+        );
+        let node = &publication.nodes[&d.source].configuration;
+        assert_eq!(node.decisions[&d.id], decision);
+        assert_eq!(
+            node.local_egress[&d.id],
+            LocalEgressPermit {
+                demand_id: d.id,
+                source: d.source,
+                target: d.target.clone(),
+                protocol: d.protocol,
+                port: d.port,
+                profile: "auto".into(),
+                action,
+                expires_at_ms: d.expires_at_ms,
+            }
+        );
+        let switched = Demand {
+            profile: fallback.into(),
+            ..d.clone()
+        };
+        assert!(
+            !profile_allowed(&normalized, &SubjectContext::default(), d.source, fallback).unwrap()
+        );
+        let denied = run(
+            &normalized,
+            &inventory(),
+            &BTreeMap::from([(switched.id, switched)]),
+            &[],
+        );
+        assert_eq!(
+            denied.nodes[&d.source].configuration.decisions[&d.id],
+            DemandDecision::Unavailable {
+                reason: UnavailableReason::InvalidProfile,
+            }
+        );
+        assert!(
+            denied.nodes[&d.source]
+                .configuration
+                .local_egress
+                .is_empty()
+        );
+    }
+    c.routing.egress.assignments[0]
+        .allowed
+        .retain(|profile| profile != "work");
+    assert!(meshway_policy::normalize((&c).into(), &context).is_err());
+    // Pure compilation also refuses an out-of-allowed internal choice, even
+    // when presented directly with an unnormalized trusted-input fixture.
+    assert_eq!(
+        compile(CompilationInput {
+            network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
+            revision: Revision::MIN,
+            publication: "00000000-0000-4004-8000-000000000001".parse().unwrap(),
+            configuration: &c,
+            subjects: &SubjectContext::default(),
+            inventory: &inventory(),
+            demands: &BTreeMap::from([(d.id, d)]),
+            dns: &[],
+            rule_sets: &BTreeMap::new(),
+            selected_profiles: &BTreeMap::new(),
+            now_ms: 1000,
+        })
+        .unwrap_err(),
+        CompileError::InvalidInput
+    );
+}
+
+#[test]
 fn local_binding_is_exact_and_published_only_to_the_authenticated_source_slice() {
     let mut c = configuration();
     c.routing.egress.rules = vec![direct_rule()];

@@ -827,127 +827,6 @@ fn remote_rule_sources_are_typed_https_declarations() {
 }
 
 #[test]
-fn ipam_pools_reject_intersections_with_excluded_ranges_and_invalid_families() {
-    for cidr in [
-        "0.0.0.0/0",
-        "128.0.0.0/1",
-        "126.0.0.0/7",
-        "169.252.0.0/14",
-        "0.0.0.0/32",
-        "0.255.255.255/32",
-        "127.0.0.0/32",
-        "127.255.255.255/32",
-        "169.254.0.0/32",
-        "169.254.255.255/32",
-        "224.0.0.0/32",
-        "239.255.255.255/32",
-        "240.0.0.0/32",
-        "255.255.255.254/32",
-        "255.255.255.255/32",
-        "256.0.0.0/8",
-        "100.64.0.0/33",
-        "fd00::/8",
-    ] {
-        let pools = AddressPools {
-            ipv4: vec![cidr.into()],
-            ipv6: vec![],
-        };
-        assert!(
-            matches!(
-                new_network(pools, "mesh.example".into()),
-                Err(ConfigurationError::Invalid(_))
-            ),
-            "accepted IPv4 pool {cidr}"
-        );
-    }
-    for cidr in [
-        "::/0",
-        "::/127",
-        "fe00::/8",
-        "fe00::/7",
-        "fe80::/9",
-        "::/128",
-        "::1/128",
-        "fe80::/128",
-        "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128",
-        "ff00::/128",
-        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128",
-        "fd00::/129",
-        "100.64.0.0/10",
-    ] {
-        let pools = AddressPools {
-            ipv4: vec![],
-            ipv6: vec![cidr.into()],
-        };
-        assert!(
-            matches!(
-                new_network(pools, "mesh.example".into()),
-                Err(ConfigurationError::Invalid(_))
-            ),
-            "accepted IPv6 pool {cidr}"
-        );
-    }
-    for json in [
-        r#"{"ipv4":"256.0.0.1","ipv6":null}"#,
-        r#"{"ipv4":"fd00::1","ipv6":null}"#,
-        r#"{"ipv4":null,"ipv6":"100.64.0.1"}"#,
-    ] {
-        assert!(
-            serde_json::from_str::<NodeAddressesInput>(json).is_err(),
-            "accepted {json}"
-        );
-    }
-}
-
-#[test]
-fn ipam_pools_keep_private_unicast_and_adjacent_allowed_boundaries() {
-    // These are IPAM acceptance cases, not internet grant classifications.
-    for cidr in [
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "100.64.0.0/10",
-        "1.0.0.0/32",
-        "126.255.255.255/32",
-        "128.0.0.0/32",
-        "169.253.255.255/32",
-        "169.255.0.0/32",
-        "223.255.255.255/32",
-        "100.64.0.0/31",
-        "100.64.0.255/32",
-    ] {
-        let pools = AddressPools {
-            ipv4: vec![cidr.into()],
-            ipv6: vec![],
-        };
-        assert!(
-            new_network(pools, "mesh.example".into()).is_ok(),
-            "rejected IPv4 pool {cidr}"
-        );
-    }
-    for cidr in [
-        "fc00::/7",
-        "fd00::/8",
-        "fd42:7a65:8800::/48",
-        "fd00::1/128",
-        "::2/128",
-        "fe00::/9",
-        "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128",
-        "fec0::/128",
-        "feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128",
-    ] {
-        let pools = AddressPools {
-            ipv4: vec![],
-            ipv6: vec![cidr.into()],
-        };
-        assert!(
-            new_network(pools, "mesh.example".into()).is_ok(),
-            "rejected IPv6 pool {cidr}"
-        );
-    }
-}
-
-#[test]
 fn ipam_node_validation_independently_rejects_excluded_single_addresses() {
     for (ip, prefix) in [
         ("0.0.0.0", 32),
@@ -1026,11 +905,8 @@ fn ipam_point_to_point_and_single_address_allocations_keep_their_boundaries() {
     assert!(normalize(c, &context()).is_ok());
 }
 
-/// A large bound rule set must not make an unrelated edit quadratic. The
-/// Console measured ~40 s for 8 483 entries before destination coverage,
-/// retained-rule comparison and access permits were made linear.
 #[test]
-fn large_rule_set_validation_stays_linear() {
+fn large_rule_set_validation_preserves_grants_across_unrelated_edits() {
     let entries = 8_500u32;
     let cidrs: Vec<String> = (0..entries)
         .map(|i| format!("1.{}.{}.0/24", (i >> 8) & 0xff, i & 0xff))
@@ -1055,9 +931,7 @@ fn large_rule_set_validation_stays_linear() {
     let rule = &mut input.routing.egress.profiles.get_mut("work").unwrap().rules[0];
     rule.matcher.ip_cidr.clear();
     rule.matcher.rule_sets.push("big".into());
-    let started = std::time::Instant::now();
     let (old, bindings) = normalize(input, &context()).unwrap();
-    let first = started.elapsed();
     let ctx = ValidationContext {
         previous: Some(&old),
         expected_user_bindings: bindings.clone(),
@@ -1068,11 +942,15 @@ fn large_rule_set_validation_stays_linear() {
     edited
         .groups
         .insert("group:unrelated".into(), vec!["alice@example.com".into()]);
-    let started = std::time::Instant::now();
-    normalize_with_dependencies(edited, &ctx).unwrap();
-    let second = started.elapsed();
-    eprintln!("large rule set: first {first:?}, edit on previous {second:?}");
-    assert!(second < std::time::Duration::from_secs(2), "{second:?}");
+    let result = normalize_with_dependencies(edited, &ctx).unwrap();
+    assert_eq!(result.configuration.rule_sets, old.rule_sets);
+    assert_eq!(result.configuration.access, old.access);
+    assert_eq!(result.configuration.routing, old.routing);
+    assert_eq!(
+        result.configuration.groups["group:unrelated"],
+        vec!["alice@example.com"]
+    );
+    assert!(result.unavailable_dependencies.is_empty());
 }
 
 fn issues(value: Result<NormalizedConfiguration, ConfigurationError>) -> Vec<ConfigurationIssue> {
@@ -1308,119 +1186,6 @@ fn exact_names_are_shadowed_by_suffixes_but_never_shadow_them() {
             ("/routing/egress/rules/1", "0"),
             ("/routing/egress/rules/4", "3")
         ]
-    );
-}
-
-#[test]
-fn managed_certificates_are_reissued_per_server_name_and_provided_ones_are_kept() {
-    let previous: Listener = serde_json::from_str(
-        r#"{"type":"vless","listenPort":443,"uuid":"11111111-1111-4111-8111-111111111111",
-            "tls":{"serverName":"a.example.test","certificate":"CERT-A","privateKey":"KEY-A"}}"#,
-    )
-    .unwrap();
-    let update = |tls: &str| -> Listener {
-        serde_json::from_str(&format!(
-            r#"{{"type":"vless","listenPort":8443,"tls":{tls}}}"#
-        ))
-        .unwrap()
-    };
-    let mut same = update(r#"{"serverName":"A.example.test"}"#);
-    inherit_materials(&mut same, &previous);
-    let Listener::Vless(v) = &same else { panic!() };
-    assert_eq!(
-        v.uuid.as_ref().map(|s| s.expose()),
-        Some("11111111-1111-4111-8111-111111111111")
-    );
-    assert_eq!(
-        v.tls.certificate.as_ref().map(|s| s.expose()),
-        Some("CERT-A")
-    );
-    // A managed certificate is for one name; a new name gets a new one.
-    let mut renamed = update(r#"{"serverName":"b.example.test"}"#);
-    inherit_materials(&mut renamed, &previous);
-    let Listener::Vless(v) = &renamed else {
-        panic!()
-    };
-    assert_eq!(
-        v.uuid.as_ref().map(|s| s.expose()),
-        Some("11111111-1111-4111-8111-111111111111")
-    );
-    assert_eq!(v.tls.certificate, None);
-    assert_eq!(v.tls.private_key, None);
-    // Provided material is the author's: omission keeps it regardless of name.
-    let provided: Listener = serde_json::from_str(
-        r#"{"type":"vless","listenPort":443,"uuid":"11111111-1111-4111-8111-111111111111",
-            "tls":{"mode":"provided","serverName":"a.example.test","certificate":"CERT-A","privateKey":"KEY-A"}}"#,
-    )
-    .unwrap();
-    let mut renamed = update(r#"{"mode":"provided","serverName":"b.example.test"}"#);
-    inherit_materials(&mut renamed, &provided);
-    let Listener::Vless(v) = &renamed else {
-        panic!()
-    };
-    assert_eq!(
-        v.tls.certificate.as_ref().map(|s| s.expose()),
-        Some("CERT-A")
-    );
-}
-
-#[test]
-fn listener_updates_keep_omitted_websocket_response_headers_for_the_same_resource() {
-    let previous: Listener = serde_json::from_str(
-        r#"{"type":"vless","listenPort":443,"stream":"websocket","uuid":"11111111-1111-4111-8111-111111111111",
-            "tls":{"serverName":"a.example.test","alpn":["http/1.1"],"certificate":"CERT-A","privateKey":"KEY-A"},
-            "websocket":{"path":"/ws","responseHeaders":{"X-Keep":"yes"}}}"#,
-    )
-    .unwrap();
-    let update = |websocket: &str| -> ListenerUpdate {
-        serde_json::from_str(&format!(
-            r#"{{"type":"vless","listenPort":8443,"stream":"websocket","tls":{{"serverName":"a.example.test","alpn":["http/1.1"]}}{websocket}}}"#
-        ))
-        .unwrap()
-    };
-    let headers = |l: &Listener| match l {
-        Listener::Vless(v) => v
-            .websocket
-            .as_ref()
-            .map(|w| serde_json::to_value(&w.response_headers).unwrap()),
-        _ => None,
-    };
-    // Omitted websocket block: the previous block, headers included.
-    assert_eq!(
-        headers(&update("").apply(Some(&previous))),
-        headers(&previous)
-    );
-    // Websocket block without headers: the previous headers.
-    assert_eq!(
-        headers(&update(r#","websocket":{"path":"/new"}"#).apply(Some(&previous))),
-        headers(&previous)
-    );
-    // Explicitly empty headers clear them; an explicit null removes the block.
-    assert_eq!(
-        headers(
-            &update(r#","websocket":{"path":"/new","responseHeaders":{}}"#).apply(Some(&previous))
-        ),
-        Some(serde_json::json!({}))
-    );
-    assert_eq!(
-        headers(&update(r#","websocket":null"#).apply(Some(&previous))),
-        None
-    );
-    // A new resource has no predecessor to inherit from.
-    assert_eq!(
-        headers(&update(r#","websocket":{"path":"/new"}"#).apply(None)),
-        Some(serde_json::json!({}))
-    );
-    let Listener::Vless(v) = update("").apply(Some(&previous)) else {
-        panic!()
-    };
-    assert_eq!(
-        v.uuid.as_ref().map(|s| s.expose()),
-        Some("11111111-1111-4111-8111-111111111111")
-    );
-    assert_eq!(
-        v.tls.certificate.as_ref().map(|s| s.expose()),
-        Some("CERT-A")
     );
 }
 

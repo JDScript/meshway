@@ -1,4 +1,4 @@
-//! Pure binding tests use real compiler output, not request-shaped route grants.
+//! Policy binding tests use real compiler output, not request-shaped route grants.
 use meshway_configuration::{execution::*, *};
 use meshway_model::{
     BoundNodeKey, KeyAlgorithm, NodeId, NodePublicKey, RequestId, Revision, Version,

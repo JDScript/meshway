@@ -284,14 +284,10 @@ pub(super) fn egress_action(
     if let EgressProfile::Auto(auto) = profile {
         // Region is a trusted external input, never guessed from controller IP.
         // No region input means the configured fallback, with the same allowed check.
-        if auto.fallback == "auto"
-            || !profile_allowed(
-                input.configuration,
-                input.subjects,
-                d.source,
-                &auto.fallback,
-            )?
-        {
+        // Locking constrains the user's selected profile, not auto's internal
+        // choice. Every choice must still belong to the same allowed union.
+        let (allowed, _, _) = profile_assignment(input.configuration, input.subjects, d.source)?;
+        if auto.fallback == "auto" || !allowed.contains(&auto.fallback) {
             return Err(CompileError::InvalidInput);
         }
         profile = resolve_profile(input.configuration, &auto.fallback)?;
