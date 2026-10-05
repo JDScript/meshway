@@ -1,25 +1,16 @@
 import {
-  changeMemberRole,
   type MembershipRole,
   type MemberSummary,
   type NetworkMembersResponse,
   type NetworkSummary,
 } from "@meshway/control-client"
-import {
-  useMutation,
-  useQueryClient,
-  type InfiniteData,
-  type UseInfiniteQueryResult,
+import type {
+  InfiniteData,
+  UseInfiniteQueryResult,
 } from "@tanstack/react-query"
 import { LogOutIcon, UserMinusIcon } from "lucide-react"
 import { useState, type FormEvent } from "react"
-import { toast } from "sonner"
 
-import { authed, client } from "@/api/client"
-import { toastFailureWith } from "@/api/failure"
-import { joinLinksQuery, membersQuery } from "@/api/queries/members"
-import { networkQuery } from "@/api/queries/network"
-import { BusyLabel } from "@/components/chrome/busy-label"
 import { CloseButton } from "@/components/chrome/close-button"
 import { DangerRow, Section } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
@@ -37,6 +28,7 @@ import { roleLabel, ROLES } from "@/lib/roles"
 import { m } from "@/paraglide/messages.js"
 
 import { YouMark } from "../-member-list"
+import { RoleChangeDialog } from "./-role-change"
 
 type MembersRead = UseInfiniteQueryResult<InfiniteData<NetworkMembersResponse>>
 
@@ -97,9 +89,6 @@ export function MemberWorkspace({
   )
 }
 
-/** A role change the controller refused because the member moved meanwhile. */
-const ROLE_FAILURE = { version_conflict: () => m.members_changed() }
-
 function Body({
   networkId,
   network,
@@ -113,34 +102,12 @@ function Body({
   self: boolean
   onClose: () => void
 }) {
-  const queryClient = useQueryClient()
   const [confirming, setConfirming] = useState(false)
-
-  const save = useMutation({
-    mutationFn: (role: MembershipRole) =>
-      authed((token) =>
-        changeMemberRole(
-          client,
-          { networkId, membershipId: member.membershipId },
-          { expectedVersion: member.version, role },
-          { token }
-        )
-      ),
-    onSuccess: () =>
-      toast.success(m.members_role_saved(), { id: "member-role" }),
-    onError: toastFailureWith(ROLE_FAILURE),
-    // Roles change what this account may do (its own) and which links stay valid.
-    onSettled: () =>
-      Promise.all(
-        [
-          membersQuery(networkId),
-          joinLinksQuery(networkId),
-          networkQuery(networkId),
-        ].map((query) =>
-          queryClient.invalidateQueries({ queryKey: query.queryKey })
-        )
-      ),
-  })
+  // The role last chosen, kept while its confirmation closes.
+  const [changing, setChanging] = useState<{
+    role: MembershipRole
+    open: boolean
+  } | null>(null)
 
   return (
     <div className="swap-in flex min-h-0 flex-1 flex-col">
@@ -166,8 +133,7 @@ function Body({
             <RoleForm
               role={member.role}
               roles={member.actions.assignableRoles}
-              saving={save.isPending}
-              onSave={(role) => save.mutate(role)}
+              onSave={(role) => setChanging({ role, open: true })}
             />
           ) : null}
 
@@ -190,7 +156,6 @@ function Body({
                   <Button
                     variant="destructive"
                     className="h-9 rounded-full px-4"
-                    disabled={save.isPending}
                     onClick={() => setConfirming(true)}
                   >
                     {self ? <LogOutIcon /> : <UserMinusIcon />}
@@ -203,6 +168,16 @@ function Body({
         </div>
       </div>
 
+      {changing ? (
+        <RoleChangeDialog
+          networkId={networkId}
+          member={member}
+          role={changing.role}
+          self={self}
+          open={changing.open}
+          onOpenChange={(open) => setChanging({ ...changing, open })}
+        />
+      ) : null}
       {self ? (
         <LeaveNetworkDialog
           networkId={networkId}
@@ -227,12 +202,10 @@ function Body({
 function RoleForm({
   role,
   roles,
-  saving,
   onSave,
 }: {
   role: MembershipRole
   roles: readonly MembershipRole[]
-  saving: boolean
   onSave: (role: MembershipRole) => void
 }) {
   const [chosen, setChosen] = useState(role)
@@ -241,7 +214,7 @@ function RoleForm({
   )
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (chosen !== role && !saving) onSave(chosen)
+    if (chosen !== role) onSave(chosen)
   }
   return (
     <Section title={m.members_role()}>
@@ -258,10 +231,9 @@ function RoleForm({
         <Button
           type="submit"
           className="h-9 rounded-full px-4"
-          disabled={chosen === role || saving}
-          aria-busy={saving}
+          disabled={chosen === role}
         >
-          <BusyLabel busy={saving}>{m.members_role_save()}</BusyLabel>
+          {m.members_role_save()}
         </Button>
       </form>
     </Section>
