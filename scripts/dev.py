@@ -4,9 +4,11 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import signal
@@ -24,6 +26,7 @@ SERVICES = {"server": (8420, "/api/v1/auth/options"), "docs": (5173, "/v2/")}
 CONSOLE_ORIGIN = "http://127.0.0.1:3001"
 SERVER_ORIGIN = "https://meshway-dev-api.jdscript.dev"
 STUN_SERVER = "dev-public=stun.l.google.com:19302"
+MAX_DATASET_BYTES = 128 * 1024 * 1024
 
 
 class DevError(RuntimeError):
@@ -43,6 +46,7 @@ def private(path, directory=False, create=False):
             or stat.S_IMODE(info.st_mode) != (0o700 if directory else 0o600)
             or not directory and info.st_nlink != 1):
         raise DevError("invalid private path ownership or permissions: " + str(path))
+    return info
 
 
 def save(path, value):
@@ -147,6 +151,86 @@ def private_tree(path):
             private_tree(child)
         else:
             private(child)
+
+
+def snapshot_datasets(root, backup):
+    directory = root / ".meshway/ip-datasets"
+    if not directory.exists() and not directory.is_symlink():
+        return None
+    before = private(directory, directory=True)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+    @contextmanager
+    def asset(name):
+        path = directory / name
+        before = private(path)
+        opened = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+        with os.fdopen(opened, "rb") as source:
+            if os.fstat(source.fileno()) != before:
+                raise DevError("dataset asset changed while opening: " + name)
+            yield source, before.st_size
+            after = os.fstat(source.fileno())
+            if any(getattr(after, key) != getattr(before, key) for key in (
+                    "st_dev", "st_ino", "st_mode", "st_uid", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")):
+                raise DevError("dataset asset changed while snapshotting: " + name)
+
+    def unique_keys(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise DevError("duplicate dataset manifest key")
+            value[key] = item
+        return value
+
+    try:
+        if os.fstat(descriptor) != before:
+            raise DevError("dataset asset directory changed while opening")
+        with asset("manifest.json") as (source, size):
+            if not 0 < size <= 8192:
+                raise DevError("dataset manifest exceeds its size bound")
+            manifest = json.load(source, object_pairs_hook=unique_keys)
+        if (not isinstance(manifest, dict) or set(manifest) != {"version", "datasets"}
+                or type(manifest["version"]) is not int or manifest["version"] != 1
+                or not isinstance(manifest["datasets"], dict) or not manifest["datasets"]
+                or not set(manifest["datasets"]) <= {"geoip", "asn"}):
+            raise DevError("invalid dataset manifest")
+        for entry in manifest["datasets"].values():
+            if (not isinstance(entry, dict) or set(entry) != {"sha256", "source"}
+                    or not isinstance(entry["sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
+                    or not isinstance(entry["source"], str)
+                    or not 1 <= len(entry["source"].encode("utf-8")) <= 256
+                    or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in entry["source"])):
+                raise DevError("invalid dataset manifest entry")
+        snapshot = backup / "ip-datasets"
+        private(snapshot, directory=True, create=True)
+        for kind in ("geoip", "asn"):
+            if kind not in manifest["datasets"]:
+                continue
+            name = kind + ".mmdb"
+            with asset(name) as (source, size):
+                if not 0 < size <= MAX_DATASET_BYTES:
+                    raise DevError("dataset file size is outside the accepted range: " + kind)
+                output_fd = os.open(snapshot / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(output_fd, "wb") as output:
+                    digest = hashlib.sha256()
+                    copied = 0
+                    while chunk := source.read(1024 * 1024):
+                        copied += len(chunk)
+                        if copied > size:
+                            raise DevError("dataset asset grew while snapshotting: " + kind)
+                        digest.update(chunk)
+                        output.write(chunk)
+                    if copied != size or digest.hexdigest() != manifest["datasets"][kind]["sha256"]:
+                        raise DevError("dataset asset size/hash differs: " + kind)
+                    output.flush()
+                    os.fsync(output.fileno())
+        save(snapshot / "manifest.json", manifest)
+        return manifest
+    except (OSError, ValueError):
+        raise DevError("cannot validate or snapshot private dataset assets") from None
+    finally:
+        os.close(descriptor)
 
 
 class LocalServices:
@@ -278,8 +362,8 @@ class LocalServices:
         if shutil.disk_usage(self.root).free < 50 * 1024**3:
             raise DevError("Server build requires at least 50 GiB free space")
         env = dict(os.environ, CARGO_BUILD_JOBS="2", CARGO_INCREMENTAL="0", CARGO_TARGET_DIR=str(self.root / "target"))
-        print("server: building locked binary…", flush=True)
-        run(["cargo", "build", "--locked", "-p", "meshway-server", "--bin", "meshway-server"], cwd=self.root, timeout=None, env=env)
+        print("server: building locked service and dataset binaries…", flush=True)
+        run(["cargo", "build", "--locked", "-p", "meshway-server", "--bin", "meshway-server", "--bin", "ip-datasets"], cwd=self.root, timeout=None, env=env)
 
     def start(self, service):
         pane = self.pane(service)
@@ -402,13 +486,16 @@ class LocalServices:
             raise DevError("server: foreign process uses data directory")
         # Fail missing toolchain/SDK before interrupting a service or moving data.
         run(["node", "--experimental-strip-types", "scripts/dev/seed.ts", "--check", str(self.root)], cwd=self.root)
-        if not (self.root / "target/debug/meshway-server").is_file():
-            self.build()
         identity = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
         backup = backups / ("server-" + identity)
         private(backup, directory=True, create=True)
+        manifest = snapshot_datasets(self.root, backup)
+        if (not (self.root / "target/debug/meshway-server").is_file()
+                or manifest and not (self.root / "target/debug/ip-datasets").is_file()):
+            self.build()
         journal = {"version": 1, "runId": identity, "backup": str(backup), "phase": "stopping",
-                   "server": SERVER_ORIGIN, "console": CONSOLE_ORIGIN}
+                   "server": SERVER_ORIGIN, "console": CONSOLE_ORIGIN,
+                   "datasets": {kind: {**entry, "installed": False} for kind, entry in manifest["datasets"].items()} if manifest else {}}
 
         def phase(name):
             journal["phase"] = name
@@ -441,6 +528,25 @@ class LocalServices:
                     os.fsync(descriptor)
                 finally:
                     os.close(descriptor)
+            phase("datasets")
+            if data.exists() or data.is_symlink():
+                raise DevError("server: fresh data directory already exists")
+            for kind in ("geoip", "asn"):
+                if kind not in journal["datasets"]:
+                    continue
+                if self.pane("server") is not None:
+                    raise DevError("server: cannot import datasets while Server is running")
+                self.port("server", None)
+                if data.exists() or data.is_symlink():
+                    private_tree(data)
+                    if self.data_users(data):
+                        raise DevError("server: cannot import datasets into an active data directory")
+                entry = journal["datasets"][kind]
+                run([str(self.root / "target/debug/ip-datasets"), "--data-dir", str(data),
+                     "import", "--kind", kind, "--file", str(backup / "ip-datasets" / (kind + ".mmdb")),
+                     "--source=" + entry["source"]], cwd=self.root, timeout=120)
+                entry["installed"] = True
+                phase("datasets")
             phase("starting")
             self.start("server")
             phase("seeding")

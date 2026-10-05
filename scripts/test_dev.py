@@ -1,4 +1,5 @@
 """Process ownership and reset transaction regressions; no live services."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -6,6 +7,7 @@ import shlex
 import signal
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import dev
@@ -110,10 +112,20 @@ class Services(unittest.TestCase):
         saved = self.record(launch=dev.command("server", self.root)[:-2])
         order = []
         pane = {"pane": "%8", "pid": 101, "processes": {101}}
-        with patch.object(dev, "LocalServices", return_value=self.local), patch.object(self.local, "pane", return_value=pane), patch.object(self.local, "port", return_value=True), patch.object(self.local, "build", side_effect=lambda: order.append("build")), patch.object(self.local, "stop", side_effect=lambda service: order.append(self.local.state(service)["launchCommand"])), patch.object(self.local, "start", side_effect=lambda service: order.append(dev.command(service, self.root))), patch.object(self.local, "reset") as reset, patch("builtins.print"):
+        with patch.object(dev, "LocalServices", return_value=self.local), patch.object(self.local, "pane", return_value=pane), patch.object(self.local, "port", return_value=True), patch.object(self.local, "build", side_effect=lambda: order.append("build")), patch.object(self.local, "stop", side_effect=lambda service: order.append(self.local.state(service)["launchCommand"])), patch.object(self.local, "start", side_effect=lambda service: order.append(dev.command(service, self.root))), patch.object(self.local, "reset") as reset, patch.object(dev, "snapshot_datasets") as snapshot, patch("builtins.print"):
             self.assertEqual(dev.main(["update", "server"]), 0)
-        self.assertEqual(order, ["build", saved["launchCommand"], dev.command("server", self.root)])
+            self.assertEqual(dev.main(["start", "server"]), 0)
+        self.assertEqual(order, ["build", saved["launchCommand"], dev.command("server", self.root), dev.command("server", self.root)])
         reset.assert_not_called()
+        snapshot.assert_not_called()
+
+    def test_build_includes_the_offline_dataset_tool_and_pinned_target(self):
+        with patch.object(dev.shutil, "disk_usage", return_value=SimpleNamespace(free=50 * 1024**3)), patch.object(dev, "run") as run, patch("builtins.print"):
+            self.local.build()
+        args = run.call_args.args[0]
+        self.assertEqual(args, ["cargo", "build", "--locked", "-p", "meshway-server", "--bin", "meshway-server", "--bin", "ip-datasets"])
+        self.assertEqual(run.call_args.kwargs["env"]["CARGO_INCREMENTAL"], "0")
+        self.assertEqual(run.call_args.kwargs["env"]["CARGO_TARGET_DIR"], str(self.root / "target"))
 
     def test_stop_only_signals_verified_tree_and_has_no_force_fallback(self):
         pane = {"pane": "%8", "pid": 101, "processes": {101, 102}}
@@ -153,6 +165,20 @@ class Services(unittest.TestCase):
         dev.save(login, {"password": "private test marker"})
         return data, login
 
+    def dataset_fixture(self, kinds=("geoip", "asn")):
+        directory = self.root / ".meshway/ip-datasets"
+        directory.mkdir(mode=0o700)
+        manifest = {"version": 1, "datasets": {}}
+        for kind in kinds:
+            # Lifecycle fixtures only; MMDB validation belongs to the real App importer.
+            content = (kind + " lifecycle fixture").encode()
+            path = directory / (kind + ".mmdb")
+            dev.private(path, create=True)
+            path.write_bytes(content)
+            manifest["datasets"][kind] = {"sha256": hashlib.sha256(content).hexdigest(), "source": "--deployment 'quoted' $(not-a-command) " + kind}
+        dev.save(directory / "manifest.json", manifest)
+        return directory, manifest
+
     def test_reset_stops_archives_whole_private_directory_then_starts_seeds(self):
         data, login = self.reset_fixture()
         inode = data.stat().st_ino
@@ -179,11 +205,258 @@ class Services(unittest.TestCase):
             order.append("seed")
             dev.save(login, {"networkId": "new-network"})
 
-        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run"), patch.object(self.local, "stop", side_effect=stop), patch.object(self.local, "start", side_effect=start), patch.object(self.local, "seed", side_effect=seed):
+        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run") as run, patch.object(self.local, "build") as build, patch.object(self.local, "stop", side_effect=stop), patch.object(self.local, "start", side_effect=start), patch.object(self.local, "seed", side_effect=seed):
             self.local.reset()
+        build.assert_not_called()
+        self.assertEqual(len(run.call_args_list), 1)
+        self.assertIn("--check", run.call_args.args[0])
         self.assertEqual(order, ["stop", "start", "seed"])
         self.assertEqual(self.local.reset_state()["phase"], "complete")
+        journal = json.loads((self.local.directory / "server-reset.json").read_text())
+        self.assertEqual(journal["datasets"], {})
+        self.assertFalse((Path(journal["backup"]) / "ip-datasets").exists())
         dev.private(login)
+
+    def test_reset_snapshots_assets_before_stop_then_archives_imports_starts_seeds(self):
+        data, login = self.reset_fixture()
+        assets, manifest = self.dataset_fixture()
+        contents = {kind: (assets / (kind + ".mmdb")).read_bytes() for kind in manifest["datasets"]}
+        inode = data.stat().st_ino
+        order = []
+        running = True
+        rename = os.rename
+
+        def stop(service):
+            nonlocal running
+            running = False
+            order.append("stop")
+            backup = Path(self.local.reset_state()["backup"])
+            self.assertEqual(json.loads((backup / "ip-datasets/manifest.json").read_text()), manifest)
+            # Deployment may publish another generation after preflight. Both imports
+            # must still use this reset's already-verified files and manifest.
+            for kind in manifest["datasets"]:
+                (assets / (kind + ".mmdb")).write_bytes(b"next generation")
+            dev.save(assets / "manifest.json", {"version": 2})
+
+        def archive(source, destination):
+            if source == data:
+                order.append("archive")
+            rename(source, destination)
+
+        def run(args, **kwargs):
+            if args[0] == "node":
+                self.assertIn("--check", args)
+                return
+            self.assertFalse(running)
+            kind = args[args.index("--kind") + 1]
+            backup = Path(self.local.reset_state()["backup"])
+            self.assertEqual(args, [str(self.root / "target/debug/ip-datasets"), "--data-dir", str(data), "import", "--kind", kind, "--file", str(backup / "ip-datasets" / (kind + ".mmdb")), "--source=" + manifest["datasets"][kind]["source"]])
+            self.assertEqual(self.local.reset_state()["phase"], "datasets")
+            self.assertEqual((backup / "server").stat().st_ino, inode)
+            self.assertFalse(login.exists())
+            self.assertEqual((backup / "ip-datasets" / (kind + ".mmdb")).read_bytes(), contents[kind])
+            dev.private_tree(backup / "ip-datasets")
+            if kind == "geoip":
+                self.assertFalse(data.exists())
+                data.mkdir(mode=0o700)
+            dev.save(data / (kind + "-installed"), {"mockImport": True})
+            order.append("import " + kind)
+
+        def start(service):
+            self.assertTrue((data / "geoip-installed").exists())
+            self.assertTrue((data / "asn-installed").exists())
+            order.append("start")
+
+        def seed(backup):
+            order.append("seed")
+            dev.save(login, {"networkId": "fresh"})
+
+        with patch.object(self.local, "pane", side_effect=lambda service: {"processes": {101}} if running else None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", side_effect=lambda path: {101} if running else set()), patch.object(self.local, "build", side_effect=lambda: order.append("build")), patch.object(dev, "run", side_effect=run), patch.object(dev.os, "rename", side_effect=archive), patch.object(self.local, "stop", side_effect=stop), patch.object(self.local, "start", side_effect=start), patch.object(self.local, "seed", side_effect=seed):
+            self.local.reset()
+        self.assertEqual(order, ["build", "stop", "archive", "import geoip", "import asn", "start", "seed"])
+        journal = json.loads((self.local.directory / "server-reset.json").read_text())
+        self.assertEqual(journal["phase"], "complete")
+        self.assertEqual(journal, json.loads((Path(journal["backup"]) / "reset.json").read_text()))
+        self.assertEqual(journal["datasets"], {kind: {**entry, "installed": True} for kind, entry in manifest["datasets"].items()})
+        self.assertTrue(assets.exists())
+
+    def test_reset_accepts_only_asn_and_an_already_built_importer(self):
+        _, login = self.reset_fixture()
+        self.dataset_fixture(("asn",))
+        (self.root / "target/debug/ip-datasets").touch()
+        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run") as run, patch.object(self.local, "build") as build, patch.object(self.local, "stop"), patch.object(self.local, "start"), patch.object(self.local, "seed", side_effect=lambda backup: dev.save(login, {"fresh": True})):
+            self.local.reset()
+        build.assert_not_called()
+        imports = [call.args[0] for call in run.call_args_list if "import" in call.args[0]]
+        self.assertEqual(len(imports), 1)
+        self.assertEqual(imports[0][imports[0].index("--kind") + 1], "asn")
+
+    def test_reset_rejects_invalid_dataset_manifests_before_stopping(self):
+        data, login = self.reset_fixture()
+        assets, valid = self.dataset_fixture()
+        inode = data.stat().st_ino
+        invalid = [None, [], {}, {"version": True, "datasets": valid["datasets"]},
+                   {"version": 2, "datasets": valid["datasets"]}, {**valid, "extra": 1},
+                   {"version": 1, "datasets": {}}, {"version": 1, "datasets": {"country": valid["datasets"]["geoip"]}}]
+        entry = valid["datasets"]["geoip"]
+        entries = [None, {}, {**entry, "file": "elsewhere.mmdb"}, {**entry, "sha256": "A" * 64},
+                   {**entry, "sha256": "0" * 63}, {**entry, "sha256": 1}]
+        entries += [{**entry, "source": value} for value in (None, "", "x" * 257, "国" * 86, "x\n", "x\0", "x\x7f", "x\x85", "\ud800")]
+        invalid += [{"version": 1, "datasets": {"geoip": item}} for item in entries]
+        texts = [json.dumps(item) for item in invalid] + ["{", '{"version":1,"version":1,"datasets":{}}', json.dumps(valid).replace('"source":', '"source":"duplicate","source":', 1), json.dumps(valid) + " " * 8192]
+        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run"), patch.object(self.local, "build") as build, patch.object(self.local, "stop") as stop, patch.object(self.local, "start") as start:
+            for text in texts:
+                with self.subTest(manifest=text):
+                    (assets / "manifest.json").write_text(text)
+                    with self.assertRaises(dev.DevError):
+                        self.local.reset()
+                    self.assertEqual(data.stat().st_ino, inode)
+                    self.assertTrue(login.exists())
+            build.assert_not_called()
+            stop.assert_not_called()
+            start.assert_not_called()
+
+    def test_reset_rejects_missing_empty_oversize_and_hash_mismatched_assets_before_stop(self):
+        data, login = self.reset_fixture()
+        assets, _ = self.dataset_fixture()
+        path = assets / "geoip.mmdb"
+        content = path.read_bytes()
+        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run"), patch.object(self.local, "stop") as stop:
+            for kind in ("missing-manifest", "missing-file", "empty", "oversize", "hash"):
+                with self.subTest(kind=kind):
+                    manifest = (assets / "manifest.json").read_bytes()
+                    if kind == "missing-manifest":
+                        (assets / "manifest.json").unlink()
+                    elif kind == "missing-file":
+                        path.unlink()
+                    else:
+                        with path.open("wb") as output:
+                            if kind == "oversize":
+                                output.truncate(dev.MAX_DATASET_BYTES + 1)
+                            elif kind == "hash":
+                                output.write(b"mismatched bytes")
+                    with self.assertRaises(dev.DevError):
+                        self.local.reset()
+                    self.assertTrue(data.exists())
+                    self.assertTrue(login.exists())
+                    dev.private(assets / "manifest.json", create=True)
+                    (assets / "manifest.json").write_bytes(manifest)
+                    dev.private(path, create=True)
+                    path.write_bytes(content)
+            stop.assert_not_called()
+
+    def test_reset_rejects_dataset_permissions_links_and_non_regular_files_before_stop(self):
+        self.reset_fixture()
+        assets, _ = self.dataset_fixture()
+        targets = [assets, assets / "manifest.json", assets / "geoip.mmdb"]
+        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run"), patch.object(self.local, "stop") as stop:
+            for target in targets:
+                for kind in ("mode", "symlink", "hardlink", "fifo"):
+                    if target == assets and kind in ("hardlink", "fifo"):
+                        continue
+                    with self.subTest(path=target.name, kind=kind):
+                        other = target.with_name(target.name + "-original")
+                        if kind == "mode":
+                            target.chmod(0o755 if target == assets else 0o644)
+                        elif kind == "hardlink":
+                            os.link(target, other)
+                        else:
+                            target.rename(other)
+                            if kind == "symlink":
+                                target.symlink_to(other)
+                            else:
+                                os.mkfifo(target, 0o600)
+                        with self.assertRaises(dev.DevError):
+                            self.local.reset()
+                        if kind == "mode":
+                            target.chmod(0o700 if target == assets else 0o600)
+                        elif kind == "hardlink":
+                            other.unlink()
+                        else:
+                            target.unlink()
+                            other.rename(target)
+            stop.assert_not_called()
+
+    def test_failed_import_preserves_original_and_partial_databases_without_start_or_retry(self):
+        data, login = self.reset_fixture()
+        self.dataset_fixture()
+        imports = []
+
+        def run(args, **kwargs):
+            if args[0] == "node":
+                return
+            kind = args[args.index("--kind") + 1]
+            imports.append(kind)
+            if kind == "asn":
+                raise dev.DevError("SECRET")
+            data.mkdir(mode=0o700)
+            dev.save(data / "partial-db", {"geoipImported": True})
+
+        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(self.local, "build"), patch.object(dev, "run", side_effect=run), patch.object(self.local, "stop"), patch.object(self.local, "start") as start, patch.object(self.local, "seed") as seed:
+            with self.assertRaisesRegex(dev.DevError, "reset failed during datasets") as failure:
+                self.local.reset()
+            start.assert_not_called()
+            seed.assert_not_called()
+        self.assertNotIn("SECRET", str(failure.exception))
+        self.assertEqual(imports, ["geoip", "asn"])
+        journal = json.loads((self.local.directory / "server-reset.json").read_text())
+        self.assertEqual((journal["phase"], journal["failedAt"]), ("failed", "datasets"))
+        self.assertTrue(journal["datasets"]["geoip"]["installed"])
+        self.assertFalse(journal["datasets"]["asn"]["installed"])
+        backup = Path(journal["backup"])
+        self.assertTrue((backup / "server/controller.sqlite").exists())
+        self.assertTrue((backup / "dev-login.json").exists())
+        dev.private_tree(backup / "ip-datasets")
+        self.assertTrue((data / "partial-db").exists())
+        self.assertFalse(login.exists())
+
+    def test_reset_rejects_foreign_uid_on_dataset_directory_manifest_or_file_before_stop(self):
+        self.reset_fixture()
+        assets, _ = self.dataset_fixture()
+        lstat = Path.lstat
+
+        def foreign_uid(path, *args, **kwargs):
+            info = lstat(path, *args, **kwargs)
+            if path == target:
+                fields = list(info)
+                fields[4] += 1
+                return os.stat_result(fields)
+            return info
+
+        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run"), patch.object(self.local, "stop") as stop:
+            for target in (assets, assets / "manifest.json", assets / "geoip.mmdb"):
+                with self.subTest(path=target.name), patch.object(Path, "lstat", new=foreign_uid):
+                    with self.assertRaisesRegex(dev.DevError, "ownership or permissions"):
+                        self.local.reset()
+            stop.assert_not_called()
+
+    def test_reset_refuses_import_when_server_reappears_after_archive(self):
+        self.reset_fixture()
+        self.dataset_fixture()
+        with patch.object(self.local, "pane", return_value={"processes": {101}}), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", return_value=set()), patch.object(self.local, "build"), patch.object(dev, "run") as run, patch.object(self.local, "stop"), patch.object(self.local, "start") as start:
+            with self.assertRaisesRegex(dev.DevError, "reset failed during datasets"):
+                self.local.reset()
+            start.assert_not_called()
+        self.assertEqual(len(run.call_args_list), 1)
+        self.assertIn("--check", run.call_args.args[0])
+
+    def test_reset_refuses_next_import_when_fresh_data_directory_becomes_active(self):
+        data, _ = self.reset_fixture()
+        self.dataset_fixture()
+        imports = []
+
+        def run(args, **kwargs):
+            if args[0] != "node":
+                imports.append(args[args.index("--kind") + 1])
+                data.mkdir(mode=0o700)
+                dev.save(data / "partial-db", {"geoipImported": True})
+
+        with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "port", return_value=False), patch.object(self.local, "data_users", side_effect=lambda path: {777} if imports else set()), patch.object(self.local, "build"), patch.object(dev, "run", side_effect=run), patch.object(self.local, "stop"), patch.object(self.local, "start") as start:
+            with self.assertRaisesRegex(dev.DevError, "reset failed during datasets"):
+                self.local.reset()
+            start.assert_not_called()
+        self.assertEqual(imports, ["geoip"])
+        self.assertTrue((data / "partial-db").exists())
 
     def test_failed_seed_keeps_original_backup_and_partial_database_without_retry(self):
         data, login = self.reset_fixture()

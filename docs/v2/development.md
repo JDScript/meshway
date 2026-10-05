@@ -41,7 +41,7 @@ MESHWAY_CONTROLLER_URL=https://meshway-dev-api.jdscript.dev mise run dev:console
 
 ### 生命周期与归属
 
-- `start` 幂等启动或检查健康；缺少 Server 二进制时才构建。`restart` 重启现有程序，`update server` 构建锁定程序后停旧启新。这些操作保留整个数据库、私有材料与开发登录文件。
+- `start` 幂等启动或检查健康；缺少 Server 二进制时才构建。`restart` 重启现有程序，`update server` 构建锁定程序后停旧启新。services 的构建同时产出 `meshway-server` 和离线维护工具 `ip-datasets`。这些操作保留整个数据库、私有材料与开发登录文件，不隐式导入或替换部署数据集。
 - 脚本保存真实启动的 argv、tmux 命令、pane、PID、进程启动时间、路径和端口；检查记录、当前进程命令及监听进程树后才能停止。源码中的期望参数改变时，旧记录仍能证明旧进程归属，update 随后按新命令启动。
 - tmux 会话名为 `meshway-server`／`meshway-docs`。缺失或旧格式记录、空启动命令、PID 重用、路径／命令不一致、同名多 pane 会话、外部 listener 均阻断操作。旧手动服务须先按实际进程证据由操作者停止，再用此入口启动；脚本不自动迁移未知进程。
 - 停止只对核验过的进程树发送 SIGINT，超时保留现场。多个工作树共用这些本机端口和会话名，记录中的工作树路径必须匹配。
@@ -55,11 +55,12 @@ mise run services reset server
 
 此命令只针对当前工作树的 `.meshway/server`，顺序如下：
 
-1. 核验私有目录／文件权限、已记录服务、端口、数据目录使用者和 seed 工具链；拒绝外来进程、符号链接、硬链接或非私有数据树。
+1. 核验私有目录／文件权限、已记录服务、端口、数据目录使用者和 seed 工具链；拒绝外来进程、符号链接、硬链接或非私有数据树。若部署了[独立 GeoIP／ASN 资产](#独立-geoip-asn-部署资产)，先校验并复制到本次私有备份中的 `ip-datasets/`，缺少所需二进制时在停服前构建。
 2. 停止已核验 Server，确认端口释放和数据目录无人使用，并取得 Server 使用的 `controller.lock` 排他锁。
 3. 将**整个** `.meshway/server` 原子移到 `.meshway/backups/server-<UTC时间>-<runId>/server`，保留数据库、WAL 和所有私有密钥；将旧 `.meshway/dev-login.json` 移到同一备份目录。备份目录权限为 `0700`，不对活动 SQLite 逐文件删除。
-4. 用当前已构建程序启动 fresh Server，使用生成 TypeScript SDK 及其严格运行时 schema，在 loopback 创建固定开发账户和一个 `Development` 网络。
-5. 核验成员／网络结果、确认加入链接已被对应成员单次消费并注销临时会话后，原子发布 `0600` 的 `.meshway/dev-login.json`。
+4. 进入 `datasets` 阶段；如有资产，按 `geoip`、`asn` 顺序通过正式 `ip-datasets` 工具将已校验快照导入 fresh `.meshway/server`。每次导入前确认 Server 未运行、端口释放，已创建的新目录没有使用者；App 持有自己的目录锁，完成 key、MMDB 类型／范围校验和事务写入后退出。
+5. 用当前已构建程序启动 fresh Server，使用生成 TypeScript SDK 及其严格运行时 schema，在 loopback 创建固定开发账户和一个 `Development` 网络。
+6. 核验成员／网络结果、确认加入链接已被对应成员单次消费并注销临时会话后，原子发布 `0600` 的 `.meshway/dev-login.json`。
 
 | 账户 | Development 角色 |
 | --- | --- |
@@ -74,9 +75,41 @@ mise run services reset server
 
 旧文件的顶层默认登录可以是另一个旧 Owner，不一定属于四个种子账户；只有顶层邮箱属于这四个账户时，才要求其密码与 `accounts` 中对应值一致。reset 只导入 `accounts` 中精确四个密码，新文件的主登录固定为 `admin@example.com`（Development Owner）；旧非种子 Owner 及原登录文件保留在整库备份中。
 
-当前 reset 状态保存在 `.meshway/services/server-reset.json`，每次备份另有 `reset.json`；阶段为 `stopping`、`archiving`、`starting`、`seeding`、`complete` 或 `failed`，失败时记录 `failedAt`。失败返回非零，保留已有备份及部分初始化的新库，不自动重试 seed、不自动再次清库。`status` 对未完成 reset 显示 `ready=false`，即使 HTTP 已能响应。
+当前 reset 状态保存在 `.meshway/services/server-reset.json`，每次备份另有 `reset.json`；阶段为 `stopping`、`archiving`、`datasets`、`starting`、`seeding`、`complete` 或 `failed`，失败时记录 `failedAt`。journal 的 `datasets` 按种类记录 `sha256`、`source` 和 `installed`；只有对应导入命令成功退出才设为 `true`，`false` 表示未确认完成，不能据此认定失败事务未写入。失败返回非零，保留已有备份、资产快照及部分初始化的新库，不自动重试导入／seed、不自动再次清库。`status` 对未完成 reset 显示 `ready=false`，即使 HTTP 已能响应。
 
 恢复时先检查两个 journal、私有服务日志及当前进程归属。正常 start／update 不会修复或重做 seed。若决定重新执行 reset，这是新的整库重置，会再次归档当前部分初始化目录；若恢复旧备份，应先核验并停止服务，将当前目录另行保留，再以同一批次的整个 `server` 和 `dev-login.json` 恢复，避免数据库与 key／凭据交叉配对。备份不会被脚本自动回收。
+
+### 独立 GeoIP／ASN 部署资产
+
+部署方将已取得的真实 MMDB 文件保存在当前工作树 `.meshway/ip-datasets/`，与业务库 `.meshway/server/` 分开。MaxMind 授权、账户和下载由部署方处理；reset 只复用这些本地文件，不自动下载、生成替代数据或从旧业务库回退选取数据。独立资产不随业务库 reset 删除。
+
+目录中的固定文件为 `manifest.json`、`geoip.mmdb`／`asn.mmdb`。清单结构如下，摘要占位符必须替换为对应文件实际的 64 位小写十六进制 SHA-256：
+
+```json
+{
+  "version": 1,
+  "datasets": {
+    "geoip": {
+      "sha256": "<geoip.mmdb 的 SHA-256>",
+      "source": "GeoLite2-City deployment snapshot"
+    },
+    "asn": {
+      "sha256": "<asn.mmdb 的 SHA-256>",
+      "source": "GeoLite2-ASN deployment snapshot"
+    }
+  }
+}
+```
+
+- 顶层只接受 `version`、`datasets`；`version` 为整数 `1`。`datasets` 只接受 `geoip`／`asn`，至少一项；每项只接受 `sha256`、`source`，没有 `file` 字段，不接受重复 JSON 键。
+- `source` 为 1–256 UTF-8 字节的非控制字符字符串，作为正式导入的来源记录。每个声明文件大小必须在 `(0, 128 MiB]` 内，实际摘要必须匹配清单。
+- 资产目录为当前 UID 所有、权限 `0700`；清单和声明文件为当前 UID 所有的普通文件、权限 `0600`，禁止符号链接和硬链接。
+- 整个资产目录缺失时，reset 保持无数据集的初始化行为；未提供种类的查询仍真实返回 `datasetUnavailable`。存在目录时，清单、声明文件、大小、摘要或权限检查失败均在停服前拒绝，保留原服务及业务库。
+- 校验快照保存在 `.meshway/backups/server-<UTC时间>-<runId>/ip-datasets/`，含本次规范化 `manifest.json` 和已核对摘要的文件；目录／文件同样为 `0700`／`0600`。停服后仅从这一批快照读取，部署方后续更新源目录不会混入本次 reset。
+
+归档后、fresh Server 启动前，脚本执行 `target/debug/ip-datasets --data-dir <fresh-path> import --kind <geoip|asn> --file <backup-snapshot> --source=<source>`，通过正式 App owner 导入；不会直接写 SQL，也不在运行中 Server 的数据目录执行导入。内容不符合 MMDB 类型／范围或导入失败时，journal 记录 `failedAt=datasets`，保留现场供检查。
+
+Python 回归验证快照、停服／归档／导入／启动／seed 顺序和失败保留行为；真实数据可用性仍需正式 import 后重启及实际查询验证。维护工具短时打开 App 不代表 Node execution 或真实包流验收。
 
 ## 隔离 Linux 验收与镜像
 
@@ -101,7 +134,7 @@ DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-man
 
 | 所属入口 | 数据／报告／缓存位置 | 清理边界 |
 | --- | --- | --- |
-| 本机 services | 工作树 `.meshway/server/`、`.meshway/dev-login.json`；`.meshway/services/` 的 launch 记录、reset journal、私有日志和 `dev.lock`；`target/` 构建缓存 | stop 保留数据；reset 整库移入 `.meshway/backups/`；备份人工保留或回收 |
+| 本机 services | 工作树 `.meshway/server/`、`.meshway/dev-login.json`、独立 `.meshway/ip-datasets/` 部署资产；`.meshway/services/` 的 launch 记录、reset journal、私有日志和 `dev.lock`；`target/` 构建缓存 | stop 保留数据；reset 整库移入 `.meshway/backups/`，并保存本次资产快照；独立部署资产保留，备份人工保留或回收 |
 | 隔离 TUN／packet／runtime | 公共根 `.meshway/validation/{tun,packet,runtime}/<runId>/` 的报告、二进制、进程日志、场景数据和证据；工作树 `target/node-kernel-tests/` | 正常 finally 清理精确容器／网络，报告保留；失败查报告及 Docker 实际资源 |
 | OS fixture | 显式 `--output` 目录中的包、Dockerfile、image manifest；Docker 的不可变 image ID | 先确认没有容器／构建引用，再回收该输出和对应镜像 |
 | 常驻 Node lab | 公共根 `.meshway/node-lab/releases/`、`selected`、`operation.lock`、`deploy.json`；工作树 `target/node-linux/`；`meshway-{lax,sha,nyc}-state` named volumes | stop 先清理 TUN 并保留原意图与卷；deploy 核验 namespace 停止证明、复用身份卷并更换不可变程序；完整重新接入时按标签和精确资源身份单独处理 |
