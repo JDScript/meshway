@@ -144,6 +144,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ### 需要修正
 
+- **旧版本保存的配置在新版本里打不开**（自 `2a4bd0cc`）：`RouteMatch.domain` 和 inline `RuleSet.domain` 总会序列化，而 `restore_canonical_json` 要求库里的规范 JSON 与重新序列化的结果逐字相同。于是旧版本保存的、含出口规则或 inline 规则集的版本报 `IncompleteVersion`，凡是打开当前版本的接口都返回 503：`GET /networks`、`/networks/{id}`、`members`、`configuration`、`configuration/source`、`rule-sets`、`state`，以及 Node 的 `POST /agent-api/v1/instances`。日志里没有原因。用 8420 的库副本可以复现，新建的网络正常。已有数据应当能读：读取旧格式时补上缺省值再比较，或者提供迁移。8420 已回到 `1f4efbbd`，并恢复到换版本前的备份，等修复后再升级。
 - Node：daemon 把 400 等未分类的服务端拒绝归为 `Contract` 且不再重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），节点停在 `blocked`，直到手动 `meshway up`。服务端现在接受 15 分钟内（最多 8 次发布）该节点的旧引用，超出后仍是 400；这时应重新同步而不是永久停住。后端已转给 Node。
 
 ### 需要真实 Node 复核
