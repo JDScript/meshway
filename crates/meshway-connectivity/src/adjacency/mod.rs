@@ -15,6 +15,7 @@ const CHALLENGE: &[u8] = b"meshway/adjacency/linkChallenge/v1\0";
 const ACK: &[u8] = b"meshway/adjacency/linkAck/v1\0";
 
 mod exchange;
+pub(crate) use exchange::incoming_bound;
 pub(crate) use exchange::{Initiation, Kind, Transcript, decode, encode, incoming};
 
 fn keys(cfg: &NodeConfiguration, node: NodeId) -> Result<(&BoundNodeKey, &BoundNodeKey), Error> {

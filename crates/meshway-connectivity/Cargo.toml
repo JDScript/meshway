@@ -10,6 +10,8 @@ meshway-configuration = { path = "../meshway-configuration" }
 meshway-control = { path = "../meshway-control" }
 meshway-model = { path = "../meshway-model" }
 meshway-policy = { path = "../meshway-policy" }
+meshway-protocol = { path = "../meshway-protocol" }
+meshway-stun = { path = "../meshway-stun" }
 meshway-dataplane = { path = "../meshway-dataplane" }
 meshway-underlay = { path = "../meshway-underlay" }
 meshway-transport = { path = "../meshway-transport" }
@@ -21,6 +23,7 @@ tokio-util.workspace = true
 futures-util.workspace = true
 sha2.workspace = true
 getrandom.workspace = true
+chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
@@ -29,7 +32,6 @@ ed25519-dalek = { version = "2.2", default-features = false, features = ["std", 
 tempfile.workspace = true
 meshway-server = { path = "../../apps/meshway-server" }
 meshway-control-client = { path = "../meshway-control-client" }
-meshway-protocol = { path = "../meshway-protocol" }
 meshway-transport-udp = { path = "../meshway-transport-udp" }
 axum.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

@@ -3,6 +3,7 @@
 mod agent;
 mod auth;
 mod configuration;
+mod connectivity;
 mod enrollment;
 mod error;
 pub mod events;
@@ -92,11 +93,17 @@ struct HttpState {
     configurations: crate::configuration::Configurations,
     history: crate::history::History,
     execution: crate::execution::Execution,
+    connectivity: crate::connectivity::Connectivity,
     enrollment: crate::enrollment::Enrollment,
 }
 impl FromRef<HttpState> for crate::execution::Execution {
     fn from_ref(state: &HttpState) -> Self {
         state.execution.clone()
+    }
+}
+impl FromRef<HttpState> for crate::connectivity::Connectivity {
+    fn from_ref(state: &HttpState) -> Self {
+        state.connectivity.clone()
     }
 }
 impl FromRef<HttpState> for crate::enrollment::Enrollment {
@@ -198,6 +205,10 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(agent::configuration))
         .routes(routes!(agent::refresh_configuration))
         .routes(routes!(agent::query_dns))
+        .routes(routes!(connectivity::query))
+        .routes(routes!(connectivity::prepare))
+        .routes(routes!(connectivity::accept))
+        .routes(routes!(connectivity::cancel))
         .routes(routes!(agent::receipt))
         .routes(routes!(agent::demand))
         .routes(routes!(agent::renew_demand))
@@ -270,6 +281,7 @@ pub fn router(app: &App) -> Router {
             configurations: app.configurations(),
             history: app.history(),
             execution: app.execution(),
+            connectivity: app.connectivity(),
             enrollment: app.enrollment(),
         })
         .merge(state::user_router(

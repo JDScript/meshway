@@ -27,6 +27,8 @@
 
 同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。中继流不能借作本机发起资格；歧义拒绝。
 
+SecureNode 的实际 forward 包通过认证与流准入后，CID 与协议状态在同一流表事务中提交；handshake 完成、读取状态、失败准入和重放均不能建立或改写绑定。`SecureNode::local_circuit` 据此选择本机回包的 cipher，reply 准入再次要求相同 CID，避免从相同 demand／path 的多个本地 Established circuit 中误选未完成全路径交付的旧响应。普通 Engine 流的 cipher 引用为不适用；只有业务源可在旧 cipher 结束后为同一获准路径取得新 cipher。
+
 `Engine::reconcile` 使用 Control 的[直接连续性交接](/v2/node/control#执行快照)，仅保留原授权与完整路径仍相同的活流。比较使用排除 `expiresAt` 的 `permit_authorization_digest`，同时检查路径相关身份、地址与 key 绑定。换 instance、撤回、取消、跳过 publication 或旧期限已到都不迁移状态。
 
 交接本身保守保留流的旧 idle／permit／快照截止，不凭读状态延长流。只有旧流仍有效时，实际获准包通过同一协议状态机才能刷新其期限；已排队输出继续受原截止与 guard 约束。拒绝包不建立或推进流状态。
@@ -121,6 +123,8 @@ mise run test:runtime:linux
 默认场景配置为关闭系统 DNS 的 Mesh-only 网络，强制 A→R→B 及原路径回复；`--transport native-udp` 选择 Native UDP 静态承载。已通过的 daemon 验收包含双栈 UDP／TCP、同一 socket 跨需求添加与至少 125 秒持续续租、独立 UDP 流停止发包后的入站活动续租、Access 撤销／恢复、中转取消 IPv6 地址后继续转发 IPv6 密文、Server 失联后期限截止、拒绝路由保留及离线 `down` 清理。单独的内核测试检查同目的地址的普通／受保护 socket、旧池拒绝边界、journal 恢复及外部同优先级规则冲突；HTTPS bootstrap 另验显式 down 前后的联系。
 
 DNS 场景增加 `--dns-backend resolv-conf|resolved` 和 `--dns-image-manifest`，固定 OS 包／镜像由 `dev/dns-fixture/build.py` 离线构建。Native UDP 与显式文件代理、resolved 两种后端分别通过真实 `getaddrinfo`、短名称、可见性 REFUSED、分域 UDP／TCP、系统 UDP→TCP 截断重试、进程重启、上述长时包流、失效阻断及 DNS／接口恢复。独立内核测试还覆盖 DNS 锚点归属、并发读取、取消、恢复和精确删除。
+
+`--transport native-udp --traversal nat` 使用同一 daemon、Control 和包流 owner，增加独立 SNAT 路由器及真实候选协调；`--traversal-fallback` 验证获准的 A–R TCP 退路。两组关闭系统 DNS 的完整验收已通过，精确拓扑、连续性和限制统一见[连接获取验收](/v2/node/connectivity#路径选择与验收)。
 
 容器只运行预编译程序，使用独立 IPv4／IPv6 internal bridge，不发布宿主端口。IP 场景使用 NET_ADMIN／TUN；DNS 场景额外使用私有 mount namespace 建立可原子替换的 `/etc`，并在测试 namespace 内运行私有 D-Bus／resolver。额外 capability 的用途、固定 OS 资产及运行命令记录在 `dev/dns-fixture/README.md` 与报告中；不用 host network 或 privileged，也不改写 Docker 的 resolver bind 源。源码／二进制指纹、各角色结果和精确清理证据保存到 `.meshway/validation/runtime/`。通过结果只覆盖明确配置，不代表出口转发、其他承载或完整 TCP conntrack 已验收。
 

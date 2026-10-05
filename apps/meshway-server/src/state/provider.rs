@@ -223,12 +223,12 @@ impl StateProvider for NodeProvider {
                 .scope
                 .current
                 .get(&node)
-                .map(|node| node.instance_id)
+                .map(|node| (node.instance_id, node.instance_generation))
                 == current
                     .scope
                     .current
                     .get(&node)
-                    .map(|node| node.instance_id)
+                    .map(|node| (node.instance_id, node.instance_generation))
     }
     fn view(
         &self,
@@ -331,6 +331,7 @@ fn disclosure_digest(scope: &super::VisibilityScope) -> Result<meshway_model::Di
             (
                 node,
                 current.instance_id,
+                current.instance_generation,
                 current.revoked,
                 &current.configurations,
                 &current.execution,
@@ -341,6 +342,7 @@ fn disclosure_digest(scope: &super::VisibilityScope) -> Result<meshway_model::Di
         scope.network_id,
         &scope.visible,
         &scope.full,
+        &scope.endpoint_resources,
         &scope.observation_paths,
         &scope.mesh_addresses,
         current,

@@ -32,6 +32,7 @@ wire_object! { #[derive(Clone, Debug, PartialEq)] pub struct DerivedNodeState {
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerEndpoint {
     pub socket_id: String, pub resource: ResourceRef, pub generation: Sequence,
     pub network: SocketNetwork, pub candidate: PeerCandidate,
+    pub candidate_reference: crate::connectivity::CandidateReference,
 } }
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,

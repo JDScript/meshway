@@ -92,6 +92,7 @@ impl Shared {
             shared: self.clone(),
             snapshot: Some(snapshot.clone()),
             epoch: token.clone(),
+            physical: false,
         })
     }
 
@@ -100,6 +101,7 @@ impl Shared {
             shared: self.clone(),
             snapshot: None,
             epoch: self.tasks.stop.clone(),
+            physical: false,
         }
     }
 }
@@ -109,18 +111,33 @@ pub(super) struct Scope {
     pub shared: Arc<Shared>,
     snapshot: Option<ExecutionSnapshot>,
     epoch: CancellationToken,
+    physical: bool,
 }
 
 impl Scope {
-    pub fn check(&self) -> Result<()> {
+    pub fn owner_current(&self) -> Result<()> {
         self.shared.check()?;
         if self.epoch.is_cancelled() {
             return Err(Error::Expired);
         }
+        Ok(())
+    }
+    pub fn physical(mut self) -> Self {
+        self.physical = true;
+        self
+    }
+    pub fn frozen(&self) -> Result<Self> {
+        let mut scope = self.clone();
+        scope.snapshot = self.current()?;
+        scope.physical = false;
+        Ok(scope)
+    }
+    pub fn execution(&self) -> Result<ExecutionSnapshot> {
+        self.current()?.ok_or(Error::Target)
+    }
+    pub fn check(&self) -> Result<()> {
+        self.owner_current()?;
         if self.current().is_err() {
-            // Once observed expired, this carrier epoch cannot be revived by a
-            // later renewal. The host must install a new epoch instead.
-            self.epoch.cancel();
             return Err(Error::Expired);
         }
         Ok(())
@@ -132,7 +149,10 @@ impl Scope {
         };
         let active = self.shared.execution.read().map_err(|_| Error::Worker)?;
         let (snapshot, token) = active.as_ref().ok_or(Error::Expired)?;
-        if token.is_cancelled() || !snapshot.same_execution(original) {
+        if token.is_cancelled()
+            || (!self.physical
+                && (!snapshot.same_execution(original) || original.ensure_current().is_err()))
+        {
             return Err(Error::Expired);
         }
         snapshot.ensure_current().map_err(|_| Error::Expired)?;
@@ -168,7 +188,6 @@ impl Scope {
                 return;
             }
             let Ok(current) = self.current() else {
-                self.epoch.cancel();
                 return;
             };
             tokio::select! { biased;
@@ -185,6 +204,42 @@ impl Scope {
             // A successful live same-target Host::install is an explicit
             // Control-issued carrier renewal. Queued packet guards retain their
             // own original deadlines; only this physical socket scope refreshes.
+        }
+    }
+
+    /// Physical descriptors remain inactive during a publication gap. Only the
+    /// Host's validated, compatible epoch handoff can supply current authority.
+    /// Ordinary resolver/opening scopes keep their original invalidation rules.
+    pub async fn closed(&self) {
+        if !self.physical || self.snapshot.is_none() {
+            return self.invalidated().await;
+        }
+        loop {
+            if self.shared.check().is_err() || self.epoch.is_cancelled() {
+                return;
+            }
+            let snapshot = self
+                .shared
+                .execution
+                .read()
+                .ok()
+                .and_then(|active| active.as_ref().map(|(snapshot, _)| snapshot.clone()));
+            let Some(snapshot) = snapshot else {
+                return;
+            };
+            let Ok(deadline) = snapshot.retention_deadline() else {
+                return;
+            };
+            tokio::select! { biased;
+                _ = self.shared.conflict.cancelled() => return,
+                _ = self.shared.tasks.stop.cancelled() => return,
+                _ = self.epoch.cancelled() => return,
+                _ = tokio::time::sleep_until(deadline.into()) => {},
+                _ = async {
+                    if snapshot.ensure_current().is_ok() { snapshot.invalidated().await; }
+                    else { tokio::time::sleep(std::time::Duration::from_millis(10)).await; }
+                } => {},
+            }
         }
     }
 }

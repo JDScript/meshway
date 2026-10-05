@@ -53,11 +53,11 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 | 范围 | 当前行为 |
 | --- | --- |
-| Linux Mesh-only | 已验证 TUN capture、Native TCP／Native UDP 静态端点认证邻接、双栈 UDP／TCP 多跳包流、持续续租和失效清理；精确范围见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance) |
+| Linux Mesh-only | 已验证 TUN capture、Native TCP／Native UDP 静态端点认证邻接、双栈 UDP／TCP 多跳包流、持续续租和失效清理；精确范围见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance)。双 NAT 与同路径 TCP 退路见[连接获取验收](/v2/node/connectivity#路径选择与验收) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
 | Exit／本机 egress | `exitEnabled`、非 Mesh permit、未由 DNS owner 持有的 local egress 或缺少明确 no-exit DNS 执行证明均拒绝安装；出口／NAT 尚未接线 |
 | 诊断 | 非空 diagnostics 拒绝安装；ping 和测量运行器尚未实现 |
-| 承载 | Manager 支持获准的 stream 与 Native UDP 静态端点，范围见[邻接管理](/v2/node/transport#邻接管理)；协调 UDP 打洞尚未实现 |
+| 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace、netstack、SOCKS5、动态插件和切网尚未实现 |
 
 仅验证 Mesh IP、无需系统 DNS 的场景，在 Server 配置中明确设置 `magicDNS=false`、`overrideLocal=false`，并保持 `servers`、`default`、`routes`、`searchDomains` 为空。此时不创建 DNS 服务／锚点，也不要求机器运行 resolved。存在 DNS 需求时须完成对应安装；本机后端选择不覆盖云端 DNS 业务配置。`control-only` 不安装系统 DNS。

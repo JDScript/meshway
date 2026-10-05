@@ -102,6 +102,10 @@ id!(
     "User session record identifier; not the session token."
 );
 id!(RequestId, "Request identifier.");
+id!(
+    UdpTraversalId,
+    "Short-lived UDP traversal attempt identifier; not a credential."
+);
 id!(PublicationId, "Execution publication identifier.");
 id!(InstanceId, "Runtime instance identifier.");
 id!(KeyId, "Key record identifier; not key material.");

@@ -5,6 +5,7 @@
 #![cfg(unix)]
 
 mod authority_race;
+mod circuit_binding;
 mod continuity;
 mod secure;
 mod send_lifetime;

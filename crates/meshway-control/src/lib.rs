@@ -7,6 +7,7 @@
 
 mod authority;
 mod clock;
+pub mod connectivity;
 mod runtime;
 pub use runtime::ApplicationTicket;
 mod dataplane_identity;
@@ -105,6 +106,7 @@ pub struct Control {
     report_sequence: u64,
     application_owner: Arc<()>,
     application: Option<ApplicationTicket>,
+    connectivity: connectivity::Authority,
 }
 
 struct Session {
@@ -163,6 +165,7 @@ impl Control {
             report_sequence: 0,
             application_owner: Arc::new(()),
             application: None,
+            connectivity: connectivity::Authority::default(),
         })
     }
 

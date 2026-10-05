@@ -11,6 +11,7 @@ pub mod state;
 pub mod accounts;
 mod app;
 pub(crate) mod configuration;
+pub mod connectivity;
 mod directory;
 pub mod effect;
 pub mod enrollment;
@@ -22,6 +23,7 @@ pub mod networks;
 mod secrets;
 pub mod settings;
 mod store;
+mod stun;
 
 pub use app::{App, AppError};
 pub use settings::{InvalidConsoleOrigin, Settings, console_origin};

@@ -21,6 +21,7 @@ pub struct ProtectedDatagram {
     owned: Owned<UdpTransport>,
     local: SocketAddr,
     targets: Option<Vec<SocketAddr>>,
+    pub(super) traversal: Option<std::sync::Arc<super::traversal::Registry>>,
 }
 
 impl fmt::Debug for ProtectedDatagram {
@@ -63,6 +64,7 @@ impl ProtectedDatagram {
             owned: Owned::new(endpoint, scope, capacity)?,
             local,
             targets,
+            traversal: None,
         })
     }
 
@@ -101,6 +103,10 @@ impl Datagram for ProtectedDatagram {
             .targets
             .as_ref()
             .is_some_and(|targets| !targets.contains(&peer))
+            && !self
+                .traversal
+                .as_ref()
+                .is_some_and(|registry| registry.allows(peer))
         {
             return Poll::Ready(Err(io_error(Error::Target)));
         }
@@ -115,6 +121,14 @@ impl Datagram for ProtectedDatagram {
     ) -> Poll<io::Result<DatagramRead>> {
         self.owned.wakers.read.register(cx.waker());
         self.with(|endpoint| endpoint.poll_recv_from(cx, bytes))
+    }
+}
+
+impl Drop for ProtectedDatagram {
+    fn drop(&mut self) {
+        if let Some(registry) = &self.traversal {
+            registry.closed.cancel();
+        }
     }
 }
 

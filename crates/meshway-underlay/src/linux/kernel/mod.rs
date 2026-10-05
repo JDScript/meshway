@@ -343,7 +343,13 @@ impl Kernel {
         if snapshot.continuation_from(installed).is_err() {
             return Ok(false);
         }
-        if snapshot.same_execution(installed) && !token.is_cancelled() {
+        let previous = snapshot
+            .continuation_from(installed)
+            .map_err(|_| Error::Expired)?;
+        let next = snapshot.configuration().map_err(|_| Error::Expired)?;
+        let sockets_compatible =
+            previous.listeners == next.listeners && previous.dialers == next.dialers;
+        if sockets_compatible && !token.is_cancelled() {
             *installed = snapshot.clone();
         } else {
             token.cancel();

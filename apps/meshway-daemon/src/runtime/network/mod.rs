@@ -10,6 +10,8 @@ mod packets;
 mod reporting;
 mod requirements;
 #[cfg(target_os = "linux")]
+mod traversal;
+#[cfg(target_os = "linux")]
 mod worker;
 
 use chrono::{DateTime, Utc};
@@ -107,6 +109,8 @@ pub(super) struct Reply {
     renewal: Option<RenewDemandRequest>,
 }
 pub(super) enum Request {
+    #[cfg(target_os = "linux")]
+    Traversal(traversal::Request),
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Constructed by Linux packet ingress.
     Demand {
         operation: Operation,
@@ -120,6 +124,21 @@ pub(super) enum Request {
             Result<meshway_protocol::NodeDnsQueryResponse, meshway_dns::GatewayError>,
         >,
     },
+}
+
+impl Request {
+    /// Traversal mutates only bounded acquisition state, not the compiled
+    /// execution target. Its individual RPCs do not require a full refresh cycle.
+    pub(super) fn acquisition(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            matches!(self, Self::Traversal(_))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
 }
 
 struct Completion {
@@ -153,6 +172,8 @@ pub(super) struct Handle {
     completions: mpsc::Receiver<Completion>,
     pending_completion: Option<Completion>,
     reporting: reporting::Schedule,
+    #[cfg(target_os = "linux")]
+    traversal_acknowledged: watch::Sender<traversal::Acknowledged>,
     #[cfg(target_os = "linux")]
     dns_plans: watch::Receiver<Option<dns::intents::Plan>>,
     #[cfg(target_os = "linux")]
@@ -206,6 +227,9 @@ impl Handle {
             let report = reports.subscribe();
             let (reports, reporting) = reporting::channel(reports);
             let (gateway, requests) = mpsc::channel(16);
+            let (traversal_acknowledged, acknowledged) =
+                watch::channel(traversal::Acknowledged::default());
+            let traversal = traversal::Gateway::new(gateway.clone(), acknowledged);
             let (completed, completions) = mpsc::channel(8);
             let (plans, dns_plans) = watch::channel(None);
             let dns = dns::Attachment::new(dns_settings, directory, reservation, gateway.clone());
@@ -217,6 +241,7 @@ impl Handle {
                 gateway,
                 completed,
                 (dns, plans),
+                traversal,
             ));
             Ok(Self {
                 commands,
@@ -230,6 +255,7 @@ impl Handle {
                 completions,
                 pending_completion: None,
                 reporting,
+                traversal_acknowledged,
                 dns_plans,
                 dns_intents: dns::intents::Registry::default(),
             })
@@ -557,6 +583,8 @@ pub(super) async fn request(
     request: Request,
 ) -> Result<(), meshway_control::Error> {
     let (operation, reply) = match request {
+        #[cfg(target_os = "linux")]
+        Request::Traversal(request) => return traversal::dispatch(control, request).await,
         Request::Demand { operation, reply } => (operation, reply),
         #[cfg(target_os = "linux")]
         Request::Dns {

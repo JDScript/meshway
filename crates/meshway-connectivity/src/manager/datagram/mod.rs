@@ -11,6 +11,8 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::OwnedSemaphorePermit, time::Instant};
+mod stun;
+mod traversal;
 
 const RETRY: Duration = Duration::from_millis(250);
 const MAX_SENDS: u8 = 8;
@@ -72,6 +74,7 @@ struct Channel {
     budget: ControlBudget,
     _capacity: OwnedSemaphorePermit,
     recovery: Option<Recovery>,
+    dynamic_target: bool,
 }
 
 struct Owner {
@@ -89,9 +92,87 @@ struct Owner {
     // Independent diagnostic deduplication; never an authentication/replay gate.
     diagnosed: BTreeSet<(NodeId, [u8; 32], &'static str)>,
     unverified_init_rejections: u64,
+    discovery: BTreeMap<[u8; 12], stun::Pending>,
+    traversal: BTreeMap<meshway_model::UdpTraversalId, traversal::Attempt>,
+    commands: Option<mpsc::Receiver<super::traversal::Command>>,
+    authorization: Option<Arc<dyn crate::DatagramAuthorization>>,
 }
 
 impl Owner {
+    fn handoff(&mut self, next: Arc<Shared>) -> Result<(), Error> {
+        next.identity
+            .snapshot()
+            .continuation_from(self.shared.identity.snapshot())
+            .map_err(|_| Error::Authority)?;
+        self.lifetime.cancellation.cancel();
+        for attempt in self.pending.values() {
+            attempt.scope.cancellation.cancel();
+        }
+        self.pending.clear();
+        for attempt in self.traversal.values() {
+            attempt.cancel();
+        }
+        self.traversal.clear();
+        self.discovery.clear();
+        if let Some(outbound) = &mut self.outbound {
+            outbound.scope.cancellation.cancel();
+            outbound.attempts.clear();
+            if !outbound.established {
+                return Err(Error::Unavailable);
+            }
+            outbound.scope = next.scope(Some((outbound.peer, outbound.carrier.clone())), false);
+        }
+        let mut selected = Vec::new();
+        let remotes: Vec<_> = self.channels.keys().copied().collect();
+        for remote in remotes {
+            let channel = self.channels.get_mut(&remote).ok_or(Error::Worker)?;
+            if let Some(recovery) = channel.recovery.take() {
+                recovery.scope.cancellation.cancel();
+            }
+            channel.probe = None;
+            channel.next_probe = Instant::now();
+            channel.ready_until = Instant::now();
+            if let Some(scope) = next.renew_link(&channel.fact)? {
+                channel.scope = scope.clone();
+                if channel.dynamic_target {
+                    selected.push((
+                        remote,
+                        Arc::new(scope) as Arc<dyn meshway_transport::SendLifetime>,
+                    ));
+                }
+            } else {
+                let channel = self.channels.remove(&remote).ok_or(Error::Worker)?;
+                channel.scope.cancellation.cancel();
+                retire(&next, &channel.fact)?;
+            }
+        }
+        let mut fact = next
+            .sockets
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .get(&self.id)
+            .cloned();
+        if let Some(fact) = &mut fact {
+            fact.reference.configuration = next.identity.snapshot().reference();
+            if let Some(authorization) = &self.authorization {
+                authorization.handoff(next.identity.snapshot(), &fact.reference, &selected)?;
+            }
+            // Observations and descriptor generation are deliberately unchanged.
+            next.sockets
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .insert(self.id, fact.clone());
+        }
+        self.lifetime = next.scope(None, false);
+        next.socket_epochs
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .insert(self.id, next.identity.snapshot().clone());
+        self.shared = next;
+        self.changed();
+        Ok(())
+    }
+
     fn new(shared: Arc<Shared>, endpoint: Box<dyn Datagram>, id: [u8; 32]) -> Result<Self, Error> {
         let local = endpoint.local_addr()?;
         let lifetime = shared.scope(None, false);
@@ -111,7 +192,7 @@ impl Owner {
         let (sender, receiver) = Session::datagram(
             scope::Datagram {
                 inner: endpoint,
-                scope: lifetime.clone(),
+                scope: shared.physical()?,
             },
             limits,
         )
@@ -130,6 +211,10 @@ impl Owner {
             replay: BTreeSet::new(),
             diagnosed: BTreeSet::new(),
             unverified_init_rejections: 0,
+            discovery: BTreeMap::new(),
+            traversal: BTreeMap::new(),
+            commands: None,
+            authorization: None,
         })
     }
 
@@ -157,6 +242,31 @@ impl Owner {
         ready_until: Instant,
         supersedes: Replacement,
     ) -> Result<bool, Error> {
+        self.promote_scoped(
+            peer,
+            carrier,
+            remote,
+            transcript,
+            capacity,
+            ready_until,
+            supersedes,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn promote_scoped(
+        &mut self,
+        peer: NodeId,
+        carrier: Carrier,
+        remote: SocketAddr,
+        transcript: Transcript,
+        capacity: OwnedSemaphorePermit,
+        ready_until: Instant,
+        supersedes: Replacement,
+        attempt: Option<meshway_control::connectivity::AttemptScope>,
+    ) -> Result<bool, Error> {
+        let dynamic_target = attempt.is_some();
         if self
             .channels
             .get(&remote)
@@ -170,6 +280,13 @@ impl Owner {
         if scope.check().is_err() {
             return Ok(false);
         }
+        if let Some(attempt) = &attempt {
+            attempt.ensure_current().map_err(|_| Error::Authority)?;
+            self.authorization
+                .as_ref()
+                .ok_or(Error::Underlay)?
+                .authorize_channel(attempt, Arc::new(scope.clone()))?;
+        }
         let fact = LinkFact {
             id: transcript.id(),
             socket_id: self.id,
@@ -178,16 +295,26 @@ impl Owner {
             local: self.local,
             remote,
         };
-        if !install_ready(
+        let selected = install_ready(
             &self.shared,
             ReadyPeer {
                 fact: fact.clone(),
                 sender: self.sender.clone(),
                 scope: scope.clone(),
                 supersedes,
+                attempt,
             },
-        )? {
-            return Ok(false);
+        );
+        match selected {
+            Ok(true) => {}
+            Ok(false) => {
+                scope.cancellation.cancel();
+                return Ok(false);
+            }
+            Err(error) => {
+                scope.cancellation.cancel();
+                return Err(error);
+            }
         }
         if let Some(old) = self.channels.remove(&remote) {
             old.scope.cancellation.cancel();
@@ -207,6 +334,7 @@ impl Owner {
                 budget: ControlBudget::with_limit(16),
                 _capacity: capacity,
                 recovery: None,
+                dynamic_target,
             },
         );
         self.changed();
@@ -214,50 +342,82 @@ impl Owner {
     }
 
     async fn run(&mut self) -> Result<(), Error> {
+        let mut updates = self.shared.epochs.subscribe();
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             let lifetime = self.lifetime.clone();
             enum Work {
+                Handoff,
                 Tick,
                 Frame(Result<Frame, ReceiveError>),
+                Command(Option<super::traversal::Command>),
             }
             let work = lifetime.run(async {
                 tokio::select! { biased;
+                    _ = updates.changed() => Ok(Work::Handoff),
                     _ = tick.tick() => Ok(Work::Tick),
+                    command = async { match &mut self.commands { Some(commands) => commands.recv().await, None => std::future::pending().await } } => Ok(Work::Command(command)),
                     frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv() => Ok(Work::Frame(frame)),
                 }
-            }).await?;
-            match work {
-                Work::Tick => self.tick().await?,
-                Work::Frame(Ok(frame)) => self.receive(frame).await?,
-                Work::Frame(Err(
-                    ReceiveError::Empty
-                    | ReceiveError::Truncated(_)
-                    | ReceiveError::Oversized
-                    | ReceiveError::InvalidMetadata,
-                )) => {}
-                Work::Frame(Err(ReceiveError::Io(error)))
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::ConnectionRefused
-                            | std::io::ErrorKind::ConnectionReset
-                            | std::io::ErrorKind::HostUnreachable
-                            | std::io::ErrorKind::NetworkUnreachable
-                            | std::io::ErrorKind::TimedOut
-                            | std::io::ErrorKind::Interrupted
-                    ) =>
-                {
-                    // Unconnected UDP may surface an asynchronous error from a
-                    // single destination. Its health scope expires independently.
-                    tokio::task::yield_now().await;
+            }).await;
+            if matches!(
+                work,
+                Ok(Work::Handoff) | Err(Error::Authority | Error::Cancelled)
+            ) {
+                let next = self.shared.successor(&mut updates).await?;
+                self.handoff(next)?;
+                continue;
+            }
+            let operation = async {
+                match work? {
+                    Work::Handoff => unreachable!(),
+                    Work::Command(Some(command)) => self.traversal_command(command)?,
+                    Work::Command(None) => self.commands = None,
+                    Work::Tick => self.tick().await?,
+                    Work::Frame(Ok(frame)) => self.receive(frame).await?,
+                    Work::Frame(Err(
+                        ReceiveError::Empty
+                        | ReceiveError::Truncated(_)
+                        | ReceiveError::Oversized
+                        | ReceiveError::InvalidMetadata,
+                    )) => {}
+                    Work::Frame(Err(ReceiveError::Io(error)))
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::ConnectionRefused
+                                | std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::HostUnreachable
+                                | std::io::ErrorKind::NetworkUnreachable
+                                | std::io::ErrorKind::TimedOut
+                                | std::io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        // Unconnected UDP may surface an asynchronous error from a
+                        // single destination. Its health scope expires independently.
+                        tokio::task::yield_now().await;
+                    }
+                    Work::Frame(Err(_)) => return Err(Error::Unavailable),
                 }
-                Work::Frame(Err(_)) => return Err(Error::Unavailable),
+                Ok(())
+            };
+            match lifetime.run(operation).await {
+                Err(Error::Authority | Error::Cancelled)
+                    if self.shared.epoch_changed()
+                        || self.lifetime.snapshot.ensure_current().is_err() =>
+                {
+                    let next = self.shared.successor(&mut updates).await?;
+                    self.handoff(next)?;
+                }
+                result => result?,
             }
         }
     }
 
     async fn tick(&mut self) -> Result<(), Error> {
+        self.stun_tick().await?;
+        self.traversal_tick().await?;
+        self.lifetime.check()?;
         self.pending
             .retain(|_, attempt| attempt.scope.check().is_ok());
         let stale: Vec<_> = self
@@ -267,6 +427,7 @@ impl Owner {
             .map(|(remote, _)| *remote)
             .collect();
         for remote in stale {
+            self.lifetime.check()?;
             if let Some(channel) = self.channels.remove(&remote) {
                 diagnostic_link(
                     &self.shared,
@@ -368,6 +529,14 @@ impl Owner {
         let Some(remote) = frame.peer else {
             return Ok(());
         };
+        if meshway_stun::classify(&frame.payload).is_some() {
+            self.stun_receive(remote, &frame.payload)?;
+            return Ok(());
+        }
+        if frame.payload.starts_with(traversal::MAGIC) {
+            self.traversal_receive(remote, &frame.payload).await?;
+            return Ok(());
+        }
         if frame.payload.starts_with(adjacency::MAGIC) {
             // A single bounded rate budget covers all listeners/candidates and
             // is checked before signature work or attacker-selected allocation.
@@ -996,6 +1165,15 @@ impl Owner {
 impl Drop for Owner {
     fn drop(&mut self) {
         self.lifetime.cancellation.cancel();
+        for attempt in self.traversal.values() {
+            attempt.cancel();
+        }
+        if let Ok(mut sockets) = self.shared.sockets.lock() {
+            sockets.remove(&self.id);
+        }
+        if let Ok(mut epochs) = self.shared.socket_epochs.lock() {
+            epochs.remove(&self.id);
+        }
         for channel in self.channels.values() {
             channel.scope.cancellation.cancel();
             let _ = retire(&self.shared, &channel.fact);
@@ -1057,6 +1235,28 @@ pub(super) async fn listen(shared: Arc<Shared>, fact: ListenerFact, endpoint: Bo
     let result = async {
         let mut owner = Owner::new(shared.clone(), endpoint, fact.socket_id)?;
         owner.listener = Some(fact);
+        let result = owner.run().await;
+        owner.shutdown().await?;
+        result
+    }
+    .await;
+    if result.is_err() {
+        shared.stop.cancel();
+    }
+}
+
+pub(super) async fn listen_traversal(
+    shared: Arc<Shared>,
+    id: [u8; 32],
+    listener: Option<ListenerFact>,
+    socket: crate::TraversalSocket,
+    commands: mpsc::Receiver<super::traversal::Command>,
+) {
+    let result = async {
+        let mut owner = Owner::new(shared.clone(), socket.endpoint, id)?;
+        owner.listener = listener;
+        owner.commands = Some(commands);
+        owner.authorization = Some(socket.authorization);
         let result = owner.run().await;
         owner.shutdown().await?;
         result
@@ -1153,6 +1353,20 @@ async fn dial_endpoint(
     }
     scope.check()?;
     let mut owner = Owner::new(shared, endpoint, adjacency::nonce()?)?;
+    owner.shared.register_socket(
+        owner.id,
+        meshway_model::state::ResourceRef::Dial {
+            key: format!("{}/{}", carrier.listener, carrier.listener_key),
+        },
+        TransportProtocol::NativeUdp,
+        local,
+    )?;
+    owner
+        .shared
+        .socket_epochs
+        .lock()
+        .map_err(|_| Error::Worker)?
+        .insert(owner.id, owner.shared.identity.snapshot().clone());
     owner.outbound = Some(Outbound {
         peer,
         carrier,
@@ -1208,15 +1422,21 @@ mod tests {
         let mut fixture = Fixture::new(false, false).await;
         let ids = fixture.ids();
         let identity = fixture.identities[1].clone();
+        let (epochs, _) = tokio::sync::watch::channel(identity.clone());
         let (events, _receiver) = mpsc::channel(64);
         let shared = Arc::new(Shared {
             identity,
             stop: CancellationToken::new(),
-            links: Mutex::new(LinkTable::default()),
+            links: Arc::new(Mutex::new(LinkTable::default())),
             events,
             capacity: Arc::new(Semaphore::new(64)),
             limits: Limits::default(),
-            control_budget: Mutex::new(ControlBudget::new()),
+            control_budget: Arc::new(Mutex::new(ControlBudget::new())),
+            sockets: Arc::new(Mutex::new(BTreeMap::new())),
+            epochs,
+            gates: Arc::new(Mutex::new(Vec::new())),
+            socket_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            generation: meshway_model::Sequence::MIN.checked_next().unwrap(),
         });
         let socket = UdpTransport::adopt(fixture.udp.take().unwrap(), &Default::default()).unwrap();
         let local = socket.local_addr().unwrap();

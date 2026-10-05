@@ -10,6 +10,7 @@ members = [
     "crates/meshway-tun",
     "crates/meshway-underlay",
     "crates/meshway-connectivity",
+    "crates/meshway-stun",
     "crates/meshway-dns",
     "crates/meshway-control-client",
     "crates/meshway-protocol",

@@ -9,7 +9,11 @@ use meshway_dataplane::{
 };
 use meshway_model::{NodeId, RequestId};
 use meshway_protocol::{DemandRequest, RenewDemandRequest};
-use std::{collections::VecDeque, net::IpAddr, time::Duration};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    net::IpAddr,
+    time::Duration,
+};
 use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
@@ -53,10 +57,47 @@ pub(super) struct Packets {
     incoming: VecDeque<Incoming>,
     intents: Vec<Intent>,
     attempts: Vec<Attempt>,
+    traced_circuits: BTreeMap<[u8; 32], Instant>,
     pub dropped: u64,
 }
 
 impl Packets {
+    fn trace_packet(&mut self, frame: &secure::PendingFrame, circuit: &secure::CircuitInfo) {
+        const TARGET: &str = "meshway_daemon::runtime::network::circuit_packet";
+        if !tracing::enabled!(target: TARGET, tracing::Level::DEBUG) {
+            return;
+        }
+        let now = Instant::now();
+        let id = frame.circuit();
+        if self
+            .traced_circuits
+            .get(&id)
+            .is_some_and(|previous| now.duration_since(*previous) < Duration::from_secs(1))
+        {
+            return;
+        }
+        if self.traced_circuits.len() >= MAX_INTENTS {
+            self.traced_circuits
+                .retain(|_, previous| now.duration_since(*previous) < Duration::from_secs(5));
+            if !self.traced_circuits.contains_key(&id) && self.traced_circuits.len() >= MAX_INTENTS
+            {
+                return;
+            }
+        }
+        let Ok(path_json) = serde_json::to_string(&circuit.path) else {
+            return;
+        };
+        let Ok(observed_at_ms) = u64::try_from(chrono::Utc::now().timestamp_millis()) else {
+            return;
+        };
+        self.traced_circuits.insert(id, now);
+        let cid = id
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        tracing::debug!(target: TARGET, %cid, demand = %circuit.demand, %path_json, observed_at_ms,
+            "Mesh circuit packet ready");
+    }
     pub fn wake_at(&self, target: &Target) -> Option<Instant> {
         let snapshot = target.identity.as_ref()?.snapshot();
         let cfg = snapshot.configuration().ok()?;
@@ -396,11 +437,13 @@ impl Packets {
                 self.local.push_back(item);
                 continue;
             };
-            let ready = secure.ready_circuits().ok().and_then(|circuits| {
-                circuits
-                    .into_iter()
-                    .find(|circuit| circuit.demand == demand && circuit.path == path)
-            });
+            let ready = match secure.local_circuit(demand, &path, &item.packet) {
+                Ok(ready) => ready,
+                Err(error) => {
+                    self.drop_admission("circuit_selection", error, Some(demand));
+                    continue;
+                }
+            };
             if let Some(circuit) = ready {
                 let next = if path.first() == Some(&cfg.node_id) {
                     path.get(1)
@@ -413,6 +456,7 @@ impl Packets {
                 }
                 match secure.send(circuit.id, item.packet) {
                     Ok(frame) => {
+                        self.trace_packet(&frame, &circuit);
                         if manager.send(frame).await.is_err() {
                             self.drop_packet("packet_send");
                         }
@@ -421,6 +465,7 @@ impl Packets {
                 }
             } else {
                 if path.first() == Some(&cfg.node_id)
+                    && path.get(1).is_some_and(|next| carriers.contains_key(next))
                     && self.attempts.len() < MAX_INTENTS
                     && !self
                         .attempts

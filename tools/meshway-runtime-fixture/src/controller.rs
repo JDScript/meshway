@@ -34,8 +34,26 @@ pub async fn run(cli: &Cli) -> Result<()> {
 async fn run_server(cli: &Cli) -> Result<()> {
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     let tls = meshway_packet_fixture::tls_server(&cli.public, &cli.private).await?;
-    let app = App::open(Settings::new(cli.state.join("server"))).await?;
-    let router = meshway_server::http::router(&app);
+    let mut settings = Settings::new(cli.state.join("server"));
+    let audit = crate::traversal::Audit::default();
+    if cli.traversal == crate::TraversalMode::Nat {
+        settings.stun_listen = vec!["0.0.0.0:3478".parse()?];
+        settings.stun_servers = BTreeMap::from([(
+            "fixture".into(),
+            Endpoint {
+                host: signals::underlay(cli).await?.controller.to_string(),
+                port: 3478.try_into()?,
+            },
+        )]);
+    }
+    let app = App::open(settings).await?;
+    let mut router = meshway_server::http::router(&app);
+    if cli.traversal == crate::TraversalMode::Nat {
+        router = router.layer(axum::middleware::from_fn_with_state(
+            audit.clone(),
+            crate::traversal::observe,
+        ));
+    }
     let (stop, mut stopped) = watch::channel(false);
     let server = tokio::spawn(async move {
         let mut connections = JoinSet::new();
@@ -85,7 +103,8 @@ async fn run_server(cli: &Cli) -> Result<()> {
         result.and(cleanup)
     });
     tracing::info!(phase = "controller-listening", "real Server HTTPS ready");
-    let result = tokio::time::timeout(DEADLINE, coordinate(cli)).await;
+    let result = tokio::time::timeout(DEADLINE, coordinate(cli, &audit)).await;
+    let audit_result = audit.save(cli).await;
     // Always shut down the actual listener, SSE streams, and database owner,
     // including when an enrollment/configuration/traffic assertion fails.
     let stop_result = stop
@@ -97,6 +116,7 @@ async fn run_server(cli: &Cli) -> Result<()> {
     stop_result?;
     server_result??;
     store_result?;
+    audit_result?;
     result??;
     let signals = Signals::new(&cli.signals);
     signals.write("offline", &Signal::Ready).await?;
@@ -120,8 +140,18 @@ async fn run_server(cli: &Cli) -> Result<()> {
                 capture_removed: true,
                 identity_preserved: true,
                 dns,
+                fallback,
                 ..
             } if *claimed == role
+                && match fallback {
+                    Some(proof) => {
+                        cli.traversal_fallback
+                            && role == Role::A
+                            && proof.passed
+                            && proof.tcp_circuits.len() == 2
+                    }
+                    None => !(cli.traversal_fallback && role == Role::A),
+                }
                 && (dns.as_ref().is_some_and(|evidence| {
                     evidence.backend == cli.dns_backend
                         && evidence.original_resolv_conf_restored == Some(true)
@@ -187,7 +217,7 @@ async fn apply(
         .revision)
 }
 
-async fn coordinate(cli: &Cli) -> Result<()> {
+async fn coordinate(cli: &Cli, audit: &crate::traversal::Audit) -> Result<()> {
     let signals = Signals::new(&cli.signals);
     let underlay = signals::underlay(cli).await?;
     let client = Client::new(
@@ -364,16 +394,47 @@ async fn coordinate(cli: &Cli) -> Result<()> {
                     remark: String::new(),
                     listen: "0.0.0.0".parse()?,
                     listen_port: 35000.try_into()?,
-                    endpoints: vec![Endpoint {
-                        host: underlay.actors[&role].to_string(),
-                        port: 35000.try_into()?,
-                    }],
+                    endpoints: if cli.traversal == crate::TraversalMode::Nat {
+                        vec![]
+                    } else {
+                        vec![Endpoint {
+                            host: underlay.actors[&role].to_string(),
+                            port: 35000.try_into()?,
+                        }]
+                    },
                     bind_interface: String::new(),
                     socket: Default::default(),
                 }),
             },
         )]);
-        node.dialers = Input::Omitted;
+        if cli.traversal_fallback && role == Role::R {
+            node.listeners.insert(
+                "fallback-tcp".into(),
+                Listener::NativeTcp(NativeTcpListener {
+                    enabled: true,
+                    remark: String::new(),
+                    listen: "0.0.0.0".parse()?,
+                    listen_port: 35001.try_into()?,
+                    endpoints: vec![Endpoint {
+                        host: underlay.routers[&Role::R].wan.to_string(),
+                        port: 35001.try_into()?,
+                    }],
+                    bind_interface: String::new(),
+                    socket: Default::default(),
+                    tcp: Default::default(),
+                }),
+            );
+        }
+        node.dialers = if cli.traversal_fallback && role == Role::A {
+            // Only A-R owns the TCP alternative. A globally inherited TCP
+            // dialer would also let B choose R's newly reachable listener after
+            // withdrawal/recovery, defeating this fixture's R-B UDP constraint.
+            let mut dialers = input.defaults.dialers.clone();
+            dialers.native_tcp = Some(NativeTcpDialer::default());
+            Input::Value(dialers)
+        } else {
+            Input::Omitted
+        };
     }
     input.topology = [(Role::A, Role::R), (Role::R, Role::B)]
         .into_iter()
@@ -406,6 +467,34 @@ async fn coordinate(cli: &Cli) -> Result<()> {
             .nodes
             .get(&nodes[&role])
             .ok_or("committed node missing")?;
+        if cli.traversal_fallback {
+            let dialers = match &node.dialers {
+                Input::Value(dialers) => dialers,
+                Input::Omitted => &committed.configuration.defaults.dialers,
+            };
+            if dialers.native_udp.is_none() || dialers.native_tcp.is_some() != (role == Role::A) {
+                return Err("TCP fallback must be authorized only on the A-R edge".into());
+            }
+        }
+        if cli.traversal == crate::TraversalMode::Nat
+            && (node.listeners.len() != if cli.traversal_fallback && role == Role::R { 2 } else { 1 }
+                || !node.listeners.iter().all(|(key, listener)| {
+                    matches!(listener.declaration(),
+                    Listener::NativeUdp(listener) if listener.enabled
+                        && listener.listen == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+                        && listener.listen_port.get() == 35000
+                        && listener.endpoints.is_empty())
+                    || (cli.traversal_fallback && role == Role::R && key == "fallback-tcp"
+                        && matches!(listener.declaration(), Listener::NativeTcp(listener)
+                            if listener.enabled && listener.listen_port.get() == 35001
+                                && listener.listen == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+                                && listener.endpoints == vec![Endpoint { host: underlay.routers[&Role::R].wan.to_string(), port: 35001.try_into().expect("fixed port") }]))
+                }))
+        {
+            return Err(
+                "committed traversal listeners contain static endpoints or another carrier".into(),
+            );
+        }
         addresses.insert(
             role,
             Addresses {
@@ -413,6 +502,13 @@ async fn coordinate(cli: &Cli) -> Result<()> {
                 ipv6: node.addresses.ipv6.ok_or("missing IPv6")?,
             },
         );
+    }
+    if cli.traversal == crate::TraversalMode::Nat {
+        tokio::fs::write(
+            cli.evidence.join("configuration-traversal.json"),
+            serde_json::to_vec_pretty(&committed)?,
+        )
+        .await?;
     }
     signals
         .write(
@@ -425,6 +521,43 @@ async fn coordinate(cli: &Cli) -> Result<()> {
         )
         .await?;
     applied(cli, &client, network, token, &nodes, revision, "initial").await?;
+    if cli.traversal == crate::TraversalMode::Nat {
+        signals.ready("traversal-first").await?;
+        measured_links(
+            cli,
+            &client,
+            network,
+            token,
+            &nodes,
+            false,
+            "initial-carrier",
+        )
+        .await?;
+        audit.verify(cli, &nodes).await?;
+        audit.save(cli).await?;
+        signals.write("traversal-verified", &Signal::Ready).await?;
+    }
+    if cli.traversal_fallback {
+        // Three additional demand publications and the receive-only
+        // subscription warm up sequentially. Budget their aggregate rendezvous,
+        // not a longer UDP exchange, signed attempt, or application lifetime.
+        if !matches!(
+            signals
+                .wait_for("persistent-start", Duration::from_secs(90))
+                .await?,
+            Signal::Ready
+        ) {
+            return Err("invalid persistent traffic readiness".into());
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        // Both carriers were authorized before demand creation. Only the owned
+        // underlay changes here; application exchanges continue concurrently.
+        signals.write("enable-fallback", &Signal::Ready).await?;
+        signals.ready("fallback-router-r").await?;
+        signals.ready("fallback-router-a").await?;
+        measured_links(cli, &client, network, token, &nodes, true, "fallback").await?;
+        signals.write("fallback-verified", &Signal::Ready).await?;
+    }
     tracing::info!(
         phase = "traffic",
         "waiting for persistent UDP/TCP beyond original demand lifetime"
@@ -442,7 +575,16 @@ async fn coordinate(cli: &Cli) -> Result<()> {
             .ready(&format!("traffic-ready-{}", role.name()))
             .await?;
     }
-    measured_links(cli, &client, network, token, &nodes).await?;
+    measured_links(
+        cli,
+        &client,
+        network,
+        token,
+        &nodes,
+        cli.traversal_fallback,
+        "traffic",
+    )
+    .await?;
     let original = source(&client, network, token).await?;
     let mut allowed = NetworkConfigurationInput::from(&original.configuration);
     // The relay no longer owns a Mesh IPv6 address, but must still forward
@@ -475,6 +617,18 @@ async fn coordinate(cli: &Cli) -> Result<()> {
             .ready(&format!("lease-ready-{}", role.name()))
             .await?;
     }
+    if cli.traversal_fallback {
+        measured_links(
+            cli,
+            &client,
+            network,
+            token,
+            &nodes,
+            true,
+            "restored-carrier",
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -484,6 +638,8 @@ async fn measured_links(
     network: NetworkId,
     token: &str,
     nodes: &BTreeMap<Role, NodeId>,
+    fallback: bool,
+    stage: &str,
 ) -> Result<()> {
     tokio::time::timeout(STARTUP, async {
         for role in Role::ALL {
@@ -503,7 +659,7 @@ async fn measured_links(
                     .ok_or("missing traffic NodeState")?;
                 tokio::fs::write(
                     cli.evidence
-                        .join(format!("state-traffic-attempt-{}.json", role.name())),
+                        .join(format!("state-{stage}-attempt-{}.json", role.name())),
                     serde_json::to_vec_pretty(&view)?,
                 )
                 .await?;
@@ -520,8 +676,14 @@ async fn measured_links(
                         report.links.get(&nodes[peer]).is_some_and(|links| {
                             links.iter().any(|link| {
                                 link.phase == meshway_model::state::LinkPhase::Authenticated
-                                    && link.transport == cli.transport.protocol().as_str()
+                                    && link.transport
+                                        == expected_carrier(cli, role, *peer, fallback).as_str()
                                     && link.business_dependencies > 0
+                            }) && links.iter().all(|link| {
+                                link.phase != meshway_model::state::LinkPhase::Authenticated
+                                    || link.business_dependencies == 0
+                                    || link.transport
+                                        == expected_carrier(cli, role, *peer, fallback).as_str()
                             })
                         })
                     });
@@ -540,9 +702,12 @@ async fn measured_links(
                     tokio::time::sleep(Duration::from_millis(200)).await;
                     continue;
                 }
+                if cli.traversal == crate::TraversalMode::Nat {
+                    crate::traversal::verify_state(cli, role, report).await?;
+                }
                 tokio::fs::write(
                     cli.evidence
-                        .join(format!("state-traffic-{}.json", role.name())),
+                        .join(format!("state-{stage}-{}.json", role.name())),
                     serde_json::to_vec_pretty(&view)?,
                 )
                 .await?;
@@ -552,6 +717,22 @@ async fn measured_links(
         Ok(())
     })
     .await?
+}
+
+fn expected_carrier(
+    cli: &Cli,
+    role: Role,
+    peer: Role,
+    fallback: bool,
+) -> meshway_transport_spec::TransportProtocol {
+    if cli.traversal_fallback
+        && fallback
+        && matches!((role, peer), (Role::A, Role::R) | (Role::R, Role::A))
+    {
+        meshway_transport_spec::TransportProtocol::NativeTcp
+    } else {
+        cli.transport.protocol()
+    }
 }
 
 async fn applied(

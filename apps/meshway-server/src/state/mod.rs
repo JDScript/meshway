@@ -1,5 +1,6 @@
 //! Volatile source reports and read-time projections. All calls are serialized
 //! with commits on the SQLite owner; no HTTP future owns committed effects.
+pub(crate) mod connectivity;
 pub mod service;
 pub mod stream;
 pub(crate) mod validation;
@@ -9,7 +10,7 @@ use crate::error::Error;
 use crate::resources::GeoIp;
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{
-    Digest, InstanceId, NetworkId, NodeId, Revision, Sequence, StateEpoch,
+    Digest, InstanceId, NetworkId, NodeId, Revision, Sequence, StateEpoch, Version,
     state::{ConfigurationRef, ResourceRef, SocketNetwork},
 };
 use meshway_protocol::state::*;
@@ -28,6 +29,7 @@ pub struct ReportAdmission {
     pub network_id: NetworkId,
     pub node_id: NodeId,
     pub instance_id: InstanceId,
+    pub instance_generation: Version,
     pub lease_expires_at: DateTime<Utc>,
     /// Current execution context, distinct from saved/installation/history.
     pub execution: Option<ConfigurationRef>,
@@ -85,6 +87,9 @@ pub struct VisibilityScope {
     /// Configured hostnames of the visible nodes.
     pub hostnames: BTreeMap<NodeId, String>,
     pub full: BTreeSet<NodeId>,
+    /// None is management projection; Node readers disclose only exact current
+    /// business-adjacent resources. Visibility of a complete path is not this grant.
+    pub endpoint_resources: Option<BTreeMap<NodeId, BTreeSet<ResourceRef>>>,
     pub observation_paths: BTreeSet<Vec<NodeId>>,
     pub mesh_addresses: BTreeSet<std::net::IpAddr>,
     pub expires_at: DateTime<Utc>,
@@ -93,6 +98,7 @@ pub struct VisibilityScope {
 #[derive(Clone, Debug)]
 pub struct CurrentNode {
     pub instance_id: Option<InstanceId>,
+    pub instance_generation: Option<Version>,
     /// The currently usable execution, not the set retained for receipts/history.
     pub execution: Option<ConfigurationRef>,
     pub configurations: Vec<ConfigurationRef>,
@@ -102,6 +108,7 @@ pub struct CurrentNode {
 #[derive(Clone)]
 struct StoredReport {
     report: StateReport,
+    instance_generation: Version,
     received_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
     authenticated_at: DateTime<Utc>,
@@ -138,6 +145,7 @@ impl StateHub {
             .get(&(admission.network_id, admission.node_id))
             .filter(|stored| {
                 stored.report.instance_id == admission.instance_id
+                    && stored.instance_generation == admission.instance_generation
                     && stored.report.state.configuration.applied.as_ref()
                         == admission.execution.as_ref()
                     && stored.expires_at > now
@@ -190,6 +198,7 @@ impl StateHub {
             .len();
         if let Some(previous) = self.reports.get_mut(&key)
             && previous.report.instance_id == report.instance_id
+            && previous.instance_generation == admission.instance_generation
         {
             if report.sequence < previous.report.sequence {
                 return Err(Error::StateConflict);
@@ -239,6 +248,7 @@ impl StateHub {
             key,
             StoredReport {
                 report,
+                instance_generation: admission.instance_generation,
                 received_at: now,
                 expires_at,
                 authenticated_at: now,
@@ -354,7 +364,8 @@ impl StateHub {
                     Freshness::Expired
                 }
                 (Some(stored), Some(current))
-                    if current.instance_id != Some(stored.report.instance_id) =>
+                    if current.instance_id != Some(stored.report.instance_id)
+                        || current.instance_generation != Some(stored.instance_generation) =>
                 {
                     Freshness::Superseded
                 }
@@ -393,6 +404,9 @@ impl StateHub {
                         && current.and_then(|node| node.execution.as_ref()) == source.configuration.applied.as_ref()
                     {
                         for (socket_id, socket) in &source.sockets {
+                            if scope.endpoint_resources.as_ref().is_some_and(|resources| {
+                                resources.get(&node_id).is_none_or(|allowed| !allowed.contains(&socket.resource))
+                            }) { continue; }
                             if source.configuration.applied.is_none()
                                 || socket.configuration.as_ref().is_some_and(|reference| Some(reference) != source.configuration.applied.as_ref()) {
                                 continue;
@@ -415,6 +429,23 @@ impl StateHub {
                                 if candidate.expires_at <= now {
                                     continue;
                                 }
+                                let Some(configuration) = socket.configuration.as_ref().or(source.configuration.applied.as_ref()) else { continue; };
+                                let candidate_reference = meshway_protocol::CandidateReference::from_observation(
+                                    meshway_protocol::SocketReference {
+                                        node_id,
+                                        instance: meshway_protocol::InstanceRequest {
+                                            instance_id: stored.report.instance_id,
+                                            generation: stored.instance_generation,
+                                        },
+                                        configuration: configuration.clone(),
+                                        socket_id: socket_id.clone(),
+                                        socket_generation: socket.generation,
+                                        resource: socket.resource.clone(),
+                                    }, socket.network, socket.bound_address, candidate,
+                                ).map_err(|_| Error::encode("candidate observation"));
+                                // Stored, strictly typed reports are serializable. Fail closed
+                                // on an encoding failure rather than inventing a reference.
+                                let Ok(candidate_reference) = candidate_reference else { continue; };
                                 let candidate = PeerCandidate {
                                     address: candidate.address.clone(),
                                     source: match candidate.origin {
@@ -437,6 +468,7 @@ impl StateHub {
                                     generation: socket.generation,
                                     network: socket.network,
                                     candidate,
+                                    candidate_reference,
                                 });
                             }
                         }

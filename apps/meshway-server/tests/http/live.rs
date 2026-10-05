@@ -1374,7 +1374,7 @@ async fn production_demand_receipts_peer_expansion_and_node_termination() {
         .network
         .id;
     let (a, at, ai) = enroll(&c, &s, network, owner.token.expose(), 11).await;
-    let (b, bt, _) = enroll(&c, &s, network, owner.token.expose(), 12).await;
+    let (b, bt, bi) = enroll(&c, &s, network, owner.token.expose(), 12).await;
     let current = source(&c, &s, network, owner.token.expose()).await;
     let mut input = meshway_configuration::NetworkConfigurationInput::from(&current.configuration);
     for node in [a.node_id, b.node_id] {
@@ -1583,6 +1583,35 @@ async fn production_demand_receipts_peer_expansion_and_node_termination() {
     } = peer.nodes[&a.node_id].report.as_ref().unwrap()
     else {
         panic!("peer projection")
+    };
+    // Visibility alone cannot disclose probe targets while the querying Node
+    // still holds its pre-demand execution. Obtain the current grant first.
+    assert!(peer_report.endpoints.is_empty());
+    let _: meshway_protocol::NodeConfigurationResponse = json(
+        c.post(format!("{}/agent-api/v1/configuration/refresh", s.url))
+            .bearer_auth(&bt)
+            .json(&meshway_protocol::NodeConfigurationRequest {
+                instance: InstanceRequest {
+                    instance_id: bi.instance_id,
+                    generation: bi.generation,
+                },
+                base: None,
+            }),
+    )
+    .await;
+    let peer: StateView = json(
+        c.post(format!("{}/agent-api/v1/state/query", s.url))
+            .bearer_auth(&bt)
+            .json(&StateQuery {
+                nodes: Some(vec![a.node_id]),
+            }),
+    )
+    .await;
+    let Some(VisibleReport::Peer {
+        report: peer_report,
+    }) = &peer.nodes[&a.node_id].report
+    else {
+        panic!("current peer projection")
     };
     assert_eq!(peer_report.endpoints.len(), 2);
     let peer_json = serde_json::to_string(&peer).unwrap();

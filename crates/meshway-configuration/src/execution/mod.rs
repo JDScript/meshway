@@ -13,6 +13,13 @@ mod diagnostics;
 pub use delta::*;
 pub use diagnostics::*;
 
+object! {
+/// Actual socket establishment orientation, independent of business direction.
+pub struct Carrier {
+    pub dialer: NodeId, pub listener: NodeId, pub listener_key: String,
+    pub protocol: TransportProtocol,
+} }
+
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
 )]

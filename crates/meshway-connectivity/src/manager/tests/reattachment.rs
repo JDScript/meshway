@@ -60,6 +60,7 @@ async fn passive_restart_challenges_dial_only_peer_without_retiring_it_until_fre
     };
     let before_ack = acks();
     faults.held_controls.lock().unwrap().insert(Kind::Ack as u8);
+    b.shutdown().await.unwrap();
     b.reconcile(fixture.identities[1].clone()).await.unwrap();
     // No listener/dial candidate was added to A. Its existing real signed Ping
     // solicits a new server challenge; the actual ACK is held at its raw sender.
@@ -136,6 +137,189 @@ async fn recovery_probe_and_challenge_bind_registered_peer_channel_role_and_outs
     fixture.close().await;
 }
 
+#[tokio::test]
+async fn native_tcp_session_survives_staggered_control_publications_without_reopening() {
+    let mut fixture = support::Fixture::new(true, false).await;
+    let ids = fixture.ids();
+    let faults = Arc::new(Faults::default());
+    faults.blackhole.store(true, Ordering::SeqCst);
+    let factory = Factory::new(&mut fixture, faults);
+    let mut a = Manager::start(
+        fixture.identities[0].clone(),
+        factory.clone(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let mut b = Manager::start(fixture.identities[1].clone(), factory, Default::default())
+        .await
+        .unwrap();
+    linked(&a, 1, TransportProtocol::NativeTcp).await;
+    linked(&b, 1, TransportProtocol::NativeTcp).await;
+    let af = a.snapshot().unwrap().links[0].clone();
+    let bf = b.snapshot().unwrap().links[0].clone();
+    let (mut sa, mut sb) = (
+        secure(&fixture.identities[0], &a),
+        secure(&fixture.identities[1], &b),
+    );
+    let cid = handshake(
+        &mut a,
+        &mut b,
+        &mut sa,
+        &mut sb,
+        fixture.demands[0],
+        vec![ids[0], ids[1]],
+    )
+    .await;
+    exchange(&a, &mut b, &mut sa, &mut sb, cid, packet(&fixture, false)).await;
+    for _ in 0..5 {
+        let lease = fixture.controls[0].renew_instance().await.unwrap();
+        fixture.controls[0]
+            .renew_demand(&meshway_protocol::RenewDemandRequest {
+                instance: meshway_protocol::InstanceRequest {
+                    instance_id: lease.instance_id,
+                    generation: lease.generation,
+                },
+                request_id: fixture.demands[0],
+                expires_at_ms: lease.expires_at_ms,
+            })
+            .await
+            .unwrap();
+        for (index, manager, node) in [(0, &mut a, &mut sa), (1, &mut b, &mut sb)] {
+            fixture.controls[index]
+                .refresh_configuration()
+                .await
+                .unwrap();
+            let next = fixture.controls[index]
+                .dataplane_identity(fixture.controls[index].execution_snapshot().unwrap())
+                .unwrap();
+            assert!(manager.can_reconcile(&next));
+            node.reconcile(next.clone()).unwrap();
+            tokio::time::timeout(Duration::from_secs(2), manager.reconcile(next.clone()))
+                .await
+                .unwrap()
+                .unwrap();
+            node.set_carriers(manager.carriers().unwrap()).unwrap();
+            fixture.identities[index] = next;
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(a.snapshot().unwrap().links[0], af);
+        assert_eq!(b.snapshot().unwrap().links[0], bf);
+        exchange(&b, &mut a, &mut sb, &mut sa, cid, packet(&fixture, true)).await;
+        assert!(
+            sa.ready_circuits()
+                .unwrap()
+                .iter()
+                .any(|info| info.id == cid)
+        );
+    }
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn direct_publication_retires_only_the_unadmitted_peer_on_a_shared_udp_descriptor() {
+    let mut fixture = support::Fixture::new(false, false).await;
+    let ids = fixture.ids();
+    let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
+    let mut a = Manager::start(
+        fixture.identities[0].clone(),
+        factory.clone(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let mut b = Manager::start(
+        fixture.identities[1].clone(),
+        factory.clone(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let mut c = Manager::start(fixture.identities[2].clone(), factory, Default::default())
+        .await
+        .unwrap();
+    linked(&a, 1, TransportProtocol::NativeUdp).await;
+    linked(&b, 2, TransportProtocol::NativeUdp).await;
+    linked(&c, 1, TransportProtocol::NativeUdp).await;
+    let before = b.shared.links.lock().unwrap()[&ids[0]].fact.clone();
+    let retired = b.shared.links.lock().unwrap()[&ids[2]].scope.clone();
+    let socket = b.snapshot().unwrap().listeners[0].socket_id;
+    let (mut sa, mut sb) = (
+        secure(&fixture.identities[0], &a),
+        secure(&fixture.identities[1], &b),
+    );
+    let cid = handshake(
+        &mut a,
+        &mut b,
+        &mut sa,
+        &mut sb,
+        fixture.demands[0],
+        vec![ids[0], ids[1]],
+    )
+    .await;
+    exchange(&a, &mut b, &mut sa, &mut sb, cid, packet(&fixture, false)).await;
+    let instance = fixture.controls[2].execution_snapshot().unwrap().instance();
+    fixture.controls[2]
+        .cancel_demand(&meshway_protocol::CancelDemandRequest {
+            instance,
+            request_id: fixture.demands[1],
+        })
+        .await
+        .unwrap();
+    for (index, manager, node) in [(0, &mut a, &mut sa), (1, &mut b, &mut sb)] {
+        fixture.controls[index]
+            .refresh_configuration()
+            .await
+            .unwrap();
+        let next = fixture.controls[index]
+            .dataplane_identity(fixture.controls[index].execution_snapshot().unwrap())
+            .unwrap();
+        assert!(
+            manager.can_reconcile(&next),
+            "index={index}, stopped={}, bounds={}, lineage={}, resources={:?}",
+            manager.shared.stop.is_cancelled(),
+            manager
+                .shared
+                .identity
+                .snapshot()
+                .retention_deadline()
+                .is_ok(),
+            next.snapshot()
+                .continuation_from(manager.shared.identity.snapshot())
+                .is_ok(),
+            next.snapshot()
+                .continuation_from(manager.shared.identity.snapshot())
+                .ok()
+                .map(|old| {
+                    let cfg = next.snapshot().configuration().unwrap();
+                    (
+                        old.listeners == cfg.listeners,
+                        old.dialers == cfg.dialers,
+                        old.peers == cfg.peers,
+                        old.mesh_address_pools == cfg.mesh_address_pools,
+                    )
+                })
+        );
+        node.reconcile(next.clone()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), manager.reconcile(next.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        node.set_carriers(manager.carriers().unwrap()).unwrap();
+        fixture.identities[index] = next;
+    }
+    assert_eq!(b.snapshot().unwrap().links, vec![before]);
+    assert_eq!(b.snapshot().unwrap().listeners[0].socket_id, socket);
+    assert!(retired.check().is_err());
+    exchange(&b, &mut a, &mut sb, &mut sa, cid, packet(&fixture, true)).await;
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    c.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
 async fn converged(a: &Manager, b: &Manager, a_id: NodeId, b_id: NodeId, old: Option<[u8; 32]>) {
     let result = tokio::time::timeout(RECOVERY, async {
         loop {
@@ -197,7 +381,7 @@ async fn handshake(
     cid
 }
 
-fn packet(fixture: &support::Fixture, reply: bool) -> Packet {
+pub(super) fn packet(fixture: &support::Fixture, reply: bool) -> Packet {
     let address = |index: usize| {
         fixture.identities[index]
             .snapshot()
@@ -237,7 +421,7 @@ fn packet(fixture: &support::Fixture, reply: bool) -> Packet {
     Packet::parse(bytes).unwrap()
 }
 
-async fn exchange(
+pub(super) async fn exchange(
     from: &Manager,
     to: &mut Manager,
     source: &mut SecureNode,
@@ -324,6 +508,7 @@ async fn restart_reattaches_across_opposite_udp_carrier_and_fences_unpolled_old_
     assert!(faults.blocked.load(Ordering::SeqCst));
     factory.blocked_dialers.lock().unwrap().insert(ids[1]);
     factory.blocked_dialers.lock().unwrap().remove(&ids[0]);
+    a.shutdown().await.unwrap();
     a.reconcile(fixture.identities[0].clone()).await.unwrap();
     converged(&a, &b, ids[0], ids[1], Some(old.id)).await;
     assert_eq!(b.snapshot().unwrap().links[0].carrier.dialer, ids[0]);
@@ -583,6 +768,7 @@ async fn pending_supersession_cannot_replace_a_newer_authenticated_channel() {
             .shared
             .scope(Some((ids[0], candidate.carrier.clone())), false),
         supersedes: Replacement::Vacant(None),
+        attempt: None,
     };
     assert!(!install_ready(&b.shared, ready()).unwrap());
     assert_eq!(b.shared.links.lock().unwrap()[&ids[0]].fact, current);
@@ -741,6 +927,7 @@ async fn staggered_three_node_managers_and_real_demand_publication_keep_original
     .await;
     // Each physical owner refreshes separately; logical circuit/flow owners stay.
     for index in [0, 2, 1] {
+        managers[index].shutdown().await.unwrap();
         managers[index]
             .reconcile(fixture.identities[index].clone())
             .await
@@ -758,6 +945,10 @@ async fn staggered_three_node_managers_and_real_demand_publication_keep_original
     }
     route_packet(&mut managers, &mut nodes, cid, true, packet(&fixture, true)).await;
     let lease = fixture.controls[0].renew_instance().await.unwrap();
+    let original_channels: Vec<_> = managers
+        .iter()
+        .map(|manager| manager.snapshot().unwrap().links)
+        .collect();
     fixture.controls[0]
         .renew_demand(&meshway_protocol::RenewDemandRequest {
             instance: meshway_protocol::InstanceRequest {
@@ -779,6 +970,11 @@ async fn staggered_three_node_managers_and_real_demand_publication_keep_original
             .unwrap();
         nodes[index].reconcile(identity.clone()).unwrap();
         managers[index].reconcile(identity.clone()).await.unwrap();
+        assert_eq!(
+            managers[index].snapshot().unwrap().links,
+            original_channels[index],
+            "the direct publication preserves the mandatory-path physical channels"
+        );
         fixture.identities[index] = identity;
         all_links(&managers, &ids).await;
         for (node, manager) in nodes.iter_mut().zip(&managers) {

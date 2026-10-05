@@ -26,7 +26,9 @@ pub struct ExecutionSnapshot {
     invalidated: CancellationToken,
     clock: Arc<Clock>,
     deadlines: [Deadline; 3],
-    lineage: Arc<()>,
+    // Only Control owns the strong lineage root. Holding a snapshot must not
+    // keep inactive descriptors retainable after stop/re-enrollment/fencing.
+    lineage: std::sync::Weak<()>,
     publication: Arc<()>,
     predecessor: Option<(Arc<()>, ConfigurationRef)>,
 }
@@ -52,7 +54,7 @@ impl Control {
             validity: Arc::clone(&self.validity),
             invalidated: self.invalidated.clone(),
             clock: Arc::clone(&self.clock),
-            lineage: self.lineage.clone(),
+            lineage: Arc::downgrade(&self.lineage),
             publication: self.publication.clone(),
             predecessor: self.predecessor.clone(),
             deadlines: [
@@ -71,6 +73,13 @@ impl Control {
 }
 
 impl ExecutionSnapshot {
+    pub fn instance(&self) -> meshway_protocol::InstanceRequest {
+        meshway_protocol::InstanceRequest {
+            instance_id: self.instance,
+            generation: self.generation,
+        }
+    }
+
     pub fn ensure_current(&self) -> Result<(), Error> {
         if !self.validity.load(Ordering::Acquire)
             || self.invalidated.is_cancelled()
@@ -116,7 +125,7 @@ impl ExecutionSnapshot {
         let same = Arc::ptr_eq(&self.publication, &old.publication)
             && self.same_execution(old)
             && old.ensure_current().is_ok();
-        if !Arc::ptr_eq(&self.lineage, &old.lineage)
+        if !std::sync::Weak::ptr_eq(&self.lineage, &old.lineage)
             || !(same || direct)
             || self.instance != old.instance
             || self.generation != old.generation
@@ -138,6 +147,40 @@ impl ExecutionSnapshot {
     pub fn now_ms(&self) -> Result<u64, Error> {
         self.ensure_current()?;
         self.clock.now()
+    }
+
+    /// Current execution permission for a retained physical adjacency. This is
+    /// not peer authentication; the channel owner must retain that evidence.
+    pub fn admit_adjacency(
+        &self,
+        peer: meshway_model::NodeId,
+        carrier: &meshway_configuration::execution::Carrier,
+    ) -> Result<u64, Error> {
+        meshway_policy::admission::admit_adjacency(
+            self.configuration()?,
+            peer,
+            carrier,
+            self.now_ms()?,
+        )
+        .map_err(|_| Error::Expired)
+    }
+
+    /// Inactive-resource retention only, never I/O authority. A publication can
+    /// invalidate this snapshot while its original UTC/monotonic lease bounds
+    /// still allow an owner to await a direct `continuation_from` handoff.
+    pub fn retention_deadline(&self) -> Result<Instant, Error> {
+        if self.lineage.strong_count() == 0 || !self.deadlines.iter().all(Deadline::valid) {
+            return Err(Error::Expired);
+        }
+        let remaining = self
+            .expires_at_ms()
+            .checked_sub(self.clock.now()?)
+            .ok_or(Error::Expired)?;
+        Ok(self.expires_at().min(
+            Instant::now()
+                .checked_add(std::time::Duration::from_millis(remaining))
+                .ok_or(Error::Expired)?,
+        ))
     }
 
     pub fn expires_at(&self) -> Instant {

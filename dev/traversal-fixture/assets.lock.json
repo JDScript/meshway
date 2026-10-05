@@ -1,0 +1,10 @@
+{
+  "base": "debian@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "snapshot": "https://snapshot.debian.org/archive/debian/20260920T000000Z",
+  "releaseSha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
+  "indexes": {
+    "amd64": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
+    "arm64": "be16b37b2f740f066ea93d35d56f04f94d63693e5a3eb421b052bf86fae75bcd"
+  },
+  "packages": ["systemd-resolved", "dbus-daemon", "iproute2", "util-linux", "procps", "iptables", "conntrack", "tcpdump"]
+}

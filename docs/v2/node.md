@@ -53,4 +53,4 @@ Server 决定许可和有界候选；Node 在获准集合内结合实时状态�
 
 首个验收目标使用 Linux 系统 TUN：CLI 接入、Server 批准、取得实例／lease、校验保存并安装执行目标、两节点之间产生真实业务包流、上报实际状态，以及 down／撤回后停止受管流量并清理所属资源。
 
-当前 Linux Mesh IP 验收在 Server 显式完全关闭 DNS，具体安装门槛见[网络模式](/v2/node/runtime#安装范围与状态)。userspace、其他承载、NAT 穿透和性能各自验收；MTU／分片、动态 ABI 与 TCP 性能优化仍待完善。
+Linux Mesh IP、两种系统 DNS 后端及双 NAT 穿透按明确组合分别验收，安装门槛见[网络模式](/v2/node/runtime#安装范围与状态)，组合范围见[数据面验收](/v2/node/dataplane#daemon-与内核资源-conformance)与[连接获取](/v2/node/connectivity#路径选择与验收)。userspace、其他承载和性能各自验收；MTU／分片、动态 ABI 与 TCP 性能优化仍待完善。

@@ -74,11 +74,13 @@ def main():
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"), required=True)
     parser.add_argument("--output", type=Path, required=True, help="new private build/support directory")
     parser.add_argument("--resume", action="store_true", help="resume this exact locked build's verified downloads")
+    parser.add_argument("--lock-file", type=Path, default=HERE / "assets.lock.json",
+                        help="explicit pinned OS asset lock; also used by isolated traversal fixtures")
     args = parser.parse_args()
     if not args.output.is_absolute():
         raise RuntimeError("OS build output must be an absolute private directory.")
     args.output.mkdir(parents=True, exist_ok=args.resume, mode=0o700)
-    lock_bytes = (HERE / "assets.lock.json").read_bytes()
+    lock_bytes = args.lock_file.read_bytes()
     lock = json.loads(lock_bytes)
     arch = args.platform.split("/")[1]
     fetch(lock["snapshot"] + "/dists/trixie/Release", lock["releaseSha256"])

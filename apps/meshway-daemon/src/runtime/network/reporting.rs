@@ -26,6 +26,7 @@ pub(super) struct Key {
     dns_live: bool,
     listeners: BTreeMap<[u8; 32], Listener>,
     links: BTreeMap<[u8; 32], LinkFact>,
+    sockets: Vec<meshway_connectivity::SocketFact>,
     dependencies: BTreeMap<NodeId, u32>,
 }
 impl Key {
@@ -54,6 +55,7 @@ impl Key {
             dns_live,
             listeners: BTreeMap::new(),
             links: BTreeMap::new(),
+            sockets: Vec::new(),
             dependencies: BTreeMap::new(),
         };
         if execution_live
@@ -81,6 +83,7 @@ impl Key {
                 .map(|link| (link.id, link.clone()))
                 .collect();
             key.dependencies = report.dependencies.clone();
+            key.sockets = facts.sockets.clone();
         }
         key
     }
@@ -131,6 +134,8 @@ impl Mark {
 struct Pending {
     instance: InstanceRequest,
     mark: Option<Mark>,
+    #[cfg(target_os = "linux")]
+    candidates: Vec<meshway_protocol::connectivity::CandidateReference>,
 }
 
 pub(super) struct Schedule {
@@ -248,7 +253,8 @@ impl super::Handle {
         self.reporting.last_attempt = Some(Instant::now());
         if self.reporting.pending.is_some() {
             match control.retry_state_report().await {
-                Ok(_) => {
+                Ok(accepted) => {
+                    self.acknowledge_traversal(&accepted);
                     return Ok(self.reporting.delivered(true));
                 }
                 // A cancelled preflight may not have accepted a report yet.
@@ -279,12 +285,26 @@ impl super::Handle {
                 key: sample.key,
                 receipt,
             });
-        self.reporting.pending = Some(Pending { instance, mark });
+        #[cfg(target_os = "linux")]
+        let candidates = control
+            .status()
+            .binding
+            .map(|binding| super::traversal::candidates(&state, binding.node_id, &instance))
+            .unwrap_or_default();
+        self.reporting.pending = Some(Pending {
+            instance,
+            mark,
+            #[cfg(target_os = "linux")]
+            candidates,
+        });
         match control
             .report_runtime_state(state, chrono::Utc::now())
             .await
         {
-            Ok(_) => Ok(self.reporting.delivered(false)),
+            Ok(accepted) => {
+                self.acknowledge_traversal(&accepted);
+                Ok(self.reporting.delivered(false))
+            }
             Err(Error::Pending) => {
                 // Defensive recovery if Control already retained an older body.
                 // Its marker is unknown, so retry it without acknowledging ours.
@@ -293,8 +313,18 @@ impl super::Handle {
                     .as_mut()
                     .expect("pending report")
                     .mark = None;
+                #[cfg(target_os = "linux")]
+                self.reporting
+                    .pending
+                    .as_mut()
+                    .expect("pending report")
+                    .candidates
+                    .clear();
                 match control.retry_state_report().await {
-                    Ok(_) => Ok(self.reporting.delivered(true)),
+                    Ok(accepted) => {
+                        self.acknowledge_traversal(&accepted);
+                        Ok(self.reporting.delivered(true))
+                    }
                     Err(error) => {
                         if matches!(error, Error::StateScopeChanged) {
                             self.reporting.pending = None;
@@ -310,6 +340,19 @@ impl super::Handle {
                 Err(error)
             }
         }
+    }
+
+    fn acknowledge_traversal(&self, accepted: &meshway_protocol::StateAccepted) {
+        #[cfg(target_os = "linux")]
+        if let Some(pending) = &self.reporting.pending {
+            self.traversal_acknowledged
+                .send_replace(super::traversal::Acknowledged {
+                    sequence: Some(accepted.sequence),
+                    candidates: pending.candidates.clone(),
+                });
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = accepted;
     }
 }
 
@@ -337,6 +380,7 @@ mod tests {
                 local: "127.0.0.1:35000".parse().unwrap(),
             }],
             links: vec![],
+            sockets: vec![],
         });
         publisher.send_replace(report.clone());
         let physical = schedule.changes.borrow_and_update().clone();
@@ -376,6 +420,8 @@ mod tests {
                 generation: Version::MIN,
             },
             mark: Some(old),
+            #[cfg(target_os = "linux")]
+            candidates: Vec::new(),
         });
         let mut ready = Report::stopped();
         ready.plane = meshway_ipc::DataPlane::Ready;

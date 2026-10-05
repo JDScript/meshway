@@ -54,6 +54,109 @@ function rfc3339(value: string): boolean {
     (parts[7] === undefined || (Number(parts[7]) <= 23 && Number(parts[8]) <= 59));
 }
 
+export const zUdpTraversalId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zAcceptUdpTraversalPath = z.strictObject({
+  ["attemptId"]: zUdpTraversalId
+});
+
+export const zNodeId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zTransportProtocol = z.enum(["native_udp","native_tcp","vless","trojan"]);
+
+export const zCarrier = z.strictObject({
+  ["dialer"]: zNodeId,
+  ["listener"]: zNodeId,
+  ["listenerKey"]: z.string(),
+  ["protocol"]: zTransportProtocol
+});
+
+export const zDigest = z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"));
+
+export const zPublicationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zRevision = z.int().gte(1).lte(9007199254740991);
+
+export const zConfigurationRef = z.strictObject({
+  ["digest"]: zDigest,
+  ["executionPublication"]: zPublicationId,
+  ["revision"]: zRevision
+});
+
+export const zVersion = z.int().gte(1).lte(9007199254740991);
+
+export const zInstanceId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zInstanceRequest = z.strictObject({
+  ["generation"]: zVersion,
+  ["instanceId"]: zInstanceId
+});
+
+export const zResourceRef = z.union([z.strictObject({
+  ["key"]: z.string(),
+  ["kind"]: z.enum(["listener"])
+}), z.strictObject({
+  ["key"]: z.string(),
+  ["kind"]: z.enum(["dial"])
+}), z.strictObject({
+  ["key"]: z.string(),
+  ["kind"]: z.enum(["coordination"])
+})]);
+
+export const zSequence = z.int().gte(0).lte(9007199254740991);
+
+export const zSocketReference = z.strictObject({
+  ["configuration"]: zConfigurationRef,
+  ["instance"]: zInstanceRequest,
+  ["nodeId"]: zNodeId,
+  ["resource"]: zResourceRef,
+  ["socketGeneration"]: zSequence,
+  ["socketId"]: z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 256, "maxLength 256 Unicode code points").regex(new RegExp("^[!-~]{1,256}(?![\\s\\S])", "u"))
+});
+
+export const zCandidateReference = z.strictObject({
+  ["observationDigest"]: zDigest,
+  ["socket"]: zSocketReference
+});
+
+export const zUdpTraversalParticipant = z.strictObject({
+  ["address"]: z.string(),
+  ["candidate"]: zCandidateReference
+});
+
+export const zNetworkId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zRequestId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zStateEpoch = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zUdpTraversalOffer = z.strictObject({
+  ["attemptId"]: zUdpTraversalId,
+  ["carrier"]: zCarrier,
+  ["digest"]: zDigest,
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["local"]: zUdpTraversalParticipant,
+  ["networkId"]: zNetworkId,
+  ["nonce"]: zDigest,
+  ["peer"]: zUdpTraversalParticipant,
+  ["requestId"]: zRequestId,
+  ["stateEpoch"]: zStateEpoch,
+  ["version"]: zVersion
+});
+
+export const zUdpTraversalUnavailableReason = z.enum(["scopeChanged","candidateChanged","attemptChanged","attemptExpired","notAvailable","capacity","requestChanged"]);
+
+export const zAcceptUdpTraversalResponse = z.union([z.strictObject({
+  ["offer"]: zUdpTraversalOffer,
+  ["status"]: z.enum(["waiting"])
+}), z.strictObject({
+  ["offer"]: zUdpTraversalOffer,
+  ["status"]: z.enum(["active"])
+}), z.strictObject({
+  ["reason"]: zUdpTraversalUnavailableReason,
+  ["status"]: z.enum(["unavailable"])
+})]);
+
 export const zAccessDefault = z.enum(["deny"]);
 
 export const zAccessRule = z.strictObject({
@@ -63,8 +166,6 @@ export const zAccessRule = z.strictObject({
   ["remark"]: z.string().exactOptional(),
   ["src"]: z.array(z.string())
 });
-
-export const zRequestId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zUserId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
@@ -109,8 +210,6 @@ export const zCapability = z.union([z.strictObject({
   ["version"]: z.int().gte(0).lte(2147483647)
 })]);
 
-export const zInstanceId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
 export const zAcquireInstanceRequest = z.strictObject({
   ["capabilities"]: typedMap(z.string(), zCapability, {}),
   ["instanceId"]: zInstanceId
@@ -126,11 +225,7 @@ export const zActivityActor = z.union([z.strictObject({
   ["type"]: z.enum(["system"])
 })]);
 
-export const zRevision = z.int().gte(1).lte(9007199254740991);
-
 export const zActivityId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
-export const zNetworkId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zMembershipId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
@@ -190,13 +285,9 @@ export const zAddressPoolsInput = z.strictObject({
   ["ipv6"]: z.array(z.string()).exactOptional()
 });
 
-export const zNodeId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
 export const zLinkEvidence = z.enum(["oneSided","matched","conflicting","expired"]);
 
 export const zLinkPhase = z.enum(["preparing","authenticated","closed","failed"]);
-
-export const zSequence = z.int().gte(0).lte(9007199254740991);
 
 export const zReportRef = z.strictObject({
   ["instanceId"]: zInstanceId,
@@ -218,8 +309,6 @@ export const zAggregatedLink = z.strictObject({
 });
 
 export const zPathEvidence = z.enum(["selected","sent","peerConfirmed","delivered"]);
-
-export const zPublicationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zReporterRole = z.enum(["origin","relay","target","exit"]);
 
@@ -259,8 +348,6 @@ export const zApproveEnrollmentRequest = z.strictObject({
 });
 
 export const zArtifactId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
-export const zDigest = z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"));
 
 export const zArtifactSummary = z.strictObject({
   ["createdAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
@@ -317,8 +404,6 @@ export const zAutoProfile = z.strictObject({
   ["rules"]: z.array(zCountryProfile)
 });
 
-export const zVersion = z.int().gte(1).lte(9007199254740991);
-
 export const zKeyId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zKeyAlgorithm = z.enum(["ed25519","x25519"]);
@@ -350,11 +435,6 @@ export const zBusinessTarget = z.union([z.strictObject({
   ["type"]: z.enum(["domain"])
 })]);
 
-export const zInstanceRequest = z.strictObject({
-  ["generation"]: zVersion,
-  ["instanceId"]: zInstanceId
-});
-
 export const zCancelDemandRequest = z.strictObject({
   ["instance"]: zInstanceRequest,
   ["requestId"]: zRequestId
@@ -370,6 +450,17 @@ export const zCancelObservationPath = z.strictObject({
   ["networkId"]: zNetworkId,
   ["subscriptionId"]: zObservationSubscriptionId
 });
+
+export const zCancelUdpTraversalPath = z.strictObject({
+  ["attemptId"]: zUdpTraversalId
+});
+
+export const zCancelUdpTraversalResponse = z.union([z.strictObject({
+  ["status"]: z.enum(["cancelled"])
+}), z.strictObject({
+  ["reason"]: zUdpTraversalUnavailableReason,
+  ["status"]: z.enum(["unavailable"])
+})]);
 
 export const zCandidateSource = z.enum(["configured","interface","stun"]);
 
@@ -808,12 +899,6 @@ export const zConfigurationAppliedResponse = z.strictObject({
 
 export const zReceiptFreshness = z.enum(["current","expired","awaitingInstance","superseded"]);
 
-export const zConfigurationRef = z.strictObject({
-  ["digest"]: zDigest,
-  ["executionPublication"]: zPublicationId,
-  ["revision"]: zRevision
-});
-
 export const zConfigurationNodeProgress = z.strictObject({
   ["attempt"]: zVersion.nullable().exactOptional(),
   ["freshness"]: zReceiptFreshness,
@@ -1152,8 +1237,6 @@ export const zDefaultsView = z.strictObject({
   ["topology"]: zTopologyDefault
 });
 
-export const zTransportProtocol = z.enum(["native_udp","native_tcp","vless","trojan"]);
-
 export const zListenerTlsView = z.strictObject({
   ["alpn"]: z.array(z.string()),
   ["certificatePresent"]: z.boolean(),
@@ -1241,17 +1324,6 @@ export const zConfigurationPreviewResponse = z.strictObject({
   ["warnings"]: z.array(zConfigurationIssue),
   ["willGenerate"]: z.array(zPreparationRequirement).exactOptional()
 });
-
-export const zResourceRef = z.union([z.strictObject({
-  ["key"]: z.string(),
-  ["kind"]: z.enum(["listener"])
-}), z.strictObject({
-  ["key"]: z.string(),
-  ["kind"]: z.enum(["dial"])
-}), z.strictObject({
-  ["key"]: z.string(),
-  ["kind"]: z.enum(["coordination"])
-})]);
 
 export const zEventId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
@@ -2584,6 +2656,7 @@ export const zPeerCandidate = z.strictObject({
 
 export const zPeerEndpoint = z.strictObject({
   ["candidate"]: zPeerCandidate,
+  ["candidateReference"]: zCandidateReference,
   ["generation"]: zSequence,
   ["network"]: zSocketNetwork,
   ["resource"]: zResourceRef,
@@ -2616,8 +2689,6 @@ export const zNodeStateView = z.strictObject({
   ["reportExpiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["reportSequence"]: zSequence.nullable().exactOptional()
 });
-
-export const zStateEpoch = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zStateView = z.strictObject({
   ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
@@ -2847,6 +2918,26 @@ export const zPasswordResetRedeemRequest = z.strictObject({
   ["token"]: zWireSecret
 });
 
+export const zPrepareUdpTraversalRequest = z.strictObject({
+  ["carrier"]: zCarrier,
+  ["configuration"]: zConfigurationRef,
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["instance"]: zInstanceRequest,
+  ["localCandidate"]: zCandidateReference,
+  ["peerCandidate"]: zCandidateReference,
+  ["peerId"]: zNodeId,
+  ["requestId"]: zRequestId,
+  ["stateEpoch"]: zStateEpoch
+});
+
+export const zPrepareUdpTraversalResponse = z.union([z.strictObject({
+  ["offer"]: zUdpTraversalOffer,
+  ["status"]: z.enum(["offer"])
+}), z.strictObject({
+  ["reason"]: zUdpTraversalUnavailableReason,
+  ["status"]: z.enum(["unavailable"])
+})]);
+
 export const zPublicationProgress = z.strictObject({
   ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodePublicationProgress, {}),
   ["publication"]: zPublicationId,
@@ -2862,6 +2953,35 @@ export const zQueryEnrollmentRequestPath = z.strictObject({
 export const zQueryObservationHistoryPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
+
+export const zQueryUdpTraversalRequest = z.strictObject({
+  ["configuration"]: zConfigurationRef,
+  ["instance"]: zInstanceRequest
+});
+
+export const zUdpTraversalPhase = z.enum(["waiting","active"]);
+
+export const zUdpTraversalAttempts = z.array(z.strictObject({
+  ["offer"]: zUdpTraversalOffer,
+  ["phase"]: zUdpTraversalPhase
+})).max(32);
+
+export const zStunServers = z.array(z.strictObject({
+  ["endpoint"]: zEndpoint,
+  ["id"]: z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9_-]{1,64}(?![\\s\\S])", "u"))
+})).max(4);
+
+export const zQueryUdpTraversalResponse = z.union([z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["attempts"]: zUdpTraversalAttempts,
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["stateEpoch"]: zStateEpoch,
+  ["status"]: z.enum(["current"]),
+  ["stunServers"]: zStunServers
+}), z.strictObject({
+  ["reason"]: zUdpTraversalUnavailableReason,
+  ["status"]: z.enum(["unavailable"])
+})]);
 
 export const zReceiptPhase = z.enum(["saved","applied","failed"]);
 
@@ -3049,6 +3169,14 @@ export const zTrojanListener = z.strictObject({
   ["stream"]: zTrojanStream.exactOptional(),
   ["tcp"]: zTcpOptions.exactOptional(),
   ["tls"]: zListenerTls
+});
+
+export const zUdpTraversalAttemptRequest = z.strictObject({
+  ["configuration"]: zConfigurationRef,
+  ["digest"]: zDigest,
+  ["instance"]: zInstanceRequest,
+  ["stateEpoch"]: zStateEpoch,
+  ["version"]: zVersion
 });
 
 export const zUserConfigurationView = z.union([z.strictObject({

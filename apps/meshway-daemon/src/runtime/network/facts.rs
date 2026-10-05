@@ -59,21 +59,34 @@ impl Report {
         let Some(facts) = &self.facts else {
             return state;
         };
-        for listener in &facts.listeners {
-            let id = socket_key(&listener.socket_id);
+        for socket in &facts.sockets {
+            if socket.reference.configuration != *target {
+                continue;
+            }
             state.sockets.insert(
-                id.clone(),
+                socket.reference.socket_id.clone(),
                 SocketState {
-                    resource: ResourceRef::Listener {
-                        key: listener.key.clone(),
-                    },
-                    configuration: Some(target.clone()),
-                    generation: self.generation,
-                    network: socket_network(listener.protocol),
-                    bound_address: listener.local,
-                    endpoints: Vec::new(),
+                    resource: socket.reference.resource.clone(),
+                    configuration: Some(socket.reference.configuration.clone()),
+                    generation: socket.reference.socket_generation,
+                    network: socket.network,
+                    bound_address: socket.bound_address,
+                    endpoints: socket.endpoints.clone(),
                 },
             );
+        }
+        for listener in &facts.listeners {
+            let id = socket_key(&listener.socket_id);
+            state.sockets.entry(id.clone()).or_insert(SocketState {
+                resource: ResourceRef::Listener {
+                    key: listener.key.clone(),
+                },
+                configuration: Some(target.clone()),
+                generation: self.generation,
+                network: socket_network(listener.protocol),
+                bound_address: listener.local,
+                endpoints: Vec::new(),
+            });
             state.listeners.insert(
                 listener.key.clone(),
                 ListenerState {

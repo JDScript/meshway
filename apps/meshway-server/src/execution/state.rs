@@ -63,7 +63,7 @@ impl Execution {
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<VisibilityScope, Error> {
-        let (network, full, expires_at, actor) = match identity {
+        let (network, full, mut expires_at, actor) = match identity {
             ReadIdentity::Node { authorization } => {
                 let report = self.report_admission_in_transaction(tx, authorization, now)?;
                 (
@@ -205,6 +205,7 @@ impl Execution {
                 *node,
                 CurrentNode {
                     instance_id: lease.as_ref().map(|l| l.instance_id),
+                    instance_generation: lease.as_ref().map(|l| l.generation),
                     execution,
                     configurations,
                     revoked,
@@ -212,6 +213,21 @@ impl Execution {
                 },
             );
         }
+        let endpoint_resources = match identity {
+            ReadIdentity::Node { .. } => {
+                let mut resources = BTreeMap::new();
+                for local in &full {
+                    let disclosure =
+                        self.endpoint_disclosure(tx, network, *local, &visible, now)?;
+                    resources.extend(disclosure.resources);
+                    if let Some(deadline) = disclosure.expires_at {
+                        expires_at = expires_at.min(deadline);
+                    }
+                }
+                Some(resources)
+            }
+            ReadIdentity::UserSession { .. } => None,
+        };
         let authorization_digest = super::proof::request_digest(&(
             network,
             revision,
@@ -220,6 +236,7 @@ impl Execution {
             &full,
             &bindings,
             &observation_paths,
+            &endpoint_resources,
         ))?;
         Ok(VisibilityScope {
             network_id: network,
@@ -234,6 +251,7 @@ impl Execution {
                 .collect(),
             visible,
             full,
+            endpoint_resources,
             observation_paths,
             expires_at,
             current,
@@ -245,7 +263,9 @@ impl Execution {
         })
     }
 
-    pub(super) fn node_admission(
+    /// Current transactional identity/instance/publication admission. Acquisition
+    /// and endpoint disclosure never use retained receipt/history contexts.
+    pub(super) fn current_node_admission(
         &self,
         tx: &Transaction<'_>,
         network: NetworkId,
@@ -269,6 +289,7 @@ impl Execution {
             network_id: network,
             node_id: node,
             instance_id: lease.instance_id,
+            instance_generation: lease.generation,
             lease_expires_at: time(lease.expires_at_ms)?,
             execution: None,
             configurations: lease.target.clone().into_iter().collect(),
@@ -306,12 +327,23 @@ impl Execution {
                 .contexts
                 .push(configuration_admission(&target, eligible));
         }
+        Ok(report)
+    }
+
+    pub(super) fn node_admission(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        node: NodeId,
+        now: DateTime<Utc>,
+    ) -> Result<ReportAdmission, Error> {
+        let mut report = self.current_node_admission(tx, network, node, now)?;
         let history = store::receipt_history_targets(
             tx,
             &self.sealer,
             network,
             node,
-            lease.instance_id,
+            report.instance_id,
             now.timestamp_millis(),
         )?
         .into_iter()

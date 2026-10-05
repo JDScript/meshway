@@ -97,7 +97,7 @@ impl Scope {
 /// remains in SendContext, so sharing a socket never shares packet authority.
 pub(crate) struct Datagram {
     pub inner: Box<dyn meshway_transport::raw::Datagram>,
-    pub scope: Scope,
+    pub scope: std::sync::Arc<Physical>,
 }
 impl meshway_transport::raw::Datagram for Datagram {
     fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
@@ -112,9 +112,7 @@ impl meshway_transport::raw::Datagram for Datagram {
         bytes: &[u8],
         peer: std::net::SocketAddr,
     ) -> Poll<std::io::Result<usize>> {
-        self.scope
-            .check()
-            .map_err(|_| std::io::ErrorKind::PermissionDenied)?;
+        std::task::ready!(self.scope.poll(cx, false))?;
         self.inner.poll_send_to(cx, bytes, peer)
     }
     fn poll_recv_from(
@@ -122,10 +120,14 @@ impl meshway_transport::raw::Datagram for Datagram {
         cx: &mut std::task::Context<'_>,
         bytes: &mut [u8],
     ) -> Poll<std::io::Result<meshway_transport::raw::DatagramRead>> {
-        self.scope
-            .check()
-            .map_err(|_| std::io::ErrorKind::PermissionDenied)?;
-        self.inner.poll_recv_from(cx, bytes)
+        std::task::ready!(self.scope.poll(cx, true))?;
+        let result = self.inner.poll_recv_from(cx, bytes);
+        if matches!(result, Poll::Ready(Err(_))) && self.scope.check().is_err() {
+            return self.scope.poll(cx, true).map(|result| {
+                result.and_then(|_| Err(std::io::ErrorKind::PermissionDenied.into()))
+            });
+        }
+        result
     }
 }
 
@@ -152,17 +154,22 @@ impl meshway_transport::SendLifetime for Scope {
     }
 }
 
-/// The last poll boundary, below provider buffering and below Session. It has
-/// the execution deadline, while individual handshake futures have a shorter cap.
+/// Physical poll gate below providers/Session. Opening retains a frozen guard
+/// until authentication completes; established outputs use Session's frozen
+/// per-operation SendContext. Buffered provider channels are not retained.
 pub(crate) struct Stream {
     pub inner: Box<dyn meshway_transport::raw::Stream>,
-    pub scope: Scope,
+    pub scope: std::sync::Arc<Physical>,
+    pub opening: Option<std::sync::Arc<Opening>>,
 }
 impl Stream {
-    fn check(&self) -> std::io::Result<()> {
-        self.scope
-            .check()
-            .map_err(|_| std::io::ErrorKind::PermissionDenied.into())
+    fn opening(&self) -> std::io::Result<()> {
+        if let Some(opening) = &self.opening {
+            opening
+                .check()
+                .map_err(|_| std::io::ErrorKind::PermissionDenied)?;
+        }
+        Ok(())
     }
 }
 impl tokio::io::AsyncRead for Stream {
@@ -171,7 +178,8 @@ impl tokio::io::AsyncRead for Stream {
         cx: &mut std::task::Context<'_>,
         buffer: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        self.check()?;
+        self.opening()?;
+        std::task::ready!(self.scope.poll(cx, true))?;
         std::pin::Pin::new(&mut self.inner).poll_read(cx, buffer)
     }
 }
@@ -181,21 +189,99 @@ impl tokio::io::AsyncWrite for Stream {
         cx: &mut std::task::Context<'_>,
         buffer: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        self.check()?;
+        self.opening()?;
+        std::task::ready!(self.scope.poll(cx, false))?;
         std::pin::Pin::new(&mut self.inner).poll_write(cx, buffer)
     }
     fn poll_flush(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        self.check()?;
+        self.opening()?;
+        std::task::ready!(self.scope.poll(cx, false))?;
         std::pin::Pin::new(&mut self.inner).poll_flush(cx)
     }
     fn poll_shutdown(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        self.check()?;
+        self.opening()?;
+        std::task::ready!(self.scope.poll(cx, false))?;
         std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+pub(crate) struct Opening(std::sync::Mutex<Option<Scope>>);
+impl Opening {
+    pub fn new(scope: Scope) -> Self {
+        Self(std::sync::Mutex::new(Some(scope)))
+    }
+    fn check(&self) -> Result<(), Error> {
+        if let Some(scope) = &*self.0.lock().map_err(|_| Error::Worker)? {
+            scope.check()?;
+        }
+        Ok(())
+    }
+    pub fn release(&self) -> Result<(), Error> {
+        let mut scope = self.0.lock().map_err(|_| Error::Worker)?;
+        if let Some(scope) = &*scope {
+            scope.check()?;
+        }
+        *scope = None;
+        Ok(())
+    }
+}
+
+/// The physical gate follows only Manager-approved epochs. It is NEVER a
+/// SendLifetime: every accepted output instead retains its frozen Scope.
+pub(crate) struct Physical {
+    epochs: tokio::sync::watch::Receiver<meshway_control::DataPlaneIdentity>,
+    stop: CancellationToken,
+    read: futures_util::task::AtomicWaker,
+    write: futures_util::task::AtomicWaker,
+}
+impl Physical {
+    pub fn new(
+        epochs: tokio::sync::watch::Receiver<meshway_control::DataPlaneIdentity>,
+        stop: CancellationToken,
+    ) -> Self {
+        Self {
+            epochs,
+            stop,
+            read: Default::default(),
+            write: Default::default(),
+        }
+    }
+    pub fn wake(&self) {
+        self.read.wake();
+        self.write.wake();
+    }
+    pub fn check(&self) -> Result<(), Error> {
+        if self.stop.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        self.epochs
+            .borrow()
+            .snapshot()
+            .ensure_current()
+            .map_err(|_| Error::Authority)
+    }
+    fn poll(&self, cx: &std::task::Context<'_>, read: bool) -> Poll<std::io::Result<()>> {
+        if read {
+            self.read.register(cx.waker());
+        } else {
+            self.write.register(cx.waker());
+        }
+        if self.stop.is_cancelled() {
+            return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+        }
+        let identity = self.epochs.borrow();
+        if identity.snapshot().ensure_current().is_ok() {
+            return Poll::Ready(Ok(()));
+        }
+        if identity.snapshot().retention_deadline().is_err() {
+            return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into()));
+        }
+        Poll::Pending
     }
 }

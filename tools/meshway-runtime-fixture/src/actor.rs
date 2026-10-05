@@ -22,6 +22,30 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     signals.ready("enroll").await?;
     let underlay = signals::underlay(cli).await?;
     underlay_ready().await?;
+    if cli.traversal == crate::TraversalMode::Nat {
+        if std::env::var("MESHWAY_TRAVERSAL_OWNED").as_deref() != Ok("1") {
+            return Err("NAT route setup requires the owned fixture namespace".into());
+        }
+        save(cli, "capture-before-fixture-route", &capture().await?).await?;
+        if let Some(router) = underlay.routers.get(&role) {
+            let result = ip(&[
+                "-4",
+                "route",
+                "replace",
+                "default",
+                "via",
+                &router.private.to_string(),
+                "dev",
+                "eth0",
+            ])
+            .await?;
+            if !result.status.success() {
+                return Err("fixture-owned NAT default route setup failed".into());
+            }
+        } else if role != Role::B {
+            return Err("NAT actor lacks its owned router".into());
+        }
+    }
     let baseline = capture().await?;
     save(cli, "capture-before", &baseline).await?;
     let mut dns = crate::dns::Probe::start(cli, role).await?;
@@ -72,6 +96,10 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
 
 fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result<Child> {
     let mut daemon_command = Command::new(cli.binaries.join("meshwayd"));
+    let mut filter = "info,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug".to_owned();
+    if cli.traversal_fallback {
+        filter.push_str(",meshway_daemon::runtime::network::circuit_packet=trace");
+    }
     if cli.dns_backend.enabled() {
         daemon_command.args([
             "--dns-backend",
@@ -85,7 +113,7 @@ fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result
             "--log-format",
             "json",
             "--log-filter",
-            "info,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug",
+            &filter,
             "--server",
             meshway_packet_fixture::CONTROLLER_ORIGIN,
             "--network-mode",
@@ -216,6 +244,7 @@ async fn exercise(
     } else {
         None
     };
+    let mut fallback_evidence = None;
     if let Some(traffic) = &mut traffic {
         tracing::info!(
             phase = "first-demand",
@@ -223,10 +252,25 @@ async fn exercise(
         );
         traffic.first_udp().await?;
         save(cli, "first-demand-status", &command(cli, "status").await?).await?;
+        if cli.traversal == crate::TraversalMode::Nat {
+            signals.write("traversal-first", &Signal::Ready).await?;
+            // Let the controller capture this first flow's exact publication
+            // before additional demands legitimately replace its execution.
+            signals.ready("traversal-verified").await?;
+        }
         traffic.add_demands(&addresses[&Role::A]).await?;
         let sockets = traffic.sockets()?;
         save(cli, "persistent-sockets", &sockets).await?;
         let subscription = Subscription::start(&addresses[&Role::A], &addresses[&Role::B]).await?;
+        let fallback_before = if cli.traversal_fallback {
+            // Prove both TCP streams actually echo before starting the clock.
+            traffic.exchange().await?;
+            let sample = crate::fallback::sample(cli, traffic, Duration::ZERO, "before").await?;
+            signals.write("persistent-start", &Signal::Ready).await?;
+            Some(sample)
+        } else {
+            None
+        };
         let subscription_observation = subscription.observation();
         tracing::info!(
             phase = "persistent-traffic",
@@ -270,6 +314,13 @@ async fn exercise(
             let _ = serde_json::to_writer_pretty(file, &failure);
         }
         let (_, reception) = result?;
+        if let Some(before) = fallback_before {
+            signals.ready("fallback-verified").await?;
+            let after = crate::fallback::sample(cli, traffic, started.elapsed(), "after").await?;
+            fallback_evidence = Some(Box::new(
+                crate::fallback::verify(cli, signals, before, after).await?,
+            ));
+        }
         let inbound = inbound_stream_evidence(cli, reception).await?;
         save(cli, "inbound-stream", &inbound).await?;
         save(cli, "persistent-traffic-counts", &traffic.counts).await?;
@@ -493,6 +544,7 @@ async fn exercise(
                 capture_removed: true,
                 identity_preserved: true,
                 dns: dns_evidence,
+                fallback: fallback_evidence,
             },
         )
         .await?;
@@ -525,7 +577,7 @@ async fn publish_status(
 
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "lowercase", deny_unknown_fields)]
-enum DemandAcknowledgement {
+pub(super) enum DemandAcknowledgement {
     Create {
         #[serde(rename = "message")]
         _message: String,
@@ -559,27 +611,12 @@ async fn inbound_stream_evidence(
     cli: &Cli,
     reception: SubscriptionEvidence,
 ) -> Result<InboundStreamEvidence> {
-    // This parses this actor's known local JSON tracing output, never a Server
-    // response/authorization DTO. Selected event fields use a closed schema.
-    const LIMIT: u64 = 16 * 1024 * 1024;
-    let mut file = tokio::fs::File::open(cli.evidence.join("daemon.stderr"))
-        .await?
-        .take(LIMIT + 1);
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).await?;
-    if bytes.len() as u64 > LIMIT {
-        return Err("daemon acknowledgement log exceeds evidence bound".into());
-    }
-    let text = std::str::from_utf8(&bytes)?;
-    let end = text
-        .rfind('\n')
-        .ok_or("daemon acknowledgement log has no complete event")?;
+    let events = log_events(cli).await?;
     let mut original = None;
     let mut initial_expiry = None;
     let mut creates = 0_u64;
     let mut renewals = Vec::new();
-    for line in text[..end].lines() {
-        let event: serde_json::Value = serde_json::from_str(line)?;
+    for event in events {
         if event.get("target").and_then(serde_json::Value::as_str)
             != Some("meshway_daemon::runtime::network")
             || event
@@ -651,6 +688,28 @@ async fn inbound_stream_evidence(
         acknowledged_creates: creates,
         acknowledged_renewals: extended.len().try_into()?,
     })
+}
+
+/// Known local tracing envelope only. Selected events are subsequently decoded
+/// into closed field schemas; this is never used for Server wire responses.
+pub(super) async fn log_events(cli: &Cli) -> Result<Vec<serde_json::Value>> {
+    const LIMIT: u64 = 16 * 1024 * 1024;
+    let mut file = tokio::fs::File::open(cli.evidence.join("daemon.stderr"))
+        .await?
+        .take(LIMIT + 1);
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).await?;
+    if bytes.len() as u64 > LIMIT {
+        return Err("daemon observation log exceeds evidence bound".into());
+    }
+    let text = std::str::from_utf8(&bytes)?;
+    let end = text
+        .rfind('\n')
+        .ok_or("daemon observation log has no complete event")?;
+    text[..end]
+        .lines()
+        .map(|line| serde_json::from_str(line).map_err(Into::into))
+        .collect()
 }
 
 async fn running(cli: &Cli, revision: Revision) -> Result<Status> {
@@ -928,7 +987,8 @@ async fn route_proof(
 
 async fn ip(args: &[&str]) -> Result<std::process::Output> {
     let deadline = crate::remaining(IO)?;
-    // ip only inspects this actor's namespace. It never changes kernel state.
+    // Only this actor's namespace; the sole mutation installs the fixture NAT
+    // default route before the daemon baseline is taken.
     let mut child = Command::new("ip")
         .args(args)
         .stdin(Stdio::null())

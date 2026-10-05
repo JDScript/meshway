@@ -26,6 +26,12 @@ struct Arguments {
     /// it; without it the Server hands devices no link.
     #[arg(long, env = "MESHWAY_CONSOLE_ORIGIN", value_parser = meshway_server::console_origin)]
     console_origin: Option<meshway_server::settings::Url>,
+    /// Explicit UDP Binding listener; repeat for separate address families.
+    #[arg(long)]
+    stun_listen: Vec<SocketAddr>,
+    /// Advertised hosted or external STUN service, KEY=HOST:PORT (IPv6 in brackets).
+    #[arg(long, value_parser = meshway_server::settings::stun_server)]
+    stun_server: Vec<(String, meshway_transport_spec::Endpoint)>,
 }
 
 #[tokio::main]
@@ -56,6 +62,12 @@ async fn run(arguments: Arguments) -> Result<(), String> {
     settings.registration_enabled = arguments.registration_enabled;
     settings.session_ttl = Duration::from_secs(arguments.session_ttl_seconds);
     settings.console_origin = arguments.console_origin;
+    settings.stun_listen = arguments.stun_listen;
+    for (key, endpoint) in arguments.stun_server {
+        if settings.stun_servers.insert(key, endpoint).is_some() {
+            return Err("Duplicate STUN server key.".into());
+        }
+    }
     // AppError is a safe category with, at most, schema object names.
     let app = App::open(settings)
         .await

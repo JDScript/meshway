@@ -1,6 +1,6 @@
 # 承载会话与发送边界
 
-当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收。`meshway-connectivity::Manager` 已装配到 daemon 的 stream 与 Native UDP 静态端点运行路径；Linux Native TCP、Native UDP 承载上的双栈 UDP／TCP 包流分别验收。Mesh circuit、端到端加密和 TUN 接线见[数据面组件](/v2/node/dataplane)，动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
+当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收。`meshway-connectivity::Manager` 已装配到 daemon 的 stream、Native UDP 静态端点与协调穿透运行路径；Linux 承载上的双栈 UDP／TCP 包流、双 NAT 与同路径 TCP 退路按[连接获取](/v2/node/connectivity#路径选择与验收)的范围分别验收。Mesh circuit、端到端加密和 TUN 接线见[数据面组件](/v2/node/dataplane)，动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
 
 ## 分层
 
@@ -53,7 +53,9 @@ UDP 通道使用新鲜 nonce 的认证 Ping／Pong 检查存活，默认间隔 2
 
 默认预算为 64 连接、16 listener、128 候选和 64 事件；握手期限 5 秒，重试退避 1 秒。事件与 snapshot 来自真实 listener／link 生命周期，不制造 RTT／丢包数据。停止取消并 join 任务，guard 在阻塞 I/O 中持续检查。
 
-当前 publication／续租更新会重建 Manager 的物理承载；符合连续性条件的 SecureNode 逻辑流／circuit 可保留。TCP 建连与重连、Native UDP 静态端点均不构成打洞证明；STUN、候选交换、协调 UDP 穿透和连接池尚未实现，范围见[连接获取](/v2/node/connectivity)。
+Control 认可的直接 publication／续租交接可保留 Native TCP／UDP 的实际 socket、Session、channel ID 与认证 transcript。交接要求资源声明及原绑定可保留，并逐 peer 重验当前邻接权限、注册材料与原健康期限；失去资格的 peer 退休。socket ID／generation 随实际描述符生命周期变化，配置引用随获准交接更新；原 STUN 观测不重新计时。资源集合／参数改变时允许安全重建，活动 VLESS／Trojan 的内部缓冲写入交接尚未支持。
+
+物理 gate 与每次操作的冻结 scope 分离：无当前权限时只在原期限内保留失活资源，不能执行 I/O；只有合法后继可恢复未来操作。旧 packet、health、STUN 或 READY 输出仍按原 scope 失效，进行中的穿透授权不跨 publication 续命。SecureNode 的流／circuit 继续使用独立的[连续性规则](/v2/node/dataplane#候选受保护-circuit)。TCP 建连与重连、Native UDP 静态端点均不构成打洞证明；协调穿透范围与验收见[连接获取](/v2/node/connectivity)。
 
 ## 帧与资源
 

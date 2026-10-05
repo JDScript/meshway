@@ -14,6 +14,7 @@ struct Installed {
     live: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     mut host: Host,
     mut commands: mpsc::Receiver<Command>,
@@ -25,6 +26,7 @@ pub(super) async fn run(
         super::dns::Attachment,
         watch::Sender<Option<super::dns::intents::Plan>>,
     ),
+    traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
 ) -> Result<(), Problem> {
     let (mut dns, dns_plans) = dns;
     let mut installed: Option<Installed> = None;
@@ -216,7 +218,10 @@ pub(super) async fn run(
                     .identity
                     .as_ref()
                     .map(|identity| identity.snapshot().clone());
-                let Ok(next_generation) = generation.checked_next() else {
+                // This installation counter allocates generations for new FDs.
+                // Retained sockets report their own unchanged SocketFact value.
+                let next_generation = generation.checked_next();
+                let Ok(next_generation) = next_generation else {
                     let _ = dns.shutdown(&mut host, true).await;
                     close(&mut installed).await;
                     let _ = host.shutdown(true).await;
@@ -233,6 +238,8 @@ pub(super) async fn run(
                     !refreshing,
                     (&mut dns, &dns_plans),
                     timed_out,
+                    traversal.clone(),
+                    generation,
                 )
                 .await;
                 report.dns_guard = dns.guard();
@@ -315,7 +322,13 @@ pub(super) async fn run(
                         .is_some_and(|guard| guard.ensure_current().is_err());
                 let deadline = guard.as_ref().and_then(handoff_deadline);
                 pause_until = if transition { deadline } else { None };
-                close(&mut installed).await;
+                if pause_until.is_some() {
+                    if let Some(state) = &mut installed {
+                        state.live = false;
+                    }
+                } else {
+                    close(&mut installed).await;
+                }
                 packets.clear_incoming();
                 // A cancelled predecessor is never usable authority. Retain
                 // only its device/capture while all packet pumps are stopped,
@@ -406,11 +419,7 @@ fn same_ticket(
 }
 
 fn handoff_deadline(guard: &meshway_control::ExecutionSnapshot) -> Option<tokio::time::Instant> {
-    let wall_now = u64::try_from(chrono::Utc::now().timestamp_millis()).ok()?;
-    let remaining = guard.expires_at_ms().checked_sub(wall_now)?;
-    let deadline = tokio::time::Instant::from_std(guard.expires_at())
-        .min(tokio::time::Instant::now() + Duration::from_millis(remaining));
-    (deadline > tokio::time::Instant::now()).then_some(deadline)
+    guard.retention_deadline().ok().map(Into::into)
 }
 
 /// An explicit measurement by the resource owner. Application observation time
@@ -447,6 +456,7 @@ fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
     report
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn install(
     host: &mut Host,
     installed: &mut Option<Installed>,
@@ -458,6 +468,8 @@ async fn install(
         &watch::Sender<Option<super::dns::intents::Plan>>,
     ),
     timed_out: bool,
+    traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
+    generation: meshway_model::Sequence,
 ) -> Result<bool, (Problem, ApplyFailure)> {
     let (dns, dns_plans) = dns;
     let Some(identity) = &target.identity else {
@@ -494,7 +506,17 @@ async fn install(
             .map_err(|_| (Problem::Dns, ApplyFailure::Dns))
     };
     packets.clear_incoming();
-    close(installed).await;
+    let physical = installed
+        .as_ref()
+        .and_then(|state| state.manager.as_ref())
+        .is_some_and(|manager| manager.can_reconcile(identity));
+    if physical {
+        if let Some(state) = installed.as_mut() {
+            state.live = false;
+        }
+    } else {
+        close(installed).await;
+    }
     let retained = installed
         .as_mut()
         .is_some_and(|state| state.secure.reconcile(identity.clone()).is_ok());
@@ -506,6 +528,7 @@ async fn install(
         return Err((Problem::Apply, ApplyFailure::Dataplane));
     }
     if !retained {
+        close(installed).await;
         *installed = None;
         *packets = Packets::default();
     }
@@ -556,13 +579,28 @@ async fn install(
             .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?,
     )?;
     let dns_snapshot = needs_dns.then(|| identity.snapshot().clone());
-    let mut manager = Manager::start(
-        identity.clone(),
-        Arc::new(host.sockets()),
-        Default::default(),
-    )
-    .await
-    .map_err(|_| (Problem::Transport, ApplyFailure::Listeners))?;
+    let preserved = if physical && retained {
+        installed.as_mut().and_then(|state| state.manager.take())
+    } else {
+        None
+    };
+    let mut manager = if let Some(mut manager) = preserved {
+        if manager.reconcile(identity.clone()).await.is_err() {
+            let _ = manager.shutdown().await;
+            return Err((Problem::Transport, ApplyFailure::Listeners));
+        }
+        manager
+    } else {
+        Manager::start_with_traversal(
+            identity.clone(),
+            Arc::new(host.sockets()),
+            Default::default(),
+            traversal,
+            generation,
+        )
+        .await
+        .map_err(|_| (Problem::Transport, ApplyFailure::Listeners))?
+    };
     let carriers = match manager.carriers() {
         Ok(carriers) => carriers,
         Err(_) => {

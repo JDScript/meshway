@@ -40,26 +40,50 @@ pub(in crate::manager) struct Fixture {
     pub reverse_udp: Option<UdpSocket>,
     pub extra_udp: Vec<UdpSocket>,
     pub tcp: Option<TcpListener>,
+    client: Client,
+    user_token: WireSecret,
+    network: meshway_model::NetworkId,
+    access: Vec<AccessRule>,
 }
 
 impl Fixture {
     pub async fn new(stream: bool, ipv6: bool) -> Self {
-        Self::build(stream, ipv6, false, false).await
+        Self::build(stream, ipv6, false, false, None).await
     }
 
     pub async fn reverse() -> Self {
-        Self::build(false, false, true, false).await
+        Self::build(false, false, true, false, None).await
     }
 
     pub async fn multiple_listeners() -> Self {
-        Self::build(false, false, false, true).await
+        Self::build(false, false, false, true, None).await
     }
 
-    async fn build(stream: bool, ipv6: bool, reverse: bool, multiple: bool) -> Self {
+    pub async fn traversal(stun: SocketAddr) -> Self {
+        Self::build(false, false, true, false, Some(stun)).await
+    }
+
+    async fn build(
+        stream: bool,
+        ipv6: bool,
+        reverse: bool,
+        multiple: bool,
+        stun: Option<SocketAddr>,
+    ) -> Self {
         use meshway_configuration::execution::{BusinessProtocol, BusinessTarget, DemandDecision};
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
-        let app = App::open(Settings::new(root.join("server"))).await.unwrap();
+        let mut settings = Settings::new(root.join("server"));
+        if let Some(stun) = stun {
+            settings.stun_servers.insert(
+                "test-observer".into(),
+                Endpoint {
+                    host: stun.ip().to_string(),
+                    port: stun.port().try_into().unwrap(),
+                },
+            );
+        }
+        let app = App::open(settings).await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let router = meshway_server::http::router(&app);
@@ -247,6 +271,15 @@ impl Fixture {
             ip: vec!["udp:42424".into()],
             bidirectional: false,
         }];
+        if stun.is_some() {
+            for node in cfg.nodes.values_mut() {
+                for listener in node.listeners.values_mut() {
+                    if let Listener::NativeUdp(listener) = listener {
+                        listener.endpoints.clear();
+                    }
+                }
+            }
+        }
         client
             .apply_configuration(
                 &ApplyConfigurationPath {
@@ -303,6 +336,10 @@ impl Fixture {
             reverse_udp,
             extra_udp,
             tcp,
+            client,
+            user_token: user.token,
+            network,
+            access: cfg.access,
         }
     }
 
@@ -311,6 +348,80 @@ impl Fixture {
             .iter()
             .map(|identity| identity.snapshot().configuration().unwrap().node_id)
             .collect()
+    }
+
+    pub async fn change_udp_buffer(&self, node: meshway_model::NodeId) {
+        let source = self
+            .client
+            .get_configuration_source(
+                &GetConfigurationSourcePath {
+                    network_id: self.network,
+                },
+                &GetConfigurationSourceQuery::default(),
+                self.user_token.expose(),
+            )
+            .await
+            .unwrap();
+        let mut cfg = NetworkConfigurationInput::from(&source.configuration);
+        let Listener::NativeUdp(listener) = cfg
+            .nodes
+            .get_mut(&node)
+            .unwrap()
+            .listeners
+            .get_mut("udp")
+            .unwrap()
+        else {
+            panic!("UDP listener");
+        };
+        listener.socket.receive_buffer = 65_536;
+        self.client
+            .apply_configuration(
+                &ApplyConfigurationPath {
+                    network_id: self.network,
+                },
+                &ConfigurationRequest::Document {
+                    expected_revision: source.revision,
+                    request_id: request(),
+                    source_jsonc: WireSecret::new(serde_json::to_string(&cfg).unwrap()),
+                },
+                self.user_token.expose(),
+            )
+            .await
+            .unwrap();
+    }
+
+    pub async fn set_access(&self, allowed: bool) {
+        let source = self
+            .client
+            .get_configuration_source(
+                &GetConfigurationSourcePath {
+                    network_id: self.network,
+                },
+                &GetConfigurationSourceQuery::default(),
+                self.user_token.expose(),
+            )
+            .await
+            .unwrap();
+        let mut cfg = NetworkConfigurationInput::from(&source.configuration);
+        cfg.access = if allowed {
+            self.access.clone()
+        } else {
+            Vec::new()
+        };
+        self.client
+            .apply_configuration(
+                &ApplyConfigurationPath {
+                    network_id: self.network,
+                },
+                &ConfigurationRequest::Document {
+                    expected_revision: source.revision,
+                    request_id: request(),
+                    source_jsonc: WireSecret::new(serde_json::to_string(&cfg).unwrap()),
+                },
+                self.user_token.expose(),
+            )
+            .await
+            .unwrap();
     }
 
     pub async fn close(self) {

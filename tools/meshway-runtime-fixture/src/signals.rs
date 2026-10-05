@@ -35,6 +35,15 @@ impl Role {
 pub struct Underlay {
     pub controller: Ipv4Addr,
     pub actors: BTreeMap<Role, Ipv4Addr>,
+    #[serde(default)]
+    pub routers: BTreeMap<Role, NatRouter>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NatRouter {
+    pub private: Ipv4Addr,
+    pub wan: Ipv4Addr,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -72,6 +81,7 @@ pub enum Signal {
         capture_removed: bool,
         identity_preserved: bool,
         dns: Option<crate::dns::Evidence>,
+        fallback: Option<Box<crate::fallback::Evidence>>,
     },
 }
 

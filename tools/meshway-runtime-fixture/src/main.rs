@@ -5,8 +5,10 @@ mod actor;
 mod application;
 mod controller;
 mod dns;
+mod fallback;
 mod peer;
 mod signals;
+mod traversal;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use signals::Role;
@@ -48,8 +50,18 @@ struct Cli {
     transport: CarrierMode,
     #[arg(long, global = true, value_enum, default_value = "off")]
     dns_backend: DnsBackend,
+    #[arg(long, global = true, value_enum, default_value = "off")]
+    traversal: TraversalMode,
+    #[arg(long, global = true)]
+    traversal_fallback: bool,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TraversalMode {
+    Off,
+    Nat,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
@@ -114,6 +126,14 @@ enum Command {
 async fn main() -> std::process::ExitCode {
     STARTED.get_or_init(std::time::Instant::now);
     let cli = Cli::parse();
+    if cli.traversal_fallback && cli.traversal != TraversalMode::Nat {
+        eprintln!("--traversal-fallback requires --traversal nat");
+        return std::process::ExitCode::FAILURE;
+    }
+    if cli.traversal == TraversalMode::Nat && !matches!(cli.transport, CarrierMode::NativeUdp) {
+        eprintln!("--traversal nat requires --transport native-udp");
+        return std::process::ExitCode::FAILURE;
+    }
     if cli.logging.init().is_err() {
         eprintln!("invalid runtime fixture logging configuration");
         return std::process::ExitCode::FAILURE;

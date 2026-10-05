@@ -697,6 +697,7 @@ mod tests {
                     network_id: id(1000),
                     node_id: target.source_node_id,
                     instance_id: target.instance_id,
+                    instance_generation: meshway_model::Version::MIN,
                     lease_expires_at: now + chrono::Duration::minutes(2),
                     execution: Some(target.configuration.clone()),
                     configurations: vec![target.configuration.clone()],
@@ -840,7 +841,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().canonicalize().unwrap().join("data");
         let mut settings = crate::Settings::new(path.clone());
-        settings.database_queue_capacity = 2;
+        // One queued job per background producer (resource scan, traversal GC,
+        // observation maintenance), plus the write whose acceptance we prove.
+        const QUEUE_CAPACITY: usize = 4;
+        settings.database_queue_capacity = QUEUE_CAPACITY;
         let app = crate::App::open(settings).await.unwrap();
         let service = app.observation_service(app.execution());
         let handle = service.handle.clone();
@@ -861,12 +865,14 @@ mod tests {
             }).await.unwrap();
         });
         started.await.unwrap();
-        let before = Arc::strong_count(&service.runtime);
+        // This provider belongs only to this observation worker; Runtime is
+        // also retained by the independently scheduled traversal janitor.
+        let before = Arc::strong_count(&service.provider);
         let maintenance = service.start();
         let abort = maintenance.worker.abort_handle();
-        // The worker's service clone and accepted SQL closure each retain the
-        // runtime. One waiting slot is now held by the maintenance job.
-        until(|| Arc::strong_count(&service.runtime) == before + 2).await;
+        // The worker's service clone and SQL closure each retain this provider.
+        // The bounded queue has room for all three producer jobs.
+        until(|| Arc::strong_count(&service.provider) == before + 2).await;
         let queued_handle = handle.clone();
         let queued_commit = Arc::new(AtomicBool::new(false));
         let queued_completed = queued_commit.clone();
@@ -885,11 +891,24 @@ mod tests {
                 .unwrap();
         });
         // This current-thread test resumes after the submitter reaches its
-        // reply await: the second slot was available, so its job is accepted.
+        // reply await: at most three producer jobs occupied the queue, so this
+        // write was accepted regardless of timer scheduling.
         submitted.await.unwrap();
+        // Saturate any slots unused by background producers. Surplus fillers
+        // wait for admission and must receive Closed; accepted ones still drain.
+        let mut fillers = Vec::new();
+        for _ in 0..QUEUE_CAPACITY {
+            let handle = handle.clone();
+            let (submitting, submitted) = tokio::sync::oneshot::channel();
+            fillers.push(tokio::spawn(async move {
+                submitting.send(()).unwrap();
+                handle.execute(|_| ()).await
+            }));
+            submitted.await.unwrap();
+        }
         maintenance.shutdown().await.unwrap();
         assert!(abort.is_finished());
-        assert_eq!(Arc::strong_count(&service.runtime), before + 1);
+        assert_eq!(Arc::strong_count(&service.provider), before + 1);
         assert!(!committed.load(Ordering::Acquire));
         assert!(!queued_commit.load(Ordering::Acquire));
         let closing = tokio::spawn(app.shutdown());
@@ -909,6 +928,12 @@ mod tests {
         release.send(()).unwrap();
         blocker.await.unwrap();
         queued.await.unwrap();
+        for filler in fillers {
+            assert!(matches!(
+                filler.await.unwrap(),
+                Ok(()) | Err(crate::store::ExecutorError::Closed)
+            ));
+        }
         assert!(committed.load(Ordering::Acquire));
         assert!(queued_commit.load(Ordering::Acquire));
         drop(service);

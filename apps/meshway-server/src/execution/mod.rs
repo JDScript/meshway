@@ -1,4 +1,5 @@
 //! Authenticated node control and durable execution lifecycle.
+pub(crate) mod connectivity;
 pub(crate) mod diagnostics;
 pub mod proof;
 mod state;

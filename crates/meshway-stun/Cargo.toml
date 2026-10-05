@@ -1,0 +1,16 @@
+[package]
+name = "meshway-stun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Bounded STUN Binding codec and UDP service shared by discovery clients and Server"
+
+[dependencies]
+getrandom.workspace = true
+thiserror.workspace = true
+crc32fast = "1.5"
+tokio = { workspace = true, features = ["io-util"] }
+tokio-util.workspace = true
+
+[lints]
+workspace = true

@@ -82,10 +82,27 @@ pub(super) fn plans(
 }
 
 pub(super) async fn dial(
-    shared: Arc<Shared>,
+    mut shared: Arc<Shared>,
     factory: Arc<dyn SocketFactory>,
     peer: NodeId,
     candidates: Vec<Candidate>,
+) {
+    let mut updates = shared.epochs.subscribe();
+    let candidates = Arc::new(candidates);
+    loop {
+        dial_epoch(shared.clone(), factory.clone(), peer, candidates.clone()).await;
+        match shared.latest(&mut updates).await {
+            Ok(next) => shared = next,
+            Err(_) => return,
+        }
+    }
+}
+
+async fn dial_epoch(
+    shared: Arc<Shared>,
+    factory: Arc<dyn SocketFactory>,
+    peer: NodeId,
+    candidates: Arc<Vec<Candidate>>,
 ) {
     let lifetime = shared.scope(None, false);
     loop {
@@ -110,7 +127,7 @@ pub(super) async fn dial(
             }
             continue;
         }
-        'candidates: for candidate in &candidates {
+        'candidates: for candidate in candidates.iter() {
             for endpoint in 0..candidate.endpoints {
                 if shared.links.lock().is_ok_and(|links| {
                     links
@@ -153,12 +170,14 @@ pub(super) async fn dial(
                     break;
                 };
                 let attempt = async {
+                    let opening = Arc::new(scope::Opening::new(scope.clone()));
                     let socket = factory
                         .connect(shared.identity.snapshot(), &candidate.key, endpoint)
                         .await?;
                     let raw = Box::new(scope::Stream {
                         inner: socket.stream,
-                        scope: shared.scope(Some((peer, candidate.carrier.clone())), false),
+                        scope: shared.physical()?,
+                        opening: Some(opening.clone()),
                     });
                     let Driver::Stream(connector) = &candidate.driver else {
                         return Err(Error::Configuration);
@@ -177,10 +196,11 @@ pub(super) async fn dial(
                             local: socket.local,
                             remote: socket.peer,
                         },
+                        opening,
                     ))
                 };
-                if let Ok((stream, fact)) = scope.run(attempt).await {
-                    let _ = connected(shared.clone(), stream, fact).await;
+                if let Ok((stream, fact, opening)) = scope.run(attempt).await {
+                    let _ = connected(shared.clone(), stream, fact, opening).await;
                 }
                 drop(capacity);
                 if lifetime.check().is_err() {
@@ -214,91 +234,120 @@ pub(super) async fn dial(
 }
 
 pub(super) async fn listen(
-    shared: Arc<Shared>,
+    mut shared: Arc<Shared>,
     fact: ListenerFact,
     listener: Box<dyn ListenerSocket>,
     acceptor: Arc<provider::Acceptor>,
 ) {
-    let lifetime = shared.scope(None, false);
+    let mut updates = shared.epochs.subscribe();
     let mut children = JoinSet::new();
-    let operation = async {
-        loop {
-            let socket = tokio::select! { biased;
-                result = children.join_next(), if !children.is_empty() => {
-                    if result.is_some_and(|result| result.is_err()) {
-                        shared.stop.cancel();
-                        return Err(Error::Worker);
-                    }
-                    continue;
-                },
-                socket = listener.accept() => match socket {
-                    Ok(socket) => socket,
-                    Err(_) => { shared.stop.cancel(); return Err(Error::Underlay); },
-                },
-            };
-            let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
-                continue;
-            };
-            let cfg = shared
-                .identity
-                .snapshot()
-                .configuration()
-                .map_err(|_| Error::Authority)?;
-            let now = shared
-                .identity
-                .snapshot()
-                .now_ms()
-                .map_err(|_| Error::Authority)?;
-            let carriers: Vec<_> = cfg
-                .peers
-                .keys()
-                .filter_map(|peer| {
-                    let carrier = Carrier {
-                        dialer: *peer,
-                        listener: cfg.node_id,
-                        listener_key: fact.key.clone(),
-                        protocol: fact.protocol,
-                    };
-                    admit_adjacency(cfg, *peer, &carrier, now)
-                        .ok()
-                        .map(|_| (*peer, carrier))
-                })
-                .collect();
-            if carriers.is_empty() {
-                continue;
-            }
-            let shared = shared.clone();
-            let acceptor = acceptor.clone();
-            children.spawn(async move {
-                let _capacity = capacity;
-                let scope = shared.scope(None, true);
-                let attempt = async {
-                    let raw = Box::new(scope::Stream {
-                        inner: socket.stream,
-                        scope: shared.scope(None, false),
-                    });
-                    let stream = acceptor.accept(raw).await?;
-                    let (stream, peer, carrier, id) =
-                        adjacency::accept(&shared.identity, &scope, stream, &carriers).await?;
-                    Ok((
-                        stream,
-                        LinkFact {
-                            id,
-                            socket_id: id,
-                            peer,
-                            carrier,
-                            local: socket.local,
-                            remote: socket.peer,
-                        },
-                    ))
-                };
-                if let Ok((stream, fact)) = scope.run(attempt).await {
-                    let _ = connected(shared, stream, fact).await;
+    loop {
+        let lifetime = shared.scope(None, false);
+        let socket = lifetime
+            .run(async {
+                tokio::select! { biased;
+                    _ = updates.changed() => Err(Error::Authority),
+                    result = children.join_next(), if !children.is_empty() => {
+                        if result.is_some_and(|result| result.is_err()) {
+                            shared.stop.cancel();
+                            return Err(Error::Worker);
+                        }
+                        Ok(None)
+                    },
+                    socket = listener.accept() => match socket {
+                        Ok(socket) => Ok(Some(socket)),
+                        Err(_) => Err(Error::Underlay),
+                    },
                 }
-            });
+            })
+            .await;
+        let socket = match socket {
+            Ok(Some(socket)) => socket,
+            Ok(None) => continue,
+            Err(_) if shared.stop.is_cancelled() => break,
+            Err(_)
+                if shared.identity.snapshot().ensure_current().is_err()
+                    || shared.epoch_changed() =>
+            {
+                match shared.successor(&mut updates).await {
+                    Ok(next) => {
+                        shared = next;
+                        if shared.listener_handoff(fact.socket_id).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                    Err(_) => break,
+                }
+            }
+            Err(_) => {
+                shared.stop.cancel();
+                break;
+            }
+        };
+        let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
+            continue;
+        };
+        let cfg = shared.identity.snapshot().configuration();
+        let Ok(cfg) = cfg else {
+            continue;
+        };
+        let now = shared.identity.snapshot().now_ms();
+        let Ok(now) = now else {
+            continue;
+        };
+        let carriers: Vec<_> = cfg
+            .peers
+            .keys()
+            .filter_map(|peer| {
+                let carrier = Carrier {
+                    dialer: *peer,
+                    listener: cfg.node_id,
+                    listener_key: fact.key.clone(),
+                    protocol: fact.protocol,
+                };
+                admit_adjacency(cfg, *peer, &carrier, now)
+                    .ok()
+                    .map(|_| (*peer, carrier))
+            })
+            .collect();
+        if carriers.is_empty() {
+            continue;
         }
-    };
-    let _: Result<(), Error> = lifetime.run(operation).await;
+        let shared = shared.clone();
+        let acceptor = acceptor.clone();
+        children.spawn(async move {
+            let _capacity = capacity;
+            let scope = shared.scope(None, true);
+            let attempt = async {
+                let opening = Arc::new(scope::Opening::new(scope.clone()));
+                let raw = Box::new(scope::Stream {
+                    inner: socket.stream,
+                    scope: shared.physical()?,
+                    opening: Some(opening.clone()),
+                });
+                let stream = acceptor.accept(raw).await?;
+                let (stream, peer, carrier, id) =
+                    adjacency::accept(&shared.identity, &scope, stream, &carriers).await?;
+                Ok((
+                    stream,
+                    LinkFact {
+                        id,
+                        socket_id: id,
+                        peer,
+                        carrier,
+                        local: socket.local,
+                        remote: socket.peer,
+                    },
+                    opening,
+                ))
+            };
+            if let Ok((stream, fact, opening)) = scope.run(attempt).await {
+                let _ = connected(shared, stream, fact, opening).await;
+            }
+        });
+    }
     drop(listener);
+    shared.stop.cancel();
     while children.join_next().await.is_some() {}
 }

@@ -9,6 +9,38 @@ use std::time::Duration;
 
 const POLL: Duration = Duration::from_secs(5);
 
+/// Timings describe real owner work, including a dropped lifecycle future. No
+/// request bodies, credentials, or synthetic observations enter these events.
+async fn stage<T, E>(
+    name: &'static str,
+    operation: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, E> {
+    struct Span {
+        name: &'static str,
+        started: std::time::Instant,
+        outcome: &'static str,
+    }
+    impl Drop for Span {
+        fn drop(&mut self) {
+            tracing::debug!(
+                stage = self.name,
+                elapsed_ms = self.started.elapsed().as_millis() as u64,
+                outcome = self.outcome,
+                "Control stage completed"
+            );
+        }
+    }
+    let mut span = Span {
+        name,
+        started: std::time::Instant::now(),
+        outcome: "cancelled",
+    };
+    tracing::debug!(stage = name, "Control stage started");
+    let result = operation.await;
+    span.outcome = if result.is_ok() { "ok" } else { "error" };
+    result
+}
+
 pub(super) struct Cycle {
     pub phase: Phase,
     pub url: Option<String>,
@@ -134,7 +166,9 @@ pub(super) async fn cycle(
             return Err(failure(error, true));
         }
     }
-    control.authenticate().await.map_err(|e| failure(e, true))?;
+    stage("authenticate", control.authenticate())
+        .await
+        .map_err(|e| failure(e, true))?;
     let mut renewed = false;
     if control.status().instance.is_none() {
         control
@@ -155,16 +189,14 @@ pub(super) async fn cycle(
     }
     let before = control.status().cached;
     if network.is_some() {
-        control
-            .refresh_configuration()
+        stage("refresh_configuration", control.refresh_configuration())
             .await
             .map_err(|e| failure(e, false))?;
         // Refresh grants every TUN poll; reporting/renewal scheduling still
         // records the normal renewal cadence rather than manufacturing samples.
         renewed |= renew;
     } else {
-        control
-            .sync_configuration()
+        stage("sync_configuration", control.sync_configuration())
             .await
             .map_err(|e| failure(e, false))?;
     }
@@ -174,8 +206,7 @@ pub(super) async fn cycle(
         .as_ref()
         .is_some_and(|i| i.target.is_some())
     {
-        control
-            .acknowledge_saved()
+        stage("acknowledge_saved", control.acknowledge_saved())
             .await
             .map_err(|e| failure(e, false))?;
     }
@@ -198,25 +229,24 @@ pub(super) async fn cycle(
         }
         // A retained historical completion may wait for HTTP retry, but cannot
         // prevent offering a newly granted, fsynced target to the network owner.
-        network
-            .publish(control)
+        stage("publish", network.publish(control))
             .await
             .map_err(|error| failure(error, false))?;
-        network
-            .finish(control)
+        stage("finish", network.finish(control))
             .await
             .map_err(|error| failure(error, false))?;
-        network
-            .publish(control)
+        stage("publish_after_finish", network.publish(control))
             .await
             .map_err(|error| failure(error, false))?;
     }
     let routine = report || renewed || before != control.status().cached;
     let reported = if let Some(network) = &mut network {
-        network
-            .report_state(control, settings, routine)
-            .await
-            .map_err(|error| failure(error, false))?
+        stage(
+            "report_state",
+            network.report_state(control, settings, routine),
+        )
+        .await
+        .map_err(|error| failure(error, false))?
     } else if routine {
         match control.report_control_state(settings.system.clone()).await {
             Ok(_) => true,

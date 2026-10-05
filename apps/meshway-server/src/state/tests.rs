@@ -25,6 +25,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         network_id: id(4),
         node_id: node,
         instance_id: id(5),
+        instance_generation: Version::MIN,
         lease_expires_at: now + Duration::minutes(5),
         execution: Some(reference.clone()),
         configurations: vec![reference.clone()],
@@ -112,6 +113,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         visible: BTreeSet::from([node, peer]),
         hostnames: BTreeMap::from([(node, "node".into()), (peer, "peer".into())]),
         full: BTreeSet::from([node]),
+        endpoint_resources: None,
         observation_paths: BTreeSet::from([vec![node, peer]]),
         mesh_addresses: admission.mesh_addresses.clone(),
         expires_at: now + Duration::minutes(10),
@@ -119,6 +121,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
             node,
             CurrentNode {
                 instance_id: Some(admission.instance_id),
+                instance_generation: Some(admission.instance_generation),
                 execution: Some(reference.clone()),
                 configurations: vec![reference],
                 revoked: false,
@@ -127,6 +130,76 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         )]),
     };
     (admission, report, scope, now)
+}
+
+#[test]
+fn legacy_unicode_socket_ids_remain_full_facts_but_are_not_automatic_references() {
+    let (admission, mut report, mut scope, now) = setup();
+    let socket = report.state.sockets.remove("s1").unwrap();
+    report.state.sockets.insert("旧socket".into(), socket);
+    report.state.listeners.get_mut("udp").unwrap().socket_ids = vec!["旧socket".into()];
+    let mut hub = StateHub::new().unwrap();
+    hub.accept_report(&admission, report, now).unwrap();
+    let full = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let Some(VisibleReport::Full { report }) = &full.nodes[&admission.node_id].report else {
+        panic!();
+    };
+    assert!(report.sockets.contains_key("旧socket"));
+    scope.full.clear();
+    let peer = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let Some(VisibleReport::Peer { report }) = &peer.nodes[&admission.node_id].report else {
+        panic!();
+    };
+    assert!(report.endpoints.is_empty());
+}
+
+#[test]
+fn exact_resource_disclosure_and_instance_generation_fence_old_reports() {
+    let (mut admission, report, mut scope, now) = setup();
+    let mut hub = StateHub::new().unwrap();
+    hub.accept_report(&admission, report.clone(), now).unwrap();
+    scope.full.clear();
+    scope.endpoint_resources = Some(BTreeMap::new());
+    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let Some(VisibleReport::Peer { report: peer }) = &view.nodes[&admission.node_id].report else {
+        panic!();
+    };
+    assert!(peer.endpoints.is_empty());
+    scope.endpoint_resources = Some(BTreeMap::from([(
+        admission.node_id,
+        BTreeSet::from([ResourceRef::Listener { key: "udp".into() }]),
+    )]));
+    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let Some(VisibleReport::Peer { report: peer }) = &view.nodes[&admission.node_id].report else {
+        panic!();
+    };
+    assert_eq!(peer.endpoints.len(), 1);
+    assert_eq!(
+        peer.endpoints[0]
+            .candidate_reference
+            .socket
+            .instance
+            .generation,
+        admission.instance_generation
+    );
+    admission.instance_generation = Version::new(2).unwrap();
+    scope
+        .current
+        .get_mut(&admission.node_id)
+        .unwrap()
+        .instance_generation = Some(admission.instance_generation);
+    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    assert_eq!(
+        view.nodes[&admission.node_id].freshness,
+        Freshness::Superseded
+    );
+    let mut fresh_report = report;
+    fresh_report.sequence = Sequence::new(1).unwrap();
+    assert!(
+        !hub.accept_report(&admission, fresh_report, now)
+            .unwrap()
+            .duplicate
+    );
 }
 
 #[test]

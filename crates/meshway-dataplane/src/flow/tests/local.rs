@@ -19,6 +19,7 @@ fn original() -> LocalFlow {
     LocalFlow {
         demand: request(),
         path: vec![node(1), node(2), node(3)],
+        circuit: None,
     }
 }
 

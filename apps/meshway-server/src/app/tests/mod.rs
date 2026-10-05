@@ -5,6 +5,7 @@ use super::*;
 
 mod cache;
 mod commit;
+mod connectivity;
 mod demand_renewal;
 mod discovery;
 mod lifecycle;

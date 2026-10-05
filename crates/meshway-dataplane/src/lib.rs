@@ -140,6 +140,9 @@ pub struct Route {
 pub struct LocalFlow {
     pub demand: RequestId,
     pub path: Vec<NodeId>,
+    /// Cipher context of the last admitted forward packet, when this flow is
+    /// owned by SecureNode. Plaintext Engine consumers have no cipher context.
+    pub circuit: Option<[u8; 32]>,
 }
 
 #[derive(Debug)]
@@ -439,6 +442,24 @@ impl Engine {
         ingress: Ingress,
         facts: PacketFacts,
     ) -> Result<PendingRoute, Error> {
+        self.admit_inner(ingress, facts, None)
+    }
+
+    pub(crate) fn admit_circuit_facts(
+        &mut self,
+        ingress: Ingress,
+        facts: PacketFacts,
+        circuit: [u8; 32],
+    ) -> Result<PendingRoute, Error> {
+        self.admit_inner(ingress, facts, Some(circuit))
+    }
+
+    fn admit_inner(
+        &mut self,
+        ingress: Ingress,
+        facts: PacketFacts,
+        circuit: Option<[u8; 32]>,
+    ) -> Result<PendingRoute, Error> {
         self.maintain()?;
         let time = FlowTime {
             instant: Instant::now(),
@@ -446,9 +467,12 @@ impl Engine {
             guard_expires_at: self.snapshot.expires_at(),
             guard_expires_at_ms: self.snapshot.expires_at_ms(),
         };
-        let prepared =
+        let mut prepared =
             self.flows
                 .prepare(self.snapshot.configuration()?, &ingress, &facts, time)?;
+        if let Some(circuit) = circuit {
+            prepared.bind_circuit(circuit)?;
+        }
         // A rejected/fenced transaction cannot establish or advance flow state.
         tracing::trace!(target: "meshway_dataplane::flow::authority_boundary", operation = "commit",
             "Validating flow admission authority");

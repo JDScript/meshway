@@ -19,9 +19,11 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod continuity;
 mod datagram;
 #[cfg(test)]
 mod tests;
+mod traversal;
 mod workers;
 
 // Diagnostics only: at most 64 events/second and 32768/process; contention drops
@@ -105,6 +107,29 @@ pub struct LinkFact {
 pub struct Snapshot {
     pub listeners: Vec<ListenerFact>,
     pub links: Vec<LinkFact>,
+    pub sockets: Vec<SocketFact>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SocketFact {
+    pub reference: meshway_protocol::connectivity::SocketReference,
+    pub network: meshway_model::state::SocketNetwork,
+    pub bound_address: SocketAddr,
+    pub endpoints: Vec<meshway_model::state::EndpointCandidate>,
+}
+impl SocketFact {
+    pub fn candidate(
+        &self,
+        observation: &meshway_model::state::EndpointCandidate,
+    ) -> Result<meshway_protocol::connectivity::CandidateReference, Error> {
+        meshway_protocol::connectivity::CandidateReference::from_observation(
+            self.reference.clone(),
+            self.network,
+            self.bound_address,
+            observation,
+        )
+        .map_err(|_| Error::Configuration)
+    }
 }
 
 #[derive(Debug)]
@@ -158,11 +183,16 @@ impl LinkTable {
 struct Shared {
     identity: DataPlaneIdentity,
     stop: CancellationToken,
-    links: Mutex<LinkTable>,
+    links: Arc<Mutex<LinkTable>>,
     events: mpsc::Sender<Event>,
     capacity: Arc<Semaphore>,
     limits: Limits,
-    control_budget: Mutex<datagram::ControlBudget>,
+    control_budget: Arc<Mutex<datagram::ControlBudget>>,
+    sockets: Arc<Mutex<BTreeMap<[u8; 32], SocketFact>>>,
+    epochs: tokio::sync::watch::Sender<DataPlaneIdentity>,
+    gates: Arc<Mutex<Vec<std::sync::Weak<scope::Physical>>>>,
+    socket_epochs: Arc<Mutex<BTreeMap<[u8; 32], meshway_control::ExecutionSnapshot>>>,
+    generation: meshway_model::Sequence,
 }
 
 impl Shared {
@@ -188,15 +218,20 @@ impl Shared {
     }
 }
 
-/// A publication-scoped collection of prepared listeners and bounded workers.
-/// Reconcile closes physical endpoints before installing the new publication;
-/// the host retains its one SecureNode/FlowTable for logical flow continuity.
+/// Prepared listeners and bounded physical owners. A compatible direct Control
+/// handoff replaces operation scopes while retaining authenticated channels;
+/// incompatible resources use shutdown/replacement. The host keeps its unique
+/// SecureNode/FlowTable for logical flow continuity.
 pub struct Manager {
     factory: Arc<dyn SocketFactory>,
     shared: Arc<Shared>,
     listeners: Vec<ListenerFact>,
     events: mpsc::Receiver<Event>,
     workers: JoinSet<()>,
+    traversal: Option<(
+        Arc<dyn crate::traversal::TraversalGateway>,
+        meshway_model::Sequence,
+    )>,
 }
 
 impl Manager {
@@ -204,6 +239,31 @@ impl Manager {
         identity: DataPlaneIdentity,
         factory: Arc<dyn SocketFactory>,
         limits: Limits,
+    ) -> Result<Self, Error> {
+        Self::start_inner(identity, factory, limits, None).await
+    }
+
+    pub async fn start_with_traversal(
+        identity: DataPlaneIdentity,
+        factory: Arc<dyn SocketFactory>,
+        limits: Limits,
+        gateway: Arc<dyn crate::traversal::TraversalGateway>,
+        generation: meshway_model::Sequence,
+    ) -> Result<Self, Error> {
+        if generation.get() == 0 {
+            return Err(Error::Configuration);
+        }
+        Self::start_inner(identity, factory, limits, Some((gateway, generation))).await
+    }
+
+    async fn start_inner(
+        identity: DataPlaneIdentity,
+        factory: Arc<dyn SocketFactory>,
+        limits: Limits,
+        traversal: Option<(
+            Arc<dyn crate::traversal::TraversalGateway>,
+            meshway_model::Sequence,
+        )>,
     ) -> Result<Self, Error> {
         limits.validate()?;
         let cfg = identity
@@ -218,6 +278,8 @@ impl Manager {
         }
         let mut prepared = Vec::new();
         let mut datagrams = Vec::new();
+        let mut traversal_endpoints = Vec::new();
+        let mut bound_candidates = Vec::new();
         // All declarations must validate and bind before any worker is installed.
         for (key, declaration) in &cfg.listeners {
             let (protocol, enabled) = provider::declaration(declaration);
@@ -228,6 +290,27 @@ impl Manager {
                 return Err(Error::Configuration);
             }
             if protocol == TransportProtocol::NativeUdp {
+                if let Some((_, generation)) = &traversal {
+                    let id = adjacency::nonce()?;
+                    let reference = traversal::socket_reference(
+                        &identity,
+                        id,
+                        *generation,
+                        meshway_model::state::ResourceRef::Listener { key: key.clone() },
+                    )?;
+                    let socket = tokio::select! { biased;
+                        _ = identity.snapshot().invalidated() => return Err(Error::Authority),
+                        result = tokio::time::timeout(limits.handshake_timeout, factory.traversal_listener(identity.snapshot(), key, reference.clone())) => result.map_err(|_| Error::Cancelled)??,
+                    };
+                    let fact = ListenerFact {
+                        socket_id: id,
+                        key: key.clone(),
+                        protocol,
+                        local: socket.endpoint.local_addr()?,
+                    };
+                    traversal_endpoints.push((fact, reference, socket));
+                    continue;
+                }
                 let endpoint = tokio::select! { biased;
                     _ = identity.snapshot().invalidated() => return Err(Error::Authority),
                     result = tokio::time::timeout(limits.handshake_timeout,
@@ -255,20 +338,80 @@ impl Manager {
             };
             prepared.push((fact, listener, acceptor));
         }
+        if traversal_endpoints.is_empty()
+            && let Some((_, generation)) = &traversal
+        {
+            // Dial-only acquisition uses a real configured Native UDP socket,
+            // even when the compiler intentionally retained no published target.
+            for (key, candidate) in &cfg.dialers {
+                let meshway_transport_spec::DialParameters::NativeUdp { options } =
+                    &candidate.parameters
+                else {
+                    continue;
+                };
+                if !options.enabled
+                    || !options.bind_interface.is_empty()
+                    || bound_candidates.len() >= 4
+                {
+                    continue;
+                }
+                let local = if options.local_address.is_empty() {
+                    None
+                } else {
+                    Some(
+                        options
+                            .local_address
+                            .parse::<std::net::IpAddr>()
+                            .map_err(|_| Error::Configuration)?,
+                    )
+                };
+                for ipv4 in [true, false] {
+                    if local.is_some_and(|local| local.is_ipv4() != ipv4) {
+                        continue;
+                    }
+                    let id = adjacency::nonce()?;
+                    let reference = traversal::socket_reference(
+                        &identity,
+                        id,
+                        *generation,
+                        meshway_model::state::ResourceRef::Dial { key: key.clone() },
+                    )?;
+                    let socket = tokio::select! { biased;
+                        _ = identity.snapshot().invalidated() => return Err(Error::Authority),
+                        result = tokio::time::timeout(limits.handshake_timeout, factory.bind_datagram_candidate(identity.snapshot(), key, ipv4, reference.clone())) => result.map_err(|_| Error::Cancelled)??,
+                    };
+                    bound_candidates.push((id, reference, socket));
+                }
+            }
+        }
         let plans = workers::plans(&identity, limits)?;
         identity
             .snapshot()
             .ensure_current()
             .map_err(|_| Error::Authority)?;
         let (tx, events) = mpsc::channel(limits.events);
+        let (epochs, _) = tokio::sync::watch::channel(identity.clone());
+        let generation = traversal
+            .as_ref()
+            .map(|(_, generation)| *generation)
+            .unwrap_or(
+                meshway_model::Sequence::MIN
+                    .checked_next()
+                    .map_err(|_| Error::Capacity)?,
+            );
         let shared = Arc::new(Shared {
             identity,
             stop: CancellationToken::new(),
-            links: Mutex::new(LinkTable::default()),
+            links: Arc::new(Mutex::new(LinkTable::default())),
             events: tx,
             capacity: Arc::new(Semaphore::new(limits.connections)),
             limits,
-            control_budget: Mutex::new(datagram::ControlBudget::new()),
+            control_budget: Arc::new(Mutex::new(datagram::ControlBudget::new())),
+            sockets: Arc::new(Mutex::new(BTreeMap::new())),
+            epochs,
+            gates: Arc::new(Mutex::new(Vec::new())),
+            socket_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            generation,
         });
         let mut manager = Self {
             factory,
@@ -276,8 +419,10 @@ impl Manager {
             listeners: Vec::new(),
             events,
             workers: JoinSet::new(),
+            traversal,
         };
         for (fact, listener, acceptor) in prepared {
+            manager.register_listener(&fact)?;
             manager.listeners.push(fact.clone());
             manager.workers.spawn(workers::listen(
                 manager.shared.clone(),
@@ -287,10 +432,96 @@ impl Manager {
             ));
         }
         for (fact, endpoint) in datagrams {
+            manager.register_listener(&fact)?;
             manager.listeners.push(fact.clone());
             manager
                 .workers
                 .spawn(datagram::listen(manager.shared.clone(), fact, endpoint));
+        }
+        let mut endpoints = BTreeMap::new();
+        for (fact, reference, socket) in traversal_endpoints {
+            manager
+                .shared
+                .socket_epochs
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .insert(fact.socket_id, manager.shared.identity.snapshot().clone());
+            manager.listeners.push(fact.clone());
+            let (commands, received) = mpsc::channel(8);
+            manager
+                .shared
+                .sockets
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .insert(
+                    fact.socket_id,
+                    SocketFact {
+                        reference,
+                        network: meshway_model::state::SocketNetwork::Udp,
+                        bound_address: fact.local,
+                        endpoints: Vec::new(),
+                    },
+                );
+            endpoints.insert(
+                fact.socket_id,
+                traversal::Endpoint {
+                    commands,
+                    authorization: socket.authorization.clone(),
+                },
+            );
+            manager.workers.spawn(datagram::listen_traversal(
+                manager.shared.clone(),
+                fact.socket_id,
+                Some(fact),
+                socket,
+                received,
+            ));
+        }
+        for (id, reference, socket) in bound_candidates {
+            manager
+                .shared
+                .socket_epochs
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .insert(id, manager.shared.identity.snapshot().clone());
+            let (commands, received) = mpsc::channel(8);
+            manager
+                .shared
+                .sockets
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .insert(
+                    id,
+                    SocketFact {
+                        reference,
+                        network: meshway_model::state::SocketNetwork::Udp,
+                        bound_address: socket.endpoint.local_addr()?,
+                        endpoints: Vec::new(),
+                    },
+                );
+            endpoints.insert(
+                id,
+                traversal::Endpoint {
+                    commands,
+                    authorization: socket.authorization.clone(),
+                },
+            );
+            manager.workers.spawn(datagram::listen_traversal(
+                manager.shared.clone(),
+                id,
+                None,
+                socket,
+                received,
+            ));
+        }
+        if !endpoints.is_empty()
+            && let Some((gateway, _)) = &manager.traversal
+        {
+            manager.workers.spawn(traversal::run(
+                manager.shared.clone(),
+                gateway.clone(),
+                endpoints,
+            ));
         }
         for (peer, candidates) in plans {
             manager.workers.spawn(workers::dial(
@@ -299,6 +530,10 @@ impl Manager {
                 peer,
                 candidates,
             ));
+        }
+        if diagnostic_event() {
+            tracing::debug!(operation = "start", publication = %manager.shared.identity.snapshot().reference().execution_publication,
+                listeners = manager.listeners.len(), generation = manager.shared.generation.get(), "Connectivity manager transition");
         }
         Ok(manager)
     }
@@ -315,12 +550,63 @@ impl Manager {
         let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
         Ok(Snapshot {
             listeners: self.listeners.clone(),
+            sockets: self
+                .shared
+                .sockets
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .values()
+                .cloned()
+                .collect(),
             links: links
                 .values()
                 .filter(|link| link.scope.check().is_ok())
                 .map(|link| link.fact.clone())
                 .collect(),
         })
+    }
+
+    fn register_listener(&self, fact: &ListenerFact) -> Result<(), Error> {
+        self.shared
+            .socket_epochs
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .insert(fact.socket_id, self.shared.identity.snapshot().clone());
+        let generation = self
+            .traversal
+            .as_ref()
+            .map(|(_, generation)| *generation)
+            .unwrap_or(
+                meshway_model::Sequence::MIN
+                    .checked_next()
+                    .map_err(|_| Error::Capacity)?,
+            );
+        let reference = traversal::socket_reference(
+            &self.shared.identity,
+            fact.socket_id,
+            generation,
+            meshway_model::state::ResourceRef::Listener {
+                key: fact.key.clone(),
+            },
+        )?;
+        self.shared
+            .sockets
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .insert(
+                fact.socket_id,
+                SocketFact {
+                    reference,
+                    network: if fact.protocol == TransportProtocol::NativeUdp {
+                        meshway_model::state::SocketNetwork::Udp
+                    } else {
+                        meshway_model::state::SocketNetwork::Tcp
+                    },
+                    bound_address: fact.local,
+                    endpoints: Vec::new(),
+                },
+            );
+        Ok(())
     }
 
     pub fn carriers(&self) -> Result<BTreeMap<NodeId, Carrier>, Error> {
@@ -404,9 +690,28 @@ impl Manager {
             .snapshot()
             .ensure_current()
             .map_err(|_| Error::Authority)?;
+        if self.can_reconcile(&identity) {
+            return self.retain(identity).await;
+        }
         // Fresh snapshot guards are mandatory even for otherwise identical targets.
+        let traversal = self
+            .traversal
+            .as_ref()
+            .map(|(gateway, generation)| {
+                generation
+                    .checked_next()
+                    .map(|generation| (gateway.clone(), generation))
+                    .map_err(|_| Error::Capacity)
+            })
+            .transpose()?;
         self.shutdown().await?;
-        let replacement = Self::start(identity, self.factory.clone(), self.shared.limits).await?;
+        let replacement = Self::start_inner(
+            identity,
+            self.factory.clone(),
+            self.shared.limits,
+            traversal,
+        )
+        .await?;
         *self = replacement;
         Ok(())
     }
@@ -471,6 +776,7 @@ struct ReadyPeer {
     /// Compare-and-replace condition captured during authenticated UDP
     /// reattachment. Never inferred from an address or unsolicited READY.
     supersedes: Replacement,
+    attempt: Option<meshway_control::connectivity::AttemptScope>,
 }
 
 #[derive(Clone, Copy)]
@@ -489,6 +795,9 @@ fn preferred_existing(old: &LinkFact, new: &LinkFact) -> bool {
 
 fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
     ready.scope.check()?;
+    if let Some(attempt) = &ready.attempt {
+        attempt.ensure_current().map_err(|_| Error::Authority)?;
+    }
     let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
     if !matches!(ready.supersedes, Replacement::Ranked) {
         let expected = match ready.supersedes {
@@ -537,8 +846,26 @@ fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
         return Ok(false);
     }
     // A blocked lock/diagnostic must not let a cancelled handoff commit.
+    let fact = ready.fact.clone();
+    let scope = ready.scope.clone();
     ready.scope.check()?;
-    if let Some(old) = links.remove(&ready.fact.peer) {
+    if let Some(attempt) = &ready.attempt {
+        attempt.ensure_current().map_err(|_| Error::Authority)?;
+    }
+    let old = links.remove(&ready.fact.peer);
+    if let Some(old) = &old {
+        old.scope.cancellation.cancel();
+    }
+    links.insert(
+        ready.fact.peer,
+        Link {
+            fact: ready.fact,
+            sender: ready.sender,
+            scope: ready.scope,
+        },
+    );
+    drop(links);
+    if let Some(old) = old {
         diagnostic_link(
             shared,
             &old.fact,
@@ -547,23 +874,14 @@ fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
             "selected_replacement",
             None,
         );
-        old.scope.cancellation.cancel();
     }
     diagnostic_link(
         shared,
-        &ready.fact,
-        &ready.scope,
+        &fact,
+        &scope,
         "install",
         "authenticated_ready",
         None,
-    );
-    links.insert(
-        ready.fact.peer,
-        Link {
-            fact: ready.fact,
-            sender: ready.sender,
-            scope: ready.scope,
-        },
     );
     Ok(true)
 }
@@ -589,22 +907,33 @@ fn retire(shared: &Shared, fact: &LinkFact) -> Result<(), Error> {
 }
 
 async fn connected(
-    shared: Arc<Shared>,
+    mut shared: Arc<Shared>,
     stream: Box<dyn meshway_transport::raw::Stream>,
     fact: LinkFact,
+    opening: Arc<scope::Opening>,
 ) -> Result<(), Error> {
-    let scope = shared.scope(Some((fact.peer, fact.carrier.clone())), false);
+    let mut updates = shared.epochs.subscribe();
+    let mut scope = shared.scope(Some((fact.peer, fact.carrier.clone())), false);
     scope.check()?;
     let (sender, mut receiver) = Session::stream(
         scope::Stream {
             inner: stream,
-            scope: scope.clone(),
+            scope: shared.physical()?,
+            opening: None,
         },
         fact.remote,
         shared.limits.session,
     )
     .into_split();
     let sender = Arc::new(AsyncMutex::new(sender));
+    shared.register_link_socket(&fact)?;
+    struct Registration(Arc<Shared>, [u8; 32]);
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            self.0.remove_socket(self.1);
+        }
+    }
+    let _registration = Registration(shared.clone(), fact.socket_id);
     let selected = install_ready(
         &shared,
         ReadyPeer {
@@ -612,6 +941,7 @@ async fn connected(
             sender: sender.clone(),
             scope: scope.clone(),
             supersedes: Replacement::Ranked,
+            attempt: None,
         },
     )?;
     if !selected {
@@ -623,23 +953,51 @@ async fn connected(
             .map_err(|_| Error::Worker)?;
         return Ok(());
     }
-    let receive = async {
-        shared.event(&scope, Event::Changed).await?;
-        loop {
-            scope.check()?;
-            let frame = receiver.recv().await.map_err(|_| Error::Unavailable)?;
-            shared
-                .event(
-                    &scope,
-                    Event::Frame {
-                        link: Box::new(fact.clone()),
-                        frame,
-                    },
-                )
-                .await?;
+    if let Err(error) = opening.release() {
+        scope.cancellation.cancel();
+        retire(&shared, &fact)?;
+        let _ = sender.lock().await.shutdown().await;
+        return Err(error);
+    }
+    let result = loop {
+        let receive = async {
+            shared.event(&scope, Event::Changed).await?;
+            loop {
+                scope.check()?;
+                let frame = receiver.recv().await.map_err(|_| Error::Unavailable)?;
+                shared
+                    .event(
+                        &scope,
+                        Event::Frame {
+                            link: Box::new(fact.clone()),
+                            frame,
+                        },
+                    )
+                    .await?;
+            }
+        };
+        let result = tokio::select! { biased;
+            _ = updates.changed() => Err(Error::Authority),
+            result = scope.run(receive) => result,
+        };
+        if shared.stop.is_cancelled() {
+            break result;
         }
+        if scope.snapshot.ensure_current().is_err() || shared.epoch_changed() {
+            match shared.successor(&mut updates).await {
+                Ok(next) => match next.renew_link(&fact)? {
+                    Some(next_scope) => {
+                        shared = next;
+                        scope = next_scope;
+                        continue;
+                    }
+                    None => break Err(Error::Unavailable),
+                },
+                Err(error) => break Err(error),
+            }
+        }
+        break result;
     };
-    let result = scope.run(receive).await;
     scope.cancellation.cancel();
     drop(receiver);
     retire(&shared, &fact)?;

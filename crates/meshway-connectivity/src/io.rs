@@ -24,7 +24,56 @@ pub struct DatagramSocket {
     pub targets: Vec<SocketAddr>,
 }
 
+pub struct TraversalSocket {
+    pub endpoint: Box<dyn Datagram>,
+    pub authorization: std::sync::Arc<dyn DatagramAuthorization>,
+}
+pub trait DatagramAuthorization: Send + Sync + 'static {
+    fn handoff(
+        &self,
+        _snapshot: &ExecutionSnapshot,
+        _reference: &meshway_control::connectivity::SocketReference,
+        _channels: &[(
+            SocketAddr,
+            std::sync::Arc<dyn meshway_transport::SendLifetime>,
+        )],
+    ) -> Result<(), Error> {
+        Err(Error::Underlay)
+    }
+    fn authorize_stun<'a>(
+        &'a self,
+        context: &'a meshway_control::connectivity::DiscoveryContext,
+        server: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<SocketAddr>, Error>>;
+    fn authorize_attempt(
+        &self,
+        scope: &meshway_control::connectivity::AttemptScope,
+    ) -> Result<(), Error>;
+    fn authorize_channel(
+        &self,
+        scope: &meshway_control::connectivity::AttemptScope,
+        lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+    ) -> Result<(), Error>;
+}
+
 pub trait SocketFactory: Send + Sync + 'static {
+    fn traversal_listener<'a>(
+        &'a self,
+        _snapshot: &'a ExecutionSnapshot,
+        _key: &'a str,
+        _reference: meshway_control::connectivity::SocketReference,
+    ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
+        Box::pin(async { Err(Error::Configuration) })
+    }
+    fn bind_datagram_candidate<'a>(
+        &'a self,
+        _snapshot: &'a ExecutionSnapshot,
+        _key: &'a str,
+        _ipv4: bool,
+        _reference: meshway_control::connectivity::SocketReference,
+    ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
+        Box::pin(async { Err(Error::Configuration) })
+    }
     fn connect<'a>(
         &'a self,
         snapshot: &'a ExecutionSnapshot,
@@ -57,6 +106,41 @@ pub trait SocketFactory: Send + Sync + 'static {
 
 #[cfg(target_os = "linux")]
 impl SocketFactory for meshway_underlay::SocketFactory {
+    fn traversal_listener<'a>(
+        &'a self,
+        snapshot: &'a ExecutionSnapshot,
+        key: &'a str,
+        reference: meshway_control::connectivity::SocketReference,
+    ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
+        Box::pin(async move {
+            let socket = self
+                .traversal_listener(snapshot, key, reference)
+                .await
+                .map_err(|_| Error::Underlay)?;
+            Ok(TraversalSocket {
+                endpoint: Box::new(socket.endpoint),
+                authorization: std::sync::Arc::new(socket.authorization),
+            })
+        })
+    }
+    fn bind_datagram_candidate<'a>(
+        &'a self,
+        snapshot: &'a ExecutionSnapshot,
+        key: &'a str,
+        ipv4: bool,
+        reference: meshway_control::connectivity::SocketReference,
+    ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
+        Box::pin(async move {
+            let socket = self
+                .bind_datagram_candidate(snapshot, key, ipv4, reference)
+                .await
+                .map_err(|_| Error::Underlay)?;
+            Ok(TraversalSocket {
+                endpoint: Box::new(socket.endpoint),
+                authorization: std::sync::Arc::new(socket.authorization),
+            })
+        })
+    }
     fn datagram_listener<'a>(
         &'a self,
         snapshot: &'a ExecutionSnapshot,
@@ -118,6 +202,47 @@ impl SocketFactory for meshway_underlay::SocketFactory {
             let listener = self.listen(&handle).await.map_err(|_| Error::Underlay)?;
             Ok(Box::new(listener) as Box<dyn ListenerSocket>)
         })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl DatagramAuthorization for meshway_underlay::DatagramAuthorization {
+    fn handoff(
+        &self,
+        snapshot: &ExecutionSnapshot,
+        reference: &meshway_control::connectivity::SocketReference,
+        channels: &[(
+            SocketAddr,
+            std::sync::Arc<dyn meshway_transport::SendLifetime>,
+        )],
+    ) -> Result<(), Error> {
+        self.handoff(snapshot, reference, channels)
+            .map_err(|_| Error::Underlay)
+    }
+    fn authorize_stun<'a>(
+        &'a self,
+        context: &'a meshway_control::connectivity::DiscoveryContext,
+        server: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<SocketAddr>, Error>> {
+        Box::pin(async move {
+            self.authorize_stun(context, server)
+                .await
+                .map_err(|_| Error::Underlay)
+        })
+    }
+    fn authorize_attempt(
+        &self,
+        scope: &meshway_control::connectivity::AttemptScope,
+    ) -> Result<(), Error> {
+        self.authorize_attempt(scope).map_err(|_| Error::Underlay)
+    }
+    fn authorize_channel(
+        &self,
+        scope: &meshway_control::connectivity::AttemptScope,
+        lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+    ) -> Result<(), Error> {
+        self.authorize_channel(scope, lifetime)
+            .map_err(|_| Error::Underlay)
     }
 }
 

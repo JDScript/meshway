@@ -72,6 +72,7 @@ impl StateProvider for SqlProvider {
                 .map(|(id, node)| (*id, node.hostname.clone()))
                 .collect(),
             full: configuration.nodes.keys().copied().collect(),
+            endpoint_resources: None,
             observation_paths: Default::default(),
             mesh_addresses: Default::default(),
             expires_at: DateTime::from_timestamp_millis(expires).unwrap(),

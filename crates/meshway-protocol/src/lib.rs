@@ -7,6 +7,7 @@
 
 mod auth;
 pub mod configuration;
+pub mod connectivity;
 pub mod enrollment;
 pub mod events;
 pub mod execution;
@@ -27,6 +28,14 @@ pub use configuration::{
     CompareConfigurationRequest, ConfigurationAppliedResponse, ConfigurationComparison,
     ConfigurationPreviewResponse, ConfigurationRequest, ConfigurationResponse,
     ConfigurationSchemaResponse, ConfigurationSourceResponse, TransportCatalogResponse,
+};
+pub use connectivity::{
+    AcceptUdpTraversalResponse, CancelUdpTraversalResponse, CandidateReference,
+    ConnectivityLimitExceeded, PrepareUdpTraversalRequest, PrepareUdpTraversalResponse,
+    QueryUdpTraversalRequest, QueryUdpTraversalResponse, SocketReference, StunServer, StunServers,
+    UdpTraversalAttempt, UdpTraversalAttemptRequest, UdpTraversalAttempts, UdpTraversalOffer,
+    UdpTraversalParticipant, UdpTraversalPhase, UdpTraversalUnavailableReason,
+    candidate_observation_digest,
 };
 pub use enrollment::{
     ApproveEnrollmentRequest, CreateEnrollmentKeyRequest, CreateEnrollmentRequest,
@@ -72,7 +81,7 @@ pub use auth::{
 pub use meshway_model::{
     ActivityId, EnrollmentKeyId, EnrollmentRequestId, JoinLinkId, MembershipId, MembershipRole,
     NetworkId, NodeId, ObservationId, ObservationSubscriptionId, PublicationId, Revision,
-    SessionId, Version,
+    SessionId, UdpTraversalId, Version,
 };
 pub use networks::{
     CreateNetworkRequest, MemberActions, MemberSummary, NetworkActions, NetworkListResponse,

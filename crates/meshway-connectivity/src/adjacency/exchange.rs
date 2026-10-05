@@ -104,11 +104,19 @@ impl Initiation {
     }
 
     pub fn new(identity: &DataPlaneIdentity, carrier: &Carrier) -> Result<(Self, Vec<u8>), Error> {
+        Self::new_bound(identity, carrier, None)
+    }
+
+    pub fn new_bound(
+        identity: &DataPlaneIdentity,
+        carrier: &Carrier,
+        binding: Option<meshway_model::Digest>,
+    ) -> Result<(Self, Vec<u8>), Error> {
         let cfg = identity
             .snapshot()
             .configuration()
             .map_err(|_| Error::Authority)?;
-        let context = context(cfg, carrier)?;
+        let context = bound_context(cfg, carrier, binding)?;
         let client = nonce()?;
         let signature = identity
             .sign_packet(digest(INIT, &context, &client, &[0; 32]))
@@ -166,6 +174,42 @@ pub(crate) fn incoming(
         return Ok((*peer, carrier.clone(), Initiation { context, client }));
     }
     Err(Error::Authentication)
+}
+
+fn bound_context(
+    cfg: &NodeConfiguration,
+    carrier: &Carrier,
+    binding: Option<meshway_model::Digest>,
+) -> Result<Vec<u8>, Error> {
+    let mut context = context(cfg, carrier)?;
+    if let Some(binding) = binding {
+        context.extend_from_slice(b"meshway/adjacency/traversal/v1\0");
+        context.extend_from_slice(binding.as_bytes());
+    }
+    Ok(context)
+}
+
+pub(crate) fn incoming_bound(
+    cfg: &NodeConfiguration,
+    peer: NodeId,
+    carrier: &Carrier,
+    binding: meshway_model::Digest,
+    intro: &[u8],
+) -> Result<Initiation, Error> {
+    let context = bound_context(cfg, carrier, Some(binding))?;
+    if intro.len() != context.len() + 96 || !intro.starts_with(&context) {
+        return Err(Error::Authentication);
+    }
+    let client = intro[context.len()..context.len() + 32]
+        .try_into()
+        .map_err(|_| Error::Authentication)?;
+    verify(
+        cfg,
+        peer,
+        digest(INIT, &context, &client, &[0; 32]),
+        &intro[context.len() + 32..],
+    )?;
+    Ok(Initiation { context, client })
 }
 
 pub(crate) struct Transcript {

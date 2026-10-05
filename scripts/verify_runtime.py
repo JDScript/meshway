@@ -9,6 +9,7 @@ import datetime
 import fcntl
 import hashlib
 import ipaddress
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -40,7 +41,7 @@ KERNEL_TESTS = {
 def fingerprint():
     paths = [ROOT / name for name in ("Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock")]
     for directory in ("crates", "apps/meshway-server", "apps/meshway-daemon", "apps/meshway-cli",
-                      "tools/meshway-packet-fixture", "tools/meshway-runtime-fixture", "dev/dns-fixture"):
+                      "tools/meshway-packet-fixture", "tools/meshway-runtime-fixture", "dev/dns-fixture", "dev/traversal-fixture"):
         # Include SQL and other compile-time include_str/include_bytes inputs,
         # not just Rust modules and manifests.
         paths.extend(path for path in (ROOT / directory).rglob("*")
@@ -155,9 +156,21 @@ def main():
                         help="real libc DNS conformance in an owned private mount namespace")
     parser.add_argument("--dns-image-manifest", type=Path,
                         help="parent-built dev/dns-fixture/build.py immutable OS image manifest")
+    parser.add_argument("--traversal", choices=("off", "nat"), default="off",
+                        help="real two-router IPv4 NAT acquisition with empty UDP endpoints")
+    parser.add_argument("--traversal-fallback", action="store_true",
+                        help="preauthorize TCP on R, then block only A-R UDP during the same 125-second flows")
+    parser.add_argument("--traversal-image-manifest", type=Path,
+                        help="immutable OS manifest built with dev/dns-fixture/build.py --lock-file dev/traversal-fixture/assets.lock.json")
     args = parser.parse_args()
     if not args.build_only and (args.dns_backend != "off") != bool(args.dns_image_manifest):
         parser.error("DNS scenarios require --dns-image-manifest; IP-only runs must omit it")
+    if args.traversal == "nat" and args.transport != "native-udp":
+        parser.error("--traversal nat requires --transport native-udp")
+    if args.traversal_fallback and args.traversal != "nat":
+        parser.error("--traversal-fallback requires --traversal nat")
+    if not args.build_only and (args.traversal == "nat") != bool(args.traversal_image_manifest):
+        parser.error("NAT runs require --traversal-image-manifest; static runs must omit it")
     os.umask(0o077)
     target, platform, machine = docker_target()  # read-only engine architecture query
     common = Path(run("git", "rev-parse", "--git-common-dir", capture=True).strip())
@@ -166,7 +179,7 @@ def main():
     root.mkdir(parents=True, exist_ok=True)
     identity = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     report = root / identity
-    for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", *ROLES,
+    for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES,
                  "underlay-peer", "bootstrap", *KERNEL_TESTS, *PLATFORM_BINARIES):
         (report / name).mkdir(parents=True, exist_ok=True)
     source = fingerprint()
@@ -203,18 +216,43 @@ def main():
                 or dns_description["Config"].get("Volumes")):
             raise RuntimeError("DNS OS image identity/platform/volumes mismatch")
         shutil.copyfile(ROOT / "dev/dns-fixture/namespace.sh", report / "dns-support/namespace.sh")
+    traversal_image = None
+    traversal_assets = None
+    if args.traversal == "nat":
+        traversal_assets = json.loads(args.traversal_image_manifest.read_text())
+        lock_path = ROOT / "dev/traversal-fixture/assets.lock.json"
+        lock = json.loads(lock_path.read_text())
+        if (traversal_assets.get("status") != "built" or traversal_assets.get("platform") != platform
+                or traversal_assets.get("base") != lock["base"] or traversal_assets.get("lockSha256") != sha256(lock_path)
+                or not set(lock["packages"]).issubset({item["name"] for item in traversal_assets.get("packages", [])})):
+            raise RuntimeError("Traversal OS manifest does not match the locked router assets")
+        traversal_image = traversal_assets["imageId"]
+        if not isinstance(traversal_image, str) or not traversal_image.startswith("sha256:") or len(traversal_image) != 71:
+            raise RuntimeError("Traversal OS image must be an immutable local SHA256 ID")
+        inspected_image = json.loads(run("docker", "image", "inspect", traversal_image, capture=True))[0]
+        if (inspected_image["Id"] != traversal_image or inspected_image["Os"] != "linux"
+                or inspected_image["Architecture"] != platform.split("/")[1] or inspected_image["Config"].get("Volumes")):
+            raise RuntimeError("Traversal OS image identity/platform/volumes mismatch")
+        shutil.copyfile(ROOT / "dev/traversal-fixture/router.sh", report / "traversal-support/router.sh")
     if fingerprint() != source:
         raise RuntimeError("Sources changed before runtime start.")
     label_key = "io.meshway.runtime-fixture"
     label = label_key + "=" + identity
     containers = {}
     network = None
+    networks = {}
+    actor_networks = {}
+    routers = {}
     manifest = {**artifacts, "image": image, "imageId": description["Id"], "run": identity,
                 "dirty": bool(run("git", "status", "--porcelain", capture=True).strip()),
                  "passed": False, "processes": {}, "resources": {"containers": containers},
                   "carrier": args.transport,
                   "dnsBackend": args.dns_backend,
-                  "dnsOsAssets": dns_assets,
+                   "dnsOsAssets": dns_assets,
+                   "traversal": args.traversal,
+                   "traversalOsAssets": traversal_assets,
+                   "traversalScope": "outer IPv4, two port-preserving Linux SNATs; optional same-edge TCP fallback; no mapping-rotation claim" if args.traversal == "nat" else None,
+                   "traversalFallback": {"status": "notRun"} if args.traversal_fallback else None,
                  "scope": "real meshwayd/CLI; Server browser approval; A-R-B; IPv4/IPv6 UDP/TCP TUN; demand renewal; Access revocation; lease loss; offline down",
                 "tests": {name: {"status": "notRun", "test": test} for name, test in KERNEL_TESTS.items()},
                   "bootstrapHttpsTest": {"status": "notRun"},
@@ -231,7 +269,7 @@ def main():
                    "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m",
                    "--pids-limit", "128", "--tmpfs", "/state:rw,nosuid,nodev,mode=700",
                    "--env", "TMPDIR=/state",
-                   "--network", network if address else "none"]
+                   "--network", actor_networks.get(role, network) if address else "none"]
         if address:
             command.extend(["--ip", str(address)])
         if address6:
@@ -242,6 +280,8 @@ def main():
             command.extend(["--workdir", "/state"])
         for key, value in (environment or {}).items():
             command.extend(["--env", f"{key}={value}"])
+        if args.traversal == "nat" and role in ("a", "r", "b"):
+            command.extend(["--env", "MESHWAY_TRAVERSAL_OWNED=1"])
         if dns_actor:
             command.extend(["--tmpfs", "/run:rw,nosuid,nodev,mode=755",
                             "--env", "MESHWAY_DNS_FIXTURE_OWNED=1",
@@ -278,7 +318,10 @@ def main():
             command.extend(["/bin/sh", "/dns-fixture/namespace.sh"])
         command.append("/fixtures/" + executable)
         if executable == "meshway-runtime-fixture":
-            command.extend(["--log-format", "json", "--transport", args.transport, "--dns-backend", args.dns_backend])
+            command.extend(["--log-format", "json", "--transport", args.transport, "--dns-backend", args.dns_backend,
+                            "--traversal", args.traversal])
+            if args.traversal_fallback:
+                command.append("--traversal-fallback")
         command.extend(arguments)
         identifier = run(*command, capture=True).strip()
         containers[role] = identifier
@@ -292,6 +335,76 @@ def main():
                                     stdout=log, stderr=subprocess.STDOUT, timeout=450, close_fds=True)
         state = json.loads(run("docker", "inspect", identifier, capture=True))[0]["State"]
         return {"attachExit": result.returncode, "exitCode": state["ExitCode"], "oomKilled": state["OOMKilled"], "running": state["Running"]}
+
+    def owned_container(identifier):
+        inspected = json.loads(run("docker", "inspect", identifier, capture=True))[0]
+        if inspected["Config"]["Labels"].get(label_key) != identity:
+            raise RuntimeError("container ownership label changed")
+        return inspected
+
+    def start_router(actor):
+        role = "router-" + actor
+        router = routers[actor]
+        command = ["docker", "create", "--pull", "never", "--name", f"meshway-runtime-{identity.lower()}-{role}",
+                   "--label", label, "--platform", platform, "--read-only", "--cap-drop", "ALL",
+                   "--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW", "--cap-add", "SETUID", "--cap-add", "SETGID",
+                   "--security-opt", "no-new-privileges", "--cpus", "1", "--memory", "256m", "--pids-limit", "32",
+                   "--tmpfs", "/run:rw,nosuid,nodev,mode=700", "--env", "MESHWAY_TRAVERSAL_OWNED=1",
+                   "--network", network, "--ip", router["wan"], "--ip6", router["wan6"],
+                   "--sysctl", "net.ipv4.ip_forward=1", "--sysctl", "net.ipv6.conf.all.forwarding=0",
+                   "--sysctl", "net.ipv6.conf.all.disable_ipv6=0", "--sysctl", "net.ipv6.conf.default.disable_ipv6=0"]
+        for source_name, destination, readonly in ((role, "/evidence", False), ("signals", "/signals", False),
+                                                   ("traversal-support", "/traversal-fixture", True)):
+            command.extend(["--mount", f"type=bind,source={report / source_name},target={destination}" + (",readonly" if readonly else "")])
+        if args.traversal_fallback:
+            command.extend(["--env", "MESHWAY_TRAVERSAL_FALLBACK=1", "--env",
+                            "MESHWAY_TRAVERSAL_PEER_WAN=" + routers["r" if actor == "a" else "a"]["wan"]])
+        command.extend([traversal_image, "/bin/sh", "/traversal-fixture/router.sh", role,
+                        router["private"], router["wan"], addresses[actor]])
+        identifier = run(*command, capture=True).strip()
+        containers[role] = identifier
+        manifest["resources"].setdefault("commands", {})[role] = command
+        write_json(metadata, manifest)
+        owned_container(identifier)
+        connect = ["docker", "network", "connect", "--ip", router["private"], "--ip6", router["private6"],
+                   actor_networks[actor], identifier]
+        run(*connect, capture=True)
+        manifest["resources"].setdefault("networkConnect", {})[role] = connect
+        run("docker", "start", identifier, capture=True)
+        deadline = time.monotonic() + 20
+        ready = report / f"signals/{role}-ready.json"
+        while not ready.exists():
+            if time.monotonic() >= deadline or not owned_container(identifier)["State"]["Running"]:
+                raise RuntimeError("NAT router did not become ready: " + role)
+            time.sleep(0.1)
+        if json.loads(ready.read_text()) != {"kind": "ready"}:
+            raise RuntimeError("invalid NAT router readiness")
+        manifest["resources"].setdefault("routerInspections", {})[role] = owned_container(identifier)
+        write_json(metadata, manifest)
+
+    def stop_routers():
+        write_json(report / "signals/routers-stop.json", {"kind": "ready"})
+        failures = []
+        for actor in routers:
+            role = "router-" + actor
+            if role not in containers or role in manifest.get("routerProcesses", {}):
+                continue
+            identifier = containers[role]
+            try:
+                owned_container(identifier)
+                run("docker", "wait", identifier, capture=True, timeout=20)
+                inspected = owned_container(identifier)
+                state = inspected["State"]
+                (report / f"{role}.log").write_text(run("docker", "logs", identifier, capture=True))
+                manifest.setdefault("routerProcesses", {})[role] = {
+                    "exitCode": state["ExitCode"], "running": state["Running"], "oomKilled": state["OOMKilled"]}
+                if state["ExitCode"] or state["Running"] or state["OOMKilled"]:
+                    raise RuntimeError("router capture did not stop/join cleanly: " + role)
+            except Exception as error:
+                failures.append(error)
+        write_json(metadata, manifest)
+        if failures:
+            raise ExceptionGroup("NAT router shutdown failed", failures)
 
     failure = None
     try:
@@ -313,9 +426,14 @@ def main():
         ipv6_requested = ipaddress.ip_network(f"2001:db8:{random[:4]}:{random[4:8]}::/64")
         network = run("docker", "network", "create", "--internal", "--ipv6", "--subnet", str(ipv6_requested), "--label", label,
                       "meshway-runtime-" + identity.lower(), capture=True).strip()
+        networks["wan"] = network
+        manifest["resources"]["networks"] = networks
         manifest["resources"]["network"] = network
         write_json(metadata, manifest)
         inspected = json.loads(run("docker", "network", "inspect", network, capture=True))[0]
+        if inspected["Labels"].get(label_key) != identity or not inspected["Internal"] or inspected["Driver"] != "bridge":
+            raise RuntimeError("WAN is not the owned internal fixture bridge")
+        manifest["resources"]["networkInspections"] = {"wan": inspected}
         configurations = inspected["IPAM"]["Config"]
         ipv4 = None
         ipv6 = None
@@ -338,8 +456,47 @@ def main():
         gateways = {config.get("Gateway") for config in configurations}
         if gateways.intersection((*addresses.values(), *addresses6.values())):
             raise RuntimeError("fixture address conflicts with isolated gateway")
+        if args.traversal == "nat":
+            subnets = [ipv4, ipv6]
+            for index, role in enumerate(("a", "r")):
+                salt = uuid.uuid4().hex
+                requested6 = ipaddress.ip_network(f"2001:db8:{salt[:4]}:{salt[4:8]}::/64")
+                identifier = run("docker", "network", "create", "--internal", "--ipv6", "--subnet", str(requested6),
+                                 "--label", label, f"meshway-runtime-{identity.lower()}-private-{role}", capture=True).strip()
+                networks["private-" + role] = identifier
+                actor_networks[role] = identifier
+                write_json(metadata, manifest)
+                inspected_private = json.loads(run("docker", "network", "inspect", identifier, capture=True))[0]
+                if (inspected_private["Labels"].get(label_key) != identity
+                        or not inspected_private["Internal"] or inspected_private["Driver"] != "bridge"):
+                    raise RuntimeError("NAT LAN is not the owned internal fixture bridge")
+                manifest["resources"]["networkInspections"]["private-" + role] = inspected_private
+                configurations_private = inspected_private["IPAM"]["Config"]
+                private4 = None
+                private6 = None
+                for config in configurations_private:
+                    subnet = ipaddress.ip_network(config["Subnet"])
+                    managed = ipaddress.ip_network("100.64.0.0/10" if subnet.version == 4 else "fc00::/7")
+                    if subnet.overlaps(managed) or any(subnet.version == previous.version and subnet.overlaps(previous) for previous in subnets):
+                        raise RuntimeError("NAT private bridge overlaps another fixture or Mesh subnet")
+                    subnets.append(subnet)
+                    if subnet.version == 4:
+                        private4 = subnet
+                    else:
+                        private6 = subnet
+                if private4 is None or private4.num_addresses < 32 or private6 != requested6:
+                    raise RuntimeError("Unexpected private NAT bridge address allocation")
+                addresses[role] = str(private4.network_address + 10)
+                addresses6[role] = str(private6.network_address + 10)
+                routers[role] = {"private": str(private4.network_address + 2), "private6": str(private6.network_address + 2),
+                                 "wan": str(ipv4.network_address + 28 + index), "wan6": str(ipv6.network_address + 28 + index)}
+                allocated = {addresses[role], addresses6[role], *routers[role].values()}
+                if allocated.intersection({config.get("Gateway") for config in configurations_private} | gateways):
+                    raise RuntimeError("NAT fixture address conflicts with Docker gateway")
+            manifest["natRouters"] = routers
         write_json(report / "public/underlay.json", {"controller": addresses["controller"],
-                    "actors": {role: addresses[role] for role in ("a", "r", "b")}})
+                    "actors": {role: addresses[role] for role in ("a", "r", "b")},
+                    "routers": {role: {"private": router["private"], "wan": router["wan"]} for role, router in routers.items()}})
         manifest["underlay"] = addresses
         manifest["underlay6"] = addresses6
         create("underlay-peer", ["underlay-peer", "--ipv4", addresses["underlay-peer"], "--ipv6", addresses6["underlay-peer"]],
@@ -378,6 +535,8 @@ def main():
                 write_json(metadata, manifest)
         if any(manifest["underlayPeer"].values()):
             raise RuntimeError("remote underlay peer did not stop cleanly")
+        for role in routers:
+            start_router(role)
         create("controller", ["controller"], address=addresses["controller"], address6=addresses6["controller"], private=True)
         for role in ("a", "r", "b"):
             create(role, ["actor", "--role", role], address=addresses[role], address6=addresses6[role], tun=True)
@@ -413,13 +572,36 @@ def main():
         for role in ("a", "r", "b"):
             actor = json.loads((report / f"controller/report-{role}.json").read_text())
             manifest.setdefault("actors", {})[role] = actor
+            if args.traversal == "nat":
+                inspected_actor = owned_container(containers[role])
+                attached = inspected_actor["NetworkSettings"]["Networks"].values()
+                if {item["NetworkID"] for item in attached} != {actor_networks.get(role, network)}:
+                    raise RuntimeError("Actor has an unexpected network attachment/bypass")
+                manifest["resources"].setdefault("actorInspections", {})[role] = inspected_actor
+        if args.traversal == "nat":
+            stop_routers()
+            spec = importlib.util.spec_from_file_location("meshway_traversal_evidence", ROOT / "dev/traversal-fixture/evidence.py")
+            if spec is None or spec.loader is None:
+                raise RuntimeError("Traversal evidence reader unavailable")
+            evidence = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(evidence)
+            manifest["traversalPackets"] = evidence.verify(report, addresses, routers, fallback=args.traversal_fallback)
+            if args.traversal_fallback:
+                manifest["traversalFallback"] = {"status": "passed", **manifest["traversalPackets"]["fallback"]}
         manifest["passed"] = True
     except BaseException as error:
         failure = error
         manifest["passed"] = False
         manifest["failure"] = type(error).__name__
+        if args.traversal_fallback and (report / "signals/enable-fallback.json").exists():
+            manifest["traversalFallback"] = {"status": "failed"}
     finally:
         cleanup_errors = []
+        if routers:
+            try:
+                stop_routers()
+            except Exception as error:
+                cleanup_errors.append(error)
         for role, identifier in containers.items():
             try:
                 labels = json.loads(run("docker", "inspect", identifier, capture=True))[0]["Config"]["Labels"]
@@ -430,16 +612,16 @@ def main():
             except Exception as error:
                 cleanup_errors.append(error)
                 manifest["cleanup"][role] = False
-        if network:
+        for name, identifier in reversed(list(networks.items())):
             try:
-                labels = json.loads(run("docker", "network", "inspect", network, capture=True))[0]["Labels"]
+                labels = json.loads(run("docker", "network", "inspect", identifier, capture=True))[0]["Labels"]
                 if labels.get(label_key) != identity:
                     raise RuntimeError("network ownership label changed")
-                run("docker", "network", "rm", network, capture=True)
-                manifest["cleanup"]["network"] = True
+                run("docker", "network", "rm", identifier, capture=True)
+                manifest["cleanup"]["network" if name == "wan" else "network-" + name] = True
             except Exception as error:
                 cleanup_errors.append(error)
-                manifest["cleanup"]["network"] = False
+                manifest["cleanup"]["network" if name == "wan" else "network-" + name] = False
         if cleanup_errors:
             manifest["passed"] = False
         write_json(metadata, manifest)

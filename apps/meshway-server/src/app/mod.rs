@@ -16,8 +16,12 @@ static DIRECTORY_PREPARATIONS: Semaphore =
 /// the SQLite worker retains its process lock until accepted work has drained
 /// and the connection has closed. Use [`Self::shutdown`] to await that boundary.
 pub struct App {
+    stun: crate::stun::Hosted,
+    pub(crate) stun_servers:
+        Arc<std::collections::BTreeMap<String, meshway_transport_spec::Endpoint>>,
     resource_scheduler: crate::resources::scheduler::Scheduler,
     observation_maintenance: std::sync::Mutex<crate::observations::service::MaintenanceOwner>,
+    traversal_maintenance: crate::connectivity::maintenance::Maintenance,
     downloads: Arc<crate::resources::downloads::Downloads>,
     executor: Executor,
     accounts: Accounts,
@@ -69,6 +73,8 @@ pub enum AppError {
     Database,
     #[error("application worker failed or stopped")]
     Worker,
+    #[error("hosted STUN listener failed")]
+    Stun,
     #[error("private storage is unsupported on this platform")]
     UnsupportedPlatform,
     #[error("private master key is missing, invalid, or does not match storage")]
@@ -95,6 +101,8 @@ impl App {
         let account_options =
             crate::accounts::Options::new(settings.registration_enabled, settings.session_ttl)
                 .ok_or(AppError::InvalidSettings)?;
+        crate::settings::validate_stun(&settings)?;
+        let stun_sockets = crate::stun::bind(&settings.stun_listen)?;
         let permit = DIRECTORY_PREPARATIONS
             .acquire()
             .await
@@ -108,14 +116,17 @@ impl App {
         })
         .await
         .map_err(|_| AppError::Worker)??;
-        Self::open_directory(
+        let mut app = Self::open_directory(
             directory,
             options,
             account_options,
             downloads,
             settings.console_origin.map(Arc::new),
         )
-        .await
+        .await?;
+        app.stun = crate::stun::Hosted::start(stun_sockets)?;
+        app.stun_servers = Arc::new(settings.stun_servers);
+        Ok(app)
     }
 
     async fn open_directory(
@@ -177,6 +188,12 @@ impl App {
             downloads.clone(),
         );
         let app = Self {
+            traversal_maintenance: crate::connectivity::maintenance::Maintenance::start(
+                executor.handle(),
+                state_runtime.clone(),
+            ),
+            stun: crate::stun::Hosted::default(),
+            stun_servers: Arc::default(),
             resource_scheduler,
             downloads,
             executor,
@@ -345,6 +362,18 @@ impl App {
     pub fn execution(&self) -> crate::execution::Execution {
         crate::execution::Execution::new(self.executor.handle(), self.sealer(), self.boot)
     }
+    pub fn connectivity(&self) -> crate::connectivity::Connectivity {
+        crate::connectivity::Connectivity::new(
+            self.executor.handle(),
+            self.execution(),
+            self.state_runtime.clone(),
+            self.stun_servers.clone(),
+            self.stun.health(),
+        )
+    }
+    pub fn stun_ready(&self) -> bool {
+        self.stun.ready()
+    }
     pub fn enrollment(&self) -> crate::enrollment::Enrollment {
         crate::enrollment::Enrollment::new(
             self.executor.handle(),
@@ -385,15 +414,26 @@ impl App {
                 .unwrap_or_else(|e| e.into_inner()),
             crate::observations::service::MaintenanceOwner::Closed,
         );
-        let maintenance_result = match maintenance {
-            crate::observations::service::MaintenanceOwner::Running(worker) => {
-                worker.shutdown().await.map_err(|_| AppError::Worker)
-            }
-            _ => Ok(()),
-        };
-        self.resource_scheduler.shutdown().await;
+        // Each shutdown signals its producer before its first await. Poll all
+        // of them together so one queued SQL reply or task join cannot delay
+        // cancellation of another producer. Accepted SQL work drains below.
+        let (stun_result, maintenance_result, (), traversal_result) = tokio::join!(
+            self.stun.shutdown(),
+            async move {
+                match maintenance {
+                    crate::observations::service::MaintenanceOwner::Running(worker) => {
+                        worker.shutdown().await.map_err(|_| AppError::Worker)
+                    }
+                    _ => Ok(()),
+                }
+            },
+            self.resource_scheduler.shutdown(),
+            self.traversal_maintenance.shutdown(),
+        );
         self.executor.shutdown().await?;
+        traversal_result.map_err(|_| AppError::Worker)?;
         maintenance_result?;
+        stun_result?;
         Ok(())
     }
 }

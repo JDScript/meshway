@@ -4,6 +4,67 @@ export const schemaDocument = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "components": {
     "schemas": {
+      "AcceptUdpTraversalResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "offer",
+              "status"
+            ],
+            "properties": {
+              "offer": {
+                "$ref": "#/components/schemas/UdpTraversalOffer"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "waiting"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "offer",
+              "status"
+            ],
+            "properties": {
+              "offer": {
+                "$ref": "#/components/schemas/UdpTraversalOffer"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/UdpTraversalUnavailableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
       "AccessDefault": {
         "type": "string",
         "enum": [
@@ -827,6 +888,60 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CancelUdpTraversalResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "cancelled"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/UdpTraversalUnavailableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "CandidateReference": {
+        "type": "object",
+        "required": [
+          "socket",
+          "observationDigest"
+        ],
+        "properties": {
+          "observationDigest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketReference"
+          }
+        },
+        "additionalProperties": false
+      },
       "CandidateSource": {
         "type": "string",
         "enum": [
@@ -888,6 +1003,31 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ]
+      },
+      "Carrier": {
+        "type": "object",
+        "description": "Actual socket establishment orientation, independent of business direction.",
+        "required": [
+          "dialer",
+          "listener",
+          "listenerKey",
+          "protocol"
+        ],
+        "properties": {
+          "dialer": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "listener": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "listenerKey": {
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/TransportProtocol"
+          }
+        },
+        "additionalProperties": false
       },
       "ChallengeId": {
         "type": "string",
@@ -9244,11 +9384,15 @@ export const schemaDocument = {
           "resource",
           "generation",
           "network",
-          "candidate"
+          "candidate",
+          "candidateReference"
         ],
         "properties": {
           "candidate": {
             "$ref": "#/components/schemas/PeerCandidate"
+          },
+          "candidateReference": {
+            "$ref": "#/components/schemas/CandidateReference"
           },
           "generation": {
             "$ref": "#/components/schemas/Sequence"
@@ -9378,6 +9522,94 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "PrepareUdpTraversalRequest": {
+        "type": "object",
+        "required": [
+          "instance",
+          "configuration",
+          "stateEpoch",
+          "requestId",
+          "expiresAt",
+          "peerId",
+          "carrier",
+          "localCandidate",
+          "peerCandidate"
+        ],
+        "properties": {
+          "carrier": {
+            "$ref": "#/components/schemas/Carrier"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Absolute requested deadline, unchanged on retry, never a duration."
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          },
+          "localCandidate": {
+            "$ref": "#/components/schemas/CandidateReference"
+          },
+          "peerCandidate": {
+            "$ref": "#/components/schemas/CandidateReference"
+          },
+          "peerId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "stateEpoch": {
+            "$ref": "#/components/schemas/StateEpoch"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrepareUdpTraversalResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "offer",
+              "status"
+            ],
+            "properties": {
+              "offer": {
+                "$ref": "#/components/schemas/UdpTraversalOffer"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "offer"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/UdpTraversalUnavailableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "PreparedListener": {
         "oneOf": [
@@ -10686,6 +10918,82 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "QueryUdpTraversalRequest": {
+        "type": "object",
+        "required": [
+          "instance",
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QueryUdpTraversalResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "stateEpoch",
+              "asOf",
+              "expiresAt",
+              "stunServers",
+              "attempts",
+              "status"
+            ],
+            "properties": {
+              "asOf": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "attempts": {
+                "$ref": "#/components/schemas/UdpTraversalAttempts"
+              },
+              "expiresAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "stateEpoch": {
+                "$ref": "#/components/schemas/StateEpoch"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "current"
+                ]
+              },
+              "stunServers": {
+                "$ref": "#/components/schemas/StunServers"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/UdpTraversalUnavailableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
       "ReceiptFreshness": {
         "type": "string",
         "enum": [
@@ -11586,6 +11894,41 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "SocketReference": {
+        "type": "object",
+        "required": [
+          "nodeId",
+          "instance",
+          "configuration",
+          "socketId",
+          "socketGeneration",
+          "resource"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          },
+          "socketGeneration": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "socketId": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,256}(?![\\s\\S])"
+          }
+        },
+        "additionalProperties": false
+      },
       "SocketState": {
         "type": "object",
         "required": [
@@ -11838,6 +12181,30 @@ export const schemaDocument = {
           "websocket",
           "udp"
         ]
+      },
+      "StunServers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "endpoint"
+          ],
+          "properties": {
+            "endpoint": {
+              "$ref": "#/components/schemas/Endpoint",
+              "description": "Explicit operator metadata; a hostname is allowed here, not in probe targets."
+            },
+            "id": {
+              "type": "string",
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]{1,64}(?![\\s\\S])"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 4
       },
       "SystemState": {
         "type": "object",
@@ -12195,6 +12562,158 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "UdpTraversalAttemptRequest": {
+        "type": "object",
+        "description": "Shared accept/cancel CAS body. attemptId is the path parameter.",
+        "required": [
+          "instance",
+          "configuration",
+          "stateEpoch",
+          "version",
+          "digest"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          },
+          "digest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          },
+          "stateEpoch": {
+            "$ref": "#/components/schemas/StateEpoch"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UdpTraversalAttempts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "offer",
+            "phase"
+          ],
+          "properties": {
+            "offer": {
+              "$ref": "#/components/schemas/UdpTraversalOffer"
+            },
+            "phase": {
+              "$ref": "#/components/schemas/UdpTraversalPhase",
+              "description": "Active only after both actual socket receivers reserved bounded slots."
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 32
+      },
+      "UdpTraversalId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Short-lived UDP traversal attempt identifier; not a credential.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "UdpTraversalOffer": {
+        "type": "object",
+        "required": [
+          "attemptId",
+          "requestId",
+          "networkId",
+          "stateEpoch",
+          "version",
+          "digest",
+          "nonce",
+          "carrier",
+          "local",
+          "peer",
+          "expiresAt"
+        ],
+        "properties": {
+          "attemptId": {
+            "$ref": "#/components/schemas/UdpTraversalId"
+          },
+          "carrier": {
+            "$ref": "#/components/schemas/Carrier"
+          },
+          "digest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Fixed minimum of requested/max-window and every authority/fact deadline."
+          },
+          "local": {
+            "$ref": "#/components/schemas/UdpTraversalParticipant",
+            "description": "Prepare caller orientation, identical for both recipients."
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nonce": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Random 32 bytes, public attempt separation, never a credential."
+          },
+          "peer": {
+            "$ref": "#/components/schemas/UdpTraversalParticipant"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "stateEpoch": {
+            "$ref": "#/components/schemas/StateEpoch"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Immutable offer version; accepting does not increment it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "UdpTraversalParticipant": {
+        "type": "object",
+        "required": [
+          "candidate",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Original State address, copied without origin/observer/interface disclosure.\nServer and Node must validate a numeric, eligible unicast UDP target."
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/CandidateReference"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UdpTraversalPhase": {
+        "type": "string",
+        "enum": [
+          "waiting",
+          "active"
+        ]
+      },
+      "UdpTraversalUnavailableReason": {
+        "type": "string",
+        "description": "Expected authority/CAS races are closed outcomes, not authentication errors.",
+        "enum": [
+          "scopeChanged",
+          "candidateChanged",
+          "attemptChanged",
+          "attemptExpired",
+          "notAvailable",
+          "capacity",
+          "requestChanged"
+        ]
       },
       "UnavailableReason": {
         "type": "string",

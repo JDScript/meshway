@@ -6,6 +6,7 @@
 //! prove authentication or establish a flow. Replies require the caller's own
 //! established forward state, never a forward tuple supplied by the wire.
 use crate::compile::{MAX_EXIT_CANDIDATES, MAX_HOPS, MAX_PATHS};
+pub use meshway_configuration::execution::Carrier;
 use meshway_configuration::{NodeAddresses, execution::*};
 use meshway_model::{BoundNodeKey, KeyAlgorithm, NodeId, RequestId};
 use meshway_transport_spec::{Listener, Port, TransportProtocol};
@@ -25,15 +26,6 @@ pub enum Hop {
     Forward(NodeId),
     Deliver,
     Exit,
-}
-
-/// Actual socket establishment orientation, independent of business direction.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Carrier {
-    pub dialer: NodeId,
-    pub listener: NodeId,
-    pub listener_key: String,
-    pub protocol: TransportProtocol,
 }
 
 /// Bounded labels only; no addresses, keys, payloads or raw configuration.

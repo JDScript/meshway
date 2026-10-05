@@ -1,6 +1,11 @@
 // Generated from Controller OpenAPI. Do not edit.
 
 #[derive(Clone)]
+pub struct AcceptUdpTraversalPath {
+    pub r#attempt_id: meshway_protocol::UdpTraversalId,
+}
+
+#[derive(Clone)]
 pub struct ApplyConfigurationPath {
     pub r#network_id: meshway_protocol::NetworkId,
 }
@@ -19,6 +24,11 @@ pub struct CancelEnrollmentRequestPath {
 pub struct CancelObservationPath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#subscription_id: meshway_protocol::ObservationSubscriptionId,
+}
+
+#[derive(Clone)]
+pub struct CancelUdpTraversalPath {
+    pub r#attempt_id: meshway_protocol::UdpTraversalId,
 }
 
 #[derive(Clone)]
@@ -324,6 +334,52 @@ pub struct WatchNetworkPath {
 }
 
 impl crate::Client {
+    pub async fn accept_udp_traversal(
+        &self,
+        path: &AcceptUdpTraversalPath,
+        body: &meshway_protocol::UdpTraversalAttemptRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::AcceptUdpTraversalResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("attemptId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#attempt_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/agent-api/v1/connectivity/udp/attempts/{attemptId}/accept",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn acquire_node_instance(
         &self,
         body: &meshway_protocol::AcquireInstanceRequest,
@@ -564,6 +620,52 @@ impl crate::Client {
         match response.status {
             204 => response.empty(),
             400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn cancel_udp_traversal(
+        &self,
+        path: &CancelUdpTraversalPath,
+        body: &meshway_protocol::UdpTraversalAttemptRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::CancelUdpTraversalResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("attemptId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#attempt_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/agent-api/v1/connectivity/udp/attempts/{attemptId}/cancel",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -3135,6 +3237,29 @@ impl crate::Client {
         }
     }
 
+    pub async fn prepare_udp_traversal(
+        &self,
+        body: &meshway_protocol::PrepareUdpTraversalRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::PrepareUdpTraversalResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/connectivity/udp/attempts",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn query_enrollment_request(
         &self,
         path: &QueryEnrollmentRequestPath,
@@ -3288,6 +3413,29 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn query_udp_traversal(
+        &self,
+        body: &meshway_protocol::QueryUdpTraversalRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::QueryUdpTraversalResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/connectivity/udp/query",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

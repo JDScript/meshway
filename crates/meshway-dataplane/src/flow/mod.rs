@@ -101,6 +101,7 @@ struct Flow {
     expires_at: Instant,
     permit_expires_at_ms: u64,
     guard_expires_at_ms: u64,
+    circuit: Option<[u8; 32]>,
 }
 
 impl Flow {
@@ -132,6 +133,20 @@ pub(super) struct Prepared {
     direction: Direction,
     pub expires_at: Instant,
     pub permit_expires_at_ms: u64,
+}
+
+impl Prepared {
+    /// Called only after SecureNode authenticated the complete packet. Binding
+    /// commits with the existing protocol/route transaction, never from a hint,
+    /// a handshake response, a metadata read, or a failed admission.
+    pub fn bind_circuit(&mut self, circuit: [u8; 32]) -> Result<(), Error> {
+        match self.direction {
+            Direction::Forward => self.flow.circuit = Some(circuit),
+            Direction::Reply if self.flow.circuit != Some(circuit) => return Err(Error::Flow),
+            Direction::Reply => {}
+        }
+        Ok(())
+    }
 }
 
 pub(super) struct FlowTable {
@@ -227,6 +242,7 @@ impl FlowTable {
                 route: LocalFlow {
                     demand: key.demand,
                     path: key.path.clone(),
+                    circuit: flow.circuit,
                 },
                 expires_at: flow.expires_at.min(time.guard_expires_at),
                 expires_at_ms: flow
@@ -439,6 +455,7 @@ impl FlowTable {
             expires_at,
             permit_expires_at_ms,
             guard_expires_at_ms: time.guard_expires_at_ms,
+            circuit: existing.and_then(|flow| flow.circuit),
         };
         Ok(Prepared {
             key,

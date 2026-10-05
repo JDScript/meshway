@@ -576,6 +576,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32fast"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1691,6 +1700,7 @@ name = "meshway-connectivity"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.3.4",
@@ -1702,6 +1712,7 @@ dependencies = [
  "meshway-policy",
  "meshway-protocol",
  "meshway-server",
+ "meshway-stun",
  "meshway-transport",
  "meshway-transport-spec",
  "meshway-transport-trojan",
@@ -1732,6 +1743,7 @@ dependencies = [
  "meshway-configuration",
  "meshway-control-client",
  "meshway-model",
+ "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
  "meshway-serde",
@@ -1977,6 +1989,7 @@ dependencies = [
 name = "meshway-runtime-fixture"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "clap",
  "getrandom 0.3.4",
  "hickory-proto",
@@ -2024,6 +2037,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hmac",
  "idna",
+ "ipnet",
  "maxminddb",
  "meshway-configuration",
  "meshway-logging",
@@ -2032,6 +2046,7 @@ dependencies = [
  "meshway-private-storage",
  "meshway-protocol",
  "meshway-serde",
+ "meshway-stun",
  "meshway-tls",
  "meshway-transport-spec",
  "rcgen",
@@ -2043,15 +2058,28 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2",
+ "socket2",
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tower-http",
  "tracing",
  "utoipa",
  "utoipa-axum",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "meshway-stun"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "getrandom 0.3.4",
+ "thiserror",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

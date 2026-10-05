@@ -16,6 +16,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 mod reattachment;
 pub(super) mod support;
+mod traversal;
 
 #[derive(Default)]
 struct Faults {

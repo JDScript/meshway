@@ -7,9 +7,13 @@ mod io;
 mod manager;
 mod provider;
 mod scope;
+pub mod traversal;
 
-pub use io::{AcceptedSocket, DatagramSocket, ListenerSocket, SocketFactory};
-pub use manager::{Event, LinkFact, ListenerFact, Manager, Snapshot};
+pub use io::{
+    AcceptedSocket, DatagramAuthorization, DatagramSocket, ListenerSocket, SocketFactory,
+    TraversalSocket,
+};
+pub use manager::{Event, LinkFact, ListenerFact, Manager, Snapshot, SocketFact};
 pub use meshway_policy::admission::Carrier;
 
 use meshway_model::state::{Capability, StreamKind, TransportRole};

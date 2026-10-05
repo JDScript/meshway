@@ -765,13 +765,13 @@ impl SecureNode {
                 circuit.ensure_current(self.identity.snapshot())?;
                 let route = self
                     .engine
-                    .admit_facts(ingress, packet.facts())
+                    .admit_circuit_facts(ingress, packet.facts(), circuit.context.circuit)
                     .map_err(|error| circuit.engine_rejected("receive_endpoint", error))?;
                 (route, Some(packet))
             }
             State::RelayEstablished => (
                 self.engine
-                    .admit_facts(ingress, facts)
+                    .admit_circuit_facts(ingress, facts, circuit.context.circuit)
                     .map_err(|error| circuit.engine_rejected("receive_relay", error))?,
                 None,
             ),
@@ -845,7 +845,7 @@ impl SecureNode {
         };
         let route = self
             .engine
-            .admit_facts(ingress, facts)
+            .admit_circuit_facts(ingress, facts, circuit.context.circuit)
             .map_err(|error| circuit.engine_rejected("send", error))?;
         if (route.route().direction == Direction::Reply) != reply {
             return Err(Error::Context);
@@ -1128,6 +1128,45 @@ impl SecureNode {
             }
         }
         Ok(ready)
+    }
+
+    /// Select a local output from the unique flow owner's authenticated cipher
+    /// binding. A terminal must never guess among locally completed handshakes:
+    /// the origin may not have received one of their responses. Only an origin
+    /// can acquire another cipher for its unchanged route after the old one ends.
+    /// Reading this does not advance any flow, nonce or deadline; send rechecks.
+    pub fn local_circuit(
+        &self,
+        demand: RequestId,
+        path: &[NodeId],
+        packet: &Packet,
+    ) -> Result<Option<CircuitInfo>, Error> {
+        let cfg = self
+            .identity
+            .snapshot()
+            .configuration()
+            .map_err(|_| Error::Authority)?;
+        let origin = path.first() == Some(&cfg.node_id);
+        if let Some(flow) = self.local_flow(packet)? {
+            if flow.demand != demand || flow.path != path {
+                return Err(Error::Flow);
+            }
+            if let Some(id) = flow.circuit
+                && let Some(info) = self.circuit_info(id)?
+                && info.state != CircuitState::Closed
+            {
+                if info.demand != demand || info.path != path {
+                    return Err(Error::Context);
+                }
+                return Ok((info.state == CircuitState::Established).then_some(info));
+            }
+        }
+        if !origin {
+            return Ok(None);
+        }
+        Ok(self.ready_circuits()?.into_iter().find(|info| {
+            info.demand == demand && info.path == path && info.role == CircuitRole::Origin
+        }))
     }
     pub fn retained_circuits(&self) -> usize {
         self.circuits.len()

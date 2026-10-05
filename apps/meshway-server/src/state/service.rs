@@ -144,6 +144,7 @@ pub(crate) struct Runtime {
     pub hub: StateHub,
     pub geoip: GeoIp,
     pub observations: Observations,
+    pub traversal: crate::connectivity::Attempts,
 }
 /// The executor applies committed effects here, on its own thread, after COMMIT.
 impl crate::effect::EffectSink for Mutex<Runtime> {
@@ -161,9 +162,13 @@ impl crate::effect::EffectSink for Mutex<Runtime> {
     }
 }
 impl Runtime {
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed
+    }
     pub(crate) fn close(&mut self) {
         self.closed = true;
         self.observations = Observations::default();
+        self.traversal = crate::connectivity::Attempts::default();
         self.hub.wakeups.bump(None);
     }
     pub(crate) fn new() -> Result<Self, Error> {
@@ -172,6 +177,7 @@ impl Runtime {
             hub: StateHub::new()?,
             geoip: GeoIp::default(),
             observations: Observations::default(),
+            traversal: crate::connectivity::Attempts::default(),
         })
     }
 }

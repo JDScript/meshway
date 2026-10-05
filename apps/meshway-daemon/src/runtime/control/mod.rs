@@ -1,5 +1,6 @@
 //! Drive the control owner with bounded retries and cancellable desired-state waits.
 mod cycle;
+mod scheduling;
 
 use super::{intent::Desired, network, status::Report};
 use crate::settings::Settings;
@@ -228,9 +229,16 @@ pub(super) async fn run(
             let outcome = tokio::select! { biased;
                 _ = desired.wait_for(|next| next.shutdown || next.revision != plan.revision) => None,
                 result = async {
-                    if let Some(request) = queued.take()
-                        && let Err(error) = network::request(driver, request).await {
-                        tracing::debug!(%error, "Network control intent failed");
+                    let requests_started = Instant::now();
+                    for _ in 0..32 {
+                        let request = queued.take().or_else(|| network.as_mut().and_then(|network| network.requests.try_recv().ok()));
+                        let Some(request) = request else { break; };
+                        if let Err(error) = network::request(driver, request).await {
+                            tracing::debug!(%error, "Network control intent failed");
+                        }
+                        // Always return to renewal/report work, including under
+                        // traversal pressure. Each request has its own deadline.
+                        if requests_started.elapsed() >= Duration::from_millis(100) { break; }
                     }
                     cycle(
                     driver,
@@ -270,7 +278,8 @@ pub(super) async fn run(
                         &plan,
                         Some(result.delay),
                         network.as_mut(),
-                        true,
+                        scheduling::reports_enabled(result.phase),
+                        Some(driver),
                     )
                     .await
                     {
@@ -319,7 +328,8 @@ pub(super) async fn run(
                         delay,
                     );
                     backoff = (backoff * 2).min(30);
-                    match wait_work(&mut desired, &plan, delay, network.as_mut(), false).await {
+                    match wait_work(&mut desired, &plan, delay, network.as_mut(), false, None).await
+                    {
                         Waiting::Change => {}
                         Waiting::Request(request) => {
                             queued = Some(request);
@@ -384,14 +394,64 @@ async fn wait_work(
     desired: &mut watch::Receiver<Desired>,
     plan: &Desired,
     delay: Option<Duration>,
-    network: Option<&mut network::Handle>,
+    mut network: Option<&mut network::Handle>,
     report_changes: bool,
+    mut control: Option<&mut Control>,
 ) -> Waiting {
-    tokio::select! { biased;
-        _ = desired.wait_for(|next| next.shutdown || next.revision != plan.revision) => Waiting::Change,
-        work = async {
-            match network { Some(network) => network.work(report_changes).await, None => std::future::pending().await }
-        } => match work { network::Work::Request(request) => Waiting::Request(request), network::Work::Report => Waiting::Timer, network::Work::Closed => Waiting::Worker },
-        _ = async { match delay { Some(delay) => tokio::time::sleep(delay).await, None => std::future::pending().await } } => Waiting::Timer,
+    let mut window = scheduling::Window::new(delay);
+    loop {
+        let waiting = window
+            .wait(
+                async {
+                    let _ = desired
+                        .wait_for(|next| next.shutdown || next.revision != plan.revision)
+                        .await;
+                },
+                async {
+                    match network.as_deref_mut() {
+                        Some(network) => network.work(report_changes).await,
+                        None => std::future::pending().await,
+                    }
+                },
+            )
+            .await;
+        let waiting = match waiting {
+            scheduling::Wake::Changed => Waiting::Change,
+            scheduling::Wake::Due => Waiting::Timer,
+            scheduling::Wake::Work(work) => match work {
+                network::Work::Request(request) => Waiting::Request(request),
+                network::Work::Report => Waiting::Timer,
+                network::Work::Closed => Waiting::Worker,
+            },
+        };
+        match waiting {
+            Waiting::Request(request) if request.acquisition() && control.is_some() => {
+                let result = window
+                    .serve(
+                        async {
+                            let _ = desired
+                                .wait_for(|next| next.shutdown || next.revision != plan.revision)
+                                .await;
+                        },
+                        network::request(
+                            control.as_deref_mut().expect("Control owner present"),
+                            request,
+                        ),
+                    )
+                    .await;
+                let result = match result {
+                    scheduling::Wake::Changed => return Waiting::Change,
+                    scheduling::Wake::Due => {
+                        unreachable!("an admitted RPC retains its original deadline")
+                    }
+                    scheduling::Wake::Work(result) => result,
+                };
+                if let Err(error) = result {
+                    tracing::debug!(%error, "Acquisition control intent failed");
+                    return Waiting::Timer;
+                }
+            }
+            waiting => return waiting,
+        }
     }
 }

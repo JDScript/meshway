@@ -17,7 +17,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const UDP: u16 = 42424;
-const TCP: u16 = 42425;
+pub(super) const TCP: u16 = 42425;
 pub const SUBSCRIPTION_PORT: u16 = 42428;
 const FRAME: usize = 64;
 
