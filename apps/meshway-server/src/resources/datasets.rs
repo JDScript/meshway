@@ -56,7 +56,7 @@ impl IpDatasets {
             .read(move |tx| {
                 let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 for kind in [IpDatasetKind::GeoIp, IpDatasetKind::Asn] {
-                    if let Some((id, content)) = store::resources::datasets::latest(tx, kind)? {
+                    if let Some((id, content)) = store::resources::datasets::current(tx, kind)? {
                         install(&mut runtime.geoip, kind, id, content.0)?;
                     }
                 }

@@ -171,7 +171,7 @@ impl FlowTable {
         self.entries.len()
     }
     pub fn clear(&mut self) {
-        if !self.entries.is_empty() && crate::secure::diagnostics::event() {
+        if !self.entries.is_empty() && crate::diagnostics::event() {
             tracing::debug!(operation = "clear", count = self.entries.len(),
                 publication = ?self.entries.keys().next().map(|key| key.publication),
                 "Dataplane flow table cleared");
@@ -181,7 +181,7 @@ impl FlowTable {
     pub fn expire(&mut self, now: Instant, now_ms: u64) {
         self.entries.retain(|key, flow| {
             let live = flow.live_at(now, now_ms);
-            if !live && crate::secure::diagnostics::event() {
+            if !live && crate::diagnostics::event() {
                 let cause = if now >= flow.expires_at {
                     "monotonic_or_idle"
                 } else if now_ms >= flow.permit_expires_at_ms {
@@ -275,7 +275,7 @@ impl FlowTable {
                 || key.publication != old.publication
                 || !authorization_unchanged(old, new, key.demand, &key.path, time.now_ms)?
             {
-                if crate::secure::diagnostics::event() {
+                if crate::diagnostics::event() {
                     let cause = if time.instant >= flow.expires_at {
                         "monotonic_or_idle"
                     } else if time.now_ms >= flow.permit_expires_at_ms {

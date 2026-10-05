@@ -42,6 +42,20 @@ BEGIN SELECT RAISE(ABORT,'irreversible node revocation'); END;
 CREATE TRIGGER node_keys_irreversible BEFORE UPDATE OF revoked_at,retired_at ON node_keys
 WHEN (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NOT OLD.revoked_at) OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
 BEGIN SELECT RAISE(ABORT,'irreversible key retirement'); END;
+-- This replay boundary survives both process restart and challenge GC.
+CREATE TABLE node_challenge_clock (
+    singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton=1),
+    utc_ms INTEGER NOT NULL CHECK(utc_ms>=0)
+) STRICT;
+INSERT INTO node_challenge_clock VALUES(1,0);
+CREATE TRIGGER node_challenge_clock_no_replace BEFORE INSERT ON node_challenge_clock
+WHEN EXISTS(SELECT 1 FROM node_challenge_clock)
+BEGIN SELECT RAISE(ABORT, 'immutable challenge clock identity'); END;
+CREATE TRIGGER node_challenge_clock_monotonic BEFORE UPDATE ON node_challenge_clock
+WHEN NEW.singleton!=OLD.singleton OR NEW.utc_ms<OLD.utc_ms
+BEGIN SELECT RAISE(ABORT, 'challenge clock cannot regress'); END;
+CREATE TRIGGER node_challenge_clock_no_delete BEFORE DELETE ON node_challenge_clock
+BEGIN SELECT RAISE(ABORT, 'challenge clock cannot be deleted'); END;
 CREATE TABLE node_challenges (
     id BLOB NOT NULL PRIMARY KEY CHECK(length(id)=16),
     controller_id BLOB NOT NULL CHECK(length(controller_id)=16),
@@ -54,6 +68,7 @@ CREATE TABLE node_challenges (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL CHECK(expires_at>created_at),
     consumed_at INTEGER,
+    session_anchor INTEGER NOT NULL DEFAULT 0 CHECK(session_anchor IN (0,1) AND (session_anchor=0 OR (operation='session' AND consumed_at IS NOT NULL))),
     FOREIGN KEY(network_id,node_id,key_id) REFERENCES node_keys(network_id,node_id,id)
 ) STRICT;
 CREATE TABLE node_sessions (

@@ -17,7 +17,6 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 pub(crate) const INSTANCE_TTL: i64 = 120_000;
 pub(crate) const EXECUTION_TTL: i64 = 60_000;
-pub(crate) use lease as instance_lease;
 struct PreviousInstance {
     instance: Option<Vec<u8>>,
     generation: i64,

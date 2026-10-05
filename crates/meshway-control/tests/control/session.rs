@@ -283,7 +283,13 @@ async fn foreign_challenge_and_session_bindings_fence_instead_of_preserving_old_
                 "foreign Server challenge is not signed"
             );
         }
-        control.authenticate().await.unwrap();
+        let recovered = control.authenticate().await;
+        assert!(
+            recovered.is_ok(),
+            "fresh proof after {suffix}: {recovered:?}; challenges={}, sessions={}",
+            proxy.count(CHALLENGE),
+            proxy.count(SESSION)
+        );
         control.acquire_instance(Default::default()).await.unwrap();
         control.sync_configuration().await.unwrap();
     }

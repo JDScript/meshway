@@ -1,4 +1,5 @@
 mod anchor;
+mod capture;
 mod journal;
 mod monitor;
 mod plan;
@@ -89,6 +90,16 @@ impl Kernel {
         }
         journal.routes.clear();
         journal.tun = None;
+        let addresses = get_addresses(&handle, options.max_kernel_objects).await?;
+        if addresses
+            .iter()
+            .any(|address| capture::address_conflicts(&journal.pools, None, address))
+            || routes
+                .iter()
+                .any(|route| capture::route_conflicts(&journal.pools, None, route))
+        {
+            return Err(Error::Conflict);
+        }
         let foreign: Vec<_> = rules
             .into_iter()
             .filter(|rule| {
@@ -126,6 +137,7 @@ impl Kernel {
         }
         let expected = Arc::new(Mutex::new(Expected {
             anchor: journal.anchor.clone(),
+            pools: journal.pools.clone(),
             ..Expected::default()
         }));
         let watched = shared.clone();
@@ -180,6 +192,8 @@ impl Kernel {
             return Err(Error::Conflict);
         }
         let routes = get_routes(&self.handle, self.options.max_kernel_objects).await?;
+        self.verify_capture_routes(&self.journal.pools, &routes)
+            .await?;
         let actual: Vec<_> = routes
             .into_iter()
             .filter(|route| route_table(route) == self.journal.table)
@@ -197,6 +211,51 @@ impl Kernel {
             return Err(Error::Conflict);
         }
         Ok(())
+    }
+
+    async fn verify_capture(&self, pools: &[ipnet::IpNet]) -> Result<()> {
+        let routes = get_routes(&self.handle, self.options.max_kernel_objects).await?;
+        self.verify_capture_routes(pools, &routes).await
+    }
+
+    async fn verify_capture_routes(
+        &self,
+        pools: &[ipnet::IpNet],
+        routes: &[RouteMessage],
+    ) -> Result<()> {
+        let addresses = get_addresses(&self.handle, self.options.max_kernel_objects).await?;
+        let mut assigned = Vec::new();
+        let owned = if let Some(tun) = &self.tun {
+            let record = self.journal.tun.as_ref().ok_or(Error::Conflict)?;
+            let index = tun.if_index()?;
+            if index == 0 || index != record.ifindex || tun.name() != record.name {
+                return Err(Error::Conflict);
+            }
+            assigned.extend(
+                [
+                    record.addresses.ipv4.map(IpAddr::V4),
+                    record.addresses.ipv6.map(IpAddr::V6),
+                ]
+                .into_iter()
+                .flatten(),
+            );
+            Some(capture::Owned {
+                index,
+                addresses: &assigned,
+            })
+        } else {
+            None
+        };
+        if routes
+            .iter()
+            .any(|route| capture::route_conflicts(pools, owned, route))
+            || addresses
+                .iter()
+                .any(|address| capture::address_conflicts(pools, owned, address))
+        {
+            return Err(Error::Conflict);
+        }
+        self.shared.check()
     }
 
     pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<()> {
@@ -241,26 +300,11 @@ impl Kernel {
             return Err(Error::Conflict);
         }
         let addresses = cfg.addresses.clone();
+        self.verify_capture(&pools).await?;
         if self.retain_tun(&snapshot, &pools, &addresses).await? {
             return Ok(());
         }
         self.verify().await?;
-        // Reject local address overlap before touching the new boundary.
-        let owned_index = self.tun.as_ref().map(Tun::if_index).transpose()?;
-        let existing = get_addresses(&self.handle, self.options.max_kernel_objects).await?;
-        if existing
-            .iter()
-            .filter(|address| Some(address.header.index) != owned_index)
-            .flat_map(|a| &a.attributes)
-            .any(|a| match a {
-                AddressAttribute::Address(ip) | AddressAttribute::Local(ip) => {
-                    pools.iter().any(|pool| pool.contains(ip))
-                }
-                _ => false,
-            })
-        {
-            return Err(Error::Conflict);
-        }
         self.journal.binding = Some(binding);
         self.store.persist(&self.journal).await?;
         // Fence the old packet/carrier scope, then protect the complete new
@@ -329,6 +373,7 @@ impl Kernel {
 
         self.verify().await?;
         self.verify_tun(tun, pools, addresses).await?;
+        self.quiesce().await?;
         self.shared.check()?;
         snapshot.ensure_current().map_err(|_| Error::Expired)?;
         let mut active = self.shared.execution.write().map_err(|_| Error::Worker)?;
@@ -446,6 +491,12 @@ impl Kernel {
         if union.len() > self.journal.pool_limit {
             return Err(Error::Capacity);
         }
+        // Arm before the dump and before any new rule: a concurrent addition
+        // cannot hide between preflight and publication. Retired pools stay armed.
+        self.quiesce().await?;
+        self.expected.lock().map_err(|_| Error::Worker)?.pools = union.clone();
+        self.verify_capture(&union).await?;
+        self.quiesce().await?;
         self.journal.pools = union;
         self.store.persist(&self.journal).await?;
         if self.journal.pools.is_empty() {
@@ -505,7 +556,6 @@ impl Kernel {
         snapshot.ensure_current().map_err(|_| Error::Expired)?;
         self.journal.pending = Some(Pending::CreateTun);
         self.store.persist(&self.journal).await?;
-        self.expected.lock().map_err(|_| Error::Worker)?.changing = true;
         let mut options = meshway_tun::Options::new(self.options.mtu)?;
         if let Some(ip) = addresses.ipv4 {
             options = options.with_ipv4(ip, 32)?;
@@ -513,16 +563,38 @@ impl Kernel {
         if let Some(ip) = addresses.ipv6 {
             options = options.with_ipv6(ip, 128)?;
         }
-        let created = Tun::create(options).and_then(|tun| {
-            let index = tun.if_index()?;
-            Ok((tun, index))
-        });
+        let created = {
+            // Creation is synchronous. Hold the monitor projection lock until
+            // the live descriptor's exact address exception is installed; even
+            // another Tokio worker cannot classify our creation as foreign.
+            let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
+            expected.changing = true;
+            let created = Tun::create(options).and_then(|tun| {
+                let index = tun.if_index()?;
+                Ok((tun, index))
+            });
+            if let Ok((tun, index)) = &created {
+                expected.tun = Some((
+                    *index,
+                    tun.name().to_owned(),
+                    tun.mtu(),
+                    [
+                        addresses.ipv4.map(IpAddr::V4),
+                        addresses.ipv6.map(IpAddr::V6),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                ));
+            }
+            created
+        };
         let (tun, index) = match created {
             Ok(created) => created,
             Err(error) => {
                 // meshway-tun drops every failed creation's owned descriptor.
-                // This known failure needs no guessed kernel cleanup, and does
-                // not invalidate independent bootstrap protection.
+                // This known failure needs no guessed kernel cleanup. Independently
+                // observed capture conflicts still fence the socket owner.
                 self.journal.pending = None;
                 self.expected.lock().map_err(|_| Error::Worker)?.changing = false;
                 self.store.persist(&self.journal).await?;
@@ -531,18 +603,6 @@ impl Kernel {
         };
         self.tun = Some(tun);
         let tun = self.tun.as_ref().ok_or(Error::Worker)?;
-        self.expected.lock().map_err(|_| Error::Worker)?.tun = Some((
-            index,
-            tun.name().to_owned(),
-            tun.mtu(),
-            [
-                addresses.ipv4.map(IpAddr::V4),
-                addresses.ipv6.map(IpAddr::V6),
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
-        ));
         self.journal.tun = Some(TunRecord {
             name: tun.name().to_owned(),
             ifindex: index,
@@ -559,6 +619,7 @@ impl Kernel {
         self.quiesce().await?;
         self.expected.lock().map_err(|_| Error::Worker)?.changing = false;
         self.verify().await?;
+        self.quiesce().await?;
         snapshot.ensure_current().map_err(|_| Error::Expired)?;
         self.shared.check()?;
         *self.shared.execution.write().map_err(|_| Error::Worker)? =
@@ -674,7 +735,13 @@ impl Kernel {
         self.journal.binding = None;
         self.store.persist(&self.journal).await?;
         self.quiesce().await?;
-        self.verify().await
+        self.verify().await?;
+        self.expected
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .pools
+            .clear();
+        Ok(())
     }
 
     pub async fn settle(&mut self) -> Result<()> {

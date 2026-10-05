@@ -338,10 +338,34 @@ impl Packets {
                 .ok()
                 .flatten()
                 .is_some_and(|info| {
-                    attempt.wake_at = info.expires_at.into();
+                    attempt.wake_at = secure
+                        .handshake_retry_at(attempt.circuit)
+                        .ok()
+                        .flatten()
+                        .map_or(info.expires_at.into(), |at| at.min(info.expires_at).into());
                     info.state != CircuitState::Closed
                 })
         });
+        for attempt in &mut self.attempts {
+            if attempt.wake_at > Instant::now() {
+                continue;
+            }
+            // The unique SecureNode owns cached INIT bytes, original guards,
+            // total deadline and retry budget. A local send failure does not
+            // rebuild Noise or close that still-live handshake.
+            if let Ok(Some(frame)) = secure.retry_handshake(attempt.circuit)
+                && manager.send(frame).await.is_err()
+            {
+                self.dropped = self.dropped.saturating_add(1);
+            }
+            if let Ok(Some(info)) = secure.circuit_info(attempt.circuit) {
+                attempt.wake_at = secure
+                    .handshake_retry_at(attempt.circuit)
+                    .ok()
+                    .flatten()
+                    .map_or(info.expires_at.into(), |at| at.min(info.expires_at).into());
+            }
+        }
         for _ in 0..self.local.len() {
             let Some(item) = self.local.pop_front() else {
                 break;
@@ -479,13 +503,13 @@ impl Packets {
                         path,
                         circuit,
                         wake_at: secure
-                            .circuit_info(circuit)
+                            .handshake_retry_at(circuit)
                             .ok()
                             .flatten()
-                            .map_or(now + Duration::from_secs(10), |info| info.expires_at.into()),
+                            .map_or(now + Duration::from_secs(10), Into::into),
                     });
                     if manager.send(frame).await.is_err() {
-                        secure.close(circuit);
+                        self.drop_packet("handshake_send");
                     }
                 }
                 self.local.push_back(item);

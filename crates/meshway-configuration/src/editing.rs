@@ -3,6 +3,7 @@ use crate::{
     *,
 };
 use meshway_model::NodeId;
+use meshway_serde::required_nullable as nullable_listener;
 use std::collections::BTreeMap;
 
 #[derive(
@@ -56,12 +57,6 @@ tagged! { pub enum ConfigurationOperation {
     SetAddresses { #[serde(rename="nodeId")] node_id: NodeId, addresses: NodeAddressesInput },
     DeleteNode { #[serde(rename="nodeId")] node_id: NodeId },
 } }
-
-fn nullable_listener<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Option<ListenerUpdate>, D::Error> {
-    serde::Deserialize::deserialize(d)
-}
 
 /// Apply typed edits to values. Authorization, material preparation, source-text
 /// edits and final validation belong to the transaction preparation pipeline.
@@ -166,12 +161,14 @@ pub fn apply_operations(
     Ok(())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ChangeKind {
     Added,
     Removed,
     Changed,
+}
 }
 object! { pub struct ConfigurationChange { pub path: String, pub kind: ChangeKind } }
 

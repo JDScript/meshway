@@ -2,7 +2,6 @@
 """Protected TUN conformance in four disposable, isolated Linux namespaces."""
 import concurrent.futures
 import datetime
-import hashlib
 import ipaddress
 import json
 import os
@@ -13,17 +12,11 @@ import uuid
 
 from node_lab import ROOT, check_elf, docker_target, run, sha256
 from verify_tun import pinned_image
+from verification_sources import fingerprint as source_fingerprint
 
 
 def fingerprint():
-    paths = [ROOT / "Cargo.toml", ROOT / "Cargo.lock"]
-    for directory in ("crates", "apps/meshway-server", "tools/meshway-packet-fixture"):
-        paths.extend(p for p in (ROOT / directory).rglob("*")
-                     if p.is_file() and (p.suffix == ".rs" or p.name == "Cargo.toml"))
-    digest = hashlib.sha256()
-    for path in sorted(paths):
-        digest.update(str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes() + b"\0")
-    return digest.hexdigest()
+    return source_fingerprint(ROOT)
 
 
 def main():
@@ -113,6 +106,8 @@ def main():
         # host networking, builder privilege, persistent volume or published port.
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             results = dict(zip(("controller", "a", "r", "b"), executor.map(execute, ("controller", "a", "r", "b"))))
+        if fingerprint() != before:
+            raise RuntimeError("Sources changed while validating candidate binaries.")
         manifest["processes"] = results
         manifest["passed"] = all(not item["attachExit"] and not item["exitCode"] and not item["oomKilled"] for item in results.values())
         metadata.write_text(json.dumps(manifest, indent=2) + "\n")

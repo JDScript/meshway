@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use meshway_model::RequestId;
-use meshway_protocol::{ErrorResponse, execution::*, node::*};
+use meshway_protocol::{ErrorResponse, SignedNodeChallengeRequest, execution::*, node::*};
 
 #[utoipa::path(post,path="/agent-api/v1/dns/query",operation_id="queryNodeDns",tag="node",security(("nodeSession"=[])),request_body=NodeDnsQueryRequest,responses((status=200,body=NodeDnsQueryResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn query_dns(
@@ -24,11 +24,11 @@ pub(super) async fn query_dns(
         .map_err(|e| HttpError::domain(id, e))
 }
 
-#[utoipa::path(post,path="/agent-api/v1/auth/challenges",operation_id="createNodeChallenge",tag="node",request_body=NodeChallengeRequest,responses((status=200,body=NodeChallenge),(status=401,body=ErrorResponse),(status=400,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/agent-api/v1/auth/challenges",operation_id="createNodeChallenge",tag="node",request_body=SignedNodeChallengeRequest,responses((status=200,body=NodeChallenge),(status=401,body=ErrorResponse),(status=400,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn challenge(
     State(service): State<Execution>,
     Extension(id): Extension<RequestId>,
-    body: Result<Json<NodeChallengeRequest>, JsonRejection>,
+    body: Result<Json<SignedNodeChallengeRequest>, JsonRejection>,
 ) -> Result<Json<NodeChallenge>, HttpError> {
     let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
     service

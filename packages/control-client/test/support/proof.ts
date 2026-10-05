@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash, sign } from "node:crypto";
+import { createHash, randomUUID, sign } from "node:crypto";
 import type { KeyObject } from "node:crypto";
-import type { EnrollmentIntent, NodeSessionIntent, NodeChallenge } from "../../src/index.ts";
+import type { EnrollmentIntent, NodeSessionIntent, NodeChallenge, NodeChallengeRequest, NodeChallengeIntent, SignedNodeChallengeRequest } from "../../src/index.ts";
 
 // Independent consumer encoding of the documented sorted typed-intent JSON.
 // These inputs use generated DTOs; no endpoint or request/response DTO is copied.
@@ -33,6 +33,13 @@ export function sessionProof(challenge: NodeChallenge, key: KeyObject): string {
   const bytes = Buffer.concat([Buffer.from("meshway/node-proof/ed25519/v1\0"), Buffer.from([1]), ...ids,
     integer(challenge.keyGeneration), Buffer.from(challenge.nonce, "hex"), integer(Date.parse(challenge.expiresAt)), Buffer.from(challenge.requestDigest, "hex")]);
   return sign(null, bytes, key).toString("base64url");
+}
+export function challengeRequest(request: NodeChallengeRequest, controllerId: string, key: KeyObject): SignedNodeChallengeRequest {
+  const intent: NodeChallengeIntent = { id: randomUUID(), controllerId, request, expiresAt: new Date(Date.now() + 50_000).toISOString() };
+  const ids = [intent.id, controllerId, request.networkId, request.nodeId, request.keyId].map(uuid);
+  const bytes = Buffer.concat([Buffer.from("meshway/node-challenge-request/ed25519/v1\0"), ...ids,
+    Buffer.from([request.operation === "session" ? 1 : 2]), Buffer.from(request.requestDigest, "hex"), integer(Date.parse(intent.expiresAt))]);
+  return { intent, signature: sign(null, bytes, key).toString("base64url") };
 }
 export function publicBytes(key: KeyObject, prefix: string): string {
   const bytes = key.export({ format: "der", type: "spki" });

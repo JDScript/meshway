@@ -129,17 +129,19 @@ async fn imported_datasets_survive_restart_and_answer_lookups() {
     assert!(installed.contains(&status.geoip.unwrap().to_string()));
     let info = app.ip_datasets().lookup(documented.into()).unwrap();
     let LookupResult::Available {
-        data, dataset_id, ..
+        data: geoip,
+        dataset_id,
+        ..
     } = info.geoip.clone()
     else {
         panic!("{info:?}")
     };
     assert_eq!(dataset_id, status.geoip.unwrap());
-    assert_eq!(data.country.as_deref(), Some("JP"));
-    let LookupResult::Available { data, .. } = info.asn.clone() else {
+    assert_eq!(geoip.country.as_deref(), Some("JP"));
+    let LookupResult::Available { data: asn, .. } = info.asn.clone() else {
         panic!("{info:?}")
     };
-    assert_eq!(data.number, 64512);
+    assert_eq!(asn.number, 64512);
     // Re-importing replaces the current dataset; lookups cite the new artifact.
     let again = app
         .ip_datasets()
@@ -152,5 +154,86 @@ async fn imported_datasets_survive_restart_and_answer_lookups() {
         .unwrap();
     assert_ne!(Some(again), status.geoip);
     assert_eq!(app.ip_datasets().status().unwrap().geoip, Some(again));
+    app.shutdown().await.unwrap();
+    let app = App::open(Settings::new(&data)).await.unwrap();
+    assert_eq!(app.ip_datasets().status().unwrap().geoip, Some(again));
+    assert!(
+        matches!(app.ip_datasets().lookup(documented.into()).unwrap().geoip,
+        LookupResult::Available { dataset_id, .. } if dataset_id == again)
+    );
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_mmdb_coordinates_fail_the_lookup_without_poisoning_asn_or_wire_data() {
+    use meshway_model::resources::{IpInfo, UnavailableReason};
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().canonicalize().unwrap().join("data");
+    let app = App::open(Settings::new(&data)).await.unwrap();
+    let prefix = Ipv4Addr::new(93, 184, 216, 0);
+    let address = Ipv4Addr::new(93, 184, 216, 34);
+    let asn_id = app
+        .ip_datasets()
+        .install(
+            IpDatasetKind::Asn,
+            "valid ASN".into(),
+            mmdb::database("GeoLite2-ASN", &[(prefix, 24, mmdb::asn(64512, "Example"))]),
+        )
+        .await
+        .unwrap();
+    for (latitude, longitude) in [
+        (91.0, 0.0),
+        (-91.0, 0.0),
+        (0.0, 181.0),
+        (0.0, -181.0),
+        (f64::NAN, 0.0),
+        (0.0, f64::INFINITY),
+        (f64::NEG_INFINITY, 0.0),
+    ] {
+        // These are real, parseable MMDB records, not forged GeoPosition DTOs.
+        app.ip_datasets()
+            .install(
+                IpDatasetKind::GeoIp,
+                "invalid coordinate record".into(),
+                mmdb::database(
+                    "GeoLite2-City",
+                    &[(prefix, 24, mmdb::city("JP", "Tokyo", latitude, longitude))],
+                ),
+            )
+            .await
+            .unwrap();
+        let info = app.ip_datasets().lookup(address.into()).unwrap();
+        assert!(matches!(
+            info.geoip,
+            LookupResult::Unavailable {
+                reason: UnavailableReason::LookupFailed
+            }
+        ));
+        assert!(
+            matches!(info.asn, LookupResult::Available { dataset_id, .. } if dataset_id == asn_id)
+        );
+        let encoded = serde_json::to_vec(&info).unwrap();
+        assert_eq!(serde_json::from_slice::<IpInfo>(&encoded).unwrap(), info);
+        assert_eq!(app.ip_datasets().lookup(address.into()).unwrap(), info);
+    }
+    app.ip_datasets()
+        .install(
+            IpDatasetKind::GeoIp,
+            "valid coordinate boundaries".into(),
+            mmdb::database(
+                "GeoLite2-City",
+                &[(prefix, 24, mmdb::city("JP", "Tokyo", -90.0, 180.0))],
+            ),
+        )
+        .await
+        .unwrap();
+    let info = app.ip_datasets().lookup(address.into()).unwrap();
+    assert!(
+        matches!(info.geoip, LookupResult::Available { ref data, .. } if data.position.is_some())
+    );
+    assert_eq!(
+        serde_json::from_slice::<IpInfo>(&serde_json::to_vec(&info).unwrap()).unwrap(),
+        info
+    );
     app.shutdown().await.unwrap();
 }

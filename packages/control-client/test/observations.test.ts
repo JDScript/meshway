@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { controller } from "./support/controller.ts";
-import { deviceProof, digest, publicBytes, sessionProof } from "./support/proof.ts";
+import { challengeRequest, deviceProof, digest, publicBytes, sessionProof } from "./support/proof.ts";
 import {
   register, createNetwork, getNetwork, createEnrollmentRequest, approveDeviceAuthorization,
   queryEnrollmentRequest, redeemEnrollmentRequest, createNodeChallenge, createNodeSession,
@@ -31,7 +31,7 @@ async function node(client: ControlClient, user: { token: string }, networkId: s
   const admitted = await redeemEnrollmentRequest(client, path, { code: poll.data.code, proof: { verifier, signature: deviceProof(intent, "redeem", signer.privateKey) } });
   assert.ok(admitted.ok);
   const sessionIntent = { requestId: randomUUID() };
-  const challenge = await createNodeChallenge(client, { networkId, nodeId: admitted.data.nodeId, keyId: admitted.data.keys.control.id, operation: "session", requestDigest: digest(sessionIntent).toString("hex") });
+  const challenge = await createNodeChallenge(client, challengeRequest({ networkId, nodeId: admitted.data.nodeId, keyId: admitted.data.keys.control.id, operation: "session", requestDigest: digest(sessionIntent).toString("hex") }, admitted.data.controllerId, signer.privateKey));
   assert.ok(challenge.ok);
   const session = await createNodeSession(client, { intent: sessionIntent, proof: { challengeId: challenge.data.id, signature: sessionProof(challenge.data, signer.privateKey) } });
   assert.ok(session.ok);

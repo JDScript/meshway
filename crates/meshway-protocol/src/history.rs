@@ -3,11 +3,7 @@ use chrono::{DateTime, Utc};
 use meshway_model::{
     ActivityId, JoinLinkId, MembershipId, NetworkId, RequestId, Revision, SessionId, UserId,
 };
-fn nullable<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
-    d: D,
-) -> Result<Option<T>, D::Error> {
-    serde::Deserialize::deserialize(d)
-}
+use meshway_serde::required_nullable as nullable;
 
 wire_tagged! {pub enum ActivityActor {User{
     #[serde(rename="userId")]user_id:UserId,

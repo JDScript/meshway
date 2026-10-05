@@ -159,13 +159,16 @@ pub(super) async fn session(
 ) -> NodeSessionResponse {
     let intent = NodeSessionIntent { request_id: rid() };
     let challenge = service
-        .challenge(NodeChallengeRequest {
-            network_id: network,
-            node_id: node,
-            key_id: key.control.id,
-            operation: ProofOperation::Session,
-            request_digest: proof::request_digest(&intent).unwrap(),
-        })
+        .challenge(service.signed_challenge_fixture(
+            NodeChallengeRequest {
+                network_id: network,
+                node_id: node,
+                key_id: key.control.id,
+                operation: ProofOperation::Session,
+                request_digest: proof::request_digest(&intent).unwrap(),
+            },
+            signer,
+        ))
         .await
         .unwrap();
     let signature = URL_SAFE_NO_PAD.encode(signer.sign(&proof_transcript(&challenge)).to_bytes());
@@ -1464,13 +1467,16 @@ async fn actual_http_signatures_and_pkce_polling() {
     let intent = NodeSessionIntent { request_id: rid() };
     let challenge: NodeChallenge = client
         .post(format!("{base}/agent-api/v1/auth/challenges"))
-        .json(&NodeChallengeRequest {
-            network_id: network,
-            node_id: node,
-            key_id: keys.control.id,
-            operation: ProofOperation::Session,
-            request_digest: proof::request_digest(&intent).unwrap(),
-        })
+        .json(&app.execution().signed_challenge_fixture(
+            NodeChallengeRequest {
+                network_id: network,
+                node_id: node,
+                key_id: keys.control.id,
+                operation: ProofOperation::Session,
+                request_digest: proof::request_digest(&intent).unwrap(),
+            },
+            &signer,
+        ))
         .send()
         .await
         .unwrap()
@@ -1875,16 +1881,21 @@ async fn actual_http_signatures_and_pkce_polling() {
         .unwrap();
     assert_eq!(removed.deleted_node_ids, vec![enrolled.node_id]);
     let attempt = execution
-        .challenge(NodeChallengeRequest {
-            network_id: own.id,
-            node_id: enrolled.node_id,
-            key_id: enrolled.keys.control.id,
-            operation: ProofOperation::Session,
-            request_digest: crate::execution::proof::request_digest(&NodeSessionIntent {
-                request_id: rid(),
-            })
-            .unwrap(),
-        })
+        .challenge(
+            execution.signed_challenge_fixture(
+                NodeChallengeRequest {
+                    network_id: own.id,
+                    node_id: enrolled.node_id,
+                    key_id: enrolled.keys.control.id,
+                    operation: ProofOperation::Session,
+                    request_digest: crate::execution::proof::request_digest(&NodeSessionIntent {
+                        request_id: rid(),
+                    })
+                    .unwrap(),
+                },
+                &key,
+            ),
+        )
         .await;
     assert!(matches!(attempt, Err(Error::InvalidCredentials)));
     server.abort();
@@ -1898,13 +1909,16 @@ async fn signed_authentication_replay_rotation_and_controller_restart() {
     let service = app.execution();
     let intent = NodeSessionIntent { request_id: rid() };
     let challenge = service
-        .challenge(NodeChallengeRequest {
-            network_id: network,
-            node_id: a,
-            key_id: keys.control.id,
-            operation: ProofOperation::Session,
-            request_digest: proof::request_digest(&intent).unwrap(),
-        })
+        .challenge(service.signed_challenge_fixture(
+            NodeChallengeRequest {
+                network_id: network,
+                node_id: a,
+                key_id: keys.control.id,
+                operation: ProofOperation::Session,
+                request_digest: proof::request_digest(&intent).unwrap(),
+            },
+            &signer,
+        ))
         .await
         .unwrap();
     let signature = URL_SAFE_NO_PAD.encode(signer.sign(&proof_transcript(&challenge)).to_bytes());
@@ -1944,13 +1958,16 @@ async fn signed_authentication_replay_rotation_and_controller_restart() {
         },
     };
     let challenge = service
-        .challenge(NodeChallengeRequest {
-            network_id: network,
-            node_id: a,
-            key_id: keys.control.id,
-            operation: ProofOperation::Rotate,
-            request_digest: proof::request_digest(&intent).unwrap(),
-        })
+        .challenge(service.signed_challenge_fixture(
+            NodeChallengeRequest {
+                network_id: network,
+                node_id: a,
+                key_id: keys.control.id,
+                operation: ProofOperation::Rotate,
+                request_digest: proof::request_digest(&intent).unwrap(),
+            },
+            &signer,
+        ))
         .await
         .unwrap();
     let rotated = service
@@ -2278,13 +2295,16 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
     };
     let challenge = app
         .execution()
-        .challenge(NodeChallengeRequest {
-            network_id: network,
-            node_id: a,
-            key_id: keys.control.id,
-            operation: ProofOperation::Rotate,
-            request_digest: proof::request_digest(&intent).unwrap(),
-        })
+        .challenge(app.execution().signed_challenge_fixture(
+            NodeChallengeRequest {
+                network_id: network,
+                node_id: a,
+                key_id: keys.control.id,
+                operation: ProofOperation::Rotate,
+                request_digest: proof::request_digest(&intent).unwrap(),
+            },
+            &signer,
+        ))
         .await
         .unwrap();
     let request = NodeRotationRequest {
@@ -3262,14 +3282,17 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
     let service = app.execution();
     assert_eq!(
         service
-            .challenge(NodeChallengeRequest {
-                network_id: network,
-                node_id: old_node.node_id,
-                key_id: old_node.keys.control.id,
-                operation: ProofOperation::Session,
-                request_digest: proof::request_digest(&NodeSessionIntent { request_id: rid() })
-                    .unwrap()
-            })
+            .challenge(service.signed_challenge_fixture(
+                NodeChallengeRequest {
+                    network_id: network,
+                    node_id: old_node.node_id,
+                    key_id: old_node.keys.control.id,
+                    operation: ProofOperation::Session,
+                    request_digest:
+                        proof::request_digest(&NodeSessionIntent { request_id: rid() }).unwrap()
+                },
+                &old_signer
+            ))
             .await
             .err(),
         Some(Error::InvalidCredentials)

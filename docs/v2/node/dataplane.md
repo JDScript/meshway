@@ -59,6 +59,8 @@ SecureNode 的实际 forward 包通过认证与流准入后，CID 与协议状�
 
 `carrier::send` 把完整 I/O lifetime 随已接纳工作交给正式 transport worker；即使完成等待者暂不被轮询，每次底层 write／flush 也检查同一许可期限和失效条件。`carrier::deliver` 在每次恢复 TUN 写入前检查所有限制。完成只表示本机写入完成，对端接收／应用回包另行证明。
 
+握手在原总期限内按 250 ms 间隔有界重发，不另建 Noise 状态。每 CID 最多缓存两个阶段、每阶段 4 KiB 与 256 次输出；重复 INIT／RESPONSE 仍须先通过 proof 和权限检查，再匹配精确输入并返回原签名输出。缓存保留原 scope、路径、nonce 和期限，交接不重新绑定缓存；迟到调度不突发补发，Closed／过期状态不复活。
+
 ## Linux TUN
 
 `meshway-tun::Tun::create(Options)` 在宿主已经选择的 network namespace 中创建内核自动命名、非持久的 L3 TUN。安全 Rust 层使用固定版本 tun-rs；不接管已有名称，不导出 FD，drop 由内核回收设备。
@@ -74,6 +76,8 @@ SecureNode 的实际 forward 包通过认证与流准入后，CID 与协议状�
 全部发布地址池都进入拒绝捕获边界；只有本机具有对应地址族的已分配地址时，才安装该族的正向 TUN 路由。缺少某族地址不会解除该族的拒绝边界；无本机地址的中转不据此获得本机发起业务资格。
 
 capture 使用执行配置中完整的 `meshAddressPools`，其[契约](/v2/configuration-reference/node-configuration#capture-与本机-egress)不授予 Access。私有 route table 只包含所属 capture 路由；RPDB 安装 own-mark goto、各池 lookup／unreachable 和 end，受保护 socket 跳到此块末尾后继续原 RPDB，而非强制走 main table。SO_MARK 选择、保留已有 selector 语义与读回验证必须成功；同 UID 其他 socket 不获全局绕过。
+
+安装、保留交接与运行监控均检查优先于 capture 的 local-table 路由和外部接口地址。只有本 owner 的精确 TUN 本机地址路由可豁免；覆盖 Mesh 池的外来 local 路由／地址会阻断安装或使其失效，外部对象保留供宿主处理。
 
 | 生命周期 | 处理 |
 | --- | --- |
@@ -162,6 +166,8 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 两种后端均使用 namespace 级私有预约，避免不同数据目录竞争同一系统 DNS。MagicDNS 域加入系统搜索域；额外搜索域仍按配置执行。resolved 保留未捕获域的原有系统路由，不把原系统的分域配置压平成任意 nameserver 列表。需要这种未实现 fallback 的搜索域组合明确失败。
 
 文件代理只安装本机 stub，原系统上游作为受监控的私有来源保存。其业务查询仍需要精确的 Server local-egress 许可；普通 UDP 系统 resolver 的 TCP 截断重试使用另一个预先获准的 TCP demand，配置为 UDP 的专用 resolver 不隐含 TCP 权限。现阶段不接受 loopback／scoped IPv6 业务 resolver；实际后端安装条件不能由配置选项或地址候选代替。
+
+多个系统上游按原顺序在同一查询 ticket／总期限内重试，按剩余上游数量分配剩余时间。网络失败或子期限到达才尝试下一项；权限失效或取消立即停止。UDP→TCP 重试绑定当前选中的上游及其独立 TCP 许可，不借用另一上游的权限。
 
 显式文件代理仅安装本机 stub；没有当前执行许可时，受其接管的普通查询也返回 SERVFAIL，恢复授权后继续，显式 down 恢复原配置。resolved 分域后端未接管的普通解析继续由原系统处理。首期保证覆盖 daemon、lease 失效和进程退出后保留的本机配置；整机重启、系统 resolver 服务停机及应用绕过系统 DNS 的行为随系统服务安装分别验收。
 

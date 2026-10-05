@@ -3,7 +3,7 @@ use crate::{
     state::{ConfigurationRef, ProbeObservation},
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use utoipa::ToSchema;
 
 meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ObservationEvent {
@@ -13,22 +13,18 @@ meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct Obser
     pub payload: ObservationPayload,
 } }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(
-    remote = "Self",
-    tag = "kind",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
+meshway_serde::tagged! {
+tag = "kind";
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObservationPayload {
-    DialStarted {
+    DialStarted = "dial_started" {
         #[serde(rename = "peerNodeId")]
         peer_node_id: NodeId,
         #[serde(rename = "attemptId")]
         attempt_id: String,
         transport: String,
     },
-    DialFailed {
+    DialFailed = "dial_failed" {
         #[serde(rename = "peerNodeId")]
         peer_node_id: NodeId,
         #[serde(rename = "attemptId")]
@@ -38,14 +34,14 @@ pub enum ObservationPayload {
         #[serde(rename = "durationUs")]
         duration_us: Option<Sequence>,
     },
-    LinkOpened {
+    LinkOpened = "link_opened" {
         #[serde(rename = "peerNodeId")]
         peer_node_id: NodeId,
         #[serde(rename = "linkId")]
         link_id: String,
         transport: String,
     },
-    LinkClosed {
+    LinkClosed = "link_closed" {
         #[serde(rename = "peerNodeId")]
         peer_node_id: NodeId,
         #[serde(rename = "linkId")]
@@ -53,27 +49,19 @@ pub enum ObservationPayload {
         transport: String,
         reason: CloseReason,
     },
-    ProbeCompleted {
+    ProbeCompleted = "probe_completed" {
         probe: ProbeObservation,
     },
-    CollectionGap {
+    CollectionGap = "collection_gap" {
         dropped: Sequence,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     },
 }
-impl<'de> Deserialize<'de> for ObservationPayload {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Self::deserialize(meshway_serde::MapOnly(d))
-    }
-}
-impl Serialize for ObservationPayload {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        Self::serialize(self, s)
-    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseReason {
     Idle,
@@ -82,13 +70,16 @@ pub enum CloseReason {
     Withdrawn,
     LocalFailure,
 }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum MetricKind {
     Rtt,
     Traffic,
     ProbeLoss,
+}
 }
 
 meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct TrafficWindow {

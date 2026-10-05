@@ -15,6 +15,23 @@ where
     getrandom::fill(&mut bytes).unwrap();
     T::try_from(uuid::Uuid::from_bytes(bytes)).unwrap()
 }
+fn signed_challenge(
+    controller: KeyId,
+    request: NodeChallengeRequest,
+    signer: &SigningKey,
+) -> SignedNodeChallengeRequest {
+    let intent = NodeChallengeIntent {
+        id: id(),
+        controller_id: controller,
+        request,
+        expires_at_ms: chrono::Utc::now().timestamp_millis() as u64 + 30_000,
+    };
+    let signature = signer.sign(&challenge_request_transcript(&intent));
+    SignedNodeChallengeRequest {
+        intent,
+        signature: WireSecret::new(URL_SAFE_NO_PAD.encode(signature.to_bytes())),
+    }
+}
 pub struct Server {
     pub app: App,
     pub base: String,
@@ -172,13 +189,17 @@ impl Server {
             self.post(
                 "/agent-api/v1/auth/challenges",
                 "",
-                &NodeChallengeRequest {
-                    network_id: network,
-                    node_id: enrolled.node_id,
-                    key_id: enrolled.keys.control.id,
-                    operation: ProofOperation::Session,
-                    request_digest: proof::request_digest(&intent).unwrap(),
-                },
+                &signed_challenge(
+                    enrolled.controller_id,
+                    NodeChallengeRequest {
+                        network_id: network,
+                        node_id: enrolled.node_id,
+                        key_id: enrolled.keys.control.id,
+                        operation: ProofOperation::Session,
+                        request_digest: proof::request_digest(&intent).unwrap(),
+                    },
+                    &signer,
+                ),
             ),
             200,
         )
@@ -215,6 +236,7 @@ impl Server {
         .await;
         Node {
             id: enrolled.node_id,
+            controller_id: enrolled.controller_id,
             token: session.token,
             signer,
             keys: enrolled.keys,
@@ -294,13 +316,17 @@ impl Server {
             self.post(
                 "/agent-api/v1/auth/challenges",
                 "",
-                &NodeChallengeRequest {
-                    network_id: network,
-                    node_id: node.id,
-                    key_id: node.keys.control.id,
-                    operation: ProofOperation::Session,
-                    request_digest: proof::request_digest(&intent).unwrap(),
-                },
+                &signed_challenge(
+                    node.controller_id,
+                    NodeChallengeRequest {
+                        network_id: network,
+                        node_id: node.id,
+                        key_id: node.keys.control.id,
+                        operation: ProofOperation::Session,
+                        request_digest: proof::request_digest(&intent).unwrap(),
+                    },
+                    &node.signer,
+                ),
             ),
             200,
         )
@@ -344,6 +370,7 @@ impl Server {
 }
 pub struct Node {
     pub id: NodeId,
+    controller_id: KeyId,
     pub token: WireSecret,
     pub instance: InstanceRequest,
     signer: SigningKey,

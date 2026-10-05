@@ -25,11 +25,12 @@ pub fn valid_node_hostname(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+meshway_serde::object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserBinding {
     pub user_id: UserId,
     pub membership_id: MembershipId,
+}
 }
 
 /// All inventory is scoped and authenticated by the Controller. The library
@@ -56,7 +57,7 @@ pub struct ValidationContext<'a> {
     pub previous_rule_sets: BTreeMap<String, meshway_model::resources::RuleSetData>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PreparationKind {
     AddressPoolV4,
@@ -66,6 +67,41 @@ pub enum PreparationKind {
     IdentityProof,
     Material(MaterialRequirement),
     RuleSetContent,
+}
+impl<'de> Deserialize<'de> for PreparationKind {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = PreparationKind;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a preparation kind string or a material requirement object")
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                match value {
+                    "addressPoolV4" => Ok(PreparationKind::AddressPoolV4),
+                    "addressPoolV6" => Ok(PreparationKind::AddressPoolV6),
+                    "addressV4" => Ok(PreparationKind::AddressV4),
+                    "addressV6" => Ok(PreparationKind::AddressV6),
+                    "identityProof" => Ok(PreparationKind::IdentityProof),
+                    "ruleSetContent" => Ok(PreparationKind::RuleSetContent),
+                    _ => Err(E::custom("unknown preparation kind")),
+                }
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                map: M,
+            ) -> Result<Self::Value, M::Error> {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Material {
+                    material: MaterialRequirement,
+                }
+                Material::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                    .map(|value| PreparationKind::Material(value.material))
+            }
+        }
+        d.deserialize_any(Visitor)
+    }
 }
 impl utoipa::PartialSchema for PreparationKind {
     fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
@@ -113,11 +149,12 @@ impl ToSchema for PreparationKind {
         MaterialRequirement::schemas(schemas);
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+meshway_serde::object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparationRequirement {
     pub path: String,
     pub kind: PreparationKind,
+}
 }
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigurationError {

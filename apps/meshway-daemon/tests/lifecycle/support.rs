@@ -184,7 +184,9 @@ impl Process {
         Self::start_with_options(path, origin, mode, &[])
     }
     pub fn start_with_options(path: &Path, origin: &str, mode: &str, options: &[&str]) -> Self {
-        let child = Command::new(env!("CARGO_BIN_EXE_meshwayd"))
+        let binary = std::env::var_os("MESHWAY_TEST_DAEMON_BINARY")
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_meshwayd").into());
+        let child = Command::new(binary)
             .args([
                 "--network-mode",
                 mode,

@@ -7,7 +7,6 @@ description = "Meshway configuration contracts, normalization, serialization and
 
 [dependencies]
 chrono.workspace = true
-idna.workspace = true
 ipnet.workspace = true
 jsonc-parser = { version = "=0.33.1", features = ["serde"] }
 meshway-model = { path = "../meshway-model" }

@@ -12,6 +12,7 @@
 //! transport frames must not be passed off as authenticated end-to-end traffic.
 #![forbid(unsafe_code)]
 
+mod diagnostics;
 #[cfg(test)]
 mod fixtures;
 mod flow;
@@ -460,7 +461,9 @@ impl Engine {
         facts: PacketFacts,
         circuit: Option<[u8; 32]>,
     ) -> Result<PendingRoute, Error> {
-        self.maintain()?;
+        // Prepare collects expired entries once, with this admission's final
+        // FlowTime. Authority checks remain independent of that collection.
+        self.snapshot.ensure_current()?;
         let time = FlowTime {
             instant: Instant::now(),
             now_ms: self.snapshot.now_ms()?,

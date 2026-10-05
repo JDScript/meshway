@@ -1,6 +1,7 @@
 // Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.
 
 import * as z from "zod";
+import { unwrapJsonNumber } from "../json.ts";
 
 function typedMap<Value extends z.ZodType>(
   keySchema: z.ZodType<string>,
@@ -54,6 +55,22 @@ function rfc3339(value: string): boolean {
     (parts[7] === undefined || (Number(parts[7]) <= 23 && Number(parts[8]) <= 59));
 }
 
+function timestampMillis(value: string): boolean {
+  if (!rfc3339(value)) return false;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (!parts) return false;
+  const fraction = parts[7] ?? "";
+  if (/[^0]/.test(fraction.slice(3))) return false;
+  const date = new Date(0);
+  date.setUTCFullYear(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+  const second = Number(parts[6]);
+  if (second === 60) return false;
+  date.setUTCHours(Number(parts[4]), Number(parts[5]), Math.min(second, 59), Number(fraction.slice(0, 3).padEnd(3, "0")));
+  const offset = parts[8] === undefined ? 0 : (Number(parts[9]) * 60 + Number(parts[10])) * (parts[8] === "+" ? 1 : -1);
+  const millis = date.getTime() - offset * 60000;
+  return millis >= 0 && millis <= 253402300799999;
+}
+
 export const zUdpTraversalId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zAcceptUdpTraversalPath = z.strictObject({
@@ -72,6 +89,8 @@ export const zCarrier = z.strictObject({
 });
 
 export const zDigest = z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"));
+
+export const zTimestamp = z.string().refine(timestampMillis, "Expected nonnegative RFC 3339 exact milliseconds");
 
 export const zPublicationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
@@ -134,7 +153,7 @@ export const zUdpTraversalOffer = z.strictObject({
   ["attemptId"]: zUdpTraversalId,
   ["carrier"]: zCarrier,
   ["digest"]: zDigest,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["local"]: zUdpTraversalParticipant,
   ["networkId"]: zNetworkId,
   ["nonce"]: zDigest,
@@ -543,7 +562,7 @@ export const zReplyPolicy = z.enum(["statefulExactReversePath"]);
 
 export const zPathPermit = z.strictObject({
   ["demandId"]: zRequestId,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["paths"]: z.array(zLogicalPath),
   ["port"]: zPort.nullable().exactOptional(),
   ["profile"]: z.string(),
@@ -583,7 +602,7 @@ export const zObservationServiceScope = z.union([z.strictObject({
 })]);
 
 export const zDiagnosticPermit = z.strictObject({
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["instanceId"]: zInstanceId,
   ["observationId"]: zObservationId,
   ["paths"]: z.array(zLogicalPath),
@@ -713,7 +732,7 @@ export const zTrustedDnsAssociation = z.strictObject({
   ["addresses"]: z.array(zExecutionAddress),
   ["cnameChain"]: z.array(z.string()),
   ["configurationRevision"]: zRevision,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["name"]: z.string(),
   ["networkId"]: zNetworkId,
   ["source"]: zNodeId
@@ -839,7 +858,7 @@ export const zLocalEgressAction = z.enum(["direct","unmanaged"]);
 export const zLocalEgressPermit = z.strictObject({
   ["action"]: zLocalEgressAction,
   ["demandId"]: zRequestId,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["port"]: zPort.nullable().exactOptional(),
   ["profile"]: z.string(),
   ["protocol"]: zBusinessProtocol,
@@ -1514,7 +1533,7 @@ export const zInitialNodeSettings = z.strictObject({
 });
 
 export const zCreateEnrollmentKeyRequest = z.strictObject({
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["initialSettings"]: zInitialNodeSettings,
   ["requestId"]: zRequestId,
   ["tags"]: z.array(z.string())
@@ -1639,9 +1658,9 @@ export const zLookupResult_AsnData = z.union([z.strictObject({
 })]);
 
 export const zGeoPosition = z.strictObject({
-  ["accuracyRadiusKm"]: z.number().gte(0).nullable().exactOptional(),
-  ["latitude"]: z.number().gte(-90).lte(90),
-  ["longitude"]: z.number().gte(-180).lte(180)
+  ["accuracyRadiusKm"]: z.preprocess(unwrapJsonNumber, z.number().gte(0)).nullable().exactOptional(),
+  ["latitude"]: z.preprocess(unwrapJsonNumber, z.number().gte(-90).lte(90)),
+  ["longitude"]: z.preprocess(unwrapJsonNumber, z.number().gte(-180).lte(180))
 });
 
 export const zLookupResult_GeoIpData = z.union([z.strictObject({
@@ -1712,7 +1731,7 @@ export const zEnrollmentRequestView = z.strictObject({
   ["authorizationUrl"]: z.string().nullable(),
   ["controlKey"]: zNodePublicKey,
   ["existing"]: zExistingNodeBinding.nullable(),
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["hostname"]: z.string(),
   ["id"]: zEnrollmentRequestId,
   ["phase"]: zEnrollmentPhase,
@@ -1774,15 +1793,15 @@ export const zInitialNodeSettingsView = z.strictObject({
 
 export const zEnrollmentKeyView = z.strictObject({
   ["actions"]: zEnrollmentKeyActions,
-  ["consumedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
+  ["consumedAt"]: zTimestamp.nullable(),
   ["consumedRequestId"]: zEnrollmentRequestId.nullable().exactOptional(),
-  ["createdAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["createdAt"]: zTimestamp,
   ["createdBy"]: zUserId,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["id"]: zEnrollmentKeyId,
   ["initialSettings"]: zInitialNodeSettingsView,
   ["nodeId"]: zNodeId.nullable(),
-  ["revokedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
+  ["revokedAt"]: zTimestamp.nullable(),
   ["tags"]: z.array(z.string())
 });
 
@@ -2146,7 +2165,7 @@ export const zHistoryBucket = z.strictObject({
   ["instanceId"]: zInstanceId,
   ["kind"]: zProbeKind,
   ["linkId"]: z.string().nullable().exactOptional(),
-  ["meanSuccessDurationUs"]: z.number().nullable().exactOptional(),
+  ["meanSuccessDurationUs"]: z.preprocess(unwrapJsonNumber, z.number()).nullable().exactOptional(),
   ["path"]: z.array(zNodeId),
   ["publicationId"]: zPublicationId,
   ["sampleCount"]: z.int().gte(0).lte(2147483647),
@@ -2224,8 +2243,8 @@ export const zHistoryReport = z.strictObject({
 });
 
 export const zInstanceLease = z.strictObject({
-  ["executionExpiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["executionExpiresAt"]: zTimestamp.nullable(),
+  ["expiresAt"]: zTimestamp,
   ["generation"]: zVersion,
   ["instanceId"]: zInstanceId,
   ["target"]: zConfigurationRef.nullable().exactOptional()
@@ -2499,7 +2518,7 @@ export const zProofOperation = z.enum(["session","rotate"]);
 
 export const zNodeChallenge = z.strictObject({
   ["controllerId"]: zKeyId,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["id"]: zChallengeId,
   ["keyGeneration"]: zVersion,
   ["keyId"]: zKeyId,
@@ -2516,6 +2535,13 @@ export const zNodeChallengeRequest = z.strictObject({
   ["nodeId"]: zNodeId,
   ["operation"]: zProofOperation,
   ["requestDigest"]: zDigest
+});
+
+export const zNodeChallengeIntent = z.strictObject({
+  ["controllerId"]: zKeyId,
+  ["expiresAt"]: zTimestamp,
+  ["id"]: zChallengeId,
+  ["request"]: zNodeChallengeRequest
 });
 
 export const zPeerDelta = z.strictObject({
@@ -2594,10 +2620,10 @@ export const zNodeInventoryView = z.strictObject({
   ["canDelete"]: z.boolean(),
   ["canRevokeControlKey"]: z.boolean(),
   ["canRevokeDataplaneKey"]: z.boolean(),
-  ["controlKeyCreatedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["controlKeyRevokedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
-  ["dataplaneKeyCreatedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["dataplaneKeyRevokedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
+  ["controlKeyCreatedAt"]: zTimestamp,
+  ["controlKeyRevokedAt"]: zTimestamp.nullable(),
+  ["dataplaneKeyCreatedAt"]: zTimestamp,
+  ["dataplaneKeyRevokedAt"]: zTimestamp.nullable(),
   ["desiredExecution"]: zConfigurationRef.nullable(),
   ["enabled"]: z.boolean(),
   ["hostname"]: z.string(),
@@ -2605,7 +2631,7 @@ export const zNodeInventoryView = z.strictObject({
   ["identity"]: zNodeIdentity,
   ["keys"]: zNodeKeyMetadata,
   ["networkId"]: zNetworkId,
-  ["registeredAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+  ["registeredAt"]: zTimestamp
 });
 
 export const zNodeEntitiesView = z.strictObject({
@@ -2838,7 +2864,7 @@ export const zNodePublicationProgress = z.strictObject({
   ["current"]: z.boolean(),
   ["failed"]: z.boolean(),
   ["freshness"]: zReceiptFreshness,
-  ["lastReceivedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable(),
+  ["lastReceivedAt"]: zTimestamp.nullable(),
   ["saved"]: z.boolean(),
   ["target"]: zConfigurationRef
 });
@@ -2865,7 +2891,7 @@ export const zNodeSessionRequest = z.strictObject({
 });
 
 export const zNodeSessionResponse = z.strictObject({
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["keyId"]: zKeyId,
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId,
@@ -2921,7 +2947,7 @@ export const zPasswordResetRedeemRequest = z.strictObject({
 export const zPrepareUdpTraversalRequest = z.strictObject({
   ["carrier"]: zCarrier,
   ["configuration"]: zConfigurationRef,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["instance"]: zInstanceRequest,
   ["localCandidate"]: zCandidateReference,
   ["peerCandidate"]: zCandidateReference,
@@ -2943,7 +2969,7 @@ export const zPublicationProgress = z.strictObject({
   ["publication"]: zPublicationId,
   ["revision"]: zRevision,
   ["sequence"]: zSequence,
-  ["withdrawnAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable()
+  ["withdrawnAt"]: zTimestamp.nullable()
 });
 
 export const zQueryEnrollmentRequestPath = z.strictObject({
@@ -2972,9 +2998,9 @@ export const zStunServers = z.array(z.strictObject({
 })).max(4);
 
 export const zQueryUdpTraversalResponse = z.union([z.strictObject({
-  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["asOf"]: zTimestamp,
   ["attempts"]: zUdpTraversalAttempts,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["stateEpoch"]: zStateEpoch,
   ["status"]: z.enum(["current"]),
   ["stunServers"]: zStunServers
@@ -2990,7 +3016,7 @@ export const zReceiptRequest = z.strictObject({
   ["failure"]: zApplyFailure.nullable().exactOptional(),
   ["instance"]: zInstanceRequest,
   ["phase"]: zReceiptPhase,
-  ["reportedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["reportedAt"]: zTimestamp,
   ["sequence"]: zSequence,
   ["target"]: zConfigurationRef
 });
@@ -3044,7 +3070,7 @@ export const zRenameNetworkRequest = z.strictObject({
 });
 
 export const zRenewDemandRequest = z.strictObject({
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["expiresAt"]: zTimestamp,
   ["instance"]: zInstanceRequest,
   ["requestId"]: zRequestId
 });
@@ -3125,6 +3151,11 @@ export const zSessionIssuedResponse = z.strictObject({
   ["session"]: zSessionMetadata,
   ["token"]: zWireSecret,
   ["user"]: zUserView
+});
+
+export const zSignedNodeChallengeRequest = z.strictObject({
+  ["intent"]: zNodeChallengeIntent,
+  ["signature"]: zWireSecret
 });
 
 export const zStateAccepted = z.strictObject({

@@ -166,14 +166,25 @@ pub(super) async fn enroll(
     let intent = NodeSessionIntent {
         request_id: request(),
     };
+    let allocation = meshway_protocol::NodeChallengeIntent {
+        id: ChallengeId::new(*request().as_uuid()).unwrap(),
+        controller_id: enrolled.controller_id,
+        request: NodeChallengeRequest {
+            network_id: network,
+            node_id: enrolled.node_id,
+            key_id: enrolled.keys.control.id,
+            operation: ProofOperation::Session,
+            request_digest: proof::request_digest(&intent).unwrap(),
+        },
+        expires_at_ms: chrono::Utc::now().timestamp_millis() as u64 + 30_000,
+    };
+    let allocation_signature =
+        signer.sign(&meshway_protocol::challenge_request_transcript(&allocation));
     let challenge: NodeChallenge = json(
         c.post(format!("{}/agent-api/v1/auth/challenges", s.url))
-            .json(&NodeChallengeRequest {
-                network_id: network,
-                node_id: enrolled.node_id,
-                key_id: enrolled.keys.control.id,
-                operation: ProofOperation::Session,
-                request_digest: proof::request_digest(&intent).unwrap(),
+            .json(&meshway_protocol::SignedNodeChallengeRequest {
+                intent: allocation,
+                signature: WireSecret::new(URL_SAFE_NO_PAD.encode(allocation_signature.to_bytes())),
             }),
     )
     .await;

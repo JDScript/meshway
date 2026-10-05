@@ -18,6 +18,140 @@ fn rid() -> meshway_model::RequestId {
     meshway_model::RequestId::new(crate::accounts::random_uuid().unwrap()).unwrap()
 }
 
+#[tokio::test]
+async fn history_budget_counts_visible_sources_before_pagination_and_preserves_cursor_scope() {
+    use crate::observations::history;
+    use meshway_model::{
+        EventId,
+        observations::{ObservationEvent, ObservationPayload},
+    };
+    use meshway_protocol::observations::*;
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::open(Settings::new(
+        dir.path().canonicalize().unwrap().join("data"),
+    ))
+    .await
+    .unwrap();
+    let user = app
+        .accounts()
+        .register(
+            "history-budget@example.test".into(),
+            crate::accounts::Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let network = app
+        .networks()
+        .create(user.token.expose(), "history budget".into(), rid())
+        .await
+        .unwrap()
+        .id;
+    let service = app.node_state_service().unwrap();
+    service
+        .handle
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            let (mut admission, _, mut scope, now) = super::tests::setup();
+            admission.network_id = network;
+            scope.network_id = network;
+            let visible = admission.node_id;
+            let hidden = NodeId::new(crate::accounts::random_uuid().unwrap()).unwrap();
+            scope.visible = BTreeSet::from([visible]);
+            scope.full = scope.visible.clone();
+            let event = |index: usize| ObservationEvent {
+                event_id: EventId::new(crate::accounts::random_uuid().unwrap()).unwrap(),
+                configuration: admission.configurations[0].clone(),
+                occurred_at: now - Duration::milliseconds(index as i64),
+                payload: ObservationPayload::CollectionGap {
+                    dropped: Sequence::new(1).unwrap(),
+                    from: now - Duration::seconds(30),
+                    to: now - Duration::seconds(20),
+                },
+            };
+            // Populate through the same history acceptance and retention path. The
+            // synthetic admission isolates the query's source-scope contract here.
+            let mut other = admission.clone();
+            other.node_id = hidden;
+            for start in (0..=history::MAX_QUERY_ROWS).step_by(256) {
+                let events = (start..(start + 256).min(history::MAX_QUERY_ROWS + 1))
+                    .map(event)
+                    .collect();
+                history::accept(
+                    &tx,
+                    &other,
+                    HistoryReport {
+                        instance_id: other.instance_id,
+                        events,
+                    },
+                    now,
+                )
+                .unwrap();
+            }
+            history::accept(
+                &tx,
+                &admission,
+                HistoryReport {
+                    instance_id: admission.instance_id,
+                    events: vec![event(0), event(1)],
+                },
+                now,
+            )
+            .unwrap();
+            let query = HistoryQuery {
+                from: now - Duration::minutes(1),
+                to: now + Duration::seconds(1),
+                source_node_id: None,
+                peer_node_id: None,
+                mode: HistoryMode::Raw,
+                bucket_seconds: None,
+                cursor: None,
+                limit: 1,
+                kinds: None,
+                link_id: None,
+            };
+            let (first, next) = history::query(&tx, &scope, &query, None, now).unwrap();
+            let HistoryItems::Raw { items } = first.result else {
+                panic!()
+            };
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].source_node_id, visible);
+            let next = next.unwrap();
+            let (second, end) =
+                history::query(&tx, &scope, &query, Some(next.clone()), now).unwrap();
+            assert!(end.is_none());
+            let HistoryItems::Raw { items: second } = second.result else {
+                panic!()
+            };
+            assert_eq!(second.len(), 1);
+            assert_ne!(second[0].event.event_id, items[0].event.event_id);
+            let mut forbidden = query.clone();
+            forbidden.source_node_id = Some(hidden);
+            assert!(matches!(
+                history::query(&tx, &scope, &forbidden, None, now),
+                Err(Error::InvalidRequest)
+            ));
+            let mut expanded = scope.clone();
+            expanded.visible.insert(hidden);
+            expanded.full.insert(hidden);
+            expanded.authorization_digest =
+                crate::resources::content_digest(b"expanded history authority");
+            assert!(matches!(
+                history::query(&tx, &expanded, &query, Some(next), now),
+                Err(Error::InvalidCursor)
+            ));
+            assert!(matches!(
+                history::query(&tx, &expanded, &query, None, now),
+                Err(Error::StateLimit)
+            ));
+            tx.commit().unwrap();
+        })
+        .await
+        .unwrap();
+    app.shutdown().await.unwrap();
+}
+
 struct SqlProvider {
     sealer: Arc<Sealer>,
 }

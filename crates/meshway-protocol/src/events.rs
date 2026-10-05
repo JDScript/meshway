@@ -143,7 +143,8 @@ crate::object::wire_tagged! { #[derive(Clone, Debug)] pub enum EventActor {
     System,
     Redacted,
 } }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResetReason {
     CursorTooOld,
@@ -151,13 +152,16 @@ pub enum ResetReason {
     Backpressure,
     EpochChanged,
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+}
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClosedReason {
     SessionExpired,
     MembershipRevoked,
     NodeLeaseExpired,
     ServerShutdown,
+}
 }
 
 // One generic declaration owns wire fields and variant names. Concrete roots

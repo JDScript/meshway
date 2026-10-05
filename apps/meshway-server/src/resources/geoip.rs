@@ -60,19 +60,38 @@ impl GeoIp {
         if let Some(value) = self.cache.get(&ip) {
             return value.clone();
         }
-        let geoip = match &self.city {
+        let value = IpInfo {
+            geoip: self.lookup_city(ip, now),
+            asn: self.lookup_asn(ip, now),
+        };
+        if self.cache.len() >= 8192 {
+            self.cache.clear();
+        }
+        self.cache.insert(ip, value.clone());
+        value
+    }
+    fn lookup_city(&self, ip: IpAddr, now: DateTime<Utc>) -> LookupResult<GeoIpData> {
+        match &self.city {
             None => LookupResult::Unavailable {
                 reason: UnavailableReason::DatasetUnavailable,
             },
             Some((id, reader)) => match reader.lookup::<geoip2::City<'_>>(ip) {
                 Ok(Some(city)) => {
-                    let position = city.location.and_then(|location| {
-                        Some(GeoPosition {
-                            latitude: location.latitude?,
-                            longitude: location.longitude?,
-                            accuracy_radius_km: location.accuracy_radius.map(f64::from),
+                    let position = city
+                        .location
+                        .and_then(|location| {
+                            Some(GeoPosition::new(
+                                location.latitude?,
+                                location.longitude?,
+                                location.accuracy_radius.map(f64::from),
+                            ))
                         })
-                    });
+                        .transpose();
+                    let Ok(position) = position else {
+                        return LookupResult::Unavailable {
+                            reason: UnavailableReason::LookupFailed,
+                        };
+                    };
                     LookupResult::Available {
                         dataset_id: *id,
                         looked_up_at: now,
@@ -102,8 +121,10 @@ impl GeoIp {
                     reason: UnavailableReason::LookupFailed,
                 },
             },
-        };
-        let asn = match &self.asn {
+        }
+    }
+    fn lookup_asn(&self, ip: IpAddr, now: DateTime<Utc>) -> LookupResult<AsnData> {
+        match &self.asn {
             None => LookupResult::Unavailable {
                 reason: UnavailableReason::DatasetUnavailable,
             },
@@ -131,13 +152,7 @@ impl GeoIp {
                     reason: UnavailableReason::LookupFailed,
                 },
             },
-        };
-        let value = IpInfo { geoip, asn };
-        if self.cache.len() >= 8192 {
-            self.cache.clear();
         }
-        self.cache.insert(ip, value.clone());
-        value
     }
     pub fn derive(
         &mut self,

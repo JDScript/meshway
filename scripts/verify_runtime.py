@@ -7,7 +7,6 @@ import argparse
 import concurrent.futures
 import datetime
 import fcntl
-import hashlib
 import ipaddress
 import importlib.util
 import json
@@ -21,13 +20,16 @@ import uuid
 
 from node_lab import ROOT, check_elf, docker_target, run, sha256
 from verify_tun import pinned_image
+from verification_sources import fingerprint as source_fingerprint
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
 BOOTSTRAP_BINARY = "meshway-underlay-bootstrap-tests"
+LIFECYCLE_BINARY = "meshway-daemon-lifecycle-tests"
+LIFECYCLE_TEST = "cleanup::blocked_down_retries_real_dns_reservation_cleanup_without_going_online"
 PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests"),
                      "platform-daemon": ("meshway_daemon", "meshway-daemon-platform-tests")}
-ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, *(binary for _, binary in PLATFORM_BINARIES.values()))
+ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
 KERNEL_TESTS = {
     "underlay-negative": "linux::kernel::tests::negative_capture_marked_bypass_recovery_and_exact_down",
@@ -35,25 +37,12 @@ KERNEL_TESTS = {
     "underlay-datagram": "linux::datagram::tests::actual_udp_mark_truncation_and_unpolled_owner_release",
     "underlay-dns-anchor": "linux::kernel::tests::dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal",
     "underlay-dns-foreign": "linux::kernel::tests::foreign_dns_anchor_mutation_blocks_cleanup_without_removing_the_interface",
+    "underlay-local-conflict": "linux::kernel::capture::tests::local_route_preflight_and_live_address_conflicts_preserve_foreign_resources",
 }
 
 
 def fingerprint():
-    paths = [ROOT / name for name in ("Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock")]
-    for directory in ("crates", "apps/meshway-server", "apps/meshway-daemon", "apps/meshway-cli",
-                      "tools/meshway-packet-fixture", "tools/meshway-runtime-fixture", "dev/dns-fixture", "dev/traversal-fixture"):
-        # Include SQL and other compile-time include_str/include_bytes inputs,
-        # not just Rust modules and manifests.
-        paths.extend(path for path in (ROOT / directory).rglob("*")
-                     if path.is_file() and not any(part in {"target", "node_modules", "__pycache__", ".git"}
-                                                  for part in path.relative_to(ROOT / directory).parts)
-                     and path.name != ".DS_Store")
-    paths.extend(ROOT / "scripts" / name for name in
-                 ("verify_runtime.py", "node_lab.py", "verify_tun.py"))
-    digest = hashlib.sha256()
-    for path in sorted(paths):
-        digest.update(str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes() + b"\0")
-    return digest.hexdigest()
+    return source_fingerprint(ROOT)
 
 
 def write_json(path, value):
@@ -112,6 +101,15 @@ def build(directory, target, platform, machine, source):
     shutil.copyfile(bootstrap[0], directory / BOOTSTRAP_BINARY)
     (directory / BOOTSTRAP_BINARY).chmod(0o500)
     hashes[BOOTSTRAP_BINARY] = sha256(directory / BOOTSTRAP_BINARY)
+    lifecycle = [Path(item["executable"]) for item in messages
+                 if item.get("reason") == "compiler-artifact" and item.get("executable")
+                 and item["target"]["name"] == "lifecycle" and item["profile"].get("test")]
+    if len(lifecycle) != 1:
+        raise RuntimeError("Expected one production daemon lifecycle test executable.")
+    check_elf(lifecycle[0], machine)
+    shutil.copyfile(lifecycle[0], directory / LIFECYCLE_BINARY)
+    (directory / LIFECYCLE_BINARY).chmod(0o500)
+    hashes[LIFECYCLE_BINARY] = sha256(directory / LIFECYCLE_BINARY)
     for library, name in PLATFORM_BINARIES.values():
         tests = [Path(item["executable"]) for item in messages
                  if item.get("reason") == "compiler-artifact" and item.get("executable")
@@ -180,7 +178,7 @@ def main():
     identity = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     report = root / identity
     for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES,
-                 "underlay-peer", "bootstrap", *KERNEL_TESTS, *PLATFORM_BINARIES):
+                  "underlay-peer", "bootstrap", "daemon-cleanup", *KERNEL_TESTS, *PLATFORM_BINARIES):
         (report / name).mkdir(parents=True, exist_ok=True)
     source = fingerprint()
     # One source/cache owner per invocation; never leak the lock FD to Cargo,
@@ -256,7 +254,8 @@ def main():
                  "scope": "real meshwayd/CLI; Server browser approval; A-R-B; IPv4/IPv6 UDP/TCP TUN; demand renewal; Access revocation; lease loss; offline down",
                 "tests": {name: {"status": "notRun", "test": test} for name, test in KERNEL_TESTS.items()},
                   "bootstrapHttpsTest": {"status": "notRun"},
-                  "platformTests": {},
+                   "platformTests": {},
+                   "daemonCleanupTest": {"status": "notRun", "test": LIFECYCLE_TEST},
                 "cleanup": {}}
     metadata = report / "report.json"
     write_json(metadata, manifest)
@@ -274,7 +273,7 @@ def main():
             command.extend(["--ip", str(address)])
         if address6:
             command.extend(["--ip6", str(address6)])
-        if role in ("underlay-dns-anchor", "underlay-dns-foreign"):
+        if role in ("underlay-dns-anchor", "underlay-dns-foreign", "daemon-cleanup"):
             command.extend(["--tmpfs", "/run:rw,nosuid,nodev,mode=755"])
         if role in PLATFORM_BINARIES:
             command.extend(["--workdir", "/state"])
@@ -413,6 +412,16 @@ def main():
         manifest["preparation"] = preparation
         if preparation["attachExit"] or preparation["exitCode"] or preparation["oomKilled"] or preparation["running"]:
             raise RuntimeError("runtime TLS preparation failed")
+        create("daemon-cleanup", ["--ignored", "--exact", LIFECYCLE_TEST, "--nocapture", "--test-threads=1"],
+               executable=LIFECYCLE_BINARY, admin=True,
+               environment={"MESHWAY_DNS_ISOLATED": "1", "MESHWAY_UNDERLAY_ISOLATED": "1",
+                            "MESHWAY_TEST_DAEMON_BINARY": "/fixtures/meshwayd"})
+        result = execute("daemon-cleanup")
+        passed = not any(result.values()) and "test result: ok." in (report / "daemon-cleanup.log").read_text()
+        manifest["daemonCleanupTest"] = {"passed": passed, "test": LIFECYCLE_TEST, **result}
+        write_json(metadata, manifest)
+        if not passed:
+            raise RuntimeError("Linux daemon blocked-down cleanup retry failed")
         for role, (_, binary) in PLATFORM_BINARIES.items():
             create(role, ["--include-ignored", "--nocapture", "--test-threads=4"], executable=binary,
                    environment={"MESHWAY_DNS_ISOLATED": "1", "MESHWAY_DNS_BIND_MOUNT_FILE": "/etc/resolv.conf"})
@@ -521,6 +530,7 @@ def main():
                                            MESHWAY_UNDERLAY_PEER6="[" + addresses6["underlay-peer"] + "]:42427")
                     create(role, ["--ignored", "--exact", test, "--nocapture", "--test-threads=1"],
                            address=addresses[role], address6=addresses6[role], admin=True,
+                           tun=role == "underlay-local-conflict",
                            executable=KERNEL_BINARY, environment=environment)
                     result = execute(role)
                     passed = (not result["attachExit"] and not result["exitCode"] and not result["oomKilled"] and not result["running"]

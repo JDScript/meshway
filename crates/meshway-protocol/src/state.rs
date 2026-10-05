@@ -13,8 +13,9 @@ wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct StateReport {
 wire_object! { #[derive(Clone, Debug)] pub struct StateAccepted {
     pub sequence: Sequence, pub received_at: DateTime<Utc>, pub duplicate: bool,
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Freshness {
@@ -25,6 +26,7 @@ pub enum Freshness {
     ConfigMismatch,
     Revoked,
 }
+}
 
 wire_object! { #[derive(Clone, Debug, PartialEq)] pub struct DerivedNodeState {
     #[serde(deserialize_with="meshway_serde::unique_map")] pub ip_info: BTreeMap<String, IpInfo>, pub location: Option<GeoObservation>, pub location_absent: Option<LocationAbsentReason>,
@@ -34,14 +36,16 @@ wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerEndpoint {
     pub network: SocketNetwork, pub candidate: PeerCandidate,
     pub candidate_reference: crate::connectivity::CandidateReference,
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum CandidateSource {
     Configured,
     Interface,
     Stun,
+}
 }
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerCandidate {
     pub address: String, pub source: CandidateSource, pub observed_at: DateTime<Utc>, pub expires_at: DateTime<Utc>,
@@ -70,8 +74,9 @@ wire_object! { #[derive(Clone, Debug, PartialEq)] pub struct StateView {
     pub configuration_revision: Revision, pub as_of: DateTime<Utc>, #[serde(deserialize_with="meshway_serde::unique_map")] pub nodes: BTreeMap<NodeId, NodeStateView>,
     pub links: Vec<AggregatedLink>, pub paths: Vec<AggregatedPath>,
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum LinkEvidence {
@@ -79,6 +84,7 @@ pub enum LinkEvidence {
     Matched,
     Conflicting,
     Expired,
+}
 }
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ReportRef {
     pub node_id: NodeId, pub instance_id: InstanceId, pub report_sequence: Sequence,

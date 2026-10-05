@@ -2370,8 +2370,7 @@ export const schemaDocument = {
         ],
         "properties": {
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "initialSettings": {
             "$ref": "#/components/schemas/InitialNodeSettings"
@@ -2820,8 +2819,7 @@ export const schemaDocument = {
         ],
         "properties": {
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "instanceId": {
             "$ref": "#/components/schemas/InstanceId"
@@ -3624,11 +3622,14 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/EnrollmentKeyActions"
           },
           "consumedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "consumedRequestId": {
             "oneOf": [
@@ -3641,15 +3642,13 @@ export const schemaDocument = {
             ]
           },
           "createdAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "createdBy": {
             "$ref": "#/components/schemas/UserId"
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "id": {
             "$ref": "#/components/schemas/EnrollmentKeyId"
@@ -3668,11 +3667,14 @@ export const schemaDocument = {
             ]
           },
           "revokedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "tags": {
             "type": "array",
@@ -3811,8 +3813,7 @@ export const schemaDocument = {
             ]
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "hostname": {
             "type": "string"
@@ -4631,15 +4632,17 @@ export const schemaDocument = {
         ],
         "properties": {
           "executionExpiresAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "generation": {
             "$ref": "#/components/schemas/Version"
@@ -5911,8 +5914,7 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/RequestId"
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "port": {
             "oneOf": [
@@ -6897,8 +6899,7 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/KeyId"
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "id": {
             "$ref": "#/components/schemas/ChallengeId"
@@ -6923,6 +6924,30 @@ export const schemaDocument = {
           },
           "requestDigest": {
             "$ref": "#/components/schemas/Digest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeChallengeIntent": {
+        "type": "object",
+        "required": [
+          "id",
+          "controllerId",
+          "request",
+          "expiresAt"
+        ],
+        "properties": {
+          "controllerId": {
+            "$ref": "#/components/schemas/KeyId"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ChallengeId"
+          },
+          "request": {
+            "$ref": "#/components/schemas/NodeChallengeRequest"
           }
         },
         "additionalProperties": false
@@ -7941,27 +7966,31 @@ export const schemaDocument = {
             "type": "boolean"
           },
           "controlKeyCreatedAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "controlKeyRevokedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "Revocation of the displayed latest keys; revoked configured nodes remain manageable."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "Revocation of the displayed latest keys; revoked configured nodes remain manageable."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "dataplaneKeyCreatedAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "dataplaneKeyRevokedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "desiredExecution": {
             "oneOf": [
@@ -7993,8 +8022,7 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/NetworkId"
           },
           "registeredAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           }
         },
         "additionalProperties": false
@@ -8074,11 +8102,14 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/ReceiptFreshness"
           },
           "lastReceivedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "saved": {
             "type": "boolean"
@@ -8168,8 +8199,7 @@ export const schemaDocument = {
         ],
         "properties": {
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "keyId": {
             "$ref": "#/components/schemas/KeyId"
@@ -9219,8 +9249,7 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/RequestId"
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "paths": {
             "type": "array",
@@ -9544,8 +9573,7 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/ConfigurationRef"
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time",
+            "$ref": "#/components/schemas/Timestamp",
             "description": "Absolute requested deadline, unchanged on retry, never a duration."
           },
           "instance": {
@@ -10909,11 +10937,14 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/Sequence"
           },
           "withdrawnAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -10948,15 +10979,13 @@ export const schemaDocument = {
             ],
             "properties": {
               "asOf": {
-                "type": "string",
-                "format": "date-time"
+                "$ref": "#/components/schemas/Timestamp"
               },
               "attempts": {
                 "$ref": "#/components/schemas/UdpTraversalAttempts"
               },
               "expiresAt": {
-                "type": "string",
-                "format": "date-time"
+                "$ref": "#/components/schemas/Timestamp"
               },
               "stateEpoch": {
                 "$ref": "#/components/schemas/StateEpoch"
@@ -11043,8 +11072,7 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/ReceiptPhase"
           },
           "reportedAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "sequence": {
             "$ref": "#/components/schemas/Sequence",
@@ -11204,8 +11232,7 @@ export const schemaDocument = {
         ],
         "properties": {
           "expiresAt": {
-            "type": "string",
-            "format": "date-time",
+            "$ref": "#/components/schemas/Timestamp",
             "description": "Absolute desired deadline of the existing demand; replay never adds duration."
           },
           "instance": {
@@ -11871,6 +11898,23 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "SignedNodeChallengeRequest": {
+        "type": "object",
+        "required": [
+          "intent",
+          "signature"
+        ],
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/NodeChallengeIntent"
+          },
+          "signature": {
+            "$ref": "#/components/schemas/WireSecret",
+            "description": "64-byte Ed25519 signature encoded in unpadded base64url."
+          }
+        },
+        "additionalProperties": false
+      },
       "SocketNetwork": {
         "type": "string",
         "enum": [
@@ -12262,6 +12306,11 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "Timestamp": {
+        "type": "string",
+        "format": "meshway-timestamp-ms",
+        "description": "Nonnegative Unix time as an RFC 3339 string with exact millisecond precision and UTC year at most 9999. Offsets and lowercase t/z are accepted; fractional digits after milliseconds must all be zero. Leap seconds are rejected because they have no lossless Unix-millisecond representation."
+      },
       "TlsMode": {
         "type": "string",
         "enum": [
@@ -12521,8 +12570,7 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/Revision"
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "name": {
             "type": "string"
@@ -12647,8 +12695,7 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/Digest"
           },
           "expiresAt": {
-            "type": "string",
-            "format": "date-time",
+            "$ref": "#/components/schemas/Timestamp",
             "description": "Fixed minimum of requested/max-window and every authority/fact deadline."
           },
           "local": {

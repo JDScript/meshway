@@ -653,8 +653,12 @@ fn renewal_route_uses_node_session_and_an_absolute_timestamp_contract() {
         "#/components/schemas/RenewDemandRequest"
     );
     assert_eq!(
-        spec["components"]["schemas"]["RenewDemandRequest"]["properties"]["expiresAt"]["format"],
-        "date-time"
+        spec["components"]["schemas"]["RenewDemandRequest"]["properties"]["expiresAt"]["$ref"],
+        "#/components/schemas/Timestamp"
+    );
+    assert_eq!(
+        spec["components"]["schemas"]["Timestamp"]["format"],
+        "meshway-timestamp-ms"
     );
 }
 

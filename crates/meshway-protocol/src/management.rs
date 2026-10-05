@@ -5,11 +5,7 @@ use meshway_model::{
     UserId, Version,
 };
 
-fn nullable<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
-    d: D,
-) -> Result<Option<T>, D::Error> {
-    serde::Deserialize::deserialize(d)
-}
+use meshway_serde::required_nullable as nullable;
 
 wire_object! { pub struct AccountResponse { pub request_id: RequestId, pub user: UserView } }
 wire_object! { pub struct ChangePasswordRequest { pub current_password: WireSecret, pub password: WireSecret } }

@@ -1,7 +1,7 @@
 use crate::{WireSecret, node::NodeKeyMetadata, object::wire_object};
 use meshway_configuration::transport::Listener;
 use meshway_model::*;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
@@ -11,7 +11,7 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InitialNodeSetting
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct CreateEnrollmentKeyRequest {
     pub request_id: RequestId, pub tags: Vec<String>, pub initial_settings: InitialNodeSettings,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyView {
     pub id: EnrollmentKeyId, pub tags: Vec<String>,
@@ -21,13 +21,13 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyView 
     #[serde(deserialize_with="crate::object::required_nullable")]
     pub node_id: Option<NodeId> [required=true],
     #[serde(rename="consumedAt", with="meshway_model::timestamp::optional")]
-    pub consumed_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
+    pub consumed_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
     #[serde(rename="createdAt", with="meshway_model::timestamp")]
-    pub created_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub created_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
     #[serde(rename="revokedAt", with="meshway_model::timestamp::optional")]
-    pub revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
+    pub revoked_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
     pub consumed_request_id: Option<EnrollmentRequestId>,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InitialNodeSettingsView {
@@ -39,11 +39,13 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyActio
 wire_object! { pub struct EnrollmentKeyResponse {
     pub key: EnrollmentKeyView, pub secret_delivery: SecretDelivery, pub secret: Option<WireSecret>,
 } }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SecretDelivery {
     Available,
     Unavailable,
+}
 }
 wire_object! { pub struct EnrollmentKeysResponse {
     pub items: Vec<EnrollmentKeyView>, pub total: Count,
@@ -70,16 +72,18 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentRequestV
     pub return_method: EnrollmentReturnMethod,
     pub phase: EnrollmentPhase,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
     /// Where a signed-in user authorizes this device, built by the Server from
     /// its Console origin; null when the deployment has not configured one.
     #[serde(deserialize_with="crate::object::required_nullable")]
     pub authorization_url: Option<String> [required=true],
 } }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EnrollmentReturnMethod {
     Poll,
+}
 }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DeviceAuthorizationView {
     pub request: EnrollmentRequestView,
@@ -90,7 +94,8 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DeviceAuthorizatio
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentApprovalView {
     pub user_id: UserId, pub network_id: NetworkId,
 } }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EnrollmentPhase {
     Pending,
@@ -99,6 +104,7 @@ pub enum EnrollmentPhase {
     Cancelled,
     Consumed,
     Expired,
+}
 }
 wire_object! { pub struct EnrollmentDeviceProof {
     pub verifier: WireSecret, pub signature: WireSecret,

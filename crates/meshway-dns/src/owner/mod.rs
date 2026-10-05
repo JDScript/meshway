@@ -16,7 +16,7 @@ use meshway_control::ExecutionSnapshot;
 use meshway_model::{NetworkId, NodeId, RequestId, Revision};
 use meshway_protocol::NodeDnsQueryResponse;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fmt,
     sync::Arc,
     time::{Duration, Instant},
@@ -111,13 +111,21 @@ pub struct DiscoveryRequest {
     pub name: String,
 }
 
-/// Work for one exact configured resolver. The route is created only from the
-/// current published local permit; the host's mapping only chooses a demand ID.
+/// Work for an exact configured resolver or a bounded ordered system list.
+/// Every route comes from a current published local permit; the host's mapping
+/// only chooses demand IDs. All attempts share the original query ticket.
 #[derive(Debug)]
 pub struct UpstreamWork {
     pub(crate) ticket: Ticket,
     pub(crate) route: LocalResolverRoute,
     pub(crate) query: Query,
+    pub(crate) fallback: Option<LocalResolverRoute>,
+    pub(crate) remaining: VecDeque<SystemUpstream>,
+}
+
+#[derive(Debug)]
+pub(crate) struct SystemUpstream {
+    pub(crate) route: LocalResolverRoute,
     pub(crate) fallback: Option<LocalResolverRoute>,
 }
 
@@ -402,6 +410,7 @@ impl Owner {
             route,
             query,
             fallback: None,
+            remaining: VecDeque::new(),
         }))
     }
 
@@ -426,43 +435,14 @@ impl Owner {
         ) {
             return Begin::Unavailable(Unavailable::MissingResolverPlan);
         }
-        // Original OS order is preserved; no endpoint is tried without its own
-        // grant. A TCP retry requires its own pre-published demand and is used
-        // only after a validated truncated UDP response, within this deadline.
-        let Some(demand) = demands.get(&0) else {
-            return Begin::Unavailable(Unavailable::MissingResolverPlan);
-        };
         let deadline = deadline
             .min(self.snapshot.expires_at())
             .min(Instant::now() + self.state.limits.query_timeout);
-        let mut route = match LocalResolverRoute::system(
-            self.snapshot.clone(),
-            system.clone(),
-            0,
-            system.primary,
-            *demand,
-            deadline,
-        ) {
-            Ok(route) => route,
-            Err(_) => return Begin::Unavailable(Unavailable::MissingResolverPlan),
-        };
-        let mut fallback = if system.primary == meshway_configuration::DnsTransport::Udp {
-            let Some(demand) = tcp_demands.get(&0) else {
-                return Begin::Unavailable(Unavailable::MissingResolverPlan);
-            };
-            match LocalResolverRoute::system(
-                self.snapshot.clone(),
-                system.clone(),
-                0,
-                meshway_configuration::DnsTransport::Tcp,
-                *demand,
-                deadline,
-            ) {
-                Ok(route) => Some(route),
-                Err(_) => return Begin::Unavailable(Unavailable::MissingResolverPlan),
-            }
-        } else {
-            None
+        // Validate the entire bounded OS list before starting I/O. Missing or
+        // expired authority is terminal, never a reason to skip an upstream.
+        let mut upstreams = match self.system_upstreams(system, demands, tcp_demands, deadline) {
+            Ok(upstreams) => upstreams,
+            Err(reason) => return Begin::Unavailable(reason),
         };
         let ticket = match self.state.insert_pending(
             query.clone(),
@@ -473,16 +453,60 @@ impl Owner {
             Ok(ticket) => ticket,
             Err(reason) => return Begin::Unavailable(reason),
         };
-        route.bind_cancellation(ticket.cancelled.clone());
-        if let Some(fallback) = &mut fallback {
-            fallback.bind_cancellation(ticket.cancelled.clone());
+        for upstream in &mut upstreams {
+            upstream.route.bind_cancellation(ticket.cancelled.clone());
+            if let Some(fallback) = &mut upstream.fallback {
+                fallback.bind_cancellation(ticket.cancelled.clone());
+            }
         }
+        let first = upstreams.pop_front().expect("nonempty checked system list");
         Begin::Upstream(Box::new(UpstreamWork {
             ticket,
-            route,
+            route: first.route,
             query,
-            fallback,
+            fallback: first.fallback,
+            remaining: upstreams,
         }))
+    }
+
+    fn system_upstreams(
+        &self,
+        system: &crate::SystemResolverSnapshot,
+        demands: &BTreeMap<usize, RequestId>,
+        tcp_demands: &BTreeMap<usize, RequestId>,
+        deadline: Instant,
+    ) -> Result<VecDeque<SystemUpstream>, Unavailable> {
+        use meshway_configuration::DnsTransport;
+        if system.upstreams.is_empty() || system.upstreams.len() > 8 {
+            return Err(Unavailable::MissingResolverPlan);
+        }
+        let route = |index, transport, ids: &BTreeMap<usize, RequestId>| {
+            let demand = ids.get(&index).ok_or(Unavailable::MissingResolverPlan)?;
+            LocalResolverRoute::system(
+                self.snapshot.clone(),
+                system.clone(),
+                index,
+                transport,
+                *demand,
+                deadline,
+            )
+            .map_err(|error| match error {
+                crate::RouteError::Expired => Unavailable::Expired,
+                crate::RouteError::Binding => Unavailable::MissingResolverPlan,
+            })
+        };
+        (0..system.upstreams.len())
+            .map(|index| {
+                Ok(SystemUpstream {
+                    route: route(index, system.primary, demands)?,
+                    fallback: if system.primary == DnsTransport::Udp {
+                        Some(route(index, DnsTransport::Tcp, tcp_demands)?)
+                    } else {
+                        None
+                    },
+                })
+            })
+            .collect()
     }
 
     /// A response cannot be transplanted across owner generations or renewed

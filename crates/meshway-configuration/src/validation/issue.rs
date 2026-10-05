@@ -1,12 +1,13 @@
 //! Diagnostics of a configuration check: a closed code, its parameters, the
 //! JSON pointer of the offending value and an English fallback message.
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
+meshway_serde::string_enum! {
 /// Every diagnostic a configuration check can report. Clients localize by
 /// code and parameters; `message` is the English rendering of the same.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueCode {
     // Source text and shape.
@@ -131,6 +132,7 @@ pub enum IssueCode {
     /// `by` (index of the last rule that completes the cover).
     ShadowedRule,
 }
+}
 
 impl IssueCode {
     /// English rendering, parameter-free. Clients substitute `params`.
@@ -208,8 +210,8 @@ impl IssueCode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+meshway_serde::object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigurationIssue {
     /// JSON pointer into the configuration input; empty for the document.
     pub path: String,
@@ -218,6 +220,7 @@ pub struct ConfigurationIssue {
     pub params: BTreeMap<String, String>,
     /// English rendering of `code`; not for programmatic use.
     pub message: String,
+}
 }
 
 impl ConfigurationIssue {

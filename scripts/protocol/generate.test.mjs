@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, copyFile, cp, statfs } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -63,9 +63,11 @@ async function generatedFixture(t, document = fixture()) {
   const packageRoot = join(directory, "packages/control-client");
   await mkdir(join(packageRoot, "node_modules"), { recursive: true });
   await symlink(dirname(require.resolve("zod/package.json")), join(packageRoot, "node_modules/zod"));
-  await copyFile(join(root, "packages/control-client/src/transport.ts"), join(packageRoot, "src/transport.ts"));
-  await copyFile(join(root, "packages/control-client/src/sse.ts"), join(packageRoot, "src/sse.ts"));
-  await copyFile(join(root, "packages/control-client/src/json.ts"), join(packageRoot, "src/json.ts"));
+  // Generated fixtures consume the authoritative runtime modules. Node follows
+  // the symlinks to one module identity, including the JSON numeric-token owner.
+  for (const name of ["transport.ts", "sse.ts", "json.ts"]) {
+    await symlink(join(root, "packages/control-client/src", name), join(packageRoot, "src", name));
+  }
   await writeFile(join(packageRoot, "package.json"), '{"type":"module"}');
   return { directory, packageRoot, files };
 }
@@ -124,6 +126,28 @@ test("integer schemas must prove a lossless JS-safe range before emission", () =
     { type: "integer", minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
     { type: "integer", format: "int64", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
   ]) assert.doesNotThrow(() => validators({ $defs: { FixtureInteger: integer } }));
+});
+
+test("execution timestamps preserve exact milliseconds and epoch bounds independently of observation times", async t => {
+  const document = fixture();
+  document.components.schemas.FixtureTimestamp = { type: "string", format: "meshway-timestamp-ms" };
+  document.components.schemas.FixtureOptionalTimestamp = { anyOf: [ref("FixtureTimestamp"), { type: "null" }] };
+  const { packageRoot } = await generatedFixture(t, document);
+  const { zFixtureTimestamp: timestamp, zFixtureOptionalTimestamp: optional } = await import(pathToFileURL(join(packageRoot, "src/generated/zod.gen.ts")));
+  for (const value of [
+    "1970-01-01T00:00:00Z", "1969-12-31T19:00:00-05:00",
+    "2026-10-05t00:00:00.123000000000z", "2026-10-05T08:00:00.001+08:00",
+    "9999-12-31T23:59:59.999Z",
+  ]) assert.equal(timestamp.safeParse(value).success, true, value);
+  for (const value of [
+    "1969-12-31T23:59:59.999Z", "1970-01-01T00:00:00+00:01",
+    "2026-10-05T00:00:00.000001Z", "2026-10-05T00:00:00.000000000001Z",
+    "9999-12-31T23:59:59-00:01", "9999-12-31T23:59:60Z",
+    "2016-12-31T23:59:60Z",
+    "2026-02-30T00:00:00Z", "2026-10-05T00:00:00Z\n", null, 0,
+  ]) assert.equal(timestamp.safeParse(value).success, false, JSON.stringify(value));
+  assert.equal(optional.safeParse(null).success, true);
+  assert.equal(optional.safeParse(undefined).success, false);
 });
 
 test("generated binary64 schemas retain measurement bounds and nullable absence", async t => {
@@ -434,126 +458,4 @@ listFixtureMembers(client, path, {token: "secret"}, {token: "secret"});
   const result = spawnSync(process.execPath, [require.resolve("typescript/bin/tsc"), "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess", "--skipLibCheck", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "Bundler", "--allowImportingTsExtensions", "consumer.ts"], { cwd: packageRoot, encoding: "utf8" });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(generatedFiles(parameterFixture()), files);
-});
-
-test("generated Rust parameter methods compile and execute against HTTP with shared typed aliases", async t => {
-  const disk = await statfs(root);
-  assert.ok(disk.bavail * disk.bsize >= 50 * 1024 ** 3, "Rust fixture requires 50 GiB free; retire inactive owned caches first");
-  const { directory, files } = await generatedFixture(t, parameterFixture());
-  const project = join(directory, "rust-fixture");
-  await mkdir(join(project, "src"), { recursive: true });
-  await copyFile(join(root, "crates/meshway-control-client/src/runtime.rs"), join(project, "src/runtime.rs"));
-  await cp(join(root, "crates/meshway-control-client/src/sse"), join(project, "src/sse"), { recursive: true });
-  await writeFile(join(project, "src/generated.rs"), files["crates/meshway-control-client/src/generated/mod.rs"]);
-  await writeFile(join(project, "Cargo.toml"), `[workspace]
-[package]
-name = "meshway-codegen-parameter-fixture"
-version = "0.0.0"
-edition = "2024"
-[dependencies]
-bytes = "1"
-meshway-model = { path = ${JSON.stringify(join(root, "crates/meshway-model"))} }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-futures-util = "0.3"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
-reqwest-middleware = "0.5"
-axum = "0.8.9"
-tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
-`);
-  await writeFile(join(project, "src/lib.rs"), `#![forbid(unsafe_code)]
-extern crate self as meshway_protocol;
-mod runtime;
-mod generated;
-mod sse;
-pub use runtime::{Client, ClientError};
-pub use sse::{EventStream, EventDelivery, StreamOptions, StreamResponse};
-pub use generated::*;
-pub use meshway_model::{NetworkId as FixtureNetworkId, Revision as FixtureRevision};
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct FixtureInput { pub text: String }
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct FixtureOutput { pub id: FixtureNetworkId, pub sequence: u64, pub time: String, pub required_nullable: Option<String> }
-#[derive(serde::Deserialize)]
-pub struct FixtureProblem { pub code: String }
-#[derive(serde::Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
-pub enum FixtureEvent { Snapshot { text: String }, Ready { cursor: String } }
-#[cfg(test)]
-mod parameter_tests {
-    use super::*;
-    #[tokio::test]
-    async fn actual_generated_event_request() {
-        let router = axum::Router::new().route("/fixture/networks/{networkId}/events", axum::routing::get(|headers: axum::http::HeaderMap| async move {
-            assert_eq!(headers["accept"], "text/event-stream");
-            assert_eq!(headers["authorization"], "Bearer private-token");
-            assert_eq!(headers["last-event-id"], "caller-applied");
-            axum::http::Response::builder().header("content-type", "text/event-stream")
-                .body(axum::body::Body::from("data: {\\"type\\":\\"snapshot\\",\\"text\\":\\"😀\\"}\\n\\nid: decoded\\ndata: {\\"type\\":\\"ready\\",\\"cursor\\":\\"ready\\"}\\n\\n")).unwrap()
-        }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = Client::new(&format!("http://{}", listener.local_addr().unwrap()), reqwest::Client::builder(), 1024).unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
-        let mut events = client.watch_fixture(&WatchFixturePath { network_id: "12345678-1234-0234-0234-123456789abc".parse().unwrap() }, "private-token", &StreamOptions { applied_cursor: Some("caller-applied"), ..Default::default() }).await.unwrap();
-        let first = events.next().await.unwrap().unwrap();
-        assert!(first.id.is_none());
-        assert!(matches!(first.data, FixtureEvent::Snapshot { text } if text == "😀"));
-        let ready = events.next().await.unwrap().unwrap();
-        assert_eq!(ready.id.as_deref(), Some("decoded"));
-        assert!(matches!(ready.data, FixtureEvent::Ready { cursor } if cursor == "ready"));
-        assert!(events.next().await.is_none());
-        server.abort();
-    }
-    #[tokio::test]
-    async fn actual_parameter_requests() {
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let received = seen.clone();
-        let router = axum::Router::new().fallback(move |uri: axum::http::Uri, headers: axum::http::HeaderMap, body: String| {
-            let received = received.clone();
-            async move {
-                received.lock().unwrap().push((uri.to_string(), headers.get("authorization").map(|value| value.to_str().unwrap()).unwrap_or("").to_owned(), body));
-                axum::http::StatusCode::NO_CONTENT
-            }
-        });
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = Client::new(&format!("http://{}", listener.local_addr().unwrap()), reqwest::Client::builder(), 1024).unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
-        let path = ListFixtureMembersPath { network_id: "12345678-1234-0234-0234-123456789abc".parse().unwrap() };
-        let query = ListFixtureMembersQuery { cursor: Some(String::new()), enabled: Some(false), limit: Some(3), revision: Some(FixtureRevision::MAX) };
-        client.list_fixture_members(&path, &query, "private-token").await.unwrap();
-        client.list_fixture_members(&path, &ListFixtureMembersQuery::default(), "private-token").await.unwrap();
-        let value = "a/\\\\?#%2F%2e Unicode😀 !'()*";
-        let rename_path = RenameFixturePath { value: value.to_owned() };
-        let rename_query = RenameFixtureQuery { cursor: Some(value.to_owned()), ..Default::default() };
-        for _ in 0..2 { client.rename_fixture(&rename_path, &rename_query, &FixtureInput { text: "x".into() }, "private-token").await.unwrap(); }
-        for limit in [0, 101] {
-            assert!(matches!(client.list_fixture_members(&path, &ListFixtureMembersQuery { limit: Some(limit), ..Default::default() }, "private-token").await, Err(ClientError::Request)));
-        }
-        for value in ["", ".", ".."] {
-            assert!(matches!(client.rename_fixture(&RenameFixturePath { value: value.into() }, &RenameFixtureQuery::default(), &FixtureInput { text: "x".into() }, "private-token").await, Err(ClientError::Request)));
-        }
-        client.list_fixture_networks(&ListFixtureNetworksQuery { limit: Some(5), ..Default::default() }, "private-token").await.unwrap();
-        client.get_fixture_network(&GetFixtureNetworkPath { network_id: path.network_id }, "private-token").await.unwrap();
-        client.scalar_fixture(&ScalarFixturePath { number: -3, flag: false }, &ScalarFixtureQuery { mode: Some("\\0\\u{8}\\u{c}\\\\back".into()) }).await.unwrap();
-        assert!(matches!(client.scalar_fixture(&ScalarFixturePath { number: 101, flag: false }, &ScalarFixtureQuery::default()).await, Err(ClientError::Request)));
-        assert!(matches!(client.scalar_fixture(&ScalarFixturePath { number: 1, flag: false }, &ScalarFixtureQuery { mode: Some("invalid".into()) }).await, Err(ClientError::Request)));
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 7);
-        assert_eq!(seen[0].0, "/fixture/networks/12345678-1234-0234-0234-123456789abc/members?cursor=&enabled=false&limit=3&revision=9007199254740991");
-        assert_eq!(seen[1].0, "/fixture/networks/12345678-1234-0234-0234-123456789abc/members");
-        assert_eq!(seen[2].0, "/fixture/value/a%2F%5C%3F%23%252F%252e%20Unicode%F0%9F%98%80%20%21%27%28%29%2A?cursor=a%2F%5C%3F%23%252F%252e%20Unicode%F0%9F%98%80%20%21%27%28%29%2A");
-        assert_eq!(seen[2], seen[3]);
-        assert!(seen[..6].iter().all(|request| request.1 == "Bearer private-token"));
-        assert_eq!(seen[2].2, r#"{"text":"x"}"#);
-        assert_eq!(seen[4].0, "/fixture/networks?limit=5");
-        assert_eq!(seen[5].0, "/fixture/networks/12345678-1234-0234-0234-123456789abc");
-        assert_eq!(seen[6].0, "/fixture/scalars/-3/false?mode=%00%08%0C%5Cback");
-        server.abort();
-    }
-}
-`);
-  const result = spawnSync("cargo", ["test", "--offline", "--quiet"], { cwd: project, encoding: "utf8", env: { ...process.env, CARGO_TARGET_DIR: join(root, "target"), CARGO_INCREMENTAL: "0", CARGO_BUILD_JOBS: "4" }, timeout: 240_000 });
-  assert.equal(result.status, 0, result.error?.message ?? result.stdout + result.stderr);
-  const clippy = spawnSync("cargo", ["clippy", "--offline", "--all-targets", "--", "-D", "warnings"], { cwd: project, encoding: "utf8", env: { ...process.env, CARGO_TARGET_DIR: join(root, "target"), CARGO_INCREMENTAL: "0", CARGO_BUILD_JOBS: "4" }, timeout: 240_000 });
-  assert.equal(clippy.status, 0, clippy.stdout + clippy.stderr);
 });

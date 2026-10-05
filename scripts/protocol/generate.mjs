@@ -34,9 +34,9 @@ export async function generate(outputRoot = root) {
   run("rustfmt", ["--edition", "2024", join(outputRoot, artifactPaths[1], "mod.rs")]);
 }
 
-// Also used to retire the previous generation chain before the first fresh
-// actual-route artifact exists. This does not create a substitute API artifact.
-export async function clearGenerated(outputRoot = root) {
+// The successful actual-route export owns these directories, including removal
+// of outputs that are no longer emitted by the current contract.
+async function clearGenerated(outputRoot) {
   for (const directory of artifactPaths.slice(1)) await rm(join(outputRoot, directory), { recursive: true, force: true });
 }
 
@@ -77,6 +77,8 @@ export function validators(document) {
   const definitions = [];
   let usesTypedMap = false;
   let usesDateTime = false;
+  let usesTimestampMillis = false;
+  let usesNumber = false;
   const schemas = document.components?.schemas ?? document.$defs;
   const referencePrefix = document.components?.schemas ? "#/components/schemas/" : "#/$defs/";
   if (!schemas) throw new Error("Missing schema definitions");
@@ -203,10 +205,11 @@ export function validators(document) {
           if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title", "x-meshway-ref"].includes(key))) throw new Error("Only plain string enums are supported");
           return `z.enum(${JSON.stringify(schema.enum)})`;
         }
-        if (schema.format && !["date-time", "password", "uuid", "ipv4", "ipv6"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
+        if (schema.format && !["date-time", "meshway-timestamp-ms", "password", "uuid", "ipv4", "ipv6"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
         if (schema.format === "uuid" && !schema.pattern) throw new Error("UUID format requires the authoritative canonical UUID pattern");
         if (schema.format === "date-time") usesDateTime = true;
-        let code = schema.format === "date-time" ? 'z.string().refine(rfc3339, "Expected RFC 3339 date-time")' : ["ipv4", "ipv6"].includes(schema.format) ? `z.${schema.format}()` : "z.string()";
+        if (schema.format === "meshway-timestamp-ms") usesTimestampMillis = usesDateTime = true;
+        let code = schema.format === "meshway-timestamp-ms" ? 'z.string().refine(timestampMillis, "Expected nonnegative RFC 3339 exact milliseconds")' : schema.format === "date-time" ? 'z.string().refine(rfc3339, "Expected RFC 3339 date-time")' : ["ipv4", "ipv6"].includes(schema.format) ? `z.${schema.format}()` : "z.string()";
         for (const [key, operator] of [["minLength", ">="], ["maxLength", "<="]]) {
           if (schema[key] !== undefined) {
             if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);
@@ -227,6 +230,7 @@ export function validators(document) {
         return `z.int().gte(${minimum}).lte(${maximum})`;
       }
       case "number": {
+        usesNumber = true;
         keys(schema, ["type", "format", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]);
         if (schema.format !== undefined && schema.format !== "double") throw new Error("Only binary64 number schemas are supported");
         for (const key of ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]) {
@@ -241,7 +245,7 @@ export function validators(document) {
         for (const [key, operation] of [["minimum", "gte"], ["maximum", "lte"], ["exclusiveMinimum", "gt"], ["exclusiveMaximum", "lt"]]) {
           if (schema[key] !== undefined) code += `.${operation}(${schema[key]})`;
         }
-        return code;
+        return `z.preprocess(unwrapJsonNumber, ${code})`;
       }
       case "boolean":
         keys(schema, ["type"]);
@@ -279,7 +283,7 @@ export function validators(document) {
     return typeof schema.type === "string" && schema.type !== "null";
   }
   for (const name of Object.keys(schemas).sort()) component(name);
-  return `// Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.\n\nimport * as z from "zod";\n\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${usesDateTime ? dateTimeHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
+  return `// Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.\n\nimport * as z from "zod";\n${usesNumber ? 'import { unwrapJsonNumber } from "../json.ts";\n' : ""}\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${usesDateTime ? dateTimeHelper + "\n\n" : ""}${usesTimestampMillis ? timestampMillisHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
 }
 
 // RFC 3339 permits lowercase t/z and leap seconds. Zod's ISO validator is
@@ -293,6 +297,24 @@ const dateTimeHelper = `function rfc3339(value: string): boolean {
   return days !== undefined && day >= 1 && day <= days && Number(parts[4]) <= 23 &&
     Number(parts[5]) <= 59 && Number(parts[6]) <= 60 &&
     (parts[7] === undefined || (Number(parts[7]) <= 23 && Number(parts[8]) <= 59));
+}`;
+
+// The execution/signature scalar is narrower than ordinary observation times.
+// Inspect every fractional digit before conversion; Date.parse would truncate.
+const timestampMillisHelper = `function timestampMillis(value: string): boolean {
+  if (!rfc3339(value)) return false;
+  const parts = /^(\\d{4})-(\\d{2})-(\\d{2})[Tt](\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d+))?(?:[Zz]|([+-])(\\d{2}):(\\d{2}))$/.exec(value);
+  if (!parts) return false;
+  const fraction = parts[7] ?? "";
+  if (/[^0]/.test(fraction.slice(3))) return false;
+  const date = new Date(0);
+  date.setUTCFullYear(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+  const second = Number(parts[6]);
+  if (second === 60) return false;
+  date.setUTCHours(Number(parts[4]), Number(parts[5]), Math.min(second, 59), Number(fraction.slice(0, 3).padEnd(3, "0")));
+  const offset = parts[8] === undefined ? 0 : (Number(parts[9]) * 60 + Number(parts[10])) * (parts[8] === "+" ? 1 : -1);
+  const millis = date.getTime() - offset * 60000;
+  return millis >= 0 && millis <= 253402300799999;
 }`;
 
 // Zod 4 record skips __proto__ before validation and makes enum keys exhaustive.

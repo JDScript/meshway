@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
 use meshway_model::{RequestId, SessionId, UserId};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::{WireSecret, object::wire_object};
 
+meshway_serde::string_enum! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum PasswordLengthUnit {
@@ -12,15 +13,6 @@ pub enum PasswordLengthUnit {
     UnicodeCodepoints,
 }
 
-impl<'de> Deserialize<'de> for PasswordLengthUnit {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        // A derived unit enum also accepts {"unicodeCodepoints": null}, which
-        // disagrees with the published string schema.
-        match String::deserialize(deserializer)?.as_str() {
-            "unicodeCodepoints" => Ok(Self::UnicodeCodepoints),
-            _ => Err(serde::de::Error::custom("unknown password length unit")),
-        }
-    }
 }
 
 wire_object! {

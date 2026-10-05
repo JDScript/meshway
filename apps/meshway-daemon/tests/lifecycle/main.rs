@@ -1,6 +1,9 @@
 #![cfg(unix)]
+#[cfg(target_os = "linux")]
+mod cleanup;
 #[cfg(not(target_os = "linux"))]
 mod network;
+mod recovery;
 mod support;
 use meshway_control_client::{
     ApplyConfigurationPath, ApproveDeviceAuthorizationPath, GetDeviceAuthorizationPath,
@@ -232,8 +235,15 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     let mut daemon = Process::start(&directory, &server.origin);
     let down = wait(&daemon.socket, Phase::Down).await;
     assert!(!down.desired_up && down.instance.is_none());
-    daemon.exit("-TERM").await;
+    // The instance release is best-effort: the authenticated Server can go
+    // offline before daemon shutdown without turning a clean join into failure.
+    let up = Command::Up {
+        expected_revision: down.revision,
+    };
+    call(&daemon.socket, up, request_id()).await.unwrap();
+    wait(&daemon.socket, Phase::ControlReady).await;
     server.close().await;
+    daemon.exit("-TERM").await;
 }
 
 #[tokio::test]

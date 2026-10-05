@@ -1,6 +1,7 @@
 //! Durable source events and coverage. Tombstones outlive the complete admission
 //! window, including clock skew; retries never recreate pruned payloads.
 use crate::error::Error;
+use crate::store::observations::history as store;
 use crate::{
     resources::content_digest,
     state::{ReportAdmission, VisibilityScope},
@@ -12,7 +13,7 @@ use meshway_model::{
     state::ProbeOutcome,
 };
 use meshway_protocol::observations::*;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::Transaction;
 use std::collections::BTreeMap;
 
 pub const ADMISSION_SECONDS: i64 = 600;
@@ -74,16 +75,29 @@ pub fn accept(
             }
         }
         let bytes = serde_json::to_vec(&event).map_err(|_| Error::encode("observation event"))?;
-        let digest = content_digest(&bytes).to_string();
-        let prior: Option<(String, String)> = tx.query_row("SELECT payload_digest, instance_id FROM observation_events WHERE network_id = ?1 AND source_node_id = ?2 AND event_id = ?3", params![admission.network_id.as_uuid().as_bytes().as_slice(), admission.node_id.to_string(), event.event_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+        let digest = content_digest(&bytes);
+        let prior = store::previous(tx, admission.network_id, admission.node_id, event.event_id)?;
         if let Some((original, instance)) = prior {
-            if original != digest || instance != batch.instance_id.to_string() {
+            if original != digest || instance != batch.instance_id {
                 return Err(Error::StateConflict);
             }
             duplicates += 1;
             continue;
         }
-        tx.execute("INSERT INTO observation_events (network_id, source_node_id, instance_id, event_id, occurred_at, received_at, payload, payload_digest, admission_expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", params![admission.network_id.as_uuid().as_bytes().as_slice(), admission.node_id.to_string(), batch.instance_id.to_string(), event.event_id.to_string(), event.occurred_at.timestamp_millis(), now.timestamp_millis(), bytes, digest, (event.occurred_at + Duration::seconds(ADMISSION_SECONDS + 30)).timestamp_millis()])?;
+        store::insert(
+            tx,
+            store::EventWrite {
+                network: admission.network_id,
+                source: admission.node_id,
+                instance: batch.instance_id,
+                event: event.event_id,
+                occurred_at: event.occurred_at,
+                received_at: now,
+                payload: &bytes,
+                digest,
+                admission_expires_at: event.occurred_at + Duration::seconds(ADMISSION_SECONDS + 30),
+            },
+        )?;
         accepted += 1;
     }
     prune(tx, admission.network_id, now)?;
@@ -98,26 +112,13 @@ pub fn prune(
     network: meshway_model::NetworkId,
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
-    let network = network.as_uuid().as_bytes().as_slice();
-    let cutoff = (now - Duration::seconds(RETENTION_SECONDS)).timestamp_millis();
-    let capacity_row: i64 = tx.query_row("SELECT coalesce((SELECT row_id FROM observation_events WHERE network_id = ?1 AND payload IS NOT NULL ORDER BY row_id DESC LIMIT 1 OFFSET ?2), 0)", params![network, MAX_EVENTS_PER_NETWORK], |row| row.get(0))?;
-    for (predicate, reason, bound) in [
-        ("occurred_at < ?2", "retention", cutoff),
-        ("row_id <= ?2", "capacity", capacity_row),
-    ] {
-        let sql = format!(
-            "INSERT INTO history_coverage(network_id, source_node_id, before_at, reason) SELECT network_id, source_node_id, max(occurred_at) + 1, ?3 FROM observation_events WHERE network_id = ?1 AND payload IS NOT NULL AND {predicate} GROUP BY source_node_id ON CONFLICT(network_id, source_node_id, reason) DO UPDATE SET before_at = max(before_at, excluded.before_at)"
-        );
-        tx.execute(&sql, params![network, bound, reason])?;
-        tx.execute(
-            &format!(
-                "UPDATE observation_events SET payload = NULL WHERE network_id = ?1 AND {predicate}"
-            ),
-            params![network, bound],
-        )?;
-    }
-    tx.execute("DELETE FROM observation_events WHERE network_id = ?1 AND payload IS NULL AND admission_expires_at <= ?2", params![network, now.timestamp_millis()])?;
-    Ok(())
+    store::prune(
+        tx,
+        network,
+        now - Duration::seconds(RETENTION_SECONDS),
+        MAX_EVENTS_PER_NETWORK,
+        now,
+    )
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -190,11 +191,7 @@ pub fn query(
             window
         }
         None => ReadWindow {
-            ceiling: tx.query_row(
-                "SELECT coalesce(max(row_id), 0) FROM observation_events",
-                [],
-                |row| row.get(0),
-            )?,
+            ceiling: store::upper(tx)?,
             offset: 0,
             as_of: now,
             query_digest,
@@ -204,119 +201,119 @@ pub fn query(
     };
     // Gaps may end after the requested display window. Read the bounded
     // retention window, then intersect gap intervals separately from samples.
-    // A query for one source must not spend the row budget on other sources'
-    // traffic, so the source filter is part of the read, not of the scan below.
-    let source = query.source_node_id.map(|node| node.to_string());
-    let mut statement = tx.prepare("SELECT source_node_id, instance_id, received_at, payload FROM observation_events WHERE network_id = ?1 AND occurred_at >= ?2 AND row_id <= ?4 AND payload IS NOT NULL AND (?6 IS NULL OR source_node_id = ?6) AND (occurred_at < ?3 OR json_extract(CAST(payload AS TEXT),'$.payload.kind') = 'collection_gap') ORDER BY occurred_at, row_id LIMIT ?5")?;
-    let rows = statement.query_map(
-        params![
-            scope.network_id.as_uuid().as_bytes().as_slice(),
-            query.from.timestamp_millis(),
-            query.to.timestamp_millis(),
-            window.ceiling,
-            (MAX_QUERY_ROWS + 1) as i64,
-            source
-        ],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, Vec<u8>>(3)?,
-            ))
-        },
-    )?;
+    // Current source visibility and any narrower source selection precede the
+    // SQL scan budget. Unrelated hidden traffic cannot exhaust this reader.
+    let sources = scope
+        .visible
+        .iter()
+        .copied()
+        .filter(|node| {
+            query
+                .source_node_id
+                .is_none_or(|selected| selected == *node)
+        })
+        .collect();
     let mut events = vec![];
     let mut coverage = vec![];
-    for (count, row) in rows.enumerate() {
-        if count >= MAX_QUERY_ROWS {
-            return Err(Error::StateLimit);
-        }
-        let (node, instance, received_at, bytes) = row?;
-        let node: NodeId = node
-            .parse()
-            .map_err(|_| Error::decode("observation_events.source_node_id"))?;
-        if !scope.visible.contains(&node)
-            || query.source_node_id.is_some_and(|source| source != node)
-        {
-            continue;
-        }
-        let event: ObservationEvent = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::decode("observation_events.payload"))?;
-        if let ObservationPayload::CollectionGap { from, to, dropped } = &event.payload {
-            // A source-wide drop count has no narrower peer/link attribution.
-            // Only readers of the complete source may see it, regardless of
-            // display mode/kinds; never expose it as a peer-specific statistic.
-            if scope.full.contains(&node) && *from < query.to && *to > query.from {
-                coverage.push(HistoryCoverage::CollectionGap {
-                    source_node_id: node,
-                    instance_id: instance
-                        .parse()
-                        .map_err(|_| Error::decode("observation_events.instance_id"))?,
-                    event_id: event.event_id,
-                    from: *from,
-                    to: *to,
-                    dropped: *dropped,
-                });
+    store::events(
+        tx,
+        store::Scan {
+            network: scope.network_id,
+            sources: &sources,
+            from: query.from,
+            to: query.to,
+            ceiling: window.ceiling,
+            limit: MAX_QUERY_ROWS + 1,
+        },
+        |count, row| {
+            if count >= MAX_QUERY_ROWS {
+                return Err(Error::StateLimit);
             }
-        }
-        if event.occurred_at >= query.to {
-            continue;
-        }
-        let (kind, link) = match &event.payload {
-            ObservationPayload::DialStarted { .. } => (HistoryKind::DialStarted, None),
-            ObservationPayload::DialFailed { .. } => (HistoryKind::DialFailed, None),
-            ObservationPayload::LinkOpened { link_id, .. } => {
-                (HistoryKind::LinkOpened, Some(link_id))
+            let store::EventRow {
+                source: node,
+                instance,
+                received_at,
+                payload: bytes,
+            } = row;
+            if !scope.visible.contains(&node)
+                || query.source_node_id.is_some_and(|source| source != node)
+            {
+                return Ok(());
             }
-            ObservationPayload::LinkClosed { link_id, .. } => {
-                (HistoryKind::LinkClosed, Some(link_id))
+            let event: ObservationEvent = serde_json::from_slice(&bytes)
+                .map_err(|_| Error::decode("observation_events.payload"))?;
+            if let ObservationPayload::CollectionGap { from, to, dropped } = &event.payload {
+                // A source-wide drop count has no narrower peer/link attribution.
+                // Only readers of the complete source may see it, regardless of
+                // display mode/kinds; never expose it as a peer-specific statistic.
+                if scope.full.contains(&node) && *from < query.to && *to > query.from {
+                    coverage.push(HistoryCoverage::CollectionGap {
+                        source_node_id: node,
+                        instance_id: instance,
+                        event_id: event.event_id,
+                        from: *from,
+                        to: *to,
+                        dropped: *dropped,
+                    });
+                }
             }
-            ObservationPayload::ProbeCompleted { probe } => {
-                (HistoryKind::ProbeCompleted, probe.link_id.as_ref())
+            if event.occurred_at >= query.to {
+                return Ok(());
             }
-            ObservationPayload::CollectionGap { .. } => (HistoryKind::CollectionGap, None),
-        };
-        if query
-            .kinds
-            .as_ref()
-            .is_some_and(|kinds| !kinds.contains(&kind))
-            || query.link_id.as_ref().is_some_and(|id| Some(id) != link)
-        {
-            continue;
-        }
-        let peer = peer(&event.payload);
-        if peer.is_some_and(|id| !scope.visible.contains(&id))
-            || query.peer_node_id.is_some_and(|id| Some(id) != peer)
-        {
-            continue;
-        }
-        if let ObservationPayload::ProbeCompleted { probe } = &event.payload
-            && (probe.path.iter().any(|node| !scope.visible.contains(node))
-                || !scope.full.contains(&node) && !scope.observation_paths.contains(&probe.path))
-        {
-            continue;
-        }
-        if !scope.full.contains(&node)
-            && peer.is_none_or(|peer| {
-                !scope.observation_paths.iter().any(|path| {
-                    path.windows(2)
-                        .any(|pair| pair == [node, peer] || pair == [peer, node])
+            let (kind, link) = match &event.payload {
+                ObservationPayload::DialStarted { .. } => (HistoryKind::DialStarted, None),
+                ObservationPayload::DialFailed { .. } => (HistoryKind::DialFailed, None),
+                ObservationPayload::LinkOpened { link_id, .. } => {
+                    (HistoryKind::LinkOpened, Some(link_id))
+                }
+                ObservationPayload::LinkClosed { link_id, .. } => {
+                    (HistoryKind::LinkClosed, Some(link_id))
+                }
+                ObservationPayload::ProbeCompleted { probe } => {
+                    (HistoryKind::ProbeCompleted, probe.link_id.as_ref())
+                }
+                ObservationPayload::CollectionGap { .. } => (HistoryKind::CollectionGap, None),
+            };
+            if query
+                .kinds
+                .as_ref()
+                .is_some_and(|kinds| !kinds.contains(&kind))
+                || query.link_id.as_ref().is_some_and(|id| Some(id) != link)
+            {
+                return Ok(());
+            }
+            let peer = peer(&event.payload);
+            if peer.is_some_and(|id| !scope.visible.contains(&id))
+                || query.peer_node_id.is_some_and(|id| Some(id) != peer)
+            {
+                return Ok(());
+            }
+            if let ObservationPayload::ProbeCompleted { probe } = &event.payload
+                && (probe.path.iter().any(|node| !scope.visible.contains(node))
+                    || !scope.full.contains(&node)
+                        && !scope.observation_paths.contains(&probe.path))
+            {
+                return Ok(());
+            }
+            if !scope.full.contains(&node)
+                && peer.is_none_or(|peer| {
+                    !scope.observation_paths.iter().any(|path| {
+                        path.windows(2)
+                            .any(|pair| pair == [node, peer] || pair == [peer, node])
+                    })
                 })
-            })
-        {
-            continue;
-        }
-        events.push(HistoricalEvent {
-            source_node_id: node,
-            instance_id: instance
-                .parse::<InstanceId>()
-                .map_err(|_| Error::decode("observation_events.instance_id"))?,
-            received_at: DateTime::from_timestamp_millis(received_at)
-                .ok_or(Error::decode("observation_events.received_at"))?,
-            event,
-        });
-    }
+            {
+                return Ok(());
+            }
+            events.push(HistoricalEvent {
+                source_node_id: node,
+                instance_id: instance,
+                received_at,
+                event,
+            });
+            Ok(())
+        },
+    )?;
     let all = match query.mode {
         HistoryMode::Raw => HistoryItems::Raw { items: events },
         HistoryMode::Buckets => HistoryItems::Buckets {
@@ -360,33 +357,19 @@ pub fn query(
         return Err(Error::InvalidCursor);
     }
     window.result_count = Some(total);
-    let mut statement = tx.prepare(
-        "SELECT source_node_id, before_at, reason FROM history_coverage WHERE network_id = ?1",
-    )?;
-    let rows = statement.query_map([scope.network_id.as_uuid().as_bytes().as_slice()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
-    for row in rows {
-        let (source, before, reason) = row?;
-        let source: NodeId = source
-            .parse()
-            .map_err(|_| Error::decode("history_coverage.source_node_id"))?;
+    for store::CoverageRow {
+        source,
+        before,
+        reason,
+    } in store::coverage(tx, scope.network_id)?
+    {
         if !scope.visible.contains(&source) || query.source_node_id.is_some_and(|id| id != source) {
             continue;
         }
         coverage.push(HistoryCoverage::Pruned {
             source_node_id: source,
-            before: DateTime::from_timestamp_millis(before)
-                .ok_or(Error::decode("history_coverage.before_at"))?,
-            reason: match reason.as_str() {
-                "capacity" => CoverageReason::Capacity,
-                "retention" => CoverageReason::Retention,
-                _ => return Err(Error::decode("history_coverage.reason")),
-            },
+            before,
+            reason,
         });
     }
     let page = HistoryPage {

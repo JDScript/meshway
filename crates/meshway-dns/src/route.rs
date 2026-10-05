@@ -148,6 +148,20 @@ impl LocalResolverRoute {
         self.cancelled = cancelled;
     }
 
+    /// A single exchange can only shorten this route. Its child token lets the
+    /// dispatcher stop an accepted adapter worker without cancelling the query
+    /// ticket needed by later, independently authorized upstreams.
+    pub(crate) fn exchange_scope(&self, deadline: Instant) -> Self {
+        let mut route = self.clone();
+        route.deadline = route.deadline.min(deadline);
+        route.cancelled = self.cancelled.child_token();
+        route
+    }
+
+    pub(crate) fn cancel_exchange(&self) {
+        self.cancelled.cancel();
+    }
+
     pub fn ensure_current(&self) -> Result<(), RouteError> {
         if let Some(system) = &self.system {
             system.ensure_current().map_err(|_| RouteError::Expired)?;

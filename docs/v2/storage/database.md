@@ -103,7 +103,8 @@ control 固定 Ed25519，dataplane 固定 X25519；公钥唯一，用途与代�
 
 | 表 | 字段与用途 |
 | --- | --- |
-| `node_challenges` | id、controller_id、network_id、node_id、key_id、nonce、request_digest、operation、created_at、expires_at、consumed_at；固定签名 challenge 和一次消费 |
+| `node_challenges` | id、controller_id、network_id、node_id、key_id、nonce、request_digest、operation、created_at、expires_at、consumed_at、session_anchor；固定签名申请、challenge 和一次消费，session_anchor 区分真实会话恢复锚点 |
+| `node_challenge_clock` | singleton、utc_ms；认证／清理事务共同推进的持久 UTC 高水位，拒绝删除、替换与回拨 |
 | `node_sessions` | token_hash、network_id、node_id、key_id、boot_id、created_at、expires_at；短期 bearer 绑定当前 Server boot |
 | `node_rotations` | network_id、node_id、request_id、request_digest、challenge_id、challenge、control_key_id、dataplane_key_id、generation、result；保存原证明与公钥结果用于同次换钥恢复 |
 
@@ -156,6 +157,8 @@ listener 同名重建使用新创建 revision；socket 另有运行 generation�
 `dataset_artifacts` 保存 id、可空 network_id、kind、source、format、data、digest、created_at。kind 为 ruleSet／geoip／asn；规范化内容经过完整校验后不可变保存，原始下载为有界临时输入。
 
 资源引用精确 ArtifactId，不能重新下载最新 URL 冒充历史内容。来源与摘要不包含凭据。
+
+`ip_dataset_heads` 以 kind 为主键，保存 GeoIP／ASN 的当前 artifact_id；与导入同事务更新。引用必须对应同 kind 的全局 MMDB artifact；缺失或错误 head 阻断完整性检查，不在启动时猜测修复。
 
 ### RuleSetCheck
 

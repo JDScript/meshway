@@ -969,7 +969,7 @@ impl crate::Client {
 
     pub async fn create_node_challenge(
         &self,
-        body: &meshway_protocol::NodeChallengeRequest,
+        body: &meshway_protocol::SignedNodeChallengeRequest,
     ) -> Result<meshway_protocol::NodeChallenge, crate::ClientError<meshway_protocol::ErrorResponse>>
     {
         let response = self
@@ -982,7 +982,7 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            400 | 401 | 503 => Err(response.problem()),
+            400 | 401 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

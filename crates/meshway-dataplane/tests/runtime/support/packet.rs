@@ -25,18 +25,50 @@ pub fn udp(
     let length = u16::try_from(payload.len() + 8).unwrap();
     body[4..6].copy_from_slice(&length.to_be_bytes());
     body.extend(payload);
+    datagram(source, destination, 17, body, 6)
+}
+
+pub fn echo(
+    source: IpAddr,
+    destination: IpAddr,
+    reply: bool,
+    identifier: u16,
+    sequence: u16,
+    payload: &[u8],
+) -> Packet {
+    let (protocol, kind) = match (source.is_ipv4(), reply) {
+        (true, false) => (1, 8),
+        (true, true) => (1, 0),
+        (false, false) => (58, 128),
+        (false, true) => (58, 129),
+    };
+    let mut body = vec![kind, 0, 0, 0];
+    body.extend(identifier.to_be_bytes());
+    body.extend(sequence.to_be_bytes());
+    body.extend(payload);
+    datagram(source, destination, protocol, body, 2)
+}
+
+fn datagram(
+    source: IpAddr,
+    destination: IpAddr,
+    protocol: u8,
+    mut body: Vec<u8>,
+    checksum_offset: usize,
+) -> Packet {
+    let length = u16::try_from(body.len()).unwrap();
     let mut pseudo = Vec::new();
     let mut header = match (source, destination) {
         (IpAddr::V4(source), IpAddr::V4(destination)) => {
             pseudo.extend(source.octets());
             pseudo.extend(destination.octets());
-            pseudo.extend([0, 17]);
+            pseudo.extend([0, protocol]);
             pseudo.extend(length.to_be_bytes());
             let mut header = vec![0; 20];
             header[0] = 0x45;
             header[2..4].copy_from_slice(&(length + 20).to_be_bytes());
             header[8] = 64;
-            header[9] = 17;
+            header[9] = protocol;
             header[12..16].copy_from_slice(&source.octets());
             header[16..20].copy_from_slice(&destination.octets());
             let check = checksum(&header);
@@ -47,11 +79,11 @@ pub fn udp(
             pseudo.extend(source.octets());
             pseudo.extend(destination.octets());
             pseudo.extend(u32::from(length).to_be_bytes());
-            pseudo.extend([0, 0, 0, 17]);
+            pseudo.extend([0, 0, 0, protocol]);
             let mut header = vec![0; 40];
             header[0] = 0x60;
             header[4..6].copy_from_slice(&length.to_be_bytes());
-            header[6] = 17;
+            header[6] = protocol;
             header[7] = 64;
             header[8..24].copy_from_slice(&source.octets());
             header[24..40].copy_from_slice(&destination.octets());
@@ -59,9 +91,17 @@ pub fn udp(
         }
         _ => panic!("fixture address families must agree"),
     };
+    if protocol == 1 {
+        pseudo.clear();
+    }
     pseudo.extend(&body);
     let check = checksum(&pseudo);
-    body[6..8].copy_from_slice(&if check == 0 { u16::MAX } else { check }.to_be_bytes());
+    let check = if protocol == 17 && check == 0 {
+        u16::MAX
+    } else {
+        check
+    };
+    body[checksum_offset..checksum_offset + 2].copy_from_slice(&check.to_be_bytes());
     header.extend(body);
     Packet::parse(header).unwrap()
 }

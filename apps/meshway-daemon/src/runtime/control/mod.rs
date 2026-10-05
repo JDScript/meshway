@@ -1,10 +1,12 @@
 //! Drive the control owner with bounded retries and cancellable desired-state waits.
 mod cycle;
+mod failure;
 mod scheduling;
 
 use super::{intent::Desired, network, status::Report};
 use crate::settings::Settings;
-use cycle::{cycle, failure};
+use cycle::cycle;
+use failure::failure;
 use meshway_control::{Control, Error};
 use meshway_ipc::{Phase, Problem};
 use std::{sync::Arc, time::Duration};
@@ -101,6 +103,7 @@ pub(super) async fn run(
     let mut last_report: Option<Instant> = None;
     let mut backoff = 1u64;
     let mut reset = plan.retry_enrollment;
+    let mut shutdown_failure = None;
     loop {
         if plan.shutdown || desired.has_changed().is_err() {
             break;
@@ -308,11 +311,14 @@ pub(super) async fn run(
                     let delay = error
                         .retry
                         .then(|| error.retry_after.unwrap_or(Duration::from_secs(backoff)));
-                    if !error.retry {
+                    if !error.retry || error.reset {
                         stop(driver, false).await;
                         if let Some(network) = &mut network {
                             let _ = network.stop(false).await;
                         }
+                        queued = None;
+                        last_renew = None;
+                        last_report = None;
                     }
                     publish(
                         &reported,
@@ -328,8 +334,16 @@ pub(super) async fn run(
                         delay,
                     );
                     backoff = (backoff * 2).min(30);
-                    match wait_work(&mut desired, &plan, delay, network.as_mut(), false, None).await
-                    {
+                    // A fatal identity/contract/storage failure can only be
+                    // retried by a new operator revision, never by leftover
+                    // network requests waking an otherwise infinite wait.
+                    let waiting = if error.retry {
+                        wait_work(&mut desired, &plan, delay, network.as_mut(), false, None).await
+                    } else {
+                        wait_change(&mut desired, &plan, None).await;
+                        Waiting::Change
+                    };
+                    match waiting {
                         Waiting::Change => {}
                         Waiting::Request(request) => {
                             queued = Some(request);
@@ -361,8 +375,10 @@ pub(super) async fn run(
         queued = None;
         if control.as_ref().is_some_and(|c| c.status().reload_required)
             && let Some(driver) = control.take()
+            && let Err(error) = finish_control(driver).await
         {
-            let _ = driver.shutdown().await;
+            shutdown_failure = Some(error);
+            break;
         }
         plan = desired.borrow_and_update().clone();
         reset = plan.retry_enrollment;
@@ -370,19 +386,52 @@ pub(super) async fn run(
         last_report = None;
         backoff = 1;
     }
-    if let Some(mut driver) = control.take() {
-        stop(&mut driver, false).await;
-        let _ = driver.shutdown().await;
-    }
-    if let Some(network) = network {
-        let keep_sink = desired.borrow().up;
-        if let Err(problem) = network.shutdown(keep_sink).await {
-            tracing::error!(?problem, "Network shutdown failed");
-            return Err("Network shutdown failed.");
-        }
-    }
-    Ok(())
+    let keep_sink = desired.borrow().up;
+    shutdown(
+        control,
+        async move {
+            match network {
+                Some(network) => network.shutdown(keep_sink).await,
+                None => Ok(()),
+            }
+        },
+        shutdown_failure,
+    )
+    .await
 }
+
+async fn finish_control(mut driver: Control) -> Result<(), &'static str> {
+    // The bounded remote release is best-effort and takes the local instance
+    // before its first await. shutdown then settles accepted private writes;
+    // their final errors must not be treated as remote-release failures.
+    stop(&mut driver, false).await;
+    driver.shutdown().await.map_err(|error| {
+        tracing::error!(%error, "Control private shutdown failed");
+        "Control private shutdown failed."
+    })
+}
+
+async fn shutdown(
+    control: Option<Control>,
+    network: impl std::future::Future<Output = Result<(), Problem>>,
+    mut failure: Option<&'static str>,
+) -> Result<(), &'static str> {
+    if let Some(driver) = control
+        && let Err(error) = finish_control(driver).await
+    {
+        failure.get_or_insert(error);
+    }
+    // Always run the resource owner's cleanup and join, even after a failed
+    // accepted write. Report both failures without losing the first outcome.
+    if let Err(problem) = network.await {
+        tracing::error!(?problem, "Network shutdown failed");
+        failure.get_or_insert("Network shutdown failed.");
+    }
+    failure.map_or(Ok(()), Err)
+}
+
+#[cfg(test)]
+mod tests;
 
 enum Waiting {
     Change,

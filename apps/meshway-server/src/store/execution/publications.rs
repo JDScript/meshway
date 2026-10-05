@@ -362,7 +362,6 @@ pub(crate) fn target_for_node(
         .ok_or(Error::decode("execution_publications.payload"))?;
     Ok(Some((publication, node)))
 }
-pub(crate) use target as current_target;
 pub(super) fn historical_target(
     tx: &Transaction<'_>,
     sealer: &Sealer,

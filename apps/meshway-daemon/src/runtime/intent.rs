@@ -124,7 +124,9 @@ impl Store {
         }
         let mut record = self.record.clone();
         let desired = action == Action::Up;
-        if desired != record.desired_up || desired && blocked {
+        // A new operator request retries failed convergence in either direction.
+        // The receipt check above still makes an uncertain request replay inert.
+        if desired != record.desired_up || blocked {
             record.revision = Version::new(
                 record
                     .revision
@@ -163,4 +165,49 @@ fn save(directory: &Directory, record: &Record) -> Result<(), &'static str> {
     directory
         .replace("daemon.json", &bytes)
         .map_err(|_| "Cannot commit Node state; reopen before retrying.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn blocked_down_advances_once_and_preserves_cas_and_durable_replay() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().canonicalize().unwrap().join("node");
+        let mut store = Store::open(&path).unwrap();
+        let before = store.record.revision;
+        let id = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let record = store
+            .mutation(Action::Down, id, before, true)
+            .unwrap()
+            .unwrap();
+        assert!(!record.desired_up);
+        assert_eq!(record.revision.get(), before.get() + 1);
+        store.commit(record).await.unwrap();
+        drop(store);
+
+        let store = Store::open(&path).unwrap();
+        assert!(
+            store
+                .mutation(Action::Down, id, before, true)
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            store.mutation(Action::Up, id, before, true),
+            Err(ErrorCode::RequestConflict)
+        ));
+        let next = "00000000-0000-4000-8000-000000000002".parse().unwrap();
+        assert!(matches!(
+            store.mutation(Action::Down, next, before, true),
+            Err(ErrorCode::Conflict)
+        ));
+        let healthy = store
+            .mutation(Action::Down, next, store.record.revision, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(healthy.revision, store.record.revision);
+        assert!(!healthy.desired_up);
+    }
 }

@@ -459,13 +459,16 @@ async fn enroll(
     let challenge: NodeChallenge = json(
         s.client
             .post(format!("{}/agent-api/v1/auth/challenges", s.url))
-            .json(&NodeChallengeRequest {
-                network_id: network,
-                node_id: node.node_id,
-                key_id: node.keys.control.id,
-                operation: ProofOperation::Session,
-                request_digest: crate::execution::proof::request_digest(&intent).unwrap(),
-            }),
+            .json(&s.app.execution().signed_challenge_fixture(
+                NodeChallengeRequest {
+                    network_id: network,
+                    node_id: node.node_id,
+                    key_id: node.keys.control.id,
+                    operation: ProofOperation::Session,
+                    request_digest: crate::execution::proof::request_digest(&intent).unwrap(),
+                },
+                &signer,
+            )),
     )
     .await;
     let session: NodeSessionResponse = json(

@@ -9,8 +9,9 @@ wire_object! { #[derive(Clone, Debug)] pub struct PreparedRuleSet {
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ArtifactSummary {
     pub id: ArtifactId, pub digest: Digest, pub created_at: DateTime<Utc>, pub entries: u32,
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceProblem {
@@ -22,6 +23,7 @@ pub enum ResourceProblem {
     BudgetExceeded,
     NotReady,
     ValidationFailed,
+}
 }
 wire_object! { #[derive(Clone, Debug)] pub struct RuleSetView {
     pub key: String, pub configuration_revision: Revision,

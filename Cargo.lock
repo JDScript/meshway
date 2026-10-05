@@ -1681,7 +1681,6 @@ name = "meshway-configuration"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "idna",
  "ipnet",
  "jsonc-parser",
  "meshway-model",
@@ -1766,7 +1765,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "bytes",
- "chrono",
  "futures-util",
  "meshway-protocol",
  "meshway-server",
@@ -1775,7 +1773,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
 ]
 
@@ -1848,17 +1845,20 @@ dependencies = [
 name = "meshway-dns"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "bytes",
- "futures-util",
  "getrandom 0.3.4",
  "hickory-proto",
  "meshway-configuration",
  "meshway-control",
+ "meshway-control-client",
  "meshway-model",
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
  "meshway-serde",
+ "meshway-server",
+ "reqwest",
  "resolv-conf",
  "rustix",
  "serde",
@@ -1868,6 +1868,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "uuid",
  "zbus",
 ]
 
@@ -1915,7 +1916,6 @@ dependencies = [
 name = "meshway-packet-fixture"
 version = "0.1.0"
 dependencies = [
- "axum",
  "clap",
  "getrandom 0.3.4",
  "hyper",
@@ -1938,11 +1938,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "tempfile",
- "thiserror",
  "tokio",
- "tokio-rustls",
- "tokio-util",
  "tracing",
  "uuid",
 ]

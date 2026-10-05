@@ -15,6 +15,21 @@ BEGIN SELECT RAISE(ABORT, 'dataset artifacts are immutable'); END;
 CREATE TRIGGER dataset_artifacts_immutable_delete BEFORE DELETE ON dataset_artifacts
 BEGIN SELECT RAISE(ABORT, 'dataset artifacts are retained by version'); END;
 
+-- Current deployment datasets are explicit references, never inferred from
+-- wall-clock timestamps, random IDs or VACUUM-sensitive implicit rowids.
+CREATE TABLE ip_dataset_heads (
+    kind TEXT PRIMARY KEY NOT NULL CHECK(kind IN ('geoip', 'asn')),
+    artifact_id TEXT NOT NULL REFERENCES dataset_artifacts(id)
+) STRICT;
+CREATE TRIGGER ip_dataset_heads_insert BEFORE INSERT ON ip_dataset_heads
+WHEN NOT EXISTS(SELECT 1 FROM dataset_artifacts WHERE id=NEW.artifact_id AND kind=NEW.kind AND network_id IS NULL AND format='mmdb')
+BEGIN SELECT RAISE(ABORT, 'invalid IP dataset head'); END;
+CREATE TRIGGER ip_dataset_heads_update BEFORE UPDATE ON ip_dataset_heads
+WHEN NEW.kind!=OLD.kind OR NOT EXISTS(SELECT 1 FROM dataset_artifacts WHERE id=NEW.artifact_id AND kind=NEW.kind AND network_id IS NULL AND format='mmdb')
+BEGIN SELECT RAISE(ABORT, 'invalid IP dataset head'); END;
+CREATE TRIGGER ip_dataset_heads_no_delete BEFORE DELETE ON ip_dataset_heads
+BEGIN SELECT RAISE(ABORT, 'IP dataset heads require a replacement'); END;
+
 -- Current check outcome is separate from immutable configuration and publication
 -- bindings. A failed refresh retains the last successfully published artifact.
 CREATE TABLE rule_set_checks (

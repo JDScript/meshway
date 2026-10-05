@@ -1,20 +1,24 @@
 use crate::{Digest, KeyId, PublicationId, Revision, Version};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use utoipa::ToSchema;
 
+meshway_serde::string_enum! {
 /// Control signing and dataplane encryption are deliberately different purposes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum KeyPurpose {
     Control,
     Dataplane,
 }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyAlgorithm {
     Ed25519,
     X25519,
+}
 }
 
 meshway_serde::object! {

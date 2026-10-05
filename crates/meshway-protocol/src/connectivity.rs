@@ -234,8 +234,9 @@ bounded_collection!(
     MAX_UDP_TRAVERSAL_ATTEMPTS
 );
 
+meshway_serde::string_enum! {
 /// Expected authority/CAS races are closed outcomes, not authentication errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum UdpTraversalUnavailableReason {
     ScopeChanged,
@@ -246,6 +247,7 @@ pub enum UdpTraversalUnavailableReason {
     Capacity,
     /// An existing requestId was retried with different immutable input.
     RequestChanged,
+}
 }
 
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct QueryUdpTraversalRequest {
@@ -259,9 +261,9 @@ wire_tagged! { tag = "status";
     Current {
         state_epoch: StateEpoch,
         #[serde(rename = "asOf", with = "meshway_model::timestamp")]
-        as_of_ms: u64 [value_type = chrono::DateTime<chrono::Utc>],
+        as_of_ms: u64 [value_type = meshway_model::timestamp::Timestamp],
         #[serde(rename = "expiresAt", with = "meshway_model::timestamp")]
-        expires_at_ms: u64 [value_type = chrono::DateTime<chrono::Utc>],
+        expires_at_ms: u64 [value_type = meshway_model::timestamp::Timestamp],
         stun_servers: StunServers,
         attempts: UdpTraversalAttempts,
     },
@@ -275,7 +277,7 @@ wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PrepareUdpTrave
     pub request_id: RequestId,
     /// Absolute requested deadline, unchanged on retry, never a duration.
     #[serde(rename = "expiresAt", with = "meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type = chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type = meshway_model::timestamp::Timestamp],
     pub peer_id: NodeId,
     pub carrier: Carrier,
     pub local_candidate: CandidateReference,
@@ -305,7 +307,7 @@ wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct UdpTraversalOff
     pub peer: UdpTraversalParticipant,
     /// Fixed minimum of requested/max-window and every authority/fact deadline.
     #[serde(rename = "expiresAt", with = "meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type = chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type = meshway_model::timestamp::Timestamp],
 } }
 
 impl UdpTraversalOffer {
@@ -344,11 +346,13 @@ impl UdpTraversalOffer {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum UdpTraversalPhase {
     Waiting,
     Active,
+}
 }
 
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct UdpTraversalAttempt {

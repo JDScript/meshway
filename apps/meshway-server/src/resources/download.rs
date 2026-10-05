@@ -57,12 +57,24 @@ pub(crate) async fn download(
     {
         return Err(ResourceProblem::InvalidSource);
     }
-    let host = url.host_str().ok_or(ResourceProblem::InvalidSource)?;
+    let host = url
+        .host()
+        .ok_or(ResourceProblem::InvalidSource)?
+        .to_string();
+    // Url::host has already validated the host. Its IPv6 Display includes URL
+    // brackets; tuple-style resolver hosts and numeric IP parsing do not.
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(&host);
     let port = url
         .port_or_known_default()
         .ok_or(ResourceProblem::InvalidSource)?;
     tokio::time::timeout(Duration::from_secs(30), async {
-        let addresses = connector.resolve(host, port).await?;
+        let addresses = match host.parse::<std::net::IpAddr>() {
+            Ok(ip) => vec![SocketAddr::new(ip, port)],
+            Err(_) => connector.resolve(host, port).await?,
+        };
         if addresses.is_empty()
             || addresses.len() > 16
             || addresses
@@ -101,4 +113,70 @@ pub(crate) async fn download(
     })
     .await
     .map_err(|_| ResourceProblem::DownloadFailed)?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NumericSource {
+        host: &'static str,
+        address: SocketAddr,
+    }
+    impl Connector for NumericSource {
+        fn resolve<'a>(&'a self, _: &'a str, _: u16) -> ResolveFuture<'a> {
+            panic!("numeric URL must not resolve through DNS")
+        }
+        fn client(
+            &self,
+            host: &str,
+            addresses: &[SocketAddr],
+        ) -> Result<reqwest::Client, ResourceProblem> {
+            assert_eq!(host, self.host);
+            assert_eq!(addresses, [self.address]);
+            // Stop at the injectable socket boundary, after production address
+            // admission. No public network connection is needed for this test.
+            Err(ResourceProblem::BudgetExceeded)
+        }
+    }
+
+    #[tokio::test]
+    async fn numeric_urls_bypass_dns_but_not_public_address_admission() {
+        for (url, host, address) in [
+            (
+                "https://93.184.216.34:8443/rules",
+                "93.184.216.34",
+                "93.184.216.34:8443",
+            ),
+            (
+                "https://[2606:4700:4700::1111]:8443/rules",
+                "2606:4700:4700::1111",
+                "[2606:4700:4700::1111]:8443",
+            ),
+        ] {
+            let source = NumericSource {
+                host,
+                address: address.parse().unwrap(),
+            };
+            assert_eq!(
+                download(url, &source).await,
+                Err(ResourceProblem::BudgetExceeded)
+            );
+        }
+        let source = NumericSource {
+            host: "must not reach client",
+            address: "127.0.0.1:443".parse().unwrap(),
+        };
+        for url in [
+            "https://127.0.0.1/rules",
+            "https://[::1]/rules",
+            "https://[fd00::1]/rules",
+            "https://[::ffff:93.184.216.34]/rules",
+        ] {
+            assert_eq!(
+                download(url, &source).await,
+                Err(ResourceProblem::InvalidSource)
+            );
+        }
+    }
 }

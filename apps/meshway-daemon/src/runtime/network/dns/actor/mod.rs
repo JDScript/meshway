@@ -9,8 +9,55 @@ use meshway_dns::{
 use meshway_model::RequestId;
 use meshway_private_storage::Directory;
 use meshway_underlay::Host;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot, watch};
+
+// A stalled observation withdraws query authority. Accepted backend writes
+// remain owned by Runtime and are settled by its normal shutdown path.
+const OBSERVE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Private I/O seam for the actor loop. Runtime is the sole production owner;
+/// tests substitute observation latency, never DNS selection or installation.
+trait Owner: Send + 'static {
+    fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>>;
+    fn observe(&mut self) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
+    fn hold(
+        &mut self,
+        cfg: &NodeConfiguration,
+    ) -> impl Future<Output = Result<Vec<meshway_dns::ResolverDemand>, SystemDnsError>> + Send;
+    fn install(
+        &mut self,
+        snapshot: ExecutionSnapshot,
+        demands: &BTreeMap<ResolverSource, RequestId>,
+    ) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
+    fn shutdown(self, keep: bool) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
+}
+
+impl Owner for Runtime {
+    fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>> {
+        self.scopes.clone()
+    }
+    async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        Runtime::observe(self).await
+    }
+    async fn hold(
+        &mut self,
+        cfg: &NodeConfiguration,
+    ) -> Result<Vec<meshway_dns::ResolverDemand>, SystemDnsError> {
+        Runtime::hold(self, cfg).await?;
+        self.demands(cfg)
+    }
+    async fn install(
+        &mut self,
+        snapshot: ExecutionSnapshot,
+        demands: &BTreeMap<ResolverSource, RequestId>,
+    ) -> Result<(), SystemDnsError> {
+        Runtime::install(self, snapshot, demands).await
+    }
+    async fn shutdown(self, keep: bool) -> Result<(), SystemDnsError> {
+        Runtime::shutdown(self, keep).await
+    }
+}
 
 enum Command {
     Hold(
@@ -32,22 +79,41 @@ struct Actor {
     task: tokio::task::JoinHandle<()>,
 }
 impl Actor {
-    fn start(mut runtime: Runtime) -> Self {
+    fn start(mut runtime: impl Owner) -> Self {
         let (commands, mut received) = mpsc::channel(4);
         let (faults, fault) = watch::channel(None);
-        let scopes = runtime.scopes.clone();
+        let scopes = runtime.scopes();
+        let query_scopes = scopes.clone();
         let task = tokio::spawn(async move {
             let mut timer = tokio::time::interval(super::OBSERVE_INTERVAL);
             timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut command_turn = true;
             loop {
-                let result = tokio::select! { biased;
-                    _ = timer.tick() => runtime.observe().await,
-                    command = received.recv() => match command {
+                // An overdue tick and a command alternate deterministically.
+                // At most one due observation separates already queued commands;
+                // the four-slot FIFO therefore bounds shutdown's admission wait.
+                // Commands cannot starve provenance observations either.
+                let command = if command_turn {
+                    match received.try_recv() {
+                        Ok(command) => Some(Some(command)),
+                        Err(mpsc::error::TryRecvError::Disconnected) => Some(None),
+                        Err(mpsc::error::TryRecvError::Empty) => None,
+                    }
+                } else {
+                    None
+                };
+                let command = match command {
+                    Some(command) => Some(command),
+                    None => tokio::select! { biased;
+                        _ = timer.tick() => None,
+                        command = received.recv() => Some(command),
+                    },
+                };
+                if let Some(command) = command {
+                    command_turn = false;
+                    match command {
                         Some(Command::Hold(cfg, reply)) => {
-                            let result = match runtime.hold(&cfg).await {
-                                Ok(()) => runtime.demands(&cfg),
-                                Err(error) => Err(error),
-                            };
+                            let result = runtime.hold(&cfg).await;
                             let _ = reply.send(result);
                             continue;
                         }
@@ -60,11 +126,18 @@ impl Actor {
                             let _ = reply.send(runtime.shutdown(keep).await);
                             return;
                         }
-                        None => { let _ = runtime.shutdown(true).await; return; }
-                    },
-                };
+                        None => {
+                            let _ = runtime.shutdown(true).await;
+                            return;
+                        }
+                    }
+                }
+                command_turn = true;
+                let result = tokio::time::timeout(OBSERVE_TIMEOUT, runtime.observe())
+                    .await
+                    .unwrap_or(Err(SystemDnsError::Backend));
                 if let Err(error) = result {
-                    runtime.suspend();
+                    query_scopes.send_replace(None);
                     faults.send_replace(Some(error));
                 }
             }
@@ -115,6 +188,9 @@ impl Actor {
         result
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 pub(in crate::runtime::network) struct Attachment {
     settings: SystemDnsSettings,

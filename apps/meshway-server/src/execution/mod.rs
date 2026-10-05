@@ -58,37 +58,6 @@ impl Execution {
             .read(move |tx| store::query_dns(tx, &sealer, boot, token, request, request_id))
             .await
     }
-    /// Supplies the State report/view provider with actual current SQL facts. The
-    /// returned configuration is private execution material: providers project
-    /// only resource identities/allowed endpoints and never broadcast it.
-    pub fn current_node_execution(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        token: &str,
-    ) -> Result<
-        (
-            NodePrincipal,
-            InstanceLease,
-            Option<meshway_configuration::execution::CompiledNode>,
-        ),
-        Error,
-    > {
-        let now = store::now()?;
-        let p = store::authorize_node(tx, &self.sealer, self.boot, proof::token_hash(token)?, now)?;
-        let lease = store::instance_lease(tx, &self.sealer, &p)?;
-        store::current_instance(
-            tx,
-            self.boot,
-            &p,
-            &InstanceRequest {
-                instance_id: lease.instance_id,
-                generation: lease.generation,
-            },
-            now,
-        )?;
-        let target = store::current_target(tx, &self.sealer, &p)?.map(|(_, target)| target);
-        Ok((p, lease, target))
-    }
     pub async fn revoke_key(
         &self,
         token: &str,
@@ -104,42 +73,6 @@ impl Execution {
                 Ok(((), effects))
             })
             .await
-    }
-    /// Atomic seam for State/observation storage. Every use rechecks the current
-    /// session, Config identity, instance and (when requested) execution lease.
-    pub fn authorize_in_transaction(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        token: &str,
-        instance: &InstanceRequest,
-        configuration: Option<&ConfigurationRef>,
-        require_execution: bool,
-    ) -> Result<NodePrincipal, Error> {
-        let now = store::now()?;
-        let p = store::authorize_node(tx, &self.sealer, self.boot, proof::token_hash(token)?, now)?;
-        store::current_instance(tx, self.boot, &p, instance, now)?;
-        let lease = store::instance_lease(tx, &self.sealer, &p)?;
-        if configuration.is_some_and(|c| lease.target.as_ref() != Some(c)) {
-            return Err(Error::BindingConflict);
-        }
-        if require_execution {
-            if lease
-                .execution_expires_at_ms
-                .is_none_or(|t| t <= now as u64)
-            {
-                return Err(Error::BindingConflict);
-            }
-            let target = lease.target.ok_or(Error::BindingConflict)?;
-            store::check_publication(
-                tx,
-                &self.sealer,
-                p.network,
-                p.node,
-                target.execution_publication,
-                now,
-            )?;
-        }
-        Ok(p)
     }
     pub async fn select_profile(
         &self,
@@ -193,24 +126,6 @@ impl Execution {
             })
             .await
     }
-    /// State/observation owner obtains current identity and instance admission;
-    /// callers requiring atomic report writes use the same store functions in
-    /// their transaction rather than trusting this past check as a capability.
-    pub async fn validate_instance(
-        &self,
-        principal: NodePrincipal,
-        request: InstanceRequest,
-    ) -> Result<(), Error> {
-        let sealer = self.sealer.clone();
-        let boot = self.boot;
-        self.handle
-            .read(move |tx| {
-                let now = store::now()?;
-                let p = store::reauthorize(tx, &sealer, boot, &principal, now)?;
-                store::current_instance(tx, boot, &p, &request, now)
-            })
-            .await
-    }
     pub(crate) fn new(handle: Handle, sealer: Arc<Sealer>, boot: InstanceId) -> Self {
         Self {
             handle,
@@ -218,7 +133,32 @@ impl Execution {
             boot,
         }
     }
-    pub async fn challenge(&self, request: NodeChallengeRequest) -> Result<NodeChallenge, Error> {
+    #[cfg(test)]
+    pub(crate) fn signed_challenge_fixture(
+        &self,
+        request: NodeChallengeRequest,
+        signer: &ed25519_dalek::SigningKey,
+    ) -> meshway_protocol::SignedNodeChallengeRequest {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        use ed25519_dalek::Signer;
+        let intent = meshway_protocol::NodeChallengeIntent {
+            id: ChallengeId::new(crate::accounts::random_uuid().unwrap()).unwrap(),
+            controller_id: self.sealer.installation_id(),
+            request,
+            expires_at_ms: store::now().unwrap() as u64 + 30_000,
+        };
+        let signature = signer.sign(&meshway_protocol::challenge_request_transcript(&intent));
+        meshway_protocol::SignedNodeChallengeRequest {
+            intent,
+            signature: meshway_protocol::WireSecret::new(
+                URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+            ),
+        }
+    }
+    pub async fn challenge(
+        &self,
+        request: meshway_protocol::SignedNodeChallengeRequest,
+    ) -> Result<NodeChallenge, Error> {
         let sealer = self.sealer.clone();
         self.handle
             .write(move |tx| store::challenge(tx, &sealer, request))

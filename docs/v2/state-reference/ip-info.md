@@ -106,7 +106,7 @@ ip-datasets --data-dir <data> lookup 93.184.216.34
 ```
 
 - 文件是 MaxMind DB 格式（GeoLite2／GeoIP2）。`geoip` 接受 `database_type` 含 City 或 Country 的库，`asn` 接受含 ASN 的库；类型不符、无法解析或超过 128 MiB 的文件拒绝导入，不替换现有数据集。GeoLite2 需要 MaxMind 账号和许可才能下载，由运维取得文件，Server 不持有 MaxMind 凭据。
-- 导入写入一个不可变 artifact 并成为该类数据集的当前版本；每类各保留一个当前版本，再次导入即替换，此后的查询引用新的 `datasetId`。
+- 导入在同一事务写入不可变 artifact 并更新该类数据集的持久 head；每类各有一个当前版本，再次导入即替换，此后的查询和重启恢复均引用该 head，不用时间戳或随机 ID 推断提交顺序。无法构造合法有限坐标的记录返回 `lookupFailed`，不发布越界位置。
 - 命令与 Server 共用同一数据目录要求（绝对路径、私有权限）、锁和密钥检查：必须先停止 Server，否则报告存储被占用；其他打开失败按 Server 启动的同一原因报告。Server 下次启动时在接受任何报告之前加载当前数据集。
 - `status` 显示两类数据集的 artifact ID；`lookup` 对任意地址做一次诊断查询，输出与 State 派生相同的结果（含 `not applicable` 的非公网地址），不产生观测。
 

@@ -321,17 +321,57 @@ impl OwnerDispatcher {
             }
             Begin::Upstream(mut work) => {
                 let mut cancellation = CancelOnDrop(Some(work.ticket.clone()));
+                let mut attempt_deadline =
+                    upstream_deadline(work.ticket.expires_at(), work.remaining.len() + 1);
                 let response = loop {
+                    // This is the original grant, not the shorter exchange
+                    // budget. A permission failure must never trigger failover.
+                    work.route
+                        .ensure_current()
+                        .map_err(|_| DispatchError::Expired)?;
+                    if !matches!(scopes.has_changed(), Ok(false)) {
+                        return Err(DispatchError::Scope);
+                    }
                     let query = work
                         .query
                         .encode_upstream(self.udp_payload_limit)
                         .map_err(|_| DispatchError::Wire)?;
-                    let bytes = tokio::select! { biased;
-                        _ = scopes.changed() => return Err(DispatchError::Scope),
-                        _ = work.ticket.cancelled() => return Err(DispatchError::Expired),
-                        _ = work.route.invalidated() => return Err(DispatchError::Expired),
-                        _ = tokio::time::sleep_until(deadline.into()) => return Err(DispatchError::Expired),
-                        result = self.exchange.exchange(&work.route, query) => result.map_err(|_| DispatchError::Gateway)?,
+                    let result = {
+                        let exchange = ExchangeScope(work.route.exchange_scope(attempt_deadline));
+                        tokio::select! { biased;
+                            _ = scopes.changed() => return Err(DispatchError::Scope),
+                            _ = work.ticket.cancelled() => return Err(DispatchError::Expired),
+                            _ = work.route.invalidated() => return Err(DispatchError::Expired),
+                            _ = tokio::time::sleep_until(attempt_deadline.into()) => Err(GatewayError),
+                            result = self.exchange.exchange(&exchange.0, query) => result,
+                        }
+                    };
+                    // Completion can race withdrawal or a permit deadline. Do
+                    // not reinterpret such a failure as a network timeout.
+                    work.route
+                        .ensure_current()
+                        .map_err(|_| DispatchError::Expired)?;
+                    if !matches!(scopes.has_changed(), Ok(false)) {
+                        return Err(DispatchError::Scope);
+                    }
+                    let bytes = match result {
+                        Ok(bytes) => bytes,
+                        Err(_) => {
+                            let next = work.remaining.pop_front().ok_or(DispatchError::Gateway)?;
+                            next.route
+                                .ensure_current()
+                                .map_err(|_| DispatchError::Expired)?;
+                            if let Some(tcp) = &next.fallback {
+                                tcp.ensure_current().map_err(|_| DispatchError::Expired)?;
+                            }
+                            work.route = next.route;
+                            work.fallback = next.fallback;
+                            attempt_deadline = upstream_deadline(
+                                work.ticket.expires_at(),
+                                work.remaining.len() + 1,
+                            );
+                            continue;
+                        }
                     };
                     let transport = match work.route.transport() {
                         DnsTransport::Udp => ResponseTransport::Udp,
@@ -354,6 +394,7 @@ impl OwnerDispatcher {
                             .ensure_current()
                             .map_err(|_| DispatchError::Expired)?;
                         work.route = fallback;
+                        // UDP and its same-server TCP retry share one budget.
                         continue;
                     }
                     break response;
@@ -410,3 +451,20 @@ impl Drop for CancelOnDrop {
         }
     }
 }
+
+fn upstream_deadline(deadline: Instant, remaining: usize) -> Instant {
+    let now = Instant::now();
+    // At most eight system upstreams. Divide the remaining original budget so
+    // an unresponsive first resolver cannot consume every later resolver's time.
+    now + deadline.saturating_duration_since(now) / remaining as u32
+}
+
+struct ExchangeScope(LocalResolverRoute);
+impl Drop for ExchangeScope {
+    fn drop(&mut self) {
+        self.0.cancel_exchange();
+    }
+}
+
+#[cfg(test)]
+mod tests;

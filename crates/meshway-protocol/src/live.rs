@@ -29,16 +29,19 @@ wire_object! { #[derive(Clone, PartialEq)] pub struct NodeEntitiesView {
     #[serde(deserialize_with="meshway_serde::unique_map")] pub nodes: BTreeMap<NodeId, crate::NodeInventoryView>,
 } }
 
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum ProgressScope {
     Full,
     Partial,
 }
+}
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum ApplicationPhase {
@@ -46,6 +49,7 @@ pub enum ApplicationPhase {
     Saved,
     Applied,
     Failed,
+}
 }
 wire_object! { #[derive(Clone, PartialEq)] pub struct ConfigurationNodeProgress {
     pub target: ConfigurationRef,

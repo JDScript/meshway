@@ -3,6 +3,7 @@ use crate::{
     object::{object, tagged, unique_map},
 };
 use meshway_model::NodeId;
+use meshway_serde::required_nullable as nullable;
 use meshway_transport_spec::{DialerSet, Listener, Port, PositiveDuration, PreparedListener};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -20,11 +21,6 @@ object! { pub struct NodeAddresses {
     #[serde(deserialize_with = "nullable")] pub ipv4: Option<Ipv4Addr> [value_type = Option<String>, required = true, format = "ipv4"],
     #[serde(deserialize_with = "nullable")] pub ipv6: Option<Ipv6Addr> [value_type = Option<String>, required = true, format = "ipv6"],
 } }
-fn nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
-    d: D,
-) -> Result<Option<T>, D::Error> {
-    Option::<T>::deserialize(d)
-}
 object! { #[derive(Default)] pub struct NodeAddressesInput {
     #[serde(default, skip_serializing_if = "Input::is_omitted")] pub ipv4: Input<Option<Ipv4Addr>> [value_type = Option<String>],
     #[serde(default, skip_serializing_if = "Input::is_omitted")] pub ipv6: Input<Option<Ipv6Addr>> [value_type = Option<String>],

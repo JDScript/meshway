@@ -27,14 +27,16 @@ pub struct Carrier {
 #[schema(value_type = String)]
 pub struct ExecutionAddress(pub IpAddr);
 
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum BusinessProtocol {
     Tcp,
     Udp,
     IcmpEcho,
+}
 }
 
 tagged! { pub enum BusinessTarget {
@@ -47,7 +49,7 @@ object! { pub struct Demand {
     pub protocol: BusinessProtocol, pub port: Option<Port>,
     pub profile: String,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 object! { pub struct TrustedNode {
     pub control_key: BoundNodeKey, pub dataplane_key: BoundNodeKey,
@@ -59,7 +61,7 @@ object! { pub struct TrustedDnsAssociation {
     pub source: NodeId, pub name: String, pub cname_chain: Vec<String>,
     pub addresses: Vec<ExecutionAddress>,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 object! { pub struct RuleSetContent {
     pub network_id: NetworkId,
@@ -84,39 +86,44 @@ object! { pub struct PathPermit {
     pub target: BusinessTarget, pub protocol: BusinessProtocol, pub port: Option<Port>,
     pub profile: String, pub paths: Vec<LogicalPath>,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
     /// Always reverse the established complete path, never evaluate reverse routing for replies.
     pub replies: ReplyPolicy,
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum ReplyPolicy {
     StatefulExactReversePath,
+}
 }
 tagged! { pub enum DemandDecision {
     Permitted { permit: PathPermit },
     Direct, Unmanaged,
     Unavailable { reason: UnavailableReason },
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum LocalEgressAction {
     Direct,
     Unmanaged,
 }
+}
 object! { pub struct LocalEgressPermit {
     pub demand_id: RequestId, pub source: NodeId, pub target: BusinessTarget,
     pub protocol: BusinessProtocol, pub port: Option<Port>, pub profile: String,
     pub action: LocalEgressAction,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum UnavailableReason {
@@ -128,16 +135,19 @@ pub enum UnavailableReason {
     InvalidProfile,
     InactiveNode,
 }
+}
 tagged! { pub enum DnsEgress {
     NoExit,
     Unavailable { reason: DnsEgressUnavailable },
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum DnsEgressUnavailable {
     ExitPlanRequired,
+}
 }
 object! { pub struct DnsExecution {
     pub settings: DnsConfiguration,

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { hostname, platform, arch } from "node:os";
 import { controller } from "./support/controller.ts";
-import { digest, deviceProof, sessionProof, publicBytes } from "./support/proof.ts";
+import { challengeRequest, digest, deviceProof, sessionProof, publicBytes } from "./support/proof.ts";
 import {
   register, createNetwork, getNetwork, createEnrollmentRequest, approveDeviceAuthorization,
   queryEnrollmentRequest, redeemEnrollmentRequest, createNodeChallenge, createNodeSession,
@@ -41,8 +41,8 @@ test("generated Node SDK completes signed PKCE admission, state reporting and pe
   });
   assert.ok(enrolled.ok);
   const sessionIntent: NodeSessionIntent = { requestId: randomUUID() };
-  const challenge = await createNodeChallenge(client, { networkId: enrolled.data.networkId, nodeId: enrolled.data.nodeId,
-    keyId: enrolled.data.keys.control.id, operation: "session", requestDigest: digest(sessionIntent).toString("hex") });
+  const challenge = await createNodeChallenge(client, challengeRequest({ networkId: enrolled.data.networkId, nodeId: enrolled.data.nodeId,
+    keyId: enrolled.data.keys.control.id, operation: "session", requestDigest: digest(sessionIntent).toString("hex") }, enrolled.data.controllerId, control.privateKey));
   assert.ok(challenge.ok);
   const authenticated = await createNodeSession(client, { intent: sessionIntent,
     proof: { challengeId: challenge.data.id, signature: sessionProof(challenge.data, control.privateKey) } });

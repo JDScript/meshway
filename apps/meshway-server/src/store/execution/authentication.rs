@@ -12,20 +12,43 @@ use meshway_model::{
     NodePublicKey, Version,
 };
 use meshway_protocol::node::*;
+use meshway_protocol::{SignedNodeChallengeRequest, challenge_request_transcript};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 const CHALLENGE_TTL: i64 = 60_000;
 const SESSION_TTL: i64 = 300_000;
 const SESSION_ANCHORS: i64 = 4096;
 const NODE_SESSION_ANCHORS: i64 = 8;
+const CHALLENGES: i64 = 4096;
+const NODE_CHALLENGES: i64 = 8;
+
+fn advance_challenge_clock(tx: &Transaction<'_>, now: i64) -> Result<(), Error> {
+    let previous: i64 = tx.query_row(
+        "SELECT utc_ms FROM node_challenge_clock WHERE singleton=1",
+        [],
+        |row| row.get(0),
+    )?;
+    if now < previous {
+        return Err(Error::InvalidCredentials);
+    }
+    // The high-water and all allocation/consumption/GC changes commit together.
+    // A rejected or cancelled transaction cannot delete replay evidence while
+    // rolling back its time boundary. Never repair a missing clock row here.
+    tx.execute(
+        "UPDATE node_challenge_clock SET utc_ms=?1 WHERE singleton=1",
+        [now],
+    )?;
+    Ok(())
+}
 
 fn cleanup_challenges(tx: &Transaction<'_>, now: i64) -> Result<(), Error> {
-    // A consumed session challenge is a recovery anchor, never a usable proof.
-    // Rotation and unconsumed challenges retain their original proof lifetime.
+    advance_challenge_clock(tx, now)?;
+    // A genuine session issuance is a recovery anchor. Other consumed requests
+    // retain their original signed-ID lifetime, never usable proof authority.
     tx.execute(
         "DELETE FROM node_challenges WHERE
-         ((consumed_at IS NULL OR operation!='session') AND expires_at<=?1)
-         OR (operation='session' AND consumed_at IS NOT NULL AND consumed_at<=?2)",
+         (session_anchor=0 AND expires_at<=?1)
+         OR (session_anchor=1 AND expires_at<=?1 AND consumed_at<=?2)",
         params![now, now.saturating_sub(SESSION_TTL)],
     )?;
     Ok(())
@@ -81,12 +104,57 @@ fn bound_key(
 pub(crate) fn challenge(
     tx: &Transaction<'_>,
     sealer: &Sealer,
-    request: NodeChallengeRequest,
+    signed: SignedNodeChallengeRequest,
 ) -> Result<NodeChallenge, Error> {
     let now = now()?;
+    challenge_at(tx, sealer, signed, now)
+}
+
+fn challenge_at(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    signed: SignedNodeChallengeRequest,
+    now: i64,
+) -> Result<NodeChallenge, Error> {
+    advance_challenge_clock(tx, now)?;
+    let intent = signed.intent;
+    let expires = i64::try_from(intent.expires_at_ms).map_err(|_| Error::InvalidCredentials)?;
+    if intent.controller_id != sealer.installation_id()
+        || expires <= now
+        || expires
+            > now
+                .checked_add(CHALLENGE_TTL)
+                .ok_or(Error::InvalidCredentials)?
+    {
+        return Err(Error::InvalidCredentials);
+    }
+    let request = &intent.request;
     let key = bound_key(tx, request.network_id, request.node_id, request.key_id)?;
+    proof::verify_bytes(
+        key.public_key.bytes.as_bytes(),
+        &challenge_request_transcript(&intent),
+        signed.signature.expose(),
+    )?;
     let (_, cfg, bindings) = current_configuration(tx, sealer, request.network_id)?;
     identity_eligible(tx, &cfg, &bindings, request.network_id, request.node_id)?;
+    // Authenticate even idempotent reads. A retired key or ineligible identity
+    // cannot recover an old challenge. Consumed rows retain their original nonce
+    // and are returned here, but consume() still rejects their proof.
+    if let Some(existing) = existing_challenge(tx, intent.id, key.generation)? {
+        if existing.controller_id != intent.controller_id
+            || existing.network_id != request.network_id
+            || existing.node_id != request.node_id
+            || existing.key_id != request.key_id
+            || existing.operation != request.operation
+            || existing.request_digest != request.request_digest
+            || existing.expires_at_ms != intent.expires_at_ms
+        {
+            return Err(Error::BindingConflict);
+        }
+        return Ok(existing);
+    }
+    // Nothing above allocates or cleans quota state. In particular anonymous
+    // requests knowing a Node ID cannot reserve its eight pending proof slots.
     cleanup_challenges(tx, now)?;
     let count: i64 = tx.query_row(
         "SELECT count(*) FROM node_challenges WHERE consumed_at IS NULL AND expires_at>?1",
@@ -94,17 +162,31 @@ pub(crate) fn challenge(
         |r| r.get(0),
     )?;
     let own: i64 = tx.query_row(
-        "SELECT count(*) FROM node_challenges WHERE node_id=?1 AND consumed_at IS NULL AND expires_at>?2",
-        params![request.node_id.as_uuid().as_bytes().as_slice(), now],
+        "SELECT count(*) FROM node_challenges WHERE network_id=?1 AND node_id=?2 AND consumed_at IS NULL AND expires_at>?3",
+        params![request.network_id.as_uuid().as_bytes().as_slice(), request.node_id.as_uuid().as_bytes().as_slice(), now],
         |r| r.get(0),
     )?;
-    if count >= 4096 || own >= 8 {
+    // Recovery proofs also retain signed-ID tombstones until the request expiry.
+    // Bound those rows in addition to the pending and session-anchor budgets.
+    let (retained, own_retained): (i64, i64) = tx.query_row(
+        "SELECT count(*),coalesce(sum(network_id=?1 AND node_id=?2),0) FROM node_challenges",
+        params![
+            request.network_id.as_uuid().as_bytes().as_slice(),
+            request.node_id.as_uuid().as_bytes().as_slice()
+        ],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if count >= CHALLENGES
+        || own >= NODE_CHALLENGES
+        || retained >= CHALLENGES + SESSION_ANCHORS
+        || own_retained >= NODE_CHALLENGES + NODE_SESSION_ANCHORS
+    {
         return Err(Error::Busy);
     }
     let mut nonce = [0; 32];
     getrandom::fill(&mut nonce).map_err(|_| Error::ENTROPY)?;
     let c = NodeChallenge {
-        id: ChallengeId::new(uuid()?).map_err(|_| Error::Internal("generated challenge ID"))?,
+        id: intent.id,
         controller_id: sealer.installation_id(),
         network_id: request.network_id,
         node_id: request.node_id,
@@ -113,10 +195,55 @@ pub(crate) fn challenge(
         nonce: nonce.into(),
         operation: request.operation,
         request_digest: request.request_digest,
-        expires_at_ms: (now + CHALLENGE_TTL) as u64,
+        expires_at_ms: intent.expires_at_ms,
     };
-    tx.execute("INSERT INTO node_challenges(id,controller_id,network_id,node_id,key_id,nonce,request_digest,operation,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![c.id.as_uuid().as_bytes().as_slice(),c.controller_id.as_uuid().as_bytes().as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),nonce.as_slice(),c.request_digest.as_bytes().as_slice(),operation(c.operation),now,now+CHALLENGE_TTL])?;
+    tx.execute("INSERT INTO node_challenges(id,controller_id,network_id,node_id,key_id,nonce,request_digest,operation,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![c.id.as_uuid().as_bytes().as_slice(),c.controller_id.as_uuid().as_bytes().as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),nonce.as_slice(),c.request_digest.as_bytes().as_slice(),operation(c.operation),now,expires])?;
     Ok(c)
+}
+
+fn existing_challenge(
+    tx: &Transaction<'_>,
+    challenge: ChallengeId,
+    generation: Version,
+) -> Result<Option<NodeChallenge>, Error> {
+    let mut statement = tx.prepare(
+        "SELECT controller_id,network_id,node_id,key_id,nonce,request_digest,operation,expires_at
+         FROM node_challenges WHERE id=?1",
+    )?;
+    let mut rows = statement.query([challenge.as_uuid().as_bytes().as_slice()])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+    let nonce: Vec<u8> = row.get(4)?;
+    let digest: Vec<u8> = row.get(5)?;
+    let op: String = row.get(6)?;
+    let expires: i64 = row.get(7)?;
+    Ok(Some(NodeChallenge {
+        id: challenge,
+        controller_id: id(row.get(0)?)?,
+        network_id: id(row.get(1)?)?,
+        node_id: id(row.get(2)?)?,
+        key_id: id(row.get(3)?)?,
+        key_generation: generation,
+        nonce: Digest::from_bytes(
+            nonce
+                .try_into()
+                .map_err(|_| Error::decode("node_challenges.nonce"))?,
+        ),
+        request_digest: Digest::from_bytes(
+            digest
+                .try_into()
+                .map_err(|_| Error::decode("node_challenges.request_digest"))?,
+        ),
+        operation: match op.as_str() {
+            "session" => ProofOperation::Session,
+            "rotate" => ProofOperation::Rotate,
+            _ => return Err(Error::decode("node_challenges.operation")),
+        },
+        expires_at_ms: expires
+            .try_into()
+            .map_err(|_| Error::decode("node_challenges.expires_at"))?,
+    }))
 }
 
 fn recover_session(
@@ -126,7 +253,7 @@ fn recover_session(
     fresh: &NodeChallenge,
     now: i64,
 ) -> Result<Option<NodeSessionResponse>, Error> {
-    // Bounded by the separate per-node anchor budget. Include other intents and
+    // Bounded by the per-node retained-row budget. Include other intents and
     // keys so deleted/expired sessions and retired generations release their
     // orphaned anchor slots before checking capacity for a new issuance.
     let mut stmt = tx.prepare(
@@ -135,14 +262,14 @@ fn recover_session(
          FROM node_challenges c JOIN node_keys k
            ON k.network_id=c.network_id AND k.node_id=c.node_id AND k.id=c.key_id
          WHERE c.network_id=?1 AND c.node_id=?2 AND c.operation='session'
-           AND c.consumed_at IS NOT NULL AND c.id!=?3
+            AND c.session_anchor=1 AND c.id!=?3
          ORDER BY c.consumed_at,c.id LIMIT ?4",
     )?;
     let mut rows = stmt.query(params![
         fresh.network_id.as_uuid().as_bytes().as_slice(),
         fresh.node_id.as_uuid().as_bytes().as_slice(),
         fresh.id.as_uuid().as_bytes().as_slice(),
-        NODE_SESSION_ANCHORS
+        NODE_SESSION_ANCHORS + NODE_CHALLENGES
     ])?;
     let mut anchors = Vec::new();
     while let Some(row) = rows.next()? {
@@ -208,12 +335,8 @@ fn recover_session(
                 && anchor.key_generation == fresh.key_generation
                 && anchor.request_digest == fresh.request_digest
             {
-                // The duplicate fresh proof was consumed and verified above.
-                // Deletion makes replay invalid without accumulating anchors.
-                tx.execute(
-                    "DELETE FROM node_challenges WHERE id=?1",
-                    [fresh.id.as_uuid().as_bytes().as_slice()],
-                )?;
+                // Keep the consumed fresh row: deleting it would let the same
+                // still-valid signed allocation request mint another nonce.
                 return Ok(Some(NodeSessionResponse {
                     node_id: fresh.node_id,
                     network_id: fresh.network_id,
@@ -226,11 +349,14 @@ fn recover_session(
             }
         } else {
             // A missing row cannot be recreated from an old anchor: doing so
-            // would reactivate a captured expired token. New issuance uses fresh.
-            tx.execute(
-                "DELETE FROM node_challenges WHERE id=?1",
-                [anchor.id.as_uuid().as_bytes().as_slice()],
-            )?;
+            // would reactivate a captured expired token. Preserve a still-live
+            // signed allocation ID, but release its session-anchor budget.
+            let sql = if anchor.expires_at_ms <= now as u64 {
+                "DELETE FROM node_challenges WHERE id=?1"
+            } else {
+                "UPDATE node_challenges SET session_anchor=0 WHERE id=?1"
+            };
+            tx.execute(sql, [anchor.id.as_uuid().as_bytes().as_slice()])?;
         }
     }
     Ok(None)
@@ -249,6 +375,7 @@ fn consume(
     digest: Digest,
     now: i64,
 ) -> Result<NodeChallenge, Error> {
+    advance_challenge_clock(tx, now)?;
     let row=tx.query_row("SELECT network_id,node_id,key_id,nonce,request_digest,expires_at FROM node_challenges WHERE id=?1 AND controller_id=?2 AND operation=?3 AND consumed_at IS NULL AND expires_at>?4 AND created_at<=?4",params![p.challenge_id.as_uuid().as_bytes().as_slice(),sealer.installation_id().as_uuid().as_bytes().as_slice(),operation(op),now],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,Vec<u8>>(3)?,r.get::<_,Vec<u8>>(4)?,r.get::<_,i64>(5)?))).optional()?.ok_or(Error::InvalidCredentials)?;
     if row.4 != digest.as_bytes() {
         return Err(Error::InvalidCredentials);
@@ -313,7 +440,7 @@ pub(crate) fn session(
     )?;
     let (anchors, own): (i64, i64) = tx.query_row(
         "SELECT count(*),coalesce(sum(node_id=?1),0) FROM node_challenges
-         WHERE operation='session' AND consumed_at IS NOT NULL AND id!=?2",
+         WHERE session_anchor=1 AND id!=?2",
         params![
             c.node_id.as_uuid().as_bytes().as_slice(),
             c.id.as_uuid().as_bytes().as_slice()
@@ -326,6 +453,10 @@ pub(crate) fn session(
     let (token, hash) = proof::session_token(sealer, boot, &c)?;
     let expires = now + SESSION_TTL;
     tx.execute("INSERT INTO node_sessions(token_hash,network_id,node_id,key_id,boot_id,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![hash.as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),boot.as_uuid().as_bytes().as_slice(),now,expires])?;
+    tx.execute(
+        "UPDATE node_challenges SET session_anchor=1 WHERE id=?1",
+        [c.id.as_uuid().as_bytes().as_slice()],
+    )?;
     Ok(NodeSessionResponse {
         node_id: c.node_id,
         network_id: c.network_id,
@@ -490,4 +621,113 @@ pub(crate) fn insert_keys(
         control: make("control", "ed25519", control)?,
         dataplane: make("dataplane", "x25519", dataplane)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    #[test]
+    fn challenge_gc_and_high_water_commit_together_and_rollback_stays_fenced_after_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("clock.sqlite");
+        let mut db = Connection::open(&path).unwrap();
+        crate::store::schema::tests::initialize_fixture(&mut db).unwrap();
+        let tx = db.transaction().unwrap();
+        advance_challenge_clock(&tx, 1000).unwrap();
+        // Storage-only retention fixture. Signature/identity admission is tested
+        // separately through the real enrolled Server HTTP fixture.
+        let user = [6u8; 16];
+        let network = [3u8; 16];
+        let node = [4u8; 16];
+        let key = [5u8; 16];
+        // Keep the real foreign keys enabled and seed their complete metadata
+        // graph. Opaque sealed values are never opened by this GC-only test.
+        tx.execute(
+            "INSERT INTO users(id,email,password_hash,credential_version,created_at)
+             VALUES(?1,'clock@example.test','$argon2id$v=19$storage-fixture',1,0)",
+            [user.as_slice()],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO networks(id,name,created_by,created_at,creation_request_id,creation_request_digest,current_revision,publication_sequence)
+             VALUES(?1,'Clock fixture',?2,0,?3,zeroblob(32),1,0)",
+            params![network.as_slice(), user.as_slice(), [7u8; 16].as_slice()],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO configuration_versions(network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id)
+             VALUES(?1,1,zeroblob(61),zeroblob(61),zeroblob(61),?2,0,'networkCreated',?3)",
+            params![network.as_slice(), user.as_slice(), [7u8; 16].as_slice()],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO nodes(id,network_id,registered_at) VALUES(?1,?2,0)",
+            params![node.as_slice(), network.as_slice()],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO node_keys(id,network_id,node_id,purpose,algorithm,public_key,generation,created_at)
+             VALUES(?1,?2,?3,'control','ed25519',?4,1,0)",
+            params![key.as_slice(), network.as_slice(), node.as_slice(), [8u8; 32].as_slice()],
+        )
+        .unwrap();
+        tx.execute("INSERT INTO node_challenges(id,controller_id,network_id,node_id,key_id,nonce,request_digest,operation,created_at,expires_at) VALUES(x'01010101010101010101010101010101',x'02020202020202020202020202020202',x'03030303030303030303030303030303',x'04040404040404040404040404040404',x'05050505050505050505050505050505',zeroblob(32),zeroblob(32),'session',1000,1100)", []).unwrap();
+        tx.commit().unwrap();
+        {
+            let tx = db.transaction().unwrap();
+            cleanup_challenges(&tx, 1100).unwrap();
+            assert_eq!(
+                tx.query_row("SELECT count(*) FROM node_challenges", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            tx.rollback().unwrap();
+        }
+        assert_eq!(
+            db.query_row("SELECT utc_ms FROM node_challenge_clock", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1000
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM node_challenges", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        let tx = db.transaction().unwrap();
+        cleanup_challenges(&tx, 1100).unwrap();
+        tx.commit().unwrap();
+        drop(db);
+        let mut db = Connection::open(&path).unwrap();
+        crate::store::schema::tests::initialize_fixture(&mut db).unwrap();
+        let tx = db.transaction().unwrap();
+        // These are the very same admission/GC boundaries used by challenge_at
+        // and consume. A previously expired signed request cannot reach lookup
+        // or nonce allocation even after its old row has actually been deleted.
+        assert_eq!(
+            advance_challenge_clock(&tx, 1050),
+            Err(Error::InvalidCredentials)
+        );
+        assert_eq!(
+            cleanup_challenges(&tx, 1050),
+            Err(Error::InvalidCredentials)
+        );
+        assert_eq!(
+            tx.query_row("SELECT utc_ms FROM node_challenge_clock", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1100
+        );
+        assert_eq!(
+            tx.query_row("SELECT count(*) FROM node_challenges", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        tx.rollback().unwrap();
+    }
 }

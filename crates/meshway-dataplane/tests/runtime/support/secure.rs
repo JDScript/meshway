@@ -94,6 +94,34 @@ pub struct SecureMesh {
     pub rb: Link,
 }
 impl SecureMesh {
+    pub async fn reconcile(&mut self) {
+        for (node, secure) in [
+            (&mut self.mesh.a, &mut self.a),
+            (&mut self.mesh.r, &mut self.r),
+            (&mut self.mesh.b, &mut self.b),
+        ] {
+            let snapshot = node.sync_current().await;
+            secure
+                .reconcile(node.control.dataplane_identity(snapshot).unwrap())
+                .unwrap();
+        }
+    }
+
+    pub async fn renew(&mut self) {
+        let lease = self.mesh.a.control.renew_instance().await.unwrap();
+        self.mesh
+            .a
+            .control
+            .renew_demand(&meshway_protocol::RenewDemandRequest {
+                instance: self.mesh.a.instance(),
+                request_id: self.mesh.demand,
+                expires_at_ms: lease.expires_at_ms,
+            })
+            .await
+            .unwrap();
+        self.reconcile().await;
+    }
+
     pub async fn start() -> Self {
         let server = Server::start().await;
         let owner = server.owner().await;

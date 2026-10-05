@@ -10,36 +10,7 @@ use meshway_dataplane::{
     Direction, Hop, Packet, PendingAction,
     secure::{PendingFrame, Received},
 };
-use meshway_protocol::{DemandRequest, RenewDemandRequest};
-
-async fn reconcile(fixture: &mut SecureMesh) {
-    for (node, secure) in [
-        (&mut fixture.mesh.a, &mut fixture.a),
-        (&mut fixture.mesh.r, &mut fixture.r),
-        (&mut fixture.mesh.b, &mut fixture.b),
-    ] {
-        let snapshot = node.sync_current().await;
-        secure
-            .reconcile(node.control.dataplane_identity(snapshot).unwrap())
-            .unwrap();
-    }
-}
-
-async fn renew(fixture: &mut SecureMesh) {
-    let lease = fixture.mesh.a.control.renew_instance().await.unwrap();
-    fixture
-        .mesh
-        .a
-        .control
-        .renew_demand(&RenewDemandRequest {
-            instance: fixture.mesh.a.instance(),
-            request_id: fixture.mesh.demand,
-            expires_at_ms: lease.expires_at_ms,
-        })
-        .await
-        .unwrap();
-    reconcile(fixture).await;
-}
+use meshway_protocol::DemandRequest;
 
 async fn to_relay(
     fixture: &mut SecureMesh,
@@ -201,7 +172,7 @@ async fn tcp_recovers_cancelled_relay_and_endpoint_outputs_across_real_permit_re
         DemandDecision::Permitted { .. }
     ));
     fixture.mesh.demand = demand;
-    reconcile(&mut fixture).await;
+    fixture.reconcile().await;
     let circuit = fixture.handshake().await;
     for (reply, seq, ack, flags) in [
         (false, 100, 0, 2),
@@ -215,7 +186,7 @@ async fn tcp_recovers_cancelled_relay_and_endpoint_outputs_across_real_permit_re
     let queued_first = to_relay(&mut fixture, circuit, false, first).await;
     let second = packet(&fixture, false, 109, 901, 0x18, b"ijkl");
     let queued_second = to_relay(&mut fixture, circuit, false, second).await;
-    renew(&mut fixture).await;
+    fixture.renew().await;
     assert!(
         queued_first
             .release(|_| panic!("cancelled ciphertext escaped"))
@@ -236,7 +207,7 @@ async fn tcp_recovers_cancelled_relay_and_endpoint_outputs_across_real_permit_re
     let data = packet(&fixture, false, 113, 901, 0x18, b"mnopqr");
     let queued = to_relay(&mut fixture, circuit, false, data).await;
     let undelivered = to_endpoint(&mut fixture, false, queued).await;
-    renew(&mut fixture).await;
+    fixture.renew().await;
     assert!(
         undelivered
             .release(|_| panic!("cancelled plaintext escaped"))

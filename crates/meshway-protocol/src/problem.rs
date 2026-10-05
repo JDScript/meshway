@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{PartialSchema, ToSchema};
 
 use crate::{PasswordRules, object::wire_object};
+use meshway_serde::required_nullable as required_request_id;
 
 wire_object! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,10 +122,4 @@ wire_object! {
         pub status: u16 [minimum = 0, maximum = 65535],
         pub problem: Problem,
     }
-}
-
-fn required_request_id<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<RequestId>, D::Error> {
-    Option::<RequestId>::deserialize(deserializer)
 }

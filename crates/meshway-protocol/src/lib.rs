@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod challenge_request;
 pub mod configuration;
 pub mod connectivity;
 pub mod enrollment;
@@ -24,6 +25,9 @@ pub mod resources;
 mod secret;
 pub use management_rules::{NetworkNameRules, NetworkNameTrim};
 pub mod state;
+pub use challenge_request::{
+    NodeChallengeIntent, SignedNodeChallengeRequest, challenge_request_transcript,
+};
 pub use configuration::{
     CompareConfigurationRequest, ConfigurationAppliedResponse, ConfigurationComparison,
     ConfigurationPreviewResponse, ConfigurationRequest, ConfigurationResponse,

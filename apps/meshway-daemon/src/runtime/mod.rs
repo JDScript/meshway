@@ -80,9 +80,9 @@ pub async fn run(
                 listener_done = true;
                 failure = Some(result.ok().and_then(Result::err).unwrap_or("IPC service stopped unexpectedly."));
             },
-            _ = &mut control => {
+            result = &mut control => {
                 control_done = true;
-                failure = Some("Control worker stopped unexpectedly.");
+                failure = Some(result.ok().and_then(Result::err).unwrap_or("Control worker stopped unexpectedly."));
             },
             command = received.recv() => {
                 let Some(command) = command else { break; };

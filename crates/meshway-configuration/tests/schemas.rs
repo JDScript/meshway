@@ -71,3 +71,37 @@ fn tagged_objects_reject_sequence_forms_and_unit_branch_extra_fields() {
         assert!(serde_json::from_str::<RuleSet>(text).is_err(), "{text}");
     }
 }
+
+#[test]
+fn mixed_preparation_kind_only_uses_object_form_for_material() {
+    for kind in [
+        "addressPoolV4",
+        "addressPoolV6",
+        "addressV4",
+        "addressV6",
+        "identityProof",
+        "ruleSetContent",
+    ] {
+        let value: PreparationKind = serde_json::from_value(serde_json::json!(kind)).unwrap();
+        assert_eq!(serde_json::to_value(value).unwrap(), kind);
+        assert!(
+            serde_json::from_value::<PreparationKind>(serde_json::json!({(kind):null})).is_err()
+        );
+    }
+    let material = serde_json::json!({"material":"certificate"});
+    let value: PreparationKind = serde_json::from_value(material.clone()).unwrap();
+    assert_eq!(serde_json::to_value(value).unwrap(), material);
+    for invalid in [
+        serde_json::json!("material"),
+        serde_json::json!({"material":"certificate","extra":true}),
+        serde_json::json!(["certificate"]),
+    ] {
+        assert!(serde_json::from_value::<PreparationKind>(invalid).is_err());
+    }
+    assert!(
+        serde_json::from_str::<PreparationKind>(
+            r#"{"material":"certificate","material":"privateKey"}"#
+        )
+        .is_err()
+    );
+}

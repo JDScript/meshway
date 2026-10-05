@@ -29,14 +29,18 @@ async fn challenge(
     node: NodeId,
     keys: &NodeKeyMetadata,
     intent: &NodeSessionIntent,
+    signer: &SigningKey,
 ) -> NodeChallenge {
-    s.challenge(NodeChallengeRequest {
-        network_id: network,
-        node_id: node,
-        key_id: keys.control.id,
-        operation: ProofOperation::Session,
-        request_digest: proof::request_digest(intent).unwrap(),
-    })
+    s.challenge(s.signed_challenge_fixture(
+        NodeChallengeRequest {
+            network_id: network,
+            node_id: node,
+            key_id: keys.control.id,
+            operation: ProofOperation::Session,
+            request_digest: proof::request_digest(intent).unwrap(),
+        },
+        signer,
+    ))
     .await
     .unwrap()
 }
@@ -58,14 +62,132 @@ fn signed(
 fn hash(session: &NodeSessionResponse) -> [u8; 32] {
     proof::token_hash(session.token.expose()).unwrap()
 }
+
+#[tokio::test]
+async fn signed_allocation_cannot_recreate_nonce_after_durable_gc_time_and_server_restart() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (dir, app, network, node, _, keys, _, signer, _) = fixture().await;
+    let service = app.execution();
+    let session_intent = intent();
+    let allocation = service
+        .signed_challenge_fixture(
+            NodeChallengeRequest {
+                network_id: network,
+                node_id: node,
+                key_id: keys.control.id,
+                operation: ProofOperation::Session,
+                request_digest: proof::request_digest(&session_intent).unwrap(),
+            },
+            &signer,
+        )
+        .intent;
+    let request = || meshway_protocol::SignedNodeChallengeRequest {
+        intent: allocation.clone(),
+        signature: WireSecret::new(
+            URL_SAFE_NO_PAD.encode(
+                signer
+                    .sign(&meshway_protocol::challenge_request_transcript(&allocation))
+                    .to_bytes(),
+            ),
+        ),
+    };
+    let original = service.challenge(request()).await.unwrap();
+    let expired_at = allocation.expires_at_ms as i64;
+    let old_id = original.id;
+    // Model a successfully committed future GC followed by wall-clock rollback,
+    // without changing the host clock. The private storage test separately runs
+    // the production cleanup helper and proves GC/high-water atomicity.
+    app.executor
+        .handle()
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            tx.execute(
+                "UPDATE node_challenge_clock SET utc_ms=?1 WHERE singleton=1",
+                [expired_at],
+            )
+            .unwrap();
+            assert_eq!(
+                tx.execute(
+                    "DELETE FROM node_challenges WHERE id=?1 AND expires_at<=?2",
+                    params![old_id.as_uuid().as_bytes().as_slice(), expired_at]
+                )
+                .unwrap(),
+                1
+            );
+            tx.commit().unwrap();
+        })
+        .await
+        .unwrap();
+    drop(service);
+    app.shutdown().await.unwrap();
+    let app = App::open(Settings::new(
+        dir.path().canonicalize().unwrap().join("data"),
+    ))
+    .await
+    .unwrap();
+    assert!(
+        store::execution::now().unwrap() < expired_at,
+        "fixture must still be inside the captured signed request's wall-clock lifetime"
+    );
+    assert_eq!(
+        app.execution().challenge(request()).await.err(),
+        Some(Error::InvalidCredentials)
+    );
+    assert_eq!(
+        app.execution()
+            .session(signed(&original, &session_intent, &signer))
+            .await
+            .err(),
+        Some(Error::InvalidCredentials)
+    );
+    let count = app
+        .executor
+        .handle()
+        .execute(move |db| {
+            db.query_row(
+                "SELECT count(*) FROM node_challenges WHERE id=?1",
+                [old_id.as_uuid().as_bytes().as_slice()],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
 async fn counts(app: &App, node: NodeId) -> (i64, i64, i64) {
-    app.executor.handle().execute(move |db| {
-        let key = node.as_uuid().as_bytes().as_slice();
-        let sessions = db.query_row("SELECT count(*) FROM node_sessions WHERE node_id=?1", [key], |r| r.get(0)).unwrap();
-        let anchors = db.query_row("SELECT count(*) FROM node_challenges WHERE node_id=?1 AND operation='session' AND consumed_at IS NOT NULL", [key], |r| r.get(0)).unwrap();
-        let proofs = db.query_row("SELECT count(*) FROM node_challenges WHERE node_id=?1 AND consumed_at IS NULL", [key], |r| r.get(0)).unwrap();
-        (sessions, anchors, proofs)
-    }).await.unwrap()
+    app.executor
+        .handle()
+        .execute(move |db| {
+            let key = node.as_uuid().as_bytes().as_slice();
+            let sessions = db
+                .query_row(
+                    "SELECT count(*) FROM node_sessions WHERE node_id=?1",
+                    [key],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let anchors = db
+                .query_row(
+                    "SELECT count(*) FROM node_challenges WHERE node_id=?1 AND session_anchor=1",
+                    [key],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let proofs = db
+                .query_row(
+                    "SELECT count(*) FROM node_challenges WHERE node_id=?1 AND consumed_at IS NULL",
+                    [key],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (sessions, anchors, proofs)
+        })
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -74,7 +196,7 @@ async fn fresh_proof_recovers_original_session_at_capacity_but_consumed_proof_ne
     let (_dir, app, network, a, _, keys, _, signer, _) = fixture().await;
     let s = app.execution();
     let first_intent = intent();
-    let first = challenge(&s, network, a, &keys, &first_intent).await;
+    let first = challenge(&s, network, a, &keys, &first_intent, &signer).await;
     let issued = s
         .session(signed(&first, &first_intent, &signer))
         .await
@@ -86,8 +208,10 @@ async fn fresh_proof_recovers_original_session_at_capacity_but_consumed_proof_ne
             .err(),
         Some(Error::InvalidCredentials)
     );
-    for _ in 0..12 {
-        let c = challenge(&s, network, a, &keys, &first_intent).await;
+    // Signed allocation IDs now retain bounded replay tombstones. Repeated
+    // recovery still consumes no additional live session or anchor slot.
+    for _ in 0..3 {
+        let c = challenge(&s, network, a, &keys, &first_intent, &signer).await;
         let recovered = s.session(signed(&c, &first_intent, &signer)).await.unwrap();
         assert_eq!(hash(&recovered), hash(&issued));
         assert_eq!(recovered.expires_at_ms, issued.expires_at_ms);
@@ -100,18 +224,18 @@ async fn fresh_proof_recovers_original_session_at_capacity_but_consumed_proof_ne
     // Anchors cannot consume the proof slots needed for authenticated recovery.
     for _ in 1..8 {
         let next = intent();
-        let c = challenge(&s, network, a, &keys, &next).await;
+        let c = challenge(&s, network, a, &keys, &next, &signer).await;
         let other = s.session(signed(&c, &next, &signer)).await.unwrap();
         assert_ne!(hash(&other), hash(&issued));
     }
     assert_eq!(counts(&app, a).await, (8, 8, 0));
     let overflow = intent();
-    let c = challenge(&s, network, a, &keys, &overflow).await;
+    let c = challenge(&s, network, a, &keys, &overflow, &signer).await;
     assert_eq!(
         s.session(signed(&c, &overflow, &signer)).await.err(),
         Some(Error::Busy)
     );
-    let retry = challenge(&s, network, a, &keys, &first_intent).await;
+    let retry = challenge(&s, network, a, &keys, &first_intent, &signer).await;
     let recovered = s
         .session(signed(&retry, &first_intent, &signer))
         .await
@@ -134,7 +258,7 @@ async fn fresh_proof_recovers_original_session_at_capacity_but_consumed_proof_ne
         })
         .await
         .unwrap();
-    let fresh = challenge(&s, network, a, &keys, &first_intent).await;
+    let fresh = challenge(&s, network, a, &keys, &first_intent, &signer).await;
     let replacement = s
         .session(signed(&fresh, &first_intent, &signer))
         .await
@@ -152,26 +276,29 @@ async fn expired_proof_anchor_survives_cleanup_but_only_a_fresh_proof_can_recove
     let (_dir, app, network, a, _, keys, _, signer, _) = fixture().await;
     let s = app.execution();
     let intent = intent();
-    let mut anchor = challenge(&s, network, a, &keys, &intent).await;
-    // Shorten only this genuine challenge's lifetime before it is signed. Its
-    // nonce, identity and signature verification still come from normal flows.
-    anchor.expires_at_ms = u64::try_from(store::execution::now().unwrap()).unwrap() + 2000;
+    let mut allocation = s.signed_challenge_fixture(
+        NodeChallengeRequest {
+            network_id: network,
+            node_id: a,
+            key_id: keys.control.id,
+            operation: ProofOperation::Session,
+            request_digest: proof::request_digest(&intent).unwrap(),
+        },
+        &signer,
+    );
+    allocation.intent.expires_at_ms =
+        u64::try_from(store::execution::now().unwrap()).unwrap() + 2000;
+    allocation.signature = WireSecret::new(
+        URL_SAFE_NO_PAD.encode(
+            signer
+                .sign(&meshway_protocol::challenge_request_transcript(
+                    &allocation.intent,
+                ))
+                .to_bytes(),
+        ),
+    );
+    let anchor = s.challenge(allocation).await.unwrap();
     let expires = anchor.expires_at_ms;
-    let id = anchor.id;
-    app.executor
-        .handle()
-        .execute(move |db| {
-            db.execute(
-                "UPDATE node_challenges SET expires_at=?1 WHERE id=?2",
-                params![
-                    i64::try_from(expires).unwrap(),
-                    id.as_uuid().as_bytes().as_slice()
-                ],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
     let issued = s.session(signed(&anchor, &intent, &signer)).await.unwrap();
     let now = u64::try_from(store::execution::now().unwrap()).unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(
@@ -182,7 +309,7 @@ async fn expired_proof_anchor_survives_cleanup_but_only_a_fresh_proof_can_recove
         s.session(signed(&anchor, &intent, &signer)).await.err(),
         Some(Error::InvalidCredentials)
     );
-    let fresh = challenge(&s, network, a, &keys, &intent).await;
+    let fresh = challenge(&s, network, a, &keys, &intent, &signer).await;
     assert_eq!(counts(&app, a).await, (1, 1, 1));
     let recovered = s.session(signed(&fresh, &intent, &signer)).await.unwrap();
     assert_eq!(hash(&recovered), hash(&issued));
@@ -197,7 +324,7 @@ async fn expired_intent_and_new_server_boot_issue_new_tokens_without_old_bearer_
     let (dir, app, network, a, _, keys, _, signer, _) = fixture().await;
     let s = app.execution();
     let intent = intent();
-    let c = challenge(&s, network, a, &keys, &intent).await;
+    let c = challenge(&s, network, a, &keys, &intent, &signer).await;
     let first = s.session(signed(&c, &intent, &signer)).await.unwrap();
     let first_hash = hash(&first);
     let anchor = c.id;
@@ -214,15 +341,19 @@ async fn expired_intent_and_new_server_boot_issue_new_tokens_without_old_bearer_
             )
             .unwrap();
             tx.execute(
-                "UPDATE node_challenges SET consumed_at=?1 WHERE id=?2",
-                params![now - 300_001, anchor.as_uuid().as_bytes().as_slice()],
+                    "UPDATE node_challenges SET created_at=?1-1,consumed_at=?1,expires_at=?2 WHERE id=?3",
+                params![
+                    now - 300_001,
+                    now - 1,
+                    anchor.as_uuid().as_bytes().as_slice()
+                ],
             )
             .unwrap();
             tx.commit().unwrap();
         })
         .await
         .unwrap();
-    let fresh = challenge(&s, network, a, &keys, &intent).await;
+    let fresh = challenge(&s, network, a, &keys, &intent, &signer).await;
     let second = s.session(signed(&fresh, &intent, &signer)).await.unwrap();
     assert_ne!(hash(&second), first_hash);
     assert!(s.authenticate(first.token.expose()).await.is_err());
@@ -235,7 +366,7 @@ async fn expired_intent_and_new_server_boot_issue_new_tokens_without_old_bearer_
     .await
     .unwrap();
     let s = app.execution();
-    let fresh = challenge(&s, network, a, &keys, &intent).await;
+    let fresh = challenge(&s, network, a, &keys, &intent, &signer).await;
     let third = s.session(signed(&fresh, &intent, &signer)).await.unwrap();
     assert_ne!(hash(&third), hash(&second));
     assert!(s.authenticate(first.token.expose()).await.is_err());
@@ -251,9 +382,9 @@ async fn recovery_is_scoped_to_current_key_node_intent_and_revocation() {
     let (_dir, app, network, a, b, ak, bk, signer_a, signer_b) = fixture().await;
     let s = app.execution();
     let intent = intent();
-    let ca = challenge(&s, network, a, &ak, &intent).await;
+    let ca = challenge(&s, network, a, &ak, &intent, &signer_a).await;
     let issued_a = s.session(signed(&ca, &intent, &signer_a)).await.unwrap();
-    let cb = challenge(&s, network, b, &bk, &intent).await;
+    let cb = challenge(&s, network, b, &bk, &intent, &signer_b).await;
     assert_eq!(
         s.session(signed(&cb, &intent, &signer_a)).await.err(),
         Some(Error::InvalidCredentials)
@@ -261,7 +392,7 @@ async fn recovery_is_scoped_to_current_key_node_intent_and_revocation() {
     let issued_b = s.session(signed(&cb, &intent, &signer_b)).await.unwrap();
     assert_ne!(hash(&issued_a), hash(&issued_b));
     assert_eq!(issued_b.node_id, b);
-    let pending = challenge(&s, network, a, &ak, &intent).await;
+    let pending = challenge(&s, network, a, &ak, &intent, &signer_a).await;
     let wrong_intent = NodeSessionIntent {
         request_id: RequestId::new(random_uuid().unwrap()).unwrap(),
     };
@@ -291,6 +422,28 @@ async fn recovery_is_scoped_to_current_key_node_intent_and_revocation() {
     )
     .await
     .unwrap();
+    let allocation = meshway_protocol::NodeChallengeIntent {
+        id: pending.id,
+        controller_id: pending.controller_id,
+        request: NodeChallengeRequest {
+            network_id: pending.network_id,
+            node_id: pending.node_id,
+            key_id: pending.key_id,
+            operation: pending.operation,
+            request_digest: pending.request_digest,
+        },
+        expires_at_ms: pending.expires_at_ms,
+    };
+    let signature = signer_a.sign(&meshway_protocol::challenge_request_transcript(&allocation));
+    assert_eq!(
+        s.challenge(meshway_protocol::SignedNodeChallengeRequest {
+            intent: allocation,
+            signature: WireSecret::new(URL_SAFE_NO_PAD.encode(signature.to_bytes())),
+        })
+        .await
+        .err(),
+        Some(Error::InvalidCredentials)
+    );
     assert!(
         s.session(signed(&pending, &intent, &signer_a))
             .await
@@ -347,9 +500,9 @@ async fn membership_removal_rejects_fresh_signed_recovery_of_a_previously_live_s
     let node = enroll_user_node(&app, user.token.expose(), network, &signer, [84; 32]).await;
     let s = app.execution();
     let intent = intent();
-    let c = challenge(&s, network, node.node_id, &node.keys, &intent).await;
+    let c = challenge(&s, network, node.node_id, &node.keys, &intent, &signer).await;
     let session = s.session(signed(&c, &intent, &signer)).await.unwrap();
-    let pending = challenge(&s, network, node.node_id, &node.keys, &intent).await;
+    let pending = challenge(&s, network, node.node_id, &node.keys, &intent, &signer).await;
     let impact = app
         .networks()
         .removal_impact(owner.token.expose(), network, Some(membership), rid())
@@ -377,7 +530,7 @@ async fn token_derivation_binds_boot_installation_and_full_unique_challenge_tran
     let (_dir, app, network, a, _, keys, _, signer, _) = fixture().await;
     let s = app.execution();
     let intent = intent();
-    let anchor = challenge(&s, network, a, &keys, &intent).await;
+    let anchor = challenge(&s, network, a, &keys, &intent, &signer).await;
     let issued = s.session(signed(&anchor, &intent, &signer)).await.unwrap();
     let sealer = app.sealer();
     let (token, hash) = proof::session_token(&sealer, app.boot, &anchor).unwrap();

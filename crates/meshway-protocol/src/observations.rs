@@ -8,8 +8,9 @@ use meshway_model::{
 
 wire_object! { #[derive(Clone, Debug)] pub struct HistoryReport { pub instance_id: InstanceId, pub events: Vec<ObservationEvent> } }
 wire_object! { #[derive(Clone, Debug)] pub struct HistoryAccepted { pub accepted: u32, pub duplicates: u32 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum HistoryMode {
@@ -17,8 +18,10 @@ pub enum HistoryMode {
     Buckets,
     RecentLinks,
 }
+}
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryKind {
@@ -28,6 +31,7 @@ pub enum HistoryKind {
     LinkClosed,
     ProbeCompleted,
     CollectionGap,
+}
 }
 wire_object! { #[derive(Clone, Debug)] pub struct HistoryQuery {
     pub from: DateTime<Utc>, pub to: DateTime<Utc>, pub source_node_id: Option<NodeId>,
@@ -69,13 +73,15 @@ crate::object::wire_tagged! { #[derive(Clone, Debug)] pub enum HistoryCoverage {
         dropped: Sequence,
     },
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum CoverageReason {
     Retention,
     Capacity,
+}
 }
 crate::object::wire_tagged! { tag="mode"; #[derive(Clone, Debug)] pub enum HistoryItems {
     Raw { items: Vec<HistoricalEvent> },
@@ -96,8 +102,9 @@ wire_object! { #[derive(Clone, Debug)] pub struct CreateObservation {
     pub service: meshway_configuration::execution::ObservationServiceScope,
     pub metrics: Vec<MetricKind>, pub interval_ms: u32 [minimum=1000,maximum=30000],
 } }
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum ObservationPhase {
@@ -108,6 +115,7 @@ pub enum ObservationPhase {
     Expired,
     Cancelled,
     Unsupported,
+}
 }
 wire_object! { #[derive(Clone, Debug)] pub struct ObservationTask {
     pub id: ObservationId, pub source_node_id: NodeId, pub target_node_id: NodeId,
@@ -135,11 +143,13 @@ crate::object::wire_tagged! { #[derive(Clone, Debug)] pub enum ObservationUpdate
         sample: Box<ObservationSample>,
     },
 } }
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ReportedObservationPhase {
     Preparing,
     Failed,
     Completed,
     Unsupported,
+}
 }

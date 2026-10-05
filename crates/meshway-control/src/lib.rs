@@ -99,6 +99,7 @@ pub struct Control {
     dirty: bool,
     session: Option<Session>,
     authentication: Option<NodeSessionIntent>,
+    challenge_intent: Option<meshway_protocol::NodeChallengeIntent>,
     instance: Option<Instance>,
     acquiring: Option<AcquireInstanceRequest>,
     receipt: Option<SavedReceipt>,
@@ -158,6 +159,7 @@ impl Control {
             dirty: false,
             session: None,
             authentication: None,
+            challenge_intent: None,
             instance: None,
             acquiring: None,
             receipt: None,
@@ -312,6 +314,7 @@ impl Control {
         ) {
             self.fence();
             self.session = None;
+            self.challenge_intent = None;
         }
         response.map_err(Error::Server)
     }
@@ -327,6 +330,7 @@ impl Control {
                 generation: i.lease.generation,
             });
         self.authentication = None;
+        self.challenge_intent = None;
         self.fence();
         if let Some(session) = &mut self.session {
             session.active = false;

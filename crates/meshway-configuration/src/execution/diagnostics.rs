@@ -15,7 +15,7 @@ object! { pub struct DiagnosticDemand {
     pub service: ObservationServiceScope,
     pub path: Option<Vec<NodeId>>,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 
 object! { pub struct DiagnosticPermit {
@@ -29,13 +29,15 @@ object! { pub struct DiagnosticPermit {
     pub paths: Vec<LogicalPath>,
     pub replies: DiagnosticReplyPolicy,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 
+meshway_serde::string_enum! {
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum DiagnosticReplyPolicy {
     AuthenticatedExactReversePath,
+}
 }

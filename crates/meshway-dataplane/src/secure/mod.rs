@@ -15,7 +15,8 @@
 //! acceptance or transport implementation is implied.
 mod codec;
 mod crypto;
-pub(crate) mod diagnostics;
+mod diagnostics;
+mod recovery;
 mod replay;
 
 use crate::{
@@ -27,6 +28,7 @@ use meshway_model::{NodeId, RequestId};
 pub use meshway_policy::admission::Carrier;
 use meshway_policy::admission::{admit_carrier, admit_handshake};
 use replay::{ReplayWindow, SendNonce};
+use sha2::{Digest as _, Sha256};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -183,6 +185,8 @@ impl PendingFrame {
 #[derive(Debug)]
 pub enum Received {
     Forward(PendingFrame),
+    /// Also returned for an exact, still-authorized duplicate handshake receipt.
+    /// That idempotent result does not imply a new Noise session or RTT sample.
     Established {
         circuit: [u8; 32],
         response: Option<PendingFrame>,
@@ -259,6 +263,7 @@ struct Circuit {
     send: [SendNonce; 2],
     receive: [ReplayWindow; 2],
     cancellation: CancellationToken,
+    recovery: recovery::Recovery,
 }
 impl Drop for Circuit {
     fn drop(&mut self) {
@@ -296,6 +301,7 @@ impl Circuit {
             send: Default::default(),
             receive: Default::default(),
             cancellation,
+            recovery: Default::default(),
         })
     }
     fn guard(&self, snapshot: &ExecutionSnapshot, handshake: bool) -> Guard {
@@ -375,6 +381,7 @@ impl Circuit {
         }
         self.cancellation.cancel();
         self.state = State::Closed;
+        self.recovery = Default::default();
     }
 
     fn engine_rejected(&self, operation: &'static str, error: crate::Error) -> Error {
@@ -543,7 +550,7 @@ impl SecureNode {
         let mut noise = crypto::build(&self.identity, &context, true)?;
         let body = crypto::write_handshake(&mut noise, 96)?;
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
-        let circuit = Circuit::new(
+        let mut circuit = Circuit::new(
             context.clone(),
             State::Initiator(Box::new(noise)),
             snapshot,
@@ -561,12 +568,57 @@ impl SecureNode {
         };
         let pending = self.output(&circuit, frame, hop, None)?;
         pending.ensure_current()?;
+        circuit.recovery.init = Some(recovery::Stage::new(
+            Sha256::digest(&pending.bytes).into(),
+            pending.guard.clone(),
+            Some(&pending),
+        )?);
         self.circuits.insert(circuit_id, circuit);
         Ok(pending)
     }
 
+    /// Next paced retry of this origin's unchanged Noise INIT. No new CID,
+    /// nonce, proof or authority is created. None means no retry is available;
+    /// the host must still respect the circuit's original handshake deadline.
+    pub fn handshake_retry_at(&self, id: [u8; 32]) -> Result<Option<Instant>, Error> {
+        let circuit = self.circuits.get(&id).ok_or(Error::State)?;
+        circuit.ensure_current(self.identity.snapshot())?;
+        if !matches!(circuit.state, State::Initiator(_)) {
+            return Ok(None);
+        }
+        circuit
+            .recovery
+            .init
+            .as_ref()
+            .map_or(Ok(None), |stage| stage.retry_at())
+    }
+
+    /// Issue at most one original guarded INIT when due. Repeated polling never
+    /// bypasses pacing/budget; old outputs remain invalid after scope handoff.
+    pub fn retry_handshake(&mut self, id: [u8; 32]) -> Result<Option<PendingFrame>, Error> {
+        self.maintain_circuits()?;
+        let mut circuit = self.circuits.remove(&id).ok_or(Error::State)?;
+        let result = (|| {
+            circuit.ensure_current(self.identity.snapshot())?;
+            if !matches!(circuit.state, State::Initiator(_)) {
+                return Ok(None);
+            }
+            let Some(stage) = circuit.recovery.init.as_mut() else {
+                return Ok(None);
+            };
+            let output = stage.retry()?;
+            if let Some(output) = &output {
+                self.check_retry_carrier(output, &circuit.context)?;
+            }
+            Ok(output)
+        })();
+        let result = circuit.finish_operation(self.identity.snapshot(), "retry_handshake", result);
+        self.circuits.insert(id, circuit);
+        result
+    }
+
     pub fn receive(&mut self, incoming: &Carrier, bytes: Vec<u8>) -> Result<Received, Error> {
-        self.maintain()?;
+        self.maintain_circuits()?;
         let frame = Frame::decode(&bytes)?;
         let snapshot = self.identity.snapshot();
         let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
@@ -631,38 +683,75 @@ impl SecureNode {
             self.cancellation.child_token(),
         )?;
         let id = circuit.context.circuit;
-        let result = match hop {
-            Hop::Forward(_) => Received::Forward(self.output(&circuit, frame, hop, None)?),
-            Hop::Deliver | Hop::Exit => {
-                let mut noise = crypto::build(&self.identity, &frame.context, false)?;
-                let expected = crypto::keys(cfg, frame.context.path[0])?.1.public_key.bytes;
-                crypto::read_handshake(&mut noise, &frame.body, 96, expected.as_bytes())?;
-                let body = crypto::write_handshake(&mut noise, 48)?;
-                let response = Frame {
-                    context: frame.context,
-                    kind: Kind::Response,
-                    reply: true,
-                    sequence: 0,
-                    facts: None,
-                    body,
-                    proofs: Vec::new(),
-                };
-                let hop = self.handshake_hop(&response, None)?;
-                circuit.state = State::Endpoint(Box::new(
-                    noise
-                        .into_stateless_transport_mode()
-                        .map_err(|_| Error::Crypto)?,
-                ));
-                let response = self.output(&circuit, response, hop, None)?;
-                Received::Established {
-                    circuit: id,
-                    response: Some(response),
+        let fingerprint = Sha256::digest(frame.encode()?).into();
+        let result = (|| {
+            let result = match hop {
+                Hop::Forward(_) => Received::Forward(self.output(&circuit, frame, hop, None)?),
+                Hop::Deliver | Hop::Exit => {
+                    let expected = crypto::keys(cfg, frame.context.path[0])?.1.public_key.bytes;
+                    let completed = (|| {
+                        let mut noise = crypto::build(&self.identity, &frame.context, false)?;
+                        crypto::read_handshake(&mut noise, &frame.body, 96, expected.as_bytes())?;
+                        let body = crypto::write_handshake(&mut noise, 48)?;
+                        let noise = noise
+                            .into_stateless_transport_mode()
+                            .map_err(|_| Error::Crypto)?;
+                        Ok((noise, body))
+                    })();
+                    let (noise, body) = match completed {
+                        Ok(completed) => completed,
+                        Err(error) => {
+                            // Proof/path admission has succeeded. A cryptographic
+                            // failure consumes this CID just as an initiator failure
+                            // does; replay or renewal cannot start it again.
+                            if error == Error::Crypto {
+                                circuit.retire_for("handshake", "completion_failed");
+                            }
+                            return Err(error);
+                        }
+                    };
+                    let response = Frame {
+                        context: frame.context,
+                        kind: Kind::Response,
+                        reply: true,
+                        sequence: 0,
+                        facts: None,
+                        body,
+                        proofs: Vec::new(),
+                    };
+                    let hop = self.handshake_hop(&response, None)?;
+                    circuit.state = State::Endpoint(Box::new(noise));
+                    let response = self.output(&circuit, response, hop, None)?;
+                    Received::Established {
+                        circuit: id,
+                        response: Some(response),
+                    }
                 }
-            }
-        };
-        circuit.guard(snapshot, true).ensure_current()?;
+            };
+            let output = match &result {
+                Received::Forward(output)
+                | Received::Established {
+                    response: Some(output),
+                    ..
+                } => output,
+                _ => return Err(Error::State),
+            };
+            circuit.recovery.init = Some(recovery::Stage::new(
+                fingerprint,
+                circuit.guard(snapshot, true),
+                Some(output),
+            )?);
+            circuit.guard(snapshot, true).ensure_current()?;
+            Ok(result)
+        })();
+        if result.is_err() {
+            // Once this admitted INIT has been consumed, even a response output
+            // or final authority failure must not allow a second Noise owner for
+            // the same CID. Keep the responder failure tombstone.
+            circuit.retire_for("handshake", "initial_output_failed");
+        }
         self.circuits.insert(id, circuit);
-        Ok(result)
+        result
     }
 
     fn receive_known(
@@ -677,13 +766,22 @@ impl SecureNode {
             return Err(Error::Context);
         }
         match frame.kind {
-            Kind::Init => Err(Error::Replay),
+            Kind::Init => {
+                self.handshake_hop(&frame, Some(previous))?;
+                self.repeat_handshake(circuit, &frame)
+            }
             Kind::Response => {
                 let hop = self.handshake_hop(&frame, Some(previous))?;
+                let fingerprint = Sha256::digest(frame.encode()?).into();
                 match &circuit.state {
                     State::RelayAwaiting => {
                         let output = self.output(circuit, frame, hop, None)?;
                         circuit.guard(snapshot, true).ensure_current()?;
+                        circuit.recovery.response = Some(recovery::Stage::new(
+                            fingerprint,
+                            circuit.guard(snapshot, true),
+                            Some(&output),
+                        )?);
                         circuit.state = State::RelayEstablished;
                         Ok(Received::Forward(output))
                     }
@@ -714,16 +812,71 @@ impl SecureNode {
                             guard.ensure_current()?;
                             Ok(noise)
                         })?;
+                        circuit.recovery.response =
+                            Some(recovery::Stage::new(fingerprint, guard, None)?);
+                        circuit.recovery.init = None;
                         Ok(Received::Established {
                             circuit: circuit.context.circuit,
                             response: None,
                         })
+                    }
+                    State::RelayEstablished | State::Endpoint(_) => {
+                        self.repeat_handshake(circuit, &frame)
                     }
                     _ => Err(Error::Replay),
                 }
             }
             Kind::Data => self.receive_data(circuit, frame, previous),
         }
+    }
+
+    fn repeat_handshake(&self, circuit: &mut Circuit, frame: &Frame) -> Result<Received, Error> {
+        let stage = match frame.kind {
+            Kind::Init => &mut circuit.recovery.init,
+            Kind::Response => &mut circuit.recovery.response,
+            Kind::Data => return Err(Error::State),
+        };
+        let stage = stage.as_mut().ok_or(Error::Replay)?;
+        let fingerprint: [u8; 32] = Sha256::digest(frame.encode()?).into();
+        if stage.fingerprint != fingerprint {
+            return Err(Error::Replay);
+        }
+        stage.ensure_current()?;
+        if let Some(output) = stage.output() {
+            self.check_retry_carrier(output, &circuit.context)?;
+            let output = stage.retry()?.ok_or(Error::Replay)?;
+            if matches!(circuit.state, State::Endpoint(_)) {
+                Ok(Received::Established {
+                    circuit: circuit.context.circuit,
+                    response: Some(output),
+                })
+            } else {
+                Ok(Received::Forward(output))
+            }
+        } else {
+            Ok(Received::Established {
+                circuit: circuit.context.circuit,
+                response: None,
+            })
+        }
+    }
+
+    fn check_retry_carrier(&self, output: &PendingFrame, context: &Context) -> Result<(), Error> {
+        output.ensure_current()?;
+        if self.carriers.get(&output.next) != Some(&output.carrier) {
+            return Err(Error::Context);
+        }
+        admit_carrier(
+            self.identity
+                .snapshot()
+                .configuration()
+                .map_err(|_| Error::Authority)?,
+            context.demand,
+            &context.path,
+            output.next,
+            &output.carrier,
+        )
+        .map_err(|_| Error::Policy)
     }
 
     fn receive_data(
@@ -806,7 +959,7 @@ impl SecureNode {
     }
 
     pub fn send(&mut self, id: [u8; 32], packet: Packet) -> Result<PendingFrame, Error> {
-        self.maintain()?;
+        self.maintain_circuits()?;
         let mut circuit = self.circuits.remove(&id).ok_or(Error::State)?;
         let result = self.send_inner(&mut circuit, packet);
         let result = circuit.finish_operation(self.identity.snapshot(), "send", result);
@@ -1027,6 +1180,7 @@ impl SecureNode {
             .map_err(|_| Error::Authority)?;
         for (id, live, expiry, cause) in plan {
             let circuit = self.circuits.get_mut(&id).expect("planned circuit");
+            circuit.recovery.maintain();
             if let Some(expiry) = expiry {
                 circuit.permit_expires_at_ms = circuit.permit_expires_at_ms.max(expiry);
             }
@@ -1050,6 +1204,13 @@ impl SecureNode {
 
     /// Host-driven cleanup; expired states become bounded replay tombstones.
     pub fn maintain(&mut self) -> Result<(), Error> {
+        self.maintain_circuits()?;
+        self.engine.maintain().map_err(|_| Error::Authority)
+    }
+
+    // Packet admission collects expired flows with its final FlowTime. Avoid
+    // sweeping that same table again here, while retaining circuit fencing.
+    fn maintain_circuits(&mut self) -> Result<(), Error> {
         if self.identity.snapshot().ensure_current().is_err() {
             return Err(Error::Authority);
         }
@@ -1058,6 +1219,7 @@ impl SecureNode {
             .now_ms()
             .map_err(|_| Error::Authority)?;
         for circuit in self.circuits.values_mut() {
+            circuit.recovery.maintain();
             if circuit.validate_operation(self.identity.snapshot(), "maintain")
                 == Err(Error::Authority)
             {
@@ -1067,9 +1229,12 @@ impl SecureNode {
         // Keep bounded replay tombstones for this owner. A later authenticated
         // extension/regrant of the same authorization must not accept an old IK
         // initiation after its original absolute expiry. Capacity fails closed.
-        if self.engine.maintain().is_err() {
-            return Err(Error::Authority);
-        }
+        // Retain the shared Engine's authority/clock boundary without its
+        // redundant flow collection; prepare will collect with final FlowTime.
+        self.engine
+            .snapshot
+            .now_ms()
+            .map_err(|_| Error::Authority)?;
         Ok(())
     }
 

@@ -11,11 +11,6 @@ pub(crate) mod scheduler;
 pub mod service;
 pub use geoip::GeoIp;
 pub use rulesets::{convert, entries, normalize};
-pub async fn download(
-    source: &str,
-) -> Result<Vec<u8>, meshway_protocol::resources::ResourceProblem> {
-    download::download(source, &download::Https).await
-}
 
 use crate::error::Error;
 use crate::store;

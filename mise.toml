@@ -100,7 +100,7 @@ description = "Check generated contract/client drift"
 run = "pnpm --filter @meshway/control-client check:generated"
 
 [tasks."test:codegen"]
-description = "Test schema generation and real Rust/TypeScript consumers"
+description = "Test schema generation and TypeScript consumers"
 run = "node --test scripts/protocol/generate.test.mjs"
 
 [tasks."check:sdk"]

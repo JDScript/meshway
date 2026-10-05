@@ -10,25 +10,21 @@ mod inventory;
 pub(crate) mod progress;
 mod publications;
 use crate::configuration::ConfigurationBindings;
-use crate::{
-    execution::NodePrincipal,
-    secrets::{Purpose, Sealer},
-};
+use crate::{execution::NodePrincipal, secrets::Sealer};
 pub(crate) use authentication::{authorize_node, challenge, insert_keys, rotate, session};
 pub(crate) use discovery::query_dns;
 pub(crate) use instances::{
-    acquire, configuration, current_instance, instance_lease, lease_for_node, receipt,
-    refresh_configuration, release, renew,
+    acquire, configuration, lease_for_node, receipt, refresh_configuration, release, renew,
 };
 pub(crate) use inventory::{inventory, inventory_in_transaction, progress, revoke_key, settings};
 use meshway_configuration::{NetworkConfiguration, NodeIdentity};
 use meshway_model::*;
 pub(crate) use publications::{
-    apply_configuration_effects, cancel_demand, check_publication, configuration_targets,
-    current_target, demand, publish, publish_with_rule_sets, receipt_history_targets,
-    recent_targets_for_node, renew_demand, retire_node_sessions, select_profile, target_for_node,
+    apply_configuration_effects, cancel_demand, check_publication, configuration_targets, demand,
+    publish, publish_with_rule_sets, receipt_history_targets, recent_targets_for_node,
+    renew_demand, retire_node_sessions, select_profile, target_for_node,
 };
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Transaction, params};
 
 pub(crate) fn now() -> Result<i64, Error> {
     let now = chrono::Utc::now().timestamp_millis();
@@ -57,20 +53,16 @@ pub(crate) fn current_configuration(
     sealer: &Sealer,
     network: NetworkId,
 ) -> Result<(Revision, NetworkConfiguration, ConfigurationBindings), Error> {
-    let (revision,config,bindings):(i64,Vec<u8>,Vec<u8>)=tx.query_row("SELECT n.current_revision,c.configuration,c.bindings FROM networks n JOIN configuration_versions c ON c.network_id=n.id AND c.revision=n.current_revision WHERE n.id=?1 AND n.deleted_at IS NULL",[network.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(Error::InvalidCredentials)?;
-    let revision = Revision::new(
-        revision
-            .try_into()
-            .map_err(|_| Error::decode("networks.current_revision"))?,
-    )
-    .map_err(|_| Error::decode("networks.current_revision"))?;
-    let config = sealer.open(network, revision, Purpose::Configuration, &config)?;
-    let bindings = sealer.open(network, revision, Purpose::Bindings, &bindings)?;
-    Ok((
-        revision,
-        json(config.as_bytes())?,
-        json(bindings.as_bytes())?,
-    ))
+    let revision = super::configuration::versions::current_revision(tx, network).map_err(
+        |error| match error {
+            Error::NotFound => Error::InvalidCredentials,
+            other => other,
+        },
+    )?;
+    // Execution consumes the configuration owner's canonical version reader,
+    // including the same sealed source, canonical value and bindings checks.
+    let snapshot = super::configuration::versions::load(tx, network, revision)?.open(sealer)?;
+    Ok((revision, snapshot.document.configuration, snapshot.bindings))
 }
 pub(crate) fn identity_eligible(
     tx: &Transaction<'_>,

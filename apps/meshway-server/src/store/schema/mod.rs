@@ -128,6 +128,26 @@ fn validate(connection: &Connection) -> Result<(), SchemaError> {
     if bindings != 1 {
         return Err(SchemaError::Integrity);
     }
+    let challenge_clock_valid: bool = connection.query_row(
+        "SELECT (SELECT count(*) FROM node_challenge_clock)=1 AND NOT EXISTS(
+          SELECT 1 FROM node_challenges c JOIN node_challenge_clock clock
+          WHERE c.created_at>clock.utc_ms OR c.consumed_at>clock.utc_ms)",
+        [],
+        |row| row.get(0),
+    )?;
+    if !challenge_clock_valid {
+        return Err(SchemaError::Integrity);
+    }
+    // Triggers validate normal writes. Also reject existing rows corrupted
+    // while triggers/FKs were disabled, including a missing current head.
+    let invalid_datasets: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM ip_dataset_heads h LEFT JOIN dataset_artifacts a ON a.id=h.artifact_id WHERE a.id IS NULL OR a.kind!=h.kind OR a.network_id IS NOT NULL OR a.format!='mmdb') OR EXISTS(SELECT 1 FROM dataset_artifacts a WHERE a.network_id IS NULL AND a.kind IN ('geoip','asn') AND a.format='mmdb' AND NOT EXISTS(SELECT 1 FROM ip_dataset_heads h WHERE h.kind=a.kind))",
+        [],
+        |row| row.get(0),
+    )?;
+    if invalid_datasets {
+        return Err(SchemaError::Integrity);
+    }
     Ok(())
 }
 

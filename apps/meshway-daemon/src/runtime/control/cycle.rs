@@ -1,8 +1,8 @@
 //! One enrollment/authentication/configuration/report cycle through meshway-control.
+use super::failure::{self, Failure};
 use crate::runtime::network;
 use crate::settings::Settings;
 use meshway_control::{Control, Error};
-use meshway_control_client::ClientError;
 use meshway_ipc::{Phase, Problem};
 use meshway_protocol::enrollment::EnrollmentPhase;
 use std::time::Duration;
@@ -48,39 +48,6 @@ pub(super) struct Cycle {
     pub renewed: bool,
     pub reported: bool,
 }
-pub(super) struct Failure {
-    pub problem: Problem,
-    pub retry: bool,
-    /// Reporting scope races require prompt refresh, independent of transport backoff.
-    pub retry_after: Option<Duration>,
-}
-
-pub(super) fn failure(error: Error, authenticating: bool) -> Failure {
-    tracing::debug!(%error, authenticating, "Node control cycle operation failed");
-    let retry_after = matches!(&error, Error::StateScopeChanged).then_some(Duration::from_secs(1));
-    let (problem, retry) = match error {
-        Error::StateScopeChanged => (Problem::Apply, true),
-        Error::Server(ClientError::Network { .. }) => (Problem::Network, true),
-        Error::Server(ClientError::Http {
-            status: 429 | 503 | 502 | 504,
-            ..
-        }) => (Problem::ServerBusy, true),
-        Error::Server(ClientError::Http {
-            status: 401 | 403 | 404 | 409,
-            ..
-        }) => (Problem::Credentials, !authenticating),
-        Error::Expired => (Problem::Clock, true),
-        Error::Storage(_) | Error::Record | Error::ReloadRequired => (Problem::Storage, false),
-        Error::Endpoint => (Problem::Configuration, false),
-        _ => (Problem::Contract, false),
-    };
-    Failure {
-        problem,
-        retry,
-        retry_after,
-    }
-}
-
 pub(super) async fn cycle(
     control: &mut Control,
     settings: &Settings,
@@ -98,11 +65,11 @@ pub(super) async fn cycle(
             let created = control
                 .begin_enrollment(&hostname)
                 .await
-                .map_err(|e| failure(e, true))?;
+                .map_err(|e| failure::at("begin_enrollment", e, true))?;
             let view = control
                 .poll_enrollment()
                 .await
-                .map_err(|e| failure(e, true))?;
+                .map_err(|e| failure::at("poll_enrollment", e, true))?;
             match view.phase {
                 EnrollmentPhase::Pending => {
                     *reset = false;
@@ -121,7 +88,7 @@ pub(super) async fn cycle(
                         control
                             .cancel_enrollment()
                             .await
-                            .map_err(|e| failure(e, true))?;
+                            .map_err(|e| failure::at("cancel_enrollment", e, true))?;
                         *reset = false;
                         return Ok(Cycle {
                             phase: Phase::Starting,
@@ -139,6 +106,7 @@ pub(super) async fn cycle(
                     return Err(Failure {
                         problem,
                         retry: false,
+                        reset: false,
                         retry_after: None,
                     });
                 }
@@ -159,16 +127,17 @@ pub(super) async fn cycle(
                     return Err(Failure {
                         problem,
                         retry: false,
+                        reset: false,
                         retry_after: None,
                     });
                 }
             }
-            return Err(failure(error, true));
+            return Err(failure::at("redeem_enrollment", error, true));
         }
     }
     stage("authenticate", control.authenticate())
         .await
-        .map_err(|e| failure(e, true))?;
+        .map_err(|e| failure::at("authenticate", e, true))?;
     let mut renewed = false;
     if control.status().instance.is_none() {
         control
@@ -178,27 +147,27 @@ pub(super) async fn cycle(
                 Default::default()
             })
             .await
-            .map_err(|e| failure(e, false))?;
+            .map_err(|e| failure::at("acquire_instance", e, false))?;
         renewed = true;
     } else if renew && network.is_none() {
         control
             .renew_instance()
             .await
-            .map_err(|e| failure(e, false))?;
+            .map_err(|e| failure::at("renew_instance", e, false))?;
         renewed = true;
     }
     let before = control.status().cached;
     if network.is_some() {
         stage("refresh_configuration", control.refresh_configuration())
             .await
-            .map_err(|e| failure(e, false))?;
+            .map_err(|e| failure::at("refresh_configuration", e, false))?;
         // Refresh grants every TUN poll; reporting/renewal scheduling still
         // records the normal renewal cadence rather than manufacturing samples.
         renewed |= renew;
     } else {
         stage("sync_configuration", control.sync_configuration())
             .await
-            .map_err(|e| failure(e, false))?;
+            .map_err(|e| failure::at("sync_configuration", e, false))?;
     }
     if control
         .status()
@@ -208,7 +177,7 @@ pub(super) async fn cycle(
     {
         stage("acknowledge_saved", control.acknowledge_saved())
             .await
-            .map_err(|e| failure(e, false))?;
+            .map_err(|e| failure::at("acknowledge_saved", e, false))?;
     }
     if let Some(network) = &mut network {
         // The atomic refresh already delivered the granted target. A remaining
@@ -224,6 +193,7 @@ pub(super) async fn cycle(
             return Err(Failure {
                 problem: Problem::Apply,
                 retry: true,
+                reset: false,
                 retry_after: None,
             });
         }
@@ -231,13 +201,13 @@ pub(super) async fn cycle(
         // prevent offering a newly granted, fsynced target to the network owner.
         stage("publish", network.publish(control))
             .await
-            .map_err(|error| failure(error, false))?;
+            .map_err(|error| failure::at("publish", error, false))?;
         stage("finish", network.finish(control))
             .await
-            .map_err(|error| failure(error, false))?;
+            .map_err(|error| failure::at("finish_application", error, false))?;
         stage("publish_after_finish", network.publish(control))
             .await
-            .map_err(|error| failure(error, false))?;
+            .map_err(|error| failure::at("publish_after_finish", error, false))?;
     }
     let routine = report || renewed || before != control.status().cached;
     let reported = if let Some(network) = &mut network {
@@ -246,7 +216,7 @@ pub(super) async fn cycle(
             network.report_state(control, settings, routine),
         )
         .await
-        .map_err(|error| failure(error, false))?
+        .map_err(|error| failure::at("report_runtime_state", error, false))?
     } else if routine {
         match control.report_control_state(settings.system.clone()).await {
             Ok(_) => true,
@@ -254,10 +224,10 @@ pub(super) async fn cycle(
                 control
                     .retry_state_report()
                     .await
-                    .map_err(|e| failure(e, false))?;
+                    .map_err(|e| failure::at("retry_state_report", e, false))?;
                 false
             }
-            Err(error) => return Err(failure(error, false)),
+            Err(error) => return Err(failure::at("report_control_state", error, false)),
         }
     } else {
         false
@@ -292,6 +262,7 @@ fn enabled_current_target(control: &Control) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::failure::failure;
     use super::*;
 
     #[test]

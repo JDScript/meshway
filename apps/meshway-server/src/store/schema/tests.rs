@@ -50,6 +50,109 @@ fn database() -> Connection {
     connection
 }
 
+#[test]
+fn challenge_clock_is_persistent_monotonic_singleton_and_never_repaired() {
+    let mut db = database();
+    db.execute("UPDATE node_challenge_clock SET utc_ms=1234", [])
+        .unwrap();
+    for mutation in [
+        "UPDATE node_challenge_clock SET utc_ms=1233",
+        "UPDATE node_challenge_clock SET singleton=2",
+        "DELETE FROM node_challenge_clock",
+        "INSERT INTO node_challenge_clock VALUES(1,0)",
+        "INSERT OR REPLACE INTO node_challenge_clock VALUES(1,0)",
+    ] {
+        assert!(db.execute(mutation, []).is_err(), "{mutation}");
+    }
+    initialize(&mut db).unwrap();
+    assert_eq!(
+        db.query_row("SELECT utc_ms FROM node_challenge_clock", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1234
+    );
+    let trigger: String = db
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='node_challenge_clock_no_delete'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    db.execute_batch(
+        "DROP TRIGGER node_challenge_clock_no_delete; DELETE FROM node_challenge_clock",
+    )
+    .unwrap();
+    db.execute_batch(&trigger).unwrap();
+    let before = db.total_changes();
+    assert_eq!(check(&mut db), Err(SchemaError::Integrity));
+    assert_eq!(initialize(&mut db), Err(SchemaError::Integrity));
+    assert_eq!(db.total_changes(), before);
+}
+
+#[test]
+fn ip_dataset_heads_enforce_kind_and_scope_and_missing_heads_fail_integrity() {
+    let mut db = database();
+    for (id, kind, format) in [
+        ("city", "geoip", "mmdb"),
+        ("asn", "asn", "mmdb"),
+        ("rules", "ruleSet", "meshway-rules-v1"),
+        ("wrong-format", "geoip", "unknown"),
+    ] {
+        db.execute(
+            "INSERT INTO dataset_artifacts VALUES(?1,NULL,?2,'test',?3,x'01',?4,1000)",
+            rusqlite::params![id, kind, format, "0".repeat(64)],
+        )
+        .unwrap();
+    }
+    for (kind, artifact) in [
+        ("geoip", "asn"),
+        ("geoip", "rules"),
+        ("geoip", "wrong-format"),
+        ("geoip", "missing"),
+        ("ruleSet", "rules"),
+    ] {
+        assert!(
+            db.execute(
+                "INSERT INTO ip_dataset_heads VALUES(?1,?2)",
+                [kind, artifact]
+            )
+            .is_err()
+        );
+    }
+    db.execute("INSERT INTO ip_dataset_heads VALUES('geoip','city')", [])
+        .unwrap();
+    db.execute("INSERT INTO ip_dataset_heads VALUES('asn','asn')", [])
+        .unwrap();
+    assert!(
+        db.execute(
+            "UPDATE ip_dataset_heads SET artifact_id='asn' WHERE kind='geoip'",
+            []
+        )
+        .is_err()
+    );
+    assert!(
+        db.execute("DELETE FROM ip_dataset_heads WHERE kind='geoip'", [])
+            .is_err()
+    );
+    check(&mut db).unwrap();
+    let trigger: String = db
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='ip_dataset_heads_no_delete'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db.execute_batch(
+        "DROP TRIGGER ip_dataset_heads_no_delete; DELETE FROM ip_dataset_heads WHERE kind='geoip'",
+    )
+    .unwrap();
+    db.execute_batch(&trigger).unwrap();
+    let before = db.total_changes();
+    assert_eq!(check(&mut db), Err(SchemaError::Integrity));
+    assert_eq!(initialize(&mut db), Err(SchemaError::Integrity));
+    assert_eq!(db.total_changes(), before);
+}
+
 fn insert_user(connection: &Connection) {
     connection.execute(
         "INSERT INTO users VALUES (x'00000000000000000000000000000001', 'user@example.test', '$argon2id$v=19$test', 1, 100, NULL)",

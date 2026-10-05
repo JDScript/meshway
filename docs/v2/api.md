@@ -35,6 +35,12 @@
 - 可省略、明确 null、未知、过期和不适用是不同语义。时间为 UTC RFC 3339，整数范围须可被生成客户端无损表示。
 - 空状态保持真实。逻辑计划、saved、applied、认证 link 与实际业务成功分别表达。
 
+### JSON 标量
+
+字符串枚举只接受字符串；不能用 `{ "枚举值": null }` 代替。整数按原始 JSON token 校验，拒绝小数、指数和 `-0` 表示；不能把浮点舍入后的安全整数当作有效 revision／sequence。普通 `number` 字段仍使用有限 binary64，并执行各字段的范围约束。
+
+执行与签名时间使用 `Timestamp`（OpenAPI format `meshway-timestamp-ms`）：RFC 3339、非负 Unix 毫秒、UTC 年份不超过 9999，拒绝 leap second 和任何非零亚毫秒位。允许时区偏移、大小写 `T/Z` 及毫秒后的尾随零；普通观测 `date-time` 保留其自身精度。
+
 ## 查询、秘密与缓存
 
 普通 Config／Node settings 使用非秘密视图；整份 `configuration/source` 是显式秘密读取，不进通用缓存或 LocalStorage。表单秘密使用保持／覆盖语义，JSONC 编辑整份文档。

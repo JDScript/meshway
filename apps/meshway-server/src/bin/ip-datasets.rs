@@ -132,7 +132,7 @@ async fn execute(app: &App, command: Command) -> Result<(), String> {
                     data.city.as_deref().unwrap_or("-"),
                     data.position.as_ref().map_or_else(
                         || "-".to_owned(),
-                        |p| format!("{},{}", p.latitude, p.longitude)
+                        |p| format!("{},{}", p.latitude(), p.longitude())
                     ),
                 ),
                 other => describe(other),

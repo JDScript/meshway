@@ -2,7 +2,7 @@
 pub use crate::ConfigurationRef;
 use crate::{Digest, EventId, NodeId, ObservationId, PublicationId, Sequence};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{collections::BTreeMap, net::SocketAddr};
 use utoipa::ToSchema;
 
@@ -13,11 +13,13 @@ meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct Syste
     pub agent_version: String,
 } }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum TransportRole {
     Dial,
     Listen,
+}
 }
 
 meshway_serde::tagged! {
@@ -34,15 +36,18 @@ pub enum Capability {
 }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum StreamKind {
     Tcp,
     Websocket,
     Udp,
 }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ApplyPhase {
     Receiving,
@@ -51,6 +56,7 @@ pub enum ApplyPhase {
     Applying,
     Applied,
     Failed,
+}
 }
 
 meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ConfigurationProgress {
@@ -72,11 +78,13 @@ meshway_serde::tagged! { tag="kind"; #[derive(Clone, Debug, PartialEq, Eq, Parti
     Coordination { key: String },
 } }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SocketNetwork {
     Udp,
     Tcp,
+}
 }
 
 meshway_serde::tagged! { tag="source"; #[derive(Clone, Debug, PartialEq, Eq)] pub enum EndpointSource {
@@ -110,13 +118,15 @@ meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct Socke
     pub endpoints: Vec<EndpointCandidate>,
 } }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ListenerPhase {
     Preparing,
     Listening,
     Stopped,
     Failed,
+}
 }
 
 meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ListenerState {
@@ -127,13 +137,15 @@ meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct Liste
     pub configuration: Option<ConfigurationRef>,
 } }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum LinkPhase {
     Preparing,
     Authenticated,
     Closed,
     Failed,
+}
 }
 
 meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct LinkState {
@@ -149,7 +161,8 @@ meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct LinkS
     pub since: Option<DateTime<Utc>>,
 } }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ReporterRole {
     Origin,
@@ -157,13 +170,16 @@ pub enum ReporterRole {
     Target,
     Exit,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+}
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum PathEvidence {
     Selected,
     Sent,
     PeerConfirmed,
     Delivered,
+}
 }
 
 meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PathState {
@@ -175,7 +191,8 @@ meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct PathS
     pub expires_at: DateTime<Utc>,
 } }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ProbeKind {
     Neighbor,
@@ -183,13 +200,16 @@ pub enum ProbeKind {
     Connect,
     Controller,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+}
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ProbeOutcome {
     Pending,
     Success,
     Timeout,
     Failed,
+}
 }
 
 meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ProbeObservation {
@@ -205,40 +225,27 @@ meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct Probe
     pub duration_us: Option<Sequence>,
 } }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(
-    remote = "Self",
-    tag = "code",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
+meshway_serde::tagged! {
+tag = "code";
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StateProblem {
-    ResourceUnavailable {
+    ResourceUnavailable = "resource_unavailable" {
         resource: ResourceRef,
         #[serde(rename = "observedAt")]
         observed_at: DateTime<Utc>,
     },
-    ConfigurationRejected {
+    ConfigurationRejected = "configuration_rejected" {
         target: ConfigurationRef,
         #[serde(rename = "observedAt")]
         observed_at: DateTime<Utc>,
     },
-    ProbeFailed {
+    ProbeFailed = "probe_failed" {
         #[serde(rename = "measurementId")]
         measurement_id: EventId,
         #[serde(rename = "observedAt")]
         observed_at: DateTime<Utc>,
     },
 }
-impl<'de> Deserialize<'de> for StateProblem {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Self::deserialize(meshway_serde::MapOnly(d))
-    }
-}
-impl Serialize for StateProblem {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        Self::serialize(self, s)
-    }
 }
 
 meshway_serde::object! { #[derive(Clone, Debug, Default, PartialEq, Eq)] pub struct SelectionState {

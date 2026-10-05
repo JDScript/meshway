@@ -13,7 +13,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `poll_enrollment` | 用持钥证明查询；批准后的兑换码在兑换前私有持久化 |
 | `redeem_enrollment` | 验证返回网络与公钥绑定，保存身份；丢失响应后可恢复同一兑换结果 |
 | `cancel_enrollment` | 持钥取消待完成请求，或清理已确认的取消／撤回／过期请求；已兑换身份不会被当作临时请求删除 |
-| `authenticate` | 校验固定 Server／Node／key／generation 的 challenge 后签名，取得短期 Node 会话 |
+| `authenticate` | 先签名申请有界 challenge，再校验固定 Server／Node／key／generation 并消费证明，取得短期 Node 会话 |
 | `refresh_authentication` | 在原会话截止前持钥取得新会话，保留同一有效实例；不会延长旧快照或 execution lease |
 | `acquire_instance` | 使用宿主真实能力取得实例；同一次不确定请求保持原 instance ID |
 | `renew_instance` | 更新当前实例的期限，验证返回实例与代际 |
@@ -45,6 +45,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 - Ed25519 控制密钥和 X25519 数据面密钥分别生成。签名 transcript／intent digest 与 Server 共用协议实现。
 - Server origin 与已登记的 `controllerId` 固定保存；不同 origin 或不同安装身份的 challenge 不能接管既有密钥。
+- challenge 分配响应不确定时保留同一签名申请；申请已本地到期时使用新申请，session 响应不确定仍保留原 session intent。已本地到期证明遭拒允许重新证明，新鲜证明的凭据拒绝保持终止语义。
 - 短期会话、instance、lease 和上报计数不写入恢复文件；进程重启后重新认证并申请新 instance。
 - `stop` 停用会话的本机使用资格。仍有效的短期凭据可留在当前进程，显式 `authenticate` 后复用，以免反复启停耗尽 Server 的会话额度；它不能恢复已释放的实例。
 - 期限同时受墙上时间和单调时钟约束，延迟响应与时钟回拨不会延长已取得的期限。

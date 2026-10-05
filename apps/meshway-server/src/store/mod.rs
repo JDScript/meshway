@@ -31,6 +31,7 @@ pub(crate) mod execution;
 pub(crate) mod history;
 pub(crate) mod keys;
 pub(crate) mod networks;
+pub(crate) mod observations;
 pub(crate) mod resources;
 pub(crate) mod schema;
 

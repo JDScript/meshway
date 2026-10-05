@@ -3,6 +3,7 @@ use meshway_model::RequestId;
 pub use meshway_model::{MemberActions, MemberSummary, NetworkActions, NetworkSummary};
 
 use crate::object::wire_object;
+use meshway_serde::required_nullable;
 
 /// URI query fields, not a JSON-body DTO. Omission differs from an empty cursor.
 #[derive(Debug, Default, serde::Deserialize, utoipa::IntoParams)]
@@ -93,10 +94,4 @@ wire_object! {
         /// Removed members disappear and reduce total on subsequent pages.
         pub total:meshway_model::Count,
     }
-}
-
-fn required_nullable<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<String>, D::Error> {
-    serde::Deserialize::deserialize(deserializer)
 }

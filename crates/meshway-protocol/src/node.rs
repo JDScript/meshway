@@ -1,14 +1,16 @@
 //! Ed25519 challenge authentication. Sign `proof_transcript`, not JSON serialization.
 use crate::{WireSecret, object::wire_object};
 use meshway_model::*;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use utoipa::ToSchema;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ProofOperation {
     Session,
     Rotate,
+}
 }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeChallengeRequest {
     pub network_id: NetworkId, pub node_id: NodeId, pub key_id: KeyId,
@@ -19,7 +21,7 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeChallenge {
     pub node_id: NodeId, pub key_id: KeyId, pub key_generation: Version,
     pub nonce: Digest, pub operation: ProofOperation, pub request_digest: Digest,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 wire_object! { pub struct NodeProof {
     pub challenge_id: ChallengeId,
@@ -34,7 +36,7 @@ wire_object! { pub struct NodeSessionResponse {
     pub node_id: NodeId, pub network_id: NetworkId, pub key_id: KeyId,
     pub token: WireSecret,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
-    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeRotationIntent {
     pub request_id: RequestId, pub control_key: NodePublicKey, pub dataplane_key: NodePublicKey,
@@ -49,14 +51,14 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeKeyMetadata {
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryView {
     pub id: NodeId, pub network_id: NetworkId,
     #[serde(rename="registeredAt", with="meshway_model::timestamp")]
-    pub registered_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub registered_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
     pub hostname: String, pub enabled: bool, pub identity: meshway_configuration::NodeIdentity,
     pub addresses: meshway_configuration::NodeAddresses, pub keys: NodeKeyMetadata,
     /// Revocation of the displayed latest keys; revoked configured nodes remain manageable.
     #[serde(rename="controlKeyRevokedAt", with="meshway_model::timestamp::optional")]
-    pub control_key_revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
+    pub control_key_revoked_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
     #[serde(rename="dataplaneKeyRevokedAt", with="meshway_model::timestamp::optional")]
-    pub dataplane_key_revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
+    pub dataplane_key_revoked_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
     pub can_delete: bool,
     /// Current execution target, not a saved/applied receipt. May be a later refresh than the source apply.
     #[serde(deserialize_with="crate::object::required_nullable")]
@@ -64,9 +66,9 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryView 
     pub can_revoke_control_key: bool,
     pub can_revoke_dataplane_key: bool,
     #[serde(rename="controlKeyCreatedAt", with="meshway_model::timestamp")]
-    pub control_key_created_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub control_key_created_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
     #[serde(rename="dataplaneKeyCreatedAt", with="meshway_model::timestamp")]
-    pub dataplane_key_created_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub dataplane_key_created_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryResponse {
     pub items: Vec<NodeInventoryView>,

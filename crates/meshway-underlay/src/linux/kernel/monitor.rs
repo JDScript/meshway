@@ -31,6 +31,7 @@ pub(super) struct Event {
 #[derive(Default)]
 pub(super) struct Expected {
     pub events: VecDeque<Event>,
+    pub pools: Vec<ipnet::IpNet>,
     pub tun: Option<(u32, String, usize, Vec<std::net::IpAddr>)>,
     pub anchor: Option<super::anchor::Record>,
     pub anchor_deleting: bool,
@@ -129,6 +130,30 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                 )
                 .map_err(|_| Error::Netlink)?;
                 let mut state = expected.lock().map_err(|_| Error::Worker)?;
+                let owned =
+                    state
+                        .tun
+                        .as_ref()
+                        .map(|(index, _, _, addresses)| super::capture::Owned {
+                            index: *index,
+                            addresses,
+                        });
+                // The same predicate guards install/retention dumps. Creation
+                // only exempts the descriptor's exact /32 or /128 local route;
+                // it never suppresses foreign conflicts in a changing window.
+                match &message.payload {
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
+                        if super::capture::address_conflicts(&state.pools, owned, address) =>
+                    {
+                        return Err(Error::Conflict);
+                    }
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route))
+                        if super::capture::route_conflicts(&state.pools, owned, route) =>
+                    {
+                        return Err(Error::Conflict);
+                    }
+                    _ => {}
+                }
                 // Anchor ownership is independent of TUN installation's changing
                 // window. Never suppress its checks while a lease refresh runs.
                 if let Some(anchor) = &state.anchor {
