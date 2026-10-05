@@ -34,6 +34,10 @@ wire_object! { pub struct AccountSessionsResponse {
 wire_object! { pub struct ChangeMemberRoleRequest { pub expected_version: Version, pub role: MembershipRole } }
 wire_object! { pub struct RemoveMemberRequest { pub expected_version:Version,pub expected_revision:Revision } }
 wire_object! { pub struct RemovalImpactResponse { pub request_id:RequestId,pub membership_id:MembershipId,pub version:Version,pub revision:Revision,pub node_ids:Vec<NodeId>,pub node_count:u32 } }
+// What changing a member to `role` would do right now, besides the role
+// itself: the live join links the member could no longer issue are revoked.
+// `join_links` lists the first 100 by newest; `join_link_count` is the total.
+wire_object! { pub struct RoleChangeImpactResponse { pub request_id:RequestId,pub membership_id:MembershipId,pub version:Version,pub role:MembershipRole,pub join_links:Vec<JoinLinkView>,pub join_link_count:u32 } }
 wire_object! { pub struct MemberRemovedResponse { pub request_id:RequestId,pub revision:Revision } }
 wire_object! { pub struct MemberMutationResponse { pub request_id: RequestId, pub member: crate::MemberSummary } }
 wire_object! { pub struct CreateJoinLinkRequest { pub request_id: RequestId, pub role: MembershipRole, pub expires_in_seconds: u32 [minimum=60,maximum=604800] } }

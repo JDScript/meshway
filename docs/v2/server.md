@@ -42,10 +42,13 @@ Server HTTP／SDK 和持钥测试 Node 的验证止于相应控制流程；新 N
 ```sh
 mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
   --data-dir /absolute/private/data-dir --listen 127.0.0.1:0 \
-  --registration-enabled true --session-ttl-seconds 86400
+  --registration-enabled true --session-ttl-seconds 86400 \
+  --console-origin https://console.example.com
 ```
 
-运行目录使用私有、无符号链接的绝对路径并独占锁。端口 0 分配临时监听端口；注册默认开放，可由实例配置关闭。空库初始化属于正常启动，不提供首用户认领／实例初始化 API，首个公开账户不取得全局管理权限。
+运行目录使用私有、无符号链接的绝对路径并独占锁。`--listen` 默认 `127.0.0.1:8420`，端口 0 分配临时监听端口；注册默认开放，可由实例配置关闭。空库初始化属于正常启动，不提供首用户认领／实例初始化 API，首个公开账户不取得全局管理权限。
+
+`--console-origin`（环境变量 `MESHWAY_CONSOLE_ORIGIN`）是浏览器访问 Console 的 origin：`https://host[:port]`，或开发时 loopback 上的 `http://`；不含路径、查询或凭据。Server 据此生成交给设备的浏览器链接（设备授权 `authorizationUrl` 为 `<origin>/authorize-device/<enrollmentRequestId>`）；未配置时这些字段为 null，设备得不到链接。`reset-password` 的 `--console-origin` 遵守同一规则。
 
 Server 使用共同的[运行日志](/v2/logging)配置，支持 `RUST_LOG` 和 `--log-format json`；HTTP 日志只记录路由模板与请求关联信息。
 

@@ -49,11 +49,17 @@ fn enrollment_pagination_and_approval_distinguish_null_from_missing() {
             "id": "00000000-0000-4000-8000-000000000001",
             "hostname": "device", "controlKey": {"algorithm": "ed25519", "bytes": "11".repeat(32)},
             "existing": null, "returnMethod": "poll", "phase": "pending",
-            "expiresAt": "2026-10-03T01:00:00Z"
+            "expiresAt": "2026-10-03T01:00:00Z", "authorizationUrl": null
         },
         "approval": null
     });
     assert!(serde_json::from_value::<DeviceAuthorizationView>(view.clone()).is_ok());
+    let mut no_link = view.clone();
+    no_link["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("authorizationUrl");
+    assert!(serde_json::from_value::<DeviceAuthorizationView>(no_link).is_err());
     view.as_object_mut().unwrap().remove("approval");
     assert!(serde_json::from_value::<DeviceAuthorizationView>(view).is_err());
 }

@@ -5,7 +5,6 @@ use std::path::PathBuf;
 pub struct Settings {
     pub(crate) data_dir: PathBuf,
     pub(crate) server: String,
-    pub(crate) console_origin: String,
     pub(crate) hostname: String,
     pub(crate) system: SystemState,
     pub(crate) network_mode: meshway_ipc::NetworkMode,
@@ -16,13 +15,10 @@ impl Settings {
     pub fn new(
         data_dir: PathBuf,
         server: &str,
-        console_origin: Option<&str>,
         hostname: Option<&str>,
     ) -> Result<Self, &'static str> {
         let server =
             meshway_control::server_origin(server).map_err(|_| "Invalid Server origin.")?;
-        let console_origin = meshway_control::server_origin(console_origin.unwrap_or(&server))
-            .map_err(|_| "Invalid Console origin.")?;
         let system = rustix::system::uname();
         let machine_hostname = system
             .nodename()
@@ -38,7 +34,6 @@ impl Settings {
         Ok(Self {
             data_dir,
             server,
-            console_origin,
             hostname,
             network_mode: meshway_ipc::NetworkMode::Tun,
             underlay: meshway_underlay::Options::default(),

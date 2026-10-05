@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use meshway_control_client::{ApproveDeviceAuthorizationPath, Client};
+use meshway_control_client::{ApproveDeviceAuthorizationPath, Client, GetDeviceAuthorizationPath};
 use meshway_ipc::{Phase, Status};
 use meshway_model::RequestId;
 use meshway_protocol::{
@@ -49,11 +49,21 @@ async fn status(socket: &Path, wanted: Phase) -> Status {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
+    real_cli_enrollment(Some("https://console.example.test:8443")).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actual_cli_preserves_null_server_link_and_prompts_only_while_awaiting_approval() {
+    real_cli_enrollment(None).await;
+}
+
+async fn real_cli_enrollment(console_origin: Option<&str>) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let server = meshway_server::App::open(meshway_server::Settings::new(root.join("server")))
-        .await
-        .unwrap();
+    let mut server_settings = meshway_server::Settings::new(root.join("server"));
+    server_settings.console_origin =
+        console_origin.map(|origin| meshway_server::console_origin(origin).unwrap());
+    let server = meshway_server::App::open(server_settings).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let router = meshway_server::http::router(&server);
@@ -93,14 +103,9 @@ async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
         .unwrap();
     let path = root.join("daemon");
     let socket = path.join("control.sock");
-    let settings = meshway_daemon::Settings::new(
-        path.clone(),
-        &origin,
-        Some("http://127.0.0.1:3001"),
-        Some("cli-node"),
-    )
-    .unwrap()
-    .with_network_mode(meshway_ipc::NetworkMode::ControlOnly);
+    let settings = meshway_daemon::Settings::new(path.clone(), &origin, Some("cli-node"))
+        .unwrap()
+        .with_network_mode(meshway_ipc::NetworkMode::ControlOnly);
     let (stop, stopped) = oneshot::channel();
     let daemon = tokio::spawn(meshway_daemon::run(settings, async {
         let _ = stopped.await;
@@ -113,7 +118,7 @@ async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
         String::from_utf8_lossy(&output.stderr)
     );
     let pending: Status = serde_json::from_slice(&output.stdout).unwrap();
-    let logs: Vec<serde_json::Value> = String::from_utf8(output.stderr)
+    let logs: Vec<serde_json::Value> = std::str::from_utf8(&output.stderr)
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
@@ -121,22 +126,84 @@ async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
     assert!(!logs.is_empty());
     assert!(logs.iter().any(|event| event["fields"]["command"] == "up"));
     assert_eq!(pending.phase, Phase::AwaitingApproval);
+    assert_eq!(pending.last_error, None);
     let enrollment = pending.enrollment_request_id.unwrap();
-    assert_eq!(
-        pending.enrollment_url.unwrap(),
-        format!("http://127.0.0.1:3001/authorize-device/{enrollment}")
-    );
-    api.approve_device_authorization(
-        &ApproveDeviceAuthorizationPath {
-            enrollment_request_id: enrollment,
-        },
-        &ApproveEnrollmentRequest {
-            network_id: network.network.id,
-        },
-        owner.token.expose(),
-    )
-    .await
-    .unwrap();
+    // The daemon created and polled through its generated client. Compare its
+    // projection with the same request read over the real user API, not a
+    // locally reconstructed Console route.
+    let authorization = api
+        .get_device_authorization(
+            &GetDeviceAuthorizationPath {
+                enrollment_request_id: enrollment,
+            },
+            owner.token.expose(),
+        )
+        .await
+        .unwrap();
+    let expected = authorization.request.authorization_url;
+    assert_eq!(expected.is_some(), console_origin.is_some());
+    assert_eq!(pending.enrollment_url, expected);
+    let ipc = meshway_ipc::Client::new(&socket)
+        .call(meshway_ipc::Command::Status)
+        .await
+        .unwrap();
+    assert_eq!(ipc.enrollment_url, expected);
+    let json = cli(&socket, "status", true).await;
+    assert!(json.status.success());
+    let current: Status = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(current.phase, Phase::AwaitingApproval);
+    assert_eq!(current.enrollment_url, expected);
+    let human_pending = cli(&socket, "status", false).await;
+    assert!(human_pending.status.success());
+    let human_text = std::str::from_utf8(&human_pending.stdout).unwrap();
+    match &expected {
+        Some(url) => {
+            assert!(human_text.contains("Approve this device in your browser:"));
+            assert!(human_text.lines().any(|line| line == url.as_str()));
+            assert!(!human_text.contains("ask its operator"));
+        }
+        None => {
+            for bytes in [&output.stdout, &json.stdout] {
+                let value: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+                assert_eq!(value.get("enrollmentUrl"), Some(&serde_json::Value::Null));
+            }
+            assert!(human_text.contains("Awaiting approval."));
+            assert!(human_text.contains("The Server has not configured a Console origin"));
+            assert!(human_text.contains("ask its operator to configure --console-origin"));
+            assert!(human_text.contains("MESHWAY_CONSOLE_ORIGIN"));
+            assert!(!human_text.contains("Approve this device in your browser:"));
+            assert!(!human_text.contains("http://") && !human_text.contains("https://"));
+        }
+    }
+    for result in [&output, &json, &human_pending] {
+        let stdout = std::str::from_utf8(&result.stdout).unwrap();
+        let stderr = std::str::from_utf8(&result.stderr).unwrap();
+        for private in [
+            owner.token.expose(),
+            "CLI fixture password",
+            "mwns_",
+            "privateKey",
+        ] {
+            assert!(!stdout.contains(private) && !stderr.contains(private));
+        }
+        assert!(!stderr.contains("authorize-device/"));
+        if let Some(url) = &expected {
+            assert!(!stderr.contains(url));
+        }
+    }
+    let approved = api
+        .approve_device_authorization(
+            &ApproveDeviceAuthorizationPath {
+                enrollment_request_id: enrollment,
+            },
+            &ApproveEnrollmentRequest {
+                network_id: network.network.id,
+            },
+            owner.token.expose(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(approved.request.authorization_url, expected);
     let ready = status(&socket, Phase::ControlReady).await;
     assert!(ready.authenticated && ready.saved.is_some() && ready.applied.is_none());
     let human = cli(&socket, "status", false).await;
@@ -147,6 +214,7 @@ async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
     );
     assert!(!String::from_utf8_lossy(&human.stdout).contains("Applied configuration:"));
     assert!(!String::from_utf8_lossy(&human.stdout).contains("mwns_"));
+    assert!(!String::from_utf8_lossy(&human.stdout).contains("ask its operator"));
     let down = cli(&socket, "down", true).await;
     assert!(down.status.success());
     let down: Status = serde_json::from_slice(&down.stdout).unwrap();

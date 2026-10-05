@@ -71,6 +71,10 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentRequestV
     pub phase: EnrollmentPhase,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
     pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    /// Where a signed-in user authorizes this device, built by the Server from
+    /// its Console origin; null when the deployment has not configured one.
+    #[serde(deserialize_with="crate::object::required_nullable")]
+    pub authorization_url: Option<String> [required=true],
 } }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

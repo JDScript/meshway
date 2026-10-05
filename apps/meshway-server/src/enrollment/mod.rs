@@ -26,6 +26,8 @@ pub struct Enrollment {
     handle: Handle,
     sealer: Arc<Sealer>,
     commit: crate::configuration::Committer,
+    /// Browser links for device authorization are the Server's to build.
+    console: Option<Arc<crate::settings::Url>>,
 }
 impl Enrollment {
     pub async fn redeem_key(
@@ -69,11 +71,13 @@ impl Enrollment {
         handle: Handle,
         sealer: Arc<Sealer>,
         commit: crate::configuration::Committer,
+        console: Option<Arc<crate::settings::Url>>,
     ) -> Self {
         Self {
             handle,
             sealer,
             commit,
+            console,
         }
     }
     pub async fn create_request(
@@ -81,8 +85,9 @@ impl Enrollment {
         request: CreateEnrollmentRequest,
     ) -> Result<EnrollmentRequestView, Error> {
         let sealer = self.sealer.clone();
+        let console = self.console.clone();
         self.handle
-            .write(move |tx| store::create_request(tx, &sealer, request))
+            .write(move |tx| store::create_request(tx, &sealer, request, console.as_deref()))
             .await
     }
     pub async fn inspect(
@@ -91,8 +96,9 @@ impl Enrollment {
         id: EnrollmentRequestId,
     ) -> Result<DeviceAuthorizationView, Error> {
         let token = crate::accounts::token_digest(token)?;
+        let console = self.console.clone();
         self.handle
-            .read(move |tx| store::inspect(tx, token, id))
+            .read(move |tx| store::inspect(tx, token, id, console.as_deref()))
             .await
     }
     pub async fn approve(
@@ -103,8 +109,9 @@ impl Enrollment {
     ) -> Result<DeviceAuthorizationView, Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
+        let console = self.console.clone();
         self.handle
-            .write(move |tx| store::approve(tx, &sealer, token, id, request))
+            .write(move |tx| store::approve(tx, &sealer, token, id, request, console.as_deref()))
             .await
     }
     pub async fn deny(&self, token: &str, id: EnrollmentRequestId) -> Result<(), Error> {
@@ -119,8 +126,9 @@ impl Enrollment {
         proof: EnrollmentDeviceProof,
     ) -> Result<EnrollmentPollResponse, Error> {
         let sealer = self.sealer.clone();
+        let console = self.console.clone();
         self.handle
-            .read(move |tx| store::poll(tx, &sealer, id, proof))
+            .read(move |tx| store::poll(tx, &sealer, id, proof, console.as_deref()))
             .await
     }
     pub async fn cancel(

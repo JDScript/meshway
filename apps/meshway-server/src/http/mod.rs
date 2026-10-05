@@ -162,6 +162,7 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(management::reset_inspect))
         .routes(routes!(management::reset_redeem))
         .routes(routes!(management_networks::role))
+        .routes(routes!(management_networks::role_change_impact))
         .routes(routes!(
             management_networks::links,
             management_networks::create_link

@@ -222,7 +222,10 @@ pub(crate) fn change_role(
         // Permission loss is irreversible for existing links, including later
         // promotion or leaving/rejoining under a new membership.
         tx.execute(
-            "UPDATE join_links SET revoked_at=?1 WHERE issuer_membership_id=?2 AND consumed_at IS NULL AND revoked_at IS NULL AND (?3='member' OR (?3='admin' AND role!='member'))",
+            &format!(
+                "UPDATE join_links SET revoked_at=?1 WHERE {}",
+                links_lost_by_role_change("")
+            ),
             params![now, id.as_uuid().as_bytes().as_slice(), role_name(role)],
         )?;
         record(
@@ -242,6 +245,83 @@ pub(crate) fn change_role(
         owner_count(tx, network)?,
     );
     Ok((member, changed))
+}
+
+/// Live links the issuer could not create with the new role (?3), as of ?1;
+/// ?2 is the issuer membership. Expired links keep their own lifecycle.
+fn links_lost_by_role_change(t: &str) -> String {
+    format!(
+        "{t}issuer_membership_id=?2 AND {t}consumed_at IS NULL AND {t}revoked_at IS NULL AND {t}expires_at>?1 AND (?3='member' OR (?3='admin' AND {t}role!='member'))"
+    )
+}
+
+/// The role change's side effects without performing it. Same authorization
+/// and version checks as `change_role`; a no-op change has no impact.
+pub(crate) fn role_change_impact(
+    tx: &Transaction<'_>,
+    digest: [u8; 32],
+    network: NetworkId,
+    id: MembershipId,
+    role: MembershipRole,
+    request: RequestId,
+) -> Result<meshway_protocol::management::RoleChangeImpactResponse, Error> {
+    let now = now()?;
+    let user = current_session(tx, &digest, now)?.user.id;
+    let caller = membership(tx, network, user)?;
+    let raw = tx.query_row(
+        "SELECT m.sequence,m.id,m.user_id,u.email,m.role,m.version,m.joined_at FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.id=?2 AND m.revoked_at IS NULL",
+        params![network.as_uuid().as_bytes().as_slice(), id.as_uuid().as_bytes().as_slice()],
+        RawMember::read,
+    ).optional()?.ok_or(Error::NotFound)?;
+    let owners = owner_count(tx, network)?;
+    let member = raw.into_view(caller, owners)?;
+    if !grant(caller.1, member.role) || !grant(caller.1, role) {
+        return Err(Error::PermissionDenied);
+    }
+    if !member.actions.assignable_roles.contains(&role) {
+        return Err(if member.role == MembershipRole::Owner && owners <= 1 {
+            Error::LastOwner
+        } else {
+            Error::PermissionDenied
+        });
+    }
+    let (join_links, join_link_count) = if member.role == role {
+        (Vec::new(), 0)
+    } else {
+        let count: i64 = tx.query_row(
+            &format!(
+                "SELECT count(*) FROM join_links WHERE {}",
+                links_lost_by_role_change("")
+            ),
+            params![now, id.as_uuid().as_bytes().as_slice(), role_name(role)],
+            |row| row.get(0),
+        )?;
+        let mut stmt = tx.prepare(&format!(
+            "{LINK_SELECT} WHERE {} ORDER BY j.sequence DESC LIMIT 100",
+            links_lost_by_role_change("j.")
+        ))?;
+        let links = stmt
+            .query_map(
+                params![now, id.as_uuid().as_bytes().as_slice(), role_name(role)],
+                read_link,
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|mut link| {
+                link_actions(&mut link, Some(caller.1), now);
+                link.view
+            })
+            .collect();
+        (links, u32::try_from(count).unwrap_or(u32::MAX))
+    };
+    Ok(meshway_protocol::management::RoleChangeImpactResponse {
+        request_id: request,
+        membership_id: member.membership_id,
+        version: member.version,
+        role,
+        join_links,
+        join_link_count,
+    })
 }
 
 struct Link {

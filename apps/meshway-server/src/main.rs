@@ -21,6 +21,11 @@ struct Arguments {
     /// Session lifetime in whole seconds (60 through 2592000).
     #[arg(long, env = "MESHWAY_SESSION_TTL_SECONDS", default_value_t = 86400, value_parser = clap::value_parser!(u64).range(60..=2592000))]
     session_ttl_seconds: u64,
+    /// Browser Console origin (https, or http on loopback), such as
+    /// https://console.example.com. Device-authorization links are built on
+    /// it; without it the Server hands devices no link.
+    #[arg(long, env = "MESHWAY_CONSOLE_ORIGIN", value_parser = meshway_server::console_origin)]
+    console_origin: Option<meshway_server::settings::Url>,
 }
 
 #[tokio::main]
@@ -50,6 +55,7 @@ async fn run(arguments: Arguments) -> Result<(), String> {
     let mut settings = Settings::new(arguments.data_dir);
     settings.registration_enabled = arguments.registration_enabled;
     settings.session_ttl = Duration::from_secs(arguments.session_ttl_seconds);
+    settings.console_origin = arguments.console_origin;
     // AppError is a safe category with, at most, schema object names.
     let app = App::open(settings)
         .await

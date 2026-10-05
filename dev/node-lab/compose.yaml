@@ -18,7 +18,7 @@ x-node: &node
       chmod 700 /var/lib/meshway
       exec /opt/meshway/meshwayd "$@"
     - meshwayd
-  command: ["--data-dir", "/var/lib/meshway", "--console-origin", "http://127.0.0.1:3001", "--network-mode", "control-only"]
+  command: ["--data-dir", "/var/lib/meshway", "--network-mode", "control-only"]
   read_only: true
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]

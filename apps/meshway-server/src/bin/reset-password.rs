@@ -36,19 +36,8 @@ async fn main() -> ExitCode {
     }
 }
 async fn run(args: Arguments) -> Result<(), String> {
-    let origin = reqwest::Url::parse(&args.console_origin)
-        .map_err(|_| "Invalid Console origin.".to_owned())?;
-    if !(origin.scheme() == "https"
-        || (origin.scheme() == "http"
-            && matches!(origin.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))))
-        || !origin.username().is_empty()
-        || origin.password().is_some()
-        || origin.query().is_some()
-        || origin.fragment().is_some()
-        || origin.path() != "/"
-    {
-        return Err("Expected a secure Console origin.".to_owned());
-    }
+    let origin = meshway_server::console_origin(&args.console_origin)
+        .map_err(|error| format!("Invalid Console origin: {error}."))?;
     let app = App::open(Settings::new(args.data_dir))
         .await
         .map_err(open_failure)?;

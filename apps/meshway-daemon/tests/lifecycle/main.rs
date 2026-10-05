@@ -3,7 +3,8 @@
 mod network;
 mod support;
 use meshway_control_client::{
-    ApplyConfigurationPath, ApproveDeviceAuthorizationPath, GetNetworkPath, GetNodeStatePath,
+    ApplyConfigurationPath, ApproveDeviceAuthorizationPath, GetDeviceAuthorizationPath,
+    GetNetworkPath, GetNodeStatePath,
 };
 use meshway_ipc::{Command, ErrorCode, Phase, ResultBody};
 use meshway_protocol::{ApproveEnrollmentRequest, ConfigurationRequest, state::VisibleReport};
@@ -42,9 +43,20 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     call(&daemon.socket, up.clone(), up_id).await.unwrap();
     let pending = wait(&daemon.socket, Phase::AwaitingApproval).await;
     let enrollment = pending.enrollment_request_id.unwrap();
+    let authorization = server
+        .client
+        .get_device_authorization(
+            &GetDeviceAuthorizationPath {
+                enrollment_request_id: enrollment,
+            },
+            user.expose(),
+        )
+        .await
+        .unwrap();
+    assert!(authorization.request.authorization_url.is_some());
     assert_eq!(
-        pending.enrollment_url.unwrap(),
-        format!("http://127.0.0.1:3001/authorize-device/{enrollment}")
+        pending.enrollment_url,
+        authorization.request.authorization_url
     );
     server
         .client

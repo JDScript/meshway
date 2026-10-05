@@ -30,6 +30,8 @@ Owner／Admin 不能越过网络边界或用管理读取伪造数据面已生效
 
 移除／离开成员会永久删除其当前 User 身份设备，按相同事务处理 membership、配置与执行退出；按创建者追溯到的 Tag 设备不在这个删除集合。有权执行该动作的人可读完整 removalImpact／nodeCount，其他视图裁剪，不借影响统计泄露隐藏节点。
 
+角色降级会吊销该成员签发、仍未使用且未到期、而新角色已无权签发的加入链接（降为 admin 吊销 admin／owner 链接，降为 member 吊销全部）；已到期链接保持到期状态。`GET members/{membershipId}/role-change-impact/{role}` 按与变更相同的权限和可分配角色检查返回这些链接（`joinLinks` 最多 100 条、`joinLinkCount` 为总数、`version` 为当前成员版本），只读且不改变任何状态；同角色为空影响。
+
 无邮件密码恢复由主机运维 CLI 签发链接；任何网络 Owner／Admin 都不因此获得他人全局账户密码重置权。账户活动仅本人，网络活动仅本网络管理读取。
 
 ## 相关视图

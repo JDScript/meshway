@@ -2,7 +2,7 @@
 
 ## 启动与接入
 
-`meshwayd`／`meshway` 提供 Server 控制接入与 Linux TUN 运行装配。以下本地示例显式选择 `control-only`，假定已有当前版本 Server 位于 `127.0.0.1:8430`，Console 位于 `127.0.0.1:3001` 并连接该 Server：
+`meshwayd`／`meshway` 提供 Server 控制接入与 Linux TUN 运行装配。以下本地示例显式选择 `control-only`，假定已有当前版本 Server 位于 `127.0.0.1:8430`，Console 位于 `127.0.0.1:3001` 并连接该 Server；Server 已配置 `--console-origin http://127.0.0.1:3001`，配置入口见 [Server 运行与维护](/v2/server#运行与维护)：
 
 ```sh
 mise run build:node
@@ -10,8 +10,7 @@ install -d -m 700 .meshway
 ./target/debug/meshwayd \
   --data-dir "$PWD/.meshway/node" \
   --network-mode control-only \
-  --server http://127.0.0.1:8430 \
-  --console-origin http://127.0.0.1:3001
+  --server http://127.0.0.1:8430
 ```
 
 另开终端操作同一 daemon：
@@ -23,7 +22,7 @@ install -d -m 700 .meshway
 ./target/debug/meshway --socket "$PWD/.meshway/node/control.sock" down
 ```
 
-首次 `up` 输出公开的浏览器批准链接；在 Console 登录并选择网络批准后，daemon 自动兑换身份、认证、取得实例、保存配置和发送 saved 回执。`up` 返回批准链接时只表示正在等待批准。此示例的 `controlReady`／`dataPlane=controlOnly` 表示控制流程就绪，`applied=null`；它不安装网络。Linux TUN 使用 `--network-mode tun`（默认值），还须满足下节安装范围与设备／路由权限。
+首次 `up` 原样显示 Server 返回的浏览器批准链接，由用户打开；链接来源与 null 语义见 [Server 接入组件](/v2/node/control#接口与顺序)。Server 未配置 Console origin 时，JSON 状态保留 `enrollmentUrl: null`，人类输出提示联系 Server 运维配置入口，状态仍为等待批准。在 Console 登录并选择网络批准后，daemon 自动兑换身份、认证、取得实例、保存配置和发送 saved 回执。`up` 返回批准链接时只表示正在等待批准。此示例的 `controlReady`／`dataPlane=controlOnly` 表示控制流程就绪，`applied=null`；它不安装网络。Linux TUN 使用 `--network-mode tun`（默认值），还须满足下节安装范围与设备／路由权限。
 
 `meshwayd` 前台运行，SIGINT／SIGTERM 执行关闭与 join。进程退出保留期望状态：退出前为 up，重启后自动重新取得运行资格；显式 down 后重启继续保持下线。CLI 的 Ctrl-C 仅停止等待，不撤回已由 daemon 接纳的持久操作。
 
@@ -31,7 +30,6 @@ install -d -m 700 .meshway
 | --- | --- |
 | daemon `--data-dir` | 私有状态目录，默认 `/var/lib/meshway`；父目录须存在，Unix socket 位于其 `control.sock` |
 | daemon `--server`／`MESHWAY_SERVER_URL` | 必须明确指定 Server；远端要求 HTTPS，数字 loopback 可使用 HTTP |
-| daemon `--console-origin` | Console 独立部署时指定；省略时使用 Server origin |
 | daemon `--hostname` | 首次接入建议名；省略取系统 hostname 的首个 DNS label，既有业务名称仍由 Server 管理 |
 | daemon `--network-mode`／`MESHWAY_NETWORK_MODE` | 本机启动参数 `tun`（默认）或 `control-only`；不是云端业务字段，失败不自动回退 |
 | daemon `--bootstrap-host NAME=IP` | 可重复，为 Server 或配置中 carrier 名称提供固定 bootstrap 映射 |

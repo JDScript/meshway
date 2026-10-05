@@ -10,9 +10,6 @@ pub struct Arguments {
     /// Server origin. HTTPS is required outside numeric loopback.
     #[arg(long, env = "MESHWAY_SERVER_URL")]
     server: String,
-    /// Browser console origin, when served separately from the Server.
-    #[arg(long)]
-    console_origin: Option<String>,
     /// Suggested label for first enrollment; later business settings live on Server.
     #[arg(long)]
     hostname: Option<String>,
@@ -83,18 +80,13 @@ impl Arguments {
         }
         let nameservers =
             (!self.bootstrap_nameserver.is_empty()).then_some(self.bootstrap_nameserver);
-        meshway_daemon::Settings::new(
-            self.data_dir,
-            &self.server,
-            self.console_origin.as_deref(),
-            self.hostname.as_deref(),
-        )
-        .and_then(|settings| {
-            settings
-                .with_network_mode(self.network_mode)
-                .with_bootstrap(hosts, nameservers)
-                .with_dns_settings(dns)
-        })
+        meshway_daemon::Settings::new(self.data_dir, &self.server, self.hostname.as_deref())
+            .and_then(|settings| {
+                settings
+                    .with_network_mode(self.network_mode)
+                    .with_bootstrap(hosts, nameservers)
+                    .with_dns_settings(dns)
+            })
     }
 }
 
@@ -135,6 +127,20 @@ mod tests {
             .chain(extra.iter().copied()),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn console_origin_is_a_server_option_not_a_daemon_override() {
+        let Err(error) = Arguments::try_parse_from([
+            "meshwayd",
+            "--server",
+            "http://127.0.0.1:8430",
+            "--console-origin",
+            "http://127.0.0.1:3001",
+        ]) else {
+            panic!("obsolete daemon option must be rejected");
+        };
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]

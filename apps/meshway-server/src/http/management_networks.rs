@@ -8,7 +8,7 @@ use axum::{
     },
     http::{HeaderMap, StatusCode},
 };
-use meshway_model::{JoinLinkId, MembershipId, NetworkId, RequestId};
+use meshway_model::{JoinLinkId, MembershipId, MembershipRole, NetworkId, RequestId};
 use meshway_protocol::{ErrorResponse, NetworkPageQuery, WireSecret, management::*};
 
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/members/{membershipId}/removal-impact",operation_id="getMemberRemovalImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),responses((status=200,body=RemovalImpactResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -94,6 +94,21 @@ pub(super) async fn leave(
     }))
 }
 
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/members/{membershipId}/role-change-impact/{role}",operation_id="getMemberRoleChangeImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path),("role"=MembershipRole,Path)),responses((status=200,body=RoleChangeImpactResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+pub(super) async fn role_change_impact(
+    State(networks): State<Networks>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    path: Result<Path<(NetworkId, MembershipId, MembershipRole)>, PathRejection>,
+) -> Result<Json<RoleChangeImpactResponse>, HttpError> {
+    let Path((network, member, role)) = path.map_err(|_| HttpError::invalid_request(id))?;
+    Ok(Json(
+        networks
+            .role_change_impact(bearer(&headers, id)?, network, member, role, id)
+            .await
+            .map_err(|e| HttpError::domain(id, e))?,
+    ))
+}
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/members/{membershipId}/role",operation_id="changeMemberRole",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),request_body=ChangeMemberRoleRequest,responses((status=200,body=MemberMutationResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn role(
     State(networks): State<Networks>,

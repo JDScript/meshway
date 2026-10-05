@@ -20,8 +20,8 @@ pub(crate) mod history;
 pub mod http;
 pub mod networks;
 mod secrets;
-mod settings;
+pub mod settings;
 mod store;
 
 pub use app::{App, AppError};
-pub use settings::Settings;
+pub use settings::{InvalidConsoleOrigin, Settings, console_origin};

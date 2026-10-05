@@ -5819,6 +5819,110 @@
         ]
       }
     },
+    "/api/v1/networks/{networkId}/members/{membershipId}/role-change-impact/{role}": {
+      "get": {
+        "tags": [
+          "members"
+        ],
+        "operationId": "getMemberRoleChangeImpact",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          },
+          {
+            "name": "membershipId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MembershipId"
+            }
+          },
+          {
+            "name": "role",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MembershipRole"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleChangeImpactResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{networkId}/nodes": {
       "get": {
         "tags": [
@@ -11107,9 +11211,17 @@
           "existing",
           "returnMethod",
           "phase",
-          "expiresAt"
+          "expiresAt",
+          "authorizationUrl"
         ],
         "properties": {
+          "authorizationUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where a signed-in user authorizes this device, built by the Server from\nits Console origin; null when the deployment has not configured one."
+          },
           "controlKey": {
             "$ref": "#/components/schemas/NodePublicKey"
           },
@@ -18515,6 +18627,43 @@
           },
           "keyId": {
             "$ref": "#/components/schemas/KeyId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoleChangeImpactResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "membershipId",
+          "version",
+          "role",
+          "joinLinks",
+          "joinLinkCount"
+        ],
+        "properties": {
+          "joinLinkCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "joinLinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JoinLinkView"
+            }
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
           }
         },
         "additionalProperties": false

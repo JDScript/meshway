@@ -1,4 +1,4 @@
-use meshway_ipc::Status;
+use meshway_ipc::{Phase, Status};
 use std::io::{self, Write};
 
 pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
@@ -23,6 +23,11 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
         }
         if let Some(url) = &status.enrollment_url {
             writeln!(output, "Approve this device in your browser:\n{url}")?;
+        } else if status.phase == Phase::AwaitingApproval {
+            writeln!(
+                output,
+                "Awaiting approval. The Server has not configured a Console origin; ask its operator to configure --console-origin (MESHWAY_CONSOLE_ORIGIN)."
+            )?;
         }
         if let Some(saved) = &status.saved {
             writeln!(output, "Saved configuration: revision {}", saved.revision)?;

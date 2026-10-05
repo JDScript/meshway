@@ -44,11 +44,13 @@ impl Drop for External {
 }
 impl Server {
     pub async fn start(path: PathBuf) -> Self {
+        let console_origin = "http://127.0.0.1:3001";
         if let Some(binary) = std::env::var_os("MESHWAY_TEST_SERVER_BINARY") {
             let child = Command::new(binary)
                 .arg("--data-dir")
                 .arg(path)
                 .args(["--listen", "127.0.0.1:0", "--registration-enabled", "true"])
+                .args(["--console-origin", console_origin])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
@@ -80,7 +82,9 @@ impl Server {
             assert!(address.ip().is_loopback());
             return Self::client(format!("http://{address}"), Backend::External(external));
         }
-        let app = App::open(Settings::new(path)).await.unwrap();
+        let mut settings = Settings::new(path);
+        settings.console_origin = Some(meshway_server::console_origin(console_origin).unwrap());
+        let app = App::open(settings).await.unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let router = meshway_server::http::router(&app);
@@ -192,8 +196,6 @@ impl Process {
                 origin,
                 "--hostname",
                 "daemon-node",
-                "--console-origin",
-                "http://127.0.0.1:3001",
             ])
             .arg("--data-dir")
             .arg(path)

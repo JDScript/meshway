@@ -26,6 +26,9 @@ impl Server {
     async fn start(path: &Path, registration: bool) -> Self {
         let mut settings = Settings::new(path);
         settings.registration_enabled = registration;
+        Self::start_with(settings).await
+    }
+    async fn start_with(settings: Settings) -> Self {
         let app = App::open(settings).await.expect("open real SQLite");
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -504,7 +507,7 @@ fn exported_openapi_is_the_actual_router_contract() {
     );
     assert_eq!(spec["openapi"], "3.1.0");
     let paths = spec["paths"].as_object().unwrap();
-    assert_eq!(paths.len(), 85);
+    assert_eq!(paths.len(), 86);
     for (path, method, operation, status, component) in [
         (
             "options",

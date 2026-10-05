@@ -33,7 +33,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `stop` | 先停用本机控制上下文，再请求释放已知实例；请求失败不会恢复本机实例 |
 | `shutdown` | 停止并等待已接纳的私有写入完成 |
 
-接入时，宿主使用 `EnrollmentRequestView.id` 展示浏览器批准入口。Node 组件不持有浏览器用户会话，也不自行批准设备。
+接入时，宿主展示 Server 返回的 `EnrollmentRequestView.authorizationUrl` 作为浏览器批准入口；为 null 表示部署没有配置 Console origin，宿主如实提示而不自行拼接链接。Node 组件不持有浏览器用户会话，也不自行批准设备。
 
 首次连接的调用顺序为 `open` → `begin_enrollment` → `poll_enrollment` → `redeem_enrollment` → `authenticate` → `acquire_instance` → `sync_configuration` → `acknowledge_saved`。之后由宿主按期限驱动续租、同步、报告与重试。
 

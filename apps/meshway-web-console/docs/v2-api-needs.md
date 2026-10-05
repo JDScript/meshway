@@ -160,10 +160,10 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 需要产品决定
 
-- 设备授权的浏览器链接格式。console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
-- 两端都报告自己是发起方时 link 的判定：现在判为 `conflicting`，`inUse` 变成 null。
-- `--listen` 的默认端口：仍是 `127.0.0.1:8420`。
-- 角色变更的影响预览（降级 admin 时哪些链接会被撤销）：现在没有角色变更预览接口。
+- ~~设备授权的浏览器链接格式~~：已定。Server 启动参数 `--console-origin`（`MESHWAY_CONSOLE_ORIGIN`）给出 Console origin，`EnrollmentRequestView.authorizationUrl`（required nullable）= `<origin>/authorize-device/<enrollmentRequestId>`，create／query／getDeviceAuthorization／approve 都带；未配置时 null。console 的 `/authorize-device/<id>` 路径就是契约，写进 authentication.md。Node 改为显示该字段（转 Node 会话）。
+- ~~两端都报告自己是发起方时 link 的判定~~：维持 `conflicting`／`inUse: null`，不猜。linkId 协商和发起方语义等 Node 数据面定义后再调整聚合。
+- ~~`--listen` 的默认端口~~：保持 `127.0.0.1:8420`，共存期用 `--listen`／`MESHWAY_LISTEN` 指定。
+- ~~角色变更的影响预览~~：新增 `GET members/{membershipId}/role-change-impact/{role}` → `RoleChangeImpactResponse { requestId, membershipId, version, role, joinLinks (≤100 JoinLinkView), joinLinkCount }`，与 changeMemberRole 同样的权限／可分配角色检查（403／409 `last_owner`），只读。降级只吊销未到期的链接（已到期保持 expired）。见 permissions.md。
 - ~~域名规则集经出口~~：已定并实现。`autogroup:internet` 在声明期覆盖域名目的地（路由规则和规则集里的名称），与执行期"按解析地址判定"一致；access 仍不引用规则集。只有 CIDR 授权的源仍需 `domain:`。见 access.md「域名授权」、routing.md「Action」。
 - ~~规则集转换只接受 `+.` 后缀；10 万条上限~~：已定并实现。新增精确域名：`RouteMatch.domain`、inline 规则集 `domain`（都是 `string[]`，默认 `[]`），mihomo 裸条目和 sing-box `domain` 字段转成它；`*.`／`.` 开头的条目仍使整份失败。上限提到 250000 条（8 MiB 不变）。新 IssueCode `invalid_domain`（`params.value`，pointer 到 `…/domain/<i>`）。**console 需要**：路由规则和 inline 规则集表单显示／编辑 `domain`，JSONC 诊断本地化 `invalid_domain`。
 
