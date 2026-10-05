@@ -20,6 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = {"server": (8420, "/api/v1/auth/options"), "docs": (5173, "/v2/")}
+CONSOLE_ORIGIN = "http://127.0.0.1:3001"
 
 
 class DevError(RuntimeError):
@@ -74,7 +75,7 @@ def run(args, *, cwd=ROOT, check=True, timeout=30, env=None):
 
 def command(service, root):
     if service == "server":
-        return [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server")]
+        return [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server"), "--console-origin", CONSOLE_ORIGIN]
     return ["pnpm", "--filter", "@meshway/docs", "dev"]
 
 

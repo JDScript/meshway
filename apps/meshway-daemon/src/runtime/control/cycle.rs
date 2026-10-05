@@ -63,7 +63,7 @@ pub(super) async fn cycle(
                 .pending_hostname()
                 .unwrap_or(&settings.hostname)
                 .to_owned();
-            control
+            let created = control
                 .begin_enrollment(&hostname)
                 .await
                 .map_err(|e| failure(e, true))?;
@@ -76,7 +76,7 @@ pub(super) async fn cycle(
                     *reset = false;
                     return Ok(Cycle {
                         phase: Phase::AwaitingApproval,
-                        url: view.authorization_url,
+                        url: created.authorization_url,
                         delay: Duration::from_secs(2),
                         renewed: false,
                         reported: false,

@@ -34,6 +34,9 @@ class Services(unittest.TestCase):
                 self.local.pane("server")
         self.assertFalse(dev.known_start(shell + " ; sleep 1", "server", self.root, log))
         self.assertFalse(dev.known_start(shell.replace(shlex.quote(str(log)), shlex.quote(str(self.root / "other.log"))), "server", self.root, log))
+        self.assertIn("--console-origin", command)
+        self.assertEqual(command[command.index("--console-origin") + 1], "http://127.0.0.1:3001")
+        self.assertFalse(dev.known_start(shell.replace(dev.CONSOLE_ORIGIN, "http://127.0.0.1:3002"), "server", self.root, log))
 
     def test_foreign_listener_never_starts_or_stops_a_service(self):
         with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "listeners", return_value={777}), patch.object(dev, "run") as run, patch.object(dev.os, "kill") as kill:

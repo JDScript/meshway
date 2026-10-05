@@ -14,7 +14,7 @@
 
 当前 Compose 源码显式使用 `--network-mode control-only`：容器 `cap_drop: ALL`，没有 TUN 安装权限。源码修改不代表常驻容器已经部署新程序／参数；须用下方 versions／status 核对实际运行实例。
 
-接入地址为 `https://meshway-dev-api.jdscript.dev/`，转发到本机 Server；批准链接使用 `http://127.0.0.1:3001` 的 Console。身份绑定仍按[Node 控制组件](/v2/node/control)检查。
+接入地址为 `https://meshway-dev-api.jdscript.dev/`，转发到本机 Server；批准链接使用 `http://127.0.0.1:3001` 的 Console。`mise run services start server` 的启动命令包含 `--console-origin http://127.0.0.1:3001`；以其他入口启动 Server 时也须配置该参数或 `MESHWAY_CONSOLE_ORIGIN`，否则 Node 如实显示缺少批准链接。Node 不自行拼接 Console URL。身份绑定仍按[Node 控制组件](/v2/node/control)检查。
 
 ## 首次启动
 
