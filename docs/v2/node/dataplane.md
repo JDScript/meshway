@@ -126,6 +126,8 @@ mise run test:runtime:linux
 
 默认场景配置为关闭系统 DNS 的 Mesh-only 网络，强制 A→R→B 及原路径回复；`--transport native-udp` 选择 Native UDP 静态承载。已通过的 daemon 验收包含双栈 UDP／TCP、同一 socket 跨需求添加与至少 125 秒持续续租、独立 UDP 流停止发包后的入站活动续租、Access 撤销／恢复、中转取消 IPv6 地址后继续转发 IPv6 密文、Server 失联后期限截止、拒绝路由保留及离线 `down` 清理。单独的内核测试检查同目的地址的普通／受保护 socket、旧池拒绝边界、journal 恢复及外部同优先级规则冲突；HTTPS bootstrap 另验显式 down 前后的联系。
 
+恢复阶段关闭 Node HTTP 接纳并等待实际 instance／execution 到期，再恢复联系。Native TCP、Native UDP 静态端点、两种系统 DNS 后端、双 NAT 与同路径 TCP 退路分别验证：无需再次 `up`，原身份、进程和 operator revision 保持，取得新 instance、重新 applied／上报 State，并用新的双栈 UDP／TCP OS socket 恢复原路径包流；过期的旧 TCP／cipher 仍拒绝。最后真实停服后再验离线 down。源、终点的新交付计数及中转 TUN 的零明文交付分别记录。
+
 DNS 场景增加 `--dns-backend resolv-conf|resolved` 和 `--dns-image-manifest`，固定 OS 包／镜像由 `dev/dns-fixture/build.py` 离线构建。Native UDP 与显式文件代理、resolved 两种后端分别通过真实 `getaddrinfo`、短名称、可见性 REFUSED、分域 UDP／TCP、系统 UDP→TCP 截断重试、进程重启、上述长时包流、失效阻断及 DNS／接口恢复。独立内核测试还覆盖 DNS 锚点归属、并发读取、取消、恢复和精确删除。
 
 `--transport native-udp --traversal nat` 使用同一 daemon、Control 和包流 owner，增加独立 SNAT 路由器及真实候选协调；`--traversal-fallback` 验证获准的 A–R TCP 退路。两组关闭系统 DNS 的完整验收已通过，精确拓扑、连续性和限制统一见[连接获取验收](/v2/node/connectivity#路径选择与验收)。
