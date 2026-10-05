@@ -8,11 +8,14 @@ use meshway_transport::raw::Stream;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const MAGIC: &[u8; 8] = b"MWADJv1\0";
-const MAX_MESSAGE: usize = 2048;
+pub(crate) const MAGIC: &[u8; 8] = b"MWADJv1\0";
+pub(crate) const MAX_MESSAGE: usize = 2048;
 const INIT: &[u8] = b"meshway/adjacency/linkInit/v1\0";
 const CHALLENGE: &[u8] = b"meshway/adjacency/linkChallenge/v1\0";
 const ACK: &[u8] = b"meshway/adjacency/linkAck/v1\0";
+
+mod exchange;
+pub(crate) use exchange::{Initiation, Kind, Transcript, decode, encode, incoming};
 
 fn keys(cfg: &NodeConfiguration, node: NodeId) -> Result<(&BoundNodeKey, &BoundNodeKey), Error> {
     if node == cfg.node_id {
@@ -48,7 +51,7 @@ fn encode_context(
         meshway_transport_spec::TransportProtocol::NativeTcp => 1,
         meshway_transport_spec::TransportProtocol::Vless => 2,
         meshway_transport_spec::TransportProtocol::Trojan => 3,
-        _ => return Err(Error::Configuration),
+        meshway_transport_spec::TransportProtocol::NativeUdp => 4,
     });
     out.push(u8::try_from(key.len()).map_err(|_| Error::Configuration)?);
     out.extend_from_slice(key);
@@ -102,25 +105,14 @@ fn verify_key(
         .map_err(|_| Error::Authentication)
 }
 
-fn nonce() -> Result<[u8; 32], Error> {
+pub(crate) fn nonce() -> Result<[u8; 32], Error> {
     let mut nonce = [0; 32];
     getrandom::fill(&mut nonce).map_err(|_| Error::Authentication)?;
     Ok(nonce)
 }
 
 async fn write(stream: &mut Box<dyn Stream>, kind: u8, body: &[u8]) -> Result<(), Error> {
-    if body.len() > MAX_MESSAGE - 11 {
-        return Err(Error::Authentication);
-    }
-    let mut message = Vec::with_capacity(11 + body.len());
-    message.extend_from_slice(MAGIC);
-    message.push(kind);
-    message.extend_from_slice(
-        &u16::try_from(body.len())
-            .map_err(|_| Error::Authentication)?
-            .to_be_bytes(),
-    );
-    message.extend_from_slice(body);
+    let message = encode(Kind::from_byte(kind)?, body)?;
     stream.write_all(&message).await?;
     stream.flush().await?;
     Ok(())
@@ -169,44 +161,18 @@ pub(crate) async fn dial(
         .snapshot()
         .configuration()
         .map_err(|_| Error::Authority)?;
-    let context = context(cfg, carrier)?;
-    let client = nonce()?;
-    let mut intro = context.clone();
-    intro.extend_from_slice(&client);
-    intro.extend_from_slice(
-        &identity
-            .sign_packet(digest(INIT, &context, &client, &[0; 32]))
-            .map_err(|_| Error::Authority)?,
-    );
+    let (initiation, intro) = Initiation::new(identity, carrier)?;
     scope.run(write(&mut stream, 1, &intro)).await?;
     let challenge = scope.run(read(&mut stream, 2)).await?;
-    let server = parse_response(&challenge, &context, &client)?;
-    verify(
-        cfg,
-        carrier.listener,
-        digest(CHALLENGE, &context, &client, &server),
-        &challenge[96..],
-    )?;
-    let proof = identity
-        .sign_packet(digest(ACK, &context, &client, &server))
-        .map_err(|_| Error::Authority)?;
+    let transcript = initiation.challenge(cfg, carrier.listener, &challenge)?;
     scope
         .run(write(
             &mut stream,
             3,
-            &response(&context, &client, &server, proof),
+            &transcript.message(identity, Kind::Ack)?,
         ))
         .await?;
-    Ok((
-        stream,
-        digest(
-            b"meshway/adjacency/channel/v1\0",
-            &context,
-            &client,
-            &server,
-        )
-        .into_bytes(),
-    ))
+    Ok((stream, transcript.id()))
 }
 
 pub(crate) async fn accept(
@@ -220,61 +186,22 @@ pub(crate) async fn accept(
         .snapshot()
         .configuration()
         .map_err(|_| Error::Authority)?;
-    let mut selected = None;
-    for (peer, carrier) in carriers {
-        let context = context(cfg, carrier)?;
-        if intro.len() == context.len() + 96 && intro.starts_with(&context) {
-            selected = Some((*peer, carrier.clone(), context));
-            break;
-        }
-    }
-    let (peer, carrier, context) = selected.ok_or(Error::Authentication)?;
+    let (peer, carrier, initiation) = incoming(cfg, carriers, &intro)?;
     let mut scope = scope.clone();
     scope.edge = Some((peer, carrier.clone()));
     scope.check()?;
-    let client: [u8; 32] = intro[context.len()..context.len() + 32]
-        .try_into()
-        .map_err(|_| Error::Authentication)?;
-    verify(
-        cfg,
-        peer,
-        digest(INIT, &context, &client, &[0; 32]),
-        &intro[context.len() + 32..],
-    )?;
-    let server = nonce()?;
-    let proof = identity
-        .sign_packet(digest(CHALLENGE, &context, &client, &server))
-        .map_err(|_| Error::Authority)?;
+    let transcript = initiation.respond()?;
     scope
         .run(write(
             &mut stream,
             2,
-            &response(&context, &client, &server, proof),
+            &transcript.message(identity, Kind::Challenge)?,
         ))
         .await?;
     let ack = scope.run(read(&mut stream, 3)).await?;
-    if parse_response(&ack, &context, &client)? != server {
-        return Err(Error::Authentication);
-    }
-    verify(
-        cfg,
-        peer,
-        digest(ACK, &context, &client, &server),
-        &ack[96..],
-    )?;
+    transcript.verify(cfg, peer, Kind::Ack, &ack)?;
     scope.check()?;
-    Ok((
-        stream,
-        peer,
-        carrier,
-        digest(
-            b"meshway/adjacency/channel/v1\0",
-            &context,
-            &client,
-            &server,
-        )
-        .into_bytes(),
-    ))
+    Ok((stream, peer, carrier, transcript.id()))
 }
 
 #[cfg(test)]

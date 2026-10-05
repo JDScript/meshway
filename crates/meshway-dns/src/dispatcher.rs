@@ -50,6 +50,74 @@ pub struct Scope {
     /// the compiler-produced local_egress binding in this exact snapshot. At most
     /// 256 mappings are accepted (the compiler's current demand budget).
     pub resolver_demands: BTreeMap<String, RequestId>,
+    pub system_resolvers: Option<crate::SystemResolverSnapshot>,
+    pub system_demands: BTreeMap<usize, RequestId>,
+    pub system_tcp_demands: BTreeMap<usize, RequestId>,
+}
+
+impl Scope {
+    /// Installation readiness, distinct from per-query selection. Every declared
+    /// resolver and captured system endpoint must have an exact current permit.
+    pub fn validate_resolvers(&self) -> Result<(), DispatchError> {
+        let cfg = self
+            .snapshot
+            .configuration()
+            .map_err(|_| DispatchError::Scope)?;
+        if !matches!(
+            cfg.dns.egress,
+            meshway_configuration::execution::DnsEgress::NoExit
+        ) {
+            return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
+        }
+        if self.resolver_demands.len() + self.system_demands.len() + self.system_tcp_demands.len()
+            > 256
+        {
+            return Err(DispatchError::Scope);
+        }
+        for key in cfg.dns.settings.servers.keys() {
+            let id = self
+                .resolver_demands
+                .get(key)
+                .ok_or(DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
+            LocalResolverRoute::new(self.snapshot.clone(), key, *id, self.snapshot.expires_at())
+                .map_err(|_| DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
+        }
+        if let Some(system) = &self.system_resolvers {
+            for index in 0..system.upstreams.len() {
+                let id = self
+                    .system_demands
+                    .get(&index)
+                    .ok_or(DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
+                LocalResolverRoute::system(
+                    self.snapshot.clone(),
+                    system.clone(),
+                    index,
+                    system.primary,
+                    *id,
+                    self.snapshot.expires_at(),
+                )
+                .map_err(|_| DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
+                if system.primary == DnsTransport::Udp {
+                    let id = self
+                        .system_tcp_demands
+                        .get(&index)
+                        .ok_or(DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
+                    LocalResolverRoute::system(
+                        self.snapshot.clone(),
+                        system.clone(),
+                        index,
+                        DnsTransport::Tcp,
+                        *id,
+                        self.snapshot.expires_at(),
+                    )
+                    .map_err(|_| DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
+                }
+            }
+        } else if !self.system_demands.is_empty() || !self.system_tcp_demands.is_empty() {
+            return Err(DispatchError::Scope);
+        }
+        Ok(())
+    }
 }
 
 /// An additional cancellation fence, never a grant or a replacement lease.
@@ -163,7 +231,12 @@ impl OwnerDispatcher {
             let current = state.scopes.borrow_and_update();
             let scope = current
                 .as_ref()
-                .filter(|scope| scope.resolver_demands.len() <= 256)
+                .filter(|scope| {
+                    scope.resolver_demands.len()
+                        + scope.system_demands.len()
+                        + scope.system_tcp_demands.len()
+                        <= 256
+                })
                 .cloned();
             (current.has_changed(), scope)
         };
@@ -200,11 +273,26 @@ impl OwnerDispatcher {
             if Instant::now() >= deadline {
                 return Err(DispatchError::Expired);
             }
-            let begin = state
+            let mut begin = state
                 .owner
                 .as_mut()
                 .ok_or(DispatchError::Scope)?
-                .begin_published_until(query, &scope.resolver_demands, deadline);
+                .begin_published_until(query.clone(), &scope.resolver_demands, deadline);
+            if matches!(begin, Begin::Unmanaged)
+                && let Some(system) = &scope.system_resolvers
+            {
+                begin = state
+                    .owner
+                    .as_mut()
+                    .ok_or(DispatchError::Scope)?
+                    .begin_system(
+                        query,
+                        system,
+                        &scope.system_demands,
+                        &scope.system_tcp_demands,
+                        deadline,
+                    );
+            }
             (begin, state.scopes.clone(), scope.snapshot)
         };
         match begin {
@@ -231,30 +319,45 @@ impl OwnerDispatcher {
                 cancellation.0 = None;
                 Ok(answer.with_scope_fence(ScopeFence(scopes)))
             }
-            Begin::Upstream(work) => {
+            Begin::Upstream(mut work) => {
                 let mut cancellation = CancelOnDrop(Some(work.ticket.clone()));
-                let query = work
-                    .query
-                    .encode_upstream(self.udp_payload_limit)
+                let response = loop {
+                    let query = work
+                        .query
+                        .encode_upstream(self.udp_payload_limit)
+                        .map_err(|_| DispatchError::Wire)?;
+                    let bytes = tokio::select! { biased;
+                        _ = scopes.changed() => return Err(DispatchError::Scope),
+                        _ = work.ticket.cancelled() => return Err(DispatchError::Expired),
+                        _ = work.route.invalidated() => return Err(DispatchError::Expired),
+                        _ = tokio::time::sleep_until(deadline.into()) => return Err(DispatchError::Expired),
+                        result = self.exchange.exchange(&work.route, query) => result.map_err(|_| DispatchError::Gateway)?,
+                    };
+                    let transport = match work.route.transport() {
+                        DnsTransport::Udp => ResponseTransport::Udp,
+                        DnsTransport::Tcp => ResponseTransport::Tcp,
+                    };
+                    let response = TrustedUpstreamResponse::decode(
+                        &work.query,
+                        &bytes,
+                        transport,
+                        self.udp_payload_limit,
+                    )
                     .map_err(|_| DispatchError::Wire)?;
-                let bytes = tokio::select! { biased;
-                    _ = scopes.changed() => return Err(DispatchError::Scope),
-                    _ = work.ticket.cancelled() => return Err(DispatchError::Expired),
-                    _ = work.route.invalidated() => return Err(DispatchError::Expired),
-                    _ = tokio::time::sleep_until(deadline.into()) => return Err(DispatchError::Expired),
-                    result = self.exchange.exchange(&work.route, query) => result.map_err(|_| DispatchError::Gateway)?,
+                    if response.message.metadata.truncation
+                        && let Some(fallback) = work.fallback.take()
+                    {
+                        work.route
+                            .ensure_current()
+                            .map_err(|_| DispatchError::Expired)?;
+                        fallback
+                            .ensure_current()
+                            .map_err(|_| DispatchError::Expired)?;
+                        work.route = fallback;
+                        continue;
+                    }
+                    break response;
                 };
-                let transport = match work.route.transport() {
-                    DnsTransport::Udp => ResponseTransport::Udp,
-                    DnsTransport::Tcp => ResponseTransport::Tcp,
-                };
-                let response = TrustedUpstreamResponse::decode(
-                    &work.query,
-                    &bytes,
-                    transport,
-                    self.udp_payload_limit,
-                )
-                .map_err(|_| DispatchError::Wire)?;
                 let mut state = self.state.lock().await;
                 self.reconcile_state(&mut state)?;
                 let result = state

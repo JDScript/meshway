@@ -23,6 +23,7 @@ pub struct LocalResolverRoute {
     expires_at_ms: u64,
     deadline: Instant,
     cancelled: tokio_util::sync::CancellationToken,
+    system: Option<crate::SystemResolverSnapshot>,
 }
 
 impl fmt::Debug for LocalResolverRoute {
@@ -61,6 +62,61 @@ impl LocalResolverRoute {
             deadline: deadline.min(snapshot.expires_at()),
             snapshot,
             cancelled: tokio_util::sync::CancellationToken::new(),
+            system: None,
+        };
+        route.ensure_current()?;
+        Ok(route)
+    }
+
+    pub(crate) fn system(
+        snapshot: ExecutionSnapshot,
+        system: crate::SystemResolverSnapshot,
+        index: usize,
+        transport: DnsTransport,
+        demand: RequestId,
+        deadline: Instant,
+    ) -> Result<Self, RouteError> {
+        use meshway_configuration::execution::{
+            BusinessProtocol, BusinessTarget, DemandDecision, DnsEgress,
+        };
+        system.ensure_current().map_err(|_| RouteError::Expired)?;
+        let endpoint = *system.upstreams.get(index).ok_or(RouteError::Binding)?;
+        let cfg = snapshot.configuration().map_err(|_| RouteError::Expired)?;
+        let permit = cfg.local_egress.get(&demand).ok_or(RouteError::Binding)?;
+        if !matches!(cfg.dns.egress, DnsEgress::NoExit)
+            || !cfg.enabled
+            || permit.source != cfg.node_id
+            || permit.demand_id != demand
+            || !matches!(permit.target, BusinessTarget::Ip { address } if address.0 == endpoint.ip())
+            || permit.port.map(|p| p.get()) != Some(endpoint.port())
+            || permit.protocol
+                != match transport {
+                    DnsTransport::Udp => BusinessProtocol::Udp,
+                    DnsTransport::Tcp => BusinessProtocol::Tcp,
+                }
+            || (system.primary == DnsTransport::Tcp && transport != DnsTransport::Tcp)
+            || permit.profile != cfg.dns.profile
+            || !matches!(
+                (permit.action, cfg.decisions.get(&demand)),
+                (LocalEgressAction::Direct, Some(DemandDecision::Direct))
+                    | (
+                        LocalEgressAction::Unmanaged,
+                        Some(DemandDecision::Unmanaged)
+                    )
+            )
+        {
+            return Err(RouteError::Binding);
+        }
+        let route = Self {
+            endpoint,
+            transport,
+            action: permit.action,
+            demand,
+            expires_at_ms: permit.expires_at_ms.min(snapshot.expires_at_ms()),
+            deadline: deadline.min(snapshot.expires_at()),
+            snapshot,
+            cancelled: tokio_util::sync::CancellationToken::new(),
+            system: Some(system),
         };
         route.ensure_current()?;
         Ok(route)
@@ -93,6 +149,9 @@ impl LocalResolverRoute {
     }
 
     pub fn ensure_current(&self) -> Result<(), RouteError> {
+        if let Some(system) = &self.system {
+            system.ensure_current().map_err(|_| RouteError::Expired)?;
+        }
         let now = self.snapshot.now_ms().map_err(|_| RouteError::Expired)?;
         if now >= self.expires_at_ms
             || Instant::now() >= self.deadline
@@ -111,6 +170,7 @@ impl LocalResolverRoute {
             _ = self.snapshot.invalidated_at(self.expires_at_ms) => {},
             _ = tokio::time::sleep_until(self.deadline.into()) => {},
             _ = self.cancelled.cancelled() => {},
+            _ = async { match &self.system { Some(system) => system.invalidated().await, None => std::future::pending().await } } => {},
         }
     }
 }

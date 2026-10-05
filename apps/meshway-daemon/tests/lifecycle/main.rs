@@ -22,7 +22,17 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     let server = Server::start(root.join("server")).await;
     let (user, network) = server.owner().await;
     let directory = root.join("node");
-    let mut daemon = Process::start(&directory, &server.origin);
+    // A real DNS listener already owns this port. Control-only enrollment and
+    // configuration polling must not reserve system DNS or bind a second stub.
+    let dns_tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dns_bind = dns_tcp.local_addr().unwrap();
+    let _dns_udp = tokio::net::UdpSocket::bind(dns_bind).await.unwrap();
+    let mut daemon = Process::start_with_options(
+        &directory,
+        &server.origin,
+        "control-only",
+        &["--dns-bind", &dns_bind.to_string()],
+    );
     let initial = wait(&daemon.socket, Phase::Down).await;
     assert!(initial.applied.is_none() && !initial.authenticated);
     let up_id = request_id();
@@ -53,6 +63,7 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     let identity = ready.identity.clone().unwrap();
     let first = ready.instance.clone().unwrap();
     assert!(ready.authenticated && ready.saved.is_some() && ready.applied.is_none());
+    assert_eq!(ready.data_plane, meshway_ipc::DataPlane::ControlOnly);
     assert_eq!(
         fs::metadata(directory.join("control.sock"))
             .unwrap()

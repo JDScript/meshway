@@ -36,6 +36,10 @@ install -d -m 700 .meshway
 | daemon `--network-mode`／`MESHWAY_NETWORK_MODE` | 本机启动参数 `tun`（默认）或 `control-only`；不是云端业务字段，失败不自动回退 |
 | daemon `--bootstrap-host NAME=IP` | 可重复，为 Server 或配置中 carrier 名称提供固定 bootstrap 映射 |
 | daemon `--bootstrap-nameserver IP:PORT` | 可重复，指定受保护 bootstrap DNS 的真实上游；IPv6 使用 `[IP]:PORT` |
+| daemon `--dns-backend` | `resolved`（默认）或显式 `resolv-conf`；本机安装后端，失败不自动切换 |
+| daemon `--dns-bind` | loopback `IP:PORT`；resolved 默认 `127.0.0.1:5354`，文件代理默认 `127.0.0.1:53` 且要求端口 53 |
+| daemon `--dns-anchor-address` | resolved 的独立本机 DNS 接口 IPv4 地址，默认 `198.18.255.254`；归属／地址冲突拒绝安装 |
+| daemon `--dns-resolv-conf` | 仅用于文件代理，当前 daemon 仅接受 `/etc/resolv.conf`；文件必须满足[系统 DNS 归属约束](/v2/node/dataplane#系统-dns-安装) |
 | CLI `--socket` | 默认 `/var/lib/meshway/control.sock`，可显式选择本机 daemon |
 | CLI `--json` | 输出类型化公开状态；不包含 Node 私钥、兑换码或会话 token |
 
@@ -51,14 +55,14 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 | 范围 | 当前行为 |
 | --- | --- |
-| Linux Mesh-only | 已验证 TUN capture、Native TCP 认证邻接、双栈 UDP／TCP 多跳包流、持续续租和失效清理；精确范围见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance) |
-| DNS | 宿主 DNS 安装尚未实现；有任何 DNS 安装需求即整体失败，不能报告部分 applied |
-| Exit／本机 egress | `exitEnabled`、非空 `localEgress` 或非 Mesh permit 均被数据面安装门槛拒绝；出口／NAT 尚未接线 |
+| Linux Mesh-only | 已验证 TUN capture、Native TCP／Native UDP 静态端点认证邻接、双栈 UDP／TCP 多跳包流、持续续租和失效清理；精确范围见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance) |
+| DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
+| Exit／本机 egress | `exitEnabled`、非 Mesh permit、未由 DNS owner 持有的 local egress 或缺少明确 no-exit DNS 执行证明均拒绝安装；出口／NAT 尚未接线 |
 | 诊断 | 非空 diagnostics 拒绝安装；ping 和测量运行器尚未实现 |
-| 承载 | 当前 Manager 的 stream 支持范围见[邻接管理](/v2/node/transport#邻接管理)；Native UDP daemon listener／打洞不支持 |
+| 承载 | Manager 支持获准的 stream 与 Native UDP 静态端点，范围见[邻接管理](/v2/node/transport#邻接管理)；协调 UDP 打洞尚未实现 |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace、netstack、SOCKS5、动态插件和切网尚未实现 |
 
-用于当前 Mesh IP 场景的 Server DNS 配置必须明确关闭全部功能：`magicDNS=false`、`overrideLocal=false`，且 `servers`、`default`、`routes`、`searchDomains` 均为空。仅关闭 MagicDNS 而留下其他 DNS 配置仍会阻断 applied；这不是本机绕过云端 DNS 的选项。
+仅验证 Mesh IP、无需系统 DNS 的场景，在 Server 配置中明确设置 `magicDNS=false`、`overrideLocal=false`，并保持 `servers`、`default`、`routes`、`searchDomains` 为空。此时不创建 DNS 服务／锚点，也不要求机器运行 resolved。存在 DNS 需求时须完成对应安装；本机后端选择不覆盖云端 DNS 业务配置。`control-only` 不安装系统 DNS。
 
 IPC v2 的公开运行状态：
 
@@ -113,7 +117,7 @@ CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件�
 
 up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更的请求身份以恢复不确定结果。本机 revision 与 Server 配置 revision 分开。已接纳命令的持久化由协调器完成，CLI 断开不会撤回它；读取 status 不写入状态或生成测量。
 
-Server HTTP 等待与本机命令处理独立。配置查询通常每 5 秒，实例续租与控制报告通常每 20 秒；故障采用有界退避，期限由控制组件独立校验。down 先持久保存本机下线意图，再停止当前资格并尽力释放远端实例；离线时也不能把旧 lease 展示为有效。当前 IPC 不承载业务包。
+Server HTTP 等待与本机命令处理独立。配置查询通常每 5 秒，实例续租与控制报告通常每 20 秒；真实安装完成、socket／邻接或业务依赖变化还会触发合并后的报告，最多每秒一次。仅观测时间变化不触发新事件，旧报告重试保留原序号／内容／时间，也不确认后来出现的新状态。故障采用有界退避，期限由控制组件独立校验。down 先持久保存本机下线意图，再停止当前资格并尽力释放远端实例；离线时也不能把旧 lease 展示为有效。当前 IPC 不承载业务包。
 
 daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错。
 

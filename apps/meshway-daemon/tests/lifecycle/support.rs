@@ -177,6 +177,9 @@ impl Process {
         Self::start_with_mode(path, origin, "control-only")
     }
     pub fn start_with_mode(path: &Path, origin: &str, mode: &str) -> Self {
+        Self::start_with_options(path, origin, mode, &[])
+    }
+    pub fn start_with_options(path: &Path, origin: &str, mode: &str, options: &[&str]) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_meshwayd"))
             .args([
                 "--network-mode",
@@ -194,6 +197,7 @@ impl Process {
             ])
             .arg("--data-dir")
             .arg(path)
+            .args(options)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

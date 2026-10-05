@@ -19,20 +19,82 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod datagram;
+#[cfg(test)]
+mod tests;
 mod workers;
+
+// Diagnostics only: at most 64 events/second and 32768/process; contention drops
+// a diagnostic rather than delaying an owner or changing a selection decision.
+fn diagnostic_event() -> bool {
+    static BUDGET: std::sync::OnceLock<Mutex<(std::time::Instant, u32, u32)>> =
+        std::sync::OnceLock::new();
+    let Ok(mut budget) = BUDGET
+        .get_or_init(|| Mutex::new((std::time::Instant::now(), 0, 0)))
+        .try_lock()
+    else {
+        return false;
+    };
+    if budget.0.elapsed() >= std::time::Duration::from_secs(1) {
+        budget.0 = std::time::Instant::now();
+        budget.1 = 0;
+    }
+    if budget.1 >= 64 || budget.2 >= 32_768 {
+        return false;
+    }
+    budget.1 += 1;
+    budget.2 += 1;
+    true
+}
+
+fn diagnostic_link(
+    shared: &Shared,
+    fact: &LinkFact,
+    scope: &Scope,
+    operation: &'static str,
+    cause: &'static str,
+    attempted: Option<(SocketAddr, [u8; 32])>,
+) {
+    if !diagnostic_event() {
+        return;
+    }
+    let health = scope.health.as_ref().and_then(|health| {
+        health.try_lock().ok().map(|deadline| {
+            let now = tokio::time::Instant::now();
+            (
+                *deadline <= now,
+                deadline.saturating_duration_since(now).as_millis() as u64,
+            )
+        })
+    });
+    tracing::debug!(operation, cause, peer = %fact.peer, channel = ?fact.id,
+        socket = ?fact.socket_id, dialer = %fact.carrier.dialer, listener = %fact.carrier.listener,
+        listener_key = %fact.carrier.listener_key, protocol = ?fact.carrier.protocol,
+        local = %fact.local, remote = %fact.remote,
+        health_remaining_ms = ?health.map(|value| value.1), health_expired = ?health.map(|value| value.0),
+        attempted_remote = ?attempted.map(|value| value.0),
+        attempt = ?attempted.map(|value| value.1),
+        publication = %shared.identity.snapshot().reference().execution_publication,
+        execution_expires_at_ms = shared.identity.snapshot().expires_at_ms(),
+        "Connectivity channel transition");
+}
 
 #[derive(Clone, Debug)]
 pub struct ListenerFact {
+    pub socket_id: [u8; 32],
     pub key: String,
     pub protocol: TransportProtocol,
     pub local: SocketAddr,
 }
 
-/// Only produced after the three-message registered-key adjacency handshake.
+/// Only produced after registered-key adjacency authentication (UDP also
+/// confirms the final ACK). This is not an encryption or delivery assertion.
 /// `id` is channel-specific; it is not a logical IP circuit identifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkFact {
     pub id: [u8; 32],
+    /// Physical owner identity. Multiple UDP links share one endpoint ID.
+    pub socket_id: [u8; 32],
     pub peer: NodeId,
     pub carrier: Carrier,
     pub local: SocketAddr,
@@ -62,13 +124,45 @@ struct Link {
     scope: Scope,
 }
 
+/// The one selected-link owner also remembers its latest committed ID per peer.
+/// This bounded metadata prevents an empty-slot ABA during passive recovery;
+/// retired senders/scopes are still dropped normally. Peers are configuration-
+/// bounded and the entire table is discarded with this Manager generation.
+#[derive(Default)]
+struct LinkTable {
+    current: BTreeMap<NodeId, Link>,
+    last: BTreeMap<NodeId, [u8; 32]>,
+}
+impl std::ops::Deref for LinkTable {
+    type Target = BTreeMap<NodeId, Link>;
+    fn deref(&self) -> &Self::Target {
+        &self.current
+    }
+}
+impl std::ops::DerefMut for LinkTable {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.current
+    }
+}
+impl LinkTable {
+    fn insert(&mut self, peer: NodeId, link: Link) {
+        self.last.insert(peer, link.fact.id);
+        self.current.insert(peer, link);
+    }
+    fn clear(&mut self) {
+        self.current.clear();
+        self.last.clear();
+    }
+}
+
 struct Shared {
     identity: DataPlaneIdentity,
     stop: CancellationToken,
-    links: Mutex<BTreeMap<NodeId, Link>>,
+    links: Mutex<LinkTable>,
     events: mpsc::Sender<Event>,
     capacity: Arc<Semaphore>,
     limits: Limits,
+    control_budget: Mutex<datagram::ControlBudget>,
 }
 
 impl Shared {
@@ -83,6 +177,7 @@ impl Shared {
                 deadline
             },
             edge,
+            health: None,
         }
     }
 
@@ -94,7 +189,7 @@ impl Shared {
 }
 
 /// A publication-scoped collection of prepared listeners and bounded workers.
-/// Reconcile closes physical streams before installing the new publication;
+/// Reconcile closes physical endpoints before installing the new publication;
 /// the host retains its one SecureNode/FlowTable for logical flow continuity.
 pub struct Manager {
     factory: Arc<dyn SocketFactory>,
@@ -122,21 +217,38 @@ impl Manager {
             return Err(Error::Capacity);
         }
         let mut prepared = Vec::new();
+        let mut datagrams = Vec::new();
         // All declarations must validate and bind before any worker is installed.
         for (key, declaration) in &cfg.listeners {
             let (protocol, enabled) = provider::declaration(declaration);
             if !enabled {
                 continue;
             }
-            let acceptor = Arc::new(provider::Acceptor::new(declaration)?);
             if key.is_empty() || key.len() > 128 {
                 return Err(Error::Configuration);
             }
+            if protocol == TransportProtocol::NativeUdp {
+                let endpoint = tokio::select! { biased;
+                    _ = identity.snapshot().invalidated() => return Err(Error::Authority),
+                    result = tokio::time::timeout(limits.handshake_timeout,
+                        factory.datagram_listener(identity.snapshot(), key)) => result.map_err(|_| Error::Cancelled)??,
+                };
+                let fact = ListenerFact {
+                    socket_id: adjacency::nonce()?,
+                    key: key.clone(),
+                    protocol,
+                    local: endpoint.local_addr()?,
+                };
+                datagrams.push((fact, endpoint));
+                continue;
+            }
+            let acceptor = Arc::new(provider::Acceptor::new(declaration)?);
             let listener = tokio::select! { biased;
                 _ = identity.snapshot().invalidated() => return Err(Error::Authority),
                 result = tokio::time::timeout(limits.handshake_timeout, factory.listen(identity.snapshot(), key)) => result.map_err(|_| Error::Cancelled)??,
             };
             let fact = ListenerFact {
+                socket_id: adjacency::nonce()?,
                 key: key.clone(),
                 protocol,
                 local: listener.local_addr()?,
@@ -152,10 +264,11 @@ impl Manager {
         let shared = Arc::new(Shared {
             identity,
             stop: CancellationToken::new(),
-            links: Mutex::new(BTreeMap::new()),
+            links: Mutex::new(LinkTable::default()),
             events: tx,
             capacity: Arc::new(Semaphore::new(limits.connections)),
             limits,
+            control_budget: Mutex::new(datagram::ControlBudget::new()),
         });
         let mut manager = Self {
             factory,
@@ -172,6 +285,12 @@ impl Manager {
                 listener,
                 acceptor,
             ));
+        }
+        for (fact, endpoint) in datagrams {
+            manager.listeners.push(fact.clone());
+            manager
+                .workers
+                .spawn(datagram::listen(manager.shared.clone(), fact, endpoint));
         }
         for (peer, candidates) in plans {
             manager.workers.spawn(workers::dial(
@@ -227,7 +346,6 @@ impl Manager {
         };
         scope
             .run(async {
-                let mut sender = sender.lock().await;
                 scope.check()?;
                 let current = self
                     .shared
@@ -239,7 +357,13 @@ impl Manager {
                 if !current {
                     return Err(Error::Unavailable);
                 }
-                meshway_dataplane::carrier::send(&mut sender, pending, Some(fact.remote)).await?;
+                meshway_dataplane::carrier::send_shared(
+                    &sender,
+                    pending,
+                    fact.remote,
+                    Arc::new(scope.clone()),
+                )
+                .await?;
                 Ok(())
             })
             .await
@@ -288,6 +412,22 @@ impl Manager {
     }
 
     pub async fn shutdown(&mut self) -> Result<(), Error> {
+        if diagnostic_event() {
+            tracing::debug!(operation = "shutdown", publication = %self.shared.identity.snapshot().reference().execution_publication,
+                listeners = self.listeners.len(), "Connectivity manager transition");
+        }
+        if let Ok(links) = self.shared.links.lock() {
+            for link in links.values() {
+                diagnostic_link(
+                    &self.shared,
+                    &link.fact,
+                    &link.scope,
+                    "shutdown",
+                    "manager_shutdown",
+                    None,
+                );
+            }
+        }
         self.shared.stop.cancel();
         let mut failed = false;
         while let Some(result) = self.workers.join_next().await {
@@ -322,6 +462,132 @@ fn rank(fact: &LinkFact) -> (NodeId, NodeId, &str, TransportProtocol, [u8; 32]) 
     )
 }
 
+/// The only link selection/installation point, shared by both acquisition
+/// drivers. Authentication has completed before constructing this value.
+struct ReadyPeer {
+    fact: LinkFact,
+    sender: Arc<AsyncMutex<Sender>>,
+    scope: Scope,
+    /// Compare-and-replace condition captured during authenticated UDP
+    /// reattachment. Never inferred from an address or unsolicited READY.
+    supersedes: Replacement,
+}
+
+#[derive(Clone, Copy)]
+enum Replacement {
+    Ranked,
+    Channel([u8; 32]),
+    /// Recovery at a restarted listener must not overwrite a later winner.
+    Vacant(Option<[u8; 32]>),
+}
+
+fn preferred_existing(old: &LinkFact, new: &LinkFact) -> bool {
+    old.carrier.protocol != new.carrier.protocol
+        || (old.carrier.protocol == TransportProtocol::NativeUdp && old.carrier == new.carrier)
+        || rank(old) <= rank(new)
+}
+
+fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
+    ready.scope.check()?;
+    let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
+    if !matches!(ready.supersedes, Replacement::Ranked) {
+        let expected = match ready.supersedes {
+            Replacement::Channel(id) => links.get(&ready.fact.peer).is_some_and(|old| {
+                old.fact.id == id && old.fact.carrier.protocol == TransportProtocol::NativeUdp
+            }),
+            Replacement::Vacant(last) => {
+                !links.contains_key(&ready.fact.peer)
+                    && links.last.get(&ready.fact.peer).copied() == last
+            }
+            Replacement::Ranked => unreachable!(),
+        };
+        if ready.fact.carrier.protocol != TransportProtocol::NativeUdp || !expected {
+            diagnostic_link(
+                shared,
+                &ready.fact,
+                &ready.scope,
+                "ready_rejected",
+                "superseded_channel_changed",
+                None,
+            );
+            ready.scope.cancellation.cancel();
+            return Ok(false);
+        }
+    } else if let Some(old) = links.get(&ready.fact.peer)
+        && old.scope.check().is_ok()
+        && preferred_existing(&old.fact, &ready.fact)
+    {
+        diagnostic_link(
+            shared,
+            &old.fact,
+            &old.scope,
+            "ready_rejected",
+            if old.fact.carrier.protocol != ready.fact.carrier.protocol {
+                "existing_protocol"
+            } else if old.fact.carrier.protocol == TransportProtocol::NativeUdp
+                && old.fact.carrier == ready.fact.carrier
+            {
+                "healthy_same_udp_carrier"
+            } else {
+                "existing_rank"
+            },
+            Some((ready.fact.remote, ready.fact.id)),
+        );
+        ready.scope.cancellation.cancel();
+        return Ok(false);
+    }
+    // A blocked lock/diagnostic must not let a cancelled handoff commit.
+    ready.scope.check()?;
+    if let Some(old) = links.remove(&ready.fact.peer) {
+        diagnostic_link(
+            shared,
+            &old.fact,
+            &old.scope,
+            "retire",
+            "selected_replacement",
+            None,
+        );
+        old.scope.cancellation.cancel();
+    }
+    diagnostic_link(
+        shared,
+        &ready.fact,
+        &ready.scope,
+        "install",
+        "authenticated_ready",
+        None,
+    );
+    links.insert(
+        ready.fact.peer,
+        Link {
+            fact: ready.fact,
+            sender: ready.sender,
+            scope: ready.scope,
+        },
+    );
+    Ok(true)
+}
+
+fn retire(shared: &Shared, fact: &LinkFact) -> Result<(), Error> {
+    let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
+    if links
+        .get(&fact.peer)
+        .is_some_and(|link| link.fact.id == fact.id)
+        && let Some(link) = links.remove(&fact.peer)
+    {
+        diagnostic_link(
+            shared,
+            &link.fact,
+            &link.scope,
+            "retire",
+            "owner_retire",
+            None,
+        );
+        link.scope.cancellation.cancel();
+    }
+    Ok(())
+}
+
 async fn connected(
     shared: Arc<Shared>,
     stream: Box<dyn meshway_transport::raw::Stream>,
@@ -339,28 +605,15 @@ async fn connected(
     )
     .into_split();
     let sender = Arc::new(AsyncMutex::new(sender));
-    let selected = {
-        let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
-        if links
-            .get(&fact.peer)
-            .is_some_and(|old| old.scope.check().is_ok() && rank(&old.fact) <= rank(&fact))
-        {
-            false
-        } else {
-            if let Some(old) = links.remove(&fact.peer) {
-                old.scope.cancellation.cancel();
-            }
-            links.insert(
-                fact.peer,
-                Link {
-                    fact: fact.clone(),
-                    sender: sender.clone(),
-                    scope: scope.clone(),
-                },
-            );
-            true
-        }
-    };
+    let selected = install_ready(
+        &shared,
+        ReadyPeer {
+            fact: fact.clone(),
+            sender: sender.clone(),
+            scope: scope.clone(),
+            supersedes: Replacement::Ranked,
+        },
+    )?;
     if !selected {
         sender
             .lock()
@@ -389,15 +642,7 @@ async fn connected(
     let result = scope.run(receive).await;
     scope.cancellation.cancel();
     drop(receiver);
-    {
-        let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
-        if links
-            .get(&fact.peer)
-            .is_some_and(|link| link.fact.id == fact.id)
-        {
-            links.remove(&fact.peer);
-        }
-    }
+    retire(&shared, &fact)?;
     sender
         .lock()
         .await

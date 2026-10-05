@@ -14,6 +14,7 @@ meshway-control = { path = "../meshway-control" }
 meshway-transport = { path = "../meshway-transport" }
 meshway-tun = { path = "../meshway-tun" }
 thiserror.workspace = true
+tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 snow = { version = "=0.10.0", default-features = false, features = ["use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }

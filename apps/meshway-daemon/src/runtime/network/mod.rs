@@ -1,8 +1,13 @@
 //! Local assembly only: Control owns authority, Host owns kernel state,
 //! Manager owns adjacency, and SecureNode owns IP flows and circuit crypto.
+#[cfg(target_os = "linux")]
+mod discovery;
+#[cfg(target_os = "linux")]
+mod dns;
 mod facts;
 #[cfg(target_os = "linux")]
 mod packets;
+mod reporting;
 mod requirements;
 #[cfg(target_os = "linux")]
 mod worker;
@@ -21,6 +26,7 @@ pub(super) struct Report {
     pub plane: DataPlane,
     pub problem: Option<Problem>,
     pub guard: Option<ExecutionSnapshot>,
+    pub dns_guard: Option<watch::Receiver<Option<meshway_dns::SystemDnsError>>>,
     pub ticket: Option<ApplicationTicket>,
     pub completion: Option<Result<(), ApplyFailure>>,
     pub observed_at: DateTime<Utc>,
@@ -35,6 +41,7 @@ impl Report {
             plane: DataPlane::Stopped,
             problem: None,
             guard: None,
+            dns_guard: None,
             ticket: None,
             completion: None,
             observed_at: Utc::now(),
@@ -46,6 +53,10 @@ impl Report {
     }
     pub fn current(&self, control: &meshway_control::Status) -> bool {
         self.bound_to(control)
+            && self
+                .dns_guard
+                .as_ref()
+                .is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().is_none())
             && self
                 .guard
                 .as_ref()
@@ -76,6 +87,10 @@ struct Target {
     identity: Option<DataPlaneIdentity>,
     ticket: ApplicationTicket,
     instance_expires_at_ms: u64,
+    #[cfg(target_os = "linux")]
+    dns: Option<dns::intents::Selection>,
+    #[cfg(target_os = "linux")]
+    retired_dns: std::collections::BTreeMap<meshway_model::RequestId, dns::intents::Retired>,
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Constructed by Linux packet ingress.
@@ -91,9 +106,20 @@ pub(super) struct Reply {
     result: Result<(), ()>,
     renewal: Option<RenewDemandRequest>,
 }
-pub(super) struct Request {
-    pub operation: Operation,
-    pub reply: oneshot::Sender<Reply>,
+pub(super) enum Request {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Constructed by Linux packet ingress.
+    Demand {
+        operation: Operation,
+        reply: oneshot::Sender<Reply>,
+    },
+    #[cfg(target_os = "linux")]
+    Dns {
+        name: String,
+        deadline: tokio::time::Instant,
+        reply: oneshot::Sender<
+            Result<meshway_protocol::NodeDnsQueryResponse, meshway_dns::GatewayError>,
+        >,
+    },
 }
 
 struct Completion {
@@ -105,7 +131,7 @@ struct Completion {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Consumed by the Linux-only worker.
 enum Command {
     Builder(oneshot::Sender<reqwest::ClientBuilder>),
-    Sample(oneshot::Sender<Report>),
+    Sample(oneshot::Sender<reporting::Sample>),
     Stop {
         down: bool,
         reply: oneshot::Sender<Result<(), Problem>>,
@@ -126,6 +152,11 @@ pub(super) struct Handle {
     retry: Retry,
     completions: mpsc::Receiver<Completion>,
     pending_completion: Option<Completion>,
+    reporting: reporting::Schedule,
+    #[cfg(target_os = "linux")]
+    dns_plans: watch::Receiver<Option<dns::intents::Plan>>,
+    #[cfg(target_os = "linux")]
+    dns_intents: dns::intents::Registry,
 }
 
 impl Handle {
@@ -134,15 +165,37 @@ impl Handle {
         origin: &str,
         reports: watch::Sender<Report>,
         options: meshway_underlay::Options,
+        dns_settings: meshway_dns::SystemDnsSettings,
     ) -> Result<Self, Problem> {
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (directory, origin, reports, options);
+            let _ = (directory, origin, reports, options, dns_settings);
             Err(Problem::UnsupportedMode)
         }
         #[cfg(target_os = "linux")]
         {
-            let host = meshway_underlay::Host::open(directory, origin, options)
+            let mut options = options;
+            // The owned file may still point at our stopped stub after a crash.
+            // Recover its original resolver inputs before protected Host bootstrap.
+            let reservation = if matches!(
+                dns_settings.backend,
+                meshway_dns::SystemDnsBackend::OwnedResolvConf { .. }
+            ) {
+                let reserved =
+                    meshway_dns::SystemDnsOwner::reserve(dns_settings.clone(), directory.clone())
+                        .await
+                        .map_err(|_| Problem::Dns)?;
+                if options.bootstrap_nameservers.is_none() && options.bootstrap_hosts.is_empty() {
+                    options.bootstrap_nameservers = reserved
+                        .bootstrap_nameservers()
+                        .await
+                        .map_err(|_| Problem::Dns)?;
+                }
+                Some(reserved)
+            } else {
+                None
+            };
+            let host = meshway_underlay::Host::open(directory.clone(), origin, options)
                 .await
                 .map_err(|error| {
                     tracing::warn!(%error, "Underlay startup failed");
@@ -151,10 +204,19 @@ impl Handle {
             let (commands, received) = mpsc::channel(4);
             let (target, targets) = watch::channel(None);
             let report = reports.subscribe();
+            let (reports, reporting) = reporting::channel(reports);
             let (gateway, requests) = mpsc::channel(16);
             let (completed, completions) = mpsc::channel(8);
+            let (plans, dns_plans) = watch::channel(None);
+            let dns = dns::Attachment::new(dns_settings, directory, reservation, gateway.clone());
             let worker = tokio::spawn(worker::run(
-                host, received, targets, reports, gateway, completed,
+                host,
+                received,
+                targets,
+                reports,
+                gateway,
+                completed,
+                (dns, plans),
             ));
             Ok(Self {
                 commands,
@@ -167,6 +229,9 @@ impl Handle {
                 retry: Retry::default(),
                 completions,
                 pending_completion: None,
+                reporting,
+                dns_plans,
+                dns_intents: dns::intents::Registry::default(),
             })
         }
     }
@@ -181,6 +246,53 @@ impl Handle {
     }
 
     pub async fn publish(&mut self, control: &mut Control) -> Result<(), meshway_control::Error> {
+        #[cfg(target_os = "linux")]
+        let dns = {
+            let plan = self.dns_plans.borrow().clone();
+            let applicable = plan.filter(|plan| {
+                control
+                    .status()
+                    .instance
+                    .as_ref()
+                    .zip(control.cached_target())
+                    .is_some_and(|(instance, target)| {
+                        target.configuration.enabled
+                            && plan.matches(
+                                &meshway_protocol::InstanceRequest {
+                                    instance_id: instance.instance_id,
+                                    generation: instance.generation,
+                                },
+                                &target.configuration,
+                            )
+                    })
+            });
+            match applicable {
+                Some(plan) => {
+                    if self.dns_intents.advance(&plan, control).await? {
+                        control.refresh_configuration().await?;
+                    }
+                    self.dns_intents.selection(&plan)
+                }
+                None => {
+                    if control.cached_target().is_some_and(|target| {
+                        !target.configuration.enabled
+                            || (!requirements::dns_required(&target.configuration.dns.settings)
+                                && matches!(
+                                    target.configuration.dns.egress,
+                                    meshway_configuration::execution::DnsEgress::NoExit
+                                ))
+                    }) {
+                        self.dns_intents.deactivate();
+                    }
+                    None
+                }
+            }
+        };
+        #[cfg(target_os = "linux")]
+        let retired_dns = self.dns_intents.retired(
+            u64::try_from(Utc::now().timestamp_millis())
+                .map_err(|_| meshway_control::Error::Expired)?,
+        );
         let status = control.status();
         let Some(instance) = status.instance else {
             return Ok(());
@@ -218,12 +330,33 @@ impl Handle {
             if self.outcome == Some(Ok(())) && self.report.borrow().plane == DataPlane::Failed {
                 // Runtime refresh failure does not rewrite the completed
                 // installation receipt. Recovery is a separately saved attempt.
-                self.outcome = Some(Err(ApplyFailure::Underlay));
+                self.outcome = Some(Err(if self.report.borrow().problem == Some(Problem::Dns) {
+                    ApplyFailure::Dns
+                } else {
+                    ApplyFailure::Underlay
+                }));
                 self.retry.failed();
                 return Ok(());
             }
             match self.outcome.or(installed_locally.then_some(Ok(()))) {
-                None => return Ok(()), // saved/install/completion delivery still outstanding
+                None => {
+                    #[cfg(target_os = "linux")]
+                    if self
+                        .target
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|old| old.dns != dns)
+                    {
+                        self.target.send_replace(Some(Target {
+                            identity,
+                            ticket: self.ticket.as_ref().expect("same ticket").clone(),
+                            instance_expires_at_ms: instance.expires_at_ms,
+                            dns,
+                            retired_dns,
+                        }));
+                    }
+                    return Ok(());
+                }
                 Some(Err(failure)) => {
                     if !self.retry.ready(failure) {
                         return Ok(());
@@ -237,11 +370,18 @@ impl Handle {
                             (Some(next), Some(old))
                                 if next.snapshot().continuation_from(old.snapshot()).is_ok() =>
                             {
-                                if refresh_needed(next.snapshot(), old.snapshot()) {
+                                let changed = refresh_needed(next.snapshot(), old.snapshot());
+                                #[cfg(target_os = "linux")]
+                                let changed = changed || previous.dns != dns;
+                                if changed {
                                     self.target.send_replace(Some(Target {
                                         identity,
                                         ticket: previous.ticket,
                                         instance_expires_at_ms: instance.expires_at_ms,
+                                        #[cfg(target_os = "linux")]
+                                        dns,
+                                        #[cfg(target_os = "linux")]
+                                        retired_dns,
                                     }));
                                 }
                                 return Ok(());
@@ -267,6 +407,10 @@ impl Handle {
             identity,
             ticket,
             instance_expires_at_ms: instance.expires_at_ms,
+            #[cfg(target_os = "linux")]
+            dns,
+            #[cfg(target_os = "linux")]
+            retired_dns,
         }));
         Ok(())
     }
@@ -293,6 +437,7 @@ impl Handle {
                         completion.observed_at,
                     )
                     .await?;
+                self.reporting.receipt_completed();
             }
             if self.ticket.as_ref().is_some_and(|ticket| {
                 ticket.target() == completion.ticket.target()
@@ -322,13 +467,24 @@ impl Handle {
         result.await.map_err(|_| Problem::Worker)?
     }
 
+    pub fn preparing_dns(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.report.borrow().plane == DataPlane::Preparing && self.dns_plans.borrow().is_some()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
     pub async fn shutdown(self, keep_sink: bool) -> Result<(), Problem> {
         self.target.send_replace(None);
         let _ = self.commands.send(Command::Shutdown { keep_sink }).await;
         self.worker.await.map_err(|_| Problem::Worker)?
     }
 
-    pub async fn sample(&self) -> Result<Report, ()> {
+    async fn sample(&self) -> Result<reporting::Sample, ()> {
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             let (reply, sample) = oneshot::channel();
             self.commands
@@ -340,6 +496,19 @@ impl Handle {
         .await
         .map_err(|_| ())?
     }
+
+    pub async fn work(&mut self, report_changes: bool) -> Work {
+        tokio::select! { biased;
+            result = self.reporting.wait(), if report_changes => match result { Ok(()) => Work::Report, Err(()) => Work::Closed },
+            request = self.requests.recv() => match request { Some(request) => Work::Request(request), None => Work::Closed },
+        }
+    }
+}
+
+pub(super) enum Work {
+    Report,
+    Request(Request),
+    Closed,
 }
 
 fn refresh_needed(next: &ExecutionSnapshot, old: &ExecutionSnapshot) -> bool {
@@ -387,7 +556,37 @@ pub(super) async fn request(
     control: &mut Control,
     request: Request,
 ) -> Result<(), meshway_control::Error> {
-    let (result, renewal) = match request.operation {
+    let (operation, reply) = match request {
+        Request::Demand { operation, reply } => (operation, reply),
+        #[cfg(target_os = "linux")]
+        Request::Dns {
+            name,
+            deadline,
+            mut reply,
+        } => {
+            if reply.is_closed() || tokio::time::Instant::now() >= deadline {
+                return Ok(());
+            }
+            let result = tokio::select! { biased;
+                _ = reply.closed() => return Ok(()),
+                response = tokio::time::timeout_at(deadline, control.query_dns(&name)) => match response {
+                    Ok(response) => response,
+                    Err(_) => { let _ = reply.send(Err(meshway_dns::GatewayError)); return Ok(()); }
+                },
+            };
+            return match result {
+                Ok(response) => {
+                    let _ = reply.send(Ok(response));
+                    Ok(())
+                }
+                Err(error) => {
+                    let _ = reply.send(Err(meshway_dns::GatewayError));
+                    Err(error)
+                }
+            };
+        }
+    };
+    let (result, renewal) = match operation {
         Operation::Create(value) => (
             control.create_demand(&value).await.map(|response| {
                 if let meshway_configuration::execution::DemandDecision::Permitted { permit } =
@@ -436,7 +635,7 @@ pub(super) async fn request(
             )
         }
     };
-    let _ = request.reply.send(Reply {
+    let _ = reply.send(Reply {
         result: result.as_ref().map(|_| ()).map_err(|_| ()),
         renewal,
     });

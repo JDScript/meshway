@@ -7,7 +7,7 @@ use hickory_resolver::{
     Hosts, Resolver as HickoryResolver,
     config::{NameServerConfig, ResolverConfig, ResolverOpts},
 };
-use socket2::{Domain, Protocol, SockRef, Socket, Type};
+use meshway_transport::raw::Datagram;
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -18,11 +18,12 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::{io::AsyncReadExt, net::UdpSocket};
+use tokio::io::AsyncReadExt;
 
 use super::{
+    datagram::ProtectedDatagram,
     protection::{Scope, Shared, io_error},
-    sockets::{Owned, ProtectedTcp, connect_tcp},
+    sockets::{ProtectedTcp, connect_tcp},
     tasks::Tasks,
 };
 use crate::{Error, Options, Result};
@@ -316,15 +317,14 @@ impl RuntimeProvider for Provider {
             if !this.upstreams.contains(&server) {
                 return Err(io_error(Error::Resolver));
             }
-            let capacity = this.scope.capacity().map_err(io_error)?;
-            let socket = Socket::new(Domain::for_address(local), Type::DGRAM, Some(Protocol::UDP))?;
-            socket.set_nonblocking(true)?;
-            this.scope.prepare(&SockRef::from(&socket))?;
-            socket.bind(&local.into())?;
-            this.scope.prepare(&SockRef::from(&socket))?;
-            let socket = UdpSocket::from_std(socket.into())?;
             Ok(DnsUdp {
-                owned: Owned::new(socket, this.scope, capacity).map_err(io_error)?,
+                endpoint: ProtectedDatagram::bind(
+                    this.scope,
+                    local,
+                    &Default::default(),
+                    Some(vec![server]),
+                )
+                .map_err(io_error)?,
                 server,
             })
         })
@@ -332,7 +332,7 @@ impl RuntimeProvider for Provider {
 }
 
 struct DnsUdp {
-    owned: Owned<UdpSocket>,
+    endpoint: ProtectedDatagram,
     server: SocketAddr,
 }
 
@@ -344,18 +344,9 @@ impl DnsUdpSocket for DnsUdp {
         cx: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<(usize, SocketAddr)>> {
-        self.owned.wakers.read.register(cx.waker());
-        let socket = self
-            .owned
-            .socket
-            .lock()
-            .map_err(|_| io_error(Error::Worker))?;
-        let socket = socket.as_ref().ok_or_else(|| io_error(Error::Expired))?;
-        self.owned.scope.prepare(&SockRef::from(socket))?;
-        let mut read = tokio::io::ReadBuf::new(buffer);
-        match socket.poll_recv_from(cx, &mut read) {
-            Poll::Ready(Ok(source)) if source == self.server => {
-                Poll::Ready(Ok((read.filled().len(), source)))
+        match self.endpoint.poll_recv_from(cx, buffer) {
+            Poll::Ready(Ok(read)) if read.source == self.server && !read.truncated => {
+                Poll::Ready(Ok((read.copied_len, read.source)))
             }
             Poll::Ready(Ok(_)) => {
                 cx.waker().wake_by_ref();
@@ -375,15 +366,7 @@ impl DnsUdpSocket for DnsUdp {
         if target != self.server {
             return Poll::Ready(Err(io_error(Error::Resolver)));
         }
-        self.owned.wakers.write.register(cx.waker());
-        let socket = self
-            .owned
-            .socket
-            .lock()
-            .map_err(|_| io_error(Error::Worker))?;
-        let socket = socket.as_ref().ok_or_else(|| io_error(Error::Expired))?;
-        self.owned.scope.prepare(&SockRef::from(socket))?;
-        socket.poll_send_to(cx, bytes, target)
+        self.endpoint.poll_send_to(cx, bytes, target)
     }
 }
 

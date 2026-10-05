@@ -115,6 +115,25 @@ impl Packets {
             tracing::debug!(reason, dropped = self.dropped, "Packet discarded");
         }
     }
+
+    fn drop_admission(
+        &mut self,
+        reason: &'static str,
+        error: secure::Error,
+        demand: Option<RequestId>,
+    ) {
+        self.dropped = self.dropped.saturating_add(1);
+        if self.dropped.is_power_of_two() {
+            tracing::debug!(
+                reason,
+                ?error,
+                ?demand,
+                demand_untrusted = reason == "cipher_admission",
+                dropped = self.dropped,
+                "Packet discarded"
+            );
+        }
+    }
     pub fn enqueue(&mut self, packet: Packet) {
         if self.local.len() + self.incoming.len() >= MAX_PACKETS
             || self.bytes() + packet.as_bytes().len() > MAX_BYTES
@@ -202,7 +221,8 @@ impl Packets {
                 self.drop_packet("cipher_deadline");
                 continue;
             }
-            let waiting = secure::incoming_hint(&item.bytes).ok().is_some_and(|hint| {
+            let hint = secure::incoming_hint(&item.bytes).ok();
+            let waiting = hint.as_ref().is_some_and(|hint| {
                 let Some(position) = hint.path.iter().position(|node| *node == cfg.node_id) else {
                     return false;
                 };
@@ -266,7 +286,9 @@ impl Packets {
                         }
                     }
                 }
-                Err(_) => self.drop_packet("cipher_admission"),
+                Err(error) => {
+                    self.drop_admission("cipher_admission", error, hint.map(|hint| hint.demand))
+                }
             }
         }
         self.attempts.retain_mut(|attempt| {
@@ -395,7 +417,7 @@ impl Packets {
                             self.drop_packet("packet_send");
                         }
                     }
-                    Err(_) => self.drop_packet("packet_admission"),
+                    Err(error) => self.drop_admission("packet_admission", error, Some(demand)),
                 }
             } else {
                 if path.first() == Some(&cfg.node_id)
@@ -476,7 +498,10 @@ impl Packets {
             };
             if let Some(operation) = operation {
                 let (reply, pending) = oneshot::channel();
-                if gateway.try_send(Request { operation, reply }).is_ok() {
+                if gateway
+                    .try_send(Request::Demand { operation, reply })
+                    .is_ok()
+                {
                     intent.pending = Some(pending);
                 }
                 intent.retry = now + Duration::from_secs(2);
@@ -485,7 +510,7 @@ impl Packets {
     }
 }
 
-fn request_id() -> Option<RequestId> {
+pub(super) fn request_id() -> Option<RequestId> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).ok()?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;

@@ -214,39 +214,38 @@ pub(super) async fn cycle(
             .await
             .map_err(|error| failure(error, false))?;
     }
-    let reported = report || renewed || before != control.status().cached;
-    if reported {
-        let result = match &network {
-            Some(network) => {
-                // Busy packet I/O must not hold the Control owner past renewal.
-                // Missing measurement yields no runtime facts, not stale ones
-                // restamped as a new observation.
-                let facts = network
-                    .sample()
-                    .await
-                    .unwrap_or_else(|_| network::Report::stopped());
-                let state = facts.state(control, settings);
-                control
-                    .report_runtime_state(state, chrono::Utc::now())
-                    .await
-            }
-            None => control.report_control_state(settings.system.clone()).await,
-        };
-        match result {
-            Ok(_) => {}
+    let routine = report || renewed || before != control.status().cached;
+    let reported = if let Some(network) = &mut network {
+        network
+            .report_state(control, settings, routine)
+            .await
+            .map_err(|error| failure(error, false))?
+    } else if routine {
+        match control.report_control_state(settings.system.clone()).await {
+            Ok(_) => true,
             Err(Error::Pending) => {
                 control
                     .retry_state_report()
                     .await
                     .map_err(|e| failure(e, false))?;
+                false
             }
             Err(error) => return Err(failure(error, false)),
         }
-    }
+    } else {
+        false
+    };
     Ok(Cycle {
         phase: Phase::ControlReady,
         url: None,
-        delay: POLL,
+        delay: if network
+            .as_ref()
+            .is_some_and(|network| network.preparing_dns())
+        {
+            Duration::from_millis(100)
+        } else {
+            POLL
+        },
         renewed,
         reported,
     })

@@ -32,6 +32,8 @@ pub(super) struct Event {
 pub(super) struct Expected {
     pub events: VecDeque<Event>,
     pub tun: Option<(u32, String, usize, Vec<std::net::IpAddr>)>,
+    pub anchor: Option<super::anchor::Record>,
+    pub anchor_deleting: bool,
     pub changing: bool,
     pub wake: Arc<tokio::sync::Notify>,
     pub requested_drain: u64,
@@ -127,6 +129,44 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                 )
                 .map_err(|_| Error::Netlink)?;
                 let mut state = expected.lock().map_err(|_| Error::Worker)?;
+                // Anchor ownership is independent of TUN installation's changing
+                // window. Never suppress its checks while a lease refresh runs.
+                if let Some(anchor) = &state.anchor {
+                    match &message.payload {
+                        NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link))
+                            if link.header.index != anchor.identity.index && link.attributes.iter().any(|a| matches!(a, LinkAttribute::IfAlias(v) if v == &anchor.alias)) => return Err(Error::Conflict),
+                        NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
+                            if address.header.index != anchor.identity.index && address.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(std::net::IpAddr::V4(ip)) | AddressAttribute::Local(std::net::IpAddr::V4(ip)) if *ip == anchor.identity.address)) => return Err(Error::Conflict),
+                        NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRoute(route))
+                            if !state.anchor_deleting && super::anchor::route_conflicts(anchor.identity.address, None, route) => return Err(Error::Conflict),
+                        NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link))
+                            if link.header.index == anchor.identity.index
+                                && !(super::anchor::link_matches(anchor, link)
+                                    || (state.anchor_deleting && super::anchor::deleting_link_matches(anchor, link))) =>
+                        {
+                            return Err(Error::Conflict);
+                        }
+                        NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelLink(link))
+                            if link.header.index == anchor.identity.index
+                                && !state.anchor_deleting =>
+                        {
+                            return Err(Error::Conflict);
+                        }
+                        NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
+                            if address.header.index == anchor.identity.index
+                                && !super::anchor::address_matches(anchor, address) =>
+                        {
+                            return Err(Error::Conflict);
+                        }
+                        NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelAddress(address))
+                            if address.header.index == anchor.identity.index
+                                && !state.anchor_deleting =>
+                        {
+                            return Err(Error::Conflict);
+                        }
+                        _ => {}
+                    }
+                }
                 match message.payload {
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRule(rule)) => state
                         .consume(Event {
@@ -215,6 +255,17 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                             if flags & 0xc8 != 0x80 || !address.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(ip) | AddressAttribute::Local(ip) if known.contains(ip) && address.header.prefix_len == if ip.is_ipv4() { 32 } else { 128 })) {
                             return Err(Error::Conflict);
                         }
+                        }
+                    }
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route)) => {
+                        if let Some(anchor) = &state.anchor
+                            && super::anchor::route_conflicts(
+                                anchor.identity.address,
+                                Some(anchor.identity.index),
+                                &route,
+                            )
+                        {
+                            return Err(Error::Conflict);
                         }
                     }
                     NetlinkPayload::InnerMessage(_) | NetlinkPayload::Noop => {}

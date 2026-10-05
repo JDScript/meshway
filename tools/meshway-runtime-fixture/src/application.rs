@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::{
     net::{IpAddr, SocketAddr},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -171,9 +171,15 @@ pub struct Subscription {
     socket: UdpSocket,
     evidence: SubscriptionEvidence,
     stopped_sending: Instant,
+    born: Instant,
+    last_received: Option<Instant>,
+    last_received_wall_ms: Option<u64>,
+    last_fresh: Option<Instant>,
+    last_fresh_wall_ms: Option<u64>,
+    observation: Arc<Mutex<Option<SubscriptionFailureEvidence>>>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionEvidence {
     pub local_tuple: SocketAddr,
@@ -189,6 +195,28 @@ pub struct SubscriptionEvidence {
     pub receive_only_elapsed_ms: u128,
 }
 
+/// Failure-only observation. It is not a successful conformance result.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionFailureEvidence {
+    passed: bool,
+    local_tuple: SocketAddr,
+    peer_tuple: SocketAddr,
+    monotonic_origin: &'static str,
+    receive_only_start_monotonic_ms: u128,
+    receive_only_elapsed_ms: u128,
+    observed_wall_ms: Option<u64>,
+    last_received_monotonic_ms: Option<u128>,
+    last_received_wall_ms: Option<u64>,
+    last_fresh_monotonic_ms: Option<u128>,
+    last_fresh_wall_ms: Option<u64>,
+    max_sequence: Option<u64>,
+    received_count: Option<u64>,
+    drained_count: Option<u64>,
+    sent_initial_count: u64,
+    post_start_sent_count: u64,
+}
+
 impl Subscription {
     pub async fn start(source: &Addresses, destination: &Addresses) -> Result<Self> {
         let socket = UdpSocket::bind((source.ipv4, 0)).await?;
@@ -199,6 +227,7 @@ impl Subscription {
         getrandom::fill(&mut token).map_err(|_| "stream challenge entropy unavailable")?;
         let mut frame = [0; FRAME];
         frame[..16].copy_from_slice(&token);
+        let born = Instant::now();
         let mut subscription = Self {
             evidence: SubscriptionEvidence {
                 local_tuple: socket.local_addr()?,
@@ -215,6 +244,12 @@ impl Subscription {
             },
             socket,
             stopped_sending: Instant::now(),
+            born,
+            last_received: None,
+            last_received_wall_ms: None,
+            last_fresh: None,
+            last_fresh_wall_ms: None,
+            observation: Arc::new(Mutex::new(None)),
         };
         let deadline = Instant::now() + STARTUP;
         loop {
@@ -250,6 +285,8 @@ impl Subscription {
             return Err("invalid stream reply sequence".into());
         }
         self.evidence.received_count += 1;
+        self.last_received = Some(Instant::now());
+        self.last_received_wall_ms = wall_ms().ok();
         if drained {
             self.evidence.drained_count += 1;
         }
@@ -257,6 +294,8 @@ impl Subscription {
             return Ok(false);
         }
         self.evidence.max_sequence = sequence;
+        self.last_fresh = self.last_received;
+        self.last_fresh_wall_ms = self.last_received_wall_ms;
         Ok(true)
     }
 
@@ -306,7 +345,50 @@ impl Subscription {
         }
         self.evidence.end_wall_ms = wall_ms()?;
         self.evidence.receive_only_elapsed_ms = self.stopped_sending.elapsed().as_millis();
-        Ok(self.evidence)
+        Ok(self.evidence.clone())
+    }
+
+    pub fn observation(&self) -> Arc<Mutex<Option<SubscriptionFailureEvidence>>> {
+        Arc::clone(&self.observation)
+    }
+
+    fn failure_evidence(&self) -> SubscriptionFailureEvidence {
+        let measured = self.last_received.is_some();
+        SubscriptionFailureEvidence {
+            passed: false,
+            local_tuple: self.evidence.local_tuple,
+            peer_tuple: self.evidence.peer_tuple,
+            monotonic_origin: "subscription_created",
+            receive_only_start_monotonic_ms: self
+                .stopped_sending
+                .duration_since(self.born)
+                .as_millis(),
+            receive_only_elapsed_ms: self.stopped_sending.elapsed().as_millis(),
+            observed_wall_ms: wall_ms().ok(),
+            last_received_monotonic_ms: self
+                .last_received
+                .map(|at| at.duration_since(self.born).as_millis()),
+            last_received_wall_ms: self.last_received_wall_ms,
+            last_fresh_monotonic_ms: self
+                .last_fresh
+                .map(|at| at.duration_since(self.born).as_millis()),
+            last_fresh_wall_ms: self.last_fresh_wall_ms,
+            max_sequence: self.last_fresh.map(|_| self.evidence.max_sequence),
+            received_count: measured.then_some(self.evidence.received_count),
+            drained_count: measured.then_some(self.evidence.drained_count),
+            sent_initial_count: self.evidence.sent_initial_count,
+            post_start_sent_count: self.evidence.post_start_sent_count,
+        }
+    }
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        // Capture on success, error, or cancellation, while retaining the exact
+        // previous socket-drop boundary. Only the actor's failure branch saves it.
+        if let Ok(mut observation) = self.observation.lock() {
+            *observation = Some(self.failure_evidence());
+        }
     }
 }
 

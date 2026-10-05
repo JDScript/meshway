@@ -1,6 +1,7 @@
 use std::{
     io::{self, IoSliceMut},
     net::SocketAddr,
+    os::fd::{AsFd, BorrowedFd},
     task::{Context, Poll, ready},
 };
 
@@ -21,6 +22,14 @@ mod tests;
 #[derive(Debug)]
 pub struct UdpTransport {
     socket: UdpSocket,
+}
+
+// The host's protection wrapper borrows the actual adopted descriptor before
+// each I/O poll. This does not duplicate or transfer socket ownership.
+impl AsFd for UdpTransport {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.socket.as_fd()
+    }
 }
 
 impl UdpTransport {

@@ -60,7 +60,7 @@ impl Report {
             return state;
         };
         for listener in &facts.listeners {
-            let id = format!("listener:{}", listener.key);
+            let id = socket_key(&listener.socket_id);
             state.sockets.insert(
                 id.clone(),
                 SocketState {
@@ -69,7 +69,7 @@ impl Report {
                     },
                     configuration: Some(target.clone()),
                     generation: self.generation,
-                    network: SocketNetwork::Tcp,
+                    network: socket_network(listener.protocol),
                     bound_address: listener.local,
                     endpoints: Vec::new(),
                 },
@@ -98,11 +98,8 @@ impl Report {
             return state;
         };
         for link in &facts.links {
-            let id = link
-                .id
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
+            let id = socket_key(&link.id);
+            let socket_id = socket_key(&link.socket_id);
             let resource = if link.carrier.listener == cfg.node_id {
                 ResourceRef::Listener {
                     key: link.carrier.listener_key.clone(),
@@ -115,20 +112,20 @@ impl Report {
                 };
                 ResourceRef::Dial { key: key.clone() }
             };
-            state.sockets.insert(
-                id.clone(),
-                SocketState {
+            state
+                .sockets
+                .entry(socket_id.clone())
+                .or_insert(SocketState {
                     resource,
                     configuration: Some(target.clone()),
                     generation: self.generation,
-                    network: SocketNetwork::Tcp,
+                    network: socket_network(link.carrier.protocol),
                     bound_address: link.local,
                     endpoints: Vec::new(),
-                },
-            );
+                });
             state.links.entry(link.peer).or_default().push(LinkState {
                 link_id: id.clone(),
-                socket_id: id,
+                socket_id,
                 transport: link.carrier.protocol.as_str().to_owned(),
                 initiator_node_id: link.carrier.dialer,
                 phase: LinkPhase::Authenticated,
@@ -140,5 +137,16 @@ impl Report {
             });
         }
         state
+    }
+}
+
+fn socket_key(id: &[u8; 32]) -> String {
+    id.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn socket_network(protocol: meshway_configuration::transport::TransportProtocol) -> SocketNetwork {
+    match protocol.outer_socket() {
+        meshway_configuration::transport::OuterSocket::Udp => SocketNetwork::Udp,
+        meshway_configuration::transport::OuterSocket::Tcp => SocketNetwork::Tcp,
     }
 }

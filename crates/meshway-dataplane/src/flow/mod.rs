@@ -156,10 +156,32 @@ impl FlowTable {
         self.entries.len()
     }
     pub fn clear(&mut self) {
+        if !self.entries.is_empty() && crate::secure::diagnostics::event() {
+            tracing::debug!(operation = "clear", count = self.entries.len(),
+                publication = ?self.entries.keys().next().map(|key| key.publication),
+                "Dataplane flow table cleared");
+        }
         self.entries.clear();
     }
     pub fn expire(&mut self, now: Instant, now_ms: u64) {
-        self.entries.retain(|_, flow| flow.live_at(now, now_ms));
+        self.entries.retain(|key, flow| {
+            let live = flow.live_at(now, now_ms);
+            if !live && crate::secure::diagnostics::event() {
+                let cause = if now >= flow.expires_at {
+                    "monotonic_or_idle"
+                } else if now_ms >= flow.permit_expires_at_ms {
+                    "permit_deadline"
+                } else {
+                    "guard_deadline"
+                };
+                tracing::debug!(operation = "expire", cause, demand = %key.demand,
+                    publication = %key.publication, now_ms,
+                    permit_expires_at_ms = flow.permit_expires_at_ms,
+                    guard_expires_at_ms = flow.guard_expires_at_ms,
+                    "Dataplane flow removed");
+            }
+            live
+        });
     }
 
     /// Exact tuple lookup in the established table; never refresh or advance it.
@@ -237,6 +259,24 @@ impl FlowTable {
                 || key.publication != old.publication
                 || !authorization_unchanged(old, new, key.demand, &key.path, time.now_ms)?
             {
+                if crate::secure::diagnostics::event() {
+                    let cause = if time.instant >= flow.expires_at {
+                        "monotonic_or_idle"
+                    } else if time.now_ms >= flow.permit_expires_at_ms {
+                        "permit_deadline"
+                    } else if time.now_ms >= flow.guard_expires_at_ms {
+                        "guard_deadline"
+                    } else if key.publication != old.publication {
+                        "publication"
+                    } else {
+                        "authorization_changed"
+                    };
+                    tracing::debug!(operation = "reconcile", cause, demand = %key.demand,
+                        old_publication = %old.publication, new_publication = %new.publication,
+                        now_ms = time.now_ms, permit_expires_at_ms = flow.permit_expires_at_ms,
+                        guard_expires_at_ms = flow.guard_expires_at_ms,
+                        "Dataplane flow excluded from reconciliation");
+                }
                 continue;
             }
             let mut key = key.clone();

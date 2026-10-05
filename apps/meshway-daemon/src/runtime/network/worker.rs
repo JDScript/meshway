@@ -18,10 +18,15 @@ pub(super) async fn run(
     mut host: Host,
     mut commands: mpsc::Receiver<Command>,
     mut targets: watch::Receiver<Option<Target>>,
-    reports: watch::Sender<Report>,
+    reports: super::reporting::Publisher,
     gateway: mpsc::Sender<Request>,
     completed: mpsc::Sender<Completion>,
+    dns: (
+        super::dns::Attachment,
+        watch::Sender<Option<super::dns::intents::Plan>>,
+    ),
 ) -> Result<(), Problem> {
+    let (mut dns, dns_plans) = dns;
     let mut installed: Option<Installed> = None;
     let mut packets = Packets::default();
     let mut buffer = vec![0u8; Packet::MAX_LEN];
@@ -30,6 +35,8 @@ pub(super) async fn run(
     let mut last_completion: Option<meshway_control::ApplicationTicket> = None;
     let mut last_success: Option<meshway_control::ApplicationTicket> = None;
     let mut pause_until: Option<tokio::time::Instant> = None;
+    let mut preparing: Option<(Target, tokio::time::Instant)> = None;
+    let mut dns_failed = false;
     loop {
         if let Some(completion) = pending_completion.take() {
             match completed.try_send(completion) {
@@ -38,6 +45,7 @@ pub(super) async fn run(
                     pending_completion = Some(completion)
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
+                    let _ = dns.shutdown(&mut host, true).await;
                     close(&mut installed).await;
                     return host.shutdown(true).await.map_err(|_| Problem::Underlay);
                 }
@@ -48,6 +56,8 @@ pub(super) async fn run(
             Target,
             Invalid,
             HardExpired,
+            DnsTimeout,
+            DnsFailure,
             Packet(Result<usize, meshway_underlay::Error>),
             Carrier(Event),
             Tick,
@@ -68,6 +78,8 @@ pub(super) async fn run(
         let work = tokio::select! { biased;
             command = commands.recv() => Work::Command(command),
             changed = targets.changed(), if pending_completion.is_none() => { if changed.is_err() { Work::Command(None) } else { Work::Target } },
+            _ = async { match &preparing { Some((_, at)) => tokio::time::sleep_until(*at).await, None => std::future::pending().await } } => Work::DnsTimeout,
+            _ = dns.failed(), if !dns_failed => Work::DnsFailure,
             _ = async { match pause_until { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::HardExpired,
             _ = async {
                 if let Some(guard) = &guard && live {
@@ -102,37 +114,55 @@ pub(super) async fn run(
             }
             Work::Command(Some(Command::Sample(reply))) => {
                 let report = sample(&installed, reports.borrow().clone());
-                reports.send_replace(report.clone());
-                let _ = reply.send(report);
+                let _ = reply.send(reports.sample(report));
                 continue;
             }
             Work::Command(Some(Command::Shutdown { keep_sink })) => {
+                let dns_result = dns
+                    .shutdown(&mut host, keep_sink)
+                    .await
+                    .map_err(|_| Problem::Dns);
                 close(&mut installed).await;
-                return host
+                let host_result = host
                     .shutdown(keep_sink)
                     .await
                     .map_err(|_| Problem::Underlay);
+                return dns_result.and(host_result);
             }
             Work::Command(None) => {
+                let dns_result = dns
+                    .shutdown(&mut host, true)
+                    .await
+                    .map_err(|_| Problem::Dns);
                 close(&mut installed).await;
-                return host.shutdown(true).await.map_err(|_| Problem::Underlay);
+                return dns_result.and(host.shutdown(true).await.map_err(|_| Problem::Underlay));
             }
             Work::Command(Some(Command::Stop { down, reply })) => {
+                dns.suspend();
+                preparing = None;
+                dns_plans.send_replace(None);
                 close(&mut installed).await;
                 installed = None;
                 pause_until = None;
                 last_success = None;
                 packets = Packets::default();
-                let result = if down {
+                let dns_result = if down {
+                    dns.down(&mut host).await.map_err(|_| Problem::Dns)
+                } else {
+                    Ok(())
+                };
+                let host_result = if down && dns_result.is_ok() {
+                    dns_failed = false;
                     host.down().await
                 } else {
                     host.suspend().await
                 }
                 .map_err(|_| Problem::Underlay);
+                let result = dns_result.and(host_result);
                 let mut report = Report::stopped();
                 if result.is_err() {
                     report.plane = DataPlane::Failed;
-                    report.problem = Some(Problem::Underlay);
+                    report.problem = result.err();
                 } else if !down {
                     report.plane = DataPlane::Suspended;
                 }
@@ -140,11 +170,34 @@ pub(super) async fn run(
                 let _ = reply.send(result);
                 continue;
             }
-            Work::Target => {
-                let target = targets.borrow_and_update().clone();
+            Work::Target | Work::DnsTimeout => {
+                let timed_out = matches!(work, Work::DnsTimeout);
+                let target = if timed_out {
+                    preparing.as_ref().map(|(target, _)| target.clone())
+                } else {
+                    targets.borrow_and_update().clone()
+                };
                 let Some(target) = target else {
                     continue;
                 };
+                let prepare_deadline = preparing
+                    .as_ref()
+                    .filter(|(_, _)| {
+                        dns_plans
+                            .borrow()
+                            .as_ref()
+                            .zip(target.identity.as_ref())
+                            .is_some_and(|(plan, identity)| {
+                                identity
+                                    .snapshot()
+                                    .configuration()
+                                    .is_ok_and(|cfg| plan.matches(target.ticket.instance(), cfg))
+                            })
+                    })
+                    .map(|(_, at)| *at)
+                    .unwrap_or_else(|| {
+                        tokio::time::Instant::now() + super::dns::intents::PREPARE_TIMEOUT
+                    });
                 pause_until = None;
                 let refreshing = last_success
                     .as_ref()
@@ -164,6 +217,7 @@ pub(super) async fn run(
                     .as_ref()
                     .map(|identity| identity.snapshot().clone());
                 let Ok(next_generation) = generation.checked_next() else {
+                    let _ = dns.shutdown(&mut host, true).await;
                     close(&mut installed).await;
                     let _ = host.shutdown(true).await;
                     return Err(Problem::Worker);
@@ -171,8 +225,26 @@ pub(super) async fn run(
                 generation = next_generation;
                 report.generation = generation;
                 reports.send_replace(report.clone());
-                let result =
-                    install(&mut host, &mut installed, &mut packets, target, !refreshing).await;
+                let result = install(
+                    &mut host,
+                    &mut installed,
+                    &mut packets,
+                    target.clone(),
+                    !refreshing,
+                    (&mut dns, &dns_plans),
+                    timed_out,
+                )
+                .await;
+                report.dns_guard = dns.guard();
+                if result == Ok(false) {
+                    reports.send_replace(report);
+                    preparing = Some((target, prepare_deadline));
+                    close(&mut installed).await;
+                    let _ = host.suspend().await;
+                    continue;
+                }
+                preparing = None;
+                let result = result.map(|_| ());
                 if !refreshing {
                     report.observed_at = chrono::Utc::now();
                 }
@@ -198,6 +270,7 @@ pub(super) async fn run(
                 }
                 match result {
                     Ok(()) => {
+                        dns_failed = false;
                         last_success = report.ticket.clone();
                         report.plane = if installed.is_some() {
                             DataPlane::Ready
@@ -206,6 +279,7 @@ pub(super) async fn run(
                         }
                     }
                     Err((problem, _)) => {
+                        dns.suspend();
                         close(&mut installed).await;
                         if host.suspend().await.is_err() {
                             report.problem = Some(Problem::Underlay);
@@ -220,8 +294,22 @@ pub(super) async fn run(
             Work::Invalid
             | Work::Carrier(Event::Closed)
             | Work::Packet(Err(_))
-            | Work::HardExpired => {
-                let transition = !matches!(work, Work::HardExpired | Work::Packet(Err(_)))
+            | Work::HardExpired
+            | Work::DnsFailure => {
+                dns.suspend();
+                let dns_error = matches!(work, Work::DnsFailure);
+                dns_failed |= dns_error;
+                if dns_error && let Some((target, _)) = preparing.take() {
+                    let observed_at = chrono::Utc::now();
+                    pending_completion = Some(Completion {
+                        ticket: target.ticket.clone(),
+                        result: Err(ApplyFailure::Dns),
+                        observed_at,
+                    });
+                    last_completion = Some(target.ticket);
+                }
+                let transition = !dns_error
+                    && !matches!(work, Work::HardExpired | Work::Packet(Err(_)))
                     && guard
                         .as_ref()
                         .is_some_and(|guard| guard.ensure_current().is_err());
@@ -249,6 +337,7 @@ pub(super) async fn run(
                 if !transition && !matches!(work, Work::HardExpired) {
                     report.plane = DataPlane::Failed;
                     report.problem = Some(match work {
+                        Work::DnsFailure => Problem::Dns,
                         Work::Packet(_) => Problem::Tun,
                         Work::Carrier(_) => Problem::Transport,
                         _ => Problem::Underlay,
@@ -289,6 +378,7 @@ pub(super) async fn run(
             tokio::select! { biased;
                 _ = host.invalidated() => {},
                 _ = guard.invalidated() => {},
+                _ = dns.failed(), if !dns_failed => {},
                 _ = packets.drive(&mut state.secure, manager, &host, &state.target, &gateway) => {},
             }
         }
@@ -363,21 +453,46 @@ async fn install(
     packets: &mut Packets,
     target: Target,
     allow_replacement: bool,
-) -> Result<(), (Problem, ApplyFailure)> {
+    dns: (
+        &mut super::dns::Attachment,
+        &watch::Sender<Option<super::dns::intents::Plan>>,
+    ),
+    timed_out: bool,
+) -> Result<bool, (Problem, ApplyFailure)> {
+    let (dns, dns_plans) = dns;
     let Some(identity) = &target.identity else {
+        dns.suspend();
+        dns_plans.send_replace(None);
         close(installed).await;
         *installed = None;
         *packets = Packets::default();
         return host
             .suspend()
             .await
+            .map(|_| true)
             .map_err(|_| (Problem::Underlay, ApplyFailure::Underlay));
     };
     let cfg = identity
         .snapshot()
         .configuration()
         .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
-    let validation = super::requirements::validate(cfg);
+    let needs_dns = super::requirements::dns_required(&cfg.dns.settings)
+        || !matches!(
+            cfg.dns.egress,
+            meshway_configuration::execution::DnsEgress::NoExit
+        );
+    let dns_prepared = if needs_dns {
+        dns.plan(host, &target).await.map(Some).map_err(|error| {
+            tracing::warn!(%error, "DNS preparation failed");
+            (Problem::Dns, ApplyFailure::Dns)
+        })
+    } else {
+        dns_plans.send_replace(None);
+        dns.down(host)
+            .await
+            .map(|_| None)
+            .map_err(|_| (Problem::Dns, ApplyFailure::Dns))
+    };
     packets.clear_incoming();
     close(installed).await;
     let retained = installed
@@ -409,7 +524,38 @@ async fn install(
     // Host installation establishes the owned capture/sink first. A failed
     // required component then suspends it without leaking Mesh destinations
     // back to the host default route; no packet loop runs before every gate.
-    validation?;
+    let dns_ids = if let Some(plan) = dns_prepared? {
+        // Publish descriptors only after negative DNS and Mesh capture exist.
+        // Control may now create demands and atomically replace this snapshot.
+        dns_plans.send_replace(Some(plan.clone()));
+        if timed_out {
+            return Err((Problem::Dns, ApplyFailure::Dns));
+        }
+        if plan.empty() {
+            Default::default()
+        } else if let Some(selection) = &target.dns
+            && selection.plan == plan
+        {
+            if selection.failed {
+                return Err((Problem::Dns, ApplyFailure::Dns));
+            }
+            selection.ids.clone()
+        } else {
+            return Ok(false);
+        }
+    } else {
+        Default::default()
+    };
+    super::requirements::validate(
+        cfg,
+        &dns_ids,
+        &target.retired_dns,
+        identity
+            .snapshot()
+            .now_ms()
+            .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?,
+    )?;
+    let dns_snapshot = needs_dns.then(|| identity.snapshot().clone());
     let mut manager = Manager::start(
         identity.clone(),
         Arc::new(host.sockets()),
@@ -447,7 +593,13 @@ async fn install(
             live: true,
         });
     }
-    Ok(())
+    if let Some(snapshot) = dns_snapshot {
+        dns.install(snapshot, dns_ids).await.map_err(|error| {
+            tracing::warn!(%error, "DNS scope installation failed");
+            (Problem::Dns, ApplyFailure::Dns)
+        })?;
+    }
+    Ok(true)
 }
 
 #[cfg(test)]

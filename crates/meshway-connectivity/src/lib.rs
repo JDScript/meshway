@@ -1,4 +1,4 @@
-//! Bounded stream adjacency owner. Packet crypto, flows and routing belong to
+//! Bounded stream/datagram adjacency owner. Packet crypto, flows and routing belong to
 //! meshway-dataplane; socket protection and DNS belong to meshway-underlay.
 #![forbid(unsafe_code)]
 
@@ -8,7 +8,7 @@ mod manager;
 mod provider;
 mod scope;
 
-pub use io::{AcceptedSocket, ListenerSocket, SocketFactory};
+pub use io::{AcceptedSocket, DatagramSocket, ListenerSocket, SocketFactory};
 pub use manager::{Event, LinkFact, ListenerFact, Manager, Snapshot};
 pub use meshway_policy::admission::Carrier;
 
@@ -62,6 +62,7 @@ impl Limits {
 
 pub fn capabilities() -> BTreeMap<String, Capability> {
     [
+        ("transport:native_udp", vec![StreamKind::Udp]),
         ("transport:native_tcp", vec![StreamKind::Tcp]),
         (
             "transport:vless",
@@ -88,17 +89,17 @@ pub enum Error {
     Limits,
     #[error("execution or adjacency authority expired")]
     Authority,
-    #[error("unsupported stream configuration")]
+    #[error("unsupported transport configuration")]
     Configuration,
-    #[error("stream operation cancelled or timed out")]
+    #[error("transport operation cancelled or timed out")]
     Cancelled,
     #[error("invalid adjacency message or proof")]
     Authentication,
-    #[error("bounded stream capacity exhausted")]
+    #[error("bounded connection capacity exhausted")]
     Capacity,
     #[error("authenticated carrier is unavailable")]
     Unavailable,
-    #[error("stream I/O failed")]
+    #[error("transport I/O failed")]
     Io(#[from] std::io::Error),
     #[error("protected socket operation failed")]
     Underlay,

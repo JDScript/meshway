@@ -10,6 +10,7 @@ pub struct Settings {
     pub(crate) system: SystemState,
     pub(crate) network_mode: meshway_ipc::NetworkMode,
     pub(crate) underlay: meshway_underlay::Options,
+    pub(crate) dns: meshway_dns::SystemDnsSettings,
 }
 impl Settings {
     pub fn new(
@@ -41,6 +42,7 @@ impl Settings {
             hostname,
             network_mode: meshway_ipc::NetworkMode::Tun,
             underlay: meshway_underlay::Options::default(),
+            dns: meshway_dns::SystemDnsSettings::default(),
             system: SystemState {
                 hostname: machine_hostname,
                 os: std::env::consts::OS.into(),
@@ -55,6 +57,22 @@ impl Settings {
     pub fn with_network_mode(mut self, mode: meshway_ipc::NetworkMode) -> Self {
         self.network_mode = mode;
         self
+    }
+
+    /// Machine-local DNS attachment, independent of Server-owned DNS policy.
+    pub fn with_dns_settings(
+        mut self,
+        settings: meshway_dns::SystemDnsSettings,
+    ) -> Result<Self, &'static str> {
+        settings
+            .validate()
+            .map_err(|_| "Invalid DNS installation settings.")?;
+        if matches!(&settings.backend, meshway_dns::SystemDnsBackend::OwnedResolvConf { path } if path != std::path::Path::new("/etc/resolv.conf"))
+        {
+            return Err("The daemon resolv-conf backend only supports /etc/resolv.conf.");
+        }
+        self.dns = settings;
+        Ok(self)
     }
 
     /// Machine bootstrap inputs for the protected Server/candidate resolver.

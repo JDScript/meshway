@@ -1,7 +1,10 @@
+mod datagram;
 mod dns;
+pub use datagram::{DatagramCandidate, ProtectedDatagram};
 mod kernel;
 mod protection;
 mod proxy;
+mod resolver_exchange;
 pub mod sockets;
 mod tasks;
 
@@ -90,6 +93,15 @@ impl Host {
     }
     pub fn sockets(&self) -> SocketFactory {
         self.sockets.clone()
+    }
+    pub async fn dns_anchor(
+        &mut self,
+        reservation: &meshway_dns::SystemDnsReservation,
+    ) -> Result<Arc<dyn meshway_dns::OwnedDnsLink>> {
+        self.kernel.dns_anchor(reservation).await
+    }
+    pub async fn remove_dns_anchor(&mut self) -> Result<()> {
+        self.kernel.remove_dns_anchor().await
     }
     pub fn tun(&self) -> Option<&meshway_tun::Tun> {
         if self.kernel.shared.check().is_err() {

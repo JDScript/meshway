@@ -49,7 +49,82 @@ pub async fn send(
     pending: PendingFrame,
     peer: Option<SocketAddr>,
 ) -> Result<(), Error> {
+    send_scoped(sender, pending, peer, None).await
+}
+
+/// A channel owner can only restrict the original packet authority. Both
+/// lifetimes are retained by accepted transport work, even if its completion
+/// waiter remains alive but is no longer polled.
+pub async fn send_scoped(
+    sender: &mut Sender,
+    pending: PendingFrame,
+    peer: Option<SocketAddr>,
+    channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
+) -> Result<(), Error> {
+    send_inner(SendOwner::Borrowed(sender), pending, peer, channel).await
+}
+
+/// Shared endpoint admission never holds its mutex while awaiting completion.
+/// One peer's unpolled caller must not retain another peer's physical sender.
+pub async fn send_shared(
+    sender: &tokio::sync::Mutex<Sender>,
+    pending: PendingFrame,
+    peer: SocketAddr,
+    channel: Arc<dyn meshway_transport::SendLifetime>,
+) -> Result<(), Error> {
+    send_inner(
+        SendOwner::Shared(sender),
+        pending,
+        Some(peer),
+        Some(channel),
+    )
+    .await
+}
+
+enum SendOwner<'a> {
+    Borrowed(&'a mut Sender),
+    Shared(&'a tokio::sync::Mutex<Sender>),
+}
+
+impl SendOwner<'_> {
+    async fn admit(
+        &mut self,
+        frames: &mut VecDeque<Frame>,
+        context: SendContext,
+    ) -> meshway_transport::Admission {
+        match self {
+            Self::Borrowed(sender) => sender.try_send(frames, context),
+            Self::Shared(sender) => sender.lock().await.try_send(frames, context),
+        }
+    }
+    async fn capacity(&self, capacity: usize) -> Result<(), Error> {
+        match self {
+            Self::Borrowed(sender) => sender
+                .wait_capacity(capacity)
+                .await
+                .map_err(Error::Admission),
+            Self::Shared(_) => {
+                // No borrowed wait_capacity future may retain the shared sender
+                // lock. Admission rechecks all budgets after this paced retry.
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                Ok(())
+            }
+        }
+    }
+}
+
+async fn send_inner(
+    mut sender: SendOwner<'_>,
+    pending: PendingFrame,
+    peer: Option<SocketAddr>,
+    channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
+) -> Result<(), Error> {
+    use meshway_transport::SendLifetime;
     let guard = pending.io_guard();
+    let lifetime = Arc::new(OutputLifetime {
+        packet: guard.clone(),
+        channel,
+    });
     let cancellation = guard.cancellation();
     // Cancelling this future also cancels any already-admitted transport work;
     // dropping a transport completion waiter alone intentionally would not.
@@ -57,7 +132,7 @@ pub async fn send(
     let context = SendContext {
         cancellation: cancellation.clone(),
         deadline: Some(guard.expires_at().into()),
-        lifetime: Some(Arc::new(guard.clone())),
+        lifetime: Some(lifetime.clone()),
     };
     let bytes = pending
         .release(|bytes| bytes)
@@ -65,8 +140,13 @@ pub async fn send(
     let capacity = bytes.capacity();
     let mut frames = VecDeque::from([Frame::new(bytes, peer)]);
     let completion = loop {
-        guard.ensure_current().map_err(|_| Error::Cancelled)?;
-        let admitted = sender.try_send(&mut frames, context.clone());
+        if !lifetime.is_current() {
+            return Err(Error::Cancelled);
+        }
+        let admitted = tokio::select! { biased;
+            _ = lifetime.clone().invalidated() => return Err(Error::Cancelled),
+            result = sender.admit(&mut frames, context.clone()) => result,
+        };
         if admitted.accepted == 1 {
             break admitted.completion.ok_or(Error::CompletionLost)?;
         }
@@ -77,8 +157,8 @@ pub async fn send(
                 | AdmissionStop::OperationBudget,
             ) => {
                 tokio::select! { biased;
-                    _ = guard.invalidated() => return Err(Error::Cancelled),
-                    result = sender.wait_capacity(capacity) => result.map_err(Error::Admission)?,
+                    _ = lifetime.clone().invalidated() => return Err(Error::Cancelled),
+                    result = sender.capacity(capacity) => result?,
                 }
             }
             Some(reason) => return Err(Error::Admission(reason)),
@@ -86,7 +166,7 @@ pub async fn send(
         }
     };
     let completed = tokio::select! { biased;
-        _ = guard.invalidated() => {
+        _ = lifetime.clone().invalidated() => {
             cancellation.cancel();
             return Err(Error::Cancelled);
         },
@@ -100,8 +180,40 @@ pub async fn send(
     {
         return Err(Error::Incomplete);
     }
-    guard.ensure_current().map_err(|_| Error::Cancelled)?;
+    if !lifetime.is_current() {
+        return Err(Error::Cancelled);
+    }
     Ok(())
+}
+
+#[derive(Debug)]
+struct OutputLifetime {
+    packet: crate::secure::Guard,
+    channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
+}
+
+impl meshway_transport::SendLifetime for OutputLifetime {
+    fn is_current(&self) -> bool {
+        self.packet.ensure_current().is_ok()
+            && self
+                .channel
+                .as_ref()
+                .is_none_or(|channel| channel.is_current())
+    }
+
+    fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async move {
+            tokio::select! { biased;
+                _ = self.packet.invalidated() => {},
+                _ = async {
+                    match &self.channel {
+                        Some(channel) => channel.clone().invalidated().await,
+                        None => std::future::pending().await,
+                    }
+                } => {},
+            }
+        })
+    }
 }
 
 /// Keep the plaintext packet and all circuit/flow/lease guards owned throughout

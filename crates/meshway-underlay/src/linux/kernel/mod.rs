@@ -1,3 +1,4 @@
+mod anchor;
 mod journal;
 mod monitor;
 mod plan;
@@ -25,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     protection::{Mark, Shared},
-    sockets::{dial_options, listener_enabled, listener_options},
+    sockets::{listener_enabled, validate_dial, validate_listener},
     tasks::Tasks,
 };
 use crate::{Error, Options, Result};
@@ -45,6 +46,7 @@ pub(super) struct Kernel {
     pub tun: Option<Tun>,
     options: Options,
     baseline: Vec<Vec<u8>>,
+    dns_cancel: CancellationToken,
 }
 
 impl Kernel {
@@ -64,7 +66,13 @@ impl Kernel {
         let rules = get_rules(&handle, options.max_kernel_objects).await?;
         let routes = get_routes(&handle, options.max_kernel_objects).await?;
         let mut journal = match previous {
-            Some(journal) if !journal.rules.is_empty() || !journal.routes.is_empty() => journal,
+            Some(journal)
+                if !journal.rules.is_empty()
+                    || !journal.routes.is_empty()
+                    || journal.anchor.is_some() =>
+            {
+                journal
+            }
             _ => allocate(&rules, &routes, options.max_pools)?,
         };
         if journal.pool_limit != options.max_pools {
@@ -113,7 +121,13 @@ impl Kernel {
         ] {
             shared.prepare(&socket2::SockRef::from(&socket))?;
         }
-        let expected = Arc::new(Mutex::new(Expected::default()));
+        if let Some(anchor) = &journal.anchor {
+            anchor::verify(&handle, anchor, options.max_kernel_objects).await?;
+        }
+        let expected = Arc::new(Mutex::new(Expected {
+            anchor: journal.anchor.clone(),
+            ..Expected::default()
+        }));
         let watched = shared.clone();
         let events = expected.clone();
         let table = journal.table;
@@ -131,6 +145,7 @@ impl Kernel {
             tun: None,
             options,
             baseline,
+            dns_cancel: CancellationToken::new(),
         })
     }
 
@@ -144,6 +159,9 @@ impl Kernel {
     }
 
     async fn verify(&self) -> Result<()> {
+        if let Some(anchor) = &self.journal.anchor {
+            anchor::verify(&self.handle, anchor, self.options.max_kernel_objects).await?;
+        }
         let rules = get_rules(&self.handle, self.options.max_kernel_objects).await?;
         verify_rules(&self.journal, &rules)?;
         let mut foreign: Vec<_> = rules
@@ -203,11 +221,11 @@ impl Kernel {
             return Err(Error::Target);
         }
         for candidate in cfg.dialers.values() {
-            dial_options(&candidate.parameters)?;
+            validate_dial(&candidate.parameters)?;
         }
         for listener in cfg.listeners.values() {
             if listener_enabled(listener.declaration()) {
-                listener_options(listener.declaration())?;
+                validate_listener(listener.declaration())?;
             }
         }
         let pools = plan::pools(
@@ -215,6 +233,13 @@ impl Kernel {
             &cfg.addresses,
             self.options.max_pools,
         )?;
+        if self.journal.anchor.as_ref().is_some_and(|anchor| {
+            pools
+                .iter()
+                .any(|pool| pool.contains(&IpAddr::V4(anchor.identity.address)))
+        }) {
+            return Err(Error::Conflict);
+        }
         let addresses = cfg.addresses.clone();
         if self.retain_tun(&snapshot, &pools, &addresses).await? {
             return Ok(());
@@ -893,6 +918,7 @@ fn allocate(rules: &[RuleMessage], routes: &[RouteMessage], pool_limit: usize) -
         rules: Vec::new(),
         routes: Vec::new(),
         tun: None,
+        anchor: None,
         pending: None,
     })
 }

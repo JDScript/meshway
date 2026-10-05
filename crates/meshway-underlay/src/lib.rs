@@ -18,7 +18,7 @@ use std::{
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    Host,
+    DatagramCandidate, Host, ProtectedDatagram,
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 

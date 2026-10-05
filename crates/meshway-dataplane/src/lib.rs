@@ -450,10 +450,9 @@ impl Engine {
             self.flows
                 .prepare(self.snapshot.configuration()?, &ingress, &facts, time)?;
         // A rejected/fenced transaction cannot establish or advance flow state.
-        if let Err(error) = self.snapshot.ensure_current() {
-            self.flows.clear();
-            return Err(error.into());
-        }
+        tracing::trace!(target: "meshway_dataplane::flow::authority_boundary", operation = "commit",
+            "Validating flow admission authority");
+        self.snapshot.ensure_current()?;
         if self.snapshot.now_ms()? >= prepared.permit_expires_at_ms
             || Instant::now() >= prepared.expires_at
         {
@@ -475,13 +474,11 @@ impl Engine {
     }
 
     /// Host-driven idle cleanup. Reading counters never changes permits/state.
-    /// Invalidated entries are logically unusable immediately; physical removal
-    /// occurs here, on process, on invalidated().await, or when Engine is dropped.
+    /// Invalidated entries are unusable immediately. Authority loss retains inert
+    /// state for a possible Control-approved successor; reconciliation checks
+    /// every original expiry. Explicit invalidated().await/drop still tears down.
     pub fn maintain(&mut self) -> Result<(), Error> {
-        if let Err(error) = self.snapshot.ensure_current() {
-            self.flows.clear();
-            return Err(error.into());
-        }
+        self.snapshot.ensure_current()?;
         self.flows.expire(Instant::now(), self.snapshot.now_ms()?);
         Ok(())
     }

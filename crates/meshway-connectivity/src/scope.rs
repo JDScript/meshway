@@ -14,6 +14,7 @@ pub(crate) struct Scope {
     pub cancellation: CancellationToken,
     pub deadline: Instant,
     pub edge: Option<(NodeId, Carrier)>,
+    pub health: Option<std::sync::Arc<std::sync::Mutex<Instant>>>,
 }
 
 impl Scope {
@@ -32,6 +33,14 @@ impl Scope {
         }
     }
     pub fn check(&self) -> Result<(), Error> {
+        let result = self.check_current();
+        if result.is_err() {
+            self.cancellation.cancel();
+        }
+        result
+    }
+
+    fn check_current(&self) -> Result<(), Error> {
         if self.cancellation.is_cancelled() || Instant::now() >= self.deadline {
             return Err(Error::Cancelled);
         }
@@ -39,11 +48,33 @@ impl Scope {
             .ensure_current()
             .map_err(|_| Error::Authority)?;
         self.edge_deadline()?;
+        if let Some(health) = &self.health
+            && Instant::now() >= *health.lock().map_err(|_| Error::Worker)?
+        {
+            return Err(Error::Unavailable);
+        }
         Ok(())
     }
 
+    async fn health_expired(&self) {
+        let Some(health) = &self.health else {
+            return std::future::pending().await;
+        };
+        loop {
+            let deadline = match health.lock() {
+                Ok(deadline) => *deadline,
+                Err(_) => return,
+            };
+            tokio::time::sleep_until(deadline).await;
+            if self.check().is_err() {
+                return;
+            }
+        }
+    }
+
     /// Check on every resumed poll, including futures that perform multiple
-    /// writes internally. Cancellation drops the future and its owned stream.
+    /// writes internally. Cancellation drops the operation; shared endpoint
+    /// ownership stays with its driver.
     pub async fn run<T>(&self, future: impl Future<Output = Result<T, Error>>) -> Result<T, Error> {
         let edge_deadline = self.edge_deadline()?;
         tokio::pin!(future);
@@ -51,6 +82,7 @@ impl Scope {
             _ = self.cancellation.cancelled() => Err(Error::Cancelled),
             _ = self.snapshot.invalidated_at(edge_deadline) => Err(Error::Authority),
             _ = tokio::time::sleep_until(self.deadline) => Err(Error::Cancelled),
+            _ = self.health_expired() => Err(Error::Unavailable),
             result = poll_fn(|cx| {
                 if let Err(error) = self.check() { return Poll::Ready(Err(error)); }
                 future.as_mut().poll(cx)
@@ -58,6 +90,65 @@ impl Scope {
         }?;
         self.check()?;
         Ok(result)
+    }
+}
+
+/// Endpoint lifetime below the formal Session. Per-output peer/proof lifetime
+/// remains in SendContext, so sharing a socket never shares packet authority.
+pub(crate) struct Datagram {
+    pub inner: Box<dyn meshway_transport::raw::Datagram>,
+    pub scope: Scope,
+}
+impl meshway_transport::raw::Datagram for Datagram {
+    fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.scope
+            .check()
+            .map_err(|_| std::io::ErrorKind::PermissionDenied)?;
+        self.inner.local_addr()
+    }
+    fn poll_send_to(
+        &self,
+        cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+        peer: std::net::SocketAddr,
+    ) -> Poll<std::io::Result<usize>> {
+        self.scope
+            .check()
+            .map_err(|_| std::io::ErrorKind::PermissionDenied)?;
+        self.inner.poll_send_to(cx, bytes, peer)
+    }
+    fn poll_recv_from(
+        &self,
+        cx: &mut std::task::Context<'_>,
+        bytes: &mut [u8],
+    ) -> Poll<std::io::Result<meshway_transport::raw::DatagramRead>> {
+        self.scope
+            .check()
+            .map_err(|_| std::io::ErrorKind::PermissionDenied)?;
+        self.inner.poll_recv_from(cx, bytes)
+    }
+}
+
+impl std::fmt::Debug for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PeerScope")
+            .field("deadline", &self.deadline)
+            .finish_non_exhaustive()
+    }
+}
+
+impl meshway_transport::SendLifetime for Scope {
+    fn is_current(&self) -> bool {
+        self.check().is_ok()
+    }
+
+    fn invalidated(
+        self: std::sync::Arc<Self>,
+    ) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async move {
+            let _: Result<(), Error> = self.run(std::future::pending()).await;
+            self.cancellation.cancel();
+        })
     }
 }
 

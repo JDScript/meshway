@@ -2,6 +2,12 @@
 #[cfg(target_os = "linux")]
 pub(super) fn validate(
     cfg: &meshway_configuration::execution::NodeConfiguration,
+    dns_ids: &std::collections::BTreeMap<meshway_dns::ResolverSource, meshway_model::RequestId>,
+    retired_dns: &std::collections::BTreeMap<
+        meshway_model::RequestId,
+        super::dns::intents::Retired,
+    >,
+    now_ms: u64,
 ) -> Result<
     (),
     (
@@ -11,11 +17,25 @@ pub(super) fn validate(
 > {
     use meshway_ipc::Problem;
     use meshway_protocol::execution::ApplyFailure;
-    if dns_required(&cfg.dns.settings) {
+    if !matches!(
+        cfg.dns.egress,
+        meshway_configuration::execution::DnsEgress::NoExit
+    ) {
         return Err((Problem::Dns, ApplyFailure::Dns));
     }
     if cfg.exit_enabled
-        || !cfg.local_egress.is_empty()
+        || !owns_all(
+            cfg.local_egress.iter().filter_map(|(id, permit)| {
+                // Old DNS intents cannot execute after leaving Scope. Exact,
+                // bounded owner-created metadata need not fence unrelated flows
+                // while Server expiry removes it from the next publication.
+                (!retired_dns
+                    .get(id)
+                    .is_some_and(|retired| retired.matches(cfg.node_id, permit, now_ms)))
+                .then_some(id)
+            }),
+            dns_ids,
+        )
         || !cfg.diagnostics.is_empty()
         || cfg.permits.values().any(|permit| {
             !matches!(
@@ -30,7 +50,17 @@ pub(super) fn validate(
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn dns_required(dns: &meshway_configuration::DnsConfiguration) -> bool {
+fn owns_all<'a>(
+    mut local: impl Iterator<Item = &'a meshway_model::RequestId>,
+    dns: &std::collections::BTreeMap<meshway_dns::ResolverSource, meshway_model::RequestId>,
+) -> bool {
+    // Selection is necessary, never sufficient: Runtime::install additionally
+    // validates every sealed resolver route against the exact execution lease.
+    local.all(|id| dns.values().any(|owned| owned == id))
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn dns_required(dns: &meshway_configuration::DnsConfiguration) -> bool {
     dns.magic_dns
         || dns.override_local
         || !dns.servers.is_empty()
@@ -43,6 +73,21 @@ fn dns_required(dns: &meshway_configuration::DnsConfiguration) -> bool {
 mod tests {
     use super::dns_required;
     use meshway_configuration::DnsConfiguration;
+
+    #[test]
+    fn unrelated_local_egress_cannot_pass_the_dns_component_gate() {
+        let owned: meshway_model::RequestId =
+            "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let foreign: meshway_model::RequestId =
+            "00000000-0000-4000-8000-000000000002".parse().unwrap();
+        let dns = std::collections::BTreeMap::from([(
+            meshway_dns::ResolverSource::Configured("primary".into()),
+            owned,
+        )]);
+        assert!(super::owns_all([owned].iter(), &dns));
+        assert!(!super::owns_all([owned, foreign].iter(), &dns));
+        assert!(!super::owns_all([foreign].iter(), &Default::default()));
+    }
 
     #[test]
     fn dns_requires_explicit_server_configuration_disabling_all_system_features() {

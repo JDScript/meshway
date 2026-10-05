@@ -43,6 +43,8 @@ pub(super) enum Pending {
     AddRoute { spec: RouteSpec },
     DeleteRoute { record: RouteRecord },
     CreateTun,
+    CreateDnsAnchor,
+    DeleteDnsAnchor,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -63,6 +65,8 @@ pub(super) struct Journal {
     pub rules: Vec<RuleRecord>,
     pub routes: Vec<RouteRecord>,
     pub tun: Option<TunRecord>,
+    #[serde(default)]
+    pub anchor: Option<super::anchor::Record>,
     pub pending: Option<Pending>,
 }
 
@@ -99,12 +103,25 @@ impl Journal {
             return Err(Error::Journal);
         }
         let (boot, device, inode) = Self::identity()?;
-        if (!self.rules.is_empty() || !self.routes.is_empty())
+        if (!self.rules.is_empty() || !self.routes.is_empty() || self.anchor.is_some())
             && (self.boot != boot
                 || self.namespace_device != device
                 || self.namespace_inode != inode)
         {
             return Err(Error::Conflict);
+        }
+        if self.anchor.as_ref().is_some_and(|anchor| {
+            anchor.identity.index == 0
+                || anchor.hardware_address.len() != 6
+                || anchor.mtu == 0
+                || anchor.identity.boot.trim() != self.boot.trim()
+                || anchor.identity.namespace_device != self.namespace_device
+                || anchor.identity.namespace_inode != self.namespace_inode
+                || anchor.identity.installation != self.installation
+                || anchor.alias != format!("meshway-dns:{}", self.installation)
+                || anchor.identity.name != format!("mwd{}", &self.installation[..10])
+        }) {
+            return Err(Error::Journal);
         }
         for record in &self.rules {
             let layout = match record.spec.kind {

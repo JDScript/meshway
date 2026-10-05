@@ -4,6 +4,7 @@
 //! end-to-end encryption, installed UDP transport, daemon execution or TUN I/O.
 #![cfg(unix)]
 
+mod authority_race;
 mod continuity;
 mod secure;
 mod send_lifetime;
@@ -336,7 +337,8 @@ async fn real_http_access_revocation_fences_synced_receiver_and_queued_delivery(
         )
         .is_err()
     );
-    assert_eq!(b.retained_flows(), 0);
+    // Inert entries survive authority loss, but cannot admit or deliver packets.
+    assert_eq!(b.retained_flows(), 1);
     let fresh = mesh.b.control.execution_snapshot().unwrap();
     assert!(!old.same_execution(&fresh));
     assert!(
@@ -347,6 +349,8 @@ async fn real_http_access_revocation_fences_synced_receiver_and_queued_delivery(
             .contains_key(&mesh.demand)
     );
     assert!(b.refresh(fresh.clone()).is_err());
+    b.reconcile(fresh.clone()).unwrap();
+    assert_eq!(b.retained_flows(), 0); // Actual withdrawal removes prior state.
     let mut replacement = Engine::new(fresh, Limits::default()).unwrap();
     assert!(
         replacement

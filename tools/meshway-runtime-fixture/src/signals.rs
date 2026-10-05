@@ -54,6 +54,7 @@ pub enum Signal {
     Configuration {
         revision: Revision,
         addresses: BTreeMap<Role, Addresses>,
+        dns_domain: String,
     },
     Revision {
         revision: Revision,
@@ -70,6 +71,7 @@ pub enum Signal {
         tun_removed: bool,
         capture_removed: bool,
         identity_preserved: bool,
+        dns: Option<crate::dns::Evidence>,
     },
 }
 

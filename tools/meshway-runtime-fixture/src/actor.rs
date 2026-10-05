@@ -24,42 +24,24 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     underlay_ready().await?;
     let baseline = capture().await?;
     save(cli, "capture-before", &baseline).await?;
-    let mut daemon = Command::new(cli.binaries.join("meshwayd"))
-        .args([
-            "--log-format",
-            "json",
-            "--log-filter",
-            "info,meshway_daemon=debug",
-            "--server",
-            meshway_packet_fixture::CONTROLLER_ORIGIN,
-            "--network-mode",
-            "tun",
-            "--hostname",
-            role.name(),
-            "--bootstrap-host",
-        ])
-        .arg(format!(
-            "{}={}",
-            meshway_packet_fixture::CONTROLLER_NAME,
-            underlay.controller
-        ))
-        .arg("--data-dir")
-        .arg(cli.state.join("node"))
-        .env("SSL_CERT_FILE", cli.public.join("server.pem"))
-        .env("SSL_CERT_DIR", cli.public.join("empty-cert-dir"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(private_file(
-            &cli.evidence.join("daemon.stdout"),
-        )?))
-        .stderr(Stdio::from(private_file(
-            &cli.evidence.join("daemon.stderr"),
-        )?))
-        .kill_on_drop(true)
-        .spawn()?;
+    let mut dns = crate::dns::Probe::start(cli, role).await?;
+    let mut daemon = spawn_daemon(cli, role, underlay.controller)?;
     let mut echo = None;
-    let result = exercise(cli, role, &signals, &baseline, &mut daemon, &mut echo).await;
+    let result = exercise(
+        cli,
+        role,
+        &signals,
+        &baseline,
+        &mut daemon,
+        &mut echo,
+        &mut dns,
+    )
+    .await;
     if let Err(error) = &result {
         crate::record_error(cli, "failure.txt", error.as_ref());
+        if let Some(dns) = &dns {
+            let _ = dns.save(cli).await;
+        }
         let _ = signals
             .write(&format!("abort-{}", role.name()), &Signal::Ready)
             .await;
@@ -72,6 +54,7 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
         if let Ok(journal) = tokio::fs::read(cli.state.join("node/underlay.json")).await {
             let _ = tokio::fs::write(cli.evidence.join("failure-underlay.json"), journal).await;
         }
+        let _ = save_dns_journals(cli).await;
     }
     // No early return before every owned actor task and child has been joined.
     let echo_result = match &mut echo {
@@ -87,6 +70,50 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     Ok(())
 }
 
+fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result<Child> {
+    let mut daemon_command = Command::new(cli.binaries.join("meshwayd"));
+    if cli.dns_backend.enabled() {
+        daemon_command.args([
+            "--dns-backend",
+            cli.dns_backend.name(),
+            "--dns-bind",
+            cli.dns_backend.bind(),
+        ]);
+    }
+    Ok(daemon_command
+        .args([
+            "--log-format",
+            "json",
+            "--log-filter",
+            "info,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug",
+            "--server",
+            meshway_packet_fixture::CONTROLLER_ORIGIN,
+            "--network-mode",
+            "tun",
+            "--hostname",
+            role.name(),
+            "--bootstrap-host",
+        ])
+        .arg(format!(
+            "{}={}",
+            meshway_packet_fixture::CONTROLLER_NAME,
+            controller
+        ))
+        .arg("--data-dir")
+        .arg(cli.state.join("node"))
+        .env("SSL_CERT_FILE", cli.public.join("server.pem"))
+        .env("SSL_CERT_DIR", cli.public.join("empty-cert-dir"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(private_file(
+            &cli.evidence.join("daemon.stdout"),
+        )?))
+        .stderr(Stdio::from(private_file(
+            &cli.evidence.join("daemon.stderr"),
+        )?))
+        .kill_on_drop(true)
+        .spawn()?)
+}
+
 async fn exercise(
     cli: &Cli,
     role: Role,
@@ -94,22 +121,14 @@ async fn exercise(
     baseline: &Capture,
     daemon: &mut Child,
     echo: &mut Option<Echo>,
+    dns: &mut Option<crate::dns::Probe>,
 ) -> Result<()> {
     tracing::info!(
         phase = "cli-up",
         role = role.name(),
         "starting actual daemon and local CLI"
     );
-    tokio::time::timeout(STARTUP, async {
-        while !tokio::fs::try_exists(cli.state.join("node/control.sock")).await? {
-            if daemon.try_wait()?.is_some() {
-                return Err("daemon exited before IPC ready".into());
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        Ok::<(), Error>(())
-    })
-    .await??;
+    wait_ipc(cli, daemon).await?;
     command(cli, "up").await?;
     let status = wait_status(cli, |status| status.enrollment_request_id.is_some()).await?;
     if daemon.id() != Some(status.process_id) {
@@ -122,6 +141,7 @@ async fn exercise(
     let Signal::Configuration {
         revision,
         addresses,
+        dns_domain,
     } = signals.wait("go").await?
     else {
         return Err("invalid configuration rendezvous".into());
@@ -131,6 +151,41 @@ async fn exercise(
     }
     let status = running(cli, revision).await?;
     publish_status(cli, signals, role, "initial", status).await?;
+    if let Some(dns) = dns {
+        dns.active(
+            cli,
+            role,
+            &dns_domain,
+            &addresses[&Role::B],
+            "before-restart",
+            true,
+        )
+        .await?;
+        terminate(daemon).await?;
+        dns.unavailable(cli, role, &dns_domain, "restart-gap")
+            .await?;
+        *daemon = spawn_daemon(cli, role, signals::underlay(cli).await?.controller)?;
+        wait_ipc(cli, daemon).await?;
+        let status = running(cli, revision).await?;
+        if status.identity.as_ref() != Some(&identity)
+            || daemon.id() != Some(status.process_id)
+            || !status.desired_up
+        {
+            return Err(
+                "daemon restart did not preserve the same identity and desired-up intent".into(),
+            );
+        }
+        save(cli, "dns-restart-status", &status).await?;
+        dns.active(
+            cli,
+            role,
+            &dns_domain,
+            &addresses[&Role::B],
+            "after-restart",
+            true,
+        )
+        .await?;
+    }
     let tun = owned_tun().await?;
     let tun_index = tun_index(&tun).await?;
     save(cli, "tun-identity", &(&tun, tun_index)).await?;
@@ -144,6 +199,17 @@ async fn exercise(
         .await?;
     for actor in Role::ALL {
         signals.ready(&format!("ready-{}", actor.name())).await?;
+    }
+    if let Some(dns) = dns {
+        dns.active(
+            cli,
+            role,
+            &dns_domain,
+            &addresses[&Role::B],
+            "initial",
+            true,
+        )
+        .await?;
     }
     let mut traffic = if role == Role::A {
         Some(Traffic::new(&addresses[&Role::A], &addresses[&Role::B]).await?)
@@ -161,6 +227,7 @@ async fn exercise(
         let sockets = traffic.sockets()?;
         save(cli, "persistent-sockets", &sockets).await?;
         let subscription = Subscription::start(&addresses[&Role::A], &addresses[&Role::B]).await?;
+        let subscription_observation = subscription.observation();
         tracing::info!(
             phase = "persistent-traffic",
             "same sockets and receive-only UDP subscription across 125 seconds"
@@ -185,9 +252,24 @@ async fn exercise(
             Ok::<(), Error>(())
         };
         // Both are ordinary futures, so failure cancels the other socket task
-        // without detaching a producer. receive_only consumes/drops its socket
-        // after a fresh post-125s reply; restoration never subscribes again.
-        let (_, reception) = tokio::try_join!(regular, subscription.receive_only())?;
+        // without detaching a producer. Snapshot failed reception before dropping
+        // the original socket; restoration never subscribes again.
+        let result = tokio::try_join!(regular, subscription.receive_only());
+        let failure = if result.is_err() {
+            subscription_observation
+                .lock()
+                .ok()
+                .and_then(|mut value| value.take())
+        } else {
+            None
+        };
+        // Preserve the original test failure even if evidence storage fails.
+        if let Some(failure) = failure
+            && let Ok(file) = private_file(&cli.evidence.join("failure-inbound-stream.json"))
+        {
+            let _ = serde_json::to_writer_pretty(file, &failure);
+        }
+        let (_, reception) = result?;
         let inbound = inbound_stream_evidence(cli, reception).await?;
         save(cli, "inbound-stream", &inbound).await?;
         save(cli, "persistent-traffic-counts", &traffic.counts).await?;
@@ -240,6 +322,17 @@ async fn exercise(
     };
     let status = running(cli, revision).await?;
     publish_status(cli, signals, role, "revoked", status).await?;
+    if let Some(dns) = dns {
+        dns.active(
+            cli,
+            role,
+            &dns_domain,
+            &addresses[&Role::B],
+            "revoked",
+            false,
+        )
+        .await?;
+    }
     if let Some(traffic) = &mut traffic {
         route_proof(cli, &addresses[&Role::B], &tun, false, "revoked").await?;
         traffic.blocked().await?;
@@ -250,6 +343,17 @@ async fn exercise(
     };
     let status = running(cli, revision).await?;
     publish_status(cli, signals, role, "restored", status).await?;
+    if let Some(dns) = dns {
+        dns.active(
+            cli,
+            role,
+            &dns_domain,
+            &addresses[&Role::B],
+            "restored",
+            true,
+        )
+        .await?;
+    }
     if role == Role::R {
         let v4 = ip(&["-4", "route", "get", &addresses[&Role::B].ipv4.to_string()]).await?;
         let v6 = ip(&["-6", "route", "get", &addresses[&Role::B].ipv6.to_string()]).await?;
@@ -312,6 +416,9 @@ async fn exercise(
     })
     .await?;
     save(cli, "lease-expired-status", &suspended).await?;
+    if let Some(dns) = dns {
+        dns.expired(cli, role, &dns_domain).await?;
+    }
     // Prove the unmarked destination still cannot escape via Docker's default
     // route. A held TUN or an unreachable policy route is acceptable here.
     route_proof(cli, &addresses[&Role::B], &tun, true, "suspended").await?;
@@ -367,6 +474,10 @@ async fn exercise(
     {
         return Err("identity changed on down".into());
     }
+    let dns_evidence = match dns.take() {
+        Some(dns) => Some(dns.down(cli, role).await?),
+        None => None,
+    };
     signals
         .write(
             &format!("report-{}", role.name()),
@@ -381,6 +492,7 @@ async fn exercise(
                 tun_removed: true,
                 capture_removed: true,
                 identity_preserved: true,
+                dns: dns_evidence,
             },
         )
         .await?;
@@ -560,6 +672,19 @@ async fn running(cli: &Cli, revision: Revision) -> Result<Status> {
     .await
 }
 
+async fn wait_ipc(cli: &Cli, daemon: &mut Child) -> Result<()> {
+    tokio::time::timeout(crate::remaining(STARTUP)?, async {
+        while !tokio::fs::try_exists(cli.state.join("node/control.sock")).await? {
+            if daemon.try_wait()?.is_some() {
+                return Err("daemon exited before IPC ready".into());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok::<(), Error>(())
+    })
+    .await?
+}
+
 async fn wait_status(cli: &Cli, predicate: impl Fn(&Status) -> bool) -> Result<Status> {
     let deadline = Instant::now() + crate::remaining(STARTUP)?;
     loop {
@@ -616,6 +741,49 @@ fn private_file(path: &Path) -> Result<std::fs::File> {
         .append(true)
         .mode(0o600)
         .open(path)?)
+}
+
+async fn save_dns_journals(cli: &Cli) -> Result<()> {
+    use std::io::Write;
+    let mut directories = tokio::fs::read_dir("/run/meshway").await?;
+    let mut remaining = 16;
+    while let Some(directory) = directories.next_entry().await? {
+        if !directory.file_type().await?.is_dir()
+            || !directory.file_name().to_string_lossy().starts_with("dns-")
+        {
+            continue;
+        }
+        let mut files = tokio::fs::read_dir(directory.path()).await?;
+        while let Some(file) = files.next_entry().await? {
+            if remaining == 0 {
+                return Ok(());
+            }
+            if !file.file_type().await?.is_file()
+                || file
+                    .path()
+                    .extension()
+                    .is_none_or(|extension| extension != "json")
+            {
+                continue;
+            }
+            let mut input = tokio::fs::File::open(file.path())
+                .await?
+                .take(256 * 1024 + 1);
+            let mut bytes = Vec::new();
+            input.read_to_end(&mut bytes).await?;
+            if bytes.len() > 256 * 1024 {
+                continue;
+            }
+            let name = format!(
+                "failure-{}-{}",
+                directory.file_name().to_string_lossy(),
+                file.file_name().to_string_lossy()
+            );
+            private_file(&cli.evidence.join(name))?.write_all(&bytes)?;
+            remaining -= 1;
+        }
+    }
+    Ok(())
 }
 
 async fn terminate(child: &mut Child) -> Result<()> {

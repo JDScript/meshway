@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 
@@ -23,18 +24,23 @@ from verify_tun import pinned_image
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
 BOOTSTRAP_BINARY = "meshway-underlay-bootstrap-tests"
-ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY)
+PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests"),
+                     "platform-daemon": ("meshway_daemon", "meshway-daemon-platform-tests")}
+ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
 KERNEL_TESTS = {
     "underlay-negative": "linux::kernel::tests::negative_capture_marked_bypass_recovery_and_exact_down",
     "underlay-foreign": "linux::kernel::tests::foreign_same_priority_is_retained_and_blocks_cleanup",
+    "underlay-datagram": "linux::datagram::tests::actual_udp_mark_truncation_and_unpolled_owner_release",
+    "underlay-dns-anchor": "linux::kernel::tests::dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal",
+    "underlay-dns-foreign": "linux::kernel::tests::foreign_dns_anchor_mutation_blocks_cleanup_without_removing_the_interface",
 }
 
 
 def fingerprint():
     paths = [ROOT / name for name in ("Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock")]
     for directory in ("crates", "apps/meshway-server", "apps/meshway-daemon", "apps/meshway-cli",
-                      "tools/meshway-packet-fixture", "tools/meshway-runtime-fixture"):
+                      "tools/meshway-packet-fixture", "tools/meshway-runtime-fixture", "dev/dns-fixture"):
         # Include SQL and other compile-time include_str/include_bytes inputs,
         # not just Rust modules and manifests.
         paths.extend(path for path in (ROOT / directory).rglob("*")
@@ -63,8 +69,19 @@ def build(directory, target, platform, machine, source):
     run("rustup", "target", "add", target, env=env)
     command = ["cargo", "zigbuild", "--target", target, "--locked",
                 "--jobs", "2", "--all-features", "-p", "meshway-daemon", "-p", "meshway-cli",
-                "-p", "meshway-runtime-fixture", "-p", "meshway-underlay", "--all-targets", "--message-format=json"]
-    output = run(*command, capture=True, env=env)
+                "-p", "meshway-runtime-fixture", "-p", "meshway-underlay", "-p", "meshway-dns", "--all-targets", "--message-format=json"]
+    try:
+        output = run(*command, capture=True, env=env)
+    except subprocess.CalledProcessError as error:
+        output = error.stdout or ""
+        (directory / "build.jsonl").write_text(output)
+        for line in output.splitlines():
+            if line.startswith("{"):
+                message = json.loads(line)
+                if message.get("reason") == "compiler-message":
+                    print(message["message"].get("rendered", ""), file=sys.stderr)
+        raise
+    (directory / "build.jsonl").write_text(output)
     if fingerprint() != source:
         raise RuntimeError("Sources changed during the shared daemon/CLI/fixture build.")
     hashes = {}
@@ -94,6 +111,17 @@ def build(directory, target, platform, machine, source):
     shutil.copyfile(bootstrap[0], directory / BOOTSTRAP_BINARY)
     (directory / BOOTSTRAP_BINARY).chmod(0o500)
     hashes[BOOTSTRAP_BINARY] = sha256(directory / BOOTSTRAP_BINARY)
+    for library, name in PLATFORM_BINARIES.values():
+        tests = [Path(item["executable"]) for item in messages
+                 if item.get("reason") == "compiler-artifact" and item.get("executable")
+                 and item["target"]["name"] == library and item["target"]["kind"] == ["lib"]
+                 and item["profile"].get("test")]
+        if len(tests) != 1:
+            raise RuntimeError("Expected one same-source Linux library test executable: " + library)
+        check_elf(tests[0], machine)
+        shutil.copyfile(tests[0], directory / name)
+        (directory / name).chmod(0o500)
+        hashes[name] = sha256(directory / name)
     manifest = {"sourceDigest": source, "sourceRoot": str(ROOT.resolve()), "target": target, "platform": platform,
                  "sha256": hashes, "buildCommands": [command],
                 "revision": run("git", "rev-parse", "HEAD", capture=True).strip()}
@@ -121,7 +149,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-only", action="store_true", help="host build and source manifest only")
     parser.add_argument("--artifacts", type=Path, help="reuse a --build-only bin directory with matching source manifest")
+    parser.add_argument("--transport", choices=("native-tcp", "native-udp"), default="native-tcp",
+                        help="Server-configured outer carrier; never a daemon-local policy override")
+    parser.add_argument("--dns-backend", choices=("off", "resolv-conf", "resolved"), default="off",
+                        help="real libc DNS conformance in an owned private mount namespace")
+    parser.add_argument("--dns-image-manifest", type=Path,
+                        help="parent-built dev/dns-fixture/build.py immutable OS image manifest")
     args = parser.parse_args()
+    if not args.build_only and (args.dns_backend != "off") != bool(args.dns_image_manifest):
+        parser.error("DNS scenarios require --dns-image-manifest; IP-only runs must omit it")
     os.umask(0o077)
     target, platform, machine = docker_target()  # read-only engine architecture query
     common = Path(run("git", "rev-parse", "--git-common-dir", capture=True).strip())
@@ -130,8 +166,8 @@ def main():
     root.mkdir(parents=True, exist_ok=True)
     identity = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     report = root / identity
-    for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", *ROLES,
-                 "underlay-peer", "bootstrap", *KERNEL_TESTS):
+    for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", *ROLES,
+                 "underlay-peer", "bootstrap", *KERNEL_TESTS, *PLATFORM_BINARIES):
         (report / name).mkdir(parents=True, exist_ok=True)
     source = fingerprint()
     # One source/cache owner per invocation; never leak the lock FD to Cargo,
@@ -148,6 +184,25 @@ def main():
     description = json.loads(run("docker", "image", "inspect", image, capture=True))[0]
     if description["Os"] != "linux" or description["Architecture"] != platform.split("/")[1] or description["Config"].get("Volumes"):
         raise RuntimeError("Expected the existing native Linux digest-pinned runtime image without volumes.")
+    dns_image = None
+    dns_assets = None
+    if args.dns_backend != "off":
+        dns_assets = json.loads(args.dns_image_manifest.read_text())
+        lock_path = ROOT / "dev/dns-fixture/assets.lock.json"
+        lock = json.loads(lock_path.read_text())
+        if (dns_assets.get("status") != "built" or dns_assets.get("platform") != platform
+                or dns_assets.get("base") != lock["base"] or dns_assets.get("lockSha256") != sha256(lock_path)
+                or not dns_assets.get("packages")):
+            raise RuntimeError("DNS OS asset manifest does not match the pinned fixture lock/platform")
+        dns_image = dns_assets["imageId"]
+        if not isinstance(dns_image, str) or not dns_image.startswith("sha256:") or len(dns_image) != 71:
+            raise RuntimeError("DNS OS image must be an immutable local SHA256 image ID")
+        dns_description = json.loads(run("docker", "image", "inspect", dns_image, capture=True))[0]
+        if (dns_description["Id"] != dns_image or dns_description["Os"] != "linux"
+                or dns_description["Architecture"] != platform.split("/")[1]
+                or dns_description["Config"].get("Volumes")):
+            raise RuntimeError("DNS OS image identity/platform/volumes mismatch")
+        shutil.copyfile(ROOT / "dev/dns-fixture/namespace.sh", report / "dns-support/namespace.sh")
     if fingerprint() != source:
         raise RuntimeError("Sources changed before runtime start.")
     label_key = "io.meshway.runtime-fixture"
@@ -156,16 +211,21 @@ def main():
     network = None
     manifest = {**artifacts, "image": image, "imageId": description["Id"], "run": identity,
                 "dirty": bool(run("git", "status", "--porcelain", capture=True).strip()),
-                "passed": False, "processes": {}, "resources": {"containers": containers},
-                "scope": "real meshwayd/CLI; Server browser approval; A-R-B NativeTCP; IPv4/IPv6 UDP/TCP TUN; demand renewal; Access revocation; lease loss; offline down",
+                 "passed": False, "processes": {}, "resources": {"containers": containers},
+                  "carrier": args.transport,
+                  "dnsBackend": args.dns_backend,
+                  "dnsOsAssets": dns_assets,
+                 "scope": "real meshwayd/CLI; Server browser approval; A-R-B; IPv4/IPv6 UDP/TCP TUN; demand renewal; Access revocation; lease loss; offline down",
                 "tests": {name: {"status": "notRun", "test": test} for name, test in KERNEL_TESTS.items()},
-                 "bootstrapHttpsTest": {"status": "notRun"},
+                  "bootstrapHttpsTest": {"status": "notRun"},
+                  "platformTests": {},
                 "cleanup": {}}
     metadata = report / "report.json"
     write_json(metadata, manifest)
 
     def create(role, arguments, address=None, address6=None, private=False, tun=False, admin=False,
                prepare=False, executable="meshway-runtime-fixture", environment=None):
+        dns_actor = args.dns_backend != "off" and role in ("a", "r", "b")
         command = ["docker", "create", "--pull", "never", "--name", f"meshway-runtime-{identity.lower()}-{role}",
                    "--label", label, "--platform", platform, "--read-only", "--cap-drop", "ALL",
                    "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m",
@@ -176,12 +236,33 @@ def main():
             command.extend(["--ip", str(address)])
         if address6:
             command.extend(["--ip6", str(address6)])
+        if role in ("underlay-dns-anchor", "underlay-dns-foreign"):
+            command.extend(["--tmpfs", "/run:rw,nosuid,nodev,mode=755"])
+        if role in PLATFORM_BINARIES:
+            command.extend(["--workdir", "/state"])
         for key, value in (environment or {}).items():
             command.extend(["--env", f"{key}={value}"])
+        if dns_actor:
+            command.extend(["--tmpfs", "/run:rw,nosuid,nodev,mode=755",
+                            "--env", "MESHWAY_DNS_FIXTURE_OWNED=1",
+                            "--env", "MESHWAY_DNS_BACKEND=" + args.dns_backend,
+                            "--env", "MESHWAY_DNS_UPSTREAM=" + addresses["controller"],
+                            "--env", "DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"])
+            capabilities = ["SYS_ADMIN", "CHOWN", "NET_BIND_SERVICE"]
+            if args.dns_backend == "resolved":
+                # resolved's documented privilege drop/bind path and the
+                # production owner's /proc PID-netns verification across UID.
+                capabilities += ["NET_RAW", "SETUID", "SETGID", "SETPCAP", "DAC_OVERRIDE", "SYS_PTRACE", "FOWNER", "KILL"]
+            for capability in capabilities:
+                command.extend(["--cap-add", capability])
+        if args.dns_backend != "off" and role == "controller":
+            command.extend(["--cap-add", "NET_BIND_SERVICE"])
         mounts = [("bin", "/fixtures", True), ("public", "/public", not prepare),
                   ("signals", "/signals", False)]
         if private:
             mounts.append(("controller", "/controller", not prepare))
+        if dns_actor:
+            mounts.append(("dns-support", "/dns-fixture", True))
         if not prepare:
             mounts.append((role, "/evidence", False))
         for source_name, destination, readonly in mounts:
@@ -192,9 +273,12 @@ def main():
             command.extend(["--device", "/dev/net/tun:/dev/net/tun"])
         if address6 or tun:
             command.extend(["--sysctl", "net.ipv6.conf.all.disable_ipv6=0", "--sysctl", "net.ipv6.conf.default.disable_ipv6=0"])
-        command.extend([image, "/fixtures/" + executable])
+        command.append(dns_image if dns_actor else image)
+        if dns_actor:
+            command.extend(["/bin/sh", "/dns-fixture/namespace.sh"])
+        command.append("/fixtures/" + executable)
         if executable == "meshway-runtime-fixture":
-            command.extend(["--log-format", "json"])
+            command.extend(["--log-format", "json", "--transport", args.transport, "--dns-backend", args.dns_backend])
         command.extend(arguments)
         identifier = run(*command, capture=True).strip()
         containers[role] = identifier
@@ -216,6 +300,15 @@ def main():
         manifest["preparation"] = preparation
         if preparation["attachExit"] or preparation["exitCode"] or preparation["oomKilled"] or preparation["running"]:
             raise RuntimeError("runtime TLS preparation failed")
+        for role, (_, binary) in PLATFORM_BINARIES.items():
+            create(role, ["--include-ignored", "--nocapture", "--test-threads=4"], executable=binary,
+                   environment={"MESHWAY_DNS_ISOLATED": "1", "MESHWAY_DNS_BIND_MOUNT_FILE": "/etc/resolv.conf"})
+            result = execute(role)
+            passed = not any(result.values()) and "test result: ok." in (report / f"{role}.log").read_text()
+            manifest["platformTests"][role] = {"passed": passed, **result}
+            write_json(metadata, manifest)
+            if not passed:
+                raise RuntimeError("Linux DNS/daemon platform tests failed: " + role)
         random = uuid.uuid4().hex
         ipv6_requested = ipaddress.ip_network(f"2001:db8:{random[:4]}:{random[4:8]}::/64")
         network = run("docker", "network", "create", "--internal", "--ipv6", "--subnet", str(ipv6_requested), "--label", label,
@@ -265,7 +358,7 @@ def main():
                 if json.loads(ready.read_text()) != {"kind": "ready"}:
                     raise RuntimeError("invalid remote underlay peer readiness")
                 for role, test in KERNEL_TESTS.items():
-                    environment = {"MESHWAY_UNDERLAY_ISOLATED": "1"}
+                    environment = {"MESHWAY_UNDERLAY_ISOLATED": "1", "MESHWAY_DNS_ISOLATED": "1"}
                     if role == "underlay-negative":
                         environment.update(MESHWAY_UNDERLAY_PEER4=addresses["underlay-peer"] + ":42427",
                                            MESHWAY_UNDERLAY_PEER6="[" + addresses6["underlay-peer"] + "]:42427")

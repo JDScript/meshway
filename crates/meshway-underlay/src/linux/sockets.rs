@@ -22,6 +22,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::{
+    datagram::{DatagramCandidate, ProtectedDatagram},
     dns::Resolver,
     protection::{Scope, Shared, io_error},
 };
@@ -107,7 +108,7 @@ impl SocketFactory {
         let scope = self.shared.data(snapshot)?;
         let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
         let candidate = cfg.dialers.get(key).ok_or(Error::Target)?.clone();
-        dial_options(&candidate.parameters)?;
+        validate_dial(&candidate.parameters)?;
         if candidate.peer == cfg.node_id || !cfg.peers.contains_key(&candidate.peer) {
             return Err(Error::Target);
         }
@@ -128,7 +129,7 @@ impl SocketFactory {
         let scope = self.shared.data(snapshot)?;
         let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
         let declaration = cfg.listeners.get(key).ok_or(Error::Target)?.clone();
-        listener_options(declaration.declaration())?;
+        validate_listener(declaration.declaration())?;
         Ok(ListenerHandle {
             scope,
             local: cfg.node_id,
@@ -189,6 +190,85 @@ impl SocketFactory {
             .map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))?
     }
 
+    pub async fn datagram_listener(
+        &self,
+        snapshot: &ExecutionSnapshot,
+        key: &str,
+    ) -> Result<ProtectedDatagram> {
+        let handle = self.listener(snapshot, key)?;
+        let Listener::NativeUdp(value) = handle.declaration.declaration() else {
+            return Err(Error::Target);
+        };
+        ProtectedDatagram::bind(
+            handle.scope.clone(),
+            SocketAddr::new(value.listen, value.listen_port.get()),
+            &value.socket,
+            None,
+        )
+    }
+
+    pub async fn datagram_candidate(
+        &self,
+        snapshot: &ExecutionSnapshot,
+        key: &str,
+        endpoint_index: usize,
+    ) -> Result<Vec<DatagramCandidate>> {
+        let handle = self.candidate(snapshot, key, endpoint_index)?;
+        let DialParameters::NativeUdp { options } = &handle.candidate.parameters else {
+            return Err(Error::Target);
+        };
+        let local = udp_local(options)?;
+        let _attempt = self
+            .shared
+            .attempts
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Error::Capacity)?;
+        let resolver = self.resolver.scoped(handle.scope.clone())?;
+        let addresses = tokio::select! { biased;
+            _ = handle.scope.invalidated() => return Err(Error::Expired),
+            result = tokio::time::timeout(options.connect_timeout.as_std().min(self.timeout),
+                resolver.resolve(&handle.endpoint.host, handle.endpoint.port.get())) =>
+                result.map_err(|_| Error::Resolver)??,
+        };
+        let mut endpoints = Vec::new();
+        for ipv4 in [true, false] {
+            if local.is_some_and(|local| local.is_ipv4() != ipv4) {
+                continue;
+            }
+            let mut targets: Vec<_> = addresses
+                .iter()
+                .copied()
+                .filter(|a| a.is_ipv4() == ipv4)
+                .collect();
+            targets.dedup();
+            if targets.is_empty() {
+                continue;
+            }
+            let ip = local.unwrap_or_else(|| {
+                if ipv4 {
+                    std::net::Ipv4Addr::UNSPECIFIED.into()
+                } else {
+                    std::net::Ipv6Addr::UNSPECIFIED.into()
+                }
+            });
+            endpoints.push(DatagramCandidate {
+                endpoint: ProtectedDatagram::bind(
+                    handle.scope.clone(),
+                    SocketAddr::new(ip, 0),
+                    &options.socket,
+                    Some(targets.clone()),
+                )?,
+                targets,
+            });
+        }
+        handle.scope.check()?;
+        if endpoints.is_empty() {
+            return Err(Error::Resolver);
+        }
+        Ok(endpoints)
+    }
+
     pub async fn listen(&self, handle: &ListenerHandle) -> Result<ProtectedListener> {
         if !Arc::ptr_eq(&self.shared, &handle.scope.shared) {
             return Err(Error::Target);
@@ -212,6 +292,35 @@ impl SocketFactory {
             options: options.clone(),
             tcp: tcp.clone(),
         })
+    }
+}
+
+fn udp_local(options: &meshway_transport_spec::NativeUdpDialer) -> Result<Option<IpAddr>> {
+    if !options.enabled || !options.bind_interface.is_empty() {
+        return Err(Error::Target);
+    }
+    if options.local_address.is_empty() {
+        Ok(None)
+    } else {
+        options
+            .local_address
+            .parse()
+            .map(Some)
+            .map_err(|_| Error::Target)
+    }
+}
+
+pub(super) fn validate_dial(parameters: &DialParameters) -> Result<()> {
+    match parameters {
+        DialParameters::NativeUdp { options } => udp_local(options).map(|_| ()),
+        parameters => dial_options(parameters).map(|_| ()),
+    }
+}
+
+pub(super) fn validate_listener(listener: &Listener) -> Result<()> {
+    match listener {
+        Listener::NativeUdp(value) if value.enabled && value.bind_interface.is_empty() => Ok(()),
+        listener => listener_options(listener).map(|_| ()),
     }
 }
 

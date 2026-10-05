@@ -17,11 +17,21 @@ use meshway_protocol::{
     state::{Freshness, VisibleReport},
 };
 use meshway_server::{App, Settings};
-use meshway_transport_spec::{DialerSet, Endpoint, Listener, NativeTcpDialer, NativeTcpListener};
+use meshway_transport_spec::{
+    DialerSet, Endpoint, Listener, NativeTcpDialer, NativeTcpListener, NativeUdpDialer,
+    NativeUdpListener,
+};
 use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 use tokio::{net::TcpListener, sync::watch, task::JoinSet};
 
 pub async fn run(cli: &Cli) -> Result<()> {
+    let dns = crate::dns::Upstream::start(cli).await?;
+    let result = run_server(cli).await;
+    let dns_result = dns.shutdown(cli).await;
+    result.and(dns_result)
+}
+
+async fn run_server(cli: &Cli) -> Result<()> {
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     let tls = meshway_packet_fixture::tls_server(&cli.public, &cli.private).await?;
     let app = App::open(Settings::new(cli.state.join("server"))).await?;
@@ -39,11 +49,22 @@ pub async fn run(cli: &Cli) -> Result<()> {
                         let tls = tls.clone();
                         let router = router.clone();
                         connections.spawn(async move {
-                            let stream = tls.accept(stream).await.map_err(|_| "controller TLS handshake")?;
+                            let Ok(stream) = tls.accept(stream).await else {
+                                tracing::debug!(phase = "client-connection-closed", stage = "tls", "Client connection ended before TLS completed");
+                                return Ok::<(), Error>(());
+                            };
                             let service = hyper_util::service::TowerToHyperService::new(router);
-                            hyper::server::conn::http1::Builder::new()
+                            if let Err(error) = hyper::server::conn::http1::Builder::new()
                                 .serve_connection(hyper_util::rt::TokioIo::new(stream), service).await
-                                .map_err(|_| "controller HTTP connection")?;
+                            {
+                                // A daemon restart may close a keepalive stream
+                                // without TLS close_notify. One client's I/O or
+                                // protocol failure does not stop the listener;
+                                // coordinate() still verifies every API outcome.
+                                tracing::debug!(phase = "client-connection-closed", stage = "http",
+                                    incomplete = error.is_incomplete_message(), closed = error.is_closed(),
+                                    "Client HTTP connection ended");
+                            }
                             Ok::<(), Error>(())
                         });
                     }
@@ -98,8 +119,14 @@ pub async fn run(cli: &Cli) -> Result<()> {
                 tun_removed: true,
                 capture_removed: true,
                 identity_preserved: true,
+                dns,
                 ..
             } if *claimed == role
+                && (dns.as_ref().is_some_and(|evidence| {
+                    evidence.backend == cli.dns_backend
+                        && evidence.original_resolv_conf_restored == Some(true)
+                        && evidence.original_links_restored == Some(true)
+                }) == cli.dns_backend.enabled())
                 && match role {
                     Role::A | Role::B => *udp4 > 0 && *udp6 > 0 && *tcp4 > 0 && *tcp6 > 0,
                     Role::R => {
@@ -192,21 +219,34 @@ async fn coordinate(cli: &Cli) -> Result<()> {
         .network
         .id;
     // Commit the supported network policy before approving any daemon. In
-    // particular the first downloaded configuration already has DNS disabled.
+    // particular the first downloaded configuration already has the selected DNS policy.
     let original = source(&client, network, token).await?;
     let mut input = NetworkConfigurationInput::from(&original.configuration);
     input.address_pools.ipv4 = Input::Value(vec!["100.64.0.0/10".into()]);
     input.address_pools.ipv6 = Input::Value(vec!["fc00::/64".into()]);
-    input.dns.magic_dns = false;
+    input.dns.magic_dns = cli.dns_backend.enabled();
     input.dns.servers.clear();
     input.dns.default.clear();
     input.dns.routes.clear();
     input.dns.search_domains.clear();
     input.dns.override_local = false;
+    if cli.dns_backend.enabled() {
+        crate::dns::configure(&mut input, underlay.controller)?;
+    }
     input.defaults.topology = TopologyDefault::Deny;
-    input.defaults.dialers = DialerSet {
-        native_tcp: Some(NativeTcpDialer::default()),
-        ..DialerSet::default()
+    input.defaults.dialers = match cli.transport {
+        crate::CarrierMode::NativeTcp => DialerSet {
+            native_udp: None,
+            native_tcp: Some(NativeTcpDialer::default()),
+            vless: None,
+            trojan: None,
+        },
+        crate::CarrierMode::NativeUdp => DialerSet {
+            native_udp: Some(NativeUdpDialer::default()),
+            native_tcp: None,
+            vless: None,
+            trojan: None,
+        },
     };
     apply(&client, network, token, original.revision, &input).await?;
     signals.write("enroll", &Signal::Ready).await?;
@@ -305,19 +345,33 @@ async fn coordinate(cli: &Cli) -> Result<()> {
             .ok_or("missing enrolled node")?;
         node.listeners = BTreeMap::from([(
             "tcp".into(),
-            Listener::NativeTcp(NativeTcpListener {
-                enabled: true,
-                remark: String::new(),
-                listen: "0.0.0.0".parse()?,
-                listen_port: 35000.try_into()?,
-                endpoints: vec![Endpoint {
-                    host: underlay.actors[&role].to_string(),
-                    port: 35000.try_into()?,
-                }],
-                bind_interface: String::new(),
-                socket: Default::default(),
-                tcp: Default::default(),
-            }),
+            match cli.transport {
+                crate::CarrierMode::NativeTcp => Listener::NativeTcp(NativeTcpListener {
+                    enabled: true,
+                    remark: String::new(),
+                    listen: "0.0.0.0".parse()?,
+                    listen_port: 35000.try_into()?,
+                    endpoints: vec![Endpoint {
+                        host: underlay.actors[&role].to_string(),
+                        port: 35000.try_into()?,
+                    }],
+                    bind_interface: String::new(),
+                    socket: Default::default(),
+                    tcp: Default::default(),
+                }),
+                crate::CarrierMode::NativeUdp => Listener::NativeUdp(NativeUdpListener {
+                    enabled: true,
+                    remark: String::new(),
+                    listen: "0.0.0.0".parse()?,
+                    listen_port: 35000.try_into()?,
+                    endpoints: vec![Endpoint {
+                        host: underlay.actors[&role].to_string(),
+                        port: 35000.try_into()?,
+                    }],
+                    bind_interface: String::new(),
+                    socket: Default::default(),
+                }),
+            },
         )]);
         node.dialers = Input::Omitted;
     }
@@ -366,6 +420,7 @@ async fn coordinate(cli: &Cli) -> Result<()> {
             &Signal::Configuration {
                 revision,
                 addresses,
+                dns_domain: committed.configuration.dns.domain.clone(),
             },
         )
         .await?;
@@ -430,59 +485,73 @@ async fn measured_links(
     token: &str,
     nodes: &BTreeMap<Role, NodeId>,
 ) -> Result<()> {
-    for role in Role::ALL {
-        let view = client
-            .get_node_state(
-                &GetNodeStatePath {
-                    network_id: network,
-                    node_id: nodes[&role],
-                },
-                token,
-            )
-            .await?;
-        let state = view
-            .nodes
-            .get(&nodes[&role])
-            .ok_or("missing traffic NodeState")?;
-        let Some(VisibleReport::Full { report }) = &state.report else {
-            return Err("missing measured full NodeState".into());
-        };
-        if state.freshness != Freshness::Current {
-            return Err("traffic NodeState is stale".into());
-        }
-        let peers: &[Role] = match role {
-            Role::A | Role::B => &[Role::R],
-            Role::R => &[Role::A, Role::B],
-        };
-        for peer in peers {
-            if !report.links.get(&nodes[peer]).is_some_and(|links| {
-                links.iter().any(|link| {
-                    link.phase == meshway_model::state::LinkPhase::Authenticated
-                        && link.transport == "native_tcp"
-                        && link.business_dependencies > 0
-                })
-            }) {
-                return Err(
-                    "mandatory relay edge lacks measured authenticated business dependency".into(),
-                );
+    tokio::time::timeout(STARTUP, async {
+        for role in Role::ALL {
+            loop {
+                let view = client
+                    .get_node_state(
+                        &GetNodeStatePath {
+                            network_id: network,
+                            node_id: nodes[&role],
+                        },
+                        token,
+                    )
+                    .await?;
+                let state = view
+                    .nodes
+                    .get(&nodes[&role])
+                    .ok_or("missing traffic NodeState")?;
+                tokio::fs::write(
+                    cli.evidence
+                        .join(format!("state-traffic-attempt-{}.json", role.name())),
+                    serde_json::to_vec_pretty(&view)?,
+                )
+                .await?;
+                let Some(VisibleReport::Full { report }) = &state.report else {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    continue;
+                };
+                let peers: &[Role] = match role {
+                    Role::A | Role::B => &[Role::R],
+                    Role::R => &[Role::A, Role::B],
+                };
+                let complete = state.freshness == Freshness::Current
+                    && peers.iter().all(|peer| {
+                        report.links.get(&nodes[peer]).is_some_and(|links| {
+                            links.iter().any(|link| {
+                                link.phase == meshway_model::state::LinkPhase::Authenticated
+                                    && link.transport == cli.transport.protocol().as_str()
+                                    && link.business_dependencies > 0
+                            })
+                        })
+                    });
+                if report.links.iter().any(|(peer, links)| {
+                    !peers.iter().any(|role| nodes[role] == *peer)
+                        && links.iter().any(|link| {
+                            link.phase == meshway_model::state::LinkPhase::Authenticated
+                        })
+                }) {
+                    return Err("unexpected authenticated edge bypasses mandatory relay".into());
+                }
+                if !complete {
+                    // Installation, live adjacency and reported facts have independent
+                    // lifetimes. Wait for a fresh real report after physical reattachment;
+                    // rereading a report never creates or extends the observation.
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    continue;
+                }
+                tokio::fs::write(
+                    cli.evidence
+                        .join(format!("state-traffic-{}.json", role.name())),
+                    serde_json::to_vec_pretty(&view)?,
+                )
+                .await?;
+                break;
             }
         }
-        if report.links.iter().any(|(peer, links)| {
-            !peers.iter().any(|role| nodes[role] == *peer)
-                && links
-                    .iter()
-                    .any(|link| link.phase == meshway_model::state::LinkPhase::Authenticated)
-        }) {
-            return Err("unexpected authenticated edge bypasses mandatory relay".into());
-        }
-        tokio::fs::write(
-            cli.evidence
-                .join(format!("state-traffic-{}.json", role.name())),
-            serde_json::to_vec_pretty(&view)?,
-        )
-        .await?;
-    }
-    Ok(())
+        Ok(())
+    })
+    .await?
 }
 
 async fn applied(
@@ -510,6 +579,12 @@ async fn applied(
                     .nodes
                     .get(&nodes[&role])
                     .ok_or("missing Server NodeState")?;
+                tokio::fs::write(
+                    cli.evidence
+                        .join(format!("state-{stage}-attempt-{}.json", role.name())),
+                    serde_json::to_vec_pretty(&view)?,
+                )
+                .await?;
                 if let Some(VisibleReport::Full { report }) = &state.report
                     && report
                         .configuration

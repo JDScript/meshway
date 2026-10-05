@@ -8,11 +8,13 @@ description = "Owned Linux capture routing and protected Node bootstrap/data soc
 [dependencies]
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-control = { path = "../meshway-control" }
+meshway-dns = { path = "../meshway-dns" }
 meshway-model = { path = "../meshway-model" }
 meshway-private-storage = { path = "../meshway-private-storage" }
 meshway-transport = { path = "../meshway-transport" }
 meshway-transport-spec = { path = "../meshway-transport-spec" }
 meshway-transport-tcp = { path = "../meshway-transport-tcp" }
+meshway-transport-udp = { path = "../meshway-transport-udp" }
 meshway-tun = { path = "../meshway-tun" }
 socket2.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }

@@ -118,6 +118,7 @@ pub struct UpstreamWork {
     pub(crate) ticket: Ticket,
     pub(crate) route: LocalResolverRoute,
     pub(crate) query: Query,
+    pub(crate) fallback: Option<LocalResolverRoute>,
 }
 
 impl UpstreamWork {
@@ -400,6 +401,87 @@ impl Owner {
             ticket,
             route,
             query,
+            fallback: None,
+        }))
+    }
+
+    pub(crate) fn begin_system(
+        &mut self,
+        query: Query,
+        system: &crate::SystemResolverSnapshot,
+        demands: &BTreeMap<usize, RequestId>,
+        tcp_demands: &BTreeMap<usize, RequestId>,
+        deadline: Instant,
+    ) -> Begin {
+        self.reap();
+        let Ok(cfg) = self.snapshot.configuration() else {
+            return Begin::Unavailable(Unavailable::Inactive);
+        };
+        if !matches!(
+            cfg.dns.egress,
+            meshway_configuration::execution::DnsEgress::NoExit
+        ) || !matches!(
+            self.state.published.select(&query, ExitSelection::NoExit),
+            Selection::Unmanaged
+        ) {
+            return Begin::Unavailable(Unavailable::MissingResolverPlan);
+        }
+        // Original OS order is preserved; no endpoint is tried without its own
+        // grant. A TCP retry requires its own pre-published demand and is used
+        // only after a validated truncated UDP response, within this deadline.
+        let Some(demand) = demands.get(&0) else {
+            return Begin::Unavailable(Unavailable::MissingResolverPlan);
+        };
+        let deadline = deadline
+            .min(self.snapshot.expires_at())
+            .min(Instant::now() + self.state.limits.query_timeout);
+        let mut route = match LocalResolverRoute::system(
+            self.snapshot.clone(),
+            system.clone(),
+            0,
+            system.primary,
+            *demand,
+            deadline,
+        ) {
+            Ok(route) => route,
+            Err(_) => return Begin::Unavailable(Unavailable::MissingResolverPlan),
+        };
+        let mut fallback = if system.primary == meshway_configuration::DnsTransport::Udp {
+            let Some(demand) = tcp_demands.get(&0) else {
+                return Begin::Unavailable(Unavailable::MissingResolverPlan);
+            };
+            match LocalResolverRoute::system(
+                self.snapshot.clone(),
+                system.clone(),
+                0,
+                meshway_configuration::DnsTransport::Tcp,
+                *demand,
+                deadline,
+            ) {
+                Ok(route) => Some(route),
+                Err(_) => return Begin::Unavailable(Unavailable::MissingResolverPlan),
+            }
+        } else {
+            None
+        };
+        let ticket = match self.state.insert_pending(
+            query.clone(),
+            String::new(),
+            PendingKind::Upstream,
+            deadline,
+        ) {
+            Ok(ticket) => ticket,
+            Err(reason) => return Begin::Unavailable(reason),
+        };
+        route.bind_cancellation(ticket.cancelled.clone());
+        if let Some(fallback) = &mut fallback {
+            fallback.bind_cancellation(ticket.cancelled.clone());
+        }
+        Begin::Upstream(Box::new(UpstreamWork {
+            ticket,
+            route,
+            query,
+            fallback,
         }))
     }
 

@@ -202,3 +202,35 @@ async fn cancelled_or_timed_out_owned_exchange_releases_stream() {
     );
     assert_eq!(peer.read(&mut [0; 1]).await.unwrap(), 0);
 }
+
+#[test]
+fn datagram_codec_has_exact_lengths_and_distinct_udp_phase_ids() {
+    for kind in [
+        Kind::Init,
+        Kind::Challenge,
+        Kind::Ack,
+        Kind::Ready,
+        Kind::Ping,
+        Kind::Pong,
+    ] {
+        let bytes = encode(kind, &[7; 160]).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), (kind, &[7; 160][..]));
+        for size in 0..bytes.len() {
+            assert!(decode(&bytes[..size]).is_err());
+        }
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(decode(&trailing).is_err());
+        let mut unknown = bytes;
+        unknown[8] = 7;
+        assert!(decode(&unknown).is_err());
+    }
+    assert!(encode(Kind::Init, &[]).is_err());
+    assert!(encode(Kind::Init, &[0; MAX_MESSAGE]).is_err());
+    let control = key(1, KeyAlgorithm::Ed25519);
+    let dp = key(2, KeyAlgorithm::X25519);
+    let mut udp = carrier();
+    udp.protocol = TransportProtocol::NativeUdp;
+    let context = encode_context(network(1), &udp, [(&control, &dp), (&control, &dp)]).unwrap();
+    assert_eq!(context[48], 4);
+}

@@ -5,8 +5,14 @@ pub(super) struct Candidate {
     key: String,
     carrier: Carrier,
     endpoints: usize,
-    connector: provider::Connector,
+    driver: Driver,
     priority: u16,
+    timeout: std::time::Duration,
+}
+
+enum Driver {
+    Stream(Box<provider::Connector>),
+    Datagram,
 }
 
 pub(super) fn plans(
@@ -32,8 +38,21 @@ pub(super) fn plans(
         }
         // Unsupported dial candidates cannot be used; another configured stream
         // candidate may still be usable. Enabled unsupported listeners fail start.
-        let Ok(connector) = provider::Connector::new(&candidate.parameters) else {
-            continue;
+        let (driver, timeout) = match &candidate.parameters {
+            meshway_transport_spec::DialParameters::NativeUdp { options } if options.enabled => (
+                Driver::Datagram,
+                options
+                    .connect_timeout
+                    .as_std()
+                    .min(limits.handshake_timeout),
+            ),
+            parameters => match provider::Connector::new(parameters) {
+                Ok(connector) => (
+                    Driver::Stream(Box::new(connector)),
+                    limits.handshake_timeout,
+                ),
+                Err(_) => continue,
+            },
         };
         if carrier.listener_key.is_empty() || carrier.listener_key.len() > 128 {
             return Err(Error::Configuration);
@@ -51,8 +70,9 @@ pub(super) fn plans(
             key: key.clone(),
             carrier,
             endpoints: candidate.endpoints.len(),
-            connector,
+            driver,
             priority: candidate.priority,
+            timeout,
         });
     }
     for candidates in plans.values_mut() {
@@ -90,8 +110,41 @@ pub(super) async fn dial(
             }
             continue;
         }
-        for candidate in &candidates {
+        'candidates: for candidate in &candidates {
             for endpoint in 0..candidate.endpoints {
+                if shared.links.lock().is_ok_and(|links| {
+                    links
+                        .get(&peer)
+                        .is_some_and(|link| link.scope.check().is_ok())
+                }) {
+                    break 'candidates;
+                }
+                if matches!(&candidate.driver, Driver::Datagram) {
+                    let _ = datagram::dial(
+                        shared.clone(),
+                        factory.clone(),
+                        peer,
+                        &candidate.key,
+                        &candidate.carrier,
+                        endpoint,
+                        candidate.timeout,
+                    )
+                    .await;
+                    if lifetime.check().is_err() {
+                        return;
+                    }
+                    if lifetime
+                        .run(async {
+                            tokio::time::sleep(shared.limits.retry_backoff).await;
+                            Ok(())
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    continue;
+                }
                 let scope = shared.scope(Some((peer, candidate.carrier.clone())), true);
                 if scope.check().is_err() {
                     continue;
@@ -107,7 +160,10 @@ pub(super) async fn dial(
                         inner: socket.stream,
                         scope: shared.scope(Some((peer, candidate.carrier.clone())), false),
                     });
-                    let stream = candidate.connector.connect(raw).await?;
+                    let Driver::Stream(connector) = &candidate.driver else {
+                        return Err(Error::Configuration);
+                    };
+                    let stream = connector.connect(raw).await?;
                     let (stream, id) =
                         adjacency::dial(&shared.identity, &scope, stream, &candidate.carrier)
                             .await?;
@@ -115,6 +171,7 @@ pub(super) async fn dial(
                         stream,
                         LinkFact {
                             id,
+                            socket_id: id,
                             peer,
                             carrier: candidate.carrier.clone(),
                             local: socket.local,
@@ -227,6 +284,7 @@ pub(super) async fn listen(
                         stream,
                         LinkFact {
                             id,
+                            socket_id: id,
                             peer,
                             carrier,
                             local: socket.local,

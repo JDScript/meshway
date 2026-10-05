@@ -18,6 +18,7 @@ meshway-control = { path = "../../crates/meshway-control" }
 meshway-underlay = { path = "../../crates/meshway-underlay" }
 meshway-connectivity = { path = "../../crates/meshway-connectivity" }
 meshway-dataplane = { path = "../../crates/meshway-dataplane" }
+meshway-dns = { path = "../../crates/meshway-dns" }
 meshway-ipc = { path = "../../crates/meshway-ipc" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-model = { path = "../../crates/meshway-model" }

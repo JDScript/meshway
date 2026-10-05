@@ -15,6 +15,7 @@
 //! acceptance or transport implementation is implied.
 mod codec;
 mod crypto;
+pub(crate) mod diagnostics;
 mod replay;
 
 use crate::{
@@ -261,6 +262,11 @@ struct Circuit {
 }
 impl Drop for Circuit {
     fn drop(&mut self) {
+        if !matches!(self.state, State::Closed) && diagnostics::event() {
+            tracing::debug!(operation = "drop", cid = ?self.context.circuit,
+                demand = %self.context.demand, established = self.state.established(),
+                "Dataplane circuit dropped");
+        }
         self.cancellation.cancel();
     }
 }
@@ -315,9 +321,73 @@ impl Circuit {
         self.guard(snapshot, !self.state.established())
             .ensure_current()
     }
+
+    /// Lost snapshot authority stops this operation, but is not a cryptographic
+    /// close. Only Control's checked successor can make retained state usable.
+    /// Terminal state, cancellation and observed circuit expiry remain terminal.
+    fn validate_operation(
+        &mut self,
+        snapshot: &ExecutionSnapshot,
+        operation: &'static str,
+    ) -> Result<(), Error> {
+        tracing::trace!(target: "meshway_dataplane::secure::authority_boundary", operation,
+            "Validating circuit authority");
+        let result = self.ensure_current(snapshot);
+        if let Err(error) = result
+            && error != Error::Authority
+        {
+            self.retire_for(
+                operation,
+                match error {
+                    Error::Expired => "deadline_or_cancel",
+                    _ => "state",
+                },
+            );
+        }
+        result
+    }
+
+    fn finish_operation<T>(
+        &mut self,
+        snapshot: &ExecutionSnapshot,
+        operation: &'static str,
+        result: Result<T, Error>,
+    ) -> Result<T, Error> {
+        let current = self.validate_operation(snapshot, operation);
+        // Preserve the original rejection. A produced output must also pass the
+        // final check; dropping it never rolls back consumed nonces/flow state.
+        result.and_then(|output| current.map(|()| output))
+    }
     fn retire(&mut self) {
+        self.retire_for("local", "explicit_close");
+    }
+
+    fn retire_for(&mut self, operation: &'static str, cause: &'static str) {
+        if !matches!(self.state, State::Closed) && diagnostics::event() {
+            tracing::debug!(operation, cause, cid = ?self.context.circuit,
+                demand = %self.context.demand, established = self.state.established(),
+                cancelled = self.cancellation.is_cancelled(),
+                expires_at_ms = self.expires_at_ms,
+                remaining_ms = self.expires_at.saturating_duration_since(Instant::now()).as_millis() as u64,
+                handshake_expires_at_ms = self.handshake_at_ms,
+                permit_expires_at_ms = self.permit_expires_at_ms,
+                "Dataplane circuit retired");
+        }
         self.cancellation.cancel();
         self.state = State::Closed;
+    }
+
+    fn engine_rejected(&self, operation: &'static str, error: crate::Error) -> Error {
+        if diagnostics::event() {
+            let admission = match &error {
+                crate::Error::Admission(value) => Some(*value),
+                _ => None,
+            };
+            tracing::debug!(operation, cause = diagnostics::engine_error(&error), ?admission,
+                cid = ?self.context.circuit, demand = %self.context.demand,
+                "Dataplane engine admission rejected");
+        }
+        Error::Packet
     }
 
     // Moving the Noise state out is not a lifecycle transition. Only a failed
@@ -327,24 +397,24 @@ impl Circuit {
         finish: impl FnOnce(Box<snow::HandshakeState>) -> Result<snow::StatelessTransportState, Error>,
     ) -> Result<(), Error> {
         if self.cancellation.is_cancelled() {
-            self.retire();
+            self.retire_for("handshake", "cancelled");
             return Err(Error::Expired);
         }
         let State::Initiator(noise) = std::mem::replace(&mut self.state, State::Closed) else {
-            self.retire();
+            self.retire_for("handshake", "invalid_state");
             return Err(Error::State);
         };
         match finish(noise) {
             Ok(noise) => {
                 if self.cancellation.is_cancelled() {
-                    self.retire();
+                    self.retire_for("handshake", "cancelled");
                     return Err(Error::Expired);
                 }
                 self.state = State::Endpoint(Box::new(noise));
                 Ok(())
             }
             Err(error) => {
-                self.retire();
+                self.retire_for("handshake", "completion_failed");
                 Err(error)
             }
         }
@@ -500,20 +570,37 @@ impl SecureNode {
         let frame = Frame::decode(&bytes)?;
         let snapshot = self.identity.snapshot();
         let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
-        let previous = crypto::verify(cfg, &frame, incoming)?;
+        let previous = crypto::verify(cfg, &frame, incoming).inspect_err(|error| {
+            if diagnostics::event() {
+                tracing::debug!(operation = "verify", ?error,
+                    cid = ?frame.context.circuit, demand = %frame.context.demand,
+                    metadata_authenticated = false, "Dataplane secure admission rejected");
+            }
+        })?;
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
         let id = frame.context.circuit;
         if let Some(mut circuit) = self.circuits.remove(&id) {
             // Always restore retained state on rejection. A consumed nonce or
             // handshake must never roll back as a side effect of an output error.
             let result = self.receive_known(&mut circuit, frame, previous);
-            if circuit.ensure_current(self.identity.snapshot()).is_err() {
-                circuit.retire();
+            let result = circuit.finish_operation(self.identity.snapshot(), "receive", result);
+            if let Err(error) = &result
+                && diagnostics::event()
+            {
+                tracing::debug!(operation = "receive", ?error, cid = ?id,
+                    demand = %circuit.context.demand,
+                    publication = %self.identity.snapshot().reference().execution_publication,
+                    "Dataplane secure admission rejected");
             }
             self.circuits.insert(id, circuit);
             result
         } else {
             if frame.kind != Kind::Init {
+                if diagnostics::event() {
+                    tracing::debug!(operation = "receive", cause = "unknown_circuit", error = ?Error::State,
+                        cid = ?id, demand = %frame.context.demand,
+                        "Dataplane secure admission rejected");
+                }
                 return Err(Error::State);
             }
             self.receive_init(frame, previous)
@@ -679,13 +766,13 @@ impl SecureNode {
                 let route = self
                     .engine
                     .admit_facts(ingress, packet.facts())
-                    .map_err(|_| Error::Packet)?;
+                    .map_err(|error| circuit.engine_rejected("receive_endpoint", error))?;
                 (route, Some(packet))
             }
             State::RelayEstablished => (
                 self.engine
                     .admit_facts(ingress, facts)
-                    .map_err(|_| Error::Packet)?,
+                    .map_err(|error| circuit.engine_rejected("receive_relay", error))?,
                 None,
             ),
             _ => return Err(Error::State),
@@ -722,8 +809,14 @@ impl SecureNode {
         self.maintain()?;
         let mut circuit = self.circuits.remove(&id).ok_or(Error::State)?;
         let result = self.send_inner(&mut circuit, packet);
-        if circuit.ensure_current(self.identity.snapshot()).is_err() {
-            circuit.retire();
+        let result = circuit.finish_operation(self.identity.snapshot(), "send", result);
+        if let Err(error) = &result
+            && diagnostics::event()
+        {
+            tracing::debug!(operation = "send", ?error, cid = ?id,
+                demand = %circuit.context.demand,
+                publication = %self.identity.snapshot().reference().execution_publication,
+                "Dataplane secure admission rejected");
         }
         self.circuits.insert(id, circuit);
         result
@@ -753,7 +846,7 @@ impl SecureNode {
         let route = self
             .engine
             .admit_facts(ingress, facts)
-            .map_err(|_| Error::Packet)?;
+            .map_err(|error| circuit.engine_rejected("send", error))?;
         if (route.route().direction == Direction::Reply) != reply {
             return Err(Error::Context);
         }
@@ -905,13 +998,34 @@ impl SecureNode {
                 .permits
                 .get(&circuit.context.demand)
                 .map(|permit| permit.expires_at_ms);
-            plan.push((*id, live, expiry));
+            let cause = if !compatible {
+                match (
+                    old.permits.get(&circuit.context.demand),
+                    new.permits.get(&circuit.context.demand),
+                ) {
+                    (None, _) | (_, None) => "permit_absent",
+                    (Some(before), _) if now_ms >= before.expires_at_ms => "old_permit_expired",
+                    (_, Some(after)) if now_ms >= after.expires_at_ms => "new_permit_expired",
+                    _ => "authorization_changed",
+                }
+            } else if matches!(circuit.state, State::Closed) {
+                "already_closed"
+            } else if now >= circuit.expires_at {
+                "monotonic_deadline"
+            } else if now_ms >= circuit.expires_at_ms {
+                "utc_deadline"
+            } else if !live && circuit.cancellation.is_cancelled() {
+                "cancelled"
+            } else {
+                "handshake_deadline"
+            };
+            plan.push((*id, live, expiry, cause));
         }
         let final_now_ms = snapshot.now_ms().map_err(|_| Error::Authority)?;
         snapshot
             .continuation_from(self.identity.snapshot())
             .map_err(|_| Error::Authority)?;
-        for (id, live, expiry) in plan {
+        for (id, live, expiry, cause) in plan {
             let circuit = self.circuits.get_mut(&id).expect("planned circuit");
             if let Some(expiry) = expiry {
                 circuit.permit_expires_at_ms = circuit.permit_expires_at_ms.max(expiry);
@@ -920,7 +1034,12 @@ impl SecureNode {
                 circuit.expires_at = snapshot.expires_at();
                 circuit.expires_at_ms = snapshot.expires_at_ms().min(expiry.expect("live permit"));
             } else {
-                circuit.retire();
+                let cause = if !live {
+                    cause
+                } else {
+                    "deadline_during_reconcile"
+                };
+                circuit.retire_for("reconcile", cause);
             }
         }
         self.engine.flows = flows;
@@ -939,8 +1058,10 @@ impl SecureNode {
             .now_ms()
             .map_err(|_| Error::Authority)?;
         for circuit in self.circuits.values_mut() {
-            if circuit.ensure_current(self.identity.snapshot()).is_err() {
-                circuit.retire();
+            if circuit.validate_operation(self.identity.snapshot(), "maintain")
+                == Err(Error::Authority)
+            {
+                return Err(Error::Authority);
             }
         }
         // Keep bounded replay tombstones for this owner. A later authenticated
@@ -1033,7 +1154,7 @@ impl SecureNode {
     pub async fn invalidated(&mut self) {
         self.identity.snapshot().invalidated().await;
         for circuit in self.circuits.values_mut() {
-            circuit.retire();
+            circuit.retire_for("invalidated_wait", "guard_woke");
         }
         self.engine.flows.clear();
     }

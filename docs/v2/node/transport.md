@@ -1,6 +1,6 @@
 # 承载会话与发送边界
 
-当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收。`meshway-connectivity::Manager` 已装配到 daemon 的 stream 运行路径；Linux Native TCP 承载上的双栈 UDP／TCP 包流已验收。候选 Mesh circuit、端到端加密和 TUN 接线见[数据面组件](/v2/node/dataplane)，动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
+当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收。`meshway-connectivity::Manager` 已装配到 daemon 的 stream 与 Native UDP 静态端点运行路径；Linux Native TCP、Native UDP 承载上的双栈 UDP／TCP 包流分别验收。Mesh circuit、端到端加密和 TUN 接线见[数据面组件](/v2/node/dataplane)，动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
 
 ## 分层
 
@@ -33,7 +33,7 @@ socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity�
 
 ## 邻接管理
 
-`meshway-connectivity::Manager` 持有有界 listener、拨号／重连任务、认证通道和事实快照，通过 `SocketFactory` 使用 underlay 的用途受限 socket。它复用正式 Native TCP、VLESS TCP/TLS／WebSocket/TLS、Trojan TCP/TLS provider；VLESS／Trojan 使用固定专用 Mesh CONNECT 目标，收到任意其他代理目标时拒绝，不提供通用代理。
+`meshway-connectivity::Manager` 持有有界 listener、拨号／重连任务、认证通道和事实快照，通过 `SocketFactory` 使用 underlay 的用途受限 socket。它复用正式 Native UDP、Native TCP、VLESS TCP/TLS／WebSocket/TLS、Trojan TCP/TLS provider；VLESS／Trojan 使用固定专用 Mesh CONNECT 目标，收到任意其他代理目标时拒绝，不提供通用代理。
 
 每条物理 stream 先完成三消息 `MWADJv1\0` 握手，再交给 Mesh 帧处理：
 
@@ -45,9 +45,15 @@ socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity�
 
 签名验证使用当前执行发布登记的控制公钥。Carrier 包含实际拨号方、监听方、listener key 和协议；连接方向独立于业务方向。邻接握手只证明当前获准连接，不替代 [Noise 端到端保护与逐跳包证明](/v2/node/dataplane#候选受保护-circuit)。
 
+Native UDP 复用同一 context、codec 和签名实现，并增加监听方签名的 READY 确认。INIT、Challenge、Ack、READY 均有有界重传；确认绑定实际来源地址、当前 endpoint 与双方 nonce。每个绑定 endpoint 只有一个接收 owner 和一个正式发送 owner，多个 peer 共享实际 socket；退役单个 peer 不关闭其他 peer 的通道。未知来源、截断报文和旧握手不能安装或替换活动邻接。
+
+重启／端口重绑定通过新鲜认证替换精确的旧 channel ID，不能等待旧健康窗口结束才开始建连。只有拨号能力的 peer 可用当前通道签名 Ping 触发监听端重新发起 source challenge；旧探测本身不恢复通道或延长许可。完成 Ack／READY 后仍检查捕获的旧通道或空槽代际，迟到确认不能覆盖后来建立的通道；被替换 peer 的旧排队输出立即失效。
+
+UDP 通道使用新鲜 nonce 的认证 Ping／Pong 检查存活，默认间隔 2 秒、健康窗口 6 秒；`send_to` 成功不构成可达证明。失效后按获准候选尝试其他承载。业务帧的实际目的地址由已认证通道固定，其后台发送同时检查原包期限、peer 通道和 endpoint 生命周期；外层等待者未继续被轮询也不能产生失效后的迟到输出。
+
 默认预算为 64 连接、16 listener、128 候选和 64 事件；握手期限 5 秒，重试退避 1 秒。事件与 snapshot 来自真实 listener／link 生命周期，不制造 RTT／丢包数据。停止取消并 join 任务，guard 在阻塞 I/O 中持续检查。
 
-当前 publication／续租更新会重建 Manager 的物理 stream；符合连续性条件的 SecureNode 逻辑流／circuit 可保留。TCP 建连与重连不是打洞证明；Native UDP daemon 邻接、NAT punching、主备优化和连接池尚未实现。
+当前 publication／续租更新会重建 Manager 的物理承载；符合连续性条件的 SecureNode 逻辑流／circuit 可保留。TCP 建连与重连、Native UDP 静态端点均不构成打洞证明；STUN、候选交换、协调 UDP 穿透和连接池尚未实现，范围见[连接获取](/v2/node/connectivity)。
 
 ## 帧与资源
 

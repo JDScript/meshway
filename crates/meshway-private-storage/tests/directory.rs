@@ -8,6 +8,37 @@ use std::{
 };
 
 #[test]
+fn existing_owner_inspection_never_creates_paths_or_replaces_a_missing_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let absent = root.join("absent").join("owner");
+    assert!(
+        Directory::open_existing(&absent, "owner.lock")
+            .unwrap()
+            .is_none()
+    );
+    assert!(!root.join("absent").exists());
+    let path = root.join("private");
+    let owner = Directory::open(&path, "owner.lock").unwrap();
+    assert!(matches!(
+        Directory::open_existing(&path, "owner.lock"),
+        Err(Error::InUse)
+    ));
+    drop(owner);
+    let inspected = Directory::open_existing(&path, "owner.lock")
+        .unwrap()
+        .unwrap();
+    assert_eq!(fs::read_dir(&path).unwrap().count(), 1);
+    drop(inspected);
+    fs::remove_file(path.join("owner.lock")).unwrap();
+    assert!(matches!(
+        Directory::open_existing(&path, "owner.lock"),
+        Err(Error::UnsafeStorage)
+    ));
+    assert!(!path.join("owner.lock").exists());
+}
+
+#[test]
 fn exclusive_lock_and_atomic_replacements_keep_whole_private_records() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().canonicalize().unwrap().join("private");

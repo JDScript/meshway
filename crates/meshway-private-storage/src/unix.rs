@@ -20,6 +20,14 @@ const FILE_FLAGS: OFlags = OFlags::RDWR
     .union(OFlags::NONBLOCK);
 
 pub(super) fn open(path: &Path, lock_name: &str) -> Result<Directory, Error> {
+    open_owned(path, lock_name, true)?.ok_or(Error::Io)
+}
+
+pub(super) fn open_existing(path: &Path, lock_name: &str) -> Result<Option<Directory>, Error> {
+    open_owned(path, lock_name, false)
+}
+
+fn open_owned(path: &Path, lock_name: &str, create: bool) -> Result<Option<Directory>, Error> {
     if !path.is_absolute() {
         return Err(Error::InvalidPath);
     }
@@ -38,30 +46,42 @@ pub(super) fn open(path: &Path, lock_name: &str) -> Result<Directory, Error> {
         File::from(open_directory("/", DIRECTORY_FLAGS, Mode::empty()).map_err(io_error)?);
     check_ancestor(&parent)?;
     for name in parents {
-        parent =
-            File::from(openat(&parent, *name, DIRECTORY_FLAGS, Mode::empty()).map_err(io_error)?);
+        parent = File::from(
+            match openat(&parent, *name, DIRECTORY_FLAGS, Mode::empty()) {
+                Ok(fd) => fd,
+                Err(Errno::NOENT) if !create => return Ok(None),
+                Err(error) => return Err(io_error(error)),
+            },
+        );
         check_ancestor(&parent)?;
     }
-    match mkdirat(&parent, *name, Mode::from_raw_mode(0o700)) {
-        Ok(()) => parent.sync_all().map_err(|_| Error::Io)?,
-        Err(Errno::EXIST) => {}
-        Err(error) => return Err(io_error(error)),
+    if create {
+        match mkdirat(&parent, *name, Mode::from_raw_mode(0o700)) {
+            Ok(()) => parent.sync_all().map_err(|_| Error::Io)?,
+            Err(Errno::EXIST) => {}
+            Err(error) => return Err(io_error(error)),
+        }
     }
-    let directory =
-        File::from(openat(&parent, *name, DIRECTORY_FLAGS, Mode::empty()).map_err(io_error)?);
+    let directory = File::from(
+        match openat(&parent, *name, DIRECTORY_FLAGS, Mode::empty()) {
+            Ok(fd) => fd,
+            Err(Errno::NOENT) if !create => return Ok(None),
+            Err(error) => return Err(io_error(error)),
+        },
+    );
     check(&directory, true)?;
-    let lock = file(&directory, lock_name, true)?.ok_or(Error::Io)?;
+    let lock = file(&directory, lock_name, create)?.ok_or(Error::UnsafeStorage)?;
     match lock.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return Err(Error::InUse),
         Err(TryLockError::Error(_)) => return Err(Error::Io),
     }
-    Ok(Directory {
+    Ok(Some(Directory {
         path: path.to_owned(),
         lock_name: lock_name.into(),
         directory,
         _lock: lock,
-    })
+    }))
 }
 
 pub(super) fn file(directory: &File, name: &str, create: bool) -> Result<Option<File>, Error> {

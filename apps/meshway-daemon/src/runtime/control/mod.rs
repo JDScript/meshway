@@ -111,6 +111,7 @@ pub(super) async fn run(
                     &settings.server,
                     network_reported.clone(),
                     settings.underlay.clone(),
+                    settings.dns.clone(),
                 )
                 .await
                 {
@@ -264,7 +265,14 @@ pub(super) async fn run(
                         None,
                         None,
                     );
-                    match wait_work(&mut desired, &plan, Some(result.delay), network.as_mut()).await
+                    match wait_work(
+                        &mut desired,
+                        &plan,
+                        Some(result.delay),
+                        network.as_mut(),
+                        true,
+                    )
+                    .await
                     {
                         Waiting::Change => {}
                         Waiting::Request(request) => {
@@ -311,7 +319,7 @@ pub(super) async fn run(
                         delay,
                     );
                     backoff = (backoff * 2).min(30);
-                    match wait_work(&mut desired, &plan, delay, network.as_mut()).await {
+                    match wait_work(&mut desired, &plan, delay, network.as_mut(), false).await {
                         Waiting::Change => {}
                         Waiting::Request(request) => {
                             queued = Some(request);
@@ -377,12 +385,13 @@ async fn wait_work(
     plan: &Desired,
     delay: Option<Duration>,
     network: Option<&mut network::Handle>,
+    report_changes: bool,
 ) -> Waiting {
     tokio::select! { biased;
         _ = desired.wait_for(|next| next.shutdown || next.revision != plan.revision) => Waiting::Change,
-        request = async {
-            match network { Some(network) => network.requests.recv().await, None => std::future::pending().await }
-        } => match request { Some(request) => Waiting::Request(request), None => Waiting::Worker },
+        work = async {
+            match network { Some(network) => network.work(report_changes).await, None => std::future::pending().await }
+        } => match work { network::Work::Request(request) => Waiting::Request(request), network::Work::Report => Waiting::Timer, network::Work::Closed => Waiting::Worker },
         _ = async { match delay { Some(delay) => tokio::time::sleep(delay).await, None => std::future::pending().await } } => Waiting::Timer,
     }
 }

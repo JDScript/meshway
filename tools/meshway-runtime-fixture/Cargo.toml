@@ -8,6 +8,8 @@ description = "Isolated real daemon and CLI networking conformance actors"
 [dependencies]
 meshway-packet-fixture = { path = "../meshway-packet-fixture" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
+meshway-dns = { path = "../../crates/meshway-dns" }
+hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 meshway-control-client = { path = "../../crates/meshway-control-client" }
 meshway-ipc = { path = "../../crates/meshway-ipc" }
 meshway-model = { path = "../../crates/meshway-model" }

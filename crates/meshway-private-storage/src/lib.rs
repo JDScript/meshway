@@ -47,6 +47,22 @@ impl Directory {
         }
     }
 
+    /// Inspect an existing private owner directory without creating any path or
+    /// lock file. Missing directories return None; an existing directory whose
+    /// lock is missing or invalid remains an ownership error.
+    pub fn open_existing(path: &Path, lock_name: &str) -> Result<Option<Self>, Error> {
+        name(lock_name)?;
+        #[cfg(unix)]
+        {
+            unix::open_existing(path, lock_name)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
     /// For libraries such as SQLite which must reopen checked names themselves.
     pub fn path(&self) -> &Path {
         &self.path

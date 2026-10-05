@@ -4,10 +4,11 @@
 mod actor;
 mod application;
 mod controller;
+mod dns;
 mod peer;
 mod signals;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use signals::Role;
 use std::{path::PathBuf, time::Duration};
 
@@ -43,8 +44,54 @@ struct Cli {
     evidence: PathBuf,
     #[arg(long, global = true, default_value = "/fixtures")]
     binaries: PathBuf,
+    #[arg(long, global = true, value_enum, default_value = "native-tcp")]
+    transport: CarrierMode,
+    #[arg(long, global = true, value_enum, default_value = "off")]
+    dns_backend: DnsBackend,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum DnsBackend {
+    Off,
+    ResolvConf,
+    Resolved,
+}
+
+impl DnsBackend {
+    fn enabled(self) -> bool {
+        self != Self::Off
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::ResolvConf => "resolv-conf",
+            Self::Resolved => "resolved",
+        }
+    }
+    fn bind(self) -> &'static str {
+        match self {
+            Self::Resolved => "127.0.0.1:5354",
+            _ => "127.0.0.1:53",
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CarrierMode {
+    NativeTcp,
+    NativeUdp,
+}
+
+impl CarrierMode {
+    fn protocol(self) -> meshway_transport_spec::TransportProtocol {
+        match self {
+            Self::NativeTcp => meshway_transport_spec::TransportProtocol::NativeTcp,
+            Self::NativeUdp => meshway_transport_spec::TransportProtocol::NativeUdp,
+        }
+    }
 }
 
 #[derive(Subcommand)]
