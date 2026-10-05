@@ -47,6 +47,7 @@ async fn run_server(cli: &Cli) -> Result<()> {
         )]);
     }
     let app = App::open(settings).await?;
+    let availability = crate::recovery::Availability::new();
     let mut router = meshway_server::http::router(&app);
     if cli.traversal == crate::TraversalMode::Nat {
         router = router.layer(axum::middleware::from_fn_with_state(
@@ -54,6 +55,10 @@ async fn run_server(cli: &Cli) -> Result<()> {
             crate::traversal::observe,
         ));
     }
+    router = router.layer(axum::middleware::from_fn_with_state(
+        availability.clone(),
+        crate::recovery::gate,
+    ));
     let (stop, mut stopped) = watch::channel(false);
     let server = tokio::spawn(async move {
         let mut connections = JoinSet::new();
@@ -103,7 +108,7 @@ async fn run_server(cli: &Cli) -> Result<()> {
         result.and(cleanup)
     });
     tracing::info!(phase = "controller-listening", "real Server HTTPS ready");
-    let result = tokio::time::timeout(DEADLINE, coordinate(cli, &audit)).await;
+    let result = tokio::time::timeout(DEADLINE, coordinate(cli, &audit, &availability)).await;
     let audit_result = audit.save(cli).await;
     // Always shut down the actual listener, SSE streams, and database owner,
     // including when an enrollment/configuration/traffic assertion fails.
@@ -128,52 +133,75 @@ async fn run_server(cli: &Cli) -> Result<()> {
         let report = signals
             .wait_for(&format!("report-{}", role.name()), Duration::from_secs(90))
             .await?;
-        match &report {
-            Signal::Report {
-                role: claimed,
-                udp4,
-                udp6,
-                tcp4,
-                tcp6,
-                relay_tun_received,
-                tun_removed: true,
-                capture_removed: true,
-                identity_preserved: true,
-                dns,
-                fallback,
-                ..
-            } if *claimed == role
-                && match fallback {
-                    Some(proof) => {
-                        cli.traversal_fallback
-                            && role == Role::A
-                            && proof.passed
-                            && proof.tcp_circuits.len() == 2
-                    }
-                    None => !(cli.traversal_fallback && role == Role::A),
-                }
-                && (dns.as_ref().is_some_and(|evidence| {
-                    evidence.backend == cli.dns_backend
-                        && evidence.original_resolv_conf_restored == Some(true)
-                        && evidence.original_links_restored == Some(true)
-                }) == cli.dns_backend.enabled())
-                && match role {
-                    Role::A | Role::B => *udp4 > 0 && *udp6 > 0 && *tcp4 > 0 && *tcp6 > 0,
-                    Role::R => {
-                        *relay_tun_received == Some(0)
-                            && *udp4 == 0
-                            && *udp6 == 0
-                            && *tcp4 == 0
-                            && *tcp6 == 0
-                    }
-                } => {}
-            _ => return Err("incomplete runtime actor evidence".into()),
-        }
+        validate_report(&report, role, cli.dns_backend, cli.traversal_fallback)?;
         tokio::fs::write(
             cli.evidence.join(format!("report-{}.json", role.name())),
             serde_json::to_vec_pretty(&report)?,
         )
         .await?;
+    }
+    Ok(())
+}
+
+/// Final report assertions shared with retained-artifact inspection. Decoding
+/// an old report never changes its run verdict or substitutes for a fresh run.
+pub(super) fn validate_report(
+    report: &Signal,
+    role: Role,
+    dns_backend: crate::DnsBackend,
+    traversal_fallback: bool,
+) -> Result<()> {
+    match report {
+        Signal::Report {
+            role: claimed,
+            udp4,
+            udp6,
+            tcp4,
+            tcp6,
+            relay_tun_received,
+            tun_removed: true,
+            capture_removed: true,
+            identity_preserved: true,
+            dns,
+            fallback,
+            ..
+        } if *claimed == role
+            && match fallback {
+                Some(proof) => {
+                    traversal_fallback
+                        && role == Role::A
+                        && proof.passed
+                        && proof.tcp_circuits.len() == 2
+                }
+                None => !(traversal_fallback && role == Role::A),
+            }
+            && (dns.as_ref().is_some_and(|evidence| {
+                evidence.backend == dns_backend
+                    && evidence.original_resolv_conf_restored == Some(true)
+                    && evidence.original_links_restored == Some(true)
+            }) == dns_backend.enabled())
+            && match role {
+                Role::A | Role::B => *udp4 > 0 && *udp6 > 0 && *tcp4 > 0 && *tcp6 > 0,
+                Role::R => {
+                    *relay_tun_received == Some(0)
+                        && *udp4 == 0
+                        && *udp6 == 0
+                        && *tcp4 == 0
+                        && *tcp6 == 0
+                }
+            } => {}
+        _ => return Err("incomplete runtime actor evidence".into()),
+    }
+    if let Signal::Report { node, recovery, .. } = report {
+        recovery.validate(role)?;
+        if recovery
+            .recovered
+            .identity
+            .as_ref()
+            .is_none_or(|identity| identity.node_id != *node)
+        {
+            return Err("final recovery report is bound to a different Node".into());
+        }
     }
     Ok(())
 }
@@ -217,7 +245,11 @@ async fn apply(
         .revision)
 }
 
-async fn coordinate(cli: &Cli, audit: &crate::traversal::Audit) -> Result<()> {
+async fn coordinate(
+    cli: &Cli,
+    audit: &crate::traversal::Audit,
+    availability: &crate::recovery::Availability,
+) -> Result<()> {
     let signals = Signals::new(&cli.signals);
     let underlay = signals::underlay(cli).await?;
     let client = Client::new(
@@ -520,7 +552,16 @@ async fn coordinate(cli: &Cli, audit: &crate::traversal::Audit) -> Result<()> {
             },
         )
         .await?;
-    applied(cli, &client, network, token, &nodes, revision, "initial").await?;
+    applied(
+        cli,
+        &client,
+        network,
+        token,
+        &nodes,
+        revision,
+        ("initial", None),
+    )
+    .await?;
     if cli.traversal == crate::TraversalMode::Nat {
         signals.ready("traversal-first").await?;
         measured_links(
@@ -601,7 +642,16 @@ async fn coordinate(cli: &Cli, audit: &crate::traversal::Audit) -> Result<()> {
     signals
         .write("revoked", &Signal::Revision { revision })
         .await?;
-    applied(cli, &client, network, token, &nodes, revision, "revoked").await?;
+    applied(
+        cli,
+        &client,
+        network,
+        token,
+        &nodes,
+        revision,
+        ("revoked", None),
+    )
+    .await?;
     signals.ready("revoked-traffic").await?;
     tracing::info!(
         phase = "access-revoked",
@@ -611,7 +661,16 @@ async fn coordinate(cli: &Cli, audit: &crate::traversal::Audit) -> Result<()> {
     signals
         .write("restored", &Signal::Revision { revision })
         .await?;
-    applied(cli, &client, network, token, &nodes, revision, "restored").await?;
+    applied(
+        cli,
+        &client,
+        network,
+        token,
+        &nodes,
+        revision,
+        ("restored", None),
+    )
+    .await?;
     for role in Role::ALL {
         signals
             .ready(&format!("lease-ready-{}", role.name()))
@@ -629,6 +688,150 @@ async fn coordinate(cli: &Cli, audit: &crate::traversal::Audit) -> Result<()> {
         )
         .await?;
     }
+    let closed_at_ms = availability.close().await?;
+    signals
+        .write(
+            "http-outage",
+            &Signal::HttpAvailability {
+                available: false,
+                observed_at_ms: closed_at_ms,
+            },
+        )
+        .await?;
+    tracing::info!(
+        phase = "http-outage",
+        closed_at_ms,
+        "Node HTTP admission closed; real Server owner remains running"
+    );
+    let mut expired = BTreeMap::new();
+    for role in Role::ALL {
+        let Signal::Expired {
+            role: claimed,
+            evidence,
+        } = signals
+            .wait_for(
+                &format!("instance-expired-{}", role.name()),
+                Duration::from_secs(165),
+            )
+            .await?
+        else {
+            return Err("missing instance-expiry evidence".into());
+        };
+        evidence.validate()?;
+        if claimed != role
+            || evidence.closed_at_ms != closed_at_ms
+            || evidence.before.identity.as_ref().is_none_or(|identity| {
+                identity.node_id != nodes[&role] || identity.network_id != network
+            })
+        {
+            return Err("instance-expiry evidence identity mismatch".into());
+        }
+        let view = client
+            .get_node_state(
+                &GetNodeStatePath {
+                    network_id: network,
+                    node_id: nodes[&role],
+                },
+                token,
+            )
+            .await?;
+        if view
+            .nodes
+            .get(&nodes[&role])
+            .is_none_or(|state| state.freshness == Freshness::Current)
+        {
+            return Err(
+                "Server still reports current Node State after gated instance expiry".into(),
+            );
+        }
+        tokio::fs::write(
+            cli.evidence
+                .join(format!("state-expired-{}.json", role.name())),
+            serde_json::to_vec_pretty(&view)?,
+        )
+        .await?;
+        expired.insert(role, evidence);
+    }
+    let (reopened_at_ms, rejected_requests) = availability.open()?;
+    tokio::fs::write(
+        cli.evidence.join("http-outage.json"),
+        serde_json::to_vec_pretty(&crate::recovery::Window {
+            closed_at_ms,
+            reopened_at_ms,
+            rejected_node_requests: rejected_requests,
+            response_status: 503,
+        })?,
+    )
+    .await?;
+    signals
+        .write(
+            "recovery-open",
+            &Signal::HttpAvailability {
+                available: true,
+                observed_at_ms: reopened_at_ms,
+            },
+        )
+        .await?;
+    let mut recovered = BTreeMap::new();
+    for role in Role::ALL {
+        let Signal::Status {
+            role: claimed,
+            status,
+        } = signals
+            .wait_for(
+                &format!("recovery-applied-{}", role.name()),
+                Duration::from_secs(75),
+            )
+            .await?
+        else {
+            return Err("missing automatically recovered status".into());
+        };
+        if claimed != role {
+            return Err("recovered role mismatch".into());
+        }
+        expired[&role].validate_recovered(&status, reopened_at_ms)?;
+        recovered.insert(role, *status);
+    }
+    applied(
+        cli,
+        &client,
+        network,
+        token,
+        &nodes,
+        revision,
+        ("recovered", Some(&recovered)),
+    )
+    .await?;
+    signals
+        .write("recovery-state-verified", &Signal::Ready)
+        .await?;
+    for role in Role::ALL {
+        if !matches!(
+            signals
+                .wait_for(
+                    &format!("recovery-done-{}", role.name()),
+                    Duration::from_secs(150)
+                )
+                .await?,
+            Signal::Ready
+        ) {
+            return Err("invalid recovery traffic completion".into());
+        }
+    }
+    measured_links(
+        cli,
+        &client,
+        network,
+        token,
+        &nodes,
+        cli.traversal_fallback,
+        "recovered",
+    )
+    .await?;
+    tracing::info!(
+        phase = "automatic-recovery-verified",
+        "New instances, real applied State and fresh OS flows verified; stopping actual Server next"
+    );
     Ok(())
 }
 
@@ -672,6 +875,8 @@ async fn measured_links(
                     Role::R => &[Role::A, Role::B],
                 };
                 let complete = state.freshness == Freshness::Current
+                    && report.configuration.applied.is_some()
+                    && report.configuration.applied == report.configuration.saved
                     && peers.iter().all(|peer| {
                         report.links.get(&nodes[peer]).is_some_and(|links| {
                             links.iter().any(|link| {
@@ -742,8 +947,9 @@ async fn applied(
     token: &str,
     nodes: &BTreeMap<Role, NodeId>,
     revision: Revision,
-    stage: &str,
+    observation: (&str, Option<&BTreeMap<Role, meshway_ipc::Status>>),
 ) -> Result<()> {
+    let (stage, expected) = observation;
     tokio::time::timeout(STARTUP, async {
         for role in Role::ALL {
             loop {
@@ -778,6 +984,16 @@ async fn applied(
                         .as_ref()
                         .is_some_and(|applied| applied.revision == revision)
                     && state.freshness == Freshness::Current
+                    && expected.is_none_or(|expected| {
+                        expected.get(&role).is_some_and(|status| {
+                            state.instance_id
+                                == status
+                                    .instance
+                                    .as_ref()
+                                    .map(|instance| instance.instance_id)
+                                && report.configuration.applied == report.configuration.saved
+                        })
+                    })
                 {
                     tokio::fs::write(
                         cli.evidence

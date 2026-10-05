@@ -331,7 +331,7 @@ def main():
         identifier = containers[role]
         with (report / f"{role}.log").open("w") as log:
             result = subprocess.run(["docker", "start", "-a", identifier], cwd=ROOT, text=True,
-                                    stdout=log, stderr=subprocess.STDOUT, timeout=450, close_fds=True)
+                                    stdout=log, stderr=subprocess.STDOUT, timeout=510, close_fds=True)
         state = json.loads(run("docker", "inspect", identifier, capture=True))[0]["State"]
         return {"attachExit": result.returncode, "exitCode": state["ExitCode"], "oomKilled": state["OOMKilled"], "running": state["Running"]}
 

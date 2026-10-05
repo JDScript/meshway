@@ -1,6 +1,6 @@
 //! Ordinary kernel sockets only. No Meshway control, packet codec or crypto here.
 use crate::{Error, IO, Result, STARTUP, signals::Addresses};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, SocketAddr},
     sync::{
@@ -21,13 +21,42 @@ pub(super) const TCP: u16 = 42425;
 pub const SUBSCRIPTION_PORT: u16 = 42428;
 const FRAME: usize = 64;
 
-#[derive(Clone, Copy, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Counts {
     pub udp4: u64,
     pub udp6: u64,
     pub tcp4: u64,
     pub tcp6: u64,
+}
+
+impl Counts {
+    pub fn since(self, before: Self) -> Result<Self> {
+        Ok(Self {
+            udp4: self
+                .udp4
+                .checked_sub(before.udp4)
+                .ok_or("UDP4 counter regressed")?,
+            udp6: self
+                .udp6
+                .checked_sub(before.udp6)
+                .ok_or("UDP6 counter regressed")?,
+            tcp4: self
+                .tcp4
+                .checked_sub(before.tcp4)
+                .ok_or("TCP4 counter regressed")?,
+            tcp6: self
+                .tcp6
+                .checked_sub(before.tcp6)
+                .ok_or("TCP6 counter regressed")?,
+        })
+    }
+    pub fn all_protocols(self) -> bool {
+        self.udp4 > 0 && self.udp6 > 0 && self.tcp4 > 0 && self.tcp6 > 0
+    }
+    pub fn empty(self) -> bool {
+        self.udp4 == 0 && self.udp6 == 0 && self.tcp4 == 0 && self.tcp6 == 0
+    }
 }
 
 pub struct Echo {
@@ -464,14 +493,22 @@ pub struct Traffic {
     pub counts: Counts,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PacketEvidence {
     sockets: [SocketAddr; 4],
     counts: Counts,
-    elapsed_ms: u128,
+    elapsed_ms: u64,
     last_echo_sequence: u64,
     echoed_frame: Vec<u8>,
+}
+
+impl PacketEvidence {
+    pub fn new_flows_after(&self, old: &[SocketAddr; 4]) -> bool {
+        self.counts.all_protocols()
+            && self.sockets.iter().zip(old).all(|(new, old)| new != old)
+            && self.last_echo_sequence > 0
+    }
 }
 
 impl Traffic {
@@ -581,6 +618,10 @@ impl Traffic {
                 return Err("UDP echoed after access/lease invalidation".into());
             }
         }
+        self.tcp_blocked().await
+    }
+    pub async fn tcp_blocked(&mut self) -> Result<()> {
+        let frame = self.frame();
         for stream in [&mut self.tcp4, &mut self.tcp6].into_iter().flatten() {
             match tokio::time::timeout(IO, stream.write_all(&frame)).await {
                 Ok(Ok(())) | Err(_) => {}
@@ -612,7 +653,7 @@ impl Traffic {
         Ok(PacketEvidence {
             sockets: self.sockets()?,
             counts: self.counts,
-            elapsed_ms: elapsed.as_millis(),
+            elapsed_ms: elapsed.as_millis().try_into()?,
             last_echo_sequence: self.sequence,
             echoed_frame: frame,
         })

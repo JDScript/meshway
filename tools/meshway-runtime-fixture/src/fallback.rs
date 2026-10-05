@@ -53,13 +53,58 @@ struct Blocked {
 // credentials, cipher keys, substitute flow table or fixture callback is needed.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PacketObservation {
+pub(super) struct PacketObservation {
     #[serde(rename = "message")]
     _message: String,
-    cid: String,
+    pub cid: String,
     demand: RequestId,
-    path_json: String,
-    observed_at_ms: u64,
+    pub path_json: String,
+    pub observed_at_ms: u64,
+}
+
+pub(super) fn packet_observation(event: &serde_json::Value) -> Result<Option<PacketObservation>> {
+    if event.get("target").and_then(serde_json::Value::as_str)
+        != Some("meshway_daemon::runtime::network::circuit_packet")
+        || event
+            .get("fields")
+            .and_then(|fields| fields.get("message"))
+            .and_then(serde_json::Value::as_str)
+            != Some("Mesh circuit packet ready")
+    {
+        return Ok(None);
+    }
+    let packet: PacketObservation =
+        serde_json::from_value(event.get("fields").ok_or("missing circuit fields")?.clone())?;
+    if packet.cid.len() != 64
+        || !packet.cid.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || packet.path_json.len() > 512
+    {
+        return Err("invalid production circuit observation".into());
+    }
+    Ok(Some(packet))
+}
+
+pub(super) async fn original_path(signals: &Signals) -> Result<Vec<NodeId>> {
+    let mut path = Vec::new();
+    for role in Role::ALL {
+        let Signal::Status {
+            role: claimed,
+            status,
+        } = signals.wait(&format!("enrolled-{}", role.name())).await?
+        else {
+            return Err("missing enrolled identity for circuit path proof".into());
+        };
+        if claimed != role {
+            return Err("circuit path role mismatch".into());
+        }
+        path.push(
+            status
+                .identity
+                .ok_or("circuit path identity absent")?
+                .node_id,
+        );
+    }
+    Ok(path)
 }
 
 pub async fn sample(
@@ -99,25 +144,7 @@ pub async fn verify(
     {
         return Err("fallback transition was outside live persistent traffic".into());
     }
-    let mut original_path = Vec::new();
-    for role in Role::ALL {
-        let Signal::Status {
-            role: claimed,
-            status,
-        } = signals.wait(&format!("enrolled-{}", role.name())).await?
-        else {
-            return Err("missing enrolled identity for circuit path proof".into());
-        };
-        if claimed != role {
-            return Err("circuit path role mismatch".into());
-        }
-        original_path.push(
-            status
-                .identity
-                .ok_or("circuit path identity absent")?
-                .node_id,
-        );
-    }
+    let original_path = original_path(signals).await?;
     let mut tcp_demands = BTreeSet::new();
     let mut packets = Vec::new();
     for event in actor::log_events(cli).await? {
@@ -139,17 +166,7 @@ pub async fn verify(
             {
                 tcp_demands.insert(request_id);
             }
-        } else if target == Some("meshway_daemon::runtime::network::circuit_packet")
-            && message == Some("Mesh circuit packet ready")
-        {
-            let packet: PacketObservation =
-                serde_json::from_value(fields.ok_or("missing circuit fields")?.clone())?;
-            if packet.cid.len() != 64
-                || !packet.cid.bytes().all(|byte| byte.is_ascii_hexdigit())
-                || packet.path_json.len() > 512
-            {
-                return Err("invalid production circuit observation".into());
-            }
+        } else if let Some(packet) = packet_observation(&event)? {
             packets.push(packet);
         }
     }

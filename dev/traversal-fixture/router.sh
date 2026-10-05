@@ -125,6 +125,6 @@ while test ! -f /signals/routers-stop.json; do
         fi
     fi
     count=$((count + 1))
-    test "$count" -lt 450
+    test "$count" -lt 510
     sleep 1
 done
