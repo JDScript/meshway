@@ -72,6 +72,8 @@ mise run services reset server
 
 登录文件的 `server`／`console` 是对外 Server URL 和 Console origin；`email`／`password` 是默认开发登录，`networkId` 是新网络，`accounts` 是上述邮箱到**密码**的映射。若旧文件存在且格式有效，显式 reset 保留这些密码作为 seed；首次创建则生成随机密码。脚本不在命令行参数或普通输出打印密码／token。
 
+旧文件的顶层默认登录可以是另一个旧 Owner，不一定属于四个种子账户；只有顶层邮箱属于这四个账户时，才要求其密码与 `accounts` 中对应值一致。reset 只导入 `accounts` 中精确四个密码，新文件的主登录固定为 `admin@example.com`（Development Owner）；旧非种子 Owner 及原登录文件保留在整库备份中。
+
 当前 reset 状态保存在 `.meshway/services/server-reset.json`，每次备份另有 `reset.json`；阶段为 `stopping`、`archiving`、`starting`、`seeding`、`complete` 或 `failed`，失败时记录 `failedAt`。失败返回非零，保留已有备份及部分初始化的新库，不自动重试 seed、不自动再次清库。`status` 对未完成 reset 显示 `ready=false`，即使 HTTP 已能响应。
 
 恢复时先检查两个 journal、私有服务日志及当前进程归属。正常 start／update 不会修复或重做 seed。若决定重新执行 reset，这是新的整库重置，会再次归档当前部分初始化目录；若恢复旧备份，应先核验并停止服务，将当前目录另行保留，再以同一批次的整个 `server` 和 `dev-login.json` 恢复，避免数据库与 key／凭据交叉配对。备份不会被脚本自动回收。

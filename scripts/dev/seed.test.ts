@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, chmod, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, chmod, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,7 +57,10 @@ function fixture(poison: "none" | "registration" | "network" = "none") {
     if (path === "/api/v1/auth/register") {
       assert.equal(typeof init?.body, "string");
       const body = zRegisterRequest.parse(JSON.parse(String(init?.body)));
-      assert.equal(body.email, emails[registrations]);
+      const email = emails[registrations];
+      assert.ok(email);
+      assert.equal(body.email, email);
+      assert.equal(body.password, passwords[email]);
       const session = sessions[registrations++];
       assert.ok(session);
       if (poison === "registration") return json({ ...session, extraSecret: "never print this" }, 201);
@@ -123,11 +126,28 @@ test("private seed preserves account passwords, rejects malformed inputs and che
   const value = { server: serverOrigin, console: consoleOrigin, email: emails[0], password: passwords[emails[0]], networkId: randomUUID(), accounts: passwords };
   assert.deepEqual(previousPasswords(value), passwords);
   assert.throws(() => previousPasswords({ ...value, accounts: { ...passwords, "dave@example.com": 4 } }), /Invalid private/);
-  assert.throws(() => previousPasswords({ ...value, password: "different" }), /Inconsistent private/);
+  for (const email of emails) {
+    assert.deepEqual(previousPasswords({ ...value, email, password: passwords[email] }), passwords);
+    assert.throws(() => previousPasswords({ ...value, email, password: "different" }), /Inconsistent private/);
+  }
   assert.throws(() => previousPasswords({ ...value, extra: true }), /Invalid private/);
   const { client, calls } = fixture();
   await assert.rejects(seed(client, { ...passwords, "dave@example.com": "short" }), /current rules/);
   assert.deepEqual(calls, ["GET /api/v1/auth/options"]);
+});
+
+test("a separate previous owner imports only the four seed passwords and produces the admin primary login", async () => {
+  const previous = { server: serverOrigin, console: consoleOrigin, email: "previous-owner@example.com",
+    password: "separate previous owner test password", networkId: randomUUID(), accounts: passwords };
+  const imported = previousPasswords(previous);
+  assert.deepEqual(imported, passwords);
+  assert.throws(() => previousPasswords({ ...previous, email: "" }), /Invalid private/);
+  assert.throws(() => previousPasswords({ ...previous, password: "" }), /Invalid private/);
+  assert.throws(() => previousPasswords({ ...previous, accounts: { ...passwords, [previous.email]: previous.password } }), /Invalid private/);
+  const { client, network } = fixture();
+  const result = await seed(client, imported);
+  assert.deepEqual(result, { server: serverOrigin, console: consoleOrigin, email: emails[0],
+    password: passwords[emails[0]], networkId: network.id, accounts: passwords });
 });
 
 test("CLI preflight accepts private credentials and rejects unsafe input without printing secrets", async () => {
@@ -143,6 +163,14 @@ test("CLI preflight accepts private credentials and rejects unsafe input without
     assert.equal(good.status, 0);
     assert.equal(good.stdout, "");
     assert.equal(good.stderr, "");
+    const previous = { ...value, email: "previous-owner@example.com", password: "separate previous owner test password" };
+    const previousText = JSON.stringify(previous);
+    await writeFile(file, previousText);
+    const compatible = check();
+    assert.equal(compatible.status, 0);
+    assert.equal(compatible.stdout, "");
+    assert.equal(compatible.stderr, "");
+    assert.equal(await readFile(file, "utf8"), previousText);
     await chmod(file, 0o644);
     const unsafe = check();
     assert.equal(unsafe.status, 1);

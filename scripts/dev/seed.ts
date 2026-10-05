@@ -24,6 +24,7 @@ export function previousPasswords(value: unknown): Passwords {
   if (!object(value) || !object(value.accounts)
       || Object.keys(value).some(key => !["server", "console", "email", "password", "networkId", "accounts"].includes(key))
       || !["server", "console", "email", "password", "networkId"].every(key => typeof value[key] === "string")
+      || !value.email || !value.password
       || Object.keys(value.accounts).length !== emails.length) throw new Error("Invalid private development credentials");
   const passwords = freshPasswords();
   for (const email of emails) {
@@ -31,7 +32,7 @@ export function previousPasswords(value: unknown): Passwords {
     if (typeof password !== "string" || !password) throw new Error("Invalid private development credentials");
     passwords[email] = password;
   }
-  if (value.password !== value.accounts[String(value.email)]) throw new Error("Inconsistent private development credentials");
+  if (emails.some(email => email === value.email) && value.password !== value.accounts[String(value.email)]) throw new Error("Inconsistent private development credentials");
   return passwords;
 }
 
