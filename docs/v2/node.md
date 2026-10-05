@@ -1,6 +1,6 @@
 # Node：节点端
 
-Node 由长期运行的 **`meshwayd`** 和本机 CLI **`meshway`** 组成，Linux 首版采用单机系统服务。当前源码包含[Server 接入与 Linux Mesh-only TUN 装配](/v2/node/runtime#启动与接入)：自动认证、续租、配置保存、用途受限 underlay、认证 stream 邻接、受保护 IP 包流和安装结果上报。实际 daemon 已验证 Native TCP 承载上的双栈 UDP／TCP 多跳包流、持续续租与失效清理，精确场景见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance)。DNS 系统安装、出口／NAT、SOCKS5、打洞和插件等限制见[数据面组件](/v2/node/dataplane)。旧节点源码已退出活跃树，复用通过[白名单与回归审查](/v2/architecture#旧实现退出与复用)进行。
+Node 由长期运行的 **`meshwayd`** 和本机 CLI **`meshway`** 组成，Linux 首版采用单机系统服务。当前源码包含[Server 接入与 Linux Mesh-only TUN 装配](/v2/node/runtime#启动与接入)：自动认证、续租、配置保存、用途受限 underlay、认证 stream／Native UDP 邻接、受保护 IP 包流、系统 DNS 和安装结果上报。实际 daemon 的双栈 UDP／TCP 多跳包流、持续续租、系统 DNS 与失效清理见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance)，协调 UDP 穿透见[连接获取验收](/v2/node/connectivity#路径选择与验收)。出口／NAT、SOCKS5 和插件等限制见[运行范围](/v2/node/runtime#安装范围与状态)。旧节点源码已退出活跃树，复用通过[白名单与回归审查](/v2/architecture#旧实现退出与复用)进行。
 
 ## 组件方向
 

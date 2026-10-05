@@ -23,6 +23,7 @@ crates/
   meshway-private-storage/
   meshway-control/
   meshway-connectivity/
+  meshway-stun/
   meshway-underlay/
   meshway-dataplane/
   meshway-tun/
@@ -75,6 +76,7 @@ daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影�
 | `meshway-private-storage` | Server、Node control／daemon／underlay | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
 | `meshway-logging` | Server、daemon、CLI 程序入口 | 统一 tracing subscriber、日志参数与 stderr 格式；见[运行日志](/v2/logging) |
 | `meshway-tls` | Server 材料验证、Node TLS providers | 同一证书／密钥验证、精确叶证书信任、既有流上的 TLS 握手 |
+| `meshway-stun` | Server STUN 服务、Node connectivity | 有界 RFC 8489 Binding 编解码、映射观测与 UDP Service；见[连接获取](/v2/node/connectivity#stun-与-server-协调) |
 
 Server 使用 `policy` 的完整规范化／语义校验入口及编译器；Node 数据面调用它对已发布执行许可的纯判定。Node 无需取得全网配置和秘密后再编译全网。`configuration` 提供规范化阶段的语义 hook，由 `policy` 在同一次处理内注入，保持字段位置、保留依赖和错误优先级；没有 `configuration → policy` 反向依赖或第二套 Access 实现。SQL、账户密码哈希、全局可变容器和平台 I/O 不放进 model。
 
@@ -99,13 +101,13 @@ Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它�
 | --- | --- |
 | `meshway-control` | [接入、执行快照、连续性、回执和报告顺序](/v2/node/control)的唯一 owner |
 | `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane) |
-| `meshway-connectivity` | [Manager、有界 stream 建连／重连、签名邻接握手、真实 link 事实](/v2/node/transport#邻接管理) |
+| `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理) |
 | `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay) |
-| `meshway-transport-{udp,tcp,vless,trojan}` | 正式承载 provider；UDP 库可用不表示 daemon 已接通 UDP 邻接 |
+| `meshway-transport-{udp,tcp,vless,trojan}` | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
 | `meshway-tun` | Linux TUN 设备 I/O |
-| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher；系统安装尚未接线 |
+| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal |
 
-daemon 已装配 Mesh-only stream 数据面；当前候选 Linux 验收范围见[运行模式](/v2/node/runtime)。出口转发、`meshway-netstack` 与 `meshway-diagnostics` 运行库仍待实现。
+daemon 已装配 Mesh-only stream／Native UDP 数据面与系统 DNS；Linux 验收范围见[运行模式](/v2/node/runtime)。出口转发、`meshway-netstack` 与 `meshway-diagnostics` 运行库仍待实现。
 
 组件可独立测试，并可被其他宿主复用。native 导出入口只适配共同 ABI，不复制业务、配置或状态模型。私有文件操作确有多个实际消费者时才抽窄存储原语，不为每张表、每个任务、每种状态各建库。
 
@@ -119,10 +121,10 @@ Node 的每项业务规则和可变状态都有唯一实现归属。多个入口
 | 规则语义、路径编译与执行许可纯判定 | `meshway-policy` | Server 校验／编译／DNS 可见性、Node 包准入 |
 | 活动执行快照、lease 时钟与失效代际 | `meshway-control` | 数据面、DNS 及宿主 I/O 等待／交付检查 |
 | 业务准入、端到端保护、路径执行与原路径回复 | `meshway-dataplane` | TUN 和 userspace IP 包入口 |
-| 获准 stream 邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan providers；打洞与连接池待实现 |
+| 获准邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan stream、Native UDP 显式端点与协调穿透；连接池待实现 |
 | 内核 capture／sink、资源归属与用途受限 socket | `meshway-underlay` | Server bootstrap、获准候选、daemon TUN 安装 |
 | 单个承载协议的握手、封装与会话实现 | 对应 `meshway-transport-*` | Rust 调用／协议测试与动态插件导出层 |
-| 业务域名选择、查询与回答生命周期 | `meshway-dns` | loopback UDP／TCP 共用 OwnerDispatcher；系统 DNS／SOCKS5 接线与缓存待实现 |
+| 业务域名选择、查询与回答生命周期 | `meshway-dns` | loopback UDP／TCP 共用 OwnerDispatcher，daemon 装配系统 DNS；SOCKS5 接线与缓存待实现 |
 | 实际资源、通道、包流和测量事实 | 所属运行组件 | CLI 状态、Node 报告与诊断视图 |
 
 bootstrap 解析与业务 DNS 具有不同启动条件和权限，当前实现见 [Linux underlay](/v2/node/dataplane#linux-underlay)，规划中的插件接口见 [host services](/v2/node/plugins#数据面与-host-services)。Server 事务鉴权、Node 执行准入和 IPC 本机授权分别检查自己的信任边界；共享类型与验证器的复用不取消这些检查。
@@ -144,9 +146,9 @@ control-client ──► protocol
 Server ──► protocol + configuration + policy + private-storage + 自有领域／存储模块
 Node control ──► control-client + 共享配置／模型 + private-storage
 Node dataplane ──► policy + control（执行快照）
-Node connectivity ──► dataplane（受保护帧 I/O）+ control + policy + transport providers
-Node underlay ──► control + configuration + private-storage + tun + transport/tcp + transport-spec
-Node DNS ──► policy + configuration + control（执行快照）+ protocol（发现响应）
+Node connectivity ──► dataplane（受保护帧 I/O）+ control + policy + underlay + stun + transport providers
+Node underlay ──► control + configuration + private-storage + dns（bootstrap wire）+ tun + transport/tcp/udp + transport-spec
+Node DNS ──► policy + configuration + control（执行快照）+ protocol（发现响应）+ private-storage
 Node providers ──► transport + transport-spec + tls（按协议需要）
 meshwayd ──► control + connectivity + underlay + dataplane + ipc
 meshway CLI ──► ipc
