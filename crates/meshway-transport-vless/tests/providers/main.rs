@@ -9,7 +9,38 @@ use meshway_transport_spec::{
 use meshway_transport_vless::{Acceptor, Connector, Error};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod output_scope;
+
 const UUID: &str = "00112233-4455-6677-8899-aabbccddeeff";
+
+#[test]
+fn declaration_and_provider_share_strict_uuid_syntax() {
+    for (uuid, valid) in [
+        (UUID.to_owned(), true),
+        (UUID.to_ascii_uppercase(), true),
+        (UUID.replace('-', ""), false),
+        (format!("{{{UUID}}}"), false),
+        (format!("urn:uuid:{UUID}"), false),
+        (UUID.replace('a', "g"), false),
+        (UUID.replace('-', "a"), false),
+    ] {
+        let (mut parameters, prepared, _) = fixture(VlessStream::Tcp);
+        let mut declaration = prepared.declaration().clone();
+        let Listener::Vless(listener) = &mut declaration else {
+            unreachable!()
+        };
+        listener.uuid = Some(SecretString::new(uuid.clone()));
+        let DialParameters::Vless {
+            uuid: credential, ..
+        } = &mut parameters
+        else {
+            unreachable!()
+        };
+        *credential = SecretString::new(uuid);
+        assert_eq!(PreparedListener::prepare(declaration).is_ok(), valid);
+        assert_eq!(Connector::new(&parameters).is_ok(), valid);
+    }
+}
 
 fn fixture(stream: VlessStream) -> (DialParameters, PreparedListener, ListenerTls) {
     let certified = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();

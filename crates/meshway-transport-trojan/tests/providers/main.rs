@@ -9,6 +9,8 @@ use meshway_transport_spec::{
 use meshway_transport_trojan::{Acceptor, Connector, Error};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod output_scope;
+
 fn fixture() -> (DialParameters, PreparedListener) {
     let certified = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let tls = ListenerTls {

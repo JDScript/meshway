@@ -8,7 +8,7 @@ mod protocol;
 
 use std::{fmt, io, time::Duration};
 
-use meshway_transport::raw::Stream;
+use meshway_transport::raw::{CheckedOutput, Stream};
 use meshway_transport_spec::{DialParameters, Endpoint, Listener, PreparedListener, TrojanStream};
 use tokio::{io::AsyncWriteExt, time::Instant};
 use zeroize::Zeroizing;
@@ -84,7 +84,7 @@ impl Connector {
     ) -> Result<Box<dyn Stream>, Error> {
         tokio::time::timeout_at(deadline(self.timeout)?, async {
             let request = protocol::request(&self.key, destination)?;
-            let mut stream = self.tls.connect(io).await?;
+            let mut stream = self.tls.connect(CheckedOutput::new(io)).await?;
             stream.write_all(&request).await?;
             stream.flush().await?;
             Ok(Box::new(stream) as Box<dyn Stream>)
@@ -120,7 +120,7 @@ impl Acceptor {
     /// Accept TLS and one CONNECT request under the listener handshake cap.
     pub async fn accept<S: Stream>(&self, io: S) -> Result<Accepted, Error> {
         tokio::time::timeout_at(deadline(self.timeout)?, async {
-            let mut stream = self.tls.accept(io).await?;
+            let mut stream = self.tls.accept(CheckedOutput::new(io)).await?;
             let destination = protocol::accept(&mut stream, &self.key).await?;
             Ok(Accepted {
                 stream: Box::new(stream),

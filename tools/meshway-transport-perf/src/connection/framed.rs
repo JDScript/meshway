@@ -114,10 +114,7 @@ impl Framed {
     pub(super) async fn close(&mut self) -> Result<(), Error> {
         self.stop.cancel();
         self.sender.shutdown().await?;
-        if let Some(peer) = self.peer.take() {
-            peer.await??;
-        }
-        Ok(())
+        super::join_peer(&mut self.peer).await
     }
 }
 

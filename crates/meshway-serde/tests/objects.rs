@@ -187,3 +187,86 @@ fn typed_map_keys_cannot_collide_after_normalization() {
         );
     }
 }
+
+meshway_serde::string_enum! {
+    #[derive(Debug, Default, PartialEq, Serialize, ToSchema)]
+    #[serde(rename_all = "snake_case")]
+    pub enum StringMode {
+        #[default]
+        NotReady,
+        #[serde(rename = "ready.now")]
+        Ready,
+    }
+}
+meshway_serde::tagged! {
+    tag = "kind";
+    #[derive(Debug, PartialEq)]
+    pub enum ModeEvent {
+        Changed = "mode.changed" { mode: StringMode },
+    }
+}
+
+#[test]
+fn string_enums_keep_renames_and_reject_object_aliases_after_tagged_buffering() {
+    for wire in ["not_ready", "ready.now"] {
+        let mode: StringMode = serde_json::from_value(json!(wire)).unwrap();
+        assert_eq!(serde_json::to_value(mode).unwrap(), wire);
+        let event: ModeEvent =
+            serde_json::from_value(json!({"kind":"mode.changed","mode":wire})).unwrap();
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            json!({"kind":"mode.changed","mode":wire})
+        );
+        assert!(serde_json::from_value::<StringMode>(json!({(wire):null})).is_err());
+        assert!(
+            serde_json::from_value::<ModeEvent>(
+                json!({"kind":"mode.changed","mode":{(wire):null}})
+            )
+            .is_err()
+        );
+    }
+    let schema = serde_json::to_value(StringMode::schema()).unwrap();
+    assert_eq!(schema["enum"], json!(["not_ready", "ready.now"]));
+    let event_schema = serde_json::to_value(ModeEvent::schema()).unwrap();
+    assert_eq!(
+        event_schema["oneOf"][0]["properties"]["kind"]["enum"],
+        json!(["mode.changed"])
+    );
+    assert_eq!(event_schema["oneOf"][0]["additionalProperties"], false);
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum ExternalPayload {
+    Newtype(Nested),
+    Tuple(Nested, Nested),
+    Struct { nested: Nested },
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalEnvelope {
+    #[serde(deserialize_with = "meshway_serde::deserialize_strict")]
+    pub payload: ExternalPayload,
+}
+
+#[test]
+fn strict_decoding_traverses_external_enum_access_and_variant_payloads() {
+    for wire in [
+        r#"{"payload":{"Newtype":{"value":"ok"}}}"#,
+        r#"{"payload":{"Tuple":[{"value":"one"},{"value":"two"}]}}"#,
+        r#"{"payload":{"Struct":{"nested":{"value":"ok"}}}}"#,
+    ] {
+        assert!(serde_json::from_str::<ExternalEnvelope>(wire).is_ok());
+    }
+    for wire in [
+        r#"{"payload":{"Newtype":["positional"]}}"#,
+        r#"{"payload":{"Tuple":[["positional"],{"value":"ok"}]}}"#,
+        r#"{"payload":{"Struct":[{"value":"ok"}]}}"#,
+        r#"{"payload":{"Struct":{"nested":["positional"]}}}"#,
+        r#"{"payload":{"Newtype":{"value":"one","value":"two"}}}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<ExternalEnvelope>(wire).is_err(),
+            "{wire}"
+        );
+    }
+}

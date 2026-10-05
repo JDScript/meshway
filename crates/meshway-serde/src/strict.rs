@@ -77,7 +77,8 @@ impl<'de, D: serde::Deserializer<'de>> serde::Deserializer<'de> for Strict<D> {
         variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
-        self.0.deserialize_enum(name, variants, visitor)
+        self.0
+            .deserialize_enum(name, variants, StrictVisitor(visitor))
     }
     fn deserialize_option<V: serde::de::Visitor<'de>>(
         self,
@@ -107,6 +108,48 @@ impl<'de, S: serde::de::DeserializeSeed<'de>> serde::de::DeserializeSeed<'de> fo
         deserializer: D,
     ) -> Result<Self::Value, D::Error> {
         self.0.deserialize(Strict(deserializer))
+    }
+}
+struct StrictEnum<E>(E);
+impl<'de, E: serde::de::EnumAccess<'de>> serde::de::EnumAccess<'de> for StrictEnum<E> {
+    type Error = E::Error;
+    type Variant = StrictVariant<E::Variant>;
+
+    fn variant_seed<V: serde::de::DeserializeSeed<'de>>(
+        self,
+        seed: V,
+    ) -> Result<(V::Value, Self::Variant), Self::Error> {
+        self.0
+            .variant_seed(StrictSeed(seed))
+            .map(|(value, variant)| (value, StrictVariant(variant)))
+    }
+}
+struct StrictVariant<V>(V);
+impl<'de, V: serde::de::VariantAccess<'de>> serde::de::VariantAccess<'de> for StrictVariant<V> {
+    type Error = V::Error;
+
+    fn unit_variant(self) -> Result<(), Self::Error> {
+        self.0.unit_variant()
+    }
+    fn newtype_variant_seed<T: serde::de::DeserializeSeed<'de>>(
+        self,
+        seed: T,
+    ) -> Result<T::Value, Self::Error> {
+        self.0.newtype_variant_seed(StrictSeed(seed))
+    }
+    fn tuple_variant<T: serde::de::Visitor<'de>>(
+        self,
+        len: usize,
+        visitor: T,
+    ) -> Result<T::Value, Self::Error> {
+        self.0.tuple_variant(len, StrictVisitor(visitor))
+    }
+    fn struct_variant<T: serde::de::Visitor<'de>>(
+        self,
+        fields: &'static [&'static str],
+        visitor: T,
+    ) -> Result<T::Value, Self::Error> {
+        self.0.struct_variant(fields, ObjectVisitor(visitor))
     }
 }
 struct StrictMap<M>(M, std::collections::BTreeSet<String>);
@@ -193,6 +236,20 @@ impl<'de, V: serde::de::Visitor<'de>> serde::de::Visitor<'de> for StrictVisitor<
     fn visit_seq<S: serde::de::SeqAccess<'de>>(self, seq: S) -> Result<Self::Value, S::Error> {
         self.0.visit_seq(StrictSeq(seq))
     }
+    fn visit_enum<E: serde::de::EnumAccess<'de>>(self, value: E) -> Result<Self::Value, E::Error> {
+        self.0.visit_enum(StrictEnum(value))
+    }
+}
+
+/// Restore strict nested object decoding for a generic payload after Serde has
+/// buffered its enclosing tagged enum. Scalars and arrays retain their types;
+/// any struct encountered inside the payload must still be a JSON object.
+pub fn deserialize_strict<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(Strict(d))
 }
 
 /// Reject both duplicate JSON keys and collisions after typed key decoding.

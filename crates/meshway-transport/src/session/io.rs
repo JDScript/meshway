@@ -16,6 +16,7 @@ use tokio_util::{
 };
 
 use super::send::SendFailure;
+use crate::output::{OutputScope, ScopedStream};
 use crate::{CancelReason, Frame, Limits, SendContext, raw};
 
 enum Reader {
@@ -27,37 +28,23 @@ enum Reader {
 }
 
 enum Writer {
-    Stream(FramedWrite<ScopedWriter<WriteHalf<Box<dyn raw::Stream>>>, LengthDelimitedCodec>),
+    Stream(FramedWrite<PollLimitedWriter<WriteHalf<Box<dyn raw::Stream>>>, LengthDelimitedCodec>),
     Datagram(Arc<dyn raw::Datagram>),
 }
 
-/// LengthDelimitedCodec's flush may poll the raw writer repeatedly. Guard each
-/// call, including successful short writes, and bound one engine poll's work.
-struct ScopedWriter<W> {
+/// LengthDelimitedCodec's flush may poll the raw writer repeatedly. Bound one
+/// engine poll's work; ScopedStream guards both directions below the split.
+struct PollLimitedWriter<W> {
     inner: W,
-    stop: CancellationToken,
-    context: Option<SendContext>,
     remaining_polls: usize,
 }
 
-impl<W> ScopedWriter<W> {
-    fn activate(&mut self, context: &SendContext) {
-        self.context = Some(context.clone());
+impl<W> PollLimitedWriter<W> {
+    fn activate(&mut self) {
         self.remaining_polls = 64;
     }
 
     fn ready(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.stop.is_cancelled()
-            || self
-                .context
-                .as_ref()
-                .is_none_or(|context| context.invalid_reason().is_some())
-        {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "transport send scope invalidated",
-            )));
-        }
         if self.remaining_polls == 0 {
             cx.waker().wake_by_ref();
             return Poll::Pending;
@@ -67,7 +54,7 @@ impl<W> ScopedWriter<W> {
     }
 }
 
-impl<W: AsyncWrite + Unpin> AsyncWrite for ScopedWriter<W> {
+impl<W: AsyncWrite + Unpin> AsyncWrite for PollLimitedWriter<W> {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -152,6 +139,7 @@ impl PollBudget {
 pub(super) struct Shared {
     pub stop: CancellationToken,
     pub peer: Option<SocketAddr>,
+    output: Option<Arc<OutputScope>>,
     reader: Mutex<Option<Reader>>,
     writer: Mutex<Option<Writer>>,
 }
@@ -173,13 +161,15 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Shared {
     pub fn stream<S: raw::Stream>(stream: S, peer: SocketAddr, limits: Limits) -> Self {
-        let stream: Box<dyn raw::Stream> = Box::new(stream);
-        let (read, write) = tokio::io::split(stream);
         let stop = CancellationToken::new();
-        let write = ScopedWriter {
+        let output = OutputScope::new(stop.clone());
+        let stream: Box<dyn raw::Stream> = Box::new(ScopedStream {
+            inner: stream,
+            scope: output.clone(),
+        });
+        let (read, write) = tokio::io::split(stream);
+        let write = PollLimitedWriter {
             inner: write,
-            stop: stop.clone(),
-            context: None,
             remaining_polls: 0,
         };
         let buffer_bytes = limits.stream_buffer_bytes();
@@ -188,6 +178,7 @@ impl Shared {
         Self {
             stop,
             peer: Some(peer),
+            output: Some(output),
             reader: Mutex::new(Some(Reader::Stream(FramedRead::with_capacity(
                 read,
                 codec(limits),
@@ -202,6 +193,7 @@ impl Shared {
         Self {
             stop: CancellationToken::new(),
             peer: None,
+            output: None,
             reader: Mutex::new(Some(Reader::Datagram {
                 endpoint: endpoint.clone(),
                 buffer: vec![0; limits.max_frame_bytes()],
@@ -220,6 +212,9 @@ impl Shared {
         // themselves synchronize read/write polls internally.
         lock(&self.writer).take();
         lock(&self.reader).take();
+        if let Some(output) = &self.output {
+            output.complete();
+        }
     }
 
     /// Staging uses only the codec, never carrier I/O. Cancellation before the
@@ -291,17 +286,24 @@ impl Shared {
             return Poll::Pending;
         }
         budget.flushes -= 1;
-        progress.flush_started = true;
-        writer.get_mut().activate(context);
+        let output = self.output.as_ref().expect("stream owns an output gate");
+        if !progress.flush_started {
+            output.activate(context);
+            progress.flush_started = true;
+        }
+        writer.get_mut().activate();
         let result = Pin::new(&mut *writer).poll_flush(cx);
-        writer.get_mut().context = None;
         match result {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => Poll::Ready(Err(self
                 .check_scope(context)
                 .err()
                 .unwrap_or_else(|| error.into()))),
-            Poll::Ready(Ok(())) => Poll::Ready(self.check_scope(context)),
+            Poll::Ready(Ok(())) => {
+                self.check_scope(context)?;
+                output.complete();
+                Poll::Ready(Ok(()))
+            }
         }
     }
 

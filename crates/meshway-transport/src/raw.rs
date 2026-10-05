@@ -8,6 +8,8 @@ use std::{
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
+pub use crate::output::CheckedOutput;
+
 /// Common native buffer setup for providers adopting host-owned sockets.
 /// Zero retains the OS setting; this neither opens nor protects a socket.
 pub fn apply_socket_options(
@@ -31,6 +33,9 @@ pub fn apply_socket_options(
 
 /// Any ordinary Tokio byte stream can be a carrier, including an adapter over
 /// a host-opened socket. This trait adds no handshake or socket protection.
+/// Buffering providers place [`CheckedOutput`] below their protocol stack to
+/// enforce Session's operation scope on actual output, including read-driven
+/// flushes. Provider output must remain inside its synchronous I/O polls.
 pub trait Stream: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> Stream for T {}
 

@@ -99,10 +99,7 @@ impl RawUdp {
 
     pub(super) async fn close(&mut self) -> Result<(), Error> {
         self.stop.cancel();
-        if let Some(peer) = self.peer.take() {
-            peer.await??;
-        }
-        Ok(())
+        super::join_peer(&mut self.peer).await
     }
 }
 

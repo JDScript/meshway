@@ -12,6 +12,78 @@ use tokio_tungstenite::tungstenite::{
     },
 };
 
+#[tokio::test]
+async fn session_scope_preserves_full_duplex_and_idle_control_flush_after_completion() {
+    use meshway_transport::{
+        Frame as TransportFrame, Limits, SendContext, SendOutcome, Session, raw::CheckedOutput,
+    };
+    use std::collections::VecDeque;
+
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        let (local, remote) = tokio::io::duplex(64);
+        let bytes = ByteStream::new(
+            WebSocketStream::from_raw_socket(
+                CheckedOutput::new(local),
+                Role::Client,
+                Some(config()),
+            )
+            .await,
+        );
+        let mut remote =
+            WebSocketStream::from_raw_socket(remote, Role::Server, Some(config())).await;
+        let mut session = Session::stream(
+            bytes,
+            "127.0.0.1:443".parse().unwrap(),
+            Limits::new(512, 1, 512, 1, 1).unwrap(),
+        );
+        let context = SendContext::default();
+        let mut frames = VecDeque::from([TransportFrame::new(vec![0xa5; 512], None)]);
+        let admitted = session.sender().try_send(&mut frames, context.clone());
+        let mut completed = Box::pin(admitted.completion.unwrap().wait());
+        assert!(futures_util::poll!(&mut completed).is_pending());
+
+        // Remote sends before draining our large write. Read-driven flush must not
+        // prevent independent inbound traffic from making progress under pressure.
+        remote
+            .send(Message::Binary(Bytes::from_static(b"\0\0\0\x02ok")))
+            .await
+            .unwrap();
+        assert_eq!(session.receiver().recv().await.unwrap().payload, b"ok");
+        assert!(futures_util::poll!(&mut completed).is_pending());
+        let Message::Binary(sent) = remote.next().await.unwrap().unwrap() else {
+            panic!("binary application output")
+        };
+        assert_eq!(&sent[..4], &512_u32.to_be_bytes());
+        assert!(sent[4..].iter().all(|byte| *byte == 0xa5));
+        assert!(matches!(
+            completed.await.unwrap().frames[0].outcome,
+            SendOutcome::LocalComplete
+        ));
+
+        // A completed operation no longer gates a later control-only read. Keep
+        // the provider open while canceling that old operation's token.
+        context.cancellation.cancel();
+        remote
+            .send(Message::Ping(Bytes::from_static(b"ping")))
+            .await
+            .unwrap();
+        {
+            let mut receive = std::pin::pin!(session.receiver().recv());
+            assert!(futures_util::poll!(receive.as_mut()).is_pending());
+        }
+        assert_eq!(
+            remote.next().await.unwrap().unwrap(),
+            Message::Pong(Bytes::from_static(b"ping"))
+        );
+        remote.close(None).await.unwrap();
+        assert!(session.receiver().recv().await.is_err());
+        assert!(matches!(remote.next().await, Some(Ok(Message::Close(_)))));
+        session.shutdown().await.unwrap();
+    })
+    .await
+    .expect("full-duplex application and control output must complete");
+}
+
 fn settings() -> Settings {
     Settings::new(
         &ListenerWebSocket {

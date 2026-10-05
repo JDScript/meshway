@@ -11,7 +11,7 @@ mod websocket;
 
 use std::{fmt, io, time::Duration};
 
-use meshway_transport::raw::Stream;
+use meshway_transport::raw::{CheckedOutput, Stream};
 use meshway_transport_spec::{
     DialParameters, DialerStream, Endpoint, Listener, PreparedListener, VlessStream,
     validate_websocket_alpn,
@@ -123,7 +123,7 @@ impl Connector {
         let deadline = deadline(self.timeout)?;
         tokio::time::timeout_at(deadline, async {
             let request = protocol::request(&self.uuid, destination)?;
-            let tls = self.tls.connect(io).await?;
+            let tls = self.tls.connect(CheckedOutput::new(io)).await?;
             let mut stream: Box<dyn Stream> = match &self.websocket {
                 Some(settings) => Box::new(settings.connect(tls).await?),
                 None => Box::new(tls),
@@ -170,7 +170,7 @@ impl Acceptor {
     /// The listener TLS handshake cap encloses TLS, upgrade, and VLESS parsing.
     pub async fn accept<S: Stream>(&self, io: S) -> Result<Accepted, Error> {
         tokio::time::timeout_at(deadline(self.timeout)?, async {
-            let tls = self.tls.accept(io).await?;
+            let tls = self.tls.accept(CheckedOutput::new(io)).await?;
             let mut stream: Box<dyn Stream> = match &self.websocket {
                 Some(settings) => Box::new(settings.accept(tls).await?),
                 None => Box::new(tls),

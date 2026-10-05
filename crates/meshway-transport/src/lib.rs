@@ -6,6 +6,7 @@
 
 mod frame;
 mod limits;
+mod output;
 pub mod raw;
 mod scope;
 mod session;

@@ -3,6 +3,9 @@ mod proxy;
 mod tcp;
 mod udp;
 
+#[cfg(test)]
+mod tests;
+
 use crate::{Arguments, Error, Mode, Protocol};
 use meshway_transport::{Limits, Session, raw::Stream};
 use meshway_transport_spec::{SocketOptions, TcpOptions};
@@ -19,6 +22,20 @@ enum Backend {
 }
 
 pub(crate) struct Connection(Backend);
+
+async fn join_peer(
+    peer: &mut Option<tokio::task::JoinHandle<Result<(), Error>>>,
+) -> Result<(), Error> {
+    let result = match peer.as_mut() {
+        Some(task) => task.await,
+        None => return Ok(()),
+    };
+    // Keep ownership across Pending and cancellation. Backend Drop can still
+    // abort the peer when the measurement deadline interrupts close.
+    peer.take();
+    result??;
+    Ok(())
+}
 
 impl Connection {
     pub(crate) async fn open(args: &Arguments) -> Result<Self, Error> {

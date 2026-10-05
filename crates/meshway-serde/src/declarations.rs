@@ -1,15 +1,42 @@
+/// A string-only enum. The declaration supplies its Serialize and schema
+/// derives. One variant/rename list also declares the private decoder; no raw
+/// remote-derive deserializer is exposed on the public type.
+#[macro_export]
+macro_rules! string_enum {
+    ($(#[$attribute:meta])* pub enum $name:ident {
+        $($(#[$variant_attribute:meta])* $variant:ident),* $(,)?
+    }) => {
+        $(#[$attribute])*
+        pub enum $name { $($(#[$variant_attribute])* $variant),* }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                $(#[$attribute])*
+                #[derive(serde::Deserialize)]
+                enum Fields { $($(#[$variant_attribute])* $variant),* }
+                let value = <String as serde::Deserialize>::deserialize(d)?;
+                Ok(match <Fields as serde::Deserialize>::deserialize(
+                    serde::de::value::StringDeserializer::<D::Error>::new(value),
+                )? {
+                    $(Fields::$variant => Self::$variant),*
+                })
+            }
+        }
+    };
+}
+
 /// One field declaration drives Serde and its closed OpenAPI object schema.
 /// Consumers use their existing `serde` and `utoipa` dependencies. Optional
 /// schema attributes follow a field type in brackets, separate from Serde attrs.
 #[macro_export]
 macro_rules! object {
-    ($(#[$attribute:meta])* pub struct $name:ident {
+    ($(#[$attribute:meta])* $struct_visibility:vis struct $name:ident {
         $($(#[$field_attribute:meta])* $visibility:vis $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)?
     }) => {
         $(#[$attribute])*
         #[derive(serde::Serialize, utoipa::ToSchema)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        pub struct $name {
+        $struct_visibility struct $name {
             $($(#[$field_attribute])* $(#[schema($($schema)*)])? $visibility $field: $ty),*
         }
 
@@ -30,16 +57,21 @@ macro_rules! object {
 /// a closed payload with an extra discriminator via an unsatisfiable `allOf`.
 #[macro_export]
 macro_rules! tagged {
+    (@name $variant:ident) => {{
+        let name = stringify!($variant);
+        format!("{}{}", name[..1].to_ascii_lowercase(), &name[1..])
+    }};
+    (@name $variant:ident, $wire:literal) => { String::from($wire) };
     ($(#[$attribute:meta])* pub enum $name:ident { $($variants:tt)* }) => {
         $crate::tagged!(tag="type"; $(#[$attribute])* pub enum $name { $($variants)* });
     };
     (tag=$tag:literal; $(#[$attribute:meta])* pub enum $name:ident {
-        $($variant:ident $({ $($(#[$field_attribute:meta])* $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)? })?),* $(,)?
+        $($variant:ident $(= $wire:literal)? $({ $($(#[$field_attribute:meta])* $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)? })?),* $(,)?
     }) => {
         $(#[$attribute])*
         #[derive(serde::Serialize)]
         #[serde(tag = $tag, rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
-        pub enum $name { $($variant $({ $($(#[$field_attribute])* $field: $ty),* })?),* }
+        pub enum $name { $($(#[serde(rename = $wire)])? $variant $({ $($(#[$field_attribute])* $field: $ty),* })?),* }
 
         impl<'de> serde::Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -53,7 +85,7 @@ macro_rules! tagged {
                 )*
                 #[derive(serde::Deserialize)]
                 #[serde(tag = $tag, rename_all = "camelCase", deny_unknown_fields)]
-                enum Fields { $($variant($variant)),* }
+                enum Fields { $($(#[serde(rename = $wire)])? $variant($variant)),* }
                 Ok(match Fields::deserialize($crate::MapOnly(d))? {
                     $(Fields::$variant($variant { $($($field),*)? }) => Self::$variant $({ $($field),* })?),*
                 })
@@ -71,8 +103,7 @@ macro_rules! tagged {
                     let RefOr::T(Schema::Object(mut object)) = <$variant as utoipa::PartialSchema>::schema() else {
                         unreachable!("object declaration emits an object schema")
                     };
-                    let name = stringify!($variant);
-                    let tag = format!("{}{}", name[..1].to_ascii_lowercase(), &name[1..]);
+                    let tag = $crate::tagged!(@name $variant $(, $wire)?);
                     object.properties.insert($tag.into(), ObjectBuilder::new()
                         .schema_type(Type::String).enum_values(Some([tag])).into());
                     object.required.push($tag.into());

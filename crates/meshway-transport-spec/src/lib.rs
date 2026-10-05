@@ -31,5 +31,7 @@ pub use protocol::{OuterSocket, TransportProtocol, VlessStream};
 pub use secret::SecretString;
 pub use settings::*;
 pub use tls::{TlsVersion, validate_websocket_alpn};
-pub use validation::{DeclarationError, MaterialRequirement, PreparedListener, normalize_host};
+pub use validation::{
+    DeclarationError, MaterialRequirement, PreparedListener, normalize_host, validate_vless_uuid,
+};
 pub use websocket::{WebSocketHeaderName, WebSocketHeaderValue, WebSocketHeaders, WebSocketPath};

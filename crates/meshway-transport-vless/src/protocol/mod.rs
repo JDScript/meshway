@@ -2,7 +2,7 @@
 //! mihomo/transport/vless/{vless,conn}.go (88dcbf7).
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use meshway_transport_spec::{Endpoint, Port, normalize_host};
+use meshway_transport_spec::{Endpoint, Port, normalize_host, validate_vless_uuid};
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use zeroize::Zeroizing;
@@ -10,17 +10,7 @@ use zeroize::Zeroizing;
 use crate::Error;
 
 pub(super) fn uuid(value: &str) -> Result<Zeroizing<[u8; 16]>, Error> {
-    if value.len() != 36
-        || !value.bytes().enumerate().all(|(i, byte)| {
-            if [8, 13, 18, 23].contains(&i) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_hexdigit()
-            }
-        })
-    {
-        return Err(Error::Configuration);
-    }
+    validate_vless_uuid(value).map_err(|_| Error::Configuration)?;
     uuid::Uuid::parse_str(value)
         .map(|uuid| Zeroizing::new(uuid.into_bytes()))
         .map_err(|_| Error::Configuration)

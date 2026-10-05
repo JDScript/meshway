@@ -1,4 +1,4 @@
-//! Standalone measurements; cargo test builds its empty test harness, never runs measurements.
+//! Standalone measurements; cargo test runs lifecycle checks, never measurements.
 #![forbid(unsafe_code)]
 
 mod connection;

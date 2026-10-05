@@ -54,7 +54,8 @@ impl DeclarationError {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum MaterialRequirement {
     Uuid,
@@ -62,6 +63,7 @@ pub enum MaterialRequirement {
     Certificate,
     PrivateKey,
     CertificateValidation,
+}
 }
 
 /// Strict DNS host normalization, without URL/port/path parsing.
@@ -91,6 +93,24 @@ pub fn normalize_host(host: &str) -> Result<String, DeclarationError> {
 fn tcp(options: &TcpOptions) -> Result<(), DeclarationError> {
     if options.keep_alive.count == 0 {
         return Err(DeclarationError::KeepAliveCount);
+    }
+    Ok(())
+}
+
+/// Validate the strict hyphenated VLESS UUID spelling. Hex digits may use either
+/// case; braces, URNs and the compact UUID form are not declaration syntax.
+/// This checks syntax only, without decoding or retaining credential material.
+pub fn validate_vless_uuid(value: &str) -> Result<(), DeclarationError> {
+    if value.len() != 36
+        || !value.bytes().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+    {
+        return Err(DeclarationError::InvalidVlessUuid);
     }
     Ok(())
 }
@@ -140,18 +160,7 @@ impl Listener {
                     return Err(DeclarationError::VlessFlow);
                 }
                 if let Some(uuid) = &v.uuid {
-                    let s = uuid.expose();
-                    if s.len() != 36
-                        || !s.bytes().enumerate().all(|(i, b)| {
-                            if [8, 13, 18, 23].contains(&i) {
-                                b == b'-'
-                            } else {
-                                b.is_ascii_hexdigit()
-                            }
-                        })
-                    {
-                        return Err(DeclarationError::InvalidVlessUuid);
-                    }
+                    validate_vless_uuid(uuid.expose())?;
                 }
                 match v.stream {
                     VlessStream::Tcp if v.websocket.is_some() => {
