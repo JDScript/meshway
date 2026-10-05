@@ -90,17 +90,33 @@ pub(super) fn file(directory: &File, name: &str, create: bool) -> Result<Option<
     } else {
         FILE_FLAGS
     };
-    let fd = match openat(directory, name, flags, Mode::from_raw_mode(0o600)) {
-        Ok(fd) => fd,
-        Err(Errno::EXIST) if create => {
-            openat(directory, name, FILE_FLAGS, Mode::empty()).map_err(io_error)?
+    // Another reference to this owner can atomically replace the name between
+    // openat and fstat. Never return the unlinked descriptor: reopen the current
+    // name and validate it in full. This also works across separately locked
+    // resources in the same private directory, without a process-global mutex.
+    for attempt in 0..8 {
+        let flags = if attempt == 0 { flags } else { FILE_FLAGS };
+        let fd = match openat(directory, name, flags, Mode::from_raw_mode(0o600)) {
+            Ok(fd) => fd,
+            Err(Errno::EXIST) if create && attempt == 0 => {
+                openat(directory, name, FILE_FLAGS, Mode::empty()).map_err(io_error)?
+            }
+            Err(Errno::NOENT) if !create && attempt == 0 => return Ok(None),
+            Err(Errno::NOENT) => return Err(Error::UnsafeStorage),
+            Err(error) => return Err(io_error(error)),
+        };
+        let file = File::from(fd);
+        #[cfg(test)]
+        tests::after_open();
+        let metadata = file.metadata().map_err(|_| Error::Io)?;
+        check_metadata(&metadata, false)?;
+        match metadata.nlink() {
+            1 => return Ok(Some(file)),
+            0 => continue,
+            _ => return Err(Error::UnsafeStorage),
         }
-        Err(Errno::NOENT) if !create => return Ok(None),
-        Err(error) => return Err(io_error(error)),
-    };
-    let file = File::from(fd);
-    check(&file, false)?;
-    Ok(Some(file))
+    }
+    Err(Error::UnsafeStorage)
 }
 
 pub(super) fn publish_once(
@@ -166,10 +182,18 @@ pub(super) fn replace(directory: &File, final_name: &str, bytes: &[u8]) -> Resul
 
 fn check(file: &File, directory: bool) -> Result<(), Error> {
     let metadata = file.metadata().map_err(|_| Error::Io)?;
+    check_metadata(&metadata, directory)?;
+    if !directory && metadata.nlink() != 1 {
+        return Err(Error::UnsafeStorage);
+    }
+    Ok(())
+}
+
+fn check_metadata(metadata: &std::fs::Metadata, directory: bool) -> Result<(), Error> {
     let kind_ok = if directory {
         metadata.is_dir()
     } else {
-        metadata.is_file() && metadata.nlink() == 1
+        metadata.is_file()
     };
     let mode = if directory { 0o700 } else { 0o600 };
     if !kind_ok
@@ -201,3 +225,6 @@ fn io_error(error: Errno) -> Error {
         _ => Error::Io,
     }
 }
+
+#[cfg(test)]
+mod tests;
