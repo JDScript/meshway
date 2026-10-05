@@ -47,9 +47,11 @@ mise run node:lab status
 docker exec meshway-lax ip address show
 ```
 
-`configure` 使用生成 SDK，核对实际 CLI 身份、Server 注册材料和容器归属，再按当前 revision 一次 CAS 提交：关闭该网络的系统 DNS，为三节点选择 Native UDP 并配置 `lab-udp` listener（`0.0.0.0:35000`）。它发布当前 Docker bridge 地址作为显式端点；业务仍按 Server 的 Access／topology／routing 执行。Development 初始 Access 为 deny，TUN、地址观测或 applied 不授予节点间业务权限。
+`configure` 使用生成 SDK，核对实际 CLI 身份、Server 注册材料和容器归属，再按当前 revision 一次 CAS 提交：关闭该网络的系统 DNS，为三节点选择 Native UDP 并配置 `lab-udp` listener（`0.0.0.0:35000`），添加仅覆盖这三个 Node 的 `icmp:*` Access 规则。它发布当前 Docker bridge 地址作为显式端点；其他业务按既有 Access／topology／routing 执行。Development 初始 Access 为 deny，TUN、地址观测或 applied 本身不授予节点间业务权限。
 
 Mesh-only 设置不需要 Alpine 运行 resolved。Server 提供 STUN 发现服务时，同一 UDP listener 的真实映射独立上报到 State；显式 bridge 端点和 STUN 映射分别保留来源。三个容器共用宿主出口，通常观测到相同的公网 IP 和不同的端口；不将 HTTP 代理来源地址作为映射观测。
+
+`icmp:*` 允许的是 OS `ping` 的 ICMP echo 包流；`meshway ping` 诊断命令仍未实现。首次向新目标发包需要完成需求发布与认证建连，初始 echo 可能在收敛期间超时；检查后续回包及实际通道，不能只以 TUN 存在判定可达。
 
 也可以进入容器使用同一 CLI：
 

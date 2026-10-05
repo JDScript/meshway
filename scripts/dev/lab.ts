@@ -71,6 +71,13 @@ async function main(args: string[]) {
       type: "replaceDns", dns: { ...source.configuration.dns, magicDNS: false, overrideLocal: false,
         servers: {}, default: [], routes: {}, searchDomains: [] },
     }];
+    const peers = bindings.map(binding => "node:" + binding.identity.nodeId).sort();
+    const samePeers = (values: string[]) => values.length === peers.length && peers.every(peer => values.includes(peer));
+    if (!source.configuration.access.some(rule => samePeers(rule.src) && samePeers(rule.dst) && rule.ip.includes("icmp:*"))) {
+      ops.push({ type: "replaceAccess", access: [...source.configuration.access, {
+        remark: "Development lab ICMP echo", src: peers, dst: peers, ip: ["icmp:*"], bidirectional: false,
+      }] });
+    }
     for (const { name, identity, address } of bindings) {
       const nodeId = identity.nodeId;
       const node = inventory.items.find(node => node.id === nodeId);
@@ -102,7 +109,7 @@ async function main(args: string[]) {
     }
     console.log(JSON.stringify({ networkId: path.networkId, revision: applied.revision,
       nodes: bindings.map(binding => ({ name: binding.name, nodeId: binding.identity.nodeId, bridgeAddress: binding.address })),
-      scope: "Mesh-only DNS-off; explicit bridge UDP endpoints plus independent same-socket STUN observations" }, null, 2));
+      scope: "Mesh-only DNS-off; lab-only ICMP echo; bridge UDP endpoints plus same-socket STUN observations" }, null, 2));
   } finally {
     required(await logout(client, auth()));
   }
