@@ -10,13 +10,13 @@ import {
 import { Surface } from "@/components/surface/surface"
 import { useIsMobile } from "@/hooks/use-media-query"
 import { useBooted } from "@/state/boot"
-import { usePointedNode } from "@/state/globe"
+import { usePointedNodes } from "@/state/globe"
 import { chooseHistoryLayer } from "@/state/history-layer"
 import { useLive } from "@/state/live"
 
 import { useNetworkScene } from "../-shell/network-scene"
 import { useNodeNavigation } from "../nodes/-navigation"
-import { NodeCard } from "./-node-card"
+import { GroupCard, NodeCard } from "./-node-card"
 import { StatusCard } from "./-status-card"
 
 /** The globe on its own, with what it cannot show in a corner. */
@@ -40,11 +40,10 @@ function OverviewPage() {
   const { state, nodes, located, nameOf } = scene
   const navigation = useNodeNavigation(networkId)
 
-  const pointed = usePointedNode()
-  const pointedNode =
-    pointed !== null && located.has(pointed)
-      ? (nodes.find((node) => node.id === pointed) ?? null)
-      : null
+  const pointed = usePointedNodes()
+  const pointedNodes = nodes.filter(
+    (node) => pointed.includes(node.id) && located.has(node.id)
+  )
 
   const place: CSSProperties = mobile
     ? {
@@ -65,9 +64,13 @@ function OverviewPage() {
       className="pointer-events-none absolute flex flex-col justify-end gap-3"
       style={place}
     >
-      {pointedNode && shown && !mobile ? (
+      {pointedNodes.length > 0 && shown && !mobile ? (
         <div className="glass pointer-events-auto shrink-0 rounded-surface">
-          <NodeCard node={pointedNode} />
+          {pointedNodes.length === 1 && pointedNodes[0] ? (
+            <NodeCard node={pointedNodes[0]} />
+          ) : (
+            <GroupCard nodes={pointedNodes} links={state.data?.links ?? []} />
+          )}
         </div>
       ) : null}
       <Surface

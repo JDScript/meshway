@@ -109,6 +109,128 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
   a[0] * b[1] - a[1] * b[0],
 ]
 
+/** The angle (radians) between two anchors, seen from the globe's centre. */
+export function angleBetween(a: Anchor, b: Anchor): number {
+  const da = cartesian(a.lat, a.lng)
+  const db = cartesian(b.lat, b.lng)
+  const cos = dot(da, db) / (GLOBE_RADIUS * GLOBE_RADIUS)
+  return Math.acos(Math.min(1, Math.max(-1, cos)))
+}
+
+/**
+ * Nodes too close to tell apart, as groups: two placed nodes `near` each
+ * other are in one group, and so is any node near one of a group's. Groups
+ * and their members follow `order`; a node alone is a group of one.
+ * Nothing is moved: a group is drawn at its first member.
+ */
+export function groupNearby(
+  order: readonly string[],
+  anchors: ReadonlyMap<string, Anchor>,
+  near: (a: Anchor, b: Anchor) => boolean
+): string[][] {
+  const placed = order.filter((id) => anchors.has(id))
+  const groupOf = new Map<string, number>()
+  const groups: string[][] = []
+  for (const id of placed) {
+    const anchor = anchors.get(id)
+    if (!anchor) continue
+    const close = new Set<number>()
+    for (const [other, index] of groupOf) {
+      const at = anchors.get(other)
+      if (at && near(anchor, at)) close.add(index)
+    }
+    const [first, ...rest] = [...close].sort((x, y) => x - y)
+    if (first === undefined) {
+      groupOf.set(id, groups.length)
+      groups.push([id])
+      continue
+    }
+    // Joining several groups merges them into the earliest.
+    for (const index of rest) {
+      const members = groups[index] ?? []
+      for (const member of members) groupOf.set(member, first)
+      groups[first]?.push(...members)
+      groups[index] = []
+    }
+    groupOf.set(id, first)
+    groups[first]?.push(id)
+  }
+  const rank = new Map(placed.map((id, index) => [id, index]))
+  return groups
+    .filter((group) => group.length > 0)
+    .map((group) =>
+      group.sort((x, y) => (rank.get(x) ?? 0) - (rank.get(y) ?? 0))
+    )
+}
+
+/**
+ * Where `b` is on screen relative to `a` (CSS px, right and down) at
+ * `perRadian` CSS px per radian of the globe facing the camera. North is up
+ * near the middle of the view; towards the edge this is an estimate.
+ */
+export function screenOffset(
+  a: Anchor,
+  b: Anchor,
+  perRadian: number
+): [number, number] {
+  const rad = Math.PI / 180
+  const across = ((((b.lng - a.lng + 180) % 360) + 360) % 360) - 180
+  return [
+    across * rad * Math.cos(((a.lat + b.lat) / 2) * rad) * perRadian,
+    (a.lat - b.lat) * rad * perRadian,
+  ]
+}
+
+/** A marker as laid out around its dot (CSS px): the dot's radius, and its name from `left` for `width`, `height` tall. */
+export type MarkerBox = {
+  key: string
+  anchor: Anchor
+  dot: number
+  left: number
+  width: number
+  height: number
+}
+
+/**
+ * The markers whose names fit: taken in order, a name is shown unless it
+ * would cover another marker's dot or a name already shown. Dots are
+ * always shown.
+ */
+export function fittingLabels(
+  boxes: readonly MarkerBox[],
+  perRadian: number
+): Set<string> {
+  type Rect = readonly [number, number, number, number]
+  const overlaps = (a: Rect, b: Rect) =>
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+  const label = (box: MarkerBox, dx = 0, dy = 0): Rect => [
+    dx + box.left,
+    dy - box.height / 2,
+    dx + box.left + box.width,
+    dy + box.height / 2,
+  ]
+  const shown = new Set<MarkerBox>()
+  for (const box of boxes) {
+    const own = label(box)
+    const covers = boxes.some((other) => {
+      if (other === box) return false
+      const [dx, dy] = screenOffset(box.anchor, other.anchor, perRadian)
+      const dot: Rect = [
+        dx - other.dot,
+        dy - other.dot,
+        dx + other.dot,
+        dy + other.dot,
+      ]
+      return (
+        overlaps(own, dot) ||
+        (shown.has(other) && overlaps(own, label(other, dx, dy)))
+      )
+    })
+    if (!covers) shown.add(box)
+  }
+  return new Set([...shown].map((box) => box.key))
+}
+
 /**
  * A link's path: the great circle between its ends, lifted into an arc whose
  * height grows with distance, so it never dips into the globe. Opposite ends

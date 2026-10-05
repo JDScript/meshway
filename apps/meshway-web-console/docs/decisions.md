@@ -300,8 +300,17 @@ its generated client only, and only what the controller delivers:
   between the same nodes take successive arcs. The corner counts nodes by
   status and links by phase and evidence, with the State's `asOf` and
   whether the stream keeps it live. A node opens its workspace from the
-  globe or the list. More than 120 placed nodes show names only on the one
-  pointed at, focused or selected.
+  globe or the list. Nodes whose dots would overlap at the current zoom
+  (the same IP or city, or neighbouring cities from afar) are one marker at
+  the first one's place, nothing moved: its dot counts them in the tone of
+  the one most in need of a look, its name is the selected or first node's
+  and "等 N 个", and pressing it lists them, each opening its node; pointing
+  at it lists them in the corner with their place, address and the links
+  between them, which the globe cannot draw (links between the very same
+  place are not drawn). Zooming in splits a group once its dots are apart.
+  A name that would cover another marker shows only where it is pointed
+  at, focused, open or selected, the selected node's first; more than 120
+  markers show names that way only.
 - History layer (D3): off by default; a chosen window (1 h, 6 h, 24 h, 7 d,
   the controller's longest) is fixed when chosen, and refreshing reads a new
   one, because cursors are bound to the window and lapse after 15 minutes.

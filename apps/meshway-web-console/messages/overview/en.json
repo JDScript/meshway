@@ -27,6 +27,28 @@
   "overview_location_observed": "Observed",
   "overview_location_expires": "Valid until",
   "overview_location_accuracy": "Within about {km} km",
+  "overview_group_nodes": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} node",
+        "countPlural=other": "{count} nodes"
+      }
+    }
+  ],
+  "overview_group_between": "Between them",
+  "overview_group_links": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} link",
+        "countPlural=other": "{count} links"
+      }
+    }
+  ],
+  "overview_group_links_none": "No links",
   "overview_history": "Link history",
   "overview_history_off": "Off",
   "overview_history_seen": "{count} links recorded",

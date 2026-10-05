@@ -3,10 +3,14 @@ import { test } from "vitest"
 
 import {
   anchorsOf,
+  angleBetween,
   cartesian,
+  fittingLabels,
   GLOBE_RADIUS,
+  groupNearby,
   lineStyle,
   linkCurve,
+  screenOffset,
   type Anchor,
   type SceneNode,
 } from "@/globe/scene"
@@ -99,4 +103,81 @@ test("history links are fainter than any current link", () => {
     "closed",
   ] as const)
     assert.ok(lineStyle(look).opacity > history, look)
+})
+
+test("nodes too close to tell apart are one group, in the given order; the rest stay alone", () => {
+  const at = (lat: number, lng: number): Anchor => ({
+    lat,
+    lng,
+    altitude: 0.01,
+  })
+  const anchors = new Map<string, Anchor>([
+    ["lax", at(43.6532, -79.3832)],
+    ["nyc", at(43.6532, -79.3832)],
+    ["sha", at(43.6532, -79.3832)],
+    ["tokyo", at(35.68, 139.69)],
+    ["yokohama", at(35.44, 139.64)],
+    ["osaka", at(34.69, 135.5)],
+  ])
+  const order = ["lax", "nyc", "osaka", "sha", "tokyo", "unplaced", "yokohama"]
+  const within = (radians: number) => (a: Anchor, b: Anchor) =>
+    angleBetween(a, b) < radians
+  // About 1.5° (Tokyo–Yokohama is 0.25°, Tokyo–Osaka 3.6°).
+  assert.deepEqual(groupNearby(order, anchors, within(0.026)), [
+    ["lax", "nyc", "sha"],
+    ["osaka"],
+    ["tokyo", "yokohama"],
+  ])
+  // Zoomed in, only the very same place stays together.
+  assert.deepEqual(groupNearby(order, anchors, within(0.001)), [
+    ["lax", "nyc", "sha"],
+    ["osaka"],
+    ["tokyo"],
+    ["yokohama"],
+  ])
+  // A chain of close nodes is one group, even when its ends are far apart.
+  const chain = new Map<string, Anchor>([
+    ["a", at(0, 0)],
+    ["c", at(0, 2)],
+    ["b", at(0, 1)],
+  ])
+  assert.deepEqual(groupNearby(["a", "c", "b"], chain, within(0.02)), [
+    ["a", "c", "b"],
+  ])
+  assert.equal(angleBetween(at(10, 20), at(10, 20)), 0)
+})
+
+test("a name is left out where it would cover another dot or a name already shown", () => {
+  const at = (lat: number, lng: number): Anchor => ({
+    lat,
+    lng,
+    altitude: 0.01,
+  })
+  const box = (key: string, anchor: Anchor) => ({
+    key,
+    anchor,
+    dot: 4,
+    left: 13,
+    width: 60,
+    height: 20,
+  })
+  // 1000 px per radian: 1° is about 17.5 px.
+  const west = box("west", at(0, 0))
+  const east = box("east", at(0, 3)) // 52 px right: under west's name
+  const north = box("north", at(2, 0)) // 35 px up: clear of west
+  const far = box("far", at(0, 10))
+  assert.deepEqual([...fittingLabels([west, east, north, far], 1000)].sort(), [
+    "east",
+    "far",
+    "north",
+  ])
+  // West's name covers east's dot, whatever the order; east's name covers nothing.
+  assert.deepEqual([...fittingLabels([east, west, north, far], 1000)].sort(), [
+    "east",
+    "far",
+    "north",
+  ])
+  // Across the antimeridian, the short way round.
+  const [dx] = screenOffset(at(0, 179), at(0, -179), 1000)
+  assert.ok(Math.abs(dx - 34.9) < 0.1)
 })

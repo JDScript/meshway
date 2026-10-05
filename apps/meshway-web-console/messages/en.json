@@ -9,6 +9,7 @@
   "copy": "Copy",
   "copied": "Copied",
   "globe_region": "Network globe",
+  "globe_group_label": "{name} +{others}",
   "login_title": "Sign in",
   "login_submit": "Sign in",
   "login_missing": "Enter your email and password.",

@@ -12,8 +12,9 @@ import {
   ShaderMaterial,
 } from "three"
 
-import { statusTone } from "@/lib/nodes/status"
+import { mostUrgentTone, statusTone } from "@/lib/nodes/status"
 import { statusLabel } from "@/lib/state-labels"
+import { m } from "@/paraglide/messages.js"
 import type { BootPhase } from "@/state/boot"
 import { sameInsets, type GlobeState } from "@/state/globe"
 
@@ -34,10 +35,14 @@ import {
 import { DEFAULT_LOOK } from "./look"
 import {
   anchorsOf,
+  angleBetween,
   cartesian,
+  fittingLabels,
   GLOBE_RADIUS,
+  groupNearby,
   lineStyle,
   linkCurve,
+  screenOffset,
   type Anchor,
   type LinkLook,
   type SceneNode,
@@ -68,12 +73,20 @@ export type GlobeEngine = {
   destroy(): void
 }
 
+/** One marker: a node, or nodes too close to tell apart drawn as one (at the first). */
 type MarkerDatum = {
+  members: string[]
   lat: number
   lng: number
   altitude: number
-  element: HTMLButtonElement
+  element: HTMLDivElement
+  button: HTMLButtonElement
+  count: HTMLSpanElement
   label: HTMLSpanElement
+  /** A group's nodes, listed when its button is pressed. */
+  menu: HTMLDivElement
+  /** What the menu was last filled with. */
+  menuKey: string
 }
 
 const HOME = { lat: 24, altitude: 2.5 }
@@ -98,8 +111,17 @@ const REVEAL_SPIN_MS = 1800
 /** The interface comes in this far into the reveal, while the globe settles. */
 const REVEAL_UI_MS = 850
 const COMET_FADE_MS = 900
-/** Above this many placed nodes, names show only on the node pointed at, focused or selected. */
+/** Above this many markers, names show only on the marker pointed at, focused or selected. */
 const DENSE_LABELS = 120
+/** Nodes whose dots are closer than this on screen (CSS px) are drawn as one marker. */
+const MERGE_PX = 20
+/** A marker's dot radius and where its name starts and how tall it is (CSS px, as in index.css). */
+const DOT = { single: 4, group: 8 }
+const LABEL = { single: 13, group: 17, height: 20 }
+/** A name's font, letter spacing and padding (CSS px, as in index.css). */
+const NAME = { font: "500 11.5px", spacing: 0.115, padding: 14 }
+/** Markers are grouped again once the zoom changes the on-screen scale by this share. */
+const REGROUP_SHARE = 0.1
 
 const easeOut = (t: number) => 1 - (1 - t) ** 4
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
@@ -318,7 +340,7 @@ type LinkObject = {
 export function createGlobeEngine(
   container: HTMLElement,
   onSelect: (nodeId: string | null) => void,
-  onHover: (nodeId: string | null) => void,
+  onHover: (nodeIds: readonly string[]) => void,
   onRevealed: () => void
 ): GlobeEngine {
   const look = DEFAULT_LOOK
@@ -330,10 +352,20 @@ export function createGlobeEngine(
     surface,
     atmosphere: look.atmosphere,
     onFrame: (time) => tick(time),
-    onGlobeClick: () => onSelect(null),
+    onGlobeClick: () => {
+      setOpen(null)
+      onSelect(null)
+    },
     onMarkerVisibility: (element, visible) => {
       element.dataset.behind = visible ? "false" : "true"
-      element.tabIndex = visible ? 0 : -1
+      for (const button of element.querySelectorAll("button"))
+        button.tabIndex = visible ? 0 : -1
+      if (
+        !visible &&
+        openGroup !== null &&
+        markers.get(openGroup)?.element === element
+      )
+        setOpen(null)
     },
   })
   const { renderer, camera, controls } = stage
@@ -496,6 +528,10 @@ export function createGlobeEngine(
   let height = container.clientHeight
   let anchors = new Map<string, Anchor>()
   let markersKey = ""
+  /** The on-screen scale (CSS px per radian) the current grouping is for. */
+  let groupedScale = 0
+  /** The group whose list is open. */
+  let openGroup: string | null = null
   let linksKey = ""
   let rotationTarget = 0
   let rotationSpeed = 0
@@ -736,9 +772,17 @@ export function createGlobeEngine(
 
     // Rotation eases in and out instead of starting or stopping dead.
     const target =
-      interacting || time < pausedUntil || reveal ? 0 : rotationTarget
+      interacting || time < pausedUntil || reveal || openGroup !== null
+        ? 0
+        : rotationTarget
     rotationSpeed += (target - rotationSpeed) * (1 - Math.exp(-dt / 0.7))
     controls.autoRotateSpeed = rotationSpeed
+
+    // Zooming changes which nodes are too close to tell apart.
+    if (last && last.boot !== "loading") {
+      if (Math.abs(screenScale() - groupedScale) > groupedScale * REGROUP_SHARE)
+        refreshMarkers(last)
+    }
 
     // Links draw in from their first end, one after another.
     const drawn = motion ? easeOut(clamp01((time - linksShownAt) / 1100)) : 1
@@ -765,35 +809,283 @@ export function createGlobeEngine(
   document.addEventListener("visibilitychange", onVisibility)
 
   // ---- Node markers (DOM, so they are real, focusable buttons) ----------
+  // Nodes too close to tell apart at the current zoom are one marker: its
+  // dot counts them and takes the tone of the one most in need of a look,
+  // and pressing it lists them, each opening its node.
   const markers = new Map<string, MarkerDatum>()
-  const markerFor = (node: SceneNode, order: number): MarkerDatum => {
-    const existing = markers.get(node.id)
+  const part = (name: string) => {
+    const span = document.createElement("span")
+    span.className = `globe-node__${name}`
+    return span
+  }
+  /** How wide a name is drawn, measured once per text without reading the page's layout. */
+  const nameWidths = new Map<string, number>()
+  let measure: CanvasRenderingContext2D | null | undefined
+  const nameWidth = (text: string) => {
+    const known = nameWidths.get(text)
+    if (known !== undefined) return known
+    if (measure === undefined) {
+      measure = document.createElement("canvas").getContext("2d")
+      if (measure)
+        measure.font = `${NAME.font} ${getComputedStyle(container).fontFamily}`
+    }
+    const width =
+      (measure ? measure.measureText(text).width : text.length * 6.6) +
+      text.length * NAME.spacing +
+      NAME.padding
+    nameWidths.set(text, width)
+    return width
+  }
+
+  /** CSS px per radian of the globe where it faces the camera, at the altitude the camera is heading to. */
+  const screenScale = () => {
+    const altitude =
+      springs.scale.active && !interacting
+        ? 1 / springs.scale.target - 1
+        : stage.pointOfView().altitude
+    const focal =
+      Math.max(height, 1) / 2 / Math.tan((camera.fov * Math.PI) / 360)
+    return focal / Math.max(altitude, 1e-3)
+  }
+
+  const setOpen = (key: string | null) => {
+    if (openGroup === key) return
+    const before = openGroup === null ? undefined : markers.get(openGroup)
+    if (before) {
+      before.menu.hidden = true
+      before.element.dataset.open = "false"
+      before.button.setAttribute("aria-expanded", "false")
+    }
+    openGroup = key
+    const now = key === null ? undefined : markers.get(key)
+    if (now) {
+      now.menu.hidden = false
+      now.element.dataset.open = "true"
+      now.button.setAttribute("aria-expanded", "true")
+    }
+  }
+  // A press anywhere else closes an open list.
+  const onDocumentPointer = (event: PointerEvent) => {
+    const open = openGroup === null ? undefined : markers.get(openGroup)
+    if (
+      open &&
+      !(event.target instanceof Node && open.element.contains(event.target))
+    )
+      setOpen(null)
+  }
+  document.addEventListener("pointerdown", onDocumentPointer, true)
+
+  const markerFor = (key: string, order: number): MarkerDatum => {
+    const existing = markers.get(key)
     if (existing) return existing
-    const element = document.createElement("button")
-    element.type = "button"
+    const element = document.createElement("div")
     element.className = "globe-node"
     element.style.setProperty("--enter-delay", `${order * 70}ms`)
-    const parts = ["hit", "dot"].map((name) => {
-      const span = document.createElement("span")
-      span.className = `globe-node__${name}`
-      return span
-    })
-    const label = document.createElement("span")
-    label.className = "globe-node__label"
-    element.append(...parts, label)
-    element.addEventListener("click", (event) => {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "globe-node__button"
+    const dot = part("dot")
+    const count = part("count")
+    dot.append(count)
+    const label = part("label")
+    button.append(part("hit"), dot, label)
+    const menu = document.createElement("div")
+    menu.className = "globe-node__menu"
+    menu.setAttribute("role", "group")
+    menu.hidden = true
+    element.append(button, menu)
+    const datum: MarkerDatum = {
+      members: [],
+      lat: 0,
+      lng: 0,
+      altitude: 0,
+      element,
+      button,
+      count,
+      label,
+      menu,
+      menuKey: "",
+    }
+    button.addEventListener("click", (event) => {
       event.stopPropagation()
-      onSelect(node.id)
+      const [only, ...others] = datum.members
+      if (only !== undefined && others.length === 0) onSelect(only)
+      else setOpen(openGroup === key ? null : key)
     })
-    const enter = () => onHover(node.id)
-    const leave = () => onHover(null)
-    element.addEventListener("pointerenter", enter)
-    element.addEventListener("pointerleave", leave)
-    element.addEventListener("focus", enter)
-    element.addEventListener("blur", leave)
-    const datum: MarkerDatum = { lat: 0, lng: 0, altitude: 0, element, label }
-    markers.set(node.id, datum)
+    element.addEventListener("pointerenter", () => onHover(datum.members))
+    element.addEventListener("pointerleave", () => onHover([]))
+    button.addEventListener("focus", () => onHover(datum.members))
+    button.addEventListener("blur", () => onHover([]))
+    element.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || openGroup !== key) return
+      event.stopPropagation()
+      setOpen(null)
+      button.focus()
+    })
+    markers.set(key, datum)
     return datum
+  }
+
+  /** A group's list: each node with its status, opening it. */
+  const fillMenu = (
+    datum: MarkerDatum,
+    nodes: readonly SceneNode[],
+    selected: string | null
+  ) => {
+    const key = JSON.stringify([
+      nodes.map((node) => [node.id, node.name, node.status]),
+      selected,
+    ])
+    if (datum.menuKey === key) return
+    datum.menuKey = key
+    datum.menu.replaceChildren(
+      ...nodes.map((node) => {
+        const item = document.createElement("button")
+        item.type = "button"
+        item.className = "globe-node__item"
+        item.dataset.tone = statusTone[node.status]
+        item.dataset.selected = node.id === selected ? "true" : "false"
+        const name = part("item-name")
+        name.textContent = node.name
+        const status = part("item-status")
+        status.textContent = statusLabel[node.status]()
+        item.append(part("item-dot"), name, status)
+        item.addEventListener("click", (event) => {
+          event.stopPropagation()
+          setOpen(null)
+          onSelect(node.id)
+        })
+        item.addEventListener("pointerenter", () => onHover([node.id]))
+        item.addEventListener("pointerleave", () => onHover(datum.members))
+        item.addEventListener("focus", () => onHover([node.id]))
+        return item
+      })
+    )
+  }
+
+  /** Groups the placed nodes for the current zoom and brings the markers in line. */
+  const placeMarkers = (input: EngineInput) => {
+    const nodes = input.framing === "welcome" ? [] : input.scene.nodes
+    const byId = new Map(nodes.map((node) => [node.id, node]))
+    const scale = screenScale()
+    groupedScale = scale
+    const groups = groupNearby(
+      nodes.map((node) => node.id),
+      anchors,
+      (a, b) => Math.hypot(...screenOffset(a, b, scale)) < MERGE_PX
+    )
+    const keys = new Set<string>()
+    groups.forEach((members, order) => {
+      const key = members.join(",")
+      keys.add(key)
+      const datum = markerFor(key, order)
+      datum.members = members
+      const anchor =
+        members[0] === undefined ? undefined : anchors.get(members[0])
+      if (anchor)
+        Object.assign(datum, {
+          lat: anchor.lat,
+          lng: anchor.lng,
+          altitude: anchor.altitude,
+        })
+      const shown = members.flatMap((id) => byId.get(id) ?? [])
+      const selected =
+        input.selectedNodeId !== null && members.includes(input.selectedNodeId)
+          ? input.selectedNodeId
+          : null
+      // A group is named by its selected node, else its first.
+      const lead = shown.find((node) => node.id === selected) ?? shown[0]
+      const name = lead?.name ?? ""
+      const group = shown.length > 1
+      datum.element.dataset.tone = mostUrgentTone(
+        shown.map((node) => node.status)
+      )
+      datum.element.dataset.selected = selected !== null ? "true" : "false"
+      datum.element.dataset.group = group ? "true" : "false"
+      datum.count.textContent = group ? String(shown.length) : ""
+      datum.label.textContent = group
+        ? m.globe_group_label({
+            name,
+            count: shown.length,
+            others: shown.length - 1,
+          })
+        : name
+      if (group) {
+        datum.button.setAttribute("aria-label", datum.label.textContent)
+        datum.button.setAttribute(
+          "aria-expanded",
+          openGroup === key ? "true" : "false"
+        )
+        datum.button.removeAttribute("aria-pressed")
+        datum.menu.setAttribute("aria-label", datum.label.textContent)
+        fillMenu(datum, shown, selected)
+      } else {
+        datum.button.setAttribute(
+          "aria-label",
+          lead ? `${lead.name} · ${statusLabel[lead.status]()}` : ""
+        )
+        datum.button.setAttribute(
+          "aria-pressed",
+          selected !== null ? "true" : "false"
+        )
+        datum.button.removeAttribute("aria-expanded")
+        datum.menu.replaceChildren()
+        datum.menuKey = ""
+      }
+    })
+    // Names that would cover another marker are left out (shown when pointed
+    // at), the selected node's first.
+    const boxes = groups.flatMap((members) => {
+      const key = members.join(",")
+      const datum = markers.get(key)
+      const anchor =
+        members[0] === undefined ? undefined : anchors.get(members[0])
+      if (!datum || !anchor) return []
+      const group = members.length > 1
+      return [
+        {
+          key,
+          anchor,
+          dot: group ? DOT.group : DOT.single,
+          left: group ? LABEL.group : LABEL.single,
+          width: nameWidth(datum.label.textContent ?? ""),
+          height: LABEL.height,
+          selected: datum.element.dataset.selected === "true",
+        },
+      ]
+    })
+    const fitting = fittingLabels(
+      [
+        ...boxes.filter((box) => box.selected),
+        ...boxes.filter((box) => !box.selected),
+      ],
+      scale
+    )
+    for (const { key } of boxes) {
+      const datum = markers.get(key)
+      if (datum)
+        datum.element.dataset.label = fitting.has(key) ? "shown" : "hidden"
+    }
+    if (openGroup !== null && !keys.has(openGroup)) setOpen(null)
+    for (const [key, datum] of markers) {
+      if (!keys.has(key)) {
+        datum.element.remove()
+        markers.delete(key)
+      }
+    }
+    container.dataset.dense = groups.length > DENSE_LABELS ? "true" : "false"
+    const nextMarkersKey = JSON.stringify(
+      groups.map((members) => [
+        members.join(","),
+        members[0] && anchors.get(members[0]),
+      ])
+    )
+    if (nextMarkersKey !== markersKey) {
+      markersKey = nextMarkersKey
+      stage.setMarkers(
+        groups.flatMap((members) => markers.get(members.join(",")) ?? [])
+      )
+    }
   }
 
   const applyColors = (colors: GlobeColors) => {
@@ -822,8 +1114,9 @@ export function createGlobeEngine(
     for (const sceneLink of sceneLinks) {
       const a = anchors.get(sceneLink.nodeIds[0])
       const b = anchors.get(sceneLink.nodeIds[1])
-      // Links to unplaced nodes are not drawn: they have no place to end.
-      if (!a || !b) continue
+      // Links to unplaced nodes are not drawn: they have no place to end;
+      // nor are links between nodes at the very same place.
+      if (!a || !b || angleBetween(a, b) < 1e-9) continue
       const curve = linkCurve(a, b, 72, sceneLink.lane)
       const style = lineStyle(sceneLink.look)
       const geometry = new BufferGeometry()
@@ -855,25 +1148,40 @@ export function createGlobeEngine(
     linksShownAt = performance.now()
   }
 
-  /** A highlighted node and its neighbours stay bright; the rest recede. */
-  const emphasise = (highlight: string | null) => {
+  /** Highlighted nodes and their neighbours stay bright; the rest recede. */
+  const emphasise = (highlight: ReadonlySet<string>) => {
+    const touches = (link: LinkObject) =>
+      link.nodeIds.some((id) => highlight.has(id))
     for (const link of links) {
-      const touches = highlight === null || link.nodeIds.includes(highlight)
-      link.material.opacity = touches
-        ? link.baseOpacity
-        : link.baseOpacity * 0.22
+      link.material.opacity =
+        highlight.size === 0 || touches(link)
+          ? link.baseOpacity
+          : link.baseOpacity * 0.22
     }
     const neighbours = new Set(
-      links
-        .filter((link) => highlight && link.nodeIds.includes(highlight))
-        .flatMap((link) => link.nodeIds)
+      links.filter(touches).flatMap((link) => link.nodeIds)
     )
-    for (const [id, datum] of markers) {
+    for (const datum of markers.values()) {
       datum.element.dataset.dimmed =
-        highlight !== null && id !== highlight && !neighbours.has(id)
+        highlight.size > 0 &&
+        !datum.members.some((id) => highlight.has(id) || neighbours.has(id))
           ? "true"
           : "false"
     }
+  }
+
+  /** What is highlighted: the nodes pointed at on the globe, else the one pointed at in a list, else the selected one. */
+  const highlightOf = (input: EngineInput): Set<string> => {
+    const pointed = input.pointedNodeIds.filter((id) => anchors.has(id))
+    if (pointed.length > 0) return new Set(pointed)
+    for (const id of [input.hoveredNodeId, input.selectedNodeId])
+      if (id !== null && anchors.has(id)) return new Set([id])
+    return new Set()
+  }
+
+  const refreshMarkers = (input: EngineInput) => {
+    placeMarkers(input)
+    emphasise(highlightOf(input))
   }
 
   const update = (input: EngineInput) => {
@@ -883,51 +1191,12 @@ export function createGlobeEngine(
 
     if (!previous || previous.colors !== input.colors) applyColors(input.colors)
 
-    const nodes = input.framing === "welcome" ? [] : input.scene.nodes
-    anchors = anchorsOf(nodes)
-    const placed = nodes.filter((node) => anchors.has(node.id))
-
-    placed.forEach((node, order) => {
-      const anchor = anchors.get(node.id)
-      const datum = markerFor(node, order)
-      if (anchor)
-        Object.assign(datum, {
-          lat: anchor.lat,
-          lng: anchor.lng,
-          altitude: anchor.altitude,
-        })
-      datum.label.textContent = node.name
-      datum.element.dataset.tone = statusTone[node.status]
-      datum.element.dataset.selected =
-        node.id === input.selectedNodeId ? "true" : "false"
-      datum.element.setAttribute(
-        "aria-label",
-        `${node.name} · ${statusLabel[node.status]()}`
-      )
-      datum.element.setAttribute(
-        "aria-pressed",
-        node.id === input.selectedNodeId ? "true" : "false"
-      )
-    })
-    container.dataset.dense = placed.length > DENSE_LABELS ? "true" : "false"
-    const shown = new Set(placed.map((node) => node.id))
-    for (const [id, datum] of markers) {
-      if (!shown.has(id)) {
-        datum.element.remove()
-        markers.delete(id)
-      }
-    }
-    const nextMarkersKey = JSON.stringify(
-      placed.map((node) => [node.id, anchors.get(node.id)])
-    )
-    if (nextMarkersKey !== markersKey) {
-      markersKey = nextMarkersKey
-      stage.setMarkers(placed.flatMap((node) => markers.get(node.id) ?? []))
-    }
+    anchors = anchorsOf(input.framing === "welcome" ? [] : input.scene.nodes)
+    placeMarkers(input)
 
     const nextLinksKey = JSON.stringify([
       input.framing === "welcome" ? [] : input.scene.links,
-      nextMarkersKey,
+      [...anchors],
       input.motion,
       input.colors,
     ])
@@ -935,13 +1204,7 @@ export function createGlobeEngine(
       linksKey = nextLinksKey
       buildLinks(input)
     }
-    const onGlobe = (id: string | null) =>
-      id !== null && anchors.has(id) ? id : null
-    emphasise(
-      onGlobe(input.pointedNodeId) ??
-        onGlobe(input.hoveredNodeId) ??
-        onGlobe(input.selectedNodeId)
-    )
+    emphasise(highlightOf(input))
 
     const focus = focusOf(input)
     if (input.boot === "loading") {
@@ -989,6 +1252,7 @@ export function createGlobeEngine(
     },
     destroy() {
       document.removeEventListener("visibilitychange", onVisibility)
+      document.removeEventListener("pointerdown", onDocumentPointer, true)
       stage.pause()
       disposeLinks()
       for (const disposable of [

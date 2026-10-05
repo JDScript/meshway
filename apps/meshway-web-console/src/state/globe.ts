@@ -35,8 +35,8 @@ export type GlobeState = {
   framing: Framing
   scene: Scene
   selectedNodeId: string | null
-  /** The node the pointer is on, on the globe (the stage reports it). */
-  pointedNodeId: string | null
+  /** The nodes the pointer is on, on the globe: one, or a group drawn as one (the stage reports them); empty when none. */
+  pointedNodeIds: readonly string[]
   /** A node pointed at elsewhere (a list row); highlighted, the camera stays. */
   hoveredNodeId: string | null
   insets: Insets
@@ -48,7 +48,7 @@ const globeStore = createStore<GlobeState>(() => ({
   framing: "welcome",
   scene: EMPTY_SCENE,
   selectedNodeId: null,
-  pointedNodeId: null,
+  pointedNodeIds: [],
   hoveredNodeId: null,
   insets: NO_INSETS,
   recede: false,
@@ -57,9 +57,9 @@ const globeStore = createStore<GlobeState>(() => ({
 /** What the globe shows, for its stage. */
 export const useGlobe = (): GlobeState => useStore(globeStore)
 
-/** The node the pointer is on, on the globe; null when none. */
-export const usePointedNode = (): string | null =>
-  useStore(globeStore, (globe) => globe.pointedNodeId)
+/** The nodes the pointer is on, on the globe; empty when none. */
+export const usePointedNodes = (): readonly string[] =>
+  useStore(globeStore, (globe) => globe.pointedNodeIds)
 
 export function setGlobe(patch: Partial<GlobeState>) {
   const current = globeStore.getState()
@@ -75,7 +75,7 @@ export function showWelcomeGlobe() {
     framing: "welcome",
     scene: EMPTY_SCENE,
     selectedNodeId: null,
-    pointedNodeId: null,
+    pointedNodeIds: [],
     hoveredNodeId: null,
     insets: NO_INSETS,
     recede: false,
@@ -105,7 +105,11 @@ export function selectFromGlobe(nodeId: string | null) {
 }
 
 /** The stage reports where the pointer is. */
-export function pointAtOnGlobe(nodeId: string | null) {
-  if (globeStore.getState().pointedNodeId !== nodeId)
-    globeStore.setState({ pointedNodeId: nodeId })
+export function pointAtOnGlobe(nodeIds: readonly string[]) {
+  const current = globeStore.getState().pointedNodeIds
+  if (
+    current.length !== nodeIds.length ||
+    current.some((id, index) => id !== nodeIds[index])
+  )
+    globeStore.setState({ pointedNodeIds: nodeIds })
 }

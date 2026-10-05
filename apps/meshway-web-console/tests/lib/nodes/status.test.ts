@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "vitest"
 
-import { lastSeen, nodeStatus, statusTone } from "@/lib/nodes/status"
+import {
+  lastSeen,
+  mostUrgentTone,
+  nodeStatus,
+  statusTone,
+} from "@/lib/nodes/status"
 
 const ON = {
   enabled: true,
@@ -58,4 +63,12 @@ test("last seen: the last report, else the last sign-in", () => {
     "2026-10-04T09:00:00Z"
   )
   assert.equal(lastSeen(undefined), null)
+})
+
+test("nodes shown as one take the tone most in need of a look", () => {
+  assert.equal(mostUrgentTone(["current", "expired", "superseded"]), "offline")
+  assert.equal(mostUrgentTone(["current", "config_mismatch"]), "attention")
+  assert.equal(mostUrgentTone(["disabled", "current"]), "online")
+  assert.equal(mostUrgentTone(["disabled", "unknown"]), "inactive")
+  assert.equal(mostUrgentTone([]), "inactive")
 })

@@ -43,6 +43,16 @@ export const statusTone: Record<NodeStatus, StatusTone> = {
   unknown: "inactive",
 }
 
+/** The tone of several nodes shown as one: the one most in need of a look (gone, then a look, then online, then off). */
+export function mostUrgentTone(statuses: readonly NodeStatus[]): StatusTone {
+  const tones = new Set(statuses.map((status) => statusTone[status]))
+  return (
+    (["offline", "attention", "online"] as const).find((tone) =>
+      tones.has(tone)
+    ) ?? "inactive"
+  )
+}
+
 /** The order statuses are counted in: online first, then what needs a look. */
 export const STATUS_ORDER: readonly NodeStatus[] = [
   "current",
