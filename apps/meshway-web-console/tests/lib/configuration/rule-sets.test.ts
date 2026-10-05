@@ -78,11 +78,22 @@ test("the default interval and the order of inline values make no change", () =>
     true
   )
   assert.deepEqual(writtenRuleSet({ ...remote, updateInterval: "24h" }), remote)
-  assert.deepEqual(inlineOf(["corp.example", "10.0.0.0/8"]), {
-    type: "inline",
-    domainSuffix: ["corp.example"],
-    ipCIDR: ["10.0.0.0/8"],
-  })
+  assert.deepEqual(
+    inlineOf(["corp.example", "=login.partner.example", "10.0.0.0/8"]),
+    {
+      type: "inline",
+      domainSuffix: ["corp.example"],
+      domain: ["login.partner.example"],
+      ipCIDR: ["10.0.0.0/8"],
+    }
+  )
+  assert.equal(
+    sameRuleSets(
+      { o: { type: "inline", domainSuffix: ["a.example"] } },
+      { o: { type: "inline", domain: ["a.example"] } }
+    ),
+    false
+  )
 })
 
 test("problems sit at the controller's pointers", () => {

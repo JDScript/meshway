@@ -4,7 +4,9 @@ import { test } from "vitest"
 
 import {
   badDestination,
+  matchKind,
   matchOf,
+  matchParts,
   matchValues,
   moved,
   profileChoices,
@@ -26,18 +28,28 @@ test("rules move by one place and stay put at the ends", () => {
   assert.deepEqual(moved(["a", "b", "c"], 2, 1), ["a", "b", "c"])
 })
 
-test("a match is one set of chips: domains, prefixes and rule sets", () => {
+test("a match is one set of chips: domains, exact names, prefixes and rule sets", () => {
   const match = {
     domainSuffix: ["corp.example"],
+    domain: ["login.partner.example"],
     ipCIDR: ["10.20.0.0/16"],
     ruleSets: ["office"],
   }
   assert.deepEqual(matchValues(match), [
     "corp.example",
+    "=login.partner.example",
     "10.20.0.0/16",
     "set:office",
   ])
   assert.deepEqual(matchOf(matchValues(match)), match)
+  assert.deepEqual(matchParts(match), [
+    ["domainSuffix", 1],
+    ["domain", 1],
+    ["ipCIDR", 1],
+    ["ruleSets", 1],
+  ])
+  assert.equal(matchKind("=login.partner.example"), "exact")
+  assert.equal(matchKind("="), null)
   assert.deepEqual(matchOf(["fd00::/8"]), { ipCIDR: ["fd00::/8"] })
   assert.deepEqual(matchOf([]), {})
 })

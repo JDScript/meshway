@@ -11,7 +11,12 @@ import {
   type Note,
 } from "@/components/configuration/form-kit"
 import { pointerOf, type JsonPath } from "@/lib/configuration/jsonc"
-import { matchOf, matchValues, moved } from "@/lib/configuration/routing"
+import {
+  matchOf,
+  matchParts,
+  matchValues,
+  moved,
+} from "@/lib/configuration/routing"
 import { m } from "@/paraglide/messages.js"
 
 import { moveKeys, OrderedRules, useRowKeys } from "./ordered"
@@ -115,11 +120,7 @@ export function EgressRules({
                   invalid={setRefusal(
                     notes,
                     pointerOf([...path, index, "match"]),
-                    [
-                      ["domainSuffix", rule.match.domainSuffix?.length ?? 0],
-                      ["ipCIDR", rule.match.ipCIDR?.length ?? 0],
-                      ["ruleSets", rule.match.ruleSets?.length ?? 0],
-                    ]
+                    matchParts(rule.match)
                   )}
                   onChange={(values) =>
                     update(index, { ...rule, match: matchOf(values) })

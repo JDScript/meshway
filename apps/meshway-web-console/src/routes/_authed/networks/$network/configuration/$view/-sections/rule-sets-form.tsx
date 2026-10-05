@@ -31,6 +31,7 @@ import { withEntry, without } from "@/lib/configuration/keyed"
 import {
   DEFAULT_INTERVAL,
   inlineOf,
+  inlineParts,
   inlineValues,
   preparationOf,
   refreshable,
@@ -239,10 +240,7 @@ function RuleSetCard({
           label={m.configuration_ruleset_entries()}
           addLabel={m.configuration_ruleset_entries_add()}
           editable={editable}
-          invalid={setRefusal(notes, at(), [
-            ["domainSuffix", set.domainSuffix?.length ?? 0],
-            ["ipCIDR", set.ipCIDR?.length ?? 0],
-          ])}
+          invalid={setRefusal(notes, at(), inlineParts(set))}
           onChange={(values) => onChange(inlineOf(values))}
         />
       ) : (
