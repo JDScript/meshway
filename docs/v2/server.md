@@ -62,6 +62,12 @@ mise exec -- cargo run -p meshway-server --bin reset-password --locked -- \
 
 命令显式交付一次性链接；网络 Owner 无他人全局密码重置权。GeoIP／ASN 数据集同样由本机的 `ip-datasets` binary 导入，见[数据集部署](/v2/state-reference/ip-info#datasets)。部署配置、存储和 Node 信任的切换须协调，不通过任意数据库错误自动清库。
 
+### 本机开发服务
+
+使用 `mise run services start|status|stop|restart|update server` 管理本工作树的私有 Server。显式 `mise run services reset server` 会先核验并停止服务，整体归档旧数据库／密钥及开发登录文件，再通过生成 SDK 初始化固定开发账户和干净的 `Development` 网络；普通 start／update 保留数据。
+
+服务地址、启动归属核验、reset 阶段与恢复、测试层次、报告和清理边界统一见[开发服务、测试与环境](/v2/development)。源码合并或编译完成后，仍须执行服务更新并核对实际运行实例。
+
 ## 参考
 
 - [数据模型与权限](/v2/entities) · [权限矩阵](/v2/permissions)

@@ -14,6 +14,32 @@
   "members_role": "Role",
   "members_role_save": "Save role",
   "members_role_saved": "Role saved",
+  "members_role_change": "Change role",
+  "members_role_change_effect": "{email} changes from {from} to {to}",
+  "members_role_change_self": "You change from {from} to {to}",
+  "members_role_change_links_none": "No join links to revoke",
+  "members_role_change_links": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} join link they issued and nobody used is revoked",
+        "countPlural=other": "{count} join links they issued and nobody used are revoked"
+      }
+    }
+  ],
+  "members_role_change_links_self": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} join link you issued and nobody used is revoked",
+        "countPlural=other": "{count} join links you issued and nobody used are revoked"
+      }
+    }
+  ],
+  "members_role_change_reading": "Reading the join links to revoke",
+  "members_role_change_failed": "Could not read the join links to revoke",
   "members_joined_at": "Joined",
   "members_changed": "The member or the configuration was changed by someone else; nothing was saved. Read again.",
   "members_removal": "Removal",

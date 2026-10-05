@@ -1,8 +1,10 @@
 import {
   getLeaveImpact,
   getMemberRemovalImpact,
+  getMemberRoleChangeImpact,
   listJoinLinks,
   listNetworkMembers,
+  type MembershipRole,
 } from "@meshway/control-client"
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query"
 
@@ -85,6 +87,36 @@ export const leaveImpactQuery = (networkId: string) =>
     queryFn: ({ signal }) =>
       authed((token) =>
         getLeaveImpact(client, { networkId }, { token, signal })
+      ),
+    staleTime: 0,
+    gcTime: 0,
+  })
+
+/**
+ * What changing a member to `role` does now: the join links it revokes
+ * (theirs, unused and unexpired, that the new role may not issue), and the
+ * membership version the change must be sent against. Read when its
+ * confirmation opens, never reused from before.
+ */
+export const roleChangeImpactQuery = (
+  networkId: string,
+  membershipId: string,
+  role: MembershipRole
+) =>
+  queryOptions({
+    queryKey: [
+      ...networkKey(networkId),
+      "role-change-impact",
+      membershipId,
+      role,
+    ],
+    queryFn: ({ signal }) =>
+      authed((token) =>
+        getMemberRoleChangeImpact(
+          client,
+          { networkId, membershipId, role },
+          { token, signal }
+        )
       ),
     staleTime: 0,
     gcTime: 0,

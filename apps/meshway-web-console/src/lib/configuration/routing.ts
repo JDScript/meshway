@@ -42,39 +42,56 @@ export function moved<T>(
 }
 
 // A match's destinations are edited as one set of chips: a domain suffix
-// as typed, a CIDR prefix, or a rule set as `set:<key>`.
+// as typed (the name and every name under it), an exact name after `=`
+// (that name alone), a CIDR prefix, or a rule set as `set:<key>`.
 
 export const SET_PREFIX = "set:"
+export const EXACT_PREFIX = "="
 
-export type MatchKind = "domain" | "cidr" | "set"
+export type MatchKind = "domain" | "exact" | "cidr" | "set"
 
 export function matchKind(value: string): MatchKind | null {
   if (value.startsWith(SET_PREFIX))
     return value.length > SET_PREFIX.length ? "set" : null
+  if (value.startsWith(EXACT_PREFIX))
+    return isDomain(value.slice(EXACT_PREFIX.length)) ? "exact" : null
   if (cidrFamily(value) !== null) return "cidr"
   return isDomain(value) ? "domain" : null
 }
 
-/** A match as chips: domain suffixes, then prefixes, then rule sets. */
+/** A match as chips: domain suffixes, exact names, prefixes, then rule sets. */
 export const matchValues = (match: RouteMatch): string[] => [
   ...(match.domainSuffix ?? []),
+  ...(match.domain ?? []).map((name) => EXACT_PREFIX + name),
   ...(match.ipCIDR ?? []),
   ...(match.ruleSets ?? []).map((key) => SET_PREFIX + key),
 ]
 
+/** The arrays `matchValues` joins, in its order, with their lengths: where a pointer into the match is among the chips. */
+export const matchParts = (match: RouteMatch) =>
+  [
+    ["domainSuffix", match.domainSuffix?.length ?? 0],
+    ["domain", match.domain?.length ?? 0],
+    ["ipCIDR", match.ipCIDR?.length ?? 0],
+    ["ruleSets", match.ruleSets?.length ?? 0],
+  ] as const
+
 /** Chips as a match; a value of no kind is kept as a domain suffix, for the controller to refuse. */
 export function matchOf(values: readonly string[]): RouteMatch {
   const domainSuffix: string[] = []
+  const domain: string[] = []
   const ipCIDR: string[] = []
   const ruleSets: string[] = []
   for (const value of values) {
     const kind = matchKind(value)
     if (kind === "set") ruleSets.push(value.slice(SET_PREFIX.length))
+    else if (kind === "exact") domain.push(value.slice(EXACT_PREFIX.length))
     else if (kind === "cidr") ipCIDR.push(value)
     else domainSuffix.push(value)
   }
   const out: RouteMatch = {}
   if (domainSuffix.length > 0) out.domainSuffix = domainSuffix
+  if (domain.length > 0) out.domain = domain
   if (ipCIDR.length > 0) out.ipCIDR = ipCIDR
   if (ruleSets.length > 0) out.ruleSets = ruleSets
   return out
@@ -233,6 +250,7 @@ const comparableRule = (rule: EgressRule) => ({
   remark: rule.remark ?? "",
   match: {
     domainSuffix: sorted(rule.match.domainSuffix),
+    domain: sorted(rule.match.domain),
     ipCIDR: sorted(rule.match.ipCIDR),
     ruleSets: sorted(rule.match.ruleSets),
   },

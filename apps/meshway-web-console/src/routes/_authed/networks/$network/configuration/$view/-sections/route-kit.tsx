@@ -1,6 +1,7 @@
 import type { RouteAction, RuleAction } from "@meshway/control-client"
 import {
   AtSignIcon,
+  EqualIcon,
   GlobeIcon,
   ListIcon,
   NetworkIcon,
@@ -26,6 +27,7 @@ import {
 } from "@/components/configuration/form-kit"
 import { pointerOf, type JsonPath } from "@/lib/configuration/jsonc"
 import {
+  EXACT_PREFIX,
   isCountry,
   isNodeSelector,
   matchKind,
@@ -39,7 +41,7 @@ import { m } from "@/paraglide/messages.js"
 import { MoveButtons } from "./ordered"
 
 // The values the routing and rule-set forms pick: concrete nodes (via
-// nodes, exits), destinations (domain suffixes, prefixes, rule sets),
+// nodes, exits), destinations (domain suffixes, exact names, prefixes, rule sets),
 // profiles and countries; and where a matched flow goes.
 
 /**
@@ -84,7 +86,7 @@ export function nodeChips(
   }
 }
 
-/** Destinations: domain suffixes and prefixes typed, rule sets (`set:<key>`) picked or typed. */
+/** Destinations: domain suffixes, exact names (`=<name>`) and prefixes typed, rule sets (`set:<key>`) picked or typed. */
 export function destinationChips(
   ruleSets: readonly string[],
   withSets: boolean
@@ -117,6 +119,13 @@ export function destinationChips(
           known: ruleSets.includes(key),
         }
       }
+      if (kind === "exact")
+        return {
+          icon: EqualIcon,
+          label: value.slice(EXACT_PREFIX.length),
+          mono: true,
+          known: true,
+        }
       return {
         icon: kind === "cidr" ? NetworkIcon : AtSignIcon,
         label: value,

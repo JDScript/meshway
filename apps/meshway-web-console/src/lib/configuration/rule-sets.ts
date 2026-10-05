@@ -5,10 +5,10 @@ import type {
 } from "@meshway/control-client"
 
 import { pointerOf } from "./jsonc"
-import { badDestination, matchKind } from "./routing"
+import { badDestination, EXACT_PREFIX, matchKind } from "./routing"
 
-// Rule sets as the form edits them (rule-sets.md): inline prefixes and
-// domain suffixes, or a remote HTTPS source the controller downloads and
+// Rule sets as the form edits them (rule-sets.md): inline prefixes, domain
+// suffixes and exact names (written as a route's match is), or a remote HTTPS source the controller downloads and
 // converts (when a draft is checked and applied, on its interval, and when
 // refreshed). Where a set's content stands.
 
@@ -64,6 +64,7 @@ function comparable(set: RuleSet) {
     ? {
         type: "inline",
         domainSuffix: sorted(set.domainSuffix),
+        domain: sorted(set.domain),
         ipCIDR: sorted(set.ipCIDR),
       }
     : {
@@ -87,18 +88,37 @@ export function sameRuleSets(a: RuleSetMap, b: RuleSetMap): boolean {
   })
 }
 
-/** An inline set's values as chips: domain suffixes, then prefixes. */
-export const inlineValues = (set: Extract<RuleSet, { type: "inline" }>) => [
+type Inline = Extract<RuleSet, { type: "inline" }>
+
+/** An inline set's values as chips: domain suffixes, exact names, then prefixes. */
+export const inlineValues = (set: Inline) => [
   ...(set.domainSuffix ?? []),
+  ...(set.domain ?? []).map((name) => EXACT_PREFIX + name),
   ...(set.ipCIDR ?? []),
 ]
 
+/** The arrays `inlineValues` joins, in its order, with their lengths. */
+export const inlineParts = (set: Inline) =>
+  [
+    ["domainSuffix", set.domainSuffix?.length ?? 0],
+    ["domain", set.domain?.length ?? 0],
+    ["ipCIDR", set.ipCIDR?.length ?? 0],
+  ] as const
+
 /** Chips as an inline set; a value of no kind is kept as a domain suffix, for the controller to refuse. */
 export function inlineOf(values: readonly string[]): RuleSet {
-  const domainSuffix = values.filter((value) => matchKind(value) !== "cidr")
-  const ipCIDR = values.filter((value) => matchKind(value) === "cidr")
+  const domainSuffix: string[] = []
+  const domain: string[] = []
+  const ipCIDR: string[] = []
+  for (const value of values) {
+    const kind = matchKind(value)
+    if (kind === "exact") domain.push(value.slice(EXACT_PREFIX.length))
+    else if (kind === "cidr") ipCIDR.push(value)
+    else domainSuffix.push(value)
+  }
   const out: RuleSet = { type: "inline" }
   if (domainSuffix.length > 0) out.domainSuffix = domainSuffix
+  if (domain.length > 0) out.domain = domain
   if (ipCIDR.length > 0) out.ipCIDR = ipCIDR
   return out
 }
