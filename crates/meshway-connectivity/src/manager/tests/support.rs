@@ -350,6 +350,74 @@ impl Fixture {
             .collect()
     }
 
+    pub async fn configure(&self, change: impl FnOnce(&mut NetworkConfigurationInput)) {
+        let source = self
+            .client
+            .get_configuration_source(
+                &GetConfigurationSourcePath {
+                    network_id: self.network,
+                },
+                &GetConfigurationSourceQuery::default(),
+                self.user_token.expose(),
+            )
+            .await
+            .unwrap();
+        let mut cfg = NetworkConfigurationInput::from(&source.configuration);
+        change(&mut cfg);
+        self.client
+            .apply_configuration(
+                &ApplyConfigurationPath {
+                    network_id: self.network,
+                },
+                &ConfigurationRequest::Document {
+                    expected_revision: source.revision,
+                    request_id: request(),
+                    source_jsonc: WireSecret::new(serde_json::to_string(&cfg).unwrap()),
+                },
+                self.user_token.expose(),
+            )
+            .await
+            .unwrap();
+    }
+
+    pub async fn refresh(&mut self, index: usize) -> DataPlaneIdentity {
+        let control = &mut self.controls[index];
+        control.refresh_configuration().await.unwrap();
+        let identity = control
+            .dataplane_identity(control.execution_snapshot().unwrap())
+            .unwrap();
+        self.identities[index] = identity.clone();
+        identity
+    }
+
+    pub async fn create_demand(&mut self, index: usize, duration_seconds: u16) -> RequestId {
+        use meshway_configuration::execution::{BusinessProtocol, BusinessTarget, DemandDecision};
+        let target = self.controls[1].status().binding.unwrap().node_id;
+        let control = &mut self.controls[index];
+        let lease = control.status().instance.unwrap();
+        let id = request();
+        let response = control
+            .create_demand(&DemandRequest {
+                instance: InstanceRequest {
+                    instance_id: lease.instance_id,
+                    generation: lease.generation,
+                },
+                request_id: id,
+                target: BusinessTarget::Mesh { node: target },
+                protocol: BusinessProtocol::Udp,
+                port: Some(42424.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            response.decision,
+            DemandDecision::Permitted { .. }
+        ));
+        id
+    }
+
     pub async fn change_udp_buffer(&self, node: meshway_model::NodeId) {
         let source = self
             .client

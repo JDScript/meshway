@@ -33,6 +33,7 @@ struct ServerAttempt {
     responses: u8,
     capacity: OwnedSemaphorePermit,
     supersedes: Replacement,
+    rebuild: bool,
 }
 
 struct Recovery {
@@ -354,6 +355,9 @@ impl Owner {
                 Command(Option<super::traversal::Command>),
             }
             let work = lifetime.run(async {
+                if self.shared.epoch_changed() {
+                    return Ok(Work::Handoff);
+                }
                 tokio::select! { biased;
                     _ = updates.changed() => Ok(Work::Handoff),
                     _ = tick.tick() => Ok(Work::Tick),
@@ -636,9 +640,7 @@ impl Owner {
         }
         // A fresh source challenge may coexist with the old channel even on
         // the same tuple. Nothing in the channel map changes until valid ACK.
-        if self.pending.len() + self.channels.len() >= self.shared.limits.connections
-            || self.replay.len() >= MAX_REPLAY
-        {
+        if self.pending.len() + self.channels.len() >= self.shared.limits.connections {
             return Ok(());
         }
         let cfg = self
@@ -733,7 +735,15 @@ impl Owner {
         if scope.check().is_err() {
             return Ok(());
         }
-        self.replay.insert((peer, initiation.client));
+        let rebuild = self.replay.len() >= MAX_REPLAY;
+        if !rebuild {
+            self.replay.insert((peer, initiation.client));
+        }
+        // At capacity no historical nonce is forgotten and no extra history is
+        // allocated. Only this bounded pending slot can admit its fresh ACK.
+        // Expiring/retrying the slot generates another random server nonce, so
+        // its old ACK is unusable. A copied INIT alone cannot force rebuilding:
+        // the current source must finish this challenge and win normal CAS.
         let transcript = initiation.respond()?;
         let challenge = adjacency::encode(
             Kind::Challenge,
@@ -756,6 +766,7 @@ impl Owner {
             responses: 1,
             capacity,
             supersedes,
+            rebuild,
         };
         let _ = send_control(
             &self.sender,
@@ -825,6 +836,16 @@ impl Owner {
             scope.deadline,
             attempt.supersedes,
         )? {
+            if attempt.rebuild {
+                // Authentication and normal selection succeeded. Close/join
+                // this generation and surface Event::Closed, allowing the
+                // host's saved-attempt retry to reopen it. Never leave a live
+                // listener permanently unable to accept a new channel, or clear
+                // its replay/ABA state underneath other pending handshakes.
+                tracing::warn!("UDP replay capacity exhausted; connectivity rebuild required");
+                self.shared.stop.cancel();
+                return Err(Error::Capacity);
+            }
             // READY attests completed authentication on the selected owner, not
             // merely a valid ACK for a candidate rejected by selection.
             let _ = send_control(&self.sender, &scope, remote, bytes).await;
@@ -985,7 +1006,6 @@ impl Owner {
         if self.listener.is_none()
             || self.repeat_intro(remote, Kind::Ping, body).await
             || self.pending.len() + self.channels.len() >= self.shared.limits.connections
-            || self.replay.len() >= MAX_REPLAY
         {
             return Ok(());
         }
@@ -1417,13 +1437,9 @@ mod tests {
     use meshway_transport_udp::UdpTransport;
     use tokio::net::UdpSocket;
 
-    #[tokio::test]
-    async fn server_source_challenge_replay_and_confirmation_use_real_registered_keys() {
-        let mut fixture = Fixture::new(false, false).await;
-        let ids = fixture.ids();
-        let identity = fixture.identities[1].clone();
+    fn shared(identity: DataPlaneIdentity) -> (Arc<Shared>, mpsc::Receiver<Event>) {
         let (epochs, _) = tokio::sync::watch::channel(identity.clone());
-        let (events, _receiver) = mpsc::channel(64);
+        let (events, receiver) = mpsc::channel(64);
         let shared = Arc::new(Shared {
             identity,
             stop: CancellationToken::new(),
@@ -1438,6 +1454,207 @@ mod tests {
             socket_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             generation: meshway_model::Sequence::MIN.checked_next().unwrap(),
         });
+        (shared, receiver)
+    }
+
+    #[tokio::test]
+    async fn replay_exhaustion_rebuilds_instead_of_forgetting_nonces_and_old_ack_cannot_install() {
+        let mut fixture = Fixture::new(false, false).await;
+        let ids = fixture.ids();
+        let (shared, _events) = shared(fixture.identities[1].clone());
+        let socket = UdpTransport::adopt(fixture.udp.take().unwrap(), &Default::default()).unwrap();
+        let local = socket.local_addr().unwrap();
+        let id = adjacency::nonce().unwrap();
+        let listener = ListenerFact {
+            socket_id: id,
+            key: "udp".into(),
+            protocol: TransportProtocol::NativeUdp,
+            local,
+        };
+        shared
+            .register_socket(
+                id,
+                meshway_model::state::ResourceRef::Listener { key: "udp".into() },
+                TransportProtocol::NativeUdp,
+                local,
+            )
+            .unwrap();
+        let mut owner = Owner::new(shared.clone(), Box::new(socket), id).unwrap();
+        owner.listener = Some(listener.clone());
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let source = client.local_addr().unwrap();
+        let carrier = carriers(&fixture.identities[0])[&ids[1]].clone();
+        let (initiation, intro) = Initiation::new(&fixture.identities[0], &carrier).unwrap();
+        owner.init(source, &intro).await.unwrap();
+        let mut bytes = [0; adjacency::MAX_MESSAGE];
+        let (len, from) = client.recv_from(&mut bytes).await.unwrap();
+        assert_eq!(from, local);
+        let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
+        let old = initiation
+            .challenge(
+                fixture.identities[0].snapshot().configuration().unwrap(),
+                ids[1],
+                challenge,
+            )
+            .unwrap();
+        let old_ack = old.message(&fixture.identities[0], Kind::Ack).unwrap();
+        owner.ack(source, &old_ack).await.unwrap();
+        let (len, _) = client.recv_from(&mut bytes).await.unwrap();
+        assert_eq!(adjacency::decode(&bytes[..len]).unwrap().0, Kind::Ready);
+        assert_eq!(owner.channels[&source].fact.id, old.id());
+
+        // Seed only already-retired nonce metadata to exercise the production
+        // capacity boundary without thousands of redundant crypto exchanges.
+        // The triggering packets below still require real registered signatures.
+        while owner.replay.len() < MAX_REPLAY {
+            owner.replay.insert((ids[0], adjacency::nonce().unwrap()));
+        }
+        let history = owner.replay.clone();
+        fixture.controls[1].renew_instance().await.unwrap();
+        let next = fixture.controls[1]
+            .dataplane_identity(fixture.controls[1].execution_snapshot().unwrap())
+            .unwrap();
+        let mut epochs = shared.epochs.subscribe();
+        shared.epochs.send_replace(next);
+        owner
+            .handoff(shared.latest(&mut epochs).await.unwrap())
+            .unwrap();
+        let live = owner.channels[&source].scope.clone();
+        assert_eq!(
+            owner.replay, history,
+            "renewal must not forget replay state"
+        );
+        let mut invalid = intro.clone();
+        *invalid.last_mut().unwrap() ^= 1;
+        owner.init(source, &invalid).await.unwrap();
+        owner.init(source, &intro).await.unwrap();
+        live.check().unwrap();
+        assert!(
+            !shared.stop.is_cancelled(),
+            "invalid/replayed traffic cannot force rebuilding"
+        );
+        let (rebuild_init, fresh_intro) =
+            Initiation::new(&fixture.identities[0], &carrier).unwrap();
+        owner.init(source, &fresh_intro).await.unwrap();
+        live.check().unwrap();
+        assert!(
+            !shared.stop.is_cancelled(),
+            "an INIT alone cannot retire channels"
+        );
+        let (len, _) = client.recv_from(&mut bytes).await.unwrap();
+        let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
+        let rebuild = rebuild_init
+            .challenge(
+                fixture.identities[0].snapshot().configuration().unwrap(),
+                ids[1],
+                challenge,
+            )
+            .unwrap();
+        let expired_ack = rebuild.message(&fixture.identities[0], Kind::Ack).unwrap();
+        owner
+            .pending
+            .remove(&source)
+            .unwrap()
+            .scope
+            .cancellation
+            .cancel();
+        owner.init(source, &fresh_intro).await.unwrap();
+        let (len, _) = client.recv_from(&mut bytes).await.unwrap();
+        let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
+        let retried = rebuild_init
+            .challenge(
+                fixture.identities[0].snapshot().configuration().unwrap(),
+                ids[1],
+                challenge,
+            )
+            .unwrap();
+        assert_ne!(
+            retried.id(),
+            rebuild.id(),
+            "retrying an unrecorded capacity slot must use a fresh server nonce"
+        );
+        owner.ack(source, &expired_ack).await.unwrap();
+        assert!(!shared.stop.is_cancelled());
+        owner.ack(source, &old_ack).await.unwrap();
+        assert!(!shared.stop.is_cancelled());
+        let ack = retried.message(&fixture.identities[0], Kind::Ack).unwrap();
+        let impostor = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        owner
+            .ack(impostor.local_addr().unwrap(), &ack)
+            .await
+            .unwrap();
+        assert!(!shared.stop.is_cancelled());
+        live.check().unwrap();
+        assert!(matches!(
+            owner.ack(source, &ack).await,
+            Err(Error::Capacity)
+        ));
+        assert!(live.check().is_err());
+        assert!(
+            shared.stop.is_cancelled(),
+            "the Manager recv boundary must surface Closed"
+        );
+        assert_eq!(owner.replay, history);
+        owner.shutdown().await.unwrap();
+        drop(owner);
+
+        // This is a new physical owner, the same path as a host reinstall. An
+        // old INIT is harmless only because a fresh source challenge is required.
+        let identity = fixture.controls[1]
+            .dataplane_identity(fixture.controls[1].execution_snapshot().unwrap())
+            .unwrap();
+        let (restarted, _events) = self::shared(identity);
+        let socket =
+            UdpTransport::adopt(UdpSocket::bind(local).await.unwrap(), &Default::default())
+                .unwrap();
+        let socket_id = adjacency::nonce().unwrap();
+        let mut owner = Owner::new(restarted.clone(), Box::new(socket), socket_id).unwrap();
+        owner.listener = Some(ListenerFact {
+            socket_id,
+            ..listener
+        });
+        owner.init(source, &intro).await.unwrap();
+        let (len, from) = client.recv_from(&mut bytes).await.unwrap();
+        assert_eq!(from, local);
+        let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
+        let fresh = initiation
+            .challenge(
+                fixture.identities[0].snapshot().configuration().unwrap(),
+                ids[1],
+                challenge,
+            )
+            .unwrap();
+        assert_ne!(fresh.id(), old.id());
+        owner.ack(source, &old_ack).await.unwrap();
+        assert!(owner.channels.is_empty());
+        let fresh_ack = fresh.message(&fixture.identities[0], Kind::Ack).unwrap();
+        let impostor = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        owner
+            .ack(impostor.local_addr().unwrap(), &fresh_ack)
+            .await
+            .unwrap();
+        assert!(owner.channels.is_empty());
+        owner.ack(source, &fresh_ack).await.unwrap();
+        assert_eq!(restarted.links.lock().unwrap()[&ids[0]].fact.id, fresh.id());
+        let fresh_ready = fresh.message(&restarted.identity, Kind::Ready).unwrap();
+        assert!(
+            old.verify(
+                fixture.identities[0].snapshot().configuration().unwrap(),
+                ids[1],
+                Kind::Ready,
+                &fresh_ready
+            )
+            .is_err()
+        );
+        owner.shutdown().await.unwrap();
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn server_source_challenge_replay_and_confirmation_use_real_registered_keys() {
+        let mut fixture = Fixture::new(false, false).await;
+        let ids = fixture.ids();
+        let (shared, _receiver) = shared(fixture.identities[1].clone());
         let socket = UdpTransport::adopt(fixture.udp.take().unwrap(), &Default::default()).unwrap();
         let local = socket.local_addr().unwrap();
         let id = adjacency::nonce().unwrap();

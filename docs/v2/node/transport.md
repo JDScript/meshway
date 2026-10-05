@@ -57,6 +57,10 @@ Control 认可的直接 publication／续租交接可保留 Native TCP／UDP 的
 
 物理 gate 与每次操作的冻结 scope 分离：无当前权限时只在原期限内保留失活资源，不能执行 I/O；只有合法后继可恢复未来操作。旧 packet、health、STUN 或 READY 输出仍按原 scope 失效，进行中的穿透授权不跨 publication 续命。SecureNode 的流／circuit 继续使用独立的[连续性规则](/v2/node/dataplane#候选受保护-circuit)。TCP 建连与重连、Native UDP 静态端点均不构成打洞证明；协调穿透范围与验收见[连接获取](/v2/node/connectivity)。
 
+保留交接仍检查当前 peer／资源预算，休眠拨号任务在新 scope 下重新检查资格。候选 socket 仅复用地址族、本地地址与选项均相容的 listener；缺少兼容资源时显式创建，容量不足拒绝安装。peer 候选查询按有界批次轮转，缺少候选不会永久占住排序前缀。
+
+UDP listener 保留最多 1,024 个历史 INIT nonce。额度耗尽后不遗忘历史；新的来源先完成有界新鲜 challenge／ACK 和通道 CAS，再触发 Manager 整代关闭，由 daemon 重试安装恢复接入。复制 INIT、旧 ACK 或失败的 CAS 不能触发重建。
+
 ## 帧与资源
 
 `Frame` 持有原始 payload `Vec` 和可选 peer。Stream 的 peer 为固定会话端点；UDP 必须明确目的地，接收帧携带真实来源。payload 是不解释的字节，不代表已经通过 Mesh 身份、IP 或路径检查。帧及完成结果的 Debug 只显示长度／容量等元数据。
@@ -119,6 +123,8 @@ Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP
 关闭时先停止接纳，再取消／完成在途工作，最后归还 buffer、句柄和代码引用。完成通知是内存可回收的边界，必须保证之后不再访问对应 buffer。整个顺序由会话 owner 协调，不由 CLI、provider 和数据面分别启动一套关闭流程。
 
 `SendContext` 携带宿主取消信号、单调截止时间和可选 `SendLifetime`，不构成授权凭据。已接纳操作保留完整 lifetime：每次底层 write／flush 前同步检查，阻塞 worker 自行监听失效，不依赖完成等待者继续被轮询。`wait_capacity` 提供有界预算等待，返回不代表预留，调用者仍须检查 `try_send` 结果。
+
+stream 的冻结输出 scope 保留至该组完整 flush；读驱动的 WebSocket flush 和 TLS alert 也受同一 scope 检查。缓冲 provider 在协议栈下方使用 `raw::CheckedOutput`，每次实际输出检查同步 poll 携带的限制；provider 不在脱离 Session 的后台任务中继续输出旧缓冲。
 
 编码组开始 I/O 前失效可清空 staging 并复用 stream；flush 已尝试后的失败／取消将整组标为不确定并关闭 stream，后续尚未处理的组／操作标为未开始。接收采用 pull API；取消一次接收等待保留已读半帧。丢弃任一会话半部会关闭承载并停止 owner，显式 shutdown 还会完成已接纳操作的收尾并 join。捕获的回调 panic 关闭承载并以不含原始 panic 内容的 `ProviderPanicked` 表达；owner 意外丢失通过 `CompletionLost` 表达。
 

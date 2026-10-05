@@ -69,6 +69,7 @@ pub(super) async fn run(
 ) {
     let mut updates = shared.epochs.subscribe();
     let mut discover_at = Instant::now();
+    let mut after_peer = None;
     loop {
         run_epoch(
             shared.clone(),
@@ -76,6 +77,7 @@ pub(super) async fn run(
             &endpoints,
             &mut updates,
             &mut discover_at,
+            &mut after_peer,
         )
         .await;
         match shared.latest(&mut updates).await {
@@ -91,6 +93,7 @@ async fn run_epoch(
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
     updates: &mut tokio::sync::watch::Receiver<DataPlaneIdentity>,
     discover_at: &mut Instant,
+    after_peer: &mut Option<NodeId>,
 ) {
     let scope = shared.scope(None, false);
     let mut pending: BTreeMap<UdpTraversalId, Pending> = BTreeMap::new();
@@ -98,6 +101,9 @@ async fn run_epoch(
     let mut prepare_at = Instant::now();
     let work = async {
         loop {
+            if shared.epoch_changed() {
+                return Err(Error::Authority);
+            }
             let now = shared
                 .identity
                 .snapshot()
@@ -199,7 +205,15 @@ async fn run_epoch(
                 }
                 if Instant::now() >= prepare_at && pending.len() < 8 {
                     prepare_at = Instant::now() + Duration::from_secs(1);
-                    let _ = prepare(&shared, gateway, endpoints, &context, &mut pending).await;
+                    let _ = prepare(
+                        &shared,
+                        gateway,
+                        endpoints,
+                        &context,
+                        &mut pending,
+                        after_peer,
+                    )
+                    .await;
                 }
             } else if matches!(query, Ok(Reply::Query(Outcome::Unavailable(_)))) {
                 for (id, value) in std::mem::take(&mut pending) {
@@ -260,21 +274,51 @@ fn socket_compatible(
     let meshway_transport_spec::DialParameters::NativeUdp { options } = &dial.parameters else {
         return false;
     };
-    if !options.enabled
-        || !options.bind_interface.is_empty()
-        || (!options.local_address.is_empty()
-            && options.local_address.parse::<std::net::IpAddr>().ok()
-                != Some(fact.bound_address.ip()))
-    {
-        return false;
-    }
     match &fact.reference.resource {
-        ResourceRef::Dial { key: bound } => *bound == key,
-        ResourceRef::Listener { key } => cfg.listeners.get(key).is_some_and(|listener| {
-            matches!(listener.declaration(), meshway_transport_spec::Listener::NativeUdp(listener) if listener.enabled && listener.bind_interface.is_empty() && listener.socket == options.socket)
-        }),
+        ResourceRef::Dial { key: bound } => {
+            *bound == key && dial_bind_matches(options, fact.bound_address)
+        }
+        ResourceRef::Listener { key } => cfg
+            .listeners
+            .get(key)
+            .is_some_and(|listener| listener_covers(listener, fact.bound_address, options)),
         ResourceRef::Coordination { .. } => false,
     }
+}
+
+pub(super) fn listener_covers(
+    listener: &meshway_transport_spec::PreparedListener,
+    local: SocketAddr,
+    options: &meshway_transport_spec::NativeUdpDialer,
+) -> bool {
+    dial_bind_matches(options, local)
+        && matches!(listener.declaration(), meshway_transport_spec::Listener::NativeUdp(listener)
+            if listener.enabled && listener.bind_interface.is_empty() && listener.socket == options.socket)
+}
+
+fn dial_bind_matches(options: &meshway_transport_spec::NativeUdpDialer, local: SocketAddr) -> bool {
+    options.enabled
+        && options.bind_interface.is_empty()
+        && (options.local_address.is_empty()
+            || options.local_address.parse::<std::net::IpAddr>().ok() == Some(local.ip()))
+}
+
+fn peer_batch(carriers: &BTreeMap<NodeId, Carrier>, after: &mut Option<NodeId>) -> Vec<NodeId> {
+    let peers: Vec<_> = carriers
+        .keys()
+        .filter(|peer| after.is_none_or(|after| **peer > after))
+        .chain(
+            carriers
+                .keys()
+                .filter(|peer| after.is_some_and(|after| **peer <= after)),
+        )
+        .take(8)
+        .copied()
+        .collect();
+    if let Some(last) = peers.last() {
+        *after = Some(*last);
+    }
+    peers
 }
 
 async fn reserve(
@@ -304,6 +348,7 @@ async fn prepare(
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
     context: &DiscoveryContext,
     pending: &mut BTreeMap<UdpTraversalId, Pending>,
+    after_peer: &mut Option<NodeId>,
 ) -> Result<(), Error> {
     let cfg = shared
         .identity
@@ -355,13 +400,13 @@ async fn prepare(
             && !pending
                 .values()
                 .any(|pending| pending.offer.peer().candidate.socket.node_id == *peer)
-            && !shared.links.lock().is_ok_and(|links| {
-                links
-                    .get(peer)
-                    .is_some_and(|link| link.scope.check().is_ok())
-            })
+            // Scope invalidation suspends I/O, not physical ownership. Let the
+            // selected owner finish handoff/retirement before a new acquisition.
+            && !shared.links.lock().is_ok_and(|links| links.contains_key(peer))
     });
-    let peers: Vec<_> = carriers.keys().copied().take(8).collect();
+    // Advance before the RPC, including errors/no observations. An unavailable
+    // prefix must not starve other peers; the cursor survives epoch handoff.
+    let peers = peer_batch(&carriers, after_peer);
     if peers.is_empty() {
         return Ok(());
     }
@@ -460,4 +505,55 @@ async fn prepare(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_peer_prefix_does_not_starve_later_batches_across_churn() {
+        let node = |id| NodeId::new(uuid::Uuid::from_u128(id)).unwrap();
+        let mut carriers: BTreeMap<_, _> = (1..=19)
+            .map(|id| {
+                let peer = node(id);
+                (
+                    peer,
+                    Carrier {
+                        dialer: node(100),
+                        listener: peer,
+                        listener_key: "udp".into(),
+                        protocol: TransportProtocol::NativeUdp,
+                    },
+                )
+            })
+            .collect();
+        let mut after = None;
+        let mut queried = std::collections::BTreeSet::new();
+        // No peers become pending/connected: model missing State or failed RPCs.
+        for _ in 0..3 {
+            let batch = peer_batch(&carriers, &mut after);
+            assert_eq!(batch.len(), 8);
+            assert_eq!(
+                batch
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                8
+            );
+            queried.extend(batch);
+        }
+        assert_eq!(queried, carriers.keys().copied().collect());
+        // A publication may remove the cursor peer. No reset to the unavailable
+        // prefix and no requirement for the cursor's key to remain in the map.
+        carriers.remove(&after.unwrap());
+        carriers.retain(|peer, _| *peer > node(8));
+        queried.clear();
+        for _ in 0..2 {
+            queried.extend(peer_batch(&carriers, &mut after));
+        }
+        assert_eq!(queried, carriers.keys().copied().collect());
+        carriers.clear();
+        assert!(peer_batch(&carriers, &mut after).is_empty());
+    }
 }

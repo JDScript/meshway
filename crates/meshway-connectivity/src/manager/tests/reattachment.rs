@@ -245,6 +245,7 @@ async fn direct_publication_retires_only_the_unadmitted_peer_on_a_shared_udp_des
     linked(&c, 1, TransportProtocol::NativeUdp).await;
     let before = b.shared.links.lock().unwrap()[&ids[0]].fact.clone();
     let retired = b.shared.links.lock().unwrap()[&ids[2]].scope.clone();
+    assert!(b.shared.links.lock().unwrap().last.contains_key(&ids[2]));
     let socket = b.snapshot().unwrap().listeners[0].socket_id;
     let (mut sa, mut sb) = (
         secure(&fixture.identities[0], &a),
@@ -310,9 +311,14 @@ async fn direct_publication_retires_only_the_unadmitted_peer_on_a_shared_udp_des
         node.set_carriers(manager.carriers().unwrap()).unwrap();
         fixture.identities[index] = next;
     }
-    assert_eq!(b.snapshot().unwrap().links, vec![before]);
+    assert_eq!(b.snapshot().unwrap().links, vec![before.clone()]);
     assert_eq!(b.snapshot().unwrap().listeners[0].socket_id, socket);
     assert!(retired.check().is_err());
+    assert!(!b.shared.links.lock().unwrap().last.contains_key(&ids[2]));
+    assert_eq!(
+        b.shared.links.lock().unwrap().last.get(&ids[0]),
+        Some(&before.id)
+    );
     exchange(&b, &mut a, &mut sb, &mut sa, cid, packet(&fixture, true)).await;
     a.shutdown().await.unwrap();
     b.shutdown().await.unwrap();

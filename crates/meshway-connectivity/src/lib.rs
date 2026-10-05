@@ -25,6 +25,9 @@ pub struct Limits {
     /// additionally own one just-accepted socket until capacity is checked.
     pub connections: usize,
     pub listeners: usize,
+    /// Bounds peers, dial declarations, total published dial endpoints and
+    /// bound traversal dial sockets separately. Missing socket coverage over
+    /// this budget fails startup rather than skipping configured resources.
     pub candidates: usize,
     pub events: usize,
     pub handshake_timeout: Duration,

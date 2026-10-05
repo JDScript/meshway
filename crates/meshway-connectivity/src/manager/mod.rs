@@ -150,9 +150,9 @@ struct Link {
 }
 
 /// The one selected-link owner also remembers its latest committed ID per peer.
-/// This bounded metadata prevents an empty-slot ABA during passive recovery;
-/// retired senders/scopes are still dropped normally. Peers are configuration-
-/// bounded and the entire table is discarded with this Manager generation.
+/// This bounded metadata prevents an empty-slot ABA during passive recovery.
+/// Handoff removes departed peers only after fencing old installation epochs;
+/// peers still in the configuration retain their tombstones even while vacant.
 #[derive(Default)]
 struct LinkTable {
     current: BTreeMap<NodeId, Link>,
@@ -270,12 +270,7 @@ impl Manager {
             .snapshot()
             .configuration()
             .map_err(|_| Error::Authority)?;
-        if cfg.listeners.len() > limits.listeners
-            || cfg.dialers.len() > limits.candidates
-            || cfg.peers.len() > limits.candidates
-        {
-            return Err(Error::Capacity);
-        }
+        validate_scale(cfg, limits)?;
         let mut prepared = Vec::new();
         let mut datagrams = Vec::new();
         let mut traversal_endpoints = Vec::new();
@@ -338,9 +333,7 @@ impl Manager {
             };
             prepared.push((fact, listener, acceptor));
         }
-        if traversal_endpoints.is_empty()
-            && let Some((_, generation)) = &traversal
-        {
+        if let Some((_, generation)) = &traversal {
             // Dial-only acquisition uses a real configured Native UDP socket,
             // even when the compiler intentionally retained no published target.
             for (key, candidate) in &cfg.dialers {
@@ -349,10 +342,7 @@ impl Manager {
                 else {
                     continue;
                 };
-                if !options.enabled
-                    || !options.bind_interface.is_empty()
-                    || bound_candidates.len() >= 4
-                {
+                if !options.enabled || !options.bind_interface.is_empty() {
                     continue;
                 }
                 let local = if options.local_address.is_empty() {
@@ -368,6 +358,21 @@ impl Manager {
                 for ipv4 in [true, false] {
                     if local.is_some_and(|local| local.is_ipv4() != ipv4) {
                         continue;
+                    }
+                    if traversal_endpoints.iter().any(|(fact, _, _)| {
+                        fact.local.is_ipv4() == ipv4
+                            && traversal::listener_covers(
+                                &cfg.listeners[&fact.key],
+                                fact.local,
+                                options,
+                            )
+                    }) {
+                        continue;
+                    }
+                    // Capacity is a startup error, never a permanently skipped
+                    // suffix of configured peers. Partial bindings drop here.
+                    if bound_candidates.len() >= limits.candidates {
+                        return Err(Error::Capacity);
                     }
                     let id = adjacency::nonce()?;
                     let reference = traversal::socket_reference(
@@ -767,6 +772,26 @@ fn rank(fact: &LinkFact) -> (NodeId, NodeId, &str, TransportProtocol, [u8; 32]) 
     )
 }
 
+fn validate_scale(
+    cfg: &meshway_configuration::execution::NodeConfiguration,
+    limits: Limits,
+) -> Result<(), Error> {
+    if cfg.listeners.len() > limits.listeners
+        || cfg.dialers.len() > limits.candidates
+        || cfg.peers.len() > limits.candidates
+        || cfg
+            .dialers
+            .values()
+            .try_fold(0usize, |count, dial| {
+                count.checked_add(dial.endpoints.len())
+            })
+            .is_none_or(|count| count > limits.candidates)
+    {
+        return Err(Error::Capacity);
+    }
+    Ok(())
+}
+
 /// The only link selection/installation point, shared by both acquisition
 /// drivers. Authentication has completed before constructing this value.
 struct ReadyPeer {
@@ -794,6 +819,15 @@ fn preferred_existing(old: &LinkFact, new: &LinkFact) -> bool {
 }
 
 fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
+    // A same-target renewal need not revoke the old Control snapshot. It must
+    // nevertheless fence old acquisition commits before handoff can collect a
+    // departed peer's ABA tombstone. Hold the watch read through installation:
+    // publishing an epoch and committing a channel have one definite order.
+    let epoch = shared.epochs.borrow();
+    if !continuity::same(&ready.scope.snapshot, epoch.snapshot()) {
+        ready.scope.cancellation.cancel();
+        return Err(Error::Authority);
+    }
     ready.scope.check()?;
     if let Some(attempt) = &ready.attempt {
         attempt.ensure_current().map_err(|_| Error::Authority)?;

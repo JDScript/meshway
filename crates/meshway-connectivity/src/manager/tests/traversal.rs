@@ -13,10 +13,38 @@ use meshway_model::{Sequence, state::*};
 use meshway_protocol::connectivity::{CandidateReference, SocketReference};
 
 fn public(address: SocketAddr) -> SocketAddr {
-    SocketAddr::new("198.51.100.1".parse().unwrap(), address.port())
+    SocketAddr::new(
+        if address.is_ipv4() {
+            "198.51.100.1"
+        } else {
+            "2001:db8::1"
+        }
+        .parse()
+        .unwrap(),
+        address.port(),
+    )
 }
 fn private(address: SocketAddr) -> SocketAddr {
-    SocketAddr::new("127.0.0.1".parse().unwrap(), address.port())
+    SocketAddr::new(
+        if address.is_ipv4() {
+            "127.0.0.1"
+        } else {
+            "::1"
+        }
+        .parse()
+        .unwrap(),
+        address.port(),
+    )
+}
+
+fn listener_socket(manager: &Manager) -> SocketFact {
+    manager
+        .snapshot()
+        .unwrap()
+        .sockets
+        .into_iter()
+        .find(|socket| socket.reference.resource == (ResourceRef::Listener { key: "udp".into() }))
+        .unwrap()
 }
 
 #[derive(Default)]
@@ -199,7 +227,55 @@ struct NatFactory {
     stun: SocketAddr,
     traffic: Arc<Traffic>,
 }
+impl NatFactory {
+    fn wrap(
+        &self,
+        snapshot: &ExecutionSnapshot,
+        reference: SocketReference,
+        inner: UdpTransport,
+    ) -> Result<TraversalSocket, Error> {
+        let local = inner.local_addr()?;
+        self.traffic.opened.fetch_add(1, Ordering::SeqCst);
+        Ok(TraversalSocket {
+            endpoint: Box::new(NatEndpoint {
+                inner,
+                stun: self.stun,
+                opened: Mutex::new(BTreeSet::new()),
+                traffic: self.traffic.clone(),
+            }),
+            authorization: Arc::new(Authorization {
+                binding: Mutex::new((reference, snapshot.clone())),
+                stun: self.stun,
+                local,
+                traffic: self.traffic.clone(),
+            }),
+        })
+    }
+}
 impl SocketFactory for NatFactory {
+    fn bind_datagram_candidate<'a>(
+        &'a self,
+        snapshot: &'a ExecutionSnapshot,
+        key: &'a str,
+        ipv4: bool,
+        reference: SocketReference,
+    ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
+        Box::pin(async move {
+            let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+            let DialParameters::NativeUdp { options } = &cfg.dialers[key].parameters else {
+                return Err(Error::Configuration);
+            };
+            assert_eq!(reference.resource, ResourceRef::Dial { key: key.into() });
+            let local = if options.local_address.is_empty() {
+                if ipv4 { "127.0.0.1" } else { "::1" }.parse().unwrap()
+            } else {
+                options.local_address.parse().unwrap()
+            };
+            let socket = UdpSocket::bind(SocketAddr::new(local, 0)).await?;
+            let inner = UdpTransport::adopt(socket, &options.socket)?;
+            self.wrap(snapshot, reference, inner)
+        })
+    }
     fn connect<'a>(
         &'a self,
         _: &'a ExecutionSnapshot,
@@ -235,21 +311,7 @@ impl SocketFactory for NatFactory {
                 None => UdpSocket::bind(local).await?,
             };
             let inner = UdpTransport::adopt(socket, &declaration.socket)?;
-            self.traffic.opened.fetch_add(1, Ordering::SeqCst);
-            Ok(TraversalSocket {
-                endpoint: Box::new(NatEndpoint {
-                    inner,
-                    stun: self.stun,
-                    opened: Mutex::new(BTreeSet::new()),
-                    traffic: self.traffic.clone(),
-                }),
-                authorization: Arc::new(Authorization {
-                    binding: Mutex::new((reference, snapshot.clone())),
-                    stun: self.stun,
-                    local,
-                    traffic: self.traffic.clone(),
-                }),
-            })
+            self.wrap(snapshot, reference, inner)
         })
     }
 }
@@ -257,6 +319,173 @@ impl SocketFactory for NatFactory {
 struct Gateway {
     control: AsyncMutex<Control>,
     acknowledged: Mutex<Vec<CandidateReference>>,
+}
+
+struct OfflineGateway;
+impl TraversalGateway for OfflineGateway {
+    fn request(&self, _: Operation) -> BoxFuture<'_, Result<Reply, Error>> {
+        Box::pin(std::future::pending())
+    }
+    fn published(&self, _: &CandidateReference) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn incompatible_listener_binds_exact_dial_family_and_capacity_failure_releases_sockets() {
+    use meshway_configuration::Input;
+    use meshway_transport_spec::{DialerSet, NativeUdpDialer};
+    let stun = "198.51.100.1:3478".parse().unwrap();
+    let mut fixture = support::Fixture::traversal(stun).await;
+    let ids = fixture.ids();
+    fixture
+        .configure(|cfg| {
+            cfg.nodes.get_mut(&ids[0]).unwrap().dialers = Input::Value(DialerSet {
+                native_udp: Some(NativeUdpDialer {
+                    local_address: "::1".into(),
+                    ..Default::default()
+                }),
+                native_tcp: None,
+                vless: None,
+                trojan: None,
+            });
+        })
+        .await;
+    let identity = fixture.refresh(0).await;
+    let traffic = Arc::new(Traffic::default());
+    let socket = fixture.reverse_udp.take().unwrap();
+    let factory = Arc::new(NatFactory {
+        sockets: Mutex::new(BTreeMap::from([(socket.local_addr().unwrap(), socket)])),
+        stun,
+        traffic: traffic.clone(),
+    });
+    let generation = Sequence::MIN.checked_next().unwrap();
+    let mut manager = Manager::start_with_traversal(
+        identity,
+        factory.clone(),
+        Default::default(),
+        Arc::new(OfflineGateway),
+        generation,
+    )
+    .await
+    .unwrap();
+    let facts = manager.snapshot().unwrap();
+    assert_eq!(facts.sockets.len(), 2);
+    assert!(listener_socket(&manager).bound_address.is_ipv4());
+    let dial = facts
+        .sockets
+        .iter()
+        .find(|socket| matches!(socket.reference.resource, ResourceRef::Dial { .. }))
+        .unwrap();
+    assert_eq!(
+        dial.bound_address.ip(),
+        "::1".parse::<std::net::IpAddr>().unwrap()
+    );
+    assert_ne!(dial.bound_address.port(), 0);
+    manager.shutdown().await.unwrap();
+
+    fixture
+        .configure(|cfg| {
+            let node = cfg.nodes.get_mut(&ids[0]).unwrap();
+            let Input::Value(dialers) = &mut node.dialers else {
+                panic!("explicit dialer")
+            };
+            dialers.native_udp.as_mut().unwrap().local_address.clear();
+            let Listener::NativeUdp(listener) = node.listeners.get_mut("udp").unwrap() else {
+                panic!("UDP listener")
+            };
+            listener.socket.receive_buffer = 65_536;
+        })
+        .await;
+    let identity = fixture.refresh(0).await;
+    let result = Manager::start_with_traversal(
+        identity,
+        factory,
+        Limits {
+            candidates: 1,
+            ..Default::default()
+        },
+        Arc::new(OfflineGateway),
+        generation,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(Error::Capacity)),
+        "both families are uncovered; do not silently skip the second socket"
+    );
+    assert_eq!(
+        traffic.opened.load(Ordering::SeqCst),
+        traffic.dropped.load(Ordering::SeqCst)
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn uncovered_dial_resources_beyond_four_are_all_bound() {
+    let stun = "198.51.100.1:3478".parse().unwrap();
+    let mut fixture = support::Fixture::traversal(stun).await;
+    let ids = fixture.ids();
+    let mut reserved = Vec::new();
+    for _ in 0..5 {
+        reserved.push(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    }
+    fixture
+        .configure(|cfg| {
+            let listeners = &mut cfg.nodes.get_mut(&ids[1]).unwrap().listeners;
+            let Listener::NativeUdp(template) = listeners["udp"].clone() else {
+                panic!("UDP listener")
+            };
+            for (index, socket) in reserved.iter().enumerate() {
+                let mut declaration = template.clone();
+                declaration.listen_port = socket.local_addr().unwrap().port().try_into().unwrap();
+                listeners.insert(format!("udp-{index}"), Listener::NativeUdp(declaration));
+            }
+        })
+        .await;
+    let identity = fixture.refresh(0).await;
+    let keys: Vec<_> = identity
+        .snapshot()
+        .configuration()
+        .unwrap()
+        .dialers
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(keys.len(), 6);
+    let socket = fixture.reverse_udp.take().unwrap();
+    let traffic = Arc::new(Traffic::default());
+    let factory = Arc::new(NatFactory {
+        sockets: Mutex::new(BTreeMap::from([(socket.local_addr().unwrap(), socket)])),
+        stun,
+        traffic: traffic.clone(),
+    });
+    let mut manager = Manager::start_with_traversal(
+        identity,
+        factory,
+        Default::default(),
+        Arc::new(OfflineGateway),
+        Sequence::MIN.checked_next().unwrap(),
+    )
+    .await
+    .unwrap();
+    let facts = manager.snapshot().unwrap();
+    assert_eq!(
+        facts.sockets.len(),
+        7,
+        "one reusable IPv4 listener and all six missing IPv6 dial resources"
+    );
+    for key in keys {
+        assert!(facts.sockets.iter().any(|socket| {
+            socket.bound_address.is_ipv6()
+                && socket.reference.resource == (ResourceRef::Dial { key: key.clone() })
+        }));
+    }
+    manager.shutdown().await.unwrap();
+    assert_eq!(
+        traffic.opened.load(Ordering::SeqCst),
+        traffic.dropped.load(Ordering::SeqCst)
+    );
+    fixture.close().await;
 }
 impl TraversalGateway for Gateway {
     fn request(&self, operation: Operation) -> BoxFuture<'_, Result<Reply, Error>> {
@@ -530,11 +759,13 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
                 .unwrap()
                 .sockets
                 .iter()
+                .filter(|socket| socket.bound_address.is_ipv4())
                 .all(|socket| !socket.endpoints.is_empty())
                 && b.snapshot()
                     .unwrap()
                     .sockets
                     .iter()
+                    .filter(|socket| socket.bound_address.is_ipv4())
                     .all(|socket| !socket.endpoints.is_empty())
             {
                 break;
@@ -544,7 +775,14 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
     })
     .await
     .unwrap();
-    let initial = a.snapshot().unwrap().sockets[0].clone();
+    let opened = traffic.opened.load(Ordering::SeqCst);
+    for manager in [&a, &b] {
+        assert!(manager.snapshot().unwrap().sockets.iter().any(|socket| {
+            socket.bound_address.is_ipv6()
+                && matches!(socket.reference.resource, ResourceRef::Dial { .. })
+        }));
+    }
+    let initial = listener_socket(&a);
     assert_eq!(
         initial.endpoints[0].origin,
         EndpointSource::Stun {
@@ -552,7 +790,7 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
         }
     );
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(initial, a.snapshot().unwrap().sockets[0]);
+    assert_eq!(initial, listener_socket(&a));
     assert!(a.snapshot().unwrap().links.is_empty());
     assert!(b.snapshot().unwrap().links.is_empty());
     traffic.block_traversal.store(true, Ordering::SeqCst);
@@ -567,8 +805,8 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
         else {
             panic!("metadata");
         };
-        let local = a.snapshot().unwrap().sockets[0].clone();
-        let remote = b.snapshot().unwrap().sockets[0].clone();
+        let local = listener_socket(&a);
+        let remote = listener_socket(&b);
         let carrier = support::carriers(&fixture.identities[0])[&ids[1]].clone();
         let mut request = prepare_request(
             &discovery.context,
@@ -745,7 +983,7 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
         reattachment::packet(&fixture, false),
     )
     .await;
-    let socket_before = a.snapshot().unwrap().sockets[0].clone();
+    let socket_before = listener_socket(&a);
     let old_scope = a.shared.links.lock().unwrap()[&ids[1]].scope.clone();
     let sender = a.shared.links.lock().unwrap()[&ids[1]].sender.clone();
     let pending = secure_a
@@ -808,9 +1046,9 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
         }
         assert_eq!(a.snapshot().unwrap().links[0], a_link);
         assert_eq!(b.snapshot().unwrap().links[0], b_link);
-        assert_eq!(traffic.opened.load(Ordering::SeqCst), 2);
+        assert_eq!(traffic.opened.load(Ordering::SeqCst), opened);
         assert_eq!(traffic.dropped.load(Ordering::SeqCst), 0);
-        let socket = &a.snapshot().unwrap().sockets[0];
+        let socket = listener_socket(&a);
         assert_eq!(
             socket.reference.socket_id,
             socket_before.reference.socket_id
@@ -924,7 +1162,7 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
             .iter()
             .any(|ready| ready.id == circuit)
     );
-    let original = a.snapshot().unwrap().sockets[0].reference.clone();
+    let original = listener_socket(&a).reference;
     fixture.change_udp_buffer(ids[0]).await;
     let incompatible = {
         let mut control = gateways[0].control.lock().await;
@@ -938,12 +1176,9 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
         "changed physical options must replace the owner"
     );
     a.reconcile(incompatible.clone()).await.unwrap();
+    assert_ne!(listener_socket(&a).reference.socket_id, original.socket_id);
     assert_ne!(
-        a.snapshot().unwrap().sockets[0].reference.socket_id,
-        original.socket_id
-    );
-    assert_ne!(
-        a.snapshot().unwrap().sockets[0].reference.socket_generation,
+        listener_socket(&a).reference.socket_generation,
         original.socket_generation
     );
     fixture.identities[0] = incompatible;
@@ -958,14 +1193,10 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
     )
     .await
     .unwrap();
-    let new = replacement.snapshot().unwrap().sockets[0].reference.clone();
+    let new = listener_socket(&replacement).reference;
     assert_ne!(original.socket_id, new.socket_id);
     assert_ne!(original.socket_generation, new.socket_generation);
-    assert!(
-        replacement.snapshot().unwrap().sockets[0]
-            .endpoints
-            .is_empty()
-    );
+    assert!(listener_socket(&replacement).endpoints.is_empty());
     replacement.shutdown().await.unwrap();
     let last = fixture.identities[0].snapshot().clone();
     gateways[0].control.lock().await.stop().await.unwrap();

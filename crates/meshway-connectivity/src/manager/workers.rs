@@ -23,9 +23,7 @@ pub(super) fn plans(
         .snapshot()
         .configuration()
         .map_err(|_| Error::Authority)?;
-    let now = identity.snapshot().now_ms().map_err(|_| Error::Authority)?;
     let mut plans: BTreeMap<NodeId, Vec<Candidate>> = BTreeMap::new();
-    let mut endpoints = 0usize;
     for (key, candidate) in &cfg.dialers {
         let carrier = Carrier {
             dialer: cfg.node_id,
@@ -33,9 +31,9 @@ pub(super) fn plans(
             listener_key: candidate.listener_key.clone(),
             protocol: candidate.parameters.transport(),
         };
-        if admit_adjacency(cfg, candidate.peer, &carrier, now).is_err() {
-            continue;
-        }
+        // Resource plans survive compatible publication handoffs, including a
+        // diagnostic-only or expired business grant gaining a live permit.
+        // Every actual acquisition below still checks its frozen peer Scope.
         // Unsupported dial candidates cannot be used; another configured stream
         // candidate may still be usable. Enabled unsupported listeners fail start.
         let (driver, timeout) = match &candidate.parameters {
@@ -56,12 +54,6 @@ pub(super) fn plans(
         };
         if carrier.listener_key.is_empty() || carrier.listener_key.len() > 128 {
             return Err(Error::Configuration);
-        }
-        endpoints = endpoints
-            .checked_add(candidate.endpoints.len())
-            .ok_or(Error::Capacity)?;
-        if endpoints > limits.candidates {
-            return Err(Error::Capacity);
         }
         if candidate.endpoints.is_empty() {
             continue;
@@ -105,35 +97,31 @@ async fn dial_epoch(
     candidates: Arc<Vec<Candidate>>,
 ) {
     let lifetime = shared.scope(None, false);
+    let mut updates = shared.epochs.subscribe();
     loop {
-        if lifetime.check().is_err() {
+        if lifetime.check().is_err() || shared.epoch_changed() {
             return;
         }
-        let active = shared.links.lock().is_ok_and(|links| {
-            links
-                .get(&peer)
-                .is_some_and(|link| link.scope.check().is_ok())
-        });
-        if active {
-            if lifetime
-                .run(async {
-                    tokio::time::sleep(shared.limits.retry_backoff).await;
-                    Ok(())
-                })
-                .await
-                .is_err()
-            {
+        // A revoked operation scope is not a vacant physical slot. During a
+        // direct handoff its owner must first renew or retire the selected link;
+        // racing that decision with a reverse dial can replace a retained FD.
+        let selected = shared
+            .links
+            .lock()
+            .is_ok_and(|links| links.contains_key(&peer));
+        if selected {
+            if backoff(&shared, &lifetime, &mut updates).await.is_err() {
                 return;
             }
             continue;
         }
         'candidates: for candidate in candidates.iter() {
             for endpoint in 0..candidate.endpoints {
-                if shared.links.lock().is_ok_and(|links| {
-                    links
-                        .get(&peer)
-                        .is_some_and(|link| link.scope.check().is_ok())
-                }) {
+                if shared
+                    .links
+                    .lock()
+                    .is_ok_and(|links| links.contains_key(&peer))
+                {
                     break 'candidates;
                 }
                 if matches!(&candidate.driver, Driver::Datagram) {
@@ -150,14 +138,7 @@ async fn dial_epoch(
                     if lifetime.check().is_err() {
                         return;
                     }
-                    if lifetime
-                        .run(async {
-                            tokio::time::sleep(shared.limits.retry_backoff).await;
-                            Ok(())
-                        })
-                        .await
-                        .is_err()
-                    {
+                    if backoff(&shared, &lifetime, &mut updates).await.is_err() {
                         return;
                     }
                     continue;
@@ -199,7 +180,14 @@ async fn dial_epoch(
                         opening,
                     ))
                 };
-                if let Ok((stream, fact, opening)) = scope.run(attempt).await {
+                let result = tokio::select! { biased;
+                    _ = updates.changed() => {
+                        scope.cancellation.cancel();
+                        return;
+                    },
+                    result = scope.run(attempt) => result,
+                };
+                if let Ok((stream, fact, opening)) = result {
                     let _ = connected(shared.clone(), stream, fact, opening).await;
                 }
                 drop(capacity);
@@ -208,29 +196,33 @@ async fn dial_epoch(
                 }
                 // Every failure/rejected duplicate is paced; no immediate
                 // failed-dial loop, including single-candidate publications.
-                if lifetime
-                    .run(async {
-                        tokio::time::sleep(shared.limits.retry_backoff).await;
-                        Ok(())
-                    })
-                    .await
-                    .is_err()
-                {
+                if backoff(&shared, &lifetime, &mut updates).await.is_err() {
                     return;
                 }
             }
         }
-        if lifetime
-            .run(async {
-                tokio::time::sleep(shared.limits.retry_backoff).await;
-                Ok(())
-            })
-            .await
-            .is_err()
-        {
+        if backoff(&shared, &lifetime, &mut updates).await.is_err() {
             return;
         }
     }
+}
+
+async fn backoff(
+    shared: &Shared,
+    lifetime: &Scope,
+    updates: &mut tokio::sync::watch::Receiver<DataPlaneIdentity>,
+) -> Result<(), Error> {
+    lifetime
+        .run(async {
+            if shared.epoch_changed() {
+                return Err(Error::Authority);
+            }
+            tokio::select! { biased;
+                _ = updates.changed() => Err(Error::Authority),
+                _ = tokio::time::sleep(shared.limits.retry_backoff) => Ok(()),
+            }
+        })
+        .await
 }
 
 pub(super) async fn listen(
@@ -245,6 +237,9 @@ pub(super) async fn listen(
         let lifetime = shared.scope(None, false);
         let socket = lifetime
             .run(async {
+                if shared.epoch_changed() {
+                    return Err(Error::Authority);
+                }
                 tokio::select! { biased;
                     _ = updates.changed() => Err(Error::Authority),
                     result = children.join_next(), if !children.is_empty() => {

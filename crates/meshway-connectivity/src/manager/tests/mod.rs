@@ -15,6 +15,7 @@ use std::{
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 mod reattachment;
+mod regression;
 pub(super) mod support;
 mod traversal;
 
@@ -86,6 +87,7 @@ struct Factory {
     tcp: Mutex<Option<TcpListener>>,
     faults: Arc<Faults>,
     blocked_dialers: Mutex<BTreeSet<NodeId>>,
+    acquisitions: AtomicUsize,
 }
 impl Factory {
     fn new(fixture: &mut support::Fixture, faults: Arc<Faults>) -> Arc<Self> {
@@ -101,6 +103,7 @@ impl Factory {
             tcp: Mutex::new(fixture.tcp.take()),
             faults,
             blocked_dialers: Mutex::new(BTreeSet::new()),
+            acquisitions: AtomicUsize::new(0),
         })
     }
     fn endpoint(&self, socket: UdpSocket) -> Box<dyn Datagram> {
@@ -134,6 +137,7 @@ impl SocketFactory for Factory {
         index: usize,
     ) -> BoxFuture<'a, Result<AcceptedSocket, Error>> {
         Box::pin(async move {
+            self.acquisitions.fetch_add(1, Ordering::SeqCst);
             let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
             let candidate = &cfg.dialers[key];
             assert!(matches!(
@@ -191,6 +195,7 @@ impl SocketFactory for Factory {
         index: usize,
     ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
         Box::pin(async move {
+            self.acquisitions.fetch_add(1, Ordering::SeqCst);
             let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
             if self.blocked_dialers.lock().unwrap().contains(&cfg.node_id) {
                 return Err(Error::Unavailable);

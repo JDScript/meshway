@@ -223,7 +223,8 @@ impl Manager {
         let Ok(cfg) = next.configuration() else {
             return false;
         };
-        if old.listeners != cfg.listeners
+        if validate_scale(cfg, self.shared.limits).is_err()
+            || old.listeners != cfg.listeners
             || old.dialers != cfg.dialers
             || old.mesh_address_pools != cfg.mesh_address_pools
         {
@@ -295,6 +296,16 @@ impl Manager {
                 .values()
                 .all(|snapshot| same(snapshot, &next));
             if links_ready && sockets_ready && owners_ready {
+                // install_ready rejects every previous acquisition epoch, even
+                // still-live same-target snapshots. No departed peer's late
+                // READY can observe this collection as a new vacant slot.
+                let cfg = next.configuration().map_err(|_| Error::Authority)?;
+                self.shared
+                    .links
+                    .lock()
+                    .map_err(|_| Error::Worker)?
+                    .last
+                    .retain(|peer, _| cfg.peers.contains_key(peer));
                 return Ok(());
             }
             tokio::select! { biased;
@@ -307,6 +318,6 @@ impl Manager {
     }
 }
 
-fn same(a: &ExecutionSnapshot, b: &ExecutionSnapshot) -> bool {
+pub(super) fn same(a: &ExecutionSnapshot, b: &ExecutionSnapshot) -> bool {
     a.same_execution(b) && a.expires_at() == b.expires_at()
 }
