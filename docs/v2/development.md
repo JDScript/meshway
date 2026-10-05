@@ -37,7 +37,7 @@ Console 使用其所属任务运行：
 MESHWAY_CONTROLLER_URL=https://meshway-dev-api.jdscript.dev mise run dev:console
 ```
 
-对外域名只提供 HTTPS 转发。STUN 需要独立、显式配置的 UDP 监听／可达地址；HTTPS 域名可用不证明任何公网 UDP 映射可用。
+对外域名只提供 HTTPS 转发。开发启动命令显式发布外部 STUN `dev-public=stun.l.google.com:19302`，由 Node 的实际 UDP socket 查询；该服务及容器配置的 bootstrap DNS `1.1.1.1:53` 都需要实际网络可达。托管 STUN 另需独立、显式配置的 UDP 监听／可达地址；HTTPS 域名可用不证明任何公网 UDP 映射可用。
 
 ### 生命周期与归属
 
@@ -68,7 +68,7 @@ mise run services reset server
 | `carol@example.com` | Member |
 | `dave@example.com` | Member |
 
-账户名称不授予实例全局管理员权限。网络使用 Server 的正常初始配置，没有 seed Node。旧账户、网络和 Node 身份属于备份库，原 Node 需要重新接入新网络；reset 不操作 Node 容器或状态卷。
+账户名称不授予实例全局管理员权限。网络使用 Server 的正常初始配置，没有 seed Node。三节点批准接入后，运行 `mise run node:lab configure` 提交 Mesh-only DNS-off／UDP 运行配置，见[三节点环境](/v2/node/docker-lab)。旧账户、网络和 Node 身份属于备份库，原 Node 需要重新接入新网络；reset 不操作 Node 容器或状态卷。
 
 登录文件的 `server`／`console` 是对外 Server URL 和 Console origin；`email`／`password` 是默认开发登录，`networkId` 是新网络，`accounts` 是上述邮箱到**密码**的映射。若旧文件存在且格式有效，显式 reset 保留这些密码作为 seed；首次创建则生成随机密码。脚本不在命令行参数或普通输出打印密码／token。
 
@@ -104,7 +104,7 @@ DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-man
 | 本机 services | 工作树 `.meshway/server/`、`.meshway/dev-login.json`；`.meshway/services/` 的 launch 记录、reset journal、私有日志和 `dev.lock`；`target/` 构建缓存 | stop 保留数据；reset 整库移入 `.meshway/backups/`；备份人工保留或回收 |
 | 隔离 TUN／packet／runtime | 公共根 `.meshway/validation/{tun,packet,runtime}/<runId>/` 的报告、二进制、进程日志、场景数据和证据；工作树 `target/node-kernel-tests/` | 正常 finally 清理精确容器／网络，报告保留；失败查报告及 Docker 实际资源 |
 | OS fixture | 显式 `--output` 目录中的包、Dockerfile、image manifest；Docker 的不可变 image ID | 先确认没有容器／构建引用，再回收该输出和对应镜像 |
-| 常驻 Node lab | 公共根 `.meshway/node-lab/releases/`、`selected`、`operation.lock`；工作树 `target/node-linux/`；`meshway-{lax,sha,nyc}-state` named volumes | stop 保留卷；deploy 复用卷并更换不可变程序；完整重新接入时由操作者按标签和精确资源身份单独处理 |
+| 常驻 Node lab | 公共根 `.meshway/node-lab/releases/`、`selected`、`operation.lock`、`deploy.json`；工作树 `target/node-linux/`；`meshway-{lax,sha,nyc}-state` named volumes | stop 先清理 TUN 并保留原意图与卷；deploy 核验 namespace 停止证明、复用身份卷并更换不可变程序；完整重新接入时按标签和精确资源身份单独处理 |
 | perf | 公共根 `.meshway/perf/transport/<runId>/` 的原始样本、清单、JSON／Markdown 报告；工作树 `target/transport-perf/` | 保留可追溯报告；运行结束且无引用后回收相应缓存 |
 
 大型构建前检查磁盘，至少保留 50 GiB；`CARGO_INCREMENTAL=0`，同任务复用指定 target。三个 Linux 验收入口共享 `target/node-kernel-tests`，不同 feature 的可执行测试不并发使用这个 target。回收工作树前确认没有 WIP、进程或挂载引用，并保留已提交分支和必要证据。

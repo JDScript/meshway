@@ -18,9 +18,14 @@ x-node: &node
       chmod 700 /var/lib/meshway
       exec /opt/meshway/meshwayd "$@"
     - meshwayd
-  command: ["--data-dir", "/var/lib/meshway", "--network-mode", "control-only"]
+  command: ["--data-dir", "/var/lib/meshway", "--network-mode", "tun", "--bootstrap-nameserver", "1.1.1.1:53"]
   read_only: true
   cap_drop: [ALL]
+  cap_add: [NET_ADMIN]
+  devices: ["/dev/net/tun:/dev/net/tun"]
+  sysctls:
+    net.ipv6.conf.all.disable_ipv6: 0
+    net.ipv6.conf.default.disable_ipv6: 0
   security_opt: [no-new-privileges:true]
   cpus: 0.5
   mem_limit: 256m

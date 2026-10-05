@@ -106,7 +106,7 @@ export async function seed(client: ControlClient, passwords: Passwords) {
   }
 }
 
-async function privatePath(path: string, directory = false) {
+export async function privatePath(path: string, directory = false) {
   const info = await lstat(path);
   if (!(directory ? info.isDirectory() : info.isFile()) || info.uid !== process.getuid?.()
       || (info.mode & 0o777) !== (directory ? 0o700 : 0o600) || (!directory && info.nlink !== 1)) throw new Error("Invalid private seed path");

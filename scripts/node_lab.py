@@ -6,10 +6,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import stat
 import struct
 import subprocess
+import sys
 import tempfile
+import time
+from dev import DevError, private, save
 
 ROOT = Path(__file__).resolve().parents[1]
 NODES = ("lax", "sha", "nyc")
@@ -29,7 +34,8 @@ def lab_dir():
     common = Path(run("git", "rev-parse", "--git-common-dir", capture=True).strip())
     common = (ROOT / common).resolve()
     path = common.parent / ".meshway" / "node-lab"
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    private(path.parent, directory=True, create=True)
+    private(path, directory=True, create=True)
     return path
 
 
@@ -109,22 +115,36 @@ def build(lab):
     print(f"Built {target}: {release}")
 
 
-def owned_resources():
-    resources = [("container", f"meshway-{node}") for node in NODES]
-    resources += [("volume", f"meshway-{node}-state") for node in NODES]
-    resources += [("network", "meshway-node-lab")]
-    for kind, name in resources:
-        result = subprocess.run(["docker", kind, "inspect", name], capture_output=True, text=True)
+def owned_resources(required_nodes=(), check_orphans=False):
+    containers = {}
+    volumes = {}
+    resources = [("container", f"meshway-{node}", "service", node) for node in NODES]
+    resources += [("volume", f"meshway-{node}-state", "volume", f"{node}-state") for node in NODES]
+    resources += [("network", "meshway-node-lab", "network", "default")]
+    for kind, name, label, role in resources:
+        result = subprocess.run(["docker", kind, "inspect", name], capture_output=True, text=True, timeout=45)
         if result.returncode:
             # Docker errors other than a missing exact resource must stop here.
             missing = "no such" in result.stderr.lower() or f"network {name} not found" in result.stderr.lower()
             if not missing:
                 raise SystemExit(result.stderr)
+            if kind == "volume" and (role.removesuffix("-state") in containers
+                                     or role.removesuffix("-state") in required_nodes):
+                raise DevError(f"Existing Node state volume is missing: {name}; refusing to replace its identity.")
             continue
         value = json.loads(result.stdout)[0]
         labels = (value["Config"] if kind == "container" else value).get("Labels") or {}
-        if labels.get(LABEL) != "1" or labels.get("com.docker.compose.project") != "meshway-node-lab":
+        if (labels.get(LABEL) != "1" or labels.get("com.docker.compose.project") != "meshway-node-lab"
+                or labels.get("com.docker.compose." + label) != role):
             raise SystemExit(f"Existing {kind} is not owned by this lab: {name}")
+        if kind == "container":
+            containers[role] = value
+        elif kind == "volume":
+            node = role.removesuffix("-state")
+            volumes[node] = value
+            if check_orphans and node not in containers:
+                raise DevError(f"State volume has no inspectable Node or unfinished deploy plan: {name}; namespace/intent is unknown.")
+    return containers, volumes
 
 
 def selected_release(lab):
@@ -142,17 +162,422 @@ def selected_release(lab):
     return release, manifest
 
 
-def main():
+def compose(env, *args, capture=False):
+    return run("docker", "compose", "-f", str(ROOT / "dev/node-lab/compose.yaml"),
+               *args, env=env, capture=capture, timeout=120)
+
+
+def config_hashes(env):
+    hashes = {}
+    for line in compose(env, "config", "--hash", "*", capture=True).splitlines():
+        fields = line.split()
+        if (len(fields) != 2 or fields[0] not in NODES or fields[0] in hashes
+                or not re.fullmatch(r"[0-9a-f]{64}", fields[1])):
+            raise DevError("Unexpected Compose config hash output.")
+        hashes[fields[0]] = fields[1]
+    if set(hashes) != set(NODES):
+        raise DevError("Compose must contain exactly the three lab Node roles.")
+    return hashes
+
+
+def node_status(node, container):
+    if not container["State"]["Running"]:
+        raise DevError(f"meshway-{node}: existing container is stopped; cannot verify Node intent/namespace cleanup.")
+    value = json.loads(run("docker", "exec", container["Id"], "/opt/meshway/meshway",
+                           "status", "--json", capture=True, timeout=45))
+    if (not isinstance(value, dict) or type(value.get("desiredUp")) is not bool
+            or value.get("networkMode") not in ("tun", "controlOnly")
+            or value.get("dataPlane") not in ("controlOnly", "stopped", "preparing", "ready", "suspended", "failed")
+            or not isinstance(value.get("phase"), str) or "identity" not in value):
+        raise DevError(f"meshway-{node}: invalid CLI status.")
+    node_identity(value["identity"])
+    return value
+
+
+def node_identity(value):
+    if value is None:
+        return None
+    if (not isinstance(value, dict)
+            or any(not isinstance(value.get(key), str) or not value[key] or len(value[key]) > 256
+                   for key in ("nodeId", "networkId"))):
+        raise DevError("Invalid Node identity.")
+    return {key: value[key] for key in ("nodeId", "networkId")}
+
+
+def volume_identity(node, volume, container=None):
+    limits = {"Name": 256, "CreatedAt": 128, "Driver": 128, "Mountpoint": 4096, "Scope": 128}
+    if (not isinstance(volume, dict) or volume.get("Name") != f"meshway-{node}-state"
+            or any(not isinstance(volume.get(key), str) or not volume[key] or len(volume[key]) > limit for key, limit in limits.items())):
+        raise DevError(f"meshway-{node}: state volume identity is unavailable.")
+    if container is not None:
+        mounts = [mount for mount in container.get("Mounts", []) if mount.get("Destination") == "/var/lib/meshway"]
+        if (len(mounts) != 1 or mounts[0].get("Type") != "volume" or mounts[0].get("Name") != volume["Name"]
+                or mounts[0].get("Source") != volume["Mountpoint"] or mounts[0].get("RW") is not True):
+            raise DevError(f"meshway-{node}: state volume mount differs.")
+    settings = json.dumps({key: volume.get(key) for key in ("Labels", "Options")}, sort_keys=True)
+    return {**{key: volume[key] for key in limits}, "settingsSha256": hashlib.sha256(settings.encode()).hexdigest()}
+
+
+def container_run(container):
+    value = {"startedAt": container["State"].get("StartedAt"), "restartCount": container.get("RestartCount")}
+    if (not isinstance(value["startedAt"], str) or not value["startedAt"] or len(value["startedAt"]) > 128
+            or type(value["restartCount"]) is not int or value["restartCount"] < 0):
+        raise DevError("Container run identity is unavailable.")
+    return value
+
+
+def stopped_receipt(container):
+    state = container["State"]
+    if (state["Running"] or state.get("Status") != "exited" or state.get("Paused") or state.get("Restarting")
+            or state.get("Dead") or not isinstance(state.get("FinishedAt"), str)
+            or not state["FinishedAt"] or len(state["FinishedAt"]) > 128):
+        raise DevError("Container has not confirmed a managed stop.")
+    return {**container_run(container), "finishedAt": state["FinishedAt"]}
+
+
+def wait_node_status(node, container):
+    deadline = time.monotonic() + 45
+    while True:
+        try:
+            return node_status(node, container)
+        except subprocess.CalledProcessError:
+            if time.monotonic() >= deadline:
+                raise DevError(f"meshway-{node}: restarted daemon IPC is still unavailable; journal retained.") from None
+            time.sleep(.25)
+
+
+def deploy_journal(lab):
+    path = lab / "deploy.json"
+    if not path.exists() and not path.is_symlink():
+        return None
+    private(path)
+    if path.stat().st_size > 32768:
+        raise DevError("Deploy journal exceeds its size bound; retained for inspection.")
+    value = json.loads(path.read_text())
+    if (not isinstance(value, dict) or value.get("version") != 1
+            or value.get("phase") not in ("preparing", "composing", "restoring", "complete",
+                                           "stop-preparing", "stop-stopping", "managed-stopped", "resuming")
+            or not isinstance(value.get("plan"), dict)
+            or not isinstance(value.get("nodes"), dict) or set(value["nodes"]) != set(NODES)):
+        raise DevError("Invalid deploy journal; retained for inspection.")
+    for entry in value["nodes"].values():
+        if (not isinstance(entry, dict)
+                or any(type(entry.get(key)) is not bool for key in ("desiredUp", "recreate", "downRequested", "quiesced"))
+                or entry.get("networkMode") not in (None, "tun", "controlOnly")
+                or any(entry.get(key) is not None and not isinstance(entry[key], str)
+                       for key in ("containerId", "configHash", "deployedContainerId"))
+                or "identity" not in entry):
+            raise DevError("Invalid deploy Node record; retained for inspection.")
+        node_identity(entry["identity"])
+        if value["phase"] in ("stop-preparing", "stop-stopping", "managed-stopped", "resuming"):
+            if (not isinstance(entry.get("stateVolume"), dict) or not isinstance(entry.get("stopOrigin"), dict)
+                    or type(entry.get("stopRequested")) is not bool or type(entry.get("startRequested")) is not bool
+                    or "stopReceipt" not in entry or "resumedRun" not in entry):
+                raise DevError("Invalid managed-stop proof; journal retained.")
+    return value
+
+
+def snapshot(journal=None, *, allow_stopped=False):
+    required = [node for node, entry in journal["nodes"].items() if entry["containerId"]] if journal else ()
+    containers, volumes = owned_resources(required, check_orphans=journal is None)
+    for node, volume in volumes.items():
+        identity = volume_identity(node, volume, containers.get(node))
+        if node in containers:
+            containers[node]["stateVolume"] = identity
+        recorded = journal["nodes"][node].get("stateVolume") if journal else None
+        if recorded is not None and recorded != identity:
+            raise DevError(f"meshway-{node}: state volume identity changed; journal retained.")
+    statuses = {}
+    for node, container in containers.items():
+        if allow_stopped and not container["State"]["Running"]:
+            statuses[node] = None
+        elif journal and journal["phase"] == "resuming" and journal["nodes"][node]["startRequested"]:
+            statuses[node] = wait_node_status(node, container)
+        else:
+            statuses[node] = node_status(node, container)
+    return containers, statuses
+
+
+def node_records(containers, statuses, hashes):
+    nodes = {}
+    for node in NODES:
+        container, status = containers.get(node), statuses.get(node)
+        current_hash = container["Config"]["Labels"].get("com.docker.compose.config-hash") if container else None
+        if container and not re.fullmatch(r"[0-9a-f]{64}", current_hash or ""):
+            raise DevError(f"meshway-{node}: missing/invalid current Compose hash.")
+        nodes[node] = {"containerId": container["Id"] if container else None, "configHash": current_hash,
+                       "identity": node_identity(status["identity"]) if status else None,
+                       "desiredUp": status["desiredUp"] if status else False,
+                       "networkMode": status["networkMode"] if status else None,
+                       "recreate": bool(container and current_hash != hashes[node]),
+                       "downRequested": False, "quiesced": False, "deployedContainerId": None,
+                       "stateVolume": container["stateVolume"] if container else None}
+    return nodes
+
+
+def check_managed_stop(journal, containers, statuses):
+    if set(containers) != set(NODES):
+        raise DevError("Managed stop container is missing; journal retained.")
+    for node, entry in journal["nodes"].items():
+        container, status = containers[node], statuses[node]
+        if (container["Id"] != entry["containerId"]
+                or container["Config"]["Labels"].get("com.docker.compose.config-hash") != entry["configHash"]):
+            raise DevError(f"meshway-{node}: managed-stop container/config conflict; journal retained.")
+        if not container["State"]["Running"]:
+            receipt = stopped_receipt(container)
+            if (not entry["quiesced"] or not entry["stopRequested"] or journal["phase"] == "stop-preparing"
+                    or container_run(container) != entry["stopOrigin"]
+                    or journal["phase"] in ("managed-stopped", "resuming") and entry["stopReceipt"] is None
+                    or entry["stopReceipt"] is not None and receipt != entry["stopReceipt"]):
+                raise DevError(f"meshway-{node}: stopped container lacks matching quiescence proof; journal retained.")
+            continue
+        if journal["phase"] == "managed-stopped":
+            raise DevError(f"meshway-{node}: managed-stopped container was restarted outside this plan; journal retained.")
+        if journal["phase"] == "resuming":
+            if (not entry["startRequested"] or entry["stopReceipt"] is None
+                    or entry["resumedRun"] is not None and container_run(container) != entry["resumedRun"]):
+                raise DevError(f"meshway-{node}: container restart lacks managed-stop proof; journal retained.")
+        elif container_run(container) != entry["stopOrigin"]:
+            raise DevError(f"meshway-{node}: container run identity changed during stop; journal retained.")
+        allowed_up = {entry["desiredUp"]}
+        if entry["networkMode"] == "tun" and entry["downRequested"]:
+            allowed_up.add(False)
+        if entry["networkMode"] == "tun" and entry["quiesced"]:
+            allowed_up = {False}
+        if (node_identity(status["identity"]) != entry["identity"] or status["networkMode"] != entry["networkMode"]
+                or status["desiredUp"] not in allowed_up
+                or entry["quiesced"] and (status["dataPlane"] != ("stopped" if entry["networkMode"] == "tun" else "controlOnly"))):
+            raise DevError(f"meshway-{node}: managed-stop identity/intent/quiescence conflict; journal retained.")
+
+
+def stop(lab):
+    journal = deploy_journal(lab)
+    if journal and journal["phase"] not in ("complete", "stop-preparing", "stop-stopping", "managed-stopped"):
+        raise DevError("Finish the incomplete deploy before managed stop; journal retained.")
+    if not journal or journal["phase"] == "complete":
+        containers, statuses = snapshot()
+        if set(containers) != set(NODES):
+            raise DevError("Managed stop requires all three inspectable lab Nodes.")
+        hashes = {node: container["Config"]["Labels"].get("com.docker.compose.config-hash") for node, container in containers.items()}
+        nodes = node_records(containers, statuses, hashes)
+        for node, entry in nodes.items():
+            entry.update(stopOrigin=container_run(containers[node]), stopRequested=False,
+                         stopReceipt=None, startRequested=False, resumedRun=None)
+        journal = {"version": 1, "plan": {"root": str(ROOT), "hashes": hashes}, "nodes": nodes, "phase": "stop-preparing"}
+        save(lab / "deploy.json", journal)
+    containers, statuses = snapshot(journal, allow_stopped=True)
+    check_managed_stop(journal, containers, statuses)
+    if journal["phase"] == "stop-preparing":
+        for node, entry in journal["nodes"].items():
+            if entry["networkMode"] == "tun" and statuses[node]["desiredUp"]:
+                entry["downRequested"] = True
+                save(lab / "deploy.json", journal)
+                run("docker", "exec", entry["containerId"], "/opt/meshway/meshway", "down", "--json", timeout=45)
+            containers, statuses = snapshot(journal)
+            check_managed_stop(journal, containers, statuses)
+            expected_plane = "stopped" if entry["networkMode"] == "tun" else "controlOnly"
+            if statuses[node]["dataPlane"] != expected_plane or entry["networkMode"] == "tun" and statuses[node]["desiredUp"]:
+                raise DevError(f"meshway-{node}: managed stop did not confirm quiescence; journal retained.")
+            entry["quiesced"] = True
+            save(lab / "deploy.json", journal)
+        journal["phase"] = "stop-stopping"
+        save(lab / "deploy.json", journal)
+    if journal["phase"] == "stop-stopping":
+        for node, entry in journal["nodes"].items():
+            containers, statuses = snapshot(journal, allow_stopped=True)
+            check_managed_stop(journal, containers, statuses)
+            if containers[node]["State"]["Running"]:
+                entry["stopRequested"] = True
+                save(lab / "deploy.json", journal)
+                # Wait for graceful shutdown; Docker must not escalate to SIGKILL.
+                run("docker", "stop", "--time", "-1", entry["containerId"], timeout=45)
+                containers, statuses = snapshot(journal, allow_stopped=True)
+                check_managed_stop(journal, containers, statuses)
+            entry["stopReceipt"] = stopped_receipt(containers[node])
+            save(lab / "deploy.json", journal)
+        journal["phase"] = "managed-stopped"
+        save(lab / "deploy.json", journal)
+    print("Lab containers are managed-stopped; original Node identities and up intent retained for deploy.")
+
+
+def resume_stopped(lab, journal):
+    containers, statuses = snapshot(journal, allow_stopped=True)
+    check_managed_stop(journal, containers, statuses)
+    for node, entry in journal["nodes"].items():
+        if not containers[node]["State"]["Running"]:
+            entry["startRequested"] = True
+            save(lab / "deploy.json", journal)
+            run("docker", "start", entry["containerId"], timeout=45)
+            containers, statuses = snapshot(journal, allow_stopped=True)
+            check_managed_stop(journal, containers, statuses)
+        if not containers[node]["State"]["Running"]:
+            raise DevError(f"meshway-{node}: managed restart is incomplete; journal retained.")
+        entry["resumedRun"] = container_run(containers[node])
+        save(lab / "deploy.json", journal)
+    journal["phase"] = "preparing"
+    save(lab / "deploy.json", journal)
+
+
+def check_snapshot(journal, containers, statuses, *, deployed=False):
+    for node, entry in journal["nodes"].items():
+        container = containers.get(node)
+        if container is None:
+            # Compose can fail after removing the old container but before creating
+            # its replacement. The exact owned state volume must still exist.
+            if (not deployed and journal["phase"] == "composing" and entry["recreate"]
+                    and entry["deployedContainerId"] is None
+                    and (entry["networkMode"] != "tun" or entry["quiesced"])):
+                continue
+            if entry["containerId"] is not None or deployed:
+                raise DevError(f"meshway-{node}: planned container is missing; deploy journal retained.")
+            continue
+        status = statuses[node]
+        original = container["Id"] == entry["containerId"]
+        expected_hash = journal["plan"]["hashes"][node]
+        current_hash = container["Config"]["Labels"].get("com.docker.compose.config-hash")
+        if (node_identity(status["identity"]) != entry["identity"]
+                or (entry["deployedContainerId"] is not None and container["Id"] != entry["deployedContainerId"])
+                or (not original and journal["phase"] == "preparing")
+                or (not original and entry["containerId"] is not None and not entry["recreate"])
+                or current_hash != (expected_hash if deployed or not original else entry["configHash"])
+                or original and status["networkMode"] != entry["networkMode"]
+                or original and entry.get("resumedRun") is not None and container_run(container) != entry["resumedRun"]):
+            raise DevError(f"meshway-{node}: deploy plan/container/identity conflict; journal retained.")
+        if not entry["desiredUp"] and status["desiredUp"]:
+            raise DevError(f"meshway-{node}: previously down Node intent changed; journal retained.")
+        needs_down = entry["recreate"] and entry["networkMode"] == "tun"
+        if needs_down and journal["phase"] in ("composing", "restoring") and original:
+            if not entry["quiesced"] or status["desiredUp"] or status["dataPlane"] != "stopped":
+                raise DevError(f"meshway-{node}: old TUN namespace is not stopped; journal retained.")
+        if journal["phase"] == "preparing":
+            allowed_down = (needs_down or entry.get("stopReceipt") is not None) and entry["downRequested"]
+            if status["desiredUp"] != entry["desiredUp"] and not allowed_down:
+                raise DevError(f"meshway-{node}: original Node intent changed; journal retained.")
+
+
+def deploy(lab):
+    release, manifest = selected_release(lab)
+    env = dict(os.environ, MESHWAY_NODE_RELEASE=str(release), MESHWAY_NODE_PLATFORM=manifest["platform"])
+    plan = {"root": str(ROOT), "release": str(release), "platform": manifest["platform"], "hashes": config_hashes(env)}
+    journal = deploy_journal(lab)
+    if journal and journal["phase"] in ("stop-preparing", "stop-stopping"):
+        raise DevError("Finish the incomplete managed stop before deploy; journal retained.")
+    if journal and journal["phase"] == "managed-stopped":
+        containers, statuses = snapshot(journal, allow_stopped=True)
+        check_managed_stop(journal, containers, statuses)
+        for node, entry in journal["nodes"].items():
+            entry["recreate"] = entry["configHash"] != plan["hashes"][node]
+        journal.update(plan=plan, phase="resuming")
+        save(lab / "deploy.json", journal)
+    if journal and journal["phase"] != "complete" and journal["plan"] != plan:
+        raise DevError("Incomplete deploy has a different release/config plan; journal retained. Retry its original plan.")
+    if journal and journal["phase"] == "resuming":
+        resume_stopped(lab, journal)
+    containers, statuses = snapshot(journal if journal and journal["phase"] != "complete" else None)
+    if not journal or journal["phase"] == "complete":
+        nodes = node_records(containers, statuses, plan["hashes"])
+        journal = {"version": 1, "plan": plan, "nodes": nodes, "phase": "preparing"}
+        save(lab / "deploy.json", journal)
+    check_snapshot(journal, containers, statuses, deployed=journal["phase"] == "restoring")
+    if journal["phase"] == "preparing":
+        for node, entry in journal["nodes"].items():
+            if not entry["recreate"] or entry["networkMode"] != "tun":
+                continue
+            if statuses[node]["desiredUp"]:
+                entry["downRequested"] = True
+                save(lab / "deploy.json", journal)
+                run("docker", "exec", entry["containerId"], "/opt/meshway/meshway", "down", "--json", timeout=45)
+            containers, statuses = snapshot(journal)
+            check_snapshot(journal, containers, statuses)
+            if statuses[node]["desiredUp"] or statuses[node]["dataPlane"] != "stopped":
+                raise DevError(f"meshway-{node}: down did not confirm stopped data plane; journal retained.")
+            entry["quiesced"] = True
+            save(lab / "deploy.json", journal)
+        journal["phase"] = "composing"
+        save(lab / "deploy.json", journal)
+    if journal["phase"] == "composing":
+        containers, statuses = snapshot(journal)
+        check_snapshot(journal, containers, statuses)
+        if config_hashes(env) != plan["hashes"]:
+            raise DevError("Compose config changed during deploy; original plan journal retained.")
+        changed = [node for node in NODES if node not in containers
+                   or containers[node]["Config"]["Labels"]["com.docker.compose.config-hash"] != plan["hashes"][node]]
+        if changed:
+            # Exclude matching containers even if the source file changes between
+            # hash inspection and Compose: only these namespaces were prepared.
+            compose(env, "up", "-d", "--no-build", "--no-deps", "--wait", "--wait-timeout", "60", *changed)
+        containers, statuses = snapshot(journal)
+        check_snapshot(journal, containers, statuses, deployed=True)
+        for node, container in containers.items():
+            journal["nodes"][node]["deployedContainerId"] = container["Id"]
+        journal["phase"] = "restoring"
+        save(lab / "deploy.json", journal)
+    for node, entry in journal["nodes"].items():
+        if entry["desiredUp"] and not statuses[node]["desiredUp"]:
+            run("docker", "exec", containers[node]["Id"], "/opt/meshway/meshway", "up", "--json", timeout=45)
+            containers, statuses = snapshot(journal)
+            check_snapshot(journal, containers, statuses, deployed=True)
+    containers, statuses = snapshot(journal)
+    check_snapshot(journal, containers, statuses, deployed=True)
+    pending = []
+    for node, status in statuses.items():
+        print(json.dumps({"container": f"meshway-{node}", "status": status}), flush=True)
+        if status["desiredUp"]:
+            ready = status.get("authenticated") is True and status.get("lastError") is None
+            if status["networkMode"] == "tun":
+                ready = (ready and status["phase"] == "running" and status["dataPlane"] == "ready"
+                         and status.get("applied") is not None and status["applied"] == status.get("saved"))
+            else:
+                ready = ready and status["phase"] == "controlReady" and status["dataPlane"] == "controlOnly"
+        else:
+            ready = status["phase"] == "down" and status["dataPlane"] in ("stopped", "controlOnly")
+        if not ready or status["desiredUp"] != journal["nodes"][node]["desiredUp"]:
+            pending.append(f"meshway-{node}")
+    if pending:
+        raise DevError("Deploy control/install or intent restoration remains pending or failed: " + ", ".join(pending) + "; journal retained; retry the same deploy.")
+    journal["phase"] = "complete"
+    save(lab / "deploy.json", journal)
+    print("Node deploy complete; actual states reported above.")
+
+
+def configure(lab):
+    journal = deploy_journal(lab)
+    if journal and journal["phase"] not in ("restoring", "complete"):
+        raise DevError("Finish the incomplete deploy before configuring the lab.")
+    containers, statuses = snapshot(journal if journal and journal["phase"] == "restoring" else None)
+    if set(containers) != set(NODES):
+        raise DevError("Configure requires all three deployed lab Nodes.")
+    if journal and journal["phase"] == "restoring":
+        check_snapshot(journal, containers, statuses, deployed=True)
+    helper = ROOT / "scripts/dev/lab.ts"
+    if not helper.is_file():
+        raise DevError("Missing lab configuration helper.")
+    run("node", "--experimental-strip-types", str(helper), str(ROOT),
+        str(lab.parent / "dev-login.json"), *(f"meshway-{node}" for node in NODES), timeout=180)
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["build", "deploy", "versions", "status", "stop"])
-    args = parser.parse_args()
+    parser.add_argument("action", choices=["build", "deploy", "configure", "versions", "status", "stop"])
+    args = parser.parse_args(argv)
     lab = lab_dir()
     if args.action in ("versions", "status"):
         operate(args.action, lab)
         return
-    with (lab / "operation.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    path = lab / "operation.lock"
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) not in (0o600, 0o644)):
+            raise DevError("Invalid lab operation lock ownership or permissions.")
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Older lab versions created this non-secret lock with the default umask.
+        os.fchmod(descriptor, 0o600)
+        private(path)
         operate(args.action, lab)
+    finally:
+        os.close(descriptor)
 
 
 def operate(action, lab):
@@ -176,13 +601,17 @@ def operate(action, lab):
                 print(json.dumps({**manifest, "runningDaemonMatches": running == manifest["sha256"]["meshwayd"]}, indent=2))
         return
     if action == "stop":
-        run("docker", "stop", "--time", "15", *(f"meshway-{node}" for node in NODES))
+        stop(lab)
         return
-    release, manifest = selected_release(lab)
-    env = dict(os.environ, MESHWAY_NODE_RELEASE=str(release), MESHWAY_NODE_PLATFORM=manifest["platform"])
-    run("docker", "compose", "-f", str(ROOT / "dev/node-lab/compose.yaml"),
-        "up", "-d", "--no-build", "--wait", "--wait-timeout", "60", env=env)
+    if action == "configure":
+        configure(lab)
+        return
+    deploy(lab)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (DevError, OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"Node lab operation failed: {error}; any incomplete deploy journal is retained.", file=sys.stderr)
+        raise SystemExit(1)
