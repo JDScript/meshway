@@ -191,6 +191,69 @@ def cpu_usage(container):
     return int(dict(line.split() for line in text.splitlines())["usage_usec"]) / 1_000_000
 
 
+def namespace_options(mode, role):
+    if mode.startswith("wg-"):
+        return ["--cap-add", "NET_ADMIN"] + (["--sysctl", "net.ipv4.ip_forward=1"] if role == "r" else [])
+    if role == "r":
+        return []
+    return ["--cap-add", "NET_ADMIN"] + ([] if mode == "raw" else ["--device", "/dev/net/tun:/dev/net/tun"])
+
+
+def wireguard_setup(containers, addresses, mtu):
+    """Kernel-only tunnels; private keys never leave each namespace's tmpfs."""
+    relay = "r" in containers
+    # Each entry is (role, interface, peer role, peer interface, port, peer port, AllowedIPs).
+    topology = ([('a', 'wg0', 'r', 'wg0', 41000, 41000, '100.127.0.2/32'),
+                 ('r', 'wg0', 'a', 'wg0', 41000, 41000, '100.127.0.1/32'),
+                 ('r', 'wg1', 'b', 'wg0', 41001, 41000, '100.127.0.2/32'),
+                 ('b', 'wg0', 'r', 'wg1', 41000, 41001, '100.127.0.1/32')] if relay else
+                [('a', 'wg0', 'b', 'wg0', 41000, 41000, '100.127.0.2/32'),
+                 ('b', 'wg0', 'a', 'wg0', 41000, 41000, '100.127.0.1/32')])
+    public = {}
+    for role, interface, *_ in topology:
+        container = containers[role]
+        command("docker", "exec", container, "sh", "-ec",
+                f"umask 077; mkdir -p /tmp/private; wg genkey > /tmp/private/{interface}.key; "
+                f"wg pubkey < /tmp/private/{interface}.key > /tmp/private/{interface}.pub")
+        public[role, interface] = command("docker", "exec", container, "cat", f"/tmp/private/{interface}.pub")
+        command("docker", "exec", container, "ip", "link", "add", interface, "type", "wireguard")
+    evidence = {}
+    for role, interface, peer, peer_interface, port, peer_port, allowed in topology:
+        container = containers[role]
+        # Public material is transported in memory, never included in reports or error command arguments.
+        push(container, f"/tmp/private/{interface}.peer", public[peer, peer_interface] + "\n")
+        endpoint = f"{addresses[peer]}:{peer_port}"
+        command("docker", "exec", container, "sh", "-ec",
+                f'wg set {interface} listen-port {port} private-key /tmp/private/{interface}.key '
+                f'peer "$(cat /tmp/private/{interface}.peer)" allowed-ips {allowed} endpoint {endpoint}')
+        if role != "r":
+            local = "100.127.0.1/32" if role == "a" else "100.127.0.2/32"
+            command("docker", "exec", container, "ip", "address", "add", local, "dev", interface)
+        command("docker", "exec", container, "ip", "link", "set", interface, "mtu", str(mtu), "up")
+        command("docker", "exec", container, "ip", "route", "add", allowed, "dev", interface)
+        link = json.loads(command("docker", "exec", container, "ip", "-d", "-j", "link", "show", interface))[0]
+        route = json.loads(command("docker", "exec", container, "ip", "-j", "route", "get", allowed.split('/')[0]))
+        if link["linkinfo"]["info_kind"] != "wireguard" or link["mtu"] != mtu or route[0]["dev"] != interface:
+            raise RuntimeError("WireGuard interface or route differs from the requested topology")
+        evidence.setdefault(role, {})[interface] = dict(peer=peer, endpoint=endpoint, allowedIPs=allowed,
+                                                       link=link, route=route)
+    if relay and command("docker", "exec", containers["r"], "cat", "/proc/sys/net/ipv4/ip_forward") != "1":
+        raise RuntimeError("WireGuard relay forwarding is disabled")
+    return evidence
+
+
+def wireguard_transfers(containers, evidence):
+    """Validate every tunnel carried traffic; never dump WireGuard key material."""
+    for role, interfaces in evidence.items():
+        for interface, item in interfaces.items():
+            values = command("docker", "exec", containers[role], "sh", "-ec",
+                f"wg show {interface} latest-handshakes | awk '{{print $2}}'; "
+                f"wg show {interface} transfer | awk '{{print $2, $3}}'").split()
+            if len(values) != 3 or any(int(value) <= 0 for value in values):
+                raise RuntimeError("WireGuard tunnel lacks handshake or bidirectional traffic")
+            item.update(zip(("handshakeUnixSeconds", "receivedBytes", "sentBytes"), map(int, values)))
+
+
 def sample(args, metadata, output, network, image, platform, identity, mode, batch, profile, traffic, repeat):
     label = f"{mode}-b{batch}-p{profile}-{traffic}-r{repeat}"
     print(label, flush=True)
@@ -203,15 +266,16 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     nodes = []
     server = None
     handles = []
-    roles = ("a", "r", "b") if mode == "secure-relay" else ("a", "b")
+    roles = ("a", "r", "b") if mode.endswith("-relay") else ("a", "b")
     secure = mode.startswith("secure-")
+    wireguard = mode.startswith("wg-")
     try:
         for role in roles:
             name = f"meshway-dp-{identity}-{role}"
             container = command("docker", "create", "--name", name, "--label", "io.meshway.dataplane-perf=" + identity,
                                 "--platform", platform, "--network", network,
                                  "--cap-drop", "ALL",
-                                 *([] if role == "r" else ["--cap-add", "NET_ADMIN", "--device", "/dev/net/tun:/dev/net/tun"]),
+                                 *namespace_options(mode, role),
                                 "--security-opt", "no-new-privileges", "--read-only", "--pids-limit", "128",
                                 "--cpus", str(args.cpus), "--memory", args.memory,
                                 "--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777",
@@ -232,6 +296,9 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         if mode == "raw":
             for container in containers.values():
                 command("docker", "exec", container, "ip", "link", "set", "eth0", "mtu", str(args.mtu))
+        elif wireguard:
+            metadata["environment"]["wireguardTools"] = command("docker", "exec", containers["a"], "wg", "--version")
+            record["wireguard"] = wireguard_setup(containers, addresses, args.mtu)
         else:
             if secure:
                 public_nodes = []
@@ -275,7 +342,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         record["route"] = json.loads(command("docker", "exec", containers["a"], "ip", "-j", "route", "get", destination))
         record["links"] = {role: json.loads(command("docker", "exec", container, "ip", "-j", "link"))
                            for role, container in containers.items()}
-        expected_device = "eth0" if mode == "raw" else json.loads((directory / "a.stdout").read_text())["tun"]
+        expected_device = ("eth0" if mode == "raw" else "wg0" if wireguard else
+                           json.loads((directory / "a.stdout").read_text())["tun"])
         if record["route"][0]["dev"] != expected_device:
             raise RuntimeError("iperf destination is not routed through the expected interface")
         server_out = (directory / "iperf-server.json").open("w")
@@ -316,6 +384,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 raise RuntimeError("invalid receiver metric: " + field)
         if nodes and any(node.poll() is not None for node in nodes):
             raise RuntimeError("plain node exited during measurement")
+        if wireguard:
+            wireguard_transfers(containers, record["wireguard"])
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as error:
         record.update(status="failed", failure=str(error))
     finally:
@@ -377,10 +447,13 @@ def measure(args, output_root):
                         rustc=command("rustc", "-Vv"), zig=command("zig", "version"),
                         cargoZigbuild=command("cargo-zigbuild", "--version"),
                         cpusPerContainer=args.cpus, memoryPerContainer=args.memory,
-                        runtime="Tokio current_thread per node", mtu=args.mtu, udpPayloadBytes=args.payload,
+                        runtime="Meshway: Tokio current_thread per node; WireGuard: kernel workers/softirq", mtu=args.mtu, udpPayloadBytes=args.payload,
                         profileDetail=1,
                         udpRate=args.udp_rate, warmupOmittedSeconds=args.omit,
                         cpuScope="all sample cgroups over full client wall interval including warmup (relay: 3, others: 2)",
+                        kernelCpuLimitation="WireGuard crypto/softirq/kworker CPU may be charged outside sample cgroups; total kernel CPU is unmeasured, not zero; quotas do not bound all kernel work",
+                        wireguardRelay="A-R and R-B tunnels; R decrypts, routes and re-encrypts, unlike Meshway ciphertext relay",
+                        offloadScope="kernel defaults for raw/WireGuard; following flags describe Meshway userspace only",
                         kernelBatch=False, udpSegment=False, udpGro=False))
     save(output / "results.json", metadata)
     network = "meshway-dp-" + identity
@@ -392,7 +465,7 @@ def measure(args, output_root):
             if subnet.version == 4 and subnet.overlaps(ipaddress.ip_network("100.127.0.0/30")):
                 raise RuntimeError("fixture underlay overlaps the TUN subnet")
         metadata["environment"]["network"] = description["IPAM"]["Config"]
-        configs = [("raw", 0, 0)] + [(mode, b, p) for mode in ("plain", "secure-direct", "secure-relay")
+        configs = [(mode, 0, 0) for mode in ("raw", "wg-direct", "wg-relay")] + [(mode, b, p) for mode in ("plain", "secure-direct", "secure-relay")
                                    for b in args.batch for p in args.profile]
         for repeat in range(args.repeats):
             for mode, batch, profile in (configs if repeat % 2 == 0 else list(reversed(configs))):
