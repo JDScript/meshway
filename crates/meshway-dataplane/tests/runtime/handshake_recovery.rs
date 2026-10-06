@@ -131,9 +131,9 @@ async fn every_init_and_response_hop_recovers_using_one_cid_and_exact_cached_out
         );
         assert!(fixture.a.handshake_retry_at(cid).unwrap().is_none());
         assert!(fixture.a.retry_handshake(cid).unwrap().is_none());
-        for node in [&fixture.a, &fixture.r, &fixture.b] {
+        for (index, node) in [&fixture.a, &fixture.r, &fixture.b].into_iter().enumerate() {
             assert_eq!(node.retained_circuits(), lost_hop + 1);
-            assert_eq!(node.retained_flows(), lost_hop);
+            assert_eq!(node.retained_flows(), if index == 1 { 0 } else { lost_hop });
             assert_eq!(
                 node.circuit_info(cid).unwrap().unwrap().state,
                 CircuitState::Established

@@ -30,10 +30,9 @@ fn handshake(prologue: &[u8]) -> (snow::StatelessTransportState, snow::Stateless
 }
 
 #[test]
-fn noise_protects_payload_both_directions_and_exact_facts() {
+fn noise_protects_payload_both_directions_and_parses_authenticated_plaintext() {
     let (a, b) = handshake(b"same full circuit context");
     let packet = fixtures::udp(1, 3, 50000, 443);
-    let facts = packet.facts();
     let plain = packet.as_bytes().to_vec();
     let encrypted = encrypt(&a, 0, packet).unwrap();
     assert!(
@@ -41,20 +40,25 @@ fn noise_protects_payload_both_directions_and_exact_facts() {
             .windows(b"private test payload".len())
             .any(|bytes| bytes == b"private test payload")
     );
-    assert_eq!(decrypt(&b, 0, &encrypted, facts).unwrap().as_bytes(), plain);
+    assert_eq!(decrypt(&b, 0, &encrypted).unwrap().as_bytes(), plain);
     let mut tampered = encrypted.clone();
     tampered[0] ^= 1;
-    assert!(decrypt(&b, 0, &tampered, facts).is_err());
-    assert!(decrypt(&b, 1, &encrypted, facts).is_err());
-    let mut wrong = facts;
-    wrong.traffic.source = fixtures::address(2);
-    assert!(decrypt(&b, 0, &encrypted, wrong).is_err());
+    assert!(decrypt(&b, 0, &tampered).is_err());
+    assert!(decrypt(&b, 1, &encrypted).is_err());
+    let mut invalid_plain = plain.clone();
+    invalid_plain[0] = 0;
+    let mut authenticated_invalid = vec![0; invalid_plain.len() + 16];
+    a.write_message(2, &invalid_plain, &mut authenticated_invalid)
+        .unwrap();
+    assert!(matches!(
+        decrypt(&b, 2, &authenticated_invalid),
+        Err(Error::Packet)
+    ));
     let reply = fixtures::udp(3, 1, 443, 50000);
-    let facts = reply.facts();
     let encrypted = encrypt(&b, 0, reply).unwrap();
-    decrypt(&a, 0, &encrypted, facts).unwrap();
+    decrypt(&a, 0, &encrypted).unwrap();
     let (other, _) = handshake(b"different circuit");
-    assert!(decrypt(&other, 0, &encrypted, facts).is_err());
+    assert!(decrypt(&other, 0, &encrypted).is_err());
 }
 
 #[test]
@@ -114,13 +118,12 @@ fn exact_noise_plaintext_limit_is_enforced() {
         .unwrap()
     };
     let maximum = packet(MAX_PLAINTEXT);
-    let facts = maximum.facts();
     let bytes = encrypt(&a, 0, maximum).unwrap();
     assert_eq!(bytes.len(), 65_535);
-    decrypt(&b, 0, &bytes, facts).unwrap();
+    decrypt(&b, 0, &bytes).unwrap();
     assert!(encrypt(&a, 1, packet(MAX_PLAINTEXT + 1)).is_err());
     for length in [0, 15, 16, 17, 65_536] {
-        assert!(decrypt(&b, 0, &vec![0; length], facts).is_err());
+        assert!(decrypt(&b, 0, &vec![0; length]).is_err());
     }
 }
 
@@ -157,9 +160,8 @@ fn successful_handshake_move_keeps_queued_outputs_live_and_crypto_failure_cancel
         if let State::Endpoint(noise) = &circuit.state {
             let responder = responder.into_stateless_transport_mode().unwrap();
             let packet = fixtures::udp(1, 3, 50000, 443);
-            let facts = packet.facts();
             let bytes = encrypt(noise, 0, packet).unwrap();
-            decrypt(&responder, 0, &bytes, facts).unwrap();
+            decrypt(&responder, 0, &bytes).unwrap();
         }
     }
 }
@@ -218,7 +220,6 @@ impl ProofFixture {
             kind: if reply { Kind::Response } else { Kind::Init },
             reply,
             sequence: 0,
-            facts: None,
             probe: None,
             body: vec![5; if reply { 48 } else { 96 }],
             proofs: vec![],

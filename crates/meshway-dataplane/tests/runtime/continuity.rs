@@ -126,8 +126,8 @@ async fn adding_another_destination_preserves_flow_nonce_and_replay_but_cancels_
     reconcile(&mut fixture).await;
     assert!(old.ensure_current().is_err());
     assert!(queued.release(|_| panic!("cancelled old output")).is_err());
-    for node in [&fixture.a, &fixture.r, &fixture.b] {
-        assert_eq!(node.retained_flows(), 1);
+    for (index, node) in [&fixture.a, &fixture.r, &fixture.b].into_iter().enumerate() {
+        assert_eq!(node.retained_flows(), usize::from(index != 1));
         assert_eq!(node.ready_circuits().unwrap()[0].id, circuit);
     }
     // A reply before a new forward proves the original unique flow survived.

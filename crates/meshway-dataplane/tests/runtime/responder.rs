@@ -5,7 +5,7 @@ use meshway_dataplane::secure::{CircuitState, Error, Limits, Received, SecureNod
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 
-// Adversarial candidate-v4 wire fixture, not another codec or admission path.
+// Adversarial v5 wire fixture, not another codec or admission path.
 // Change the Noise tag in a real one-proof Init and have its real origin sign
 // that changed transcript. Merely corrupting bytes would only test bad proofs.
 fn resign(
@@ -14,7 +14,7 @@ fn resign(
     listener_key: &str,
     mutate: impl FnOnce(&mut [u8], usize),
 ) -> Vec<u8> {
-    assert_eq!(&bytes[..8], b"MWCIR\0\0\x04");
+    assert_eq!(&bytes[..8], b"MWCIR\0\0\x05");
     let signature = bytes.len() - 64;
     let proof = signature - (16 + 8 + 16 + 16 + 1 + 1 + listener_key.len() + 32);
     assert_eq!(bytes[proof - 1], 1);

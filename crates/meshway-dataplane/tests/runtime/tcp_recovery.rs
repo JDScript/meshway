@@ -227,8 +227,8 @@ async fn tcp_recovers_cancelled_relay_and_endpoint_outputs_across_real_permit_re
     exchange(&mut fixture, circuit, false, retransmission).await;
     let echo = packet(&fixture, true, 901, 119, 0x18, b"recovered");
     exchange(&mut fixture, circuit, true, echo).await;
-    for secure in [&fixture.a, &fixture.r, &fixture.b] {
-        assert_eq!(secure.retained_flows(), 1);
+    for (index, secure) in [&fixture.a, &fixture.r, &fixture.b].into_iter().enumerate() {
+        assert_eq!(secure.retained_flows(), usize::from(index != 1));
         let ready = secure.ready_circuits().unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].id, circuit);

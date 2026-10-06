@@ -16,7 +16,7 @@
 
 流表内部按双向 tuple 索引查询与冲突检查，按单调／UTC 截止索引回收；刷新和删除同步移除旧截止项，索引大小受同一流容量约束。索引只定位候选，不替代当前 permit、完整路径、协议状态和最终输出 guard 检查。读取不刷新 idle／lease，也不创建反向流。
 
-`Ingress::Peer` 的 original origin、packet producer、previous peer 必须由受信身份层提供。网络入口使用下节的 `SecureNode::receive`，验证后进入同一流表；不能把未经认证的 transport payload 直接包装成明文入口输入。
+`Ingress::Peer` 的 original origin、packet producer、previous peer 必须由受信身份层提供。网络入口使用下节的 `SecureNode::receive`，端点验证解密后进入同一流表，中继使用会话级转发；不能把未经认证的 transport payload 直接包装成明文入口输入。
 
 ### 包与流边界
 
@@ -29,7 +29,7 @@
 | TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
 | 资源 | 默认 4,096 流、60 秒空闲；最大 65,536 流、24 小时空闲设置；实际寿命仍受 permit 和执行快照约束 |
 
-同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。中继流不能借作本机发起资格；歧义拒绝。
+同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。SecureNode 中继不创建业务流，也不因此获得本机发起资格；歧义拒绝。
 
 SecureNode 的实际 forward 包通过认证与流准入后，CID 与协议状态在同一流表事务中提交；handshake 完成、读取状态、失败准入和重放均不能建立或改写绑定。`SecureNode::local_circuit` 据此选择本机回包的 cipher，reply 准入再次要求相同 CID，避免从相同 demand／path 的多个本地 Established circuit 中误选未完成全路径交付的旧响应。普通 Engine 流的 cipher 引用为不适用；只有业务源可在旧 cipher 结束后为同一获准路径取得新 cipher。
 
@@ -43,23 +43,23 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 逐层图与运行成本见[包流分层与加密讨论](/v2/discussions/packet-layers)，线上字段与规模约束见 [Packet 字节账本](/v2/discussions/packet)。本页定义当前行为；讨论中的候选方案不改变这些约束。
 
-`meshway-dataplane::secure::SecureNode` 是同一执行快照下的 circuit 和流状态 owner。`start` 发起握手，`receive` 验证承载帧，`send` 接收本机 IP 包；它们使用相同的 `Engine`／`meshway-policy`，中转使用通过认证的 `PacketFacts`，不构造伪造明文包来调用另一套转发实现。
+`meshway-dataplane::secure::SecureNode` 是同一执行快照下的 circuit 和流状态 owner。`start` 发起握手，`receive` 验证承载帧，`send` 接收本机 IP 包。业务源与终点使用相同的 `Engine`／`meshway-policy`；中继仅按已建立 circuit 执行会话级转发，不解析业务 facts、不建立业务流。
 
 | 边界 | 当前实现 |
 | --- | --- |
 | 端到端身份／加密 | Snow 的 `Noise_IK_25519_ChaChaPoly_SHA256`，静态 X25519 公钥取自本机 Server 执行配置；每次握手使用新 ephemeral |
 | 握手绑定 | network、明确区分 business demand／diagnostic observation 的授权引用、完整有序 path、随机 circuit ID、permit 授权摘要（排除 expiresAt）、路径上全部控制／数据面 key ID、generation 和公钥 |
 | 早期数据 | 两个 Noise 握手消息的业务 payload 必须为空；握手不创建业务流 |
-| 路径证明 | 握手使用有序 Ed25519 证明认证各节点独立临时 X25519 contribution；稳态使用每个后续验证者独立的 HMAC-SHA256 链，绑定完整原路径会话、包和已走 carrier 前缀 |
+| 路径证明 | 握手使用有序 Ed25519 证明认证各节点独立临时 X25519 contribution；稳态使用一个方向独立的相邻 HMAC-SHA256 tag，完整原路径保留在已认证上下文 |
 | 承载约束 | carrier 包含实际 dialer、listener、listener key 与协议；验证该连接在所选完整路径的候选集合内，拨号方向与业务方向分别处理 |
 | 重放 | 每 circuit／方向独立的 64-bit nonce 和 1,024 包窗口；nonce 不回绕，只有通过认证与准入的包推进接收窗口 |
 | 生命周期 | circuit、流、permit 与 Control 截止取交集；关闭、销毁、失效同时取消排队密文和待交付明文 |
 
-**隐私范围：**IP 包通过 Noise 在业务两端之间加密。为执行中转检查，外层同时携带认证保护的五元组、有限 TCP／echo 状态和长度；这些元数据不具备机密性。中继不解密业务 payload，目标端解密后必须把真实包解析结果与认证元数据精确比较。
+**隐私范围：**IP 包通过 Noise 在业务两端之间加密，外层不公开五元组、TCP／echo 状态。CID、方向、序号与密文长度仍公开。中继不解密业务 payload；终点解密后解析真实 IP 包并执行业务准入。
 
 密钥通过 `Control::dataplane_identity` 从有效执行快照取得。包平面签名有独立的 purpose／network／node／key generation transcript，不开放任意控制认证消息签名。该句柄是受信进程内接口；密钥不进入 Debug 或序列化，不能视为恶意插件的内存隔离。
 
-当前 wire 标识为 `MWCIR\0\0\x04`，Noise prologue、握手证明、会话 KDF 和数据认证有各自的 v4 purpose；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。v3／v4 帧不兼容，完整路径节点需要协调升级；不降级到逐包签名或无认证模式。IPC v3 和 HTTP 契约独立于该 wire 版本。
+当前 wire 标识为 `MWCIR\0\0\x05`。Noise prologue 与握手证明保留原 purpose（prologue 同时绑定新的 magic），会话 KDF 与相邻 MAC 使用独立 v5 purpose；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。v4／v5 帧不兼容，旧版本被拒绝，完整路径节点需要协调升级。IPC v3 和 HTTP 契约独立于该 wire 版本。
 
 握手 UUID 使用固定 16-byte 非零 UUID，数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。最大握手帧容纳于 4 KiB 握手重试缓存。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
 
@@ -69,11 +69,17 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 1. 每个节点为该 circuit 生成独立的临时 X25519 密钥，与 Noise 的静态／临时密钥分离。INIT 的每跳签名包含自己的公开 contribution、实际 carrier 和此前完整证明。节点保留已验证的上游 contribution 前缀及自己的 contribution。
 2. RESPONSE 包含 INIT Noise 消息的 SHA256、完整有序 contribution 列表和 Noise response。每个反向签名绑定整个 RESPONSE、此前证明及签名者自己的 contribution。每个节点必须核对原 INIT digest、缓存前缀和自己的公开值；不能仅信任终点重述的列表。
-3. 每个节点只与其他路径节点做成对 X25519 agreement；拒绝全零共享秘密。HKDF-SHA256 的 salt 绑定完整 context、两次 Noise 消息和完整 contribution 列表，info 使用独立 purpose 与有序 signer／verifier 位置。不同方向、会话、授权、路径和 key generation 不共用 MAC key。握手完成后释放临时私钥；关闭时释放并清零本 owner 保留的派生密钥。密钥不进入日志或 wire。
-4. 稳态帧只携带 magic／kind、32-byte CID、方向、64-bit sequence、必要的 packet facts 或 probe metadata、ciphertext、已走 carrier 前缀与剩余验证者的 16-byte tags。原 context 从唯一 SecureNode circuit 表取得；未知 CID 不通过线上字段重建授权。carrier 的 dialer／listener 使用原 path 的位置，仍携带协议和 listener key，接收方严格匹配实际 incoming carrier 及当前 policy。
-5. 对每个后续验证者，发送者从零 tag 开始；每个经过的节点用独立成对方向 key 对 `purpose || SHA256(purpose || frame-base || carrier-prefix) || previous-tag` 做 HMAC-SHA256，取前 16 bytes。验证者用所有此前节点与自己的 keys 按相同顺序重算，常量时间比较自己的 tag。中继验证后移除自己的列，更新其余列。线上 tag 数随剩余节点减少；最多七个。面向诚实验证者，仅持有相邻通道或后续恶意节点的 keys，无法补出被跳过诚实必经点的贡献。每跳验证自己的完整前缀；其他列由对应的后续验证者检查，转发成功不代表终点已验证或交付。此证明要求相应节点参与认证，不证明物理网络地理位置；被攻陷节点可泄露自己的 key。
+3. 每个节点仅与路径位置 ±1 的相邻节点做 X25519 agreement；拒绝全零共享秘密。HKDF-SHA256 的 salt 绑定完整 context、两次 Noise 消息和完整 contribution 列表，info 使用 v5 purpose 与有序 signer／verifier 位置。不同方向、会话、授权、路径和 key generation 不共用 MAC key。握手完成后释放临时私钥；关闭时清零派生密钥。
+4. Data 固定布局为 `magic/version 8 | kind 1 | flags 1 | CID 32 | sequence 8 | body length 4 | ciphertext P+16 | hop MAC 16`。flags bit0 表示 reply，其余位必须为零；数值使用大端。每段新增 86 B，与路径长度、listener key 和内层地址族无关。未知 CID 不通过线上字段重建授权。握手保留完整 context／证明；Probe 保留自己的 metadata。
+5. Data tag 为 `HMAC-SHA256(k(dir), "meshway/circuit/hop-mac/v5" || CID || flags || sequence || body length || ciphertext)[..16]`。验证者常量时间比较相邻 tag；中继验证后替换为下一跳 tag，回复使用反向密钥。实际 carrier 仍由本地 policy 和认证邻接检查，不再放入每包 MAC。相邻认证证明本跳邻居参与；它不提供 v4 的逐验证者完整前缀证明，不能抵抗任意路径节点串通跳过更早节点。端点 Noise AEAD 继续保证业务原始来源真实性。
 
-business 与 diagnostic 共用同一认证实现，probe measurement／deadline 也进入认证 transcript。每包继续执行当前执行资格、permit、实际 carrier、重放与唯一流表检查，最终 I/O 使用原 guard。批量发送不能将这些检查替换为仅一次批次检查。紧凑格式减少封装，但长路径、大 listener key 或较小 underlay MTU 仍可能分片，不能据格式大小宣称所有场景免分片。
+| 角色 | 每包步骤 |
+| --- | --- |
+| 源 | 入口 Reading、解析真实 IP、业务流准入、选 circuit／下一跳、消耗 nonce、Noise 加密、写头与相邻 MAC、最终检查与输出 |
+| 中继 | 入口 Reading、CID 查上下文、重放预检、相邻 MAC 与实际邻接验证、选原路径下一跳、替换 MAC、最终检查后提交重放 |
+| 终点 | 入口 Reading、CID 查上下文、重放预检、相邻 MAC 验证、Noise 解密、真实 IP 解析、业务流准入与方向核对、最终检查后提交重放与交付 |
+
+business 与 diagnostic 共用相邻认证实现，Probe 的 kind、measurement／deadline 使用独立 v5 域进入认证 transcript。业务流表仅由端点业务包更新。每包继续执行当前执行资格、permit、实际 carrier 与重放检查，最终 I/O 使用原 guard。86 B 不包含外层 provider／IP／UDP 开销，较小 underlay MTU 仍可能分片。
 
 ### 发送流水线与连续性
 

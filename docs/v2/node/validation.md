@@ -18,14 +18,14 @@
 | --- | --- | --- | --- | --- | --- |
 | `test:tun:linux` | — | — | — | 真实 TUN 设备创建与双栈包 I/O | 历史通过未重验 |
 | `test:packet:linux` | Native TCP | — | — | A→R→B 内层双栈 UDP echo、R 只转发受保护帧、原路径回复 | 当前 wire 已通过 |
-| `test:runtime:linux` | Native UDP 静态端点 | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 当前 wire 已通过 |
+| `test:runtime:linux` | Native UDP 静态端点 | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 历史通过未重验 |
 | `test:runtime:linux` | Native TCP | off | — | daemon 整组：共同场景 | 历史通过未重验 |
 | `test:runtime:linux` | Native UDP 静态端点 | resolv-conf | — | 共同场景＋[DNS 场景](#dns-场景) | 历史通过未重验 |
 | `test:runtime:linux` | Native UDP 静态端点 | resolved | — | 共同场景＋DNS 场景 | 历史通过未重验 |
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋[穿透场景](#穿透场景) | 历史通过未重验 |
 | `test:runtime:linux --traversal nat --traversal-fallback` | Native UDP＋A–R Native TCP 退路 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋穿透场景＋同路径 TCP 退路 | 历史通过未重验 |
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 SNAT＋TCP 退路 | 整组组合 | 未验收；已知缺口为共享观察切换后的通道重新获取或结果发布停滞 |
-| [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 当前 wire 已通过（共享 bridge，不构成 NAT 证明） |
+| [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 历史通过未重验（共享 bridge，不构成 NAT 证明） |
 
 以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS／Trojan 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、出口转发／NAT、完整 TCP conntrack、MTU／分片、整机重启与系统 resolver 服务停机间隙、userspace／SOCKS5。
 

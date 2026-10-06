@@ -6,7 +6,7 @@ use meshway_dataplane::{
 use meshway_logging::profile::{self, Metric};
 use meshway_static_authority::{
     Error,
-    fixture::{Chain, LISTENER_KEY, tcp_ipv4},
+    fixture::{Chain, tcp_ipv4},
 };
 use serde::Serialize;
 use std::{
@@ -237,14 +237,12 @@ impl Circuit {
                         return Err("early delivery".into());
                     }
                     stats.delivered_packets += 1;
-                    // candidate-v4 IPv4/TCP F=30, listener key L=7. Both
+                    // v5 has a constant 86-byte overhead. Both
                     // directions must agree with every cut of the byte ledger.
-                    for (i, size) in sizes.iter().enumerate() {
-                        let k = i + 1;
-                        let expected =
-                            length + 71 + 30 + k * (4 + LISTENER_KEY.len()) + 16 * (last + 1 - k);
+                    for size in &sizes {
+                        let expected = length + 86;
                         if *size != expected {
-                            return Err("wire size differs from v4 ledger".into());
+                            return Err("wire size differs from v5 ledger".into());
                         }
                     }
                     let direction = if reply { "reply" } else { "forward" };

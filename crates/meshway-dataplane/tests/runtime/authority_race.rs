@@ -235,8 +235,8 @@ async fn live_handoff(operation: Operation) {
     let wire = bytes(b.send(cid, datagram(&mesh, false, true)).unwrap());
     let wire = forwarded(&mut r, &rb.carrier, wire);
     delivery(&mut a, &ar.carrier, wire).release(|_| ()).unwrap();
-    for node in [&a, &r, &b] {
-        assert_eq!(node.retained_flows(), 1);
+    for (index, node) in [&a, &r, &b].into_iter().enumerate() {
+        assert_eq!(node.retained_flows(), usize::from(index != 1));
         assert_eq!(node.ready_circuits().unwrap()[0].id, cid);
     }
     SecureMesh {

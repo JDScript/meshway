@@ -44,7 +44,6 @@ impl Fixture {
             kind: Kind::Init,
             reply: false,
             sequence: 0,
-            facts: None,
             probe: None,
             body: vec![7; 96],
             proofs: vec![],
@@ -68,7 +67,6 @@ impl Fixture {
             kind: Kind::Response,
             reply: true,
             sequence: 0,
-            facts: None,
             probe: None,
             body: vec![8; 48],
             proofs: vec![],
@@ -97,7 +95,6 @@ impl Fixture {
             kind: Kind::Data,
             reply,
             sequence: 17,
-            facts: Some(facts),
             probe: None,
             body: vec![9; facts.len + 16],
             proofs: vec![],
@@ -117,7 +114,7 @@ fn carrier(edge: usize) -> Carrier {
 }
 
 #[test]
-fn every_supported_path_and_direction_verifies_all_prefixes_with_linear_wire_tags() {
+fn every_supported_path_and_direction_verifies_adjacent_mac_with_fixed_wire_size() {
     for n in 2..=8 {
         let mut f = Fixture::pending(n);
         f.establish();
@@ -130,8 +127,9 @@ fn every_supported_path_and_direction_verifies_all_prefixes_with_linear_wire_tag
                 f.sessions[from]
                     .append(&mut frame, carrier.clone())
                     .unwrap();
-                assert_eq!(frame.auth.tags.len(), n - i - 1);
+                assert!(frame.auth.tag.is_some());
                 let bytes = frame.encode().unwrap();
+                assert_eq!(bytes.len(), frame.body.len() + 70);
                 frame = Frame::decode(&bytes, Some(&frame.context)).unwrap();
                 assert_eq!(
                     f.sessions[to]
@@ -145,26 +143,20 @@ fn every_supported_path_and_direction_verifies_all_prefixes_with_linear_wire_tag
 }
 
 #[test]
-fn colluding_origin_and_later_relay_cannot_skip_an_honest_mandatory_node() {
+fn skipping_mandatory_neighbour_is_rejected_in_both_directions() {
     let mut f = Fixture::pending(4);
     f.establish();
     for reply in [false, true] {
         let mut frame = f.frame(reply);
         let source = ordered(4, reply, 0);
-        let malicious = ordered(4, reply, 2);
-        let target = ordered(4, reply, 3);
+        let target = ordered(4, reply, 2);
         f.sessions[source]
             .append(&mut frame, carrier(if reply { 2 } else { 0 }))
             .unwrap();
-        // Remove the honest node's verifier column and claim its carrier without
-        // obtaining its contribution for downstream verifiers. The later relay
-        // can use all its own legitimate pair keys, but still cannot complete it.
-        frame.auth.tags.remove(0);
-        frame.auth.carriers.push(carrier(1));
-        let last = carrier(if reply { 0 } else { 2 });
-        f.sessions[malicious]
-            .append(&mut frame, last.clone())
-            .unwrap();
+        // Even claiming the expected incoming edge cannot turn the origin's
+        // adjacent MAC into the skipped neighbour's MAC. v5 does not promise
+        // full-prefix proof against colluding nodes beyond this honest verifier.
+        let last = carrier(1);
         assert_eq!(
             f.sessions[target].verify_chain(&frame, &last, &f.selected),
             Err(Error::Proof)
@@ -176,17 +168,18 @@ fn colluding_origin_and_later_relay_cannot_skip_an_honest_mandatory_node() {
 fn packet_tampering_wrong_verifier_and_actual_carrier_are_rejected() {
     let mut f = Fixture::pending(4);
     f.establish();
-    for tamper in 0..8 {
+    for tamper in 0..7 {
         let mut frame = f.frame(false);
         f.sessions[0].append(&mut frame, carrier(0)).unwrap();
         match tamper {
             0 => frame.body[0] ^= 1,
             1 => frame.sequence += 1,
             2 => frame.reply = true,
-            3 => frame.facts.as_mut().unwrap().traffic.destination = fixtures::address(4),
-            4 => frame.auth.tags.swap(0, 1),
-            5 => frame.auth.tags[0][0] ^= 1,
-            6 => frame.auth.carriers[0].protocol = TransportProtocol::NativeTcp,
+            3 => {
+                frame.body.push(0);
+            }
+            4 => frame.auth.tag = None,
+            5 => frame.auth.tag.as_mut().unwrap()[0] ^= 1,
             _ => frame.context.circuit[0] ^= 1,
         }
         assert!(
@@ -242,7 +235,7 @@ fn low_order_and_substituted_ephemeral_contributions_never_establish_keys() {
         public[0] = low;
         f.response.exchange.as_mut().unwrap().public[2] = public;
         assert!(matches!(
-            f.sessions[0].derive(&f.response, node(0)),
+            f.sessions[1].derive(&f.response, node(1)),
             Err(Error::Crypto)
         ));
         assert!(matches!(
@@ -273,7 +266,6 @@ fn diagnostic_mac_binds_measurement_deadline_kind_and_ciphertext() {
             } else {
                 Kind::ProbeRequest
             };
-            frame.facts = None;
             frame.body = vec![7; 48];
             frame.probe = Some(ProbeMetadata {
                 measurement_id: EventId::new(node(25).into_uuid()).unwrap(),

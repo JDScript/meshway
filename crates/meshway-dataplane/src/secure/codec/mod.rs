@@ -1,15 +1,11 @@
 use super::{Error, MAX_FRAME, MAX_PLAINTEXT};
-use crate::{PacketFacts, TcpSegment, Transport};
-use meshway_configuration::execution::{BusinessProtocol, CircuitAuthorization};
+use meshway_configuration::execution::CircuitAuthorization;
 use meshway_model::{Digest, EventId, KeyId, NetworkId, NodeId, Version};
-use meshway_policy::admission::{Carrier, Traffic};
-use meshway_transport_spec::{Port, TransportProtocol};
-use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    str::FromStr,
-};
+use meshway_policy::admission::Carrier;
+use meshway_transport_spec::TransportProtocol;
+use std::str::FromStr;
 
-pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x04";
+pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x05";
 pub(super) const MAX_PATH: usize = 8;
 
 /// Fixed session routing prefix only; never an authentication decision.
@@ -21,7 +17,7 @@ pub(super) fn session_id(bytes: &[u8]) -> Result<Option<[u8; 32]>, Error> {
         Some(1 | 2) => Ok(None),
         Some(3..=5) => Ok(Some(
             bytes
-                .get(9..41)
+                .get(if bytes[8] == 3 { 10..42 } else { 9..41 })
                 .ok_or(Error::Wire)?
                 .try_into()
                 .map_err(|_| Error::Wire)?,
@@ -60,7 +56,6 @@ pub(super) struct Frame {
     pub kind: Kind,
     pub reply: bool,
     pub sequence: u64,
-    pub facts: Option<PacketFacts>,
     pub probe: Option<ProbeMetadata>,
     pub body: Vec<u8>,
     pub proofs: Vec<Proof>,
@@ -76,9 +71,7 @@ pub(super) struct Exchange {
 
 #[derive(Default)]
 pub(super) struct HopAuth {
-    pub carriers: Vec<Carrier>,
-    /// One chained authenticator for each remaining verifier, in traversal order.
-    pub tags: Vec<[u8; 16]>,
+    pub tag: Option<[u8; 16]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -140,10 +133,7 @@ impl Frame {
                 .exchange
                 .as_ref()
                 .is_some_and(|exchange| exchange.public.len() != self.context.path.len())
-            || (self.kind.handshake()
-                && (!self.auth.carriers.is_empty() || !self.auth.tags.is_empty()))
-            || self.auth.carriers.len() >= self.context.path.len()
-            || self.auth.tags.len() >= self.context.path.len()
+            || (self.kind.handshake() && self.auth.tag.is_some())
         {
             return Err(Error::Wire);
         }
@@ -158,16 +148,13 @@ impl Frame {
         {
             return Err(Error::Wire);
         }
-        match (self.kind, self.reply, self.facts) {
-            (Kind::Init, false, None) if self.sequence == 0 && self.body.len() == 96 => {}
-            (Kind::Response, true, None) if self.sequence == 0 && self.body.len() == 48 => {}
-            (Kind::Data, _, Some(facts)) if self.sequence != u64::MAX => {
-                facts.validate().map_err(|_| Error::Wire)?;
-                if facts.len > MAX_PLAINTEXT || self.body.len() != facts.len + 16 {
-                    return Err(Error::Wire);
-                }
-            }
-            (Kind::ProbeRequest, false, None) | (Kind::ProbeReply, true, None)
+        match (self.kind, self.reply) {
+            (Kind::Init, false) if self.sequence == 0 && self.body.len() == 96 => {}
+            (Kind::Response, true) if self.sequence == 0 && self.body.len() == 48 => {}
+            (Kind::Data, _)
+                if self.sequence != u64::MAX
+                    && (16..=MAX_PLAINTEXT + 16).contains(&self.body.len()) => {}
+            (Kind::ProbeRequest, false) | (Kind::ProbeReply, true)
                 if self.sequence != u64::MAX && self.body.len() == 48 => {}
             _ => return Err(Error::Wire),
         }
@@ -191,16 +178,18 @@ impl Frame {
             Kind::ProbeRequest => 4,
             Kind::ProbeReply => 5,
         });
+        if self.kind == Kind::Data {
+            out.push(u8::from(self.reply));
+        }
         if self.kind.handshake() {
             self.context.encode(&mut out)?;
         } else {
             out.extend_from_slice(&self.context.circuit);
         }
-        out.push(u8::from(self.reply));
-        out.extend_from_slice(&self.sequence.to_be_bytes());
-        if let Some(facts) = self.facts {
-            encode_facts(&mut out, facts);
+        if self.kind != Kind::Data {
+            out.push(u8::from(self.reply));
         }
+        out.extend_from_slice(&self.sequence.to_be_bytes());
         if let Some(probe) = self.probe {
             id(&mut out, probe.measurement_id.as_uuid());
             out.extend_from_slice(&probe.expires_at_ms.to_be_bytes());
@@ -227,19 +216,10 @@ impl Frame {
                 proof.encode(&mut out)?;
             }
         } else {
-            if !self.proofs.is_empty()
-                || self.auth.carriers.is_empty()
-                || self.auth.tags.len() != self.context.path.len() - self.auth.carriers.len()
-            {
+            if !self.proofs.is_empty() {
                 return Err(Error::Wire);
             }
-            out.push(self.auth.carriers.len() as u8);
-            for carrier in &self.auth.carriers {
-                encode_compact_carrier(&mut out, &self.context, carrier)?;
-            }
-            for tag in &self.auth.tags {
-                out.extend_from_slice(tag);
-            }
+            out.extend_from_slice(&self.auth.tag.ok_or(Error::Wire)?);
         }
         if out.len() > MAX_FRAME {
             return Err(Error::Wire);
@@ -265,6 +245,11 @@ impl Frame {
             4 => Kind::ProbeRequest,
             5 => Kind::ProbeReply,
             _ => return Err(Error::Wire),
+        };
+        let flags = if kind == Kind::Data {
+            Some(r.boolean()?)
+        } else {
+            None
         };
         let context = if kind.handshake() {
             let network = r.id()?;
@@ -307,13 +292,11 @@ impl Frame {
                 .ok_or(Error::State)?;
             context.clone()
         };
-        let reply = r.boolean()?;
-        let sequence = r.u64()?;
-        let facts = if kind == Kind::Data {
-            Some(decode_facts(&mut r)?)
-        } else {
-            None
+        let reply = match flags {
+            Some(reply) => reply,
+            None => r.boolean()?,
         };
+        let sequence = r.u64()?;
         let probe = if matches!(kind, Kind::ProbeRequest | Kind::ProbeReply) {
             Some(ProbeMetadata {
                 measurement_id: r.id()?,
@@ -336,13 +319,13 @@ impl Frame {
         } else {
             None
         };
-        let count = usize::from(r.byte()?);
-        if count == 0 || count >= context.path.len() {
-            return Err(Error::Wire);
-        }
-        let mut proofs = Vec::with_capacity(count);
+        let mut proofs = Vec::new();
         let mut auth = HopAuth::default();
         if kind.handshake() {
+            let count = usize::from(r.byte()?);
+            if count == 0 || count >= context.path.len() {
+                return Err(Error::Wire);
+            }
             for _ in 0..count {
                 proofs.push(Proof {
                     key: r.id()?,
@@ -353,13 +336,7 @@ impl Frame {
                 });
             }
         } else {
-            for _ in 0..count {
-                auth.carriers
-                    .push(decode_compact_carrier(&mut r, &context)?);
-            }
-            for _ in count..context.path.len() {
-                auth.tags.push(r.array()?);
-            }
+            auth.tag = Some(r.array()?);
         }
         if !r.0.is_empty() {
             return Err(Error::Wire);
@@ -369,7 +346,6 @@ impl Frame {
             kind,
             reply,
             sequence,
-            facts,
             probe,
             body,
             proofs,
@@ -420,34 +396,6 @@ fn encode_listener(out: &mut Vec<u8>, carrier: &Carrier) -> Result<(), Error> {
     Ok(())
 }
 
-fn encode_compact_carrier(
-    out: &mut Vec<u8>,
-    context: &Context,
-    carrier: &Carrier,
-) -> Result<(), Error> {
-    for node in [carrier.dialer, carrier.listener] {
-        let position = context
-            .path
-            .iter()
-            .position(|candidate| *candidate == node)
-            .ok_or(Error::Wire)?;
-        out.push(position as u8);
-    }
-    encode_listener(out, carrier)
-}
-
-fn decode_compact_carrier(r: &mut Reader<'_>, context: &Context) -> Result<Carrier, Error> {
-    let dialer = *context
-        .path
-        .get(usize::from(r.byte()?))
-        .ok_or(Error::Wire)?;
-    let listener = *context
-        .path
-        .get(usize::from(r.byte()?))
-        .ok_or(Error::Wire)?;
-    decode_listener(r, dialer, listener)
-}
-
 fn decode_carrier(r: &mut Reader<'_>) -> Result<Carrier, Error> {
     let dialer = r.id()?;
     let listener = r.id()?;
@@ -477,103 +425,6 @@ fn decode_listener(r: &mut Reader<'_>, dialer: NodeId, listener: NodeId) -> Resu
     })
 }
 
-fn encode_ip(out: &mut Vec<u8>, ip: IpAddr) {
-    match ip {
-        IpAddr::V4(ip) => {
-            out.push(4);
-            out.extend_from_slice(&ip.octets());
-        }
-        IpAddr::V6(ip) => {
-            out.push(6);
-            out.extend_from_slice(&ip.octets());
-        }
-    }
-}
-fn decode_ip(r: &mut Reader<'_>) -> Result<IpAddr, Error> {
-    match r.byte()? {
-        4 => Ok(Ipv4Addr::from(r.array::<4>()?).into()),
-        6 => Ok(Ipv6Addr::from(r.array::<16>()?).into()),
-        _ => Err(Error::Wire),
-    }
-}
-fn encode_facts(out: &mut Vec<u8>, facts: PacketFacts) {
-    out.extend_from_slice(&(facts.len as u32).to_be_bytes());
-    encode_ip(out, facts.traffic.source);
-    encode_ip(out, facts.traffic.destination);
-    for port in [facts.traffic.source_port, facts.traffic.destination_port] {
-        out.extend_from_slice(&port.map_or(0, Port::get).to_be_bytes());
-    }
-    match facts.transport {
-        Transport::Tcp(segment) => {
-            out.push(1);
-            out.extend_from_slice(&segment.sequence.to_be_bytes());
-            out.extend_from_slice(&segment.acknowledgement.to_be_bytes());
-            out.push(segment.flags);
-            out.extend_from_slice(&segment.payload_len.to_be_bytes());
-        }
-        Transport::Udp => out.push(2),
-        Transport::Echo {
-            reply,
-            identifier,
-            sequence,
-        } => {
-            out.push(3);
-            out.push(u8::from(reply));
-            out.extend_from_slice(&identifier.to_be_bytes());
-            out.extend_from_slice(&sequence.to_be_bytes());
-        }
-    }
-}
-fn decode_facts(r: &mut Reader<'_>) -> Result<PacketFacts, Error> {
-    let len = usize::try_from(r.u32()?).map_err(|_| Error::Wire)?;
-    let source = decode_ip(r)?;
-    let destination = decode_ip(r)?;
-    let mut port = || {
-        let n = r.u16()?;
-        if n == 0 {
-            Ok(None)
-        } else {
-            Port::new(n).map(Some).map_err(|_| Error::Wire)
-        }
-    };
-    let source_port = port()?;
-    let destination_port = port()?;
-    let (protocol, transport) = match r.byte()? {
-        1 => (
-            BusinessProtocol::Tcp,
-            Transport::Tcp(TcpSegment {
-                sequence: r.u32()?,
-                acknowledgement: r.u32()?,
-                flags: r.byte()?,
-                payload_len: r.u16()?,
-            }),
-        ),
-        2 => (BusinessProtocol::Udp, Transport::Udp),
-        3 => (
-            BusinessProtocol::IcmpEcho,
-            Transport::Echo {
-                reply: r.boolean()?,
-                identifier: r.u16()?,
-                sequence: r.u16()?,
-            },
-        ),
-        _ => return Err(Error::Wire),
-    };
-    let facts = PacketFacts {
-        len,
-        traffic: Traffic {
-            source,
-            destination,
-            protocol,
-            source_port,
-            destination_port,
-        },
-        transport,
-    };
-    facts.validate().map_err(|_| Error::Wire)?;
-    Ok(facts)
-}
-
 struct Reader<'a>(&'a [u8]);
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], Error> {
@@ -593,9 +444,6 @@ impl<'a> Reader<'a> {
             1 => Ok(true),
             _ => Err(Error::Wire),
         }
-    }
-    fn u16(&mut self) -> Result<u16, Error> {
-        Ok(u16::from_be_bytes(self.array()?))
     }
     fn u32(&mut self) -> Result<u32, Error> {
         Ok(u32::from_be_bytes(self.array()?))

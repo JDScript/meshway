@@ -1,7 +1,7 @@
-//! Circuit-owned ephemeral agreement and directional, verifier-specific hop MACs.
+//! Circuit-owned ephemeral agreement and directional adjacent hop MACs.
 //! Public contributions are authenticated by the existing ordered handshake
-//! signatures. A verifier recomputes the chain with every preceding node; an
-//! intermediate node possesses only its own pair keys, never another row.
+//! signatures. Each verifier authenticates its immediate neighbour; end-to-end
+//! Noise authenticates the original producer at the endpoint.
 use super::{
     Error,
     codec::{self, Context, Exchange, Frame},
@@ -16,9 +16,9 @@ use subtle::ConstantTimeEq;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-const AGREEMENT: &[u8] = b"meshway/circuit/session-agreement/candidate-v4\0";
-const KEY: &[u8] = b"meshway/circuit/directional-hop-key/candidate-v4\0";
-const CHAIN: &[u8] = b"meshway/circuit/mac-chain/candidate-v4\0";
+const AGREEMENT: &[u8] = b"meshway/circuit/session-agreement/v5\0";
+const KEY: &[u8] = b"meshway/circuit/directional-hop-key/v5\0";
+const MAC: &[u8] = b"meshway/circuit/hop-mac/v5";
 
 struct Pending {
     secret: StaticSecret,
@@ -35,8 +35,9 @@ pub(super) struct Session {
 
 pub(super) struct Keys {
     position: usize,
-    outgoing: Zeroizing<[[u8; 32]; codec::MAX_PATH]>,
-    incoming: Zeroizing<[[u8; 32]; codec::MAX_PATH]>,
+    // Slot 0 is the preceding neighbour, slot 1 the following neighbour.
+    outgoing: Zeroizing<[[u8; 32]; 2]>,
+    incoming: Zeroizing<[[u8; 32]; 2]>,
 }
 
 impl Session {
@@ -107,11 +108,11 @@ impl Session {
         let salt = Sha256::digest(transcript);
         let mut keys = Keys {
             position,
-            outgoing: Zeroizing::new([[0; 32]; codec::MAX_PATH]),
-            incoming: Zeroizing::new([[0; 32]; codec::MAX_PATH]),
+            outgoing: Zeroizing::new([[0; 32]; 2]),
+            incoming: Zeroizing::new([[0; 32]; 2]),
         };
         for (peer, public) in exchange.public.iter().enumerate() {
-            if peer == position {
+            if peer.abs_diff(position) != 1 {
                 continue;
             }
             let shared = pending.secret.diffie_hellman(&PublicKey::from(*public));
@@ -119,9 +120,10 @@ impl Session {
                 return Err(Error::Crypto);
             }
             let hkdf = Hkdf::<Sha256>::new(Some(&salt), shared.as_bytes());
+            let slot = usize::from(peer > position);
             for (signer, verifier, output) in [
-                (position, peer, &mut keys.outgoing[peer]),
-                (peer, position, &mut keys.incoming[peer]),
+                (position, peer, &mut keys.outgoing[slot]),
+                (peer, position, &mut keys.incoming[slot]),
             ] {
                 let mut info = KEY.to_vec();
                 info.extend_from_slice(&[signer as u8, verifier as u8]);
@@ -143,7 +145,7 @@ impl Session {
         incoming: &Carrier,
     ) -> Result<NodeId, Error> {
         static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("crypto.verify_mac_chain");
+            meshway_logging::profile::Metric::new("crypto.verify_hop_mac");
         let _profile = PROFILE.enter();
         let selected = circuit_permit(cfg, frame.context.authorization)
             .map_err(|_| Error::Context)?
@@ -174,27 +176,17 @@ impl Session {
             return Err(Error::Context);
         }
         let count = ordered(frame.context.path.len(), frame.reply, keys.position);
-        if frame.kind.handshake()
-            || count == 0
-            || frame.auth.carriers.len() != count
-            || frame.auth.tags.len() != frame.context.path.len() - count
-            || frame.auth.carriers.last() != Some(incoming)
+        if frame.kind.handshake() || count == 0 || frame.auth.tag.is_none() {
+            return Err(Error::Proof);
+        }
+        let signer = ordered(frame.context.path.len(), frame.reply, count - 1);
+        if !adjacent(&frame.context, signer, keys.position, incoming)
+            || !path_carrier(selected, incoming)
         {
             return Err(Error::Proof);
         }
-        let mut hash = transcript(frame)?;
-        let mut tag = [0; 16];
-        for (index, carrier) in frame.auth.carriers.iter().enumerate() {
-            let signer = ordered(frame.context.path.len(), frame.reply, index);
-            let next = ordered(frame.context.path.len(), frame.reply, index + 1);
-            if !adjacent(&frame.context, signer, next, carrier) || !path_carrier(selected, carrier)
-            {
-                return Err(Error::Proof);
-            }
-            extend(&mut hash, carrier)?;
-            tag = authenticate(&keys.incoming[signer], &hash, &tag);
-        }
-        if !bool::from(tag.ct_eq(&frame.auth.tags[0])) {
+        let tag = authenticate(&keys.incoming[usize::from(signer > keys.position)], frame)?;
+        if !bool::from(tag.ct_eq(&frame.auth.tag.ok_or(Error::Proof)?)) {
             return Err(Error::Proof);
         }
         let previous =
@@ -209,29 +201,17 @@ impl Session {
         let keys = self.keys.as_ref().ok_or(Error::State)?;
         let count = ordered(frame.context.path.len(), frame.reply, keys.position);
         let remaining = frame.context.path.len() - count - 1;
-        if frame.kind.handshake() || remaining == 0 || frame.auth.carriers.len() != count {
+        if frame.kind.handshake() || remaining == 0 {
             return Err(Error::State);
         }
-        if count == 0 {
-            if !frame.auth.tags.is_empty() {
-                return Err(Error::Proof);
-            }
-            frame.auth.tags = vec![[0; 16]; remaining];
-        } else {
-            if frame.auth.tags.len() != remaining + 1 {
-                return Err(Error::Proof);
-            }
-            frame.auth.tags.remove(0);
+        let verifier = ordered(frame.context.path.len(), frame.reply, count + 1);
+        if !adjacent(&frame.context, keys.position, verifier, &carrier) {
+            return Err(Error::Proof);
         }
-        frame.auth.carriers.push(carrier);
-        let mut hash = transcript(frame)?;
-        for carrier in &frame.auth.carriers {
-            extend(&mut hash, carrier)?;
-        }
-        for (offset, tag) in frame.auth.tags.iter_mut().enumerate() {
-            let verifier = ordered(frame.context.path.len(), frame.reply, count + 1 + offset);
-            *tag = authenticate(&keys.outgoing[verifier], &hash, tag);
-        }
+        frame.auth.tag = Some(authenticate(
+            &keys.outgoing[usize::from(verifier > keys.position)],
+            frame,
+        )?);
         Ok(())
     }
 }
@@ -250,29 +230,29 @@ fn adjacent(context: &Context, signer: usize, next: usize, carrier: &Carrier) ->
     (carrier.dialer == a && carrier.listener == b) || (carrier.dialer == b && carrier.listener == a)
 }
 
-fn transcript(frame: &Frame) -> Result<Sha256, Error> {
-    let mut hash = Sha256::new();
-    hash.update(CHAIN);
-    hash.update(frame.base()?);
-    Ok(hash)
-}
-
-fn extend(hash: &mut Sha256, carrier: &Carrier) -> Result<(), Error> {
-    let mut bytes = Vec::new();
-    codec::encode_carrier(&mut bytes, carrier)?;
-    hash.update(bytes);
-    Ok(())
-}
-
-fn authenticate(key: &[u8; 32], hash: &Sha256, previous: &[u8; 16]) -> [u8; 16] {
+fn authenticate(key: &[u8; 32], frame: &Frame) -> Result<[u8; 16], Error> {
+    frame.validate()?;
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts a 32-byte key");
-    mac.update(CHAIN);
-    mac.update(&hash.clone().finalize());
-    mac.update(previous);
+    mac.update(MAC);
+    mac.update(&frame.context.circuit);
+    mac.update(&[u8::from(frame.reply)]);
+    mac.update(&frame.sequence.to_be_bytes());
+    if let Some(probe) = frame.probe {
+        mac.update(b"meshway/circuit/probe/v5");
+        mac.update(&[if frame.kind == codec::Kind::ProbeRequest {
+            4
+        } else {
+            5
+        }]);
+        mac.update(probe.measurement_id.as_uuid().as_bytes());
+        mac.update(&probe.expires_at_ms.to_be_bytes());
+    }
+    mac.update(&(frame.body.len() as u32).to_be_bytes());
+    mac.update(&frame.body);
     let result = mac.finalize().into_bytes();
     let mut tag = [0; 16];
     tag.copy_from_slice(&result[..16]);
-    tag
+    Ok(tag)
 }
 
 #[cfg(test)]

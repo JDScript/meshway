@@ -175,8 +175,8 @@ async fn protected_dual_stack_echo_keeps_exact_flow_and_reply_path_through_renew
         let reply = echo(&fixture, ipv6, true, 12, 34);
         queued.push(exchange(&mut fixture, cid, true, reply).await);
     }
-    for secure in [&fixture.a, &fixture.r, &fixture.b] {
-        assert_eq!(secure.retained_flows(), 2);
+    for (index, secure) in [&fixture.a, &fixture.r, &fixture.b].into_iter().enumerate() {
+        assert_eq!(secure.retained_flows(), if index == 1 { 0 } else { 2 });
         assert_eq!(secure.ready_circuits().unwrap()[0].id, cid);
     }
     fixture

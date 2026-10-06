@@ -1,10 +1,9 @@
 //! Versioned candidate Mesh circuits, not a stable wire ABI.
 //!
 //! Noise IK protects IP payloads end to end between the original source and the
-//! terminal node. Relays see authenticated five-tuples, TCP flags/sequence facts,
-//! echo identifiers and packet lengths, plus ciphertext. Every forwarding node
+//! terminal node. Relays see only circuit routing fields and ciphertext. Every forwarding node
 //! verifies ordered Ed25519 proofs during ephemeral session establishment, then
-//! verifier-specific chained MACs over frames and actual carrier descriptors.
+//! directional adjacent MACs over frames on authenticated carriers.
 //! Replies use that exact path in
 //! reverse; carrier changes never authorize another logical path.
 //!
@@ -12,7 +11,7 @@
 //! Hosts retain guarded outputs through I/O readiness and release at their final
 //! synchronous sink. Closing a circuit cancels its queued wire/plaintext outputs;
 //! dropping the node cancels every circuit, independently of Control's lease.
-//! Steady-state packets carry a CID and compact carrier path; no per-packet
+//! Steady-state packets carry a CID and a fixed-size hop MAC; no per-packet
 //! public-key operation or unauthenticated context reconstruction is used.
 mod authorization;
 mod codec;
@@ -681,7 +680,6 @@ impl SecureNode {
             kind: Kind::Init,
             reply: false,
             sequence: 0,
-            facts: None,
             probe: None,
             body,
             proofs: Vec::new(),
@@ -774,6 +772,7 @@ impl SecureNode {
             if circuit.context != frame.context {
                 return Err(Error::Context);
             }
+            circuit.receive[usize::from(frame.reply)].check(frame.sequence)?;
             circuit.session.verify(cfg, &frame, incoming)
         }
         .inspect_err(|error| {
@@ -871,7 +870,6 @@ impl SecureNode {
                         kind: Kind::Response,
                         reply: true,
                         sequence: 0,
-                        facts: None,
                         probe: None,
                         body,
                         proofs: Vec::new(),
@@ -1077,8 +1075,26 @@ impl SecureNode {
         }
         let index = usize::from(frame.reply);
         circuit.receive[index].check(frame.sequence)?;
-        let facts = frame.facts.ok_or(Error::Wire)?;
         let path = &circuit.context.path;
+        if matches!(circuit.state, State::RelayEstablished) {
+            let position = path
+                .iter()
+                .position(|node| *node == reading.configuration.node_id)
+                .ok_or(Error::Context)?;
+            let next = if frame.reply {
+                position.checked_sub(1)
+            } else {
+                position.checked_add(1)
+            }
+            .and_then(|index| path.get(index))
+            .copied()
+            .ok_or(Error::Context)?;
+            let sequence = frame.sequence;
+            let output = self.output(circuit, frame, Hop::Forward(next), None, reading)?;
+            circuit.ensure_current(self.identity.snapshot())?;
+            circuit.receive[index].commit(sequence);
+            return Ok(Received::Forward(output));
+        }
         let sender = if frame.reply {
             *path.last().ok_or(Error::Context)?
         } else {
@@ -1102,7 +1118,7 @@ impl SecureNode {
         let guard = circuit.guard(self.identity.snapshot(), false);
         let (mut route, packet) = match &circuit.state {
             State::Endpoint(noise) => {
-                let packet = crypto::decrypt(noise, frame.sequence, &frame.body, facts)?;
+                let packet = crypto::decrypt(noise, frame.sequence, &frame.body)?;
                 let route = self
                     .engine
                     .admit_circuit_facts(
@@ -1115,12 +1131,6 @@ impl SecureNode {
                     .map_err(|error| circuit.engine_rejected("receive_endpoint", error))?;
                 (route, Some(packet))
             }
-            State::RelayEstablished => (
-                self.engine
-                    .admit_circuit_facts(ingress, facts, reading, circuit.context.circuit, &guard)
-                    .map_err(|error| circuit.engine_rejected("receive_relay", error))?,
-                None,
-            ),
             _ => return Err(Error::State),
         };
         // Plaintext output must retain the circuit's original caps too, even
@@ -1220,7 +1230,6 @@ impl SecureNode {
             kind: Kind::Data,
             reply,
             sequence,
-            facts: Some(facts),
             probe: None,
             body,
             proofs: Vec::new(),

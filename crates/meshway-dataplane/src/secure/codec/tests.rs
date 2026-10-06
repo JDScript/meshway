@@ -31,7 +31,6 @@ fn frame(kind: Kind) -> Frame {
         kind,
         reply: matches!(kind, Kind::Response | Kind::ProbeReply),
         sequence: 0,
-        facts,
         probe: diagnostic.then(|| ProbeMetadata {
             measurement_id: EventId::new(a.into_uuid()).unwrap(),
             expires_at_ms: 10_000,
@@ -62,10 +61,7 @@ fn frame(kind: Kind) -> Frame {
         auth: if kind.handshake() {
             HopAuth::default()
         } else {
-            HopAuth {
-                carriers: vec![carrier],
-                tags: vec![[5; 16]],
-            }
+            HopAuth { tag: Some([5; 16]) }
         },
     }
 }
@@ -94,8 +90,8 @@ fn every_kind_rejects_truncation_trailing_bytes_unknown_versions_and_missing_ses
                 .unwrap(),
             bytes
         );
-        assert_eq!(bytes[7], 4);
-        for version in [1, 2, 3, 5] {
+        assert_eq!(bytes[7], 5);
+        for version in [1, 2, 3, 4, 6] {
             let mut wrong = bytes.clone();
             wrong[7] = version;
             assert!(Frame::decode(&wrong, Some(&f.context)).is_err());
@@ -172,45 +168,41 @@ fn handshake_canonical_context_keys_and_lengths_are_bounded() {
 }
 
 #[test]
-fn compact_data_round_trips_facts_carriers_and_rejects_invalid_indexes_and_counts() {
+fn fixed_data_layout_round_trips_and_rejects_reserved_flags_and_lengths() {
     for packet in [
         fixtures::udp(1, 2, 50000, 443),
         fixtures::tcp(false, 17, 0, 2, 0),
         fixtures::echo(false, 6, 8),
     ] {
-        for protocol in [
-            TransportProtocol::NativeUdp,
-            TransportProtocol::NativeTcp,
-            TransportProtocol::Vless,
-            TransportProtocol::Trojan,
-        ] {
+        for reply in [false, true] {
             let mut f = frame(Kind::Data);
-            f.facts = Some(packet.facts());
+            f.reply = reply;
             f.body = vec![0; packet.facts().len + 16];
-            f.auth.carriers[0].protocol = protocol;
             let bytes = f.encode().unwrap();
             let decoded = Frame::decode(&bytes, Some(&f.context)).unwrap();
-            assert_eq!(decoded.facts, f.facts);
-            assert_eq!(decoded.auth.carriers, f.auth.carriers);
+            assert_eq!(decoded.auth.tag, f.auth.tag);
             assert_eq!(decoded.encode().unwrap(), bytes);
-            assert!(bytes.len() - f.body.len() < 128);
-            let carrier_at = f.base().unwrap().len() + 1;
+            assert_eq!(bytes.len(), packet.as_bytes().len() + 86);
+            assert_eq!(&bytes[..8], MAGIC);
+            assert_eq!(bytes[8], 3);
+            assert_eq!(bytes[9], u8::from(reply));
+            assert_eq!(&bytes[10..42], &f.context.circuit);
+            assert_eq!(&bytes[42..50], &f.sequence.to_be_bytes());
+            assert_eq!(&bytes[50..54], &(f.body.len() as u32).to_be_bytes());
+            assert_eq!(&bytes[54..bytes.len() - 16], &f.body);
             let mut bad = bytes.clone();
-            bad[carrier_at] = 8;
+            bad[9] |= 2;
             assert!(Frame::decode(&bad, Some(&f.context)).is_err());
             let mut bad = bytes.clone();
-            bad[carrier_at + 2] = 255;
+            bad[50..54].copy_from_slice(&u32::MAX.to_be_bytes());
             assert!(Frame::decode(&bad, Some(&f.context)).is_err());
             let mut bad = bytes;
-            bad[carrier_at - 1] = 0;
+            bad[50..54].copy_from_slice(&15u32.to_be_bytes());
             assert!(Frame::decode(&bad, Some(&f.context)).is_err());
         }
     }
     let mut f = frame(Kind::Data);
-    f.auth.tags.clear();
-    assert!(f.encode().is_err());
-    let mut f = frame(Kind::Data);
-    f.auth.carriers[0].listener_key = "x".repeat(256);
+    f.auth.tag = None;
     assert!(f.encode().is_err());
     let mut f = frame(Kind::Data);
     f.sequence = u64::MAX;

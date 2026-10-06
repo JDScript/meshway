@@ -182,9 +182,9 @@ async fn authentic_frames_reject_tampering_replay_and_skipped_relay_without_deli
             .is_err()
     );
     let mut tampered = wire.clone();
-    // A -> R -> B carries R's tag followed by B's independent tag.
-    // R must reject its own corrupted verifier column before replay admission.
-    let relay_tag = tampered.len() - 32;
+    // A -> R -> B carries one adjacent tag. R rejects corruption before
+    // replay admission and replaces the tag only after verification.
+    let relay_tag = tampered.len() - 16;
     tampered[relay_tag] ^= 1;
     assert!(fixture.r.receive(&fixture.ar.carrier, tampered).is_err());
     let Received::Forward(forward) = fixture
@@ -207,23 +207,25 @@ async fn authentic_frames_reject_tampering_replay_and_skipped_relay_without_deli
         Received::Packet(_)
     ));
     assert!(fixture.b.receive(&fixture.rb.carrier, wire).is_err());
-    // Corruption of B's independent column is detected by B, while R can still
-    // authenticate the original packet. It must never become plaintext output.
+    // A new packet with a corrupted adjacent MAC is rejected at R. Rejection
+    // does not consume its sequence: the original still reaches B afterwards.
     let mut wire = fixture
         .a
         .send(circuit, datagram(&fixture.mesh, false, false))
         .unwrap()
         .release(|bytes| bytes)
         .unwrap();
+    let original = wire.clone();
     *wire.last_mut().unwrap() ^= 1;
-    let Received::Forward(forward) = fixture.r.receive(&fixture.ar.carrier, wire).unwrap() else {
-        panic!("R validates its own column");
+    assert!(fixture.r.receive(&fixture.ar.carrier, wire).is_err());
+    let Received::Forward(forward) = fixture.r.receive(&fixture.ar.carrier, original).unwrap() else {
+        panic!("R verifies the adjacent MAC");
     };
     assert!(
         fixture
             .b
             .receive(&fixture.rb.carrier, forward.release(|bytes| bytes).unwrap())
-            .is_err()
+            .is_ok()
     );
     fixture.close().await;
 }

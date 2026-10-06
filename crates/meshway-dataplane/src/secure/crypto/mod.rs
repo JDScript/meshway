@@ -2,7 +2,7 @@ use super::{
     Error, MAX_PLAINTEXT,
     codec::{self, Context, Frame, Proof},
 };
-use crate::{Packet, PacketFacts};
+use crate::Packet;
 use ed25519_dalek::{Signature, VerifyingKey};
 use meshway_authority::{DataPlaneIdentity, packet_proof_message};
 use meshway_configuration::execution::{LogicalPath, NodeConfiguration};
@@ -169,7 +169,6 @@ pub(super) fn decrypt(
     noise: &snow::StatelessTransportState,
     nonce: u64,
     bytes: &[u8],
-    facts: PacketFacts,
 ) -> Result<Packet, Error> {
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("crypto.decrypt_parse");
@@ -186,16 +185,7 @@ pub(super) fn decrypt(
     if length != expected {
         return Err(Error::Crypto);
     }
-    let packet = Packet::parse(plaintext[..length].to_vec()).map_err(|_| Error::Packet)?;
-    exact_facts(packet, facts)
-}
-
-fn exact_facts(packet: Packet, facts: PacketFacts) -> Result<Packet, Error> {
-    if packet.facts() != facts {
-        let _plaintext = Zeroizing::new(packet.into_bytes());
-        return Err(Error::Packet);
-    }
-    Ok(packet)
+    Packet::parse(plaintext[..length].to_vec()).map_err(|_| Error::Packet)
 }
 
 fn transcript(frame: &Frame) -> Result<Sha256, Error> {

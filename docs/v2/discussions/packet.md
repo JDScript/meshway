@@ -7,13 +7,32 @@ description: 逐字段解释 packet 多带了什么、谁使用它，以及网�
 
 **设计要求：网络变大，不应让每个业务 packet 携带更多网络信息。** 本页专门讨论线上字节：多塞了什么、为什么需要、谁验证、能否移到本地上下文，以及每包开销能否保持固定。
 
-::: info 讨论中 · 决定见 v5 契约
-已决定采用会话级中继与定长相邻认证，目标帧开销 86 B；见[数据面 v5 实现契约](/v2/discussions/dataplane-v5)。本页保留推导过程与当前 v4 账本。
+::: info v5 与历史 v4 推导
+当前候选采用会话级中继与定长相邻认证，Data 帧开销 86 B；设计背景见[数据面 v5 实现契约](/v2/discussions/dataplane-v5)。本页保留推导过程与历史 v4 账本。
 
-当前账本对应 Meshway `97dbb138` 的 candidate-v4 Data 编码。下文的固定开销方案是**条件化预算，不是已决定或已实现的新 wire**。现行行为定义仍见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)；owner、队列、复制与运行成本见[包流分层](/v2/discussions/packet-layers)。
+历史账本对应 Meshway `97dbb138` 的 candidate-v4 Data 编码。下文 v4 章节及条件草案保留当时的论证语境；现行行为定义见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)，当前字节数见下节；owner、队列、复制与运行成本见[包流分层](/v2/discussions/packet-layers)。
 :::
 
-## 先定义“不随网络变大”
+## v5 定长账本
+
+当前候选 v5 Data 删除公开 PacketFacts、carrier 前缀和逐验证者 tags，采用会话级中继与相邻 MAC。行为与证明范围见[数据面组件](/v2/node/dataplane#会话密钥与紧凑数据帧)。下文 v4 推导保留为历史，条件草案不再代表当前待定项。
+
+| 线上字段 | bytes |
+| --- | ---: |
+| magic／version | 8 |
+| kind | 1 |
+| flags（bit0 reply，其余为零） | 1 |
+| CID | 32 |
+| sequence | 8 |
+| ciphertext length | 4 |
+| ciphertext | P |
+| Noise AEAD tag | 16 |
+| 相邻 hop MAC | 16 |
+| **总新增** | **86** |
+
+每段、两个方向均为 `P+86`，与路径长度、listener key、业务协议及内层地址族无关。P=1280 时，UDP payload 为 1366 B，外层 IPv4／UDP 包为 1394 B，IPv6／UDP 为 1414 B；不含 L2。握手与 Probe 使用自己的字段，不适用本公式。
+
+## 历史 v4：先定义“不随网络变大”
 
 | 变量 | 含义 | 我们关心的约束 |
 | --- | --- | --- |

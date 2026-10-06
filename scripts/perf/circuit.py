@@ -182,9 +182,9 @@ def validate(metrics, args, nodes, size, rate):
             raise ValueError("role count mismatch")
         if values["cpuNs"] <= 0 or values["wallNs"] <= 0:
             raise ValueError("role CPU/wall missing")
-    expected = [size + 101 + 11 * k + 16 * (nodes - k) for k in range(1, nodes)]
+    expected = [size + 86 for _ in range(1, nodes)]
     if metrics["measured"]["frameBytes"] != {"forward": expected, "reply": expected}:
-        raise ValueError("candidate-v4 wire ledger mismatch")
+        raise ValueError("v5 wire ledger mismatch")
 
 
 def measure(args, output_root):
