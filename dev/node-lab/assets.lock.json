@@ -27,5 +27,5 @@
       }
     }
   ],
-  "packages": ["systemd-resolved", "dbus-daemon", "iputils-ping", "traceroute", "iperf", "iperf3", "iproute2", "dnsutils", "curl", "ca-certificates", "util-linux", "procps", "python3"]
+  "packages": ["systemd-resolved", "dbus-daemon", "iputils-ping", "traceroute", "iperf", "iperf3", "iproute2", "wireguard-tools", "dnsutils", "curl", "ca-certificates", "util-linux", "procps", "python3"]
 }

@@ -13,5 +13,5 @@ COPY entrypoint.sh runtime.py /usr/local/lib/meshway-lab/
 RUN chmod 755 /usr/local/lib/meshway-lab/entrypoint.sh && \
     python3 -c 'import json,subprocess; p=json.load(open("/usr/share/meshway-lab/packages.json")); assert all(subprocess.check_output(["dpkg-query","-W","-f=${Version}",i["name"]],text=True)==i["version"] for i in p)' && \
     . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 24.04 && \
-    ping -V && traceroute --version && iperf --version && iperf3 --version && ip -Version && dig -v && curl --version && resolvectl --version
+    ping -V && traceroute --version && iperf --version && iperf3 --version && ip -Version && wg --version && dig -v && curl --version && resolvectl --version
 ENTRYPOINT ["/usr/local/lib/meshway-lab/entrypoint.sh"]
