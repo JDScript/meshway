@@ -1,0 +1,18 @@
+[package]
+name = "meshway-circuit-perf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Explicit in-process protected circuit CPU measurements"
+
+[dependencies]
+clap.workspace = true
+meshway-dataplane = { path = "../../crates/meshway-dataplane" }
+meshway-logging = { path = "../../crates/meshway-logging" }
+meshway-static-authority = { path = "../meshway-static-authority" }
+nix = { version = "0.30.1", default-features = false, features = ["time"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

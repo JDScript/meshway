@@ -178,6 +178,9 @@ impl Frame {
     }
 
     pub fn base(&self) -> Result<Vec<u8>, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::detail("codec.base", 1);
+        let _profile = PROFILE.enter();
         self.validate()?;
         let mut out = Vec::with_capacity(self.body.len() + 512);
         out.extend_from_slice(MAGIC);

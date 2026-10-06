@@ -1681,6 +1681,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-circuit-perf"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "meshway-dataplane",
+ "meshway-logging",
+ "meshway-static-authority",
+ "nix 0.30.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "meshway-cli"
 version = "0.1.0"
 dependencies = [

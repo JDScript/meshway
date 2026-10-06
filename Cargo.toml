@@ -30,6 +30,7 @@ members = [
     "crates/meshway-transport-trojan",
     "tools/meshway-transport-perf",
     "tools/meshway-static-authority",
+    "tools/meshway-circuit-perf",
     "tools/meshway-packet-fixture",
     "tools/meshway-runtime-fixture",
 ]
