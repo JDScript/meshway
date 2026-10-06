@@ -9,12 +9,34 @@ pub(super) enum Wake<T> {
     Work(T),
 }
 
+pub(super) enum Report<T> {
+    Refresh,
+    Sent(T),
+}
+
 pub(super) struct Window {
     deadline: Option<Instant>,
     remaining: u8,
 }
 
 impl Window {
+    /// Only an installed/current application's resource notification takes the
+    /// direct State path. This preserves the routine deadline and RPC budget.
+    pub async fn report<T>(
+        &mut self,
+        ready: bool,
+        changed: impl Future<Output = ()>,
+        report: impl Future<Output = T>,
+    ) -> Wake<Report<T>> {
+        if !ready {
+            return Wake::Work(Report::Refresh);
+        }
+        match self.serve(changed, report).await {
+            Wake::Changed => Wake::Changed,
+            Wake::Due => Wake::Due,
+            Wake::Work(value) => Wake::Work(Report::Sent(value)),
+        }
+    }
     pub fn new(delay: Option<Duration>) -> Self {
         Self {
             deadline: delay.map(|delay| Instant::now() + delay),
@@ -62,6 +84,44 @@ mod tests {
         atomic::{AtomicBool, Ordering},
     };
     use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn current_state_notification_reports_before_routine_refresh_without_moving_it() {
+        let mut window = Window::new(Some(Duration::from_secs(5)));
+        let deadline = window.deadline;
+        let sampled = Arc::new(AtomicBool::new(false));
+        let sample = sampled.clone();
+        let result = window
+            .report(true, std::future::pending(), async move {
+                sample.store(true, Ordering::SeqCst);
+                7u64
+            })
+            .await;
+        assert!(matches!(result, Wake::Work(Report::Sent(7))));
+        assert!(sampled.load(Ordering::SeqCst));
+        assert_eq!(window.deadline, deadline);
+        assert_eq!(window.remaining, 31);
+        assert!(matches!(
+            window.wait(std::future::pending(), async {}).await,
+            Wake::Work(())
+        ));
+    }
+
+    #[tokio::test]
+    async fn uninstalled_or_stale_state_requires_refresh_without_polling_a_sample() {
+        let mut window = Window::new(Some(Duration::from_secs(5)));
+        let sampled = AtomicBool::new(false);
+        assert!(matches!(
+            window
+                .report(false, std::future::pending(), async {
+                    sampled.store(true, Ordering::SeqCst);
+                })
+                .await,
+            Wake::Work(Report::Refresh)
+        ));
+        assert!(!sampled.load(Ordering::SeqCst));
+        assert_eq!(window.remaining, 32);
+    }
 
     struct Aborted {
         marker: Arc<AtomicBool>,

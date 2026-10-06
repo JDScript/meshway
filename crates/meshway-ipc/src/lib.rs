@@ -5,23 +5,32 @@ mod client;
 mod codec;
 use chrono::{DateTime, Utc};
 #[cfg(unix)]
-pub use client::{Client, ClientError};
+pub use client::{Client, ClientError, PingStream};
 pub use codec::{CodecError, read, write};
-use meshway_model::{ConfigurationRef, EnrollmentRequestId, RequestId, Version};
-use meshway_protocol::{EnrollmentResponse, InstanceLease};
-use serde::{Deserialize, Serialize};
+use meshway_model::{
+    ConfigurationRef, EnrollmentRequestId, ObservationId, ObservationSubscriptionId, RequestId,
+    Sequence, Version, observations::ObservationSample,
+};
+pub use meshway_model::{
+    observations::{EndpointKind, LinkAcquisition},
+    state::ProbeOutcome,
+};
+pub use meshway_protocol::NodeObservationTarget as PingTarget;
+use meshway_protocol::{
+    EnrollmentResponse, InstanceLease, NodeObservationTarget, NodeObservationTargetView,
+};
+use serde::Serialize;
+use utoipa::ToSchema;
 
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Request {
+meshway_serde::object! { #[derive(Clone, Debug)] pub struct Request {
     pub version: u16,
     pub request_id: RequestId,
     pub command: Command,
-}
+} }
 meshway_serde::tagged! {
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -34,22 +43,74 @@ pub enum Command {
         #[serde(rename = "expectedRevision")]
         expected_revision: Version,
     },
+    Ping {
+        target: NodeObservationTarget,
+        #[serde(deserialize_with = "ping_count")]
+        count: u16 [minimum = 1, maximum = 1000],
+    },
 }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Response {
+
+fn ping_count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u16, D::Error> {
+    let count = <u16 as serde::Deserialize>::deserialize(d)?;
+    if !(1..=1000).contains(&count) {
+        return Err(serde::de::Error::custom(
+            "ping count must be between 1 and 1000",
+        ));
+    }
+    Ok(count)
+}
+
+meshway_serde::object! { #[derive(Clone, Debug)] pub struct Response {
     pub version: u16,
     pub request_id: RequestId,
     pub result: ResultBody,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
-pub enum ResultBody {
-    Status { status: Box<Status> },
+} }
+meshway_serde::tagged! { #[derive(Clone, Debug)] pub enum ResultBody {
+    Status { status: Box<crate::Status> },
     Error { code: ErrorCode },
+    Ping { sequence: Sequence, event: PingEvent },
+} }
+
+meshway_serde::tagged! { #[derive(Clone, Debug)] pub enum PingEvent {
+    Accepted {
+        #[serde(rename = "subscriptionId")]
+        subscription_id: ObservationSubscriptionId,
+        #[serde(rename = "observationId")]
+        observation_id: ObservationId,
+        target: NodeObservationTargetView,
+    },
+    Preparing {
+        #[serde(rename = "elapsedMs")]
+        elapsed_ms: Sequence,
+    },
+    Sample {
+        #[serde(rename = "observationId")]
+        observation_id: ObservationId,
+        sample: ObservationSample,
+    },
+    Completed { sent: u32, success: u32, timeout: u32, failed: u32 },
+    Failed { code: PingError },
+} }
+
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PingError {
+    NotRunning,
+    Unsupported,
+    PermissionDenied,
+    TargetNotFound,
+    Timeout,
+    Busy,
+    Stopped,
+    Protocol,
+    Failed,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+}
+
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema, thiserror::Error)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorCode {
     #[error("Daemon protocol version differs.")]
@@ -65,7 +126,9 @@ pub enum ErrorCode {
     #[error("Daemon could not commit its private state.")]
     Storage,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+}
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {
     Down,
@@ -78,7 +141,9 @@ pub enum Phase {
     Blocked,
     Stopping,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+}
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Problem {
     Network,
@@ -99,7 +164,9 @@ pub enum Problem {
     Transport,
     Apply,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+}
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum DataPlane {
     ControlOnly,
@@ -109,14 +176,17 @@ pub enum DataPlane {
     Suspended,
     Failed,
 }
+}
 
+meshway_serde::string_enum! {
 /// Local device attachment choice, independent of cloud business policy.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum NetworkMode {
     #[default]
     Tun,
     ControlOnly,
+}
 }
 
 impl std::str::FromStr for NetworkMode {
@@ -130,32 +200,30 @@ impl std::str::FromStr for NetworkMode {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Status {
+meshway_serde::object! { #[derive(Clone, Debug)] pub struct Status {
     pub process_id: u32,
     pub revision: Version,
     pub desired_up: bool,
     pub phase: Phase,
     pub server: String,
     pub observed_at: DateTime<Utc>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub enrollment_request_id: Option<EnrollmentRequestId>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub enrollment_url: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub identity: Option<EnrollmentResponse>,
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub enrollment_request_id: Option<EnrollmentRequestId> [required = true],
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub enrollment_url: Option<String> [required = true],
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub identity: Option<EnrollmentResponse> [required = true],
     pub authenticated: bool,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub instance: Option<InstanceLease>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub saved: Option<ConfigurationRef>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub applied: Option<ConfigurationRef>,
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub instance: Option<InstanceLease> [required = true],
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub saved: Option<ConfigurationRef> [required = true],
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub applied: Option<ConfigurationRef> [required = true],
     pub data_plane: DataPlane,
     pub network_mode: NetworkMode,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub last_error: Option<Problem>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub retry_at: Option<DateTime<Utc>>,
-}
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub last_error: Option<Problem> [required = true],
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub retry_at: Option<DateTime<Utc>> [required = true],
+} }

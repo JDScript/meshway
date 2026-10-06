@@ -1,6 +1,7 @@
 //! Drive the control owner with bounded retries and cancellable desired-state waits.
 mod cycle;
 mod failure;
+mod observations;
 mod scheduling;
 
 use super::{intent::Desired, network, status::Report};
@@ -94,6 +95,7 @@ pub(super) async fn run(
     reported: watch::Sender<Report>,
     directory: Arc<meshway_private_storage::Directory>,
     network_reported: watch::Sender<network::Report>,
+    mut pings: tokio::sync::mpsc::Receiver<super::PingSession>,
 ) -> Result<(), &'static str> {
     let mut control: Option<Control> = None;
     let mut network: Option<network::Handle> = None;
@@ -104,6 +106,8 @@ pub(super) async fn run(
     let mut backoff = 1u64;
     let mut reset = plan.retry_enrollment;
     let mut shutdown_failure = None;
+    let mut pending_failure = None;
+    let mut observations = observations::Subscriptions::default();
     loop {
         if plan.shutdown || desired.has_changed().is_err() {
             break;
@@ -232,7 +236,9 @@ pub(super) async fn run(
             let outcome = tokio::select! { biased;
                 _ = desired.wait_for(|next| next.shutdown || next.revision != plan.revision) => None,
                 result = async {
+                    if let Some(error) = pending_failure.take() { return Err(error); }
                     let requests_started = Instant::now();
+                    while let Ok(ping) = pings.try_recv() { observations.accept(ping, driver); }
                     for _ in 0..32 {
                         let request = queued.take().or_else(|| network.as_mut().and_then(|network| network.requests.try_recv().ok()));
                         let Some(request) = request else { break; };
@@ -243,14 +249,16 @@ pub(super) async fn run(
                         // traversal pressure. Each request has its own deadline.
                         if requests_started.elapsed() >= Duration::from_millis(100) { break; }
                     }
-                    cycle(
+                    observations.advance(driver, network.as_mut()).await;
+                    let result = cycle(
                     driver,
                     &settings,
                     last_renew.is_none_or(|t| t.elapsed() >= RENEW),
                     last_report.is_none_or(|t| t.elapsed() >= REPORT),
                     &mut reset,
                     network.as_mut(),
-                ).await
+                ).await?;
+                    Ok::<_, failure::Failure>(result)
                 } => Some(result),
             };
             match outcome {
@@ -283,12 +291,24 @@ pub(super) async fn run(
                         network.as_mut(),
                         scheduling::reports_enabled(result.phase),
                         Some(driver),
+                        &mut pings,
+                        &mut observations,
+                        &settings,
+                        &mut last_report,
                     )
                     .await
                     {
                         Waiting::Change => {}
+                        Waiting::Failed(error) => {
+                            pending_failure = Some(error);
+                            continue;
+                        }
                         Waiting::Request(request) => {
                             queued = Some(request);
+                            continue;
+                        }
+                        Waiting::Ping(ping) => {
+                            observations.accept(ping, driver);
                             continue;
                         }
                         Waiting::Timer => continue,
@@ -338,15 +358,35 @@ pub(super) async fn run(
                     // retried by a new operator revision, never by leftover
                     // network requests waking an otherwise infinite wait.
                     let waiting = if error.retry {
-                        wait_work(&mut desired, &plan, delay, network.as_mut(), false, None).await
+                        wait_work(
+                            &mut desired,
+                            &plan,
+                            delay,
+                            network.as_mut(),
+                            false,
+                            None,
+                            &mut pings,
+                            &mut observations,
+                            &settings,
+                            &mut last_report,
+                        )
+                        .await
                     } else {
                         wait_change(&mut desired, &plan, None).await;
                         Waiting::Change
                     };
                     match waiting {
                         Waiting::Change => {}
+                        Waiting::Failed(error) => {
+                            pending_failure = Some(error);
+                            continue;
+                        }
                         Waiting::Request(request) => {
                             queued = Some(request);
+                            continue;
+                        }
+                        Waiting::Ping(ping) => {
+                            observations.accept(ping, driver);
                             continue;
                         }
                         Waiting::Timer => continue,
@@ -369,6 +409,8 @@ pub(super) async fn run(
             }
         }
         stop(control.as_mut().expect("control exists"), false).await;
+        observations.stop();
+        pending_failure = None;
         if let Some(network) = &mut network {
             let _ = network.stop(false).await;
         }
@@ -387,6 +429,15 @@ pub(super) async fn run(
         backoff = 1;
     }
     let keep_sink = desired.borrow().up;
+    observations.stop();
+    pings.close();
+    while let Some(ping) = pings.recv().await {
+        let ping = ping.request;
+        let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed {
+            code: meshway_ipc::PingError::Stopped,
+        });
+        ping.cancellation.cancel();
+    }
     shutdown(
         control,
         async move {
@@ -434,11 +485,14 @@ async fn shutdown(
 mod tests;
 
 enum Waiting {
+    Failed(failure::Failure),
     Change,
     Timer,
     Worker,
     Request(network::Request),
+    Ping(super::PingSession),
 }
+#[allow(clippy::too_many_arguments)]
 async fn wait_work(
     desired: &mut watch::Receiver<Desired>,
     plan: &Desired,
@@ -446,10 +500,17 @@ async fn wait_work(
     mut network: Option<&mut network::Handle>,
     report_changes: bool,
     mut control: Option<&mut Control>,
+    pings: &mut tokio::sync::mpsc::Receiver<super::PingSession>,
+    observations: &mut observations::Subscriptions,
+    settings: &Settings,
+    last_report: &mut Option<Instant>,
 ) -> Waiting {
     let mut window = scheduling::Window::new(delay);
+    let mut local_at = Instant::now() + Duration::from_secs(1);
     loop {
-        let waiting = window
+        let waiting = tokio::select! { biased;
+            ping = pings.recv() => { if let Some(ping) = ping { return Waiting::Ping(ping); } else { return Waiting::Change; } },
+            waiting = window
             .wait(
                 async {
                     let _ = desired
@@ -458,23 +519,102 @@ async fn wait_work(
                 },
                 async {
                     match network.as_deref_mut() {
-                        Some(network) => network.work(report_changes).await,
+                        Some(network) => {
+                            tokio::select! { biased;
+                                _ = tokio::time::sleep_until(local_at), if !observations.is_empty() && control.is_some() => None,
+                                work = network.work(report_changes) => Some(work),
+                            }
+                        },
                         None => std::future::pending().await,
                     }
                 },
             )
-            .await;
+            => waiting,
+        };
         let waiting = match waiting {
             scheduling::Wake::Changed => Waiting::Change,
             scheduling::Wake::Due => Waiting::Timer,
             scheduling::Wake::Work(work) => match work {
-                network::Work::Request(request) => Waiting::Request(request),
-                network::Work::Report => Waiting::Timer,
-                network::Work::Closed => Waiting::Worker,
+                Some(network::Work::Request(request)) => Waiting::Request(request),
+                Some(network::Work::Report) => {
+                    let ready = control
+                        .as_deref()
+                        .zip(network.as_deref())
+                        .is_some_and(|(control, network)| network.can_report_inline(control));
+                    let result = window
+                        .report(
+                            ready,
+                            async {
+                                let _ = desired
+                                    .wait_for(|next| {
+                                        next.shutdown || next.revision != plan.revision
+                                    })
+                                    .await;
+                            },
+                            network
+                                .as_deref_mut()
+                                .expect("current network")
+                                .report_state(
+                                    control.as_deref_mut().expect("current Control"),
+                                    settings,
+                                    false,
+                                ),
+                        )
+                        .await;
+                    match result {
+                        scheduling::Wake::Changed => return Waiting::Change,
+                        scheduling::Wake::Work(scheduling::Report::Refresh) => {
+                            return Waiting::Timer;
+                        }
+                        scheduling::Wake::Work(scheduling::Report::Sent(Ok(fresh))) => {
+                            if fresh {
+                                *last_report = Some(Instant::now());
+                            }
+                            continue;
+                        }
+                        scheduling::Wake::Work(scheduling::Report::Sent(Err(error))) => {
+                            return Waiting::Failed(failure::at(
+                                "report_runtime_state",
+                                error,
+                                false,
+                            ));
+                        }
+                        scheduling::Wake::Due => {
+                            unreachable!("admitted State report retains its deadline")
+                        }
+                    }
+                }
+                Some(network::Work::Closed) => Waiting::Worker,
+                None => {
+                    local_at = Instant::now() + Duration::from_secs(1);
+                    match window
+                        .serve(
+                            async {
+                                let _ = desired
+                                    .wait_for(|next| {
+                                        next.shutdown || next.revision != plan.revision
+                                    })
+                                    .await;
+                            },
+                            observations.advance(
+                                control.as_deref_mut().expect("maintenance has Control"),
+                                network.as_deref_mut(),
+                            ),
+                        )
+                        .await
+                    {
+                        scheduling::Wake::Changed => return Waiting::Change,
+                        scheduling::Wake::Work(true) => return Waiting::Timer,
+                        scheduling::Wake::Work(false) => continue,
+                        scheduling::Wake::Due => {
+                            unreachable!("admitted maintenance retains its deadline")
+                        }
+                    }
+                }
             },
         };
         match waiting {
-            Waiting::Request(request) if request.acquisition() && control.is_some() => {
+            Waiting::Request(request) if request.inline() && control.is_some() => {
                 let result = window
                     .serve(
                         async {

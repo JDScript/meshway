@@ -4,7 +4,7 @@ Node 由长期运行的 **`meshwayd`** 和本机 CLI **`meshway`** 组成，Linu
 
 ## 组件方向
 
-下图包含规划中的 netstack、插件和 diagnostics；实际 crate 清单及实现范围见[总体结构](/v2/architecture#node-组件库)。
+下图包含规划中的 netstack 和插件；实际 crate 清单及实现范围见[总体结构](/v2/architecture#node-组件库)，获准测量见[路径诊断与 ping](/v2/node/diagnostics)。
 
 ```text
 meshway CLI ── 本机 IPC ──► meshwayd

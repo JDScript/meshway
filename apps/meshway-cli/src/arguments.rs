@@ -15,6 +15,13 @@ pub(crate) struct Arguments {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Diagnose the authorized full Mesh route using ICMP (5s probes, >=1s interval).
+    Ping {
+        /// Node hostname or Mesh IP address.
+        target: String,
+        #[arg(short = 'c', long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(1..=1000))]
+        count: u16,
+    },
     /// Request online control; prints the browser URL when approval is needed.
     Up,
     /// Persist offline intent and stop the active Node instance.

@@ -38,6 +38,9 @@ pub struct DatagramCandidate {
 }
 
 impl ProtectedDatagram {
+    pub(super) fn scope(&self) -> Scope {
+        self.owned.scope.clone()
+    }
     pub(super) fn bind(
         scope: Scope,
         local: SocketAddr,
@@ -149,6 +152,7 @@ mod tests {
             Ok("1")
         );
         Arc::new(Shared {
+            resources: super::super::protection::Resources::new(128),
             mark: Mark {
                 value: 0x100,
                 mask: 0x100,

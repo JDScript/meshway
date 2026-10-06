@@ -67,8 +67,8 @@ fn offer() -> UdpTraversalOffer {
         "attemptId": A, "requestId": B, "networkId": C, "stateEpoch": C,
         "version": 1, "digest": "00".repeat(32), "nonce": "02".repeat(32),
         "carrier": {"dialer": A, "listener": B, "listenerKey": "native-udp", "protocol": "native_udp"},
-        "local": {"candidate": local, "address": observation().address},
-        "peer": {"candidate": peer, "address": peer_observation.address},
+        "local": {"candidate": local, "address": observation().address, "source": "stun"},
+        "peer": {"candidate": peer, "address": peer_observation.address, "source": "stun"},
         "expiresAt": "2026-10-04T00:00:10Z"
     })).unwrap();
     offer.digest = offer.compute_digest().unwrap();
@@ -504,6 +504,8 @@ fn offer_digest_binds_all_immutable_scope_and_is_independent_of_acceptance_phase
         ("/carrier/listenerKey", json!("different")),
         ("/local/address", json!("198.51.100.7:41001")),
         ("/peer/address", json!("203.0.113.9:42001")),
+        ("/local/source", json!("configured")),
+        ("/peer/source", json!("interface")),
         ("/local/candidate/observationDigest", json!("05".repeat(32))),
         ("/peer/candidate/socket/socketGeneration", json!(2)),
         ("/expiresAt", json!("2026-10-04T00:00:09Z")),

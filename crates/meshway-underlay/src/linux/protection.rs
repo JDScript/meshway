@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use socket2::SockRef;
 use std::{
     io,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -49,6 +49,43 @@ pub(super) struct Shared {
     pub attempts: Arc<Semaphore>,
     pub resolutions: Arc<Semaphore>,
     pub execution: RwLock<Option<(ExecutionSnapshot, CancellationToken)>>,
+    pub resources: Resources,
+}
+
+pub(super) struct Resources {
+    entries: Mutex<Vec<Weak<PhysicalResource>>>,
+    limit: usize,
+}
+struct PhysicalResource {
+    snapshot: Mutex<ExecutionSnapshot>,
+    purpose: meshway_model::state::ResourceRef,
+    stop: CancellationToken,
+}
+impl Resources {
+    pub fn new(limit: usize) -> Self {
+        Self {
+            entries: Mutex::new(Vec::new()),
+            limit,
+        }
+    }
+    pub fn handoff(&self, next: &ExecutionSnapshot) -> Result<()> {
+        let mut entries = self.entries.lock().map_err(|_| Error::Worker)?;
+        entries.retain(|entry| entry.strong_count() != 0);
+        for entry in entries.iter().filter_map(Weak::upgrade) {
+            let mut previous = entry.snapshot.lock().map_err(|_| Error::Worker)?;
+            let compatible = !entry.stop.is_cancelled()
+                && next.continuation_from(&previous).is_ok_and(|old| {
+                    next.configuration()
+                        .is_ok_and(|new| crate::resource_compatible(old, new, &entry.purpose))
+                });
+            if compatible {
+                *previous = next.clone();
+            } else {
+                entry.stop.cancel();
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Shared {
@@ -93,6 +130,8 @@ impl Shared {
             snapshot: Some(snapshot.clone()),
             epoch: token.clone(),
             physical: false,
+            resource: None,
+            binding: None,
         })
     }
 
@@ -102,6 +141,8 @@ impl Shared {
             snapshot: None,
             epoch: self.tasks.stop.clone(),
             physical: false,
+            resource: None,
+            binding: None,
         }
     }
 }
@@ -112,19 +153,61 @@ pub(super) struct Scope {
     snapshot: Option<ExecutionSnapshot>,
     epoch: CancellationToken,
     physical: bool,
+    resource: Option<meshway_model::state::ResourceRef>,
+    binding: Option<Arc<PhysicalResource>>,
 }
 
 impl Scope {
     pub fn owner_current(&self) -> Result<()> {
         self.shared.check()?;
-        if self.epoch.is_cancelled() {
+        if self.epoch.is_cancelled()
+            || self
+                .binding
+                .as_ref()
+                .is_some_and(|binding| binding.stop.is_cancelled())
+        {
             return Err(Error::Expired);
         }
         Ok(())
     }
-    pub fn physical(mut self) -> Self {
-        self.physical = true;
+    pub fn for_resource(mut self, resource: meshway_model::state::ResourceRef) -> Self {
+        self.resource = Some(resource);
         self
+    }
+    pub fn physical(mut self) -> Result<Self> {
+        self.check()?;
+        let snapshot = self.snapshot.clone().ok_or(Error::Target)?;
+        let purpose = self.resource.clone().ok_or(Error::Target)?;
+        // Serialize registration with Host's execution/resource handoff. A
+        // handle minted before it cannot register an unchecked old descriptor
+        // after the per-resource cancellation pass.
+        let active = self.shared.execution.read().map_err(|_| Error::Worker)?;
+        let (installed, _) = active.as_ref().ok_or(Error::Expired)?;
+        if !installed.same_execution(&snapshot) || self.epoch.is_cancelled() {
+            return Err(Error::Expired);
+        }
+        snapshot.ensure_current().map_err(|_| Error::Expired)?;
+        let mut entries = self
+            .shared
+            .resources
+            .entries
+            .lock()
+            .map_err(|_| Error::Worker)?;
+        entries.retain(|entry| entry.strong_count() != 0);
+        if entries.len() >= self.shared.resources.limit {
+            return Err(Error::Capacity);
+        }
+        let binding = Arc::new(PhysicalResource {
+            snapshot: Mutex::new(snapshot),
+            purpose,
+            stop: self.epoch.child_token(),
+        });
+        entries.push(Arc::downgrade(&binding));
+        drop(entries);
+        drop(active);
+        self.binding = Some(binding);
+        self.physical = true;
+        Ok(self)
     }
     pub fn frozen(&self) -> Result<Self> {
         let mut scope = self.clone();
@@ -194,6 +277,7 @@ impl Scope {
                 _ = self.shared.conflict.cancelled() => return,
                 _ = self.shared.tasks.stop.cancelled() => return,
                 _ = self.epoch.cancelled() => return,
+                _ = async { match &self.binding { Some(binding) => binding.stop.cancelled().await, None => std::future::pending().await } } => return,
                 _ = async {
                     match current {
                         Some(snapshot) => snapshot.invalidated().await,
@@ -215,7 +299,7 @@ impl Scope {
             return self.invalidated().await;
         }
         loop {
-            if self.shared.check().is_err() || self.epoch.is_cancelled() {
+            if self.owner_current().is_err() {
                 return;
             }
             let snapshot = self
@@ -234,6 +318,7 @@ impl Scope {
                 _ = self.shared.conflict.cancelled() => return,
                 _ = self.shared.tasks.stop.cancelled() => return,
                 _ = self.epoch.cancelled() => return,
+                _ = async { match &self.binding { Some(binding) => binding.stop.cancelled().await, None => std::future::pending().await } } => return,
                 _ = tokio::time::sleep_until(deadline.into()) => {},
                 _ = async {
                     if snapshot.ensure_current().is_ok() { snapshot.invalidated().await; }

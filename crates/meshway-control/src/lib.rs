@@ -18,6 +18,8 @@ mod dns;
 mod enrollment;
 mod execution;
 mod identity;
+mod observations;
+pub use observations::ObservationLease;
 mod session;
 mod storage;
 
@@ -108,6 +110,7 @@ pub struct Control {
     application_owner: Arc<()>,
     application: Option<ApplicationTicket>,
     connectivity: connectivity::Authority,
+    observations: observations::Registry,
 }
 
 struct Session {
@@ -168,6 +171,7 @@ impl Control {
             application_owner: Arc::new(()),
             application: None,
             connectivity: connectivity::Authority::default(),
+            observations: observations::Registry::default(),
         })
     }
 
@@ -289,6 +293,7 @@ impl Control {
     }
 
     fn fence(&mut self) {
+        self.observations = observations::Registry::default();
         self.invalidate_snapshots();
         self.instance = None;
         self.acquiring = None;

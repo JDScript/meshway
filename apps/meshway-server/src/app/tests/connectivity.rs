@@ -769,9 +769,28 @@ async fn final_peer_session_deadline_recheck_is_terminal_even_if_storage_later_r
 }
 
 #[tokio::test]
-async fn diagnostic_only_publication_discloses_no_automatic_endpoint_or_punch_offer() {
+async fn diagnostic_only_publication_requires_common_live_adjacency_before_disclosure_and_offer() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let (_dir, app, network, a, b, _) = setup(false).await;
+    let view = app
+        .node_state_service()
+        .unwrap()
+        .query(
+            ReadIdentity::Node {
+                authorization: a.token.clone(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!view.nodes.contains_key(&b.id));
+    assert!(matches!(
+        app.connectivity()
+            .prepare(&a.token, request(&app, &a, &b).await)
+            .await
+            .unwrap(),
+        PrepareUdpTraversalResponse::Unavailable { .. }
+    ));
     let owner = app
         .accounts()
         .login(
@@ -804,6 +823,14 @@ async fn diagnostic_only_publication_discloses_no_automatic_endpoint_or_punch_of
         .await
         .unwrap();
     let a = sync(&app, a.id, a.token, a.instance, "198.51.100.1:23456").await;
+    // Peer has not acquired the matching diagnostic publication yet.
+    assert!(matches!(
+        app.connectivity()
+            .prepare(&a.token, request(&app, &a, &b).await)
+            .await
+            .unwrap(),
+        PrepareUdpTraversalResponse::Unavailable { .. }
+    ));
     let b = sync(&app, b.id, b.token, b.instance, "198.51.100.2:23456").await;
     assert!(a.target.configuration.permits.is_empty());
     assert!(!a.target.configuration.diagnostics.is_empty());
@@ -821,16 +848,74 @@ async fn diagnostic_only_publication_discloses_no_automatic_endpoint_or_punch_of
     let Some(VisibleReport::Peer { report }) = &view.nodes[&b.id].report else {
         panic!();
     };
-    assert!(report.endpoints.is_empty());
+    assert_eq!(report.endpoints[0].candidate_reference, b.candidate());
+    let request = request(&app, &a, &b).await;
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    let id = *a.target.configuration.diagnostics.keys().next().unwrap();
+    for case in 0..5 {
+        let mut peer = b.target.configuration.clone();
+        match case {
+            0 => {
+                peer.diagnostics.clear();
+            }
+            1 => {
+                peer.diagnostics.get_mut(&id).unwrap().instance_id =
+                    InstanceId::new(random_uuid().unwrap()).unwrap();
+            }
+            2 => {
+                peer.diagnostics.get_mut(&id).unwrap().service =
+                    meshway_configuration::execution::ObservationServiceScope::IcmpEcho;
+            }
+            3 => {
+                peer.diagnostics.get_mut(&id).unwrap().expires_at_ms = now;
+            }
+            _ => {
+                peer.diagnostics.get_mut(&id).unwrap().paths[0]
+                    .dial_candidates
+                    .clear();
+            }
+        }
+        assert!(
+            crate::execution::connectivity::common_witness(
+                &a.target.configuration,
+                &peer,
+                &request.carrier,
+                now,
+                None,
+                |_| panic!("mismatched bilateral grant reached full-path validation"),
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+    let offer = offer(&app, &a, request).await;
     assert_eq!(
+        offer.local.source,
+        meshway_model::observations::EndpointKind::Stun
+    );
+    assert_eq!(
+        offer.peer.source,
+        meshway_model::observations::EndpointKind::Stun
+    );
+    assert!(
+        !serde_json::to_string(&offer)
+            .unwrap()
+            .contains("203.0.113.53")
+    );
+    assert!(matches!(
         app.connectivity()
-            .prepare(&a.token, request(&app, &a, &b).await)
+            .accept(&a.token, offer.attempt_id, a.cas(&offer))
             .await
             .unwrap(),
-        PrepareUdpTraversalResponse::Unavailable {
-            reason: UdpTraversalUnavailableReason::NotAvailable
-        }
-    );
+        AcceptUdpTraversalResponse::Waiting { .. }
+    ));
+    assert!(matches!(
+        app.connectivity()
+            .accept(&b.token, offer.attempt_id, b.cas(&offer))
+            .await
+            .unwrap(),
+        AcceptUdpTraversalResponse::Active { .. }
+    ));
     app.shutdown().await.unwrap();
 }
 
@@ -999,6 +1084,117 @@ async fn complete_logical_path_visibility_does_not_disclose_nonadjacent_endpoint
         .unwrap();
     assert!(
         matches!(&full.nodes[&b.id].report, Some(VisibleReport::Full { report }) if !report.sockets.is_empty())
+    );
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn node_observation_commit_failure_rolls_back_subscription_publication_and_runtime() {
+    use meshway_protocol::node_observations::{CreateNodeObservation, NodeObservationTarget};
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, _, a, b, _) = setup(false).await;
+    let request = CreateNodeObservation {
+        instance: a.instance.clone(),
+        subscription_id: meshway_model::ObservationSubscriptionId::new(random_uuid().unwrap())
+            .unwrap(),
+        target: NodeObservationTarget::MeshIp {
+            address: b.target.configuration.addresses.ipv4.unwrap().to_string(),
+        },
+        service: meshway_configuration::execution::ObservationServiceScope::Tcp {
+            port: 443.try_into().unwrap(),
+        },
+        selection: meshway_protocol::observations::ObservationPath::Auto,
+        metrics: vec![meshway_model::observations::MetricKind::Rtt],
+        interval_ms: 1000,
+    };
+    app.executor.handle().execute(|connection| connection.execute_batch("CREATE TEMP TABLE diagnostic_commit_parent(id INTEGER PRIMARY KEY); CREATE TEMP TABLE diagnostic_commit_pending(parent INTEGER REFERENCES diagnostic_commit_parent(id) DEFERRABLE INITIALLY DEFERRED); CREATE TEMP TRIGGER diagnostic_commit_fail AFTER INSERT ON main.diagnostic_subscriptions WHEN NEW.principal_kind='node_instance' BEGIN INSERT INTO diagnostic_commit_pending VALUES(404); END;").unwrap()).await.unwrap();
+    assert!(
+        app.observations()
+            .create_node_observation(a.token.clone(), request.clone())
+            .await
+            .is_err()
+    );
+    app.executor
+        .handle()
+        .execute(|connection| {
+            assert_eq!(
+                connection
+                    .query_row("SELECT count(*) FROM diagnostic_subscriptions", [], |r| r
+                        .get::<_, i64>(
+                        0
+                    ))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT count(*) FROM diagnostic_tasks", [], |r| r
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            connection
+                .execute_batch("DROP TRIGGER diagnostic_commit_fail;")
+                .unwrap();
+        })
+        .await
+        .unwrap();
+    assert!(
+        app.observations()
+            .node_tasks(a.token.clone())
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    let created = app
+        .observations()
+        .create_node_observation(a.token.clone(), request.clone())
+        .await
+        .unwrap();
+    let target = sync_execution(&app, &a.token, &a.instance).await;
+    assert!(
+        target
+            .configuration
+            .diagnostics
+            .contains_key(&created.task.id)
+    );
+    assert_eq!(
+        app.observations()
+            .node_tasks(a.token.clone())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    app.executor.handle().execute(|connection| connection.execute_batch("CREATE TEMP TRIGGER diagnostic_commit_fail AFTER UPDATE OF cancelled ON main.diagnostic_subscriptions WHEN NEW.cancelled=1 AND OLD.cancelled=0 BEGIN INSERT INTO diagnostic_commit_pending VALUES(404); END;").unwrap()).await.unwrap();
+    assert!(
+        app.observations()
+            .cancel_node_observation(a.token.clone(), a.instance.clone(), request.subscription_id)
+            .await
+            .is_err()
+    );
+    app.executor.handle().execute(|connection| {
+        assert_eq!(connection.query_row("SELECT cancelled FROM diagnostic_subscriptions", [], |r| r.get::<_,i64>(0)).unwrap(), 0);
+        connection.execute_batch("DROP TRIGGER diagnostic_commit_fail; DROP TABLE diagnostic_commit_pending; DROP TABLE diagnostic_commit_parent;").unwrap();
+    }).await.unwrap();
+    assert_eq!(
+        app.observations()
+            .node_tasks(a.token.clone())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    assert!(
+        app.observations()
+            .cancel_node_observation(a.token.clone(), a.instance.clone(), request.subscription_id)
+            .await
+            .unwrap()
+            .task
+            .is_none()
     );
     app.shutdown().await.unwrap();
 }

@@ -47,6 +47,15 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
             peers: BTreeSet::from([peer]),
             paths: vec![vec![node, peer]],
             neighbor_transports: BTreeMap::from([(peer, BTreeSet::from(["native_udp".into()]))]),
+            path_transports: BTreeMap::from([(
+                vec![node, peer],
+                BTreeSet::from(["native_udp".into()]),
+            )]),
+            diagnostic_transports: BTreeMap::new(),
+            mesh_address_pools: meshway_configuration::AddressPools {
+                ipv4: vec!["100.64.0.0/10".into()],
+                ipv6: vec![],
+            },
             profiles: BTreeSet::from(["mesh".into()]),
         }],
         mesh_addresses: BTreeSet::from(["100.64.0.1".parse::<IpAddr>().unwrap()]),
@@ -366,9 +375,12 @@ fn observations_bind_instance_path_and_independent_subscriber_leases() {
         observation_id: None,
         unsupported_metrics: vec![],
         report: report.clone(),
-        session_id: id(10),
+        principal: crate::observations::SubscriberPrincipal::UserSession {
+            session: id(10),
+            identity: identity(report.network_id),
+        },
         authorization_digest: scope.authorization_digest,
-        session_expires_at: now + Duration::minutes(10),
+        authorization_expires_at: now + Duration::minutes(10),
     };
     let request = CreateObservation {
         service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
@@ -390,7 +402,10 @@ fn observations_bind_instance_path_and_independent_subscriber_leases() {
         .unwrap();
     assert!(first.latest.is_none());
     assert!(first.path.is_none());
-    admission.session_id = id(11);
+    admission.principal = crate::observations::SubscriberPrincipal::UserSession {
+        session: id(11),
+        identity: identity(report.network_id),
+    };
     let second = observations
         .create(
             &admission,
@@ -429,9 +444,12 @@ fn observation_authorization_distinguishes_user_session_from_execution_and_scope
         observation_id: None,
         unsupported_metrics: vec![],
         report: report.clone(),
-        session_id: id(10),
+        principal: crate::observations::SubscriberPrincipal::UserSession {
+            session: id(10),
+            identity: identity(report.network_id),
+        },
         authorization_digest: scope.authorization_digest,
-        session_expires_at: now + Duration::minutes(10),
+        authorization_expires_at: now + Duration::minutes(10),
     };
     let request = CreateObservation {
         service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
@@ -471,7 +489,7 @@ fn observation_authorization_distinguishes_user_session_from_execution_and_scope
                 Error::PermissionDenied
             }
             _ => {
-                changed.session_expires_at = now;
+                changed.authorization_expires_at = now;
                 Error::InvalidSession
             }
         };
@@ -507,9 +525,12 @@ fn shared_task_subscribers_renew_independently_and_create_retry_does_not_renew()
         observation_id: None,
         unsupported_metrics: vec![],
         report: report.clone(),
-        session_id: id(10),
+        principal: crate::observations::SubscriberPrincipal::UserSession {
+            session: id(10),
+            identity: identity(report.network_id),
+        },
         authorization_digest: scope.authorization_digest,
-        session_expires_at: now + Duration::minutes(5),
+        authorization_expires_at: now + Duration::minutes(5),
     };
     let request = CreateObservation {
         service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
@@ -538,7 +559,10 @@ fn shared_task_subscribers_renew_independently_and_create_retry_does_not_renew()
         )
         .unwrap();
     assert_eq!(retry.subscriber_expires_at, first.subscriber_expires_at);
-    admission.session_id = id(11);
+    admission.principal = crate::observations::SubscriberPrincipal::UserSession {
+        session: id(11),
+        identity: identity(report.network_id),
+    };
     let second = tasks
         .create(
             &admission,
@@ -551,11 +575,17 @@ fn shared_task_subscribers_renew_independently_and_create_retry_does_not_renew()
         )
         .unwrap();
     assert_eq!(first.id, second.id);
-    admission.session_id = id(10);
+    admission.principal = crate::observations::SubscriberPrincipal::UserSession {
+        session: id(10),
+        identity: identity(report.network_id),
+    };
     tasks
         .renew(&admission, first.id, id(100), now + Duration::seconds(10))
         .unwrap();
-    admission.session_id = id(11);
+    admission.principal = crate::observations::SubscriberPrincipal::UserSession {
+        session: id(11),
+        identity: identity(report.network_id),
+    };
     let renewed = tasks
         .renew(&admission, second.id, id(101), now + Duration::seconds(15))
         .unwrap();
@@ -576,6 +606,190 @@ fn shared_task_subscribers_renew_independently_and_create_retry_does_not_renew()
         tasks.node_tasks(&report, now + Duration::seconds(16))[0].expires_at,
         now + Duration::seconds(40)
     );
+}
+
+#[test]
+fn typed_channel_reports_and_reselection_keep_authority_and_segment_high_water() {
+    // Explicit source-report input tests acceptance only; no packet is emitted.
+    use meshway_model::observations::{
+        LinkAcquisition, ObservationSample, ProbeChannel, ProbeChannels,
+    };
+    let (mut report, _, scope, now) = setup();
+    let admission = TaskAdmission {
+        observation_id: None,
+        unsupported_metrics: vec![],
+        report: report.clone(),
+        configuration: report.execution.clone().unwrap(),
+        paths: report.current().unwrap().paths.clone(),
+        node_expires_at: report.lease_expires_at,
+        principal: crate::observations::SubscriberPrincipal::UserSession {
+            session: id(10),
+            identity: identity(report.network_id),
+        },
+        authorization_digest: scope.authorization_digest,
+        authorization_expires_at: report.lease_expires_at,
+    };
+    let mut tasks = Observations::default();
+    let task = tasks
+        .create(
+            &admission,
+            identity(report.network_id),
+            CreateObservation {
+                subscription_id: id(90),
+                source_node_id: report.node_id,
+                target_node_id: id(2),
+                selection: ObservationPath::Auto,
+                service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
+                metrics: vec![meshway_model::observations::MetricKind::Rtt],
+                interval_ms: 1000,
+            },
+            now,
+        )
+        .unwrap();
+    report.contexts[0].diagnostic_transports.insert(
+        task.id,
+        BTreeMap::from([(
+            vec![report.node_id, id(2)],
+            BTreeSet::from(["native_udp".into()]),
+        )]),
+    );
+    let channel = ProbeChannel {
+        link_id: Digest::from_bytes([1; 32]),
+        socket_id: Digest::from_bytes([2; 32]),
+        peer_node_id: id(2),
+        transport: meshway_transport_spec::TransportProtocol::NativeUdp,
+        local_address: "192.0.2.1:1234".parse().unwrap(),
+        remote_address: "192.0.2.2:1234".parse().unwrap(),
+        acquisition: LinkAcquisition::PublishedEndpoint,
+    };
+    let probe = ProbeObservation {
+        measurement_id: id(91),
+        kind: ProbeKind::Path,
+        link_id: None,
+        transport: None,
+        channels: Some(ProbeChannels {
+            request: channel.clone(),
+            reply: Some(channel),
+        }),
+        path: vec![report.node_id, id(2)],
+        publication_id: task.configuration.execution_publication,
+        started_at: now,
+        completed_at: Some(now + Duration::milliseconds(1)),
+        outcome: ProbeOutcome::Success,
+        duration_us: Some(Sequence::new(1000).unwrap()),
+    };
+    let mut wildcard = probe.clone();
+    wildcard.channels.as_mut().unwrap().request.local_address = "0.0.0.0:1234".parse().unwrap();
+    validation::validate_probe(&report, &wildcard, now).unwrap();
+    for case in 0..7 {
+        let mut invalid = probe.clone();
+        let channels = invalid.channels.as_mut().unwrap();
+        match case {
+            0 => channels.request.peer_node_id = id(3),
+            1 => channels.request.transport = meshway_transport_spec::TransportProtocol::NativeTcp,
+            2 => channels.request.remote_address = "100.64.0.9:1234".parse().unwrap(),
+            3 => channels.request.local_address = "255.255.255.255:1234".parse().unwrap(),
+            4 => channels.request.remote_address = "[::ffff:192.0.2.2]:1234".parse().unwrap(),
+            5 => channels.reply = None,
+            _ => channels.reply.as_mut().unwrap().peer_node_id = id(3),
+        }
+        assert_eq!(
+            validation::validate_probe(&report, &invalid, now),
+            Err(Error::InvalidRequest)
+        );
+    }
+    let sample = ObservationSample {
+        measurement_id: probe.measurement_id,
+        version: Version::MIN,
+        window_start: now,
+        window_end: now + Duration::milliseconds(1),
+        partial: false,
+        probe: Some(probe),
+        traffic: None,
+        probe_counts: None,
+    };
+    let result = ObservationResult {
+        instance_id: report.instance_id,
+        configuration: task.configuration.clone(),
+        result: ObservationUpdate::Sample {
+            path: vec![report.node_id, id(2)],
+            path_segment: Sequence::new(1).unwrap(),
+            sample: Box::new(sample.clone()),
+        },
+    };
+    let mut unrelated = report.clone();
+    unrelated.contexts[0].diagnostic_transports.clear();
+    assert_eq!(
+        tasks
+            .result(
+                &unrelated,
+                task.id,
+                result.clone(),
+                now + Duration::milliseconds(1)
+            )
+            .unwrap_err(),
+        Error::InvalidRequest
+    );
+    tasks
+        .result(
+            &report,
+            task.id,
+            result.clone(),
+            now + Duration::milliseconds(1),
+        )
+        .unwrap();
+    let preparing = tasks
+        .result(
+            &report,
+            task.id,
+            ObservationResult {
+                result: ObservationUpdate::Phase {
+                    phase: ReportedObservationPhase::Preparing,
+                },
+                ..result.clone()
+            },
+            now + Duration::milliseconds(2),
+        )
+        .unwrap();
+    assert_eq!(preparing.phase, ObservationPhase::Preparing);
+    assert!(preparing.latest.is_none() && preparing.path.is_none());
+    assert_eq!(preparing.path_segment, Some(Sequence::new(1).unwrap()));
+    assert_eq!(
+        tasks
+            .result(
+                &report,
+                task.id,
+                result.clone(),
+                now + Duration::milliseconds(3)
+            )
+            .unwrap_err(),
+        Error::StateConflict
+    );
+    let mut next = sample;
+    next.measurement_id = id(92);
+    next.window_start = now + Duration::milliseconds(2);
+    next.window_end = now + Duration::milliseconds(3);
+    let probe = next.probe.as_mut().unwrap();
+    probe.measurement_id = next.measurement_id;
+    probe.started_at = next.window_start;
+    probe.completed_at = Some(next.window_end);
+    let resumed = tasks
+        .result(
+            &report,
+            task.id,
+            ObservationResult {
+                result: ObservationUpdate::Sample {
+                    path: vec![report.node_id, id(2)],
+                    path_segment: Sequence::new(2).unwrap(),
+                    sample: Box::new(next),
+                },
+                ..result
+            },
+            now + Duration::milliseconds(3),
+        )
+        .unwrap();
+    assert_eq!(resumed.phase, ObservationPhase::Running);
+    assert_eq!(resumed.path_segment, Some(Sequence::new(2).unwrap()));
 }
 
 #[test]
@@ -731,6 +945,7 @@ fn neighbor_probe_uses_explicit_transport_adjacency_not_business_subpath() {
     admission.contexts[0].neighbor_transports =
         BTreeMap::from([(relay, BTreeSet::from(["native_udp".into()]))]);
     let mut probe = ProbeObservation {
+        channels: None,
         measurement_id: id(91),
         kind: ProbeKind::Neighbor,
         link_id: Some("real-link".into()),
@@ -746,8 +961,10 @@ fn neighbor_probe_uses_explicit_transport_adjacency_not_business_subpath() {
     probe.kind = ProbeKind::Path;
     assert!(validation::validate_probe(&admission, &probe, now).is_err());
     probe.path.push(target);
+    probe.transport = None;
     validation::validate_probe(&admission, &probe, now).unwrap();
     probe.kind = ProbeKind::Neighbor;
+    probe.transport = Some("native_udp".into());
     probe.path = vec![admission.node_id, target];
     assert!(validation::validate_probe(&admission, &probe, now).is_err());
     probe.path[1] = relay;

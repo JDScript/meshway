@@ -2,6 +2,7 @@
 mod control;
 mod intent;
 mod network;
+mod ping;
 mod status;
 
 pub(crate) use intent::{Action, Mutation};
@@ -16,6 +17,22 @@ use crate::{
 use meshway_ipc::{ErrorCode, Phase};
 use std::{io::Write, sync::Arc};
 use tokio::sync::{mpsc, watch};
+
+#[derive(Clone)]
+pub(crate) struct PingRequest {
+    pub id: meshway_model::RequestId,
+    pub target: meshway_protocol::NodeObservationTarget,
+    pub count: u16,
+    pub events: mpsc::Sender<meshway_ipc::PingEvent>,
+    pub cancellation: tokio_util::sync::CancellationToken,
+}
+
+struct PingSession {
+    request: PingRequest,
+    lease: watch::Sender<Option<meshway_control::ObservationLease>>,
+    progress: watch::Sender<ping::Progress>,
+    intent: ping::Intent,
+}
 
 pub async fn run(
     settings: Settings,
@@ -51,6 +68,8 @@ pub async fn run(
         network: network_report,
     };
     let (commands, mut received) = mpsc::channel::<Mutation>(16);
+    let (pings, mut ping_requests) = mpsc::channel::<PingRequest>(8);
+    let (control_pings, control_ping_requests) = mpsc::channel::<PingSession>(8);
     let (stop_ipc, stop_rx) = watch::channel(false);
     let mut control = tokio::spawn(control::run(
         settings.clone(),
@@ -58,8 +77,16 @@ pub async fn run(
         reported,
         store.directory.clone(),
         network_reported,
+        control_ping_requests,
     ));
-    let mut listener = tokio::spawn(ipc::serve(socket, commands, view.clone(), stop_rx));
+    let mut listener = tokio::spawn(ipc::serve(
+        socket,
+        commands,
+        pings,
+        view.clone(),
+        stop_rx.clone(),
+    ));
+    let mut ping_forwarders = tokio::task::JoinSet::new();
     let mut listener_done = false;
     let mut control_done = false;
     let mut failure = None;
@@ -76,6 +103,7 @@ pub async fn run(
     while failure.is_none() {
         tokio::select! { biased;
             _ = &mut shutdown => break,
+            _ = ping_forwarders.join_next(), if !ping_forwarders.is_empty() => {},
             result = &mut listener => {
                 listener_done = true;
                 failure = Some(result.ok().and_then(Result::err).unwrap_or("IPC service stopped unexpectedly."));
@@ -90,11 +118,41 @@ pub async fn run(
                     failure = Some("Node intent persistence failed.");
                 }
             },
+            ping = ping_requests.recv() => {
+                if let Some(mut ping) = ping {
+                    let code = ping::admission(&view.status()).err().or_else(|| (ping_forwarders.len() >= 8).then_some(meshway_ipc::PingError::Busy));
+                    if let Some(code) = code {
+                        let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed { code });
+                        ping.cancellation.cancel();
+                    } else {
+                        let client = ping.events.clone();
+                        let cancellation = ping.cancellation.clone();
+                        let (events, incoming) = mpsc::channel(8);
+                        let (lease, lease_rx) = watch::channel(None);
+                        let (progress, progress_rx) = watch::channel(ping::Progress::Setup);
+                        let intent = ping::Intent::capture(view.desired.clone());
+                        ping.events = events;
+                        ping_forwarders.spawn(ping::forward(client, incoming, cancellation, stop_rx.clone(), lease_rx, progress_rx, intent.clone()));
+                        if let Err(error) = control_pings.try_send(PingSession { request: ping, lease, progress, intent }) {
+                            let ping = error.into_inner().request;
+                            let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed { code: meshway_ipc::PingError::Busy });
+                            ping.cancellation.cancel();
+                        }
+                    }
+                }
+            },
         }
     }
     // No new mutations; every already queued command still receives an owner
     // result. A broken durable store rejects further work rather than resetting.
     received.close();
+    ping_requests.close();
+    while let Some(ping) = ping_requests.recv().await {
+        let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed {
+            code: meshway_ipc::PingError::Stopped,
+        });
+        ping.cancellation.cancel();
+    }
     while let Some(command) = received.recv().await {
         if failure.is_some() {
             let _ = command.reply.send(Err(ErrorCode::Storage));
@@ -104,6 +162,7 @@ pub async fn run(
     }
     desired.send_modify(|plan| plan.shutdown = true);
     stop_ipc.send_replace(true);
+    while ping_forwarders.join_next().await.is_some() {}
     if !listener_done {
         match listener.await {
             Ok(Ok(())) => {}

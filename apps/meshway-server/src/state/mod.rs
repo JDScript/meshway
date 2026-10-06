@@ -10,7 +10,7 @@ use crate::error::Error;
 use crate::resources::GeoIp;
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{
-    Digest, InstanceId, NetworkId, NodeId, Revision, Sequence, StateEpoch, Version,
+    Digest, InstanceId, NetworkId, NodeId, ObservationId, Revision, Sequence, StateEpoch, Version,
     state::{ConfigurationRef, ResourceRef, SocketNetwork},
 };
 use meshway_protocol::state::*;
@@ -52,8 +52,13 @@ pub struct ConfigurationAdmission {
     /// Authorized adjacent peers and allowed outer transports, never arbitrary
     /// subpaths of a business permit. Also used for connect probes.
     pub neighbor_transports: BTreeMap<NodeId, BTreeSet<String>>,
+    /// Source-side carriers authorized for each exact complete probe path.
+    pub path_transports: PathTransports,
+    pub diagnostic_transports: BTreeMap<ObservationId, PathTransports>,
+    pub mesh_address_pools: meshway_configuration::AddressPools,
     pub profiles: BTreeSet<String>,
 }
+pub type PathTransports = BTreeMap<Vec<NodeId>, BTreeSet<String>>;
 impl ReportAdmission {
     pub fn context(&self, reference: &ConfigurationRef) -> Result<&ConfigurationAdmission, Error> {
         if !self.configurations.contains(reference) {

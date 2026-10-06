@@ -71,6 +71,22 @@ function timestampMillis(value: string): boolean {
   return millis >= 0 && millis <= 253402300799999;
 }
 
+const socketIpv4 = z.ipv4();
+const socketIpv6 = z.ipv6();
+function socketAddress(value: string): boolean {
+  const parts = /^(?:\[([^\]]+)\]|([^:]+)):([0-9]+)$/.exec(value);
+  if (!parts || parts[0].length !== value.length) return false;
+  const port = Number(parts[3]);
+  if (port < 1 || port > 65535) return false;
+  const host = parts[1] ?? parts[2];
+  if (host === undefined || /[^0-9a-fA-F:.%]/.test(host)) return false;
+  if (parts[1] === undefined) return socketIpv4.safeParse(parts[2]).success;
+  const separator = parts[1].lastIndexOf("%");
+  if (separator < 0) return socketIpv6.safeParse(parts[1]).success;
+  const scope = parts[1].slice(separator + 1);
+  return scope.length > 0 && !/[^0]/.test(scope) && socketIpv6.safeParse(parts[1].slice(0, separator)).success;
+}
+
 export const zUdpTraversalId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zAcceptUdpTraversalPath = z.strictObject({
@@ -138,9 +154,12 @@ export const zCandidateReference = z.strictObject({
   ["socket"]: zSocketReference
 });
 
+export const zEndpointKind = z.enum(["configured","interface","stun"]);
+
 export const zUdpTraversalParticipant = z.strictObject({
   ["address"]: z.string(),
-  ["candidate"]: zCandidateReference
+  ["candidate"]: zCandidateReference,
+  ["source"]: zEndpointKind
 });
 
 export const zNetworkId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
@@ -464,6 +483,10 @@ export const zCancelEnrollmentRequestPath = z.strictObject({
 });
 
 export const zObservationSubscriptionId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+
+export const zCancelNodeObservationPath = z.strictObject({
+  ["subscriptionId"]: zObservationSubscriptionId
+});
 
 export const zCancelObservationPath = z.strictObject({
   ["networkId"]: zNetworkId,
@@ -1584,6 +1607,24 @@ export const zObservationPath = z.union([z.strictObject({
   ["path"]: z.array(zNodeId)
 })]);
 
+export const zNodeObservationTarget = z.union([z.strictObject({
+  ["name"]: z.string().refine(value => [...value].length <= 253, "maxLength 253 Unicode code points"),
+  ["type"]: z.enum(["name"])
+}), z.strictObject({
+  ["address"]: z.string().refine(value => [...value].length <= 64, "maxLength 64 Unicode code points"),
+  ["type"]: z.enum(["meshIp"])
+})]);
+
+export const zCreateNodeObservation = z.strictObject({
+  ["instance"]: zInstanceRequest,
+  ["intervalMs"]: z.int().gte(1000).lte(30000),
+  ["metrics"]: z.array(zMetricKind),
+  ["selection"]: zObservationPath,
+  ["service"]: zObservationServiceScope,
+  ["subscriptionId"]: zObservationSubscriptionId,
+  ["target"]: zNodeObservationTarget
+});
+
 export const zCreateObservation = z.strictObject({
   ["intervalMs"]: z.int().gte(1000).lte(30000),
   ["metrics"]: z.array(zMetricKind),
@@ -2065,6 +2106,15 @@ export const zGetNetworkStatePath = z.strictObject({
   ["networkId"]: zNetworkId
 });
 
+export const zGetNodeObservationPath = z.strictObject({
+  ["subscriptionId"]: zObservationSubscriptionId
+});
+
+export const zGetNodeObservationQuery = z.strictObject({
+  ["generation"]: zVersion,
+  ["instanceId"]: zInstanceId
+});
+
 export const zGetNodePath = z.strictObject({
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId
@@ -2090,11 +2140,39 @@ export const zGetRuleSetPath = z.strictObject({
   ["ruleSetKey"]: z.string()
 });
 
+export const zLinkAcquisition = z.union([z.strictObject({
+  ["type"]: z.enum(["publishedEndpoint"])
+}), z.strictObject({
+  ["type"]: z.enum(["acceptedInbound"])
+}), z.strictObject({
+  ["attemptId"]: zUdpTraversalId,
+  ["endpointSource"]: zEndpointKind,
+  ["type"]: z.enum(["coordinatedUdp"])
+})]);
+
+export const zSocketAddress = z.string().refine(socketAddress, "Expected numeric IP:port without an IPv6 scope");
+
+export const zProbeChannel = z.strictObject({
+  ["acquisition"]: zLinkAcquisition,
+  ["linkId"]: zDigest,
+  ["localAddress"]: zSocketAddress,
+  ["peerNodeId"]: zNodeId,
+  ["remoteAddress"]: zSocketAddress,
+  ["socketId"]: zDigest,
+  ["transport"]: zTransportProtocol
+});
+
+export const zProbeChannels = z.strictObject({
+  ["reply"]: zProbeChannel.nullable(),
+  ["request"]: zProbeChannel
+});
+
 export const zProbeKind = z.enum(["neighbor","path","connect","controller"]);
 
 export const zProbeOutcome = z.enum(["pending","success","timeout","failed"]);
 
 export const zProbeObservation = z.strictObject({
+  ["channels"]: zProbeChannels.nullable().exactOptional(),
   ["completedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["durationUs"]: zSequence.nullable().exactOptional(),
   ["kind"]: zProbeKind,
@@ -2854,6 +2932,26 @@ export const zNodeInventoryResponse = z.strictObject({
   ["items"]: z.array(zNodeInventoryView)
 });
 
+export const zNodeObservationCancelled = z.strictObject({
+  ["task"]: zObservationTask.nullable()
+});
+
+export const zNodeObservationQuery = z.strictObject({
+  ["generation"]: zVersion,
+  ["instanceId"]: zInstanceId
+});
+
+export const zNodeObservationTargetView = z.strictObject({
+  ["addresses"]: zNodeAddresses,
+  ["hostname"]: z.string(),
+  ["nodeId"]: zNodeId
+});
+
+export const zNodeObservationResponse = z.strictObject({
+  ["target"]: zNodeObservationTargetView,
+  ["task"]: zObservationTask
+});
+
 export const zNodeProof = z.strictObject({
   ["challengeId"]: zChallengeId,
   ["signature"]: zWireSecret
@@ -3073,6 +3171,15 @@ export const zRenewDemandRequest = z.strictObject({
   ["expiresAt"]: zTimestamp,
   ["instance"]: zInstanceRequest,
   ["requestId"]: zRequestId
+});
+
+export const zRenewNodeObservation = z.strictObject({
+  ["expiresAt"]: zTimestamp,
+  ["instance"]: zInstanceRequest
+});
+
+export const zRenewNodeObservationPath = z.strictObject({
+  ["subscriptionId"]: zObservationSubscriptionId
 });
 
 export const zRenewObservationPath = z.strictObject({

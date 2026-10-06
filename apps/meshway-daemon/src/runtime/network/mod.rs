@@ -1,5 +1,8 @@
 //! Local assembly only: Control owns authority, Host owns kernel state,
 //! Manager owns adjacency, and SecureNode owns IP flows and circuit crypto.
+#[cfg(any(target_os = "linux", test))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod diagnostics;
 #[cfg(target_os = "linux")]
 mod discovery;
 #[cfg(target_os = "linux")]
@@ -23,6 +26,18 @@ use meshway_protocol::{DemandRequest, RenewDemandRequest, execution::ApplyFailur
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
 
+pub(super) fn capabilities() -> std::collections::BTreeMap<String, meshway_model::state::Capability>
+{
+    let mut capabilities = meshway_connectivity::capabilities();
+    if cfg!(target_os = "linux") {
+        capabilities.insert(
+            "feature:path-observation".into(),
+            meshway_model::state::Capability::Feature { version: 1 },
+        );
+    }
+    capabilities
+}
+
 #[derive(Clone)]
 pub(super) struct Report {
     pub plane: DataPlane,
@@ -36,6 +51,8 @@ pub(super) struct Report {
     pub facts: Option<meshway_connectivity::Snapshot>,
     pub generation: meshway_model::Sequence,
     pub dependencies: std::collections::BTreeMap<meshway_model::NodeId, u32>,
+    pub observation_dependencies:
+        std::collections::BTreeMap<meshway_model::NodeId, Vec<meshway_model::ObservationId>>,
 }
 impl Report {
     pub fn stopped() -> Self {
@@ -51,6 +68,7 @@ impl Report {
             facts: None,
             generation: meshway_model::Sequence::MIN,
             dependencies: Default::default(),
+            observation_dependencies: Default::default(),
         }
     }
     pub fn current(&self, control: &meshway_control::Status) -> bool {
@@ -109,6 +127,11 @@ pub(super) struct Reply {
     renewal: Option<RenewDemandRequest>,
 }
 pub(super) enum Request {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    ObservationResult {
+        output: Box<meshway_diagnostics::Output>,
+        reply: oneshot::Sender<Result<(), ()>>,
+    },
     #[cfg(target_os = "linux")]
     Traversal(traversal::Request),
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Constructed by Linux packet ingress.
@@ -127,6 +150,12 @@ pub(super) enum Request {
 }
 
 impl Request {
+    /// Samples update history, not execution. Preserve their RPC deadline
+    /// without forcing unrelated configuration refresh/application work.
+    pub(super) fn inline(&self) -> bool {
+        self.acquisition()
+            || matches!(self, Self::ObservationResult { output, .. } if matches!(output.result.result, meshway_protocol::observations::ObservationUpdate::Sample { .. }))
+    }
     /// Traversal mutates only bounded acquisition state, not the compiled
     /// execution target. Its individual RPCs do not require a full refresh cycle.
     pub(super) fn acquisition(&self) -> bool {
@@ -149,6 +178,14 @@ struct Completion {
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Consumed by the Linux-only worker.
 enum Command {
+    DetachPing(meshway_model::ObservationSubscriptionId),
+    AttachPing {
+        subscription: meshway_model::ObservationSubscriptionId,
+        observation: meshway_model::ObservationId,
+        request: crate::runtime::PingRequest,
+        lease: watch::Receiver<Option<meshway_control::ObservationLease>>,
+        progress: watch::Sender<crate::runtime::ping::Progress>,
+    },
     Builder(oneshot::Sender<reqwest::ClientBuilder>),
     Sample(oneshot::Sender<reporting::Sample>),
     Stop {
@@ -160,7 +197,17 @@ enum Command {
     },
 }
 
+#[derive(Clone)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct ObservationPlan {
+    snapshot: ExecutionSnapshot,
+    tasks: Vec<meshway_protocol::observations::ObservationTask>,
+}
+
 pub(super) struct Handle {
+    observation_plans: watch::Sender<Option<ObservationPlan>>,
+    diagnostic_resume_after_refresh: std::collections::BTreeSet<meshway_model::ObservationId>,
+    diagnostic_paused: watch::Sender<std::collections::BTreeSet<meshway_model::ObservationId>>,
     commands: mpsc::Sender<Command>,
     target: watch::Sender<Option<Target>>,
     pub report: watch::Receiver<Report>,
@@ -181,6 +228,114 @@ pub(super) struct Handle {
 }
 
 impl Handle {
+    pub fn can_report_inline(&self, control: &Control) -> bool {
+        let report = self.report.borrow();
+        self.outcome == Some(Ok(()))
+            && report.plane == DataPlane::Ready
+            && report.current(&control.status())
+            && report.applied().is_some()
+    }
+    pub fn detach_ping(
+        &self,
+        subscription: meshway_model::ObservationSubscriptionId,
+    ) -> Result<(), ()> {
+        self.commands
+            .try_send(Command::DetachPing(subscription))
+            .map_err(|_| ())
+    }
+    pub fn diagnostics_ready(&self, control: &Control) -> bool {
+        let report = self.report.borrow();
+        report.plane == DataPlane::Ready
+            && report.current(&control.status())
+            && report.applied().is_some()
+    }
+    pub fn ping_readiness(&self, control: &Control) -> crate::runtime::ping::Readiness {
+        use crate::runtime::ping::Readiness;
+        if self.worker.is_finished() {
+            return Readiness::Unavailable;
+        }
+        if self.diagnostics_ready(control) {
+            return Readiness::Ready;
+        }
+        match self.report.borrow().plane {
+            DataPlane::Preparing | DataPlane::Suspended | DataPlane::Ready => Readiness::Preparing,
+            _ => Readiness::Unavailable,
+        }
+    }
+    pub fn attach_ping(
+        &self,
+        subscription: meshway_model::ObservationSubscriptionId,
+        observation: meshway_model::ObservationId,
+        request: crate::runtime::PingRequest,
+        lease: watch::Receiver<Option<meshway_control::ObservationLease>>,
+        progress: watch::Sender<crate::runtime::ping::Progress>,
+    ) -> Result<(), ()> {
+        self.commands
+            .try_send(Command::AttachPing {
+                subscription,
+                observation,
+                request,
+                lease,
+                progress,
+            })
+            .map_err(|_| ())
+    }
+    pub fn pause_observation(&self, id: meshway_model::ObservationId) {
+        self.diagnostic_paused.send_modify(|paused| {
+            paused.insert(id);
+        });
+    }
+    pub fn resume_observation(&self, id: meshway_model::ObservationId) {
+        self.diagnostic_paused.send_modify(|paused| {
+            paused.remove(&id);
+        });
+    }
+    pub fn resume_observation_after_refresh(&mut self, id: meshway_model::ObservationId) {
+        self.diagnostic_resume_after_refresh.insert(id);
+    }
+    pub async fn observation_tasks(&mut self, control: &mut Control) {
+        let Ok(snapshot) = control.execution_snapshot() else {
+            return;
+        };
+        // Transit/terminal permits do not create source tasks. The exact new
+        // snapshot also withdraws any previous source plan without an HTTP read.
+        if snapshot.configuration().is_ok_and(|cfg| {
+            !cfg.diagnostics
+                .values()
+                .any(|permit| permit.source == cfg.node_id)
+        }) {
+            self.diagnostic_paused.send_replace(Default::default());
+            self.diagnostic_resume_after_refresh.clear();
+            self.observation_plans.send_replace(Some(ObservationPlan {
+                snapshot,
+                tasks: Vec::new(),
+            }));
+            return;
+        }
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            control.get_observation_tasks(&snapshot),
+        )
+        .await;
+        if let Ok(Ok(tasks)) = response {
+            for task in &tasks.items {
+                tracing::debug!(operation = "get_observation_tasks", observation = %task.id,
+                    source_instance = %task.instance_id, publication = %task.configuration.execution_publication,
+                    phase = ?task.phase, segment = ?task.path_segment, expires_at = %task.expires_at,
+                    "Observation task received");
+            }
+            let resume = std::mem::take(&mut self.diagnostic_resume_after_refresh);
+            self.diagnostic_paused.send_modify(|paused| {
+                paused.retain(|id| {
+                    !resume.contains(id) && tasks.items.iter().any(|task| task.id == *id)
+                })
+            });
+            self.observation_plans.send_replace(Some(ObservationPlan {
+                snapshot,
+                tasks: tasks.items,
+            }));
+        }
+    }
     pub async fn open(
         directory: Arc<Directory>,
         origin: &str,
@@ -223,6 +378,8 @@ impl Handle {
                     Problem::Underlay
                 })?;
             let (commands, received) = mpsc::channel(4);
+            let (diagnostic_paused, paused) = watch::channel(Default::default());
+            let (observation_plans, plans_rx) = watch::channel(None);
             let (target, targets) = watch::channel(None);
             let report = reports.subscribe();
             let (reports, reporting) = reporting::channel(reports);
@@ -242,8 +399,13 @@ impl Handle {
                 completed,
                 (dns, plans),
                 traversal,
+                paused,
+                plans_rx,
             ));
             Ok(Self {
+                observation_plans,
+                diagnostic_resume_after_refresh: Default::default(),
+                diagnostic_paused,
                 commands,
                 target,
                 report,
@@ -481,6 +643,9 @@ impl Handle {
     }
 
     pub async fn stop(&mut self, down: bool) -> Result<(), Problem> {
+        self.observation_plans.send_replace(None);
+        self.diagnostic_resume_after_refresh.clear();
+        self.diagnostic_paused.send_replace(Default::default());
         self.target.send_replace(None);
         self.ticket = None;
         self.outcome = None;
@@ -583,6 +748,49 @@ pub(super) async fn request(
     request: Request,
 ) -> Result<(), meshway_control::Error> {
     let (operation, reply) = match request {
+        Request::ObservationResult { output, mut reply } => {
+            if reply.is_closed() || !output.is_current() {
+                return Ok(());
+            }
+            let (measurement, segment) = match &output.result.result {
+                meshway_protocol::observations::ObservationUpdate::Sample {
+                    sample,
+                    path_segment,
+                    ..
+                } => (Some(sample.measurement_id), Some(*path_segment)),
+                _ => (None, None),
+            };
+            tracing::debug!(operation = "report_observation_result", observation = %output.task.id,
+                source_instance = %output.result.instance_id, ?measurement, ?segment,
+                publication = %output.result.configuration.execution_publication,
+                task_publication = %output.task.configuration.execution_publication,
+                current_publication = ?control.status().cached.map(|cfg| cfg.execution_publication),
+                task_phase = ?output.task.phase, "Observation result dispatched");
+            let result = tokio::select! { biased;
+                _ = reply.closed() => return Ok(()),
+                result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                control.report_observation_result(&output.snapshot, &output.task, &output.result),
+            )
+                => result,
+            };
+            return match result {
+                Ok(Ok(_)) => {
+                    tracing::debug!(operation = "report_observation_result", observation = %output.task.id, ?measurement, ?segment, publication = %output.result.configuration.execution_publication, "Observation result accepted");
+                    let _ = reply.send(Ok(()));
+                    Ok(())
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!(operation = "report_observation_result", observation = %output.task.id, source_instance = %output.result.instance_id, ?measurement, ?segment, publication = %output.result.configuration.execution_publication, %error, "Observation result rejected");
+                    let _ = reply.send(Err(()));
+                    Err(error)
+                }
+                Err(_) => {
+                    let _ = reply.send(Err(()));
+                    Ok(())
+                }
+            };
+        }
         #[cfg(target_os = "linux")]
         Request::Traversal(request) => return traversal::dispatch(control, request).await,
         Request::Demand { operation, reply } => (operation, reply),
@@ -669,6 +877,9 @@ pub(super) async fn request(
     });
     result
 }
+
+#[cfg(test)]
+pub(in crate::runtime) mod testing;
 
 #[cfg(test)]
 mod tests {

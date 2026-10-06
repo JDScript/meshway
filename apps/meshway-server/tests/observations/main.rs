@@ -2,6 +2,7 @@
 //! authenticated Node report fixtures, not evidence of packet-level measurement.
 mod authorization;
 mod lifecycle;
+mod node;
 mod support;
 use meshway_configuration::execution::*;
 use meshway_model::{observations::*, state::*, *};
@@ -142,6 +143,7 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
                 window_end: now,
                 partial: false,
                 probe: Some(ProbeObservation {
+                    channels: None,
                     measurement_id: event,
                     kind: ProbeKind::Path,
                     link_id: None,

@@ -1,10 +1,12 @@
 """Namespace-safe lab deploy regressions; host mocks only, no Docker/services."""
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 import node_lab
 
 
@@ -42,12 +44,18 @@ class Deploy(unittest.TestCase):
         self.calls = []
         self.addCleanup(patch.stopall)
         patch.object(node_lab, "ROOT", self.root).start()
-        patch.object(node_lab, "selected_release", side_effect=lambda lab: (self.release, {"platform": "linux/arm64"})).start()
+        patch.object(node_lab, "selected_release", side_effect=lambda lab: (self.release, {
+            "platform": "linux/arm64", "sha256": {"meshwayd": "a" * 64}})).start()
+        patch.object(node_lab, "selected_image", return_value={"imageId": "sha256:" + "b" * 64, "sourceDigest": "c" * 64}).start()
+        patch.object(node_lab, "deployment_digest", return_value="d" * 64).start()
+        patch.object(node_lab, "daemon_proof", side_effect=lambda node, container, status: {
+            "sha256": "a" * 64, "release": container["binaryRelease"], "processId": status["processId"],
+            "startTicks": 123, "mountNamespace": "mnt:[123]"}).start()
         patch.object(node_lab.subprocess, "run", side_effect=self.external).start()
         self.output = patch("builtins.print").start()
 
     def container(self, node, config_hash):
-        return {"Id": "old-" + node, "RestartCount": 0,
+        return {"Id": "old-" + node, "RestartCount": 0, "Image": "sha256:" + "b" * 64, "binaryRelease": str(self.release),
                 "State": {"Running": True, "Status": "running", "StartedAt": "original-run-" + node, "FinishedAt": ""},
                 "Mounts": [{"Type": "volume", "Name": f"meshway-{node}-state", "Source": f"/volumes/{node}/_data",
                             "Destination": "/var/lib/meshway", "RW": True}], "Config": {"Labels": {
@@ -55,7 +63,7 @@ class Deploy(unittest.TestCase):
             "com.docker.compose.service": node, "com.docker.compose.config-hash": config_hash}}}
 
     def status(self, node, up=True, mode="tun"):
-        return {"identity": {"nodeId": node + "-identity", "networkId": "lab-network"},
+        return {"processId": 42, "identity": {"nodeId": node + "-identity", "networkId": "lab-network"},
                 "desiredUp": up, "networkMode": mode,
                 "dataPlane": "controlOnly" if mode == "controlOnly" else "ready" if up else "stopped",
                 "phase": ("controlReady" if mode == "controlOnly" else "running") if up else "down",
@@ -354,6 +362,22 @@ class Deploy(unittest.TestCase):
         self.assertEqual(self.actions, [])
         self.assertEqual(node_lab.deploy_journal(self.lab)["phase"], "complete")
 
+    def test_daemon_replacement_or_image_change_cannot_reuse_plan(self):
+        self.change("lax")
+        self.fail_down = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.deploy()
+        self.statuses["nyc"]["processId"] += 1
+        with self.assertRaisesRegex(node_lab.DevError, "daemon process/image/release conflict"):
+            self.deploy()
+        self.assertEqual(self.actions, ["down:lax"])
+
+    def test_matching_compose_hash_does_not_hide_wrong_running_image(self):
+        self.containers["lax"]["Image"] = "sha256:" + "9" * 64
+        with self.assertRaisesRegex(node_lab.DevError, "daemon process/image/release conflict"):
+            self.deploy()
+        self.assertEqual(self.actions, [])
+
     def test_rebuild_stops_only_changed_tun_before_compose_then_restores(self):
         self.change("lax", "sha")
         self.statuses["sha"] = self.status("sha", mode="controlOnly")
@@ -555,6 +579,121 @@ class Deploy(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "not owned"):
             node_lab.operate("configure", self.lab)
         self.assertEqual(self.actions, ["down:lax"])
+
+
+class ImageSelection(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="meshway-image-selection-")
+        self.addCleanup(self.temp.cleanup)
+        self.lab = Path(self.temp.name)
+        self.directory = self.lab / "images/candidate"
+        self.directory.mkdir(parents=True, mode=0o700)
+        self.manifest = {"status": "built", "platform": "linux/arm64", "imageId": "sha256:" + "a" * 64,
+                         "sourceDigest": "b" * 64, "base": node_lab.base_image()}
+        self.image = {"Id": self.manifest["imageId"], "Os": "linux", "Architecture": "arm64", "Config": {
+            "Labels": {"io.meshway.node-lab.image": "1", "io.meshway.node-lab.source": "b" * 64},
+            "Entrypoint": ["/usr/local/lib/meshway-lab/entrypoint.sh"]}}
+        node_lab.save(self.lab / "selected-image.json", {"manifest": str(self.directory / "image-manifest.json")})
+        self.save_manifest()
+        self.addCleanup(patch.stopall)
+        patch.object(node_lab, "image_builder", return_value=SimpleNamespace(source_digest=lambda: "b" * 64)).start()
+        self.run = patch.object(node_lab, "run", side_effect=lambda *args, **kw: json.dumps([self.image])).start()
+
+    def save_manifest(self):
+        (self.directory / "image-manifest.json").write_text(json.dumps(self.manifest))
+
+    def test_selection_reads_only_immutable_local_id(self):
+        self.assertEqual(node_lab.selected_image(self.lab, "linux/arm64"), self.manifest)
+        self.run.assert_called_once_with("docker", "image", "inspect", self.manifest["imageId"], capture=True, timeout=45)
+
+    def test_stale_source_wrong_arch_foreign_image_volume_and_entrypoint_are_rejected(self):
+        for owner, key, value in [
+            (self.manifest, "sourceDigest", "c" * 64), (self.manifest, "platform", "linux/amd64"),
+            (self.manifest, "status", "candidate"), (self.manifest, "imageId", "ubuntu:latest"),
+            (self.image, "Architecture", "amd64"), (self.image, "Id", "sha256:" + "c" * 64),
+            (self.image["Config"], "Volumes", {"/state": {}}), (self.image["Config"], "User", "1000"),
+            (self.image["Config"], "Entrypoint", ["/bin/sh"]),
+            (self.image["Config"]["Labels"], "io.meshway.node-lab.source", "c" * 64),
+        ]:
+            with self.subTest(key=key), patch.dict(owner, {key: value}):
+                self.save_manifest()
+                with self.assertRaises(node_lab.DevError):
+                    node_lab.selected_image(self.lab, "linux/arm64")
+            self.save_manifest()
+
+    def test_selection_cannot_escape_private_image_directory(self):
+        node_lab.save(self.lab / "selected-image.json", {"manifest": str(self.lab / "foreign/image-manifest.json")})
+        with self.assertRaisesRegex(node_lab.DevError, "outside this lab"):
+            node_lab.selected_image(self.lab, "linux/arm64")
+        self.run.assert_not_called()
+
+    def test_failed_built_image_verification_retains_previous_selection(self):
+        before = (self.lab / "selected-image.json").read_bytes()
+        self.image["Config"]["Volumes"] = {"/unexpected": {}}
+        builder = SimpleNamespace(source_digest=lambda: "b" * 64, build=lambda output, platform: self.manifest)
+        with patch.object(node_lab, "image_builder", return_value=builder), patch.object(
+                node_lab, "docker_target", return_value=("aarch64-unknown-linux-musl", "linux/arm64", 183)):
+            with self.assertRaises(node_lab.DevError):
+                node_lab.build_image(self.lab)
+        self.assertEqual((self.lab / "selected-image.json").read_bytes(), before)
+
+
+class DaemonProof(unittest.TestCase):
+    def setUp(self):
+        self.digest = hashlib.sha256(b"daemon binary, distinct from supervisor").hexdigest()
+        self.container = {"Id": "owned-container", "Mounts": [
+            {"Destination": "/opt/meshway", "Source": "/releases/exact", "Type": "bind", "RW": False}]}
+        # /proc stat field 22 is the boot-relative start time; command may have spaces.
+        fields = ["S"] + ["0"] * 18 + ["12345"]
+        self.lines = ["/opt/meshway/meshwayd", self.digest + "  /proc/42/exe",
+                      "42 (meshway daemon) " + " ".join(fields), "Uid:\t0\t0\t0\t0", "mnt:[7]", "mnt:[7]",
+                      json.dumps({"sha256": {"meshwayd": self.digest}})]
+
+    def test_hashes_status_pid_and_checks_exact_executable_mount_uid_namespace(self):
+        with patch.object(node_lab, "run", return_value="\n".join(self.lines)) as run:
+            proof = node_lab.daemon_proof("lax", self.container, {"processId": 42})
+        self.assertEqual(proof["processId"], 42)
+        self.assertEqual(proof["sha256"], self.digest)
+        self.assertEqual(proof["startTicks"], 12345)
+        command = run.call_args.args[5]
+        self.assertIn("sha256sum /proc/42/exe", command)
+        self.assertNotIn("sha256sum /proc/1/exe", command)
+
+    def test_substituted_process_uid_namespace_or_hash_is_not_a_valid_receipt(self):
+        for index, value in [(0, "/usr/bin/python3"), (1, "0" * 64 + "  /proc/42/exe"),
+                             (3, "Uid: 1000 1000 1000 1000"), (4, "mnt:[8]"),
+                             (2, self.lines[2].replace("42 (", "43 ("))]:
+            with self.subTest(index=index):
+                lines = self.lines.copy()
+                lines[index] = value
+                with patch.object(node_lab, "run", return_value="\n".join(lines)):
+                    with self.assertRaises(node_lab.DevError):
+                        node_lab.daemon_proof("lax", self.container, {"processId": 42})
+        for pid in (True, 0, -1, "42; anything", 4194305):
+            with self.subTest(pid=pid), self.assertRaises(node_lab.DevError):
+                node_lab.daemon_proof("lax", self.container, {"processId": pid})
+        self.container["Mounts"][0]["RW"] = True
+        with self.assertRaisesRegex(node_lab.DevError, "read-only bind"):
+            node_lab.daemon_proof("lax", self.container, {"processId": 42})
+
+
+class ImageBuildPreflight(unittest.TestCase):
+    def test_native_engine_and_default_builder_are_required(self):
+        builder = node_lab.image_builder()
+        native = {"ID": "engine-a", "OSType": "linux", "Architecture": "aarch64"}
+        for outputs, message in [
+            ([json.dumps({**native, "Architecture": "x86_64"})], "native Linux Docker architecture"),
+            ([json.dumps(native), json.dumps({**native, "ID": "engine-b"})], "selected Docker engine"),
+            ([json.dumps(native), json.dumps(native), "Driver: docker-container\n"], "ordinary default Docker builder"),
+        ]:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as temporary, patch.object(
+                    builder.shutil, "disk_usage", return_value=SimpleNamespace(free=60 * 1024 ** 3)), patch.object(
+                    builder.subprocess, "check_output", side_effect=outputs), patch.object(builder.subprocess, "run") as run:
+                output = Path(temporary) / "new-output"
+                with self.assertRaisesRegex(RuntimeError, message):
+                    builder.build(output, "linux/arm64")
+                self.assertFalse(output.exists())
+                run.assert_not_called()
 
 
 if __name__ == "__main__":

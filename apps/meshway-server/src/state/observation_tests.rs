@@ -90,9 +90,12 @@ impl ObservationProvider for Fixture {
             observation_id: None,
             unsupported_metrics: vec![],
             report: self.admission.clone(),
-            session_id: session(),
+            principal: crate::observations::SubscriberPrincipal::UserSession {
+                session: session(),
+                identity: identity.clone(),
+            },
             authorization_digest: self.scope.authorization_digest,
-            session_expires_at: self.scope.expires_at,
+            authorization_expires_at: self.scope.expires_at,
         })
     }
     fn observation_session(

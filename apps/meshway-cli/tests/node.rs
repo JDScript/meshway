@@ -111,6 +111,73 @@ async fn real_cli_enrollment(console_origin: Option<&str>) {
         let _ = stopped.await;
     }));
     status(&socket, Phase::Down).await;
+    let mut raw = tokio::net::UnixStream::connect(&socket).await.unwrap();
+    meshway_ipc::write(
+        &mut raw,
+        &meshway_ipc::Request {
+            version: meshway_ipc::VERSION + 1,
+            request_id: id(),
+            command: meshway_ipc::Command::Ping {
+                target: meshway_ipc::PingTarget::Name {
+                    name: "missing.mesh".into(),
+                },
+                count: 1,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let response: meshway_ipc::Response = meshway_ipc::read(&mut raw).await.unwrap();
+    assert!(matches!(
+        response.result,
+        meshway_ipc::ResultBody::Error {
+            code: meshway_ipc::ErrorCode::Version
+        }
+    ));
+    drop(raw);
+    let mut raw = tokio::net::UnixStream::connect(&socket).await.unwrap();
+    meshway_ipc::write(
+        &mut raw,
+        &serde_json::json!({
+            "version":meshway_ipc::VERSION,"requestId":id(),
+            "command":{"type":"ping","target":{"type":"name","name":"missing.mesh"},"count":0}
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        meshway_ipc::read::<meshway_ipc::Response>(&mut raw)
+            .await
+            .is_err()
+    );
+    drop(raw);
+    // Real IPC/runtime rejection must leave durable intent untouched.
+    let before_ping = meshway_ipc::Client::new(&socket)
+        .call(meshway_ipc::Command::Status)
+        .await
+        .unwrap();
+    let mut ping = meshway_ipc::Client::new(&socket)
+        .ping(
+            meshway_ipc::PingTarget::Name {
+                name: "missing.mesh".into(),
+            },
+            1,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        ping.next().await.unwrap(),
+        Some(meshway_ipc::PingEvent::Failed {
+            code: meshway_ipc::PingError::Unsupported
+        })
+    ));
+    assert!(ping.next().await.unwrap().is_none());
+    let after_ping = meshway_ipc::Client::new(&socket)
+        .call(meshway_ipc::Command::Status)
+        .await
+        .unwrap();
+    assert_eq!(after_ping.revision, before_ping.revision);
+    assert_eq!(after_ping.desired_up, before_ping.desired_up);
     let output = cli(&socket, "up", true).await;
     assert!(
         output.status.success(),

@@ -73,16 +73,14 @@ pub(super) fn plans(
     Ok(plans)
 }
 
-pub(super) async fn dial(
-    mut shared: Arc<Shared>,
-    factory: Arc<dyn SocketFactory>,
-    peer: NodeId,
-    candidates: Vec<Candidate>,
-) {
+pub(super) async fn dial(mut shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, peer: NodeId) {
     let mut updates = shared.epochs.subscribe();
-    let candidates = Arc::new(candidates);
     loop {
-        dial_epoch(shared.clone(), factory.clone(), peer, candidates.clone()).await;
+        let candidates = match plans(&shared.identity, shared.limits) {
+            Ok(mut plans) => Arc::new(plans.remove(&peer).unwrap_or_default()),
+            Err(_) => return,
+        };
+        dial_epoch(shared.clone(), factory.clone(), peer, candidates).await;
         match shared.latest(&mut updates).await {
             Ok(next) => shared = next,
             Err(_) => return,
@@ -176,6 +174,7 @@ async fn dial_epoch(
                             carrier: candidate.carrier.clone(),
                             local: socket.local,
                             remote: socket.peer,
+                            acquisition: LinkAcquisition::PublishedEndpoint,
                         },
                         opening,
                     ))
@@ -333,6 +332,7 @@ pub(super) async fn listen(
                         carrier,
                         local: socket.local,
                         remote: socket.peer,
+                        acquisition: LinkAcquisition::AcceptedInbound,
                     },
                     opening,
                 ))

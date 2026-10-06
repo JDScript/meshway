@@ -69,6 +69,12 @@ pub enum Signal {
         revision: Revision,
     },
     Ready,
+    PingRun {
+        run: Box<crate::ping::Run>,
+    },
+    Installations {
+        evidence: Box<crate::traversal::Installations>,
+    },
     HttpAvailability {
         available: bool,
         observed_at_ms: u64,
@@ -91,6 +97,7 @@ pub enum Signal {
         dns: Option<crate::dns::Evidence>,
         fallback: Option<Box<crate::fallback::Evidence>>,
         recovery: Box<crate::recovery::Evidence>,
+        ping: Option<Box<crate::ping::PingEvidence>>,
     },
 }
 
@@ -178,7 +185,7 @@ impl Signals {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        if !metadata.is_file() || metadata.len() > 64 * 1024 {
+        if !metadata.is_file() || metadata.len() > 512 * 1024 {
             return Err("invalid rendezvous file".into());
         }
         Ok(Some(Signal::decode(name, &tokio::fs::read(path).await?)?))
@@ -284,6 +291,11 @@ mod tests {
             identity_preserved: true,
             dns: None,
             fallback: None,
+            ping: Some(Box::new(crate::ping::PingEvidence {
+                runs: vec![crate::ping::roundtrip_run(elapsed)],
+                business_continuity: None,
+                diagnostic_only_business_demands: None,
+            })),
             recovery: Box::new(Evidence {
                 expired: Expired {
                     before: Box::new(status()),
@@ -343,10 +355,10 @@ mod tests {
                 let mut bytes = Vec::new();
                 std::fs::File::open(path.join("signals").join(format!("{name}.json")))
                     .unwrap()
-                    .take(64 * 1024 + 1)
+                    .take(512 * 1024 + 1)
                     .read_to_end(&mut bytes)
                     .unwrap();
-                assert!(bytes.len() <= 64 * 1024);
+                assert!(bytes.len() <= 512 * 1024);
                 // Original abort markers/run verdicts stay intact. This uses
                 // the live decoder directly, without bypassing abort handling
                 // for a running Signals consumer or writing into old evidence.

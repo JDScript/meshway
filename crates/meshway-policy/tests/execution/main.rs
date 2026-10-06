@@ -6,6 +6,7 @@ use meshway_transport_spec::*;
 use std::collections::BTreeMap;
 mod admission;
 mod capture;
+mod diagnostics;
 mod dns_egress;
 mod local_egress;
 fn node(i: u8) -> NodeId {

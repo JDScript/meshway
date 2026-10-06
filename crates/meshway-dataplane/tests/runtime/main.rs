@@ -7,6 +7,7 @@
 mod authority_race;
 mod circuit_binding;
 mod continuity;
+mod diagnostic;
 mod handshake_recovery;
 mod icmp;
 mod responder;

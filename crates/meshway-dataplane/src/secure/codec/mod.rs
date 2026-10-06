@@ -1,7 +1,7 @@
 use super::{Error, MAX_FRAME, MAX_PLAINTEXT};
 use crate::{PacketFacts, TcpSegment, Transport};
-use meshway_configuration::execution::BusinessProtocol;
-use meshway_model::{Digest, KeyId, NetworkId, NodeId, RequestId, Version};
+use meshway_configuration::execution::{BusinessProtocol, CircuitAuthorization};
+use meshway_model::{Digest, EventId, KeyId, NetworkId, NodeId, Version};
 use meshway_policy::admission::{Carrier, Traffic};
 use meshway_transport_spec::{Port, TransportProtocol};
 use std::{
@@ -9,7 +9,7 @@ use std::{
     str::FromStr,
 };
 
-pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x02";
+pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x03";
 pub(super) const MAX_PATH: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -17,12 +17,14 @@ pub(super) enum Kind {
     Init,
     Response,
     Data,
+    ProbeRequest,
+    ProbeReply,
 }
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct Context {
     pub network: NetworkId,
-    pub demand: RequestId,
+    pub authorization: CircuitAuthorization,
     pub path: Vec<NodeId>,
     pub circuit: [u8; 32],
     pub permit: Digest,
@@ -35,8 +37,15 @@ pub(super) struct Frame {
     pub reply: bool,
     pub sequence: u64,
     pub facts: Option<PacketFacts>,
+    pub probe: Option<ProbeMetadata>,
     pub body: Vec<u8>,
     pub proofs: Vec<Proof>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct ProbeMetadata {
+    pub measurement_id: EventId,
+    pub expires_at_ms: u64,
 }
 
 pub(super) struct Proof {
@@ -63,7 +72,16 @@ impl Context {
             return Err(Error::Wire);
         }
         id(out, self.network);
-        id(out, self.demand);
+        match self.authorization {
+            CircuitAuthorization::Business(value) => {
+                out.push(1);
+                id(out, value);
+            }
+            CircuitAuthorization::Diagnostic(value) => {
+                out.push(2);
+                id(out, value);
+            }
+        }
         id(out, self.path[0]); // Explicit original origin, checked against the path.
         out.push(self.path.len() as u8);
         for node in &self.path {
@@ -78,6 +96,17 @@ impl Context {
 
 impl Frame {
     pub fn validate(&self) -> Result<(), Error> {
+        let diagnostic = matches!(
+            self.context.authorization,
+            CircuitAuthorization::Diagnostic(_)
+        );
+        let probe = matches!(self.kind, Kind::ProbeRequest | Kind::ProbeReply);
+        if self.probe.is_some() != probe
+            || (probe && !diagnostic)
+            || (self.kind == Kind::Data && diagnostic)
+        {
+            return Err(Error::Wire);
+        }
         match (self.kind, self.reply, self.facts) {
             (Kind::Init, false, None) if self.sequence == 0 && self.body.len() == 96 => {}
             (Kind::Response, true, None) if self.sequence == 0 && self.body.len() == 48 => {}
@@ -87,6 +116,8 @@ impl Frame {
                     return Err(Error::Wire);
                 }
             }
+            (Kind::ProbeRequest, false, None) | (Kind::ProbeReply, true, None)
+                if self.sequence != u64::MAX && self.body.len() == 48 => {}
             _ => return Err(Error::Wire),
         }
         if self.proofs.len() >= self.context.path.len() {
@@ -103,12 +134,18 @@ impl Frame {
             Kind::Init => 1,
             Kind::Response => 2,
             Kind::Data => 3,
+            Kind::ProbeRequest => 4,
+            Kind::ProbeReply => 5,
         });
         self.context.encode(&mut out)?;
         out.push(u8::from(self.reply));
         out.extend_from_slice(&self.sequence.to_be_bytes());
         if let Some(facts) = self.facts {
             encode_facts(&mut out, facts);
+        }
+        if let Some(probe) = self.probe {
+            id(&mut out, probe.measurement_id);
+            out.extend_from_slice(&probe.expires_at_ms.to_be_bytes());
         }
         out.extend_from_slice(&(self.body.len() as u32).to_be_bytes());
         out.extend_from_slice(&self.body);
@@ -139,10 +176,16 @@ impl Frame {
             1 => Kind::Init,
             2 => Kind::Response,
             3 => Kind::Data,
+            4 => Kind::ProbeRequest,
+            5 => Kind::ProbeReply,
             _ => return Err(Error::Wire),
         };
         let network = r.id()?;
-        let demand = r.id()?;
+        let authorization = match r.byte()? {
+            1 => CircuitAuthorization::Business(r.id()?),
+            2 => CircuitAuthorization::Diagnostic(r.id()?),
+            _ => return Err(Error::Wire),
+        };
         let origin: NodeId = r.id()?;
         let count = usize::from(r.byte()?);
         if !(2..=MAX_PATH).contains(&count) {
@@ -166,6 +209,14 @@ impl Frame {
         let sequence = r.u64()?;
         let facts = if kind == Kind::Data {
             Some(decode_facts(&mut r)?)
+        } else {
+            None
+        };
+        let probe = if matches!(kind, Kind::ProbeRequest | Kind::ProbeReply) {
+            Some(ProbeMetadata {
+                measurement_id: r.id()?,
+                expires_at_ms: r.u64()?,
+            })
         } else {
             None
         };
@@ -193,7 +244,7 @@ impl Frame {
         let frame = Self {
             context: Context {
                 network,
-                demand,
+                authorization,
                 path,
                 circuit,
                 permit,
@@ -203,6 +254,7 @@ impl Frame {
             reply,
             sequence,
             facts,
+            probe,
             body,
             proofs,
         };

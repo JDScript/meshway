@@ -1709,6 +1709,7 @@ dependencies = [
  "meshway-dataplane",
  "meshway-model",
  "meshway-policy",
+ "meshway-private-storage",
  "meshway-protocol",
  "meshway-server",
  "meshway-stun",
@@ -1789,6 +1790,7 @@ dependencies = [
  "meshway-control",
  "meshway-control-client",
  "meshway-dataplane",
+ "meshway-diagnostics",
  "meshway-dns",
  "meshway-ipc",
  "meshway-logging",
@@ -1804,6 +1806,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -1839,6 +1842,28 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "meshway-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "getrandom 0.3.4",
+ "meshway-configuration",
+ "meshway-control",
+ "meshway-control-client",
+ "meshway-dataplane",
+ "meshway-model",
+ "meshway-protocol",
+ "meshway-server",
+ "reqwest",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]
@@ -1905,6 +1930,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "meshway-serde",
+ "meshway-transport-spec",
  "serde",
  "serde_json",
  "thiserror",
@@ -2868,6 +2894,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

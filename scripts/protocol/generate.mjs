@@ -78,6 +78,7 @@ export function validators(document) {
   let usesTypedMap = false;
   let usesDateTime = false;
   let usesTimestampMillis = false;
+  let usesSocketAddress = false;
   let usesNumber = false;
   const schemas = document.components?.schemas ?? document.$defs;
   const referencePrefix = document.components?.schemas ? "#/components/schemas/" : "#/$defs/";
@@ -205,11 +206,16 @@ export function validators(document) {
           if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title", "x-meshway-ref"].includes(key))) throw new Error("Only plain string enums are supported");
           return `z.enum(${JSON.stringify(schema.enum)})`;
         }
-        if (schema.format && !["date-time", "meshway-timestamp-ms", "password", "uuid", "ipv4", "ipv6"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
+        if (schema.format && !["date-time", "meshway-timestamp-ms", "meshway-socket-address", "password", "uuid", "ipv4", "ipv6"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
         if (schema.format === "uuid" && !schema.pattern) throw new Error("UUID format requires the authoritative canonical UUID pattern");
         if (schema.format === "date-time") usesDateTime = true;
         if (schema.format === "meshway-timestamp-ms") usesTimestampMillis = usesDateTime = true;
-        let code = schema.format === "meshway-timestamp-ms" ? 'z.string().refine(timestampMillis, "Expected nonnegative RFC 3339 exact milliseconds")' : schema.format === "date-time" ? 'z.string().refine(rfc3339, "Expected RFC 3339 date-time")' : ["ipv4", "ipv6"].includes(schema.format) ? `z.${schema.format}()` : "z.string()";
+        if (schema.format === "meshway-socket-address") usesSocketAddress = true;
+        let code = "z.string()";
+        if (schema.format === "meshway-socket-address") code += '.refine(socketAddress, "Expected numeric IP:port without an IPv6 scope")';
+        else if (schema.format === "meshway-timestamp-ms") code += '.refine(timestampMillis, "Expected nonnegative RFC 3339 exact milliseconds")';
+        else if (schema.format === "date-time") code += '.refine(rfc3339, "Expected RFC 3339 date-time")';
+        else if (["ipv4", "ipv6"].includes(schema.format)) code = `z.${schema.format}()`;
         for (const [key, operator] of [["minLength", ">="], ["maxLength", "<="]]) {
           if (schema[key] !== undefined) {
             if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);
@@ -283,7 +289,7 @@ export function validators(document) {
     return typeof schema.type === "string" && schema.type !== "null";
   }
   for (const name of Object.keys(schemas).sort()) component(name);
-  return `// Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.\n\nimport * as z from "zod";\n${usesNumber ? 'import { unwrapJsonNumber } from "../json.ts";\n' : ""}\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${usesDateTime ? dateTimeHelper + "\n\n" : ""}${usesTimestampMillis ? timestampMillisHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
+  return `// Generated from the Server OpenAPI by scripts/protocol/generate.mjs. Do not edit.\n\nimport * as z from "zod";\n${usesNumber ? 'import { unwrapJsonNumber } from "../json.ts";\n' : ""}\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${usesDateTime ? dateTimeHelper + "\n\n" : ""}${usesTimestampMillis ? timestampMillisHelper + "\n\n" : ""}${usesSocketAddress ? socketAddressHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
 }
 
 // RFC 3339 permits lowercase t/z and leap seconds. Zod's ISO validator is
@@ -315,6 +321,22 @@ const timestampMillisHelper = `function timestampMillis(value: string): boolean 
   const offset = parts[8] === undefined ? 0 : (Number(parts[9]) * 60 + Number(parts[10])) * (parts[8] === "+" ? 1 : -1);
   const millis = date.getTime() - offset * 60000;
   return millis >= 0 && millis <= 253402300799999;
+}`;
+
+const socketAddressHelper = `const socketIpv4 = z.ipv4();
+const socketIpv6 = z.ipv6();
+function socketAddress(value: string): boolean {
+  const parts = /^(?:\\[([^\\]]+)\\]|([^:]+)):([0-9]+)$/.exec(value);
+  if (!parts || parts[0].length !== value.length) return false;
+  const port = Number(parts[3]);
+  if (port < 1 || port > 65535) return false;
+  const host = parts[1] ?? parts[2];
+  if (host === undefined || /[^0-9a-fA-F:.%]/.test(host)) return false;
+  if (parts[1] === undefined) return socketIpv4.safeParse(parts[2]).success;
+  const separator = parts[1].lastIndexOf("%");
+  if (separator < 0) return socketIpv6.safeParse(parts[1]).success;
+  const scope = parts[1].slice(separator + 1);
+  return scope.length > 0 && !/[^0]/.test(scope) && socketIpv6.safeParse(parts[1].slice(0, separator)).success;
 }`;
 
 // Zod 4 record skips __proto__ before validation and makes enum keys exhaustive.

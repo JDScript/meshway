@@ -92,6 +92,11 @@ pub(super) struct Deadline {
     clock: Arc<Clock>,
 }
 impl Deadline {
+    pub(super) async fn ended(&self, cancelled: &tokio_util::sync::CancellationToken) {
+        self.clock
+            .wait_until(self.monotonic, self.wall, cancelled)
+            .await;
+    }
     pub fn from_response(started: Started, expires: u64) -> Result<Self, Error> {
         let remaining = expires.checked_sub(started.wall).ok_or(Error::Expired)?;
         let monotonic = started

@@ -9,6 +9,7 @@ import {
   queryEnrollmentRequest, redeemEnrollmentRequest, createNodeChallenge, createNodeSession,
   acquireNodeInstance, renewNodeInstance, queryNodeConfiguration, applyConfiguration,
   createObservation, listObservations, getObservation, renewObservation, cancelObservation,
+  createNodeObservation, getNodeObservation, cancelNodeObservation,
   getNodeTasks, reportTaskResult,
   type ControlClient, type EnrollmentIntent, type CreateObservation, type ObservationResult,
 } from "../src/index.ts";
@@ -101,4 +102,48 @@ test("generated observation SDK prepares isolated diagnostic permits and release
   assert.ok((await renewNodeInstance(client, source.instance, source.auth)).ok);
   const finished = await getNodeTasks(client, source.auth);
   assert.ok(finished.ok && finished.data.items.length === 0);
+});
+
+test("Node observation SDK retains required instance queries and independently cancels a shared task", async t => {
+  const client = await controller(t);
+  const owner = await register(client, { email: "node-observation-sdk@example.test", password: "valid node observation password" });
+  assert.ok(owner.ok);
+  const user = { token: owner.data.token };
+  const network = await createNetwork(client, { requestId: randomUUID(), name: "Node observations" }, user);
+  assert.ok(network.ok);
+  const path = { networkId: network.data.network.id };
+  const source = await node(client, user, path.networkId, "probe-source");
+  const target = await node(client, user, path.networkId, "probe-target");
+  const current = await getNetwork(client, path, user);
+  assert.ok(current.ok);
+  assert.ok((await applyConfiguration(client, path, { type: "operations", requestId: randomUUID(), expectedRevision: current.data.network.currentRevision, ops: [
+    { type: "setListener", nodeId: target.id, key: "udp", listener: { type: "native_udp", listenPort: 23456 } },
+    { type: "replaceAccess", access: [{ remark: "precise ICMP probe", src: [`node:${source.id}`], dst: [`node:${target.id}`], ip: ["icmp:*"], bidirectional: false }] },
+  ] }, user)).ok);
+  assert.ok((await renewNodeInstance(client, source.instance, source.auth)).ok);
+  assert.ok((await renewNodeInstance(client, target.instance, target.auth)).ok);
+  const subscriptionId = randomUUID();
+  const request = { instance: source.instance, subscriptionId, target: { type: "name", name: "probe-target" }, service: { type: "icmpEcho" }, selection: { mode: "auto" }, metrics: ["rtt", "probeLoss"], intervalMs: 1000 } satisfies import("../src/index.ts").CreateNodeObservation;
+  const created = await createNodeObservation(client, request, source.auth);
+  assert.ok(created.ok);
+  assert.equal(created.data.target.nodeId, target.id);
+  assert.equal(created.data.task.sourceNodeId, source.id);
+  const read = await getNodeObservation(client, { subscriptionId }, source.instance, source.auth);
+  assert.ok(read.ok);
+  assert.equal(read.data.task.id, created.data.task.id);
+  assert.equal(read.data.task.subscriberExpiresAt, created.data.task.subscriberExpiresAt);
+  const foreign = await getNodeObservation(client, { subscriptionId }, target.instance, target.auth);
+  assert.ok(!foreign.ok && foreign.error.kind === "http" && foreign.error.status === 403);
+  const invalid = await getNodeObservation(client, { subscriptionId }, { ...source.instance, generation: 0 }, source.auth);
+  assert.ok(!invalid.ok && invalid.error.kind === "request");
+  const userSubscription = randomUUID();
+  const shared = await createObservation(client, path, { subscriptionId: userSubscription, sourceNodeId: source.id, targetNodeId: target.id, service: request.service, selection: request.selection, metrics: request.metrics, intervalMs: request.intervalMs }, user);
+  assert.ok(shared.ok && shared.data.id === created.data.task.id);
+  const cancelled = await cancelNodeObservation(client, { subscriptionId }, source.instance, source.auth);
+  assert.ok(cancelled.ok && cancelled.data.task?.id === shared.data.id);
+  assert.equal(cancelled.data.task.subscriptionId, null);
+  assert.equal(cancelled.data.task.subscriberExpiresAt, null);
+  const remains = await getObservation(client, { ...path, subscriptionId: userSubscription }, user);
+  assert.ok(remains.ok && remains.data.items[0]?.id === shared.data.id);
+  assert.ok((await cancelObservation(client, { ...path, subscriptionId: userSubscription }, user)).ok);
 });

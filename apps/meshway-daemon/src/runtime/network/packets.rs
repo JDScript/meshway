@@ -1,7 +1,9 @@
 //! Bounded scheduling of original packets and control intents. There is no
 //! second flow table: every local packet consults SecureNode's unique owner.
 use super::{Operation, Reply, Request, Target};
-use meshway_configuration::execution::{BusinessTarget, DemandDecision, ExecutionAddress};
+use meshway_configuration::execution::{
+    BusinessTarget, CircuitAuthorization, DemandDecision, ExecutionAddress,
+};
 use meshway_connectivity::{Carrier, Manager};
 use meshway_dataplane::{
     Packet,
@@ -30,6 +32,8 @@ struct Queued {
 }
 struct Incoming {
     carrier: Carrier,
+    link: meshway_connectivity::LinkFact,
+    received_at: std::time::Instant,
     bytes: Vec<u8>,
     deadline: Instant,
     guard: meshway_control::ExecutionSnapshot,
@@ -59,6 +63,7 @@ pub(super) struct Packets {
     attempts: Vec<Attempt>,
     traced_circuits: BTreeMap<[u8; 32], Instant>,
     pub dropped: u64,
+    carrier_wait_logged: Option<Instant>,
 }
 
 impl Packets {
@@ -67,6 +72,12 @@ impl Packets {
         if !tracing::enabled!(target: TARGET, tracing::Level::DEBUG) {
             return;
         }
+        // This observation is emitted only for admitted OS business packets.
+        // Diagnostic observations have their own typed measurement events and
+        // cannot be represented as a business demand, even in debug output.
+        let CircuitAuthorization::Business(demand) = circuit.authorization else {
+            return;
+        };
         let now = Instant::now();
         let id = frame.circuit();
         if self
@@ -95,7 +106,7 @@ impl Packets {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        tracing::debug!(target: TARGET, %cid, demand = %circuit.demand, %path_json, observed_at_ms,
+        tracing::debug!(target: TARGET, %cid, %demand, %path_json, observed_at_ms,
             "Mesh circuit packet ready");
     }
     pub fn wake_at(&self, target: &Target) -> Option<Instant> {
@@ -188,7 +199,13 @@ impl Packets {
         });
     }
 
-    pub fn incoming(&mut self, carrier: Carrier, bytes: Vec<u8>, target: &Target) {
+    pub fn incoming(
+        &mut self,
+        link: meshway_connectivity::LinkFact,
+        bytes: Vec<u8>,
+        received_at: std::time::Instant,
+        target: &Target,
+    ) {
         let Some(identity) = &target.identity else {
             return;
         };
@@ -204,9 +221,23 @@ impl Packets {
             self.drop_packet("cipher_header");
             return;
         };
-        let known = cfg.permits.get(&hint.demand).is_some_and(|permit| {
-            permit.expires_at_ms > now_ms && permit.paths.iter().any(|path| path.nodes == hint.path)
-        });
+        let known = match hint.authorization {
+            CircuitAuthorization::Business(id) => cfg.permits.get(&id).is_some_and(|permit| {
+                permit.expires_at_ms > now_ms
+                    && permit.paths.iter().any(|path| path.nodes == hint.path)
+            }),
+            CircuitAuthorization::Diagnostic(id) => {
+                cfg.diagnostics.get(&id).is_some_and(|permit| {
+                    permit.expires_at_ms > now_ms
+                        && permit.paths.iter().any(|path| path.nodes == hint.path)
+                })
+            }
+        };
+        if matches!(hint.authorization, CircuitAuthorization::Diagnostic(_)) {
+            tracing::debug!(authorization_untrusted = ?hint.authorization, local = %cfg.node_id,
+                publication = %identity.snapshot().reference().execution_publication,
+                known, "Diagnostic carrier frame received for scheduling");
+        }
         if !known
             || bytes.len() > secure::MAX_FRAME
             || self.local.len() + self.incoming.len() >= MAX_PACKETS
@@ -216,13 +247,16 @@ impl Packets {
             return;
         }
         self.incoming.push_back(Incoming {
-            carrier,
+            carrier: link.carrier.clone(),
+            link,
+            received_at,
             bytes,
             deadline: Instant::now() + Duration::from_secs(5),
             guard: identity.snapshot().clone(),
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn drive(
         &mut self,
         secure: &mut SecureNode,
@@ -230,6 +264,7 @@ impl Packets {
         host: &meshway_underlay::Host,
         target: &Target,
         gateway: &mpsc::Sender<Request>,
+        diagnostics: &mut super::diagnostics::Diagnostics,
     ) {
         let Some(identity) = &target.identity else {
             return;
@@ -281,6 +316,15 @@ impl Packets {
                 next.is_some_and(|node| !carriers.contains_key(node))
             });
             if waiting {
+                if self
+                    .carrier_wait_logged
+                    .is_none_or(|at| at.elapsed() >= Duration::from_secs(1))
+                {
+                    self.carrier_wait_logged = Some(Instant::now());
+                    tracing::debug!(authorization_untrusted = ?hint.as_ref().map(|hint| hint.authorization), path_untrusted = ?hint.as_ref().map(|hint| &hint.path), local = %cfg.node_id,
+                        publication = %snapshot.reference().execution_publication,
+                        available = ?carriers.keys().collect::<Vec<_>>(), "Waiting for authenticated next-hop carrier before secure receive");
+                }
                 self.incoming.push_back(item);
                 continue;
             }
@@ -290,11 +334,44 @@ impl Packets {
                     response: Some(frame),
                     ..
                 }) => {
-                    if manager.send(frame).await.is_err() {
+                    let sent = if hint.as_ref().is_some_and(|hint| {
+                        matches!(hint.authorization, CircuitAuthorization::Diagnostic(_))
+                    }) {
+                        diagnostics.forward(manager, frame)
+                    } else {
+                        manager.send(frame).await.map_err(|_| ())
+                    };
+                    if sent.is_err() {
                         self.drop_packet("cipher_send");
                     }
                 }
                 Ok(Received::Established { response: None, .. }) => {}
+                Ok(Received::ProbeRequest {
+                    circuit,
+                    measurement_id,
+                    response,
+                }) => {
+                    tracing::debug!(?circuit, %measurement_id, publication = %snapshot.reference().execution_publication, "Authenticated diagnostic request received");
+                    if diagnostics.forward(manager, response).is_err() {
+                        self.drop_packet("probe_reply_send");
+                    }
+                }
+                Ok(Received::ProbeReply {
+                    circuit,
+                    measurement_id,
+                    challenge,
+                }) => {
+                    tracing::debug!(?circuit, %measurement_id, publication = %snapshot.reference().execution_publication, "Authenticated diagnostic reply received");
+                    if let Ok(channel) = super::diagnostics::channel(&item.link) {
+                        diagnostics.owner.reply(
+                            circuit,
+                            measurement_id,
+                            challenge,
+                            channel,
+                            item.received_at,
+                        );
+                    }
+                }
                 Ok(Received::Packet(packet)) => {
                     if packet.hop() != meshway_dataplane::Hop::Deliver {
                         self.drop_packet("unsupported_exit");
@@ -327,9 +404,14 @@ impl Packets {
                         }
                     }
                 }
-                Err(error) => {
-                    self.drop_admission("cipher_admission", error, hint.map(|hint| hint.demand))
-                }
+                Err(error) => self.drop_admission(
+                    "cipher_admission",
+                    error,
+                    hint.and_then(|hint| match hint.authorization {
+                        CircuitAuthorization::Business(id) => Some(id),
+                        CircuitAuthorization::Diagnostic(_) => None,
+                    }),
+                ),
             }
         }
         self.attempts.retain_mut(|attempt| {

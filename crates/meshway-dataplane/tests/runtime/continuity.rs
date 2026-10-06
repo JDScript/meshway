@@ -318,7 +318,9 @@ async fn an_expired_permit_cannot_be_revived_while_the_node_execution_lease_rema
             protocol: BusinessProtocol::Udp,
             port: Some(42424.try_into().unwrap()),
             profile: "mesh".into(),
-            duration_seconds: 1,
+            // Leave time for the three real HTTP installations and handshake;
+            // this verifies expiry while execution stays live, not setup speed.
+            duration_seconds: 5,
         })
         .await
         .unwrap();
@@ -334,7 +336,7 @@ async fn an_expired_permit_cannot_be_revived_while_the_node_execution_lease_rema
         .send(circuit, datagram(&fixture.mesh, false, false))
         .unwrap();
     tokio::time::timeout(
-        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(7),
         old.invalidated_at(permit.expires_at_ms),
     )
     .await

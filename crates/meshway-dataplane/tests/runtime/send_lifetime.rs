@@ -207,3 +207,52 @@ async fn control_stop_fences_accepted_worker_while_outer_send_is_alive_but_unpol
 async fn dropping_outer_send_cancels_accepted_worker_before_raw_gate_opens() {
     accepted_send_is_fenced(Invalidation::DropSend).await;
 }
+
+#[derive(Debug)]
+struct SnapshotLifetime(meshway_control::ExecutionSnapshot);
+impl meshway_transport::SendLifetime for SnapshotLifetime {
+    fn is_current(&self) -> bool {
+        self.0.ensure_current().is_ok()
+    }
+    fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async move { self.0.invalidated().await })
+    }
+}
+
+#[tokio::test]
+async fn shared_send_receipt_starts_after_sender_lock_wait_and_requires_local_complete() {
+    let mut fixture = SecureMesh::start().await;
+    let pending = fixture
+        .a
+        .start(fixture.mesh.demand, fixture.mesh.path.clone())
+        .unwrap();
+    let channel = Arc::new(SnapshotLifetime(
+        fixture.mesh.a.control.execution_snapshot().unwrap(),
+    ));
+    let peer = "127.0.0.1:12345".parse().unwrap();
+    let (stream, _raw_peer) = tokio::io::duplex(65536);
+    let (sender, _receiver) = Session::stream(
+        stream,
+        peer,
+        Limits::new(128 * 1024, 1, 1024 * 1024, 1, 1).unwrap(),
+    )
+    .into_split();
+    let sender = tokio::sync::Mutex::new(sender);
+    let locked = sender.lock().await;
+    let mut sending = Box::pin(carrier::send_shared_with_receipt(
+        &sender, pending, peer, channel,
+    ));
+    poll_fn(|cx| {
+        assert!(sending.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let unlocked_at = std::time::Instant::now();
+    drop(locked);
+    let receipt = timeout(WAIT, sending).await.unwrap().unwrap();
+    assert!(receipt.admitted_at >= unlocked_at);
+    assert!(receipt.admitted_at <= std::time::Instant::now());
+    sender.lock().await.shutdown().await.unwrap();
+    fixture.close().await;
+}

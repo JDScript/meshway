@@ -142,7 +142,7 @@ pub(super) async fn cycle(
     if control.status().instance.is_none() {
         control
             .acquire_instance(if network.is_some() {
-                meshway_connectivity::capabilities()
+                network::capabilities()
             } else {
                 Default::default()
             })
@@ -202,6 +202,9 @@ pub(super) async fn cycle(
         stage("publish", network.publish(control))
             .await
             .map_err(|error| failure::at("publish", error, false))?;
+        // The bounded plan watch waits for this exact installed snapshot. Fetch
+        // during application rather than losing a full poll after each rebind.
+        network.observation_tasks(control).await;
         stage("finish", network.finish(control))
             .await
             .map_err(|error| failure::at("finish_application", error, false))?;

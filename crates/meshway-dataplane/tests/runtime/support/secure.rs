@@ -126,13 +126,19 @@ impl SecureMesh {
         let server = Server::start().await;
         let owner = server.owner().await;
         let caps = || {
-            BTreeMap::from([(
-                "transport:native_tcp".into(),
-                Capability::Transport {
-                    roles: vec![TransportRole::Dial, TransportRole::Listen],
-                    streams: vec![StreamKind::Tcp],
-                },
-            )])
+            BTreeMap::from([
+                (
+                    "feature:path-observation".into(),
+                    Capability::Feature { version: 1 },
+                ),
+                (
+                    "transport:native_tcp".into(),
+                    Capability::Transport {
+                        roles: vec![TransportRole::Dial, TransportRole::Listen],
+                        streams: vec![StreamKind::Tcp],
+                    },
+                ),
+            ])
         };
         let mut a = server.enroll_with_capabilities(&owner, "a", caps()).await;
         let mut r = server.enroll_with_capabilities(&owner, "r", caps()).await;
@@ -227,6 +233,10 @@ impl SecureMesh {
             .a
             .start(self.mesh.demand, self.mesh.path.clone())
             .unwrap();
+        self.finish_handshake(first).await
+    }
+
+    pub async fn finish_handshake(&mut self, first: PendingFrame) -> [u8; 32] {
         let circuit = first.circuit();
         self.ar.dial.send(first).await;
         let first = self.ar.listen.recv().await;

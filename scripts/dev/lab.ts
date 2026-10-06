@@ -67,10 +67,7 @@ async function main(args: string[]) {
   try {
     const inventory = required(await listNodes(client, path, auth()));
     const source = required(await getConfiguration(client, path, auth()));
-    const ops: ConfigurationOperation[] = [{
-      type: "replaceDns", dns: { ...source.configuration.dns, magicDNS: false, overrideLocal: false,
-        servers: {}, default: [], routes: {}, searchDomains: [] },
-    }];
+    const ops: ConfigurationOperation[] = [];
     const peers = bindings.map(binding => "node:" + binding.identity.nodeId).sort();
     const samePeers = (values: string[]) => values.length === peers.length && peers.every(peer => values.includes(peer));
     if (!source.configuration.access.some(rule => samePeers(rule.src) && samePeers(rule.dst) && rule.ip.includes("icmp:*"))) {
@@ -98,8 +95,8 @@ async function main(args: string[]) {
     if (preview.deletedNodeIds.length || preview.identityChangedNodeIds.length) throw new LabError("Lab configuration unexpectedly changes registered identities.");
     const applied = required(await applyConfiguration(client, path, request, auth()));
     const current = required(await getConfiguration(client, path, auth()));
-    if (current.revision !== applied.revision || current.configuration.dns.magicDNS !== false
-        || current.configuration.dns.overrideLocal !== false) throw new LabError("Lab configuration was not committed as requested.");
+    if (current.revision !== applied.revision
+        || JSON.stringify(current.configuration.dns) !== JSON.stringify(source.configuration.dns)) throw new LabError("Lab configuration DNS intent differs from the original Server plan.");
     for (const { identity, address } of bindings) {
       const node = current.configuration.nodes[identity.nodeId];
       const listener = node?.listeners["lab-udp"];
@@ -109,7 +106,8 @@ async function main(args: string[]) {
     }
     console.log(JSON.stringify({ networkId: path.networkId, revision: applied.revision,
       nodes: bindings.map(binding => ({ name: binding.name, nodeId: binding.identity.nodeId, bridgeAddress: binding.address })),
-      scope: "Mesh-only DNS-off; lab-only ICMP echo; bridge UDP endpoints plus same-socket STUN observations" }, null, 2));
+      dns: { magicDNS: current.configuration.dns.magicDNS, overrideLocal: current.configuration.dns.overrideLocal },
+      scope: "Server-managed DNS; lab-only ICMP echo; bridge UDP endpoints plus same-socket STUN observations" }, null, 2));
   } finally {
     required(await logout(client, auth()));
   }

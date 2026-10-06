@@ -13,6 +13,7 @@ use meshway_configuration::{execution::Carrier, transport::Endpoint};
 use meshway_model::{
     ConfigurationRef, Digest, NetworkId, NodeId, RequestId, Sequence, StateEpoch, UdpTraversalId,
     Version,
+    observations::EndpointKind,
     state::{EndpointCandidate, ResourceRef, SocketNetwork},
 };
 use serde::{Deserialize, Serialize};
@@ -289,6 +290,8 @@ wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct UdpTraversalPar
     /// Original State address, copied without origin/observer/interface disclosure.
     /// Server and Node must validate a numeric, eligible unicast UDP target.
     pub address: String,
+    /// Coarse origin projected from the referenced original State observation.
+    pub source: EndpointKind,
 } }
 
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct UdpTraversalOffer {

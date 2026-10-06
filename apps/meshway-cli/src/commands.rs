@@ -3,7 +3,7 @@ use crate::{
     arguments::{Arguments, Command as CliCommand},
     output::display,
 };
-use meshway_ipc::{Client, Command, Phase};
+use meshway_ipc::{Client, Command, Phase, PingEvent, PingTarget};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -19,6 +19,10 @@ pub(crate) enum Error {
     Pending,
     #[error("Intent is saved; inspect the reported Node problem.")]
     ControlProblem,
+    #[error("Ping finished without a successful reply.")]
+    PingUnsuccessful,
+    #[error("Ping failed: {0:?}.")]
+    PingFailed(meshway_ipc::PingError),
 }
 
 pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
@@ -26,11 +30,39 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         CliCommand::Up => "up",
         CliCommand::Down => "down",
         CliCommand::Status { .. } => "status",
+        CliCommand::Ping { .. } => "ping",
     };
     tracing::debug!(command, "Local command started");
     let client = Client::new(arguments.socket);
+    if let CliCommand::Ping { target, count } = arguments.command {
+        let target = match target.parse::<std::net::IpAddr>() {
+            Ok(address) => PingTarget::MeshIp {
+                address: address.to_string(),
+            },
+            Err(_) => PingTarget::Name { name: target },
+        };
+        let mut stream = client.ping(target, count).await?;
+        while let Some(event) = stream.next().await? {
+            crate::output::ping(&event, arguments.json)?;
+            match event {
+                PingEvent::Completed { success, .. } => {
+                    return if success > 0 {
+                        Ok(())
+                    } else {
+                        Err(Error::PingUnsuccessful)
+                    };
+                }
+                PingEvent::Failed { code } => return Err(Error::PingFailed(code)),
+                _ => {}
+            }
+        }
+        return Err(Error::PingUnsuccessful);
+    }
     let mut status = client.call(Command::Status).await?;
     match arguments.command {
+        CliCommand::Ping { .. } => {
+            unreachable!("ping is handled without reading or mutating Node intent")
+        }
         CliCommand::Status { watch } => loop {
             display(&status, arguments.json)?;
             if !watch {

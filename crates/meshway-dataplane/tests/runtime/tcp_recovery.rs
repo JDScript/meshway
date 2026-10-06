@@ -224,7 +224,10 @@ async fn tcp_recovers_cancelled_relay_and_endpoint_outputs_across_real_permit_re
         let ready = secure.ready_circuits().unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].id, circuit);
-        assert_eq!(ready[0].demand, demand);
+        assert_eq!(
+            ready[0].authorization,
+            meshway_configuration::execution::CircuitAuthorization::Business(demand)
+        );
         assert_eq!(ready[0].path, fixture.mesh.path);
     }
     fixture.close().await;

@@ -11,7 +11,7 @@ mod subjects;
 mod validation;
 
 pub use access::mesh_access_allows_any;
-pub use authorization::permit_authorization_digest;
+pub use authorization::{diagnostic_authorization_digest, permit_authorization_digest};
 pub use compile::profile_allowed;
 pub use subjects::SubjectContext;
 pub use validation::*;

@@ -345,6 +345,10 @@ impl super::Handle {
     fn acknowledge_traversal(&self, accepted: &meshway_protocol::StateAccepted) {
         #[cfg(target_os = "linux")]
         if let Some(pending) = &self.reporting.pending {
+            tracing::debug!(operation = "report_runtime_state", source_instance = %pending.instance.instance_id,
+                sequence = accepted.sequence.get(), duplicate = accepted.duplicate,
+                publication = ?pending.mark.as_ref().and_then(|mark| mark.key.ticket.as_ref().map(|(_, reference, _)| reference.execution_publication)),
+                candidate_count = pending.candidates.len(), "State candidate publication acknowledged");
             self.traversal_acknowledged
                 .send_replace(super::traversal::Acknowledged {
                     sequence: Some(accepted.sequence),

@@ -388,6 +388,15 @@ async fn handshake(
 }
 
 pub(super) fn packet(fixture: &support::Fixture, reply: bool) -> Packet {
+    packet_between(fixture, 0, 1, reply)
+}
+
+pub(super) fn packet_between(
+    fixture: &support::Fixture,
+    source: usize,
+    target: usize,
+    reply: bool,
+) -> Packet {
     let address = |index: usize| {
         fixture.identities[index]
             .snapshot()
@@ -398,9 +407,9 @@ pub(super) fn packet(fixture: &support::Fixture, reply: bool) -> Packet {
             .unwrap()
     };
     let (source, destination, sport, dport) = if reply {
-        (address(1), address(0), 42424u16, 50000u16)
+        (address(target), address(source), 42424u16, 50000u16)
     } else {
-        (address(0), address(1), 50000u16, 42424u16)
+        (address(source), address(target), 50000u16, 42424u16)
     };
     let payload = b"same protected circuit after UDP reattachment";
     let mut bytes = vec![0; 28];
@@ -604,6 +613,102 @@ async fn selected(manager: &Manager, peer: NodeId, id: [u8; 32]) {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn receipt_uses_replacement_channel_and_rejects_same_carrier_old_scope_waiting_for_sender() {
+    let mut fixture = support::Fixture::new(false, false).await;
+    let ids = fixture.ids();
+    let faults = Arc::new(Faults::default());
+    let factory = Factory::new(&mut fixture, faults.clone());
+    let mut b = Manager::start(
+        fixture.identities[1].clone(),
+        factory.clone(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
+        .await
+        .unwrap();
+    converged(&a, &b, ids[0], ids[1], None).await;
+    let (mut sa, mut sb) = (
+        secure(&fixture.identities[0], &a),
+        secure(&fixture.identities[1], &b),
+    );
+    let cid = handshake(
+        &mut a,
+        &mut b,
+        &mut sa,
+        &mut sb,
+        fixture.demands[0],
+        vec![ids[0], ids[1]],
+    )
+    .await;
+    exchange(&a, &mut b, &mut sa, &mut sb, cid, packet(&fixture, false)).await;
+    let old = b.snapshot().unwrap().links[0].clone();
+    let (sender, old_scope) = {
+        let links = b.shared.links.lock().unwrap();
+        (links[&ids[0]].sender.clone(), links[&ids[0]].scope.clone())
+    };
+    let pending_before_replacement = sb.send(cid, packet(&fixture, true)).unwrap();
+    // Capture another real slot now, but do not poll until after replacement.
+    let delayed = b.send_with_receipt(sb.send(cid, packet(&fixture, true)).unwrap());
+    a.shutdown().await.unwrap();
+    let rebound = UdpSocket::bind(old.remote).await.unwrap();
+    let (transcript, _, ack) = challenge(&fixture, &rebound, old.local, "udp").await;
+
+    faults.block_data.store(true, Ordering::SeqCst);
+    let mut admitted = Box::pin(b.send_with_receipt(sb.send(cid, packet(&fixture, true)).unwrap()));
+    assert!(futures_util::poll!(admitted.as_mut()).is_pending());
+    assert!(faults.blocked.load(Ordering::SeqCst));
+    // Admission is waiting on the actual shared sender, after selecting the old
+    // slot. A fresh authenticated ACK replaces that slot with the same carrier
+    // and socket, but a new channel ID and lifetime.
+    let locked = sender.lock().await;
+    let writes = faults.writes.load(Ordering::SeqCst);
+    let mut stale = Box::pin(b.send_with_receipt(sb.send(cid, packet(&fixture, true)).unwrap()));
+    assert!(futures_util::poll!(stale.as_mut()).is_pending());
+    rebound.send_to(&ack, old.local).await.unwrap();
+    selected(&b, ids[0], transcript.id()).await;
+    assert!(old_scope.check().is_err());
+    assert!(
+        tokio::time::timeout(RECOVERY, stale)
+            .await
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(faults.writes.load(Ordering::SeqCst), writes);
+    drop(locked);
+    faults.block_data.store(false, Ordering::SeqCst);
+    faults.waker.wake();
+    // The already-admitted old output stays alive without its caller polling.
+    // Its retained channel lifetime must still fence the actual raw writer.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(faults.writes.load(Ordering::SeqCst), writes);
+    assert!(admitted.await.is_err());
+    control(&rebound, Kind::Ready).await;
+    let mut sends = JoinSet::new();
+    sends.spawn(delayed);
+    assert!(sends.join_next().await.unwrap().unwrap().is_err());
+    assert_eq!(faults.writes.load(Ordering::SeqCst), writes);
+
+    let current = b.snapshot().unwrap().links[0].clone();
+    assert_ne!(current.id, old.id);
+    assert_eq!(current.carrier, old.carrier);
+    assert_eq!(current.socket_id, old.socket_id);
+    assert_eq!(current.acquisition, LinkAcquisition::AcceptedInbound);
+    let before = std::time::Instant::now();
+    let receipt = b
+        .send_with_receipt(pending_before_replacement)
+        .await
+        .unwrap();
+    assert_eq!(receipt.link, current);
+    assert!(receipt.admitted_at >= before);
+    assert!(receipt.admitted_at <= std::time::Instant::now());
+    assert_eq!(faults.writes.load(Ordering::SeqCst), writes + 1);
+    b.shutdown().await.unwrap();
+    fixture.close().await;
 }
 
 #[tokio::test]

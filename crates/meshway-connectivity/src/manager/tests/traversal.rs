@@ -47,8 +47,27 @@ fn listener_socket(manager: &Manager) -> SocketFact {
         .unwrap()
 }
 
+async fn inject_adjacency(sender: &AsyncMutex<Sender>, remote: SocketAddr, bytes: Vec<u8>) {
+    let mut frames = std::collections::VecDeque::from([Frame::new(bytes, Some(remote))]);
+    let admitted = sender
+        .lock()
+        .await
+        .try_send(&mut frames, Default::default());
+    assert_eq!(admitted.accepted, 1);
+    let completed =
+        tokio::time::timeout(Duration::from_secs(2), admitted.completion.unwrap().wait())
+            .await
+            .unwrap()
+            .unwrap();
+    assert!(matches!(
+        completed.frames[0].outcome,
+        meshway_transport::SendOutcome::LocalComplete
+    ));
+}
+
 #[derive(Default)]
 struct Traffic {
+    timeline: Option<Arc<AcquisitionTimeline>>,
     sent: Mutex<Vec<(SocketAddr, SocketAddr, Vec<u8>)>>,
     block_traversal: AtomicBool,
     blocked: Mutex<Option<Blocked>>,
@@ -60,6 +79,43 @@ struct Traffic {
     data_writes: AtomicUsize,
     opened: AtomicUsize,
     dropped: AtomicUsize,
+}
+
+struct AcquisitionTimeline {
+    started: std::time::Instant,
+    events: Mutex<Vec<String>>,
+}
+impl AcquisitionTimeline {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            started: std::time::Instant::now(),
+            events: Mutex::new(Vec::new()),
+        })
+    }
+    fn record(&self, event: std::fmt::Arguments<'_>) {
+        let mut events = self.events.lock().unwrap();
+        if events.len() < 1024 {
+            events.push(format!(
+                "{}ms utc={} {event}",
+                self.started.elapsed().as_millis(),
+                chrono::Utc::now().timestamp_millis()
+            ));
+        }
+    }
+    fn packet(&self, direction: &str, local: SocketAddr, remote: SocketAddr, bytes: &[u8]) {
+        if bytes.starts_with(b"MWTRV1\0\0") && bytes.len() >= 41 {
+            self.record(format_args!(
+                "{direction} local={local} remote={remote} kind={} digest={:02x?}",
+                bytes[40],
+                &bytes[8..40]
+            ));
+        }
+    }
+    fn dump(&self) {
+        for event in self.events.lock().unwrap().iter() {
+            eprintln!("ACQUISITION {event}");
+        }
+    }
 }
 struct ChannelAuthorization {
     local: SocketAddr,
@@ -118,6 +174,9 @@ impl Datagram for NatEndpoint {
         }
         let result = self.inner.poll_send_to(cx, bytes, private(peer));
         if matches!(result, Poll::Ready(Ok(_))) {
+            if let Some(timeline) = &self.traffic.timeline {
+                timeline.packet("send", self.inner.local_addr()?, peer, bytes);
+            }
             if business {
                 self.traffic.data_writes.fetch_add(1, Ordering::SeqCst);
             }
@@ -140,6 +199,14 @@ impl Datagram for NatEndpoint {
                 Poll::Pending => return Poll::Pending,
             };
             read.source = public(read.source);
+            if let Some(timeline) = &self.traffic.timeline {
+                timeline.packet(
+                    "recv",
+                    self.inner.local_addr()?,
+                    read.source,
+                    &bytes[..read.copied_len],
+                );
+            }
             if read.source == self.stun || self.opened.lock().unwrap().contains(&read.source) {
                 return Poll::Ready(Ok(read));
             }
@@ -319,6 +386,7 @@ impl SocketFactory for NatFactory {
 struct Gateway {
     control: AsyncMutex<Control>,
     acknowledged: Mutex<Vec<CandidateReference>>,
+    timeline: Option<Arc<AcquisitionTimeline>>,
 }
 
 struct OfflineGateway;
@@ -490,7 +558,32 @@ async fn uncovered_dial_resources_beyond_four_are_all_bound() {
 impl TraversalGateway for Gateway {
     fn request(&self, operation: Operation) -> BoxFuture<'_, Result<Reply, Error>> {
         Box::pin(async move {
+            let queued = std::time::Instant::now();
             let mut control = self.control.lock().await;
+            let started = std::time::Instant::now();
+            let snapshot = self
+                .timeline
+                .as_ref()
+                .and_then(|_| control.execution_snapshot().ok());
+            let node = snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.configuration().ok())
+                .map(|cfg| cfg.node_id.to_string())
+                .unwrap_or_default();
+            if let (Some(timeline), Some(snapshot)) = (&self.timeline, &snapshot) {
+                timeline.record(format_args!("rpc-start node={node} queue_ms={} instance={:?} publication={:?} execution_expires={} operation={}", queued.elapsed().as_millis(), snapshot.instance(), snapshot.reference().execution_publication, snapshot.expires_at_ms(), match &operation { Operation::Query(_) => "query", Operation::Peers { .. } => "peers", Operation::Prepare { .. } => "prepare", Operation::Accept(_) => "accept", Operation::Cancel(_) => "cancel" }));
+                if let Operation::Accept(offer) | Operation::Cancel(offer) = &operation {
+                    timeline.record(format_args!(
+                        "original node={node} offer={:?} mono_remaining_ms={} current={:?}",
+                        offer.offer(),
+                        offer
+                            .expires_at()
+                            .saturating_duration_since(started)
+                            .as_millis(),
+                        offer.ensure_current()
+                    ));
+                }
+            }
             let result: Result<Reply, meshway_control::Error> = async {
                 Ok(match operation {
                     Operation::Query(snapshot) => {
@@ -512,6 +605,59 @@ impl TraversalGateway for Gateway {
                 })
             }
             .await;
+            if let Some(timeline) = &self.timeline {
+                use meshway_control::connectivity::{AttemptView, Outcome};
+                timeline.record(format_args!(
+                    "rpc-end node={node} elapsed_ms={}",
+                    started.elapsed().as_millis()
+                ));
+                match &result {
+                    Ok(Reply::Peers(view)) => {
+                        timeline.record(format_args!("peers node={node} view={view:?}"))
+                    }
+                    Ok(Reply::Query(Outcome::Current(discovery))) => {
+                        for view in &discovery.attempts {
+                            let (phase, offer) = match view {
+                                AttemptView::Waiting(offer) => ("waiting", offer),
+                                AttemptView::Active(active) => ("active", active.validated_offer()),
+                            };
+                            timeline.record(format_args!("query node={node} phase={phase} id={} remaining_ms={} current={:?}", offer.offer().attempt_id, offer.expires_at().saturating_duration_since(std::time::Instant::now()).as_millis(), offer.ensure_current()));
+                        }
+                    }
+                    Ok(Reply::Prepare(Outcome::Current(offer))) => timeline.record(format_args!(
+                        "prepared node={node} offer={:?} remaining_ms={}",
+                        offer.offer(),
+                        offer
+                            .expires_at()
+                            .saturating_duration_since(std::time::Instant::now())
+                            .as_millis()
+                    )),
+                    Ok(Reply::Accept(Outcome::Current(view))) => {
+                        let (phase, offer) = match view {
+                            AttemptView::Waiting(offer) => ("waiting", offer),
+                            AttemptView::Active(active) => ("active", active.validated_offer()),
+                        };
+                        timeline.record(format_args!(
+                            "accepted node={node} phase={phase} id={} remaining_ms={} current={:?}",
+                            offer.offer().attempt_id,
+                            offer
+                                .expires_at()
+                                .saturating_duration_since(std::time::Instant::now())
+                                .as_millis(),
+                            offer.ensure_current()
+                        ));
+                    }
+                    Ok(
+                        Reply::Prepare(Outcome::Unavailable(reason))
+                        | Reply::Accept(Outcome::Unavailable(reason))
+                        | Reply::Query(Outcome::Unavailable(reason)),
+                    ) => timeline.record(format_args!("unavailable node={node} reason={reason:?}")),
+                    Err(error) => {
+                        timeline.record(format_args!("rpc-error node={node} error={error:?}"))
+                    }
+                    _ => {}
+                }
+            }
             result.map_err(|_| Error::Unavailable)
         })
     }
@@ -624,6 +770,9 @@ impl Gateway {
     }
 
     async fn report(&self, snapshot: Snapshot) {
+        if let Some(timeline) = &self.timeline {
+            timeline.record(format_args!("report sockets={:?}", snapshot.sockets));
+        }
         let mut control = self.control.lock().await;
         let identity = control.execution_snapshot().unwrap();
         let cfg = identity.configuration().unwrap();
@@ -686,6 +835,263 @@ impl Gateway {
     }
 }
 
+struct AcceptSchedulingGateway {
+    inner: Arc<Gateway>,
+    prepared: Mutex<Option<meshway_control::connectivity::ValidatedOffer>>,
+    accepts: AtomicUsize,
+    overtaken: AtomicBool,
+    release_peer: Arc<AtomicBool>,
+    uncertain: bool,
+    invalidate: bool,
+}
+
+impl TraversalGateway for AcceptSchedulingGateway {
+    fn published(&self, candidate: &CandidateReference) -> bool {
+        self.inner.published(candidate)
+    }
+
+    fn request(&self, operation: Operation) -> BoxFuture<'_, Result<Reply, Error>> {
+        Box::pin(async move {
+            use meshway_control::connectivity::{AttemptView, Outcome};
+            let prepared = self.prepared.lock().unwrap().clone();
+            if matches!(operation, Operation::Query(_) | Operation::Prepare { .. })
+                && prepared.is_some()
+                && self.accepts.load(Ordering::SeqCst) == 0
+            {
+                // Deterministically expose the old next-query scheduling bug:
+                // no timer or external publication is needed to win this race.
+                self.overtaken.store(true, Ordering::SeqCst);
+                return std::future::pending().await;
+            }
+            if matches!(operation, Operation::Query(_)) && prepared.is_some() && self.invalidate {
+                // Hold the later read so it cannot mask whether the original
+                // slot/guard itself rejects the already-accepted RPC result.
+                return std::future::pending().await;
+            }
+            let local_accept = if let Operation::Accept(offer) = &operation {
+                if let Some(original) = &prepared {
+                    assert_eq!(offer.offer(), original.offer());
+                    assert_eq!(offer.expires_at(), original.expires_at());
+                    assert!(offer.ensure_current().is_ok());
+                    true
+                } else {
+                    while !self.release_peer.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                    false
+                }
+            } else {
+                false
+            };
+            let response = self.inner.request(operation).await?;
+            if let Reply::Prepare(Outcome::Current(offer)) = &response {
+                let mut prepared = self.prepared.lock().unwrap();
+                assert!(
+                    prepared.is_none(),
+                    "uncertain accept must not create a second offer"
+                );
+                *prepared = Some(offer.clone());
+            }
+            if local_accept {
+                let index = self.accepts.fetch_add(1, Ordering::SeqCst);
+                if !self.release_peer.load(Ordering::SeqCst) {
+                    assert!(matches!(
+                        response,
+                        Reply::Accept(Outcome::Current(AttemptView::Waiting(_)))
+                    ));
+                }
+                if index == 0 && self.uncertain {
+                    if self.invalidate {
+                        prepared.as_ref().unwrap().cancel();
+                    }
+                    // The real Server committed this acceptance. Lose only its
+                    // reply, keeping the original Control-issued guard/slot.
+                    return Err(Error::Unavailable);
+                }
+            }
+            Ok(response)
+        })
+    }
+}
+
+async fn accept_scheduling(uncertain: bool, invalidate: bool) {
+    let stun = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let stun_address = public(stun.local_addr().unwrap());
+    let stop = CancellationToken::new();
+    let stopped = stop.clone();
+    let service = tokio::spawn(async move {
+        let mut bytes = [0; meshway_stun::MAX_DATAGRAM_SIZE];
+        loop {
+            let (len, source) = tokio::select! {
+                _ = stopped.cancelled() => break,
+                result = stun.recv_from(&mut bytes) => result.unwrap(),
+            };
+            let request = meshway_stun::parse_request(&bytes[..len]).unwrap();
+            stun.send_to(
+                &meshway_stun::encode_response(&request, public(source)),
+                source,
+            )
+            .await
+            .unwrap();
+        }
+    });
+    let mut fixture = support::Fixture::traversal(stun_address).await;
+    let traffic = Arc::new(Traffic::default());
+    let factory = Arc::new(NatFactory {
+        sockets: Mutex::new(
+            [
+                fixture.udp.take().unwrap(),
+                fixture.reverse_udp.take().unwrap(),
+            ]
+            .into_iter()
+            .map(|socket| (socket.local_addr().unwrap(), socket))
+            .collect(),
+        ),
+        stun: stun_address,
+        traffic: traffic.clone(),
+    });
+    let release_peer = Arc::new(AtomicBool::new(false));
+    let mut gateways = Vec::new();
+    for mut control in fixture.controls.drain(..2) {
+        control.acknowledge_saved().await.unwrap();
+        let ticket = control.begin_application().await.unwrap();
+        control
+            .finish_application(&ticket, Ok(()), chrono::Utc::now())
+            .await
+            .unwrap();
+        gateways.push(Arc::new(AcceptSchedulingGateway {
+            inner: Arc::new(Gateway {
+                control: AsyncMutex::new(control),
+                acknowledged: Mutex::new(Vec::new()),
+                timeline: None,
+            }),
+            prepared: Mutex::new(None),
+            accepts: AtomicUsize::new(0),
+            overtaken: AtomicBool::new(false),
+            release_peer: release_peer.clone(),
+            uncertain,
+            invalidate,
+        }));
+    }
+    let mut managers = Vec::new();
+    for (index, gateway) in gateways.iter().enumerate() {
+        managers.push(
+            Manager::start_with_traversal(
+                fixture.identities[index].clone(),
+                factory.clone(),
+                Default::default(),
+                gateway.clone(),
+                Sequence::MIN.checked_next().unwrap(),
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            for (manager, gateway) in managers.iter().zip(&gateways) {
+                gateway
+                    .inner
+                    .report_changes(manager.snapshot().unwrap())
+                    .await;
+                assert!(
+                    !gateway.overtaken.load(Ordering::SeqCst),
+                    "prepare/reserve must accept before the next query or peer prepare"
+                );
+            }
+            let expected = if uncertain && !invalidate { 2 } else { 1 };
+            if gateways
+                .iter()
+                .any(|gateway| gateway.accepts.load(Ordering::SeqCst) >= expected)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("immediate local accept, including idempotent uncertainty retry");
+    assert!(
+        managers
+            .iter()
+            .all(|manager| manager.snapshot().unwrap().links.is_empty())
+    );
+    assert!(
+        traffic.authorized.lock().unwrap().is_empty(),
+        "one accepted participant is not Active"
+    );
+    let coordinator = gateways
+        .iter()
+        .position(|gateway| gateway.prepared.lock().unwrap().is_some())
+        .unwrap();
+    let original = gateways[coordinator]
+        .prepared
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap();
+    if invalidate {
+        assert!(original.ensure_current().is_err());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(gateways[coordinator].accepts.load(Ordering::SeqCst), 1);
+        assert!(traffic.authorized.lock().unwrap().is_empty());
+        assert!(
+            managers
+                .iter()
+                .all(|manager| manager.snapshot().unwrap().links.is_empty())
+        );
+    } else {
+        original.ensure_current().unwrap();
+        release_peer.store(true, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let left = managers[0].snapshot().unwrap();
+                let right = managers[1].snapshot().unwrap();
+                if left.links.len() == 1 && right.links.len() == 1 && left.links[0].id == right.links[0].id {
+                    for link in [left.links[0].clone(), right.links[0].clone()] {
+                        assert!(matches!(link.acquisition, LinkAcquisition::CoordinatedUdp { attempt_id, .. } if attempt_id == original.offer().attempt_id));
+                    }
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("same reserved offer completes bilateral authentication");
+    }
+    for manager in &mut managers {
+        manager.shutdown().await.unwrap();
+    }
+    drop(managers);
+    stop.cancel();
+    service.await.unwrap();
+    for gateway in gateways {
+        let gateway = Arc::try_unwrap(gateway).ok().unwrap();
+        Arc::try_unwrap(gateway.inner)
+            .ok()
+            .unwrap()
+            .control
+            .into_inner()
+            .shutdown()
+            .await
+            .unwrap();
+    }
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn prepare_reserve_accepts_locally_before_next_query_and_requires_bilateral_active() {
+    accept_scheduling(false, false).await;
+}
+
+#[tokio::test]
+async fn uncertain_local_accept_retries_original_reserved_offer_without_extending_authority() {
+    accept_scheduling(true, false).await;
+}
+
+#[tokio::test]
+async fn invalidated_original_accept_slot_cannot_activate_after_uncertain_commit() {
+    accept_scheduling(true, true).await;
+}
+
 #[tokio::test]
 async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing_noise_owner() {
     let stun = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -732,6 +1138,7 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
         gateways.push(Arc::new(Gateway {
             control: AsyncMutex::new(control),
             acknowledged: Mutex::new(Vec::new()),
+            timeline: None,
         }));
     }
     let generation = Sequence::MIN.checked_next().unwrap();
@@ -891,6 +1298,27 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
     let a_link = a.snapshot().unwrap().links[0].clone();
     let b_link = b.snapshot().unwrap().links[0].clone();
     assert_eq!(a_link.id, b_link.id);
+    for link in [&a_link, &b_link] {
+        let channels = traffic.channels.lock().unwrap();
+        let active = &channels
+            .iter()
+            .find(|channel| channel.local == link.local && channel.lifetime.is_current())
+            .unwrap()
+            .attempt;
+        let offer = active.validated_offer();
+        assert_eq!(offer.peer().address, link.remote.to_string());
+        assert_eq!(
+            offer.peer().source,
+            meshway_model::observations::EndpointKind::Stun
+        );
+        assert_eq!(
+            link.acquisition,
+            LinkAcquisition::CoordinatedUdp {
+                attempt_id: offer.offer().attempt_id,
+                endpoint_source: offer.peer().source,
+            }
+        );
+    }
     assert_eq!(
         a_link.socket_id,
         a.snapshot().unwrap().listeners[0].socket_id
@@ -955,7 +1383,8 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
         .start(fixture.demands[0], vec![ids[0], ids[1]])
         .unwrap();
     let circuit = pending.circuit();
-    a.send(pending).await.unwrap();
+    let receipt = a.send_with_receipt(pending).await.unwrap();
+    assert_eq!(receipt.link, a_link);
     let (link, received) = frame(&mut b).await;
     let meshway_dataplane::secure::Received::Established {
         response: Some(response),
@@ -1153,8 +1582,8 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
     // The ten-second grant and twenty-second candidate expiration do not own
     // the selected channel or the established end-to-end circuit.
     tokio::time::sleep(Duration::from_secs(21)).await;
-    assert_eq!(a.snapshot().unwrap().links[0].id, a_link.id);
-    assert_eq!(b.snapshot().unwrap().links[0].id, b_link.id);
+    assert_eq!(a.snapshot().unwrap().links[0], a_link);
+    assert_eq!(b.snapshot().unwrap().links[0], b_link);
     assert!(
         secure_a
             .ready_circuits()
@@ -1162,6 +1591,84 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
             .iter()
             .any(|ready| ready.id == circuit)
     );
+    // Reauthenticate through the ordinary inbound path on the SAME physical
+    // tuple. The old coordinated channel's STUN label must not be inherited.
+    // Only raw I/O is injected; the listener processes the real signed exchange.
+    let (dialer, listener, identity) = if a_link.carrier.dialer == ids[0] {
+        (&a, &b, &fixture.identities[0])
+    } else {
+        (&b, &a, &fixture.identities[1])
+    };
+    let dial_fact = dialer.snapshot().unwrap().links[0].clone();
+    let sender = {
+        let links = dialer.shared.links.lock().unwrap();
+        let link = &links[&dial_fact.peer];
+        link.sender.clone()
+    };
+    let (initiation, intro) = adjacency::Initiation::new(identity, &dial_fact.carrier).unwrap();
+    inject_adjacency(
+        &sender,
+        dial_fact.remote,
+        adjacency::encode(adjacency::Kind::Init, &intro).unwrap(),
+    )
+    .await;
+    let transcript = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let challenge =
+                traffic
+                    .sent
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find_map(|(local, remote, bytes)| {
+                        if *local != private(dial_fact.remote) || *remote != public(dial_fact.local)
+                        {
+                            return None;
+                        }
+                        let (kind, body) = adjacency::decode(bytes).ok()?;
+                        if kind != adjacency::Kind::Challenge {
+                            return None;
+                        }
+                        initiation
+                            .challenge(
+                                identity.snapshot().configuration().unwrap(),
+                                dial_fact.peer,
+                                body,
+                            )
+                            .ok()
+                    });
+            if let Some(transcript) = challenge {
+                break transcript;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    inject_adjacency(
+        &sender,
+        dial_fact.remote,
+        adjacency::encode(
+            adjacency::Kind::Ack,
+            &transcript.message(identity, adjacency::Kind::Ack).unwrap(),
+        )
+        .unwrap(),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let current = listener.snapshot().unwrap().links[0].clone();
+            if current.id == transcript.id() {
+                assert_ne!(current.id, dial_fact.id);
+                assert_eq!(current.acquisition, LinkAcquisition::AcceptedInbound);
+                assert_eq!(current.remote, public(dial_fact.local));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
     let original = listener_socket(&a).reference;
     fixture.change_udp_buffer(ids[0]).await;
     let incompatible = {
@@ -1172,8 +1679,8 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
             .unwrap()
     };
     assert!(
-        !a.can_reconcile(&incompatible),
-        "changed physical options must replace the owner"
+        a.can_reconcile(&incompatible),
+        "direct continuation replaces the changed resource inside the same manager"
     );
     a.reconcile(incompatible.clone()).await.unwrap();
     assert_ne!(listener_socket(&a).reference.socket_id, original.socket_id);
@@ -1234,6 +1741,21 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
 
 #[tokio::test]
 async fn revoked_then_restored_access_acquires_fresh_authenticated_channels_and_circuit() {
+    revocation_recovery(None).await;
+}
+
+#[tokio::test]
+async fn restored_adjacency_uses_live_witness_after_lower_id_stale_indirect_witness() {
+    revocation_recovery(Some(true)).await;
+}
+
+#[tokio::test]
+async fn restored_adjacency_uses_live_witness_before_higher_id_stale_indirect_witness() {
+    revocation_recovery(Some(false)).await;
+}
+
+async fn revocation_recovery(indirect_first: Option<bool>) {
+    let timeline = AcquisitionTimeline::new();
     let stun = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let stun_address = public(stun.local_addr().unwrap());
     let stop = CancellationToken::new();
@@ -1251,7 +1773,12 @@ async fn revoked_then_restored_access_acquires_fresh_authenticated_channels_and_
             .unwrap();
         }
     });
-    let mut fixture = support::Fixture::traversal(stun_address).await;
+    let mut fixture = match indirect_first {
+        Some(indirect_first) => {
+            support::Fixture::traversal_ordered(stun_address, indirect_first).await
+        }
+        None => support::Fixture::traversal(stun_address).await,
+    };
     let ids = fixture.ids();
     let sockets = [
         fixture.udp.take().unwrap(),
@@ -1263,7 +1790,10 @@ async fn revoked_then_restored_access_acquires_fresh_authenticated_channels_and_
     let factory = Arc::new(NatFactory {
         sockets: Mutex::new(sockets),
         stun: stun_address,
-        traffic: Arc::new(Traffic::default()),
+        traffic: Arc::new(Traffic {
+            timeline: Some(timeline.clone()),
+            ..Default::default()
+        }),
     });
     let mut gateways = Vec::new();
     for mut control in fixture.controls.drain(..2) {
@@ -1276,6 +1806,7 @@ async fn revoked_then_restored_access_acquires_fresh_authenticated_channels_and_
         gateways.push(Arc::new(Gateway {
             control: AsyncMutex::new(control),
             acknowledged: Mutex::new(Vec::new()),
+            timeline: Some(timeline.clone()),
         }));
     }
     let generation = Sequence::MIN.checked_next().unwrap();
@@ -1311,6 +1842,7 @@ async fn revoked_then_restored_access_acquires_fresh_authenticated_channels_and_
     .unwrap();
     let mut old = None;
     for restored in [false, true] {
+        timeline.record(format_args!("phase restored={restored}"));
         if restored {
             fixture.set_access(false).await;
             fixture.identities[0] = gateways[0].install(&mut a, &mut sa, false).await;
@@ -1322,7 +1854,11 @@ async fn revoked_then_restored_access_acquires_fresh_authenticated_channels_and_
             fixture.identities[0] = gateways[0].install(&mut a, &mut sa, false).await;
             fixture.identities[1] = gateways[1].install(&mut b, &mut sb, false).await;
         }
-        tokio::time::timeout(Duration::from_secs(12), async {
+        for identity in &fixture.identities {
+            let cfg = identity.snapshot().configuration().unwrap();
+            timeline.record(format_args!("grants restored={restored} node={} instance={:?} execution_expires={} permits={:?}", cfg.node_id, identity.snapshot().instance(), identity.snapshot().expires_at_ms(), cfg.permits));
+        }
+        let acquisition = tokio::time::timeout(Duration::from_secs(12), async {
             loop {
                 let left = a.snapshot().unwrap();
                 let right = b.snapshot().unwrap();
@@ -1337,8 +1873,16 @@ async fn revoked_then_restored_access_acquires_fresh_authenticated_channels_and_
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
-        .await
-        .expect("acquisition after real Server authorization");
+        .await;
+        timeline.record(format_args!(
+            "acquisition restored={restored} result={acquisition:?} left={:?} right={:?}",
+            a.snapshot(),
+            b.snapshot()
+        ));
+        if acquisition.is_err() {
+            timeline.dump();
+        }
+        acquisition.expect("acquisition after real Server authorization");
         let channel = a.snapshot().unwrap().links[0].id;
         sa.set_carriers(a.carriers().unwrap()).unwrap();
         sb.set_carriers(b.carriers().unwrap()).unwrap();
@@ -1376,6 +1920,7 @@ async fn revoked_then_restored_access_acquires_fresh_authenticated_channels_and_
     }
     a.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
+    timeline.dump();
     drop(a);
     drop(b);
     stop.cancel();

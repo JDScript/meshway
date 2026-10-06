@@ -84,10 +84,9 @@ export function parameters(path, item, op, schemas) {
       if (output.some(value => value.name === name && value.location === location)) throw new Error("Duplicate parameter declaration");
       if (parameter.required !== undefined && typeof parameter.required !== "boolean") throw new Error("Invalid parameter required");
       if (location === "path" && (parameter.required !== true || !placeholders.includes(name))) throw new Error("Unknown or optional path parameter");
-      if (location === "query" && parameter.required === true) throw new Error("Only optional query parameters supported");
       if (parameter.style !== undefined && parameter.style !== (location === "path" ? "simple" : "form")) throw new Error("Unsupported parameter style");
       if (parameter.explode !== undefined && parameter.explode !== (location === "query")) throw new Error("Unsupported parameter explode");
-      output.push({ name, rustName: name.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`), location, wireSchema: parameter.schema, ...scalar(parameter.schema, schemas) });
+      output.push({ name, rustName: name.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`), location, required: parameter.required === true, wireSchema: parameter.schema, ...scalar(parameter.schema, schemas) });
     }
   }
   if (placeholders.some(name => !output.some(value => value.location === "path" && value.name === name))) throw new Error("Missing path parameter declaration");
@@ -104,14 +103,14 @@ export function parameterSchemas(model, schemas) {
     if (!list.length) continue;
     const name = op.typeName + suffix;
     if (Object.hasOwn(output, name)) throw new Error(`Parameter schema collision: ${name}`);
-    output[name] = { type: "object", properties: Object.fromEntries(list.map(p => [p.name, p.wireSchema])), required: suffix === "Path" ? list.map(p => p.name) : [], additionalProperties: false };
+    output[name] = { type: "object", properties: Object.fromEntries(list.map(p => [p.name, p.wireSchema])), required: list.filter(p => p.required).map(p => p.name), additionalProperties: false };
   }
   return output;
 }
 
 export function rustParameterStruct(op, suffix, list) {
   if (!list.length) return "";
-  return `#[derive(Clone${suffix === "Query" ? ", Default" : ""})]\npub struct ${op.typeName}${suffix} {\n${list.map(p => `    pub r#${p.rustName}: ${suffix === "Query" ? "Option<" : ""}${p.component ? `meshway_protocol::${p.component}` : p.rustScalar}${suffix === "Query" ? ">" : ""},`).join("\n")}\n}\n`;
+  return `#[derive(Clone${list.every(p => !p.required) ? ", Default" : ""})]\npub struct ${op.typeName}${suffix} {\n${list.map(p => `    pub r#${p.rustName}: ${p.required ? "" : "Option<"}${p.component ? `meshway_protocol::${p.component}` : p.rustScalar}${p.required ? "" : ">"},`).join("\n")}\n}\n`;
 }
 
 export function rustParameterValue(p, expression) {

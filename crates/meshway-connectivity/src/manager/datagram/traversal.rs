@@ -431,6 +431,20 @@ impl Owner {
                 .offer
                 .ensure_current()
                 .map_err(|_| Error::Authority)?;
+            // The authenticated offer's remote participant is the authority for
+            // provenance. Never relabel a channel using current State candidates
+            // or a coincidentally equal published address.
+            let participant = attempt.offer.peer();
+            if meshway_control::connectivity::udp_recipient(&participant.address)
+                .map_err(|_| Error::Authentication)?
+                != remote
+            {
+                return Err(Error::Authentication);
+            }
+            let acquisition = LinkAcquisition::CoordinatedUdp {
+                attempt_id: attempt.offer.offer().attempt_id,
+                endpoint_source: participant.source,
+            };
             let transcript = attempt.transcript.take().ok_or(Error::Authentication)?;
             let capacity = attempt.capacity.take().ok_or(Error::Capacity)?;
             if self.promote_scoped(
@@ -441,6 +455,7 @@ impl Owner {
                 capacity,
                 attempt.offer.expires_at().into(),
                 attempt.replacement,
+                acquisition,
                 Some(active),
             )? {
                 attempt.completed = true;

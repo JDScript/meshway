@@ -133,6 +133,23 @@ fn trusted_inventory(
     }
     Ok(out)
 }
+
+pub(crate) fn check_diagnostic_compilation(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    expected: &BTreeMap<NodeId, TrustedNode>,
+) -> Result<(), Error> {
+    let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
+    let current = trusted_inventory(tx, network, &cfg, &subjects(tx, network, &bindings)?)?;
+    if expected
+        .iter()
+        .any(|(node, trusted)| current.get(node) != Some(trusted))
+    {
+        return Err(Error::StateConflict);
+    }
+    Ok(())
+}
 /// Transaction-local immutable publication context. A shared old publication
 /// is decrypted once, even when thousands of nodes still target its slices.
 fn active_publications(
@@ -217,23 +234,80 @@ pub(crate) fn publish_with_rule_sets(
     drop(stmt);
     let publication =
         PublicationId::new(uuid()?).map_err(|_| Error::Internal("generated publication ID"))?;
-    let diagnostics = crate::execution::diagnostics::collect(tx, network, now)?;
-    let mut compiled = compile::compile_with_diagnostics(
-        CompilationInput {
-            network,
-            revision,
-            publication,
-            configuration: &cfg,
-            subjects: &subjects,
-            inventory: &inventory,
-            demands: &demands,
-            dns: &[],
-            rule_sets: &rule_sets,
-            selected_profiles: &selected_profiles,
-            now_ms: now as u64,
-        },
-        &diagnostics,
-    )?;
+    let mut diagnostics = crate::execution::diagnostics::collect(tx, network, now)?;
+    let compile_diagnostics = |diagnostics: &BTreeMap<_, _>| {
+        compile::compile_with_diagnostics(
+            CompilationInput {
+                network,
+                revision,
+                publication,
+                configuration: &cfg,
+                subjects: &subjects,
+                inventory: &inventory,
+                demands: &demands,
+                dns: &[],
+                rule_sets: &rule_sets,
+                selected_profiles: &selected_profiles,
+                now_ms: now as u64,
+            },
+            diagnostics,
+        )
+    };
+    let mut compiled = compile_diagnostics(&diagnostics)?;
+    // The first compiler pass is the sole Access/routing/topology authority.
+    // Keep its denial distinct from a permitted path whose runtime is absent.
+    // These private decisions are committed with the final safe publication;
+    // the unsupported first-pass permits are never published to any Node.
+    use crate::execution::diagnostics::{
+        DiagnosticCompilation, DiagnosticDecision, supports_diagnostics,
+    };
+    let mut diagnostic_decisions = BTreeMap::new();
+    let mut unsupported = std::collections::BTreeSet::new();
+    let mut recompile = false;
+    for (id, demand) in &mut diagnostics {
+        let permit = compiled
+            .nodes
+            .get(&demand.source)
+            .and_then(|node| node.configuration.diagnostics.get(id));
+        let decision = match permit {
+            None => DiagnosticDecision::Denied,
+            Some(permit) => {
+                let supported: Vec<_> = permit
+                    .paths
+                    .iter()
+                    .filter(|path| {
+                        path.nodes.iter().all(|node| {
+                            compiled.nodes.get(node).is_some_and(|node| {
+                                supports_diagnostics(&node.configuration.self_keys.capabilities)
+                            })
+                        })
+                    })
+                    .collect();
+                if supported.is_empty() {
+                    unsupported.insert(*id);
+                    recompile = true;
+                    DiagnosticDecision::Unsupported {
+                        paths: permit.paths.iter().map(|path| path.nodes.clone()).collect(),
+                    }
+                } else {
+                    if supported.len() != permit.paths.len() {
+                        // Auto may use a fully capable authorized candidate. Pin
+                        // this compilation to one such complete path, then ask
+                        // the same compiler to validate it again. Never splice
+                        // paths or bypass a required waypoint.
+                        demand.path = Some(supported[0].nodes.clone());
+                        recompile = true;
+                    }
+                    DiagnosticDecision::Executable
+                }
+            }
+        };
+        diagnostic_decisions.insert(*id, (demand.source, decision));
+    }
+    if recompile {
+        diagnostics.retain(|id, _| !unsupported.contains(id));
+        compiled = compile_diagnostics(&diagnostics)?;
+    }
     let mut stmt = tx.prepare(
         "SELECT node_id,target_publication_id,execution_expires_at FROM node_execution
          WHERE network_id=?1 AND target_publication_id IS NOT NULL",
@@ -328,6 +402,44 @@ pub(crate) fn publish_with_rule_sets(
                 network.as_uuid().as_bytes().as_slice(),
                 old.as_uuid().as_bytes().as_slice()
             ],
+        )?;
+    }
+    for (id, (source, decision)) in diagnostic_decisions {
+        let (_, target) =
+            target_for_node(tx, sealer, network, source)?.ok_or(Error::StateConflict)?;
+        let configuration = ConfigurationRef {
+            revision: target.configuration.revision,
+            execution_publication: target.configuration.publication,
+            digest: target.digest,
+        };
+        let participant_ids: std::collections::BTreeSet<_> = match &decision {
+            DiagnosticDecision::Unsupported { paths } => paths.iter().flatten().copied().collect(),
+            _ => target
+                .configuration
+                .peers
+                .keys()
+                .copied()
+                .chain(std::iter::once(source))
+                .collect(),
+        };
+        let participants = participant_ids
+            .into_iter()
+            .map(|node| {
+                inventory
+                    .get(&node)
+                    .cloned()
+                    .map(|trusted| (node, trusted))
+                    .ok_or(Error::StateConflict)
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        super::diagnostics::record_compilation(
+            tx,
+            id,
+            &DiagnosticCompilation {
+                configuration,
+                participants,
+                decision,
+            },
         )?;
     }
     Ok(compiled)

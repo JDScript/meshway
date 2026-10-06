@@ -80,6 +80,52 @@ impl Node {
 }
 
 impl Server {
+    pub async fn observe(
+        &self,
+        owner: &Owner,
+        source: NodeId,
+        target: NodeId,
+    ) -> meshway_protocol::ObservationTask {
+        self.client
+            .create_observation(
+                &meshway_control_client::CreateObservationPath {
+                    network_id: owner.network,
+                },
+                &meshway_protocol::CreateObservation {
+                    subscription_id: meshway_model::ObservationSubscriptionId::new(
+                        request().into_uuid(),
+                    )
+                    .unwrap(),
+                    source_node_id: source,
+                    target_node_id: target,
+                    selection: meshway_protocol::observations::ObservationPath::Auto,
+                    service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
+                    metrics: vec![meshway_model::observations::MetricKind::Rtt],
+                    interval_ms: 1000,
+                },
+                owner.token.expose(),
+            )
+            .await
+            .unwrap()
+    }
+
+    pub async fn cancel_observation(
+        &self,
+        owner: &Owner,
+        subscription_id: meshway_model::ObservationSubscriptionId,
+    ) {
+        self.client
+            .cancel_observation(
+                &meshway_control_client::CancelObservationPath {
+                    network_id: owner.network,
+                    subscription_id,
+                },
+                owner.token.expose(),
+            )
+            .await
+            .unwrap();
+    }
+
     pub async fn start() -> Self {
         let temp = tempfile::tempdir().unwrap();
         let app = App::open(Settings::new(

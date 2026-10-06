@@ -3,6 +3,7 @@
 import argparse
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -162,6 +163,67 @@ def selected_release(lab):
     return release, manifest
 
 
+def image_builder():
+    spec = importlib.util.spec_from_file_location("node_lab_image", ROOT / "dev/node-lab/build.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def base_image():
+    """Pinned Ubuntu base for explicit fixtures; no image build or selection."""
+    image = json.loads((ROOT / "dev/node-lab/assets.lock.json").read_text())["base"]
+    if not re.fullmatch(r"ubuntu:24\.04@sha256:[0-9a-f]{64}", image):
+        raise DevError("Invalid pinned Ubuntu base image.")
+    return image
+
+
+def selected_image(lab, platform):
+    """Read/verify an explicitly built local OS image; never builds or pulls."""
+    selection = lab / "selected-image.json"
+    private(selection)
+    path = Path(json.loads(selection.read_text())["manifest"]).resolve()
+    if path.name != "image-manifest.json" or path.parent.parent != (lab / "images").resolve():
+        raise DevError("Selected OS image manifest is outside this lab.")
+    private(path.parent, directory=True)
+    manifest = json.loads(path.read_text())
+    return verify_image(manifest, platform)
+
+
+def verify_image(manifest, platform):
+    """Validate image provenance before changing an existing selection."""
+    if (manifest.get("status") != "built" or manifest.get("platform") != platform
+            or manifest.get("sourceDigest") != image_builder().source_digest()
+            or manifest.get("base") != base_image()
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", manifest.get("imageId", ""))):
+        raise DevError("Selected OS image inputs differ; explicitly run node:lab image-build.")
+    image = json.loads(run("docker", "image", "inspect", manifest["imageId"], capture=True, timeout=45))[0]
+    config = image["Config"]
+    if (image["Id"] != manifest["imageId"] or image["Os"] + "/" + image["Architecture"] != platform
+            or config.get("Volumes") or config.get("User") not in (None, "", "0", "root")
+            or config.get("Labels", {}).get("io.meshway.node-lab.image") != "1"
+            or config.get("Labels", {}).get("io.meshway.node-lab.source") != manifest["sourceDigest"]
+            or config.get("Entrypoint") != ["/usr/local/lib/meshway-lab/entrypoint.sh"]):
+        raise DevError("Selected OS image ownership/architecture/config differs.")
+    return manifest
+
+
+def build_image(lab):
+    _, platform, _ = docker_target()
+    builder = image_builder()
+    output = lab / "images" / (builder.source_digest() + "-" + platform.split("/")[1])
+    manifest = verify_image(builder.build(output, platform), platform)
+    save(lab / "selected-image.json", {"manifest": str(output / "image-manifest.json")})
+    print(f"Built OS image {manifest['imageId']}: {output / 'image-manifest.json'}")
+
+
+def deployment_digest():
+    digest = hashlib.sha256()
+    for name in ("dev/node-lab/compose.yaml", "scripts/node_lab.py", "scripts/dev/lab.ts"):
+        digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
 def compose(env, *args, capture=False):
     return run("docker", "compose", "-f", str(ROOT / "dev/node-lab/compose.yaml"),
                *args, env=env, capture=capture, timeout=120)
@@ -192,6 +254,33 @@ def node_status(node, container):
         raise DevError(f"meshway-{node}: invalid CLI status.")
     node_identity(value["identity"])
     return value
+
+
+def daemon_proof(node, container, status):
+    """Hash the IPC-reported live executable, never the PID-1 service owner."""
+    pid = status.get("processId")
+    if type(pid) is not int or not 1 <= pid <= 4194304:
+        raise DevError(f"meshway-{node}: invalid daemon processId.")
+    mounts = [mount for mount in container.get("Mounts", []) if mount.get("Destination") == "/opt/meshway"]
+    if len(mounts) != 1 or mounts[0].get("Type") != "bind" or mounts[0].get("RW") is not False:
+        raise DevError(f"meshway-{node}: daemon release must be a read-only bind.")
+    script = (f'readlink /proc/{pid}/exe; sha256sum /proc/{pid}/exe; '
+              f'cat /proc/{pid}/stat; grep "^Uid:" /proc/{pid}/status; '
+              f'readlink /proc/{pid}/ns/mnt; readlink /proc/1/ns/mnt; cat /opt/meshway/build.json')
+    lines = run("docker", "exec", container["Id"], "/bin/sh", "-ec", script, capture=True, timeout=45).splitlines()
+    if len(lines) < 7:
+        raise DevError(f"meshway-{node}: incomplete running daemon proof.")
+    executable, checksum, process, uid, namespace, init_namespace = lines[:6]
+    manifest = json.loads("\n".join(lines[6:]))
+    fields = process.rsplit(") ", 1)[-1].split()
+    digest = checksum.split()[0]
+    if (executable != "/opt/meshway/meshwayd" or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or digest != manifest.get("sha256", {}).get("meshwayd") or uid.split() != ["Uid:", "0", "0", "0", "0"]
+            or namespace != init_namespace or len(fields) < 20 or not fields[19].isdigit()
+            or not process.startswith(str(pid) + " ")):
+        raise DevError(f"meshway-{node}: live daemon executable/UID/namespace differs from its release.")
+    return {"processId": pid, "startTicks": int(fields[19]), "sha256": digest,
+            "mountNamespace": namespace, "release": mounts[0]["Source"]}
 
 
 def node_identity(value):
@@ -295,6 +384,8 @@ def snapshot(journal=None, *, allow_stopped=False):
             statuses[node] = wait_node_status(node, container)
         else:
             statuses[node] = node_status(node, container)
+        if statuses[node] is not None:
+            container["daemonProof"] = daemon_proof(node, container, statuses[node])
     return containers, statuses
 
 
@@ -311,7 +402,8 @@ def node_records(containers, statuses, hashes):
                        "networkMode": status["networkMode"] if status else None,
                        "recreate": bool(container and current_hash != hashes[node]),
                        "downRequested": False, "quiesced": False, "deployedContainerId": None,
-                       "stateVolume": container["stateVolume"] if container else None}
+                       "stateVolume": container["stateVolume"] if container else None,
+                       "daemonProof": container["daemonProof"] if container else None}
     return nodes
 
 
@@ -339,6 +431,12 @@ def check_managed_stop(journal, containers, statuses):
                 raise DevError(f"meshway-{node}: container restart lacks managed-stop proof; journal retained.")
         elif container_run(container) != entry["stopOrigin"]:
             raise DevError(f"meshway-{node}: container run identity changed during stop; journal retained.")
+        proof = container["daemonProof"]
+        original = entry.get("daemonProof")
+        if (original is not None and (proof["sha256"] != original["sha256"] or proof["release"] != original["release"])
+                or journal["phase"] != "resuming" and original is not None and proof != original
+                or entry.get("resumedDaemon") is not None and proof != entry["resumedDaemon"]):
+            raise DevError(f"meshway-{node}: managed-stop daemon process/release conflict; journal retained.")
         allowed_up = {entry["desiredUp"]}
         if entry["networkMode"] == "tun" and entry["downRequested"]:
             allowed_up.add(False)
@@ -413,6 +511,7 @@ def resume_stopped(lab, journal):
         if not containers[node]["State"]["Running"]:
             raise DevError(f"meshway-{node}: managed restart is incomplete; journal retained.")
         entry["resumedRun"] = container_run(containers[node])
+        entry["resumedDaemon"] = containers[node]["daemonProof"]
         save(lab / "deploy.json", journal)
     journal["phase"] = "preparing"
     save(lab / "deploy.json", journal)
@@ -443,6 +542,13 @@ def check_snapshot(journal, containers, statuses, *, deployed=False):
                 or original and status["networkMode"] != entry["networkMode"]
                 or original and entry.get("resumedRun") is not None and container_run(container) != entry["resumedRun"]):
             raise DevError(f"meshway-{node}: deploy plan/container/identity conflict; journal retained.")
+        proof = container["daemonProof"]
+        expected_proof = entry.get("resumedDaemon") or entry.get("daemonProof")
+        if (original and expected_proof is not None and proof != expected_proof
+                or (deployed or not original or current_hash == expected_hash) and (proof["sha256"] != journal["plan"]["daemonSha256"]
+                    or proof["release"] != journal["plan"]["release"]
+                    or container.get("Image") != journal["plan"]["imageId"])):
+            raise DevError(f"meshway-{node}: deploy daemon process/image/release conflict; journal retained.")
         if not entry["desiredUp"] and status["desiredUp"]:
             raise DevError(f"meshway-{node}: previously down Node intent changed; journal retained.")
         needs_down = entry["recreate"] and entry["networkMode"] == "tun"
@@ -457,8 +563,12 @@ def check_snapshot(journal, containers, statuses, *, deployed=False):
 
 def deploy(lab):
     release, manifest = selected_release(lab)
-    env = dict(os.environ, MESHWAY_NODE_RELEASE=str(release), MESHWAY_NODE_PLATFORM=manifest["platform"])
-    plan = {"root": str(ROOT), "release": str(release), "platform": manifest["platform"], "hashes": config_hashes(env)}
+    image = selected_image(lab, manifest["platform"])
+    env = dict(os.environ, MESHWAY_NODE_RELEASE=str(release), MESHWAY_NODE_PLATFORM=manifest["platform"],
+               MESHWAY_NODE_IMAGE=image["imageId"])
+    plan = {"root": str(ROOT), "release": str(release), "platform": manifest["platform"], "hashes": config_hashes(env),
+            "imageId": image["imageId"], "imageSourceDigest": image["sourceDigest"],
+            "sourceDigest": deployment_digest(), "daemonSha256": manifest["sha256"]["meshwayd"]}
     journal = deploy_journal(lab)
     if journal and journal["phase"] in ("stop-preparing", "stop-stopping"):
         raise DevError("Finish the incomplete managed stop before deploy; journal retained.")
@@ -498,7 +608,8 @@ def deploy(lab):
     if journal["phase"] == "composing":
         containers, statuses = snapshot(journal)
         check_snapshot(journal, containers, statuses)
-        if config_hashes(env) != plan["hashes"]:
+        if (config_hashes(env) != plan["hashes"] or deployment_digest() != plan["sourceDigest"]
+                or selected_image(lab, manifest["platform"]) != image):
             raise DevError("Compose config changed during deploy; original plan journal retained.")
         changed = [node for node in NODES if node not in containers
                    or containers[node]["Config"]["Labels"]["com.docker.compose.config-hash"] != plan["hashes"][node]]
@@ -558,7 +669,7 @@ def configure(lab):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["build", "deploy", "configure", "versions", "status", "stop"])
+    parser.add_argument("action", choices=["build", "image-build", "deploy", "configure", "versions", "status", "stop"])
     args = parser.parse_args(argv)
     lab = lab_dir()
     if args.action in ("versions", "status"):
@@ -584,6 +695,9 @@ def operate(action, lab):
     if action == "build":
         build(lab)
         return
+    if action == "image-build":
+        build_image(lab)
+        return
     owned_resources()
     if action in ("versions", "status"):
         for node in NODES:
@@ -597,8 +711,10 @@ def operate(action, lab):
                 run("docker", "exec", name, "/opt/meshway/meshway", "status", "--json")
             else:
                 manifest = json.loads(run("docker", "exec", name, "cat", "/opt/meshway/build.json", capture=True))
-                running = run("docker", "exec", name, "sha256sum", "/proc/1/exe", capture=True).split()[0]
-                print(json.dumps({**manifest, "runningDaemonMatches": running == manifest["sha256"]["meshwayd"]}, indent=2))
+                container = json.loads(run("docker", "container", "inspect", name, capture=True, timeout=45))[0]
+                proof = daemon_proof(node, container, node_status(node, container))
+                print(json.dumps({**manifest, "runningDaemonMatches": True, "daemonProof": proof,
+                                  "imageId": container["Image"]}, indent=2))
         return
     if action == "stop":
         stop(lab)
@@ -612,6 +728,6 @@ def operate(action, lab):
 if __name__ == "__main__":
     try:
         main()
-    except (DevError, OSError, ValueError, subprocess.SubprocessError) as error:
+    except (DevError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Node lab operation failed: {error}; any incomplete deploy journal is retained.", file=sys.stderr)
         raise SystemExit(1)

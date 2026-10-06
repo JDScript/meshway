@@ -69,7 +69,7 @@ mise run services reset server
 | `carol@example.com` | Member |
 | `dave@example.com` | Member |
 
-账户名称不授予实例全局管理员权限。网络使用 Server 的正常初始配置，没有 seed Node。三节点批准接入后，运行 `mise run node:lab configure` 提交 Mesh-only DNS-off／UDP 运行配置，见[三节点环境](/v2/node/docker-lab)。旧账户、网络和 Node 身份属于备份库，原 Node 需要重新接入新网络；reset 不操作 Node 容器或状态卷。
+账户名称不授予实例全局管理员权限。网络使用 Server 的正常初始配置，没有 seed Node。三节点批准接入后，运行 `mise run node:lab configure` 提交 UDP 与节点间 ICMP 运行配置并保留 Server DNS 意图，见[Ubuntu 三节点环境](/v2/node/docker-lab)。旧账户、网络和 Node 身份属于备份库，原 Node 需要重新接入新网络；reset 不操作 Node 容器或状态卷。
 
 登录文件的 `server`／`console` 是对外 Server URL 和 Console origin；`email`／`password` 是默认开发登录，`networkId` 是新网络，`accounts` 是上述邮箱到**密码**的映射。若旧文件存在且格式有效，显式 reset 保留这些密码作为 seed；首次创建则生成随机密码。脚本不在命令行参数或普通输出打印密码／token。
 
@@ -116,13 +116,14 @@ Python 回归验证快照、停服／归档／导入／启动／seed 顺序和�
 ```sh
 mise run test:tun:linux
 mise run test:packet:linux
+mise run node:lab image-build
 mise run test:runtime:linux --build-only
 mise run test:runtime:linux --artifacts /absolute/private/bin --transport native-udp --dns-backend off
 ```
 
 `--artifacts` 指向 `--build-only` 输出的 `bin` 目录；脚本验证 source manifest、目标架构和二进制摘要，不能把不同源码的产物当作当前结果。各承载／DNS 组合的实际验收范围见[数据面](/v2/node/dataplane)，daemon／CLI 行为见[运行合同](/v2/node/runtime)。
 
-基础镜像的唯一声明在 `dev/node-lab/compose.yaml`，隔离脚本只读取 digest 固定的镜像定义。DNS 与穿透需要的额外 OS／pcap 支持分别归 `dev/dns-fixture/`、`dev/traversal-fixture/`；共享 OS builder 为 `dev/dns-fixture/build.py`，使用锁定的包索引／软件包摘要并以无网络 Docker build 产出 `image-manifest.json`。具体穿透拓扑与调用参数见 `dev/traversal-fixture/README.md`。这些目录提供 OS、namespace 和证据读取支持，业务行为使用正式 Rust 实现。
+Ubuntu 基础镜像的唯一声明在 `dev/node-lab/assets.lock.json`。纯内核／packet 验收使用固定 base；完整 runtime 的常规 actors 使用显式 `image-build` 选择的 Ubuntu 工具镜像，并覆盖其 entrypoint，仅运行 fixture。DNS 与穿透需要的额外 OS／pcap 支持分别归 `dev/dns-fixture/`、`dev/traversal-fixture/`；共享软件包下载／依赖解析由 `dev/dns-fixture/build.py` 维护，校验锁定的包索引／软件包摘要后以无网络 Docker build 产出 `image-manifest.json`。具体穿透拓扑与调用参数见 `dev/traversal-fixture/README.md`。这些目录提供 OS、namespace 和证据读取支持，业务行为使用正式 Rust 实现。
 
 DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-manifest /absolute/private/os/image-manifest.json`；`off` 模式不传 DNS 镜像。OS 输出目录由 `--output` 指定，保留锁定输入、下载包和镜像清单；image ID／manifest 本身不代表行为验收成功。
 
