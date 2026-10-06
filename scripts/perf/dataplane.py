@@ -28,6 +28,14 @@ def command(*args, timeout=120, check=True):
     return result.stdout.strip()
 
 
+def push(container, path, text):
+    """Write a file into the read-only container's tmpfs; docker cp refuses read-only rootfs."""
+    result = subprocess.run(["docker", "exec", "-i", container, "sh", "-c", f"cat > {path}"],
+                            cwd=ROOT, input=text, text=True, capture_output=True, timeout=120)
+    if result.returncode:
+        raise RuntimeError(f"push {container}:{path}: {result.stderr or result.stdout}")
+
+
 def source_digest():
     files = [ROOT / name for name in ("Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock")]
     for directory in ("crates", "tools/meshway-dataplane-perf", "tools/meshway-static-authority", "scripts/perf", "dev/node-lab"):
@@ -232,13 +240,13 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                         "/fixtures/meshway-dataplane-fixture", "material", "--directory", "/tmp/private",
                         "--socket", addresses[role] + ":41000")))
                 save(directory / "public-nodes.json", public_nodes)
-                command("docker", "cp", str(directory / "public-nodes.json"), containers["a"] + ":/tmp/public-nodes.json")
+                push(containers["a"], "/tmp/public-nodes.json", (directory / "public-nodes.json").read_text())
                 fixture = json.loads(command("docker", "exec", containers["a"], "/fixtures/meshway-dataplane-fixture",
                     "compile", "--input", "/tmp/public-nodes.json", "--seconds", str(args.seconds + args.omit + 120)))
                 save(directory / "fixture.json", fixture)
                 record["publicationDigest"] = fixture["publicationDigest"]
                 for container in containers.values():
-                    command("docker", "cp", str(directory / "fixture.json"), container + ":/tmp/fixture.json")
+                    push(container, "/tmp/fixture.json", (directory / "fixture.json").read_text())
             for role in reversed(roles):
                 other = "b" if role == "a" else "a"
                 stdout = (directory / f"{role}.stdout").open("w")
