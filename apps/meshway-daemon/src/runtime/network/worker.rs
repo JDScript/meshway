@@ -161,7 +161,7 @@ pub(super) async fn run(
                 diagnostics.set_paused(diagnostic_paused.borrow_and_update().clone())
             }
             Work::Command(Some(Command::Builder(reply))) => {
-                let _ = reply.send(host.client_builder());
+                let _ = reply.send(host.client_builder().map_err(|_| Problem::Underlay));
                 continue;
             }
             Work::Command(Some(Command::Sample(reply))) => {
@@ -559,7 +559,7 @@ fn same_ticket(
     a.target() == b.target() && a.instance() == b.instance() && a.attempt() == b.attempt()
 }
 
-fn handoff_deadline(guard: &meshway_control::ExecutionSnapshot) -> Option<tokio::time::Instant> {
+fn handoff_deadline(guard: &meshway_authority::ExecutionSnapshot) -> Option<tokio::time::Instant> {
     guard.retention_deadline().ok().map(Into::into)
 }
 

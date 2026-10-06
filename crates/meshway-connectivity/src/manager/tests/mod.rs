@@ -1,7 +1,7 @@
 use super::*;
 use crate::{AcceptedSocket, DatagramSocket, ListenerSocket};
 use futures_util::{future::BoxFuture, task::AtomicWaker};
-use meshway_control::ExecutionSnapshot;
+use meshway_authority::ExecutionSnapshot;
 use meshway_transport::raw::{Datagram, DatagramRead};
 use meshway_transport_spec::{DialParameters, Listener};
 use meshway_transport_udp::UdpTransport;

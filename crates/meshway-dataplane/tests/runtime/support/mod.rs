@@ -47,7 +47,7 @@ pub struct Node {
 impl Node {
     /// Save the current target, then explicitly request its execution lease.
     /// A query can return an existing grant, but must not invent a missing one.
-    pub async fn sync_current(&mut self) -> meshway_control::ExecutionSnapshot {
+    pub async fn sync_current(&mut self) -> meshway_authority::ExecutionSnapshot {
         let target = self.control.sync_configuration().await.unwrap().unwrap();
         assert_eq!(self.control.status().cached, Some(target.clone()));
         if self

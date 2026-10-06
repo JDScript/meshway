@@ -1,5 +1,5 @@
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::DialCandidate;
-use meshway_control::ExecutionSnapshot;
 use meshway_model::NodeId;
 use meshway_transport_spec::{
     DialParameters, Endpoint, Listener, PreparedListener, SocketOptions, TcpOptions,
@@ -17,7 +17,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpSocket, TcpStream},
-    sync::OwnedSemaphorePermit,
+    sync::{OnceCell, OwnedSemaphorePermit},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -26,12 +26,13 @@ use super::{
     dns::Resolver,
     protection::{Scope, Shared, io_error},
 };
-use crate::{Error, Result};
+use crate::{Error, Options, Result};
 
 #[derive(Clone)]
 pub struct SocketFactory {
     pub(super) shared: Arc<Shared>,
-    pub(super) resolver: Resolver,
+    resolver: Arc<OnceCell<Resolver>>,
+    pub(super) options: Arc<Options>,
     pub(super) timeout: Duration,
 }
 
@@ -99,6 +100,24 @@ impl fmt::Debug for ListenerHandle {
 }
 
 impl SocketFactory {
+    pub(super) fn new(shared: Arc<Shared>, options: Options) -> Self {
+        Self {
+            shared,
+            resolver: Arc::new(OnceCell::new()),
+            timeout: options.connect_timeout,
+            options: Arc::new(options),
+        }
+    }
+
+    // Candidate-only hosts do not need a Control proxy. Resolver configuration
+    // is loaded once on first use; every candidate still gets its own data scope.
+    pub(super) async fn resolver(&self) -> Result<&Resolver> {
+        self.shared.check()?;
+        self.resolver
+            .get_or_try_init(|| Resolver::open(self.shared.clone(), &self.options))
+            .await
+    }
+
     pub async fn traversal_listener(
         &self,
         snapshot: &ExecutionSnapshot,
@@ -113,7 +132,7 @@ impl SocketFactory {
             },
         )?;
         let endpoint = self.datagram_listener(snapshot, key).await?;
-        super::DatagramAuthorization::attach(endpoint, self.resolver.clone(), reference)
+        super::DatagramAuthorization::attach(endpoint, self.resolver().await?.clone(), reference)
     }
 
     pub async fn bind_datagram_candidate(
@@ -160,7 +179,7 @@ impl SocketFactory {
             &options.socket,
             Some(Vec::new()),
         )?;
-        super::DatagramAuthorization::attach(endpoint, self.resolver.clone(), reference)
+        super::DatagramAuthorization::attach(endpoint, self.resolver().await?.clone(), reference)
     }
 
     fn validate_socket_reference(
@@ -246,7 +265,7 @@ impl SocketFactory {
             return Err(Error::Target);
         }
         candidate.scope.check()?;
-        let resolver = self.resolver.scoped(candidate.scope.clone())?;
+        let resolver = self.resolver().await?.scoped(candidate.scope.clone())?;
         let (socket, tcp, local, timeout) = dial_options(&candidate.candidate.parameters)?;
         let addresses = tokio::select! { biased;
             _ = candidate.scope.invalidated() => return Err(Error::Expired),
@@ -321,7 +340,7 @@ impl SocketFactory {
             .clone()
             .try_acquire_owned()
             .map_err(|_| Error::Capacity)?;
-        let resolver = self.resolver.scoped(handle.scope.clone())?;
+        let resolver = self.resolver().await?.scoped(handle.scope.clone())?;
         let addresses = tokio::select! { biased;
             _ = handle.scope.invalidated() => return Err(Error::Expired),
             result = tokio::time::timeout(options.connect_timeout.as_std().min(self.timeout),

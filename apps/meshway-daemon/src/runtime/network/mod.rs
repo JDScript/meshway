@@ -18,7 +18,8 @@ mod traversal;
 mod worker;
 
 use chrono::{DateTime, Utc};
-use meshway_control::{ApplicationTicket, Control, DataPlaneIdentity, ExecutionSnapshot};
+use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot};
+use meshway_control::{ApplicationTicket, Control};
 use meshway_ipc::{DataPlane, Problem};
 use meshway_model::ConfigurationRef;
 use meshway_private_storage::Directory;
@@ -186,7 +187,7 @@ enum Command {
         lease: watch::Receiver<Option<meshway_control::ObservationLease>>,
         progress: watch::Sender<crate::runtime::ping::Progress>,
     },
-    Builder(oneshot::Sender<reqwest::ClientBuilder>),
+    Builder(oneshot::Sender<Result<reqwest::ClientBuilder, Problem>>),
     Sample(oneshot::Sender<reporting::Sample>),
     Stop {
         down: bool,
@@ -371,12 +372,19 @@ impl Handle {
             } else {
                 None
             };
-            let host = meshway_underlay::Host::open(directory.clone(), origin, options)
+            let mut host = meshway_underlay::Host::open(directory.clone(), options)
                 .await
                 .map_err(|error| {
                     tracing::warn!(%error, "Underlay startup failed");
                     Problem::Underlay
                 })?;
+            if let Err(error) = host.attach_control(origin).await {
+                tracing::warn!(%error, "Underlay Control attachment failed");
+                if let Err(error) = host.shutdown(true).await {
+                    tracing::warn!(%error, "Underlay startup cleanup failed");
+                }
+                return Err(Problem::Underlay);
+            }
             let (commands, received) = mpsc::channel(4);
             let (diagnostic_paused, paused) = watch::channel(Default::default());
             let (observation_plans, plans_rx) = watch::channel(None);
@@ -430,7 +438,7 @@ impl Handle {
             .send(Command::Builder(reply))
             .await
             .map_err(|_| Problem::Worker)?;
-        result.await.map_err(|_| Problem::Worker)
+        result.await.map_err(|_| Problem::Worker)?
     }
 
     pub async fn publish(&mut self, control: &mut Control) -> Result<(), meshway_control::Error> {

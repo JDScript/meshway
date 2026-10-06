@@ -351,7 +351,7 @@ async fn converged(a: &Manager, b: &Manager, a_id: NodeId, b_id: NodeId, old: Op
     );
 }
 
-fn secure(identity: &meshway_control::DataPlaneIdentity, manager: &Manager) -> SecureNode {
+fn secure(identity: &meshway_authority::DataPlaneIdentity, manager: &Manager) -> SecureNode {
     SecureNode::new(
         identity.clone(),
         Default::default(),

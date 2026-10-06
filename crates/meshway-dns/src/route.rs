@@ -1,5 +1,5 @@
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::{DnsTransport, execution::LocalEgressAction};
-use meshway_control::ExecutionSnapshot;
 use meshway_model::RequestId;
 use std::{fmt, net::SocketAddr, time::Instant};
 

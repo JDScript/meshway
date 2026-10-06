@@ -7,7 +7,7 @@ description = "Bounded authorized Mesh probe scheduling and measurement results"
 
 [dependencies]
 meshway-configuration = { path = "../meshway-configuration" }
-meshway-control = { path = "../meshway-control" }
+meshway-authority = { path = "../meshway-authority" }
 meshway-dataplane = { path = "../meshway-dataplane" }
 meshway-model = { path = "../meshway-model" }
 meshway-protocol = { path = "../meshway-protocol" }
@@ -18,6 +18,7 @@ thiserror.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+meshway-control = { path = "../meshway-control" }
 axum.workspace = true
 meshway-control-client = { path = "../meshway-control-client" }
 meshway-server = { path = "../../apps/meshway-server" }

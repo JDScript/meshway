@@ -95,6 +95,8 @@ business 与 diagnostic 共用同一认证实现，probe measurement／deadline 
 
 `meshway-underlay::Host` 是一个 namespace 内本节点 capture／socket 保护的唯一 owner；daemon 驱动其 install／suspend／down／shutdown。Host 独占私有目录锁与 journal，使用新建的 Node-owned TUN、IPv4 `/32`／IPv6 `/128` 地址，默认 MTU 1280。已有 TUN 不接管。
 
+`Host::open(directory, options)` 只打开内核 owner 与受保护 `SocketFactory`，不要求 Server origin，也不打开 bootstrap resolver／HTTP 代理；同进程即使使用不同私有目录也不能打开第二个 Host。需要控制联系时，再调用 `host.attach_control(origin)` 初始化 bootstrap resolver 和固定 origin 的私有 UDS relay；同一 Host 不允许替换已有 attachment。`client_builder()` 在未挂接时返回 `ControlUnavailable`。候选 socket 可独立使用同一工厂，按需加载 resolver，并继续以候选的有效执行 scope 解析／收发；不存在未保护工厂。Host 的 Drop／shutdown 同时撤销所有工厂克隆和所属任务。
+
 全部发布地址池都进入拒绝捕获边界；只有本机具有对应地址族的已分配地址时，才安装该族的正向 TUN 路由。缺少某族地址不会解除该族的拒绝边界；无本机地址的中转不据此获得本机发起业务资格。
 
 capture 使用执行配置中完整的 `meshAddressPools`，其[契约](/v2/configuration-reference/node-configuration#capture-与本机-egress)不授予 Access。私有 route table 只包含所属 capture 路由；RPDB 安装 own-mark goto、各池 lookup／unreachable 和 end，受保护 socket 跳到此块末尾后继续原 RPDB，而非强制走 main table。SO_MARK 选择、保留已有 selector 语义与读回验证必须成功；同 UID 其他 socket 不获全局绕过。
@@ -115,6 +117,8 @@ journal 绑定 namespace／boot 身份，记录有界资源及待完成操作。
 #### Bootstrap 与普通业务隔离
 
 Server 与获准候选的 bootstrap 只开放用途受限 socket。Server HTTP 使用固定 origin 的私有 UDS relay 接入 reqwest，HTTPS 仍执行正常系统根 TLS 校验；不会为同 IP 的普通应用流量创建全局豁免。候选 handle 绑定已发布的 peer／listener／endpoint 和有效执行快照。
+
+daemon 在使用受管 resolv.conf 时先恢复真实 bootstrap 上游，再依次执行 `Host::open`、`attach_control`，随后启动网络协调器；挂接失败阻断启动并 shutdown 已打开的 Host。独立 DNS anchor 仍由同一内核 owner 管理，其 suspend／down 归属与生命周期不依赖是否挂接控制代理。
 
 bootstrap 名称可使用[启动参数](/v2/node/runtime#启动与接入)的显式 hosts 或真实 nameserver，也读取系统 hosts／真实上游；已知 systemd-resolved stub 可从其上游文件取得真实服务器。未知保护关系的本地 DNS stub 不支持；须提供所需名称的 hosts 地址或显式真实上游。解析失败不回退公共 DNS。宿主系统 DNS、业务 resolver socket 和出口 resolver 不由这些 bootstrap 权限代替。
 

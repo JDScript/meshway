@@ -2,9 +2,9 @@
 //! library never owns an HTTP client, credential, or another State store.
 use crate::Error;
 use futures_util::future::BoxFuture;
-use meshway_control::{
-    ExecutionSnapshot,
-    connectivity::{AttemptView, Discovery, DiscoveryContext, Outcome, ValidatedOffer},
+use meshway_authority::ExecutionSnapshot;
+use meshway_control::connectivity::{
+    AttemptView, Discovery, DiscoveryContext, Outcome, ValidatedOffer,
 };
 use meshway_model::NodeId;
 use meshway_protocol::{

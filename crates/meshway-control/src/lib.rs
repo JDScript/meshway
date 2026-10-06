@@ -8,7 +8,7 @@
 mod authority;
 pub mod connectivity;
 mod runtime;
-pub use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot, packet_proof_message};
+use meshway_authority::ExecutionSnapshot;
 pub use runtime::ApplicationTicket;
 mod demand;
 mod dns;

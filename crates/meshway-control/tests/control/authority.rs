@@ -29,7 +29,7 @@ async fn packet_identity_uses_registered_keys_and_stops_with_the_execution_hando
         VerifyingKey::from_bytes(cfg.self_keys.control_key.public_key.bytes.as_bytes()).unwrap();
     verifier
         .verify_strict(
-            &meshway_control::packet_proof_message(
+            &meshway_authority::packet_proof_message(
                 cfg.network_id,
                 cfg.node_id,
                 &cfg.self_keys.control_key,

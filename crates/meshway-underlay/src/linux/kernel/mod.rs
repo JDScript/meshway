@@ -5,7 +5,7 @@ mod monitor;
 mod plan;
 
 use futures_util::{TryStream, TryStreamExt};
-use meshway_control::ExecutionSnapshot;
+use meshway_authority::ExecutionSnapshot;
 use meshway_private_storage::Directory;
 use meshway_tun::Tun;
 use rtnetlink::{

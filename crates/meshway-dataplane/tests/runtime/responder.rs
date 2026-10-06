@@ -1,6 +1,6 @@
 //! Authenticated malformed HS1 consumes a responder CID, not a business flow.
 use super::support::secure::SecureMesh;
-use meshway_control::DataPlaneIdentity;
+use meshway_authority::DataPlaneIdentity;
 use meshway_dataplane::secure::{CircuitState, Error, Limits, Received, SecureNode};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;

@@ -1,8 +1,8 @@
 //! Signed challenge bootstrap only. This is not an application encryption layer.
 use crate::{Carrier, Error, scope::Scope};
 use ed25519_dalek::{Signature, VerifyingKey};
+use meshway_authority::{DataPlaneIdentity, packet_proof_message};
 use meshway_configuration::execution::NodeConfiguration;
-use meshway_control::{DataPlaneIdentity, packet_proof_message};
 use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId};
 use meshway_transport::raw::Stream;
 use sha2::{Digest as _, Sha256};

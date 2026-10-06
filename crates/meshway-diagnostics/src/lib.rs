@@ -8,8 +8,8 @@ mod tests;
 
 use chrono::{DateTime, Utc};
 use measurement::Measurement;
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::{Carrier, CircuitAuthorization};
-use meshway_control::ExecutionSnapshot;
 use meshway_dataplane::secure::{CircuitRole, CircuitState, PendingFrame, SecureNode};
 use meshway_model::observations::{MetricKind, ProbeChannel};
 use meshway_model::{Digest, EventId, NodeId, ObservationId, Sequence};

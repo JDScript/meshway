@@ -5,8 +5,8 @@ use crate::{
     TrustedUpstreamResponse, Unavailable,
 };
 use bytes::Bytes;
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::DnsTransport;
-use meshway_control::ExecutionSnapshot;
 use meshway_model::RequestId;
 use meshway_protocol::NodeDnsQueryResponse;
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Instant};

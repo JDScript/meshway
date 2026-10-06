@@ -1,5 +1,5 @@
 use crate::{Carrier, Error};
-use meshway_control::ExecutionSnapshot;
+use meshway_authority::ExecutionSnapshot;
 use meshway_model::NodeId;
 use std::{
     future::{Future, poll_fn},
@@ -235,14 +235,14 @@ impl Opening {
 /// The physical gate follows only Manager-approved epochs. It is NEVER a
 /// SendLifetime: every accepted output instead retains its frozen Scope.
 pub(crate) struct Physical {
-    epochs: tokio::sync::watch::Receiver<meshway_control::DataPlaneIdentity>,
+    epochs: tokio::sync::watch::Receiver<meshway_authority::DataPlaneIdentity>,
     stop: CancellationToken,
     read: futures_util::task::AtomicWaker,
     write: futures_util::task::AtomicWaker,
 }
 impl Physical {
     pub fn new(
-        epochs: tokio::sync::watch::Receiver<meshway_control::DataPlaneIdentity>,
+        epochs: tokio::sync::watch::Receiver<meshway_authority::DataPlaneIdentity>,
         stop: CancellationToken,
     ) -> Self {
         Self {

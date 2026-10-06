@@ -9,10 +9,10 @@ use hickory_proto::{
     op::{Message, ResponseCode},
     rr::{RData, Record, RecordType, rdata},
 };
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::{
     NodeAddresses, execution::NodeConfiguration, node_dns_name, normalize_dns_name,
 };
-use meshway_control::ExecutionSnapshot;
 use meshway_model::{NetworkId, NodeId, RequestId, Revision};
 use meshway_protocol::NodeDnsQueryResponse;
 use std::{

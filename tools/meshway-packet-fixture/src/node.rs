@@ -3,8 +3,9 @@ use crate::{
     signals::{Role, Signal, Signals},
     tls, wire,
 };
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::{BusinessProtocol, BusinessTarget, DemandDecision};
-use meshway_control::{Control, ExecutionSnapshot};
+use meshway_control::Control;
 use meshway_dataplane::secure::SecureNode;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
 use meshway_protocol::{DemandRequest, InstanceRequest, enrollment::EnrollmentPhase};

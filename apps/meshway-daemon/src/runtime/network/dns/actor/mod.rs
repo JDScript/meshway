@@ -1,7 +1,7 @@
 //! The DNS owner is observed independently of packet I/O and TUN address DAD.
 use super::{Runtime, intents::Plan};
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::NodeConfiguration;
-use meshway_control::ExecutionSnapshot;
 use meshway_dns::{
     ResolverSource, SystemDnsBackend, SystemDnsError, SystemDnsOwner, SystemDnsReservation,
     SystemDnsSettings,

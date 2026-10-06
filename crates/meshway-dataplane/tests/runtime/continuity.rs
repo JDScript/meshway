@@ -4,11 +4,11 @@ use super::{
     datagram,
     support::{Node, request, secure::SecureMesh},
 };
+use meshway_authority::DataPlaneIdentity;
 use meshway_configuration::{
     AccessRule,
     execution::{BusinessProtocol, BusinessTarget, DemandDecision},
 };
-use meshway_control::DataPlaneIdentity;
 use meshway_dataplane::secure::{CircuitState, Received};
 use meshway_protocol::{CancelDemandRequest, DemandRequest, RenewDemandRequest};
 

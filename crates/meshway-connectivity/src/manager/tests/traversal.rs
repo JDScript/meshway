@@ -686,7 +686,7 @@ impl Gateway {
         &self,
         manager: &mut Manager,
         secure: &mut meshway_dataplane::secure::SecureNode,
-    ) -> meshway_control::DataPlaneIdentity {
+    ) -> meshway_authority::DataPlaneIdentity {
         self.install(manager, secure, true).await
     }
     async fn install(
@@ -694,7 +694,7 @@ impl Gateway {
         manager: &mut Manager,
         secure: &mut meshway_dataplane::secure::SecureNode,
         continuous: bool,
-    ) -> meshway_control::DataPlaneIdentity {
+    ) -> meshway_authority::DataPlaneIdentity {
         let identity = {
             let mut control = self.control.lock().await;
             control.authenticate().await.unwrap();

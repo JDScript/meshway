@@ -89,7 +89,7 @@ Server 使用 `policy` 的完整规范化／语义校验入口及编译器；Nod
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |
 | `meshway-ipc` | daemon、CLI | 本机命令、查询、事件与客户端 |
-| `meshway-authority` | control（签发）、dataplane、connectivity、underlay、dns、diagnostics（消费） | `ExecutionSnapshot`、`DataPlaneIdentity`、UTC 高水位 `Clock` 与三重 `Deadline`；只定义绑定与检查，不读存储、不联系 Server |
+| `meshway-authority` | control（签发）、daemon、dataplane、connectivity、underlay、dns、diagnostics、packet-fixture（消费） | `ExecutionSnapshot`、`DataPlaneIdentity`、UTC 高水位 `Clock` 与三重 `Deadline`；只定义绑定与检查，不读存储、不联系 Server |
 | `meshway-transport` | connectivity、dataplane、transport providers | 承载会话、batch／buffer 与背压接口 |
 
 Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它使用 `transport-spec`。本机 IPC 也不与远端 HTTP 共用一套 endpoint。
@@ -104,14 +104,14 @@ Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它�
 
 | 实际 crate | 实现归属与边界 |
 | --- | --- |
-| `meshway-control` | [接入、执行快照、连续性、回执和报告顺序](/v2/node/control)的唯一 owner |
-| `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane) |
-| `meshway-diagnostics` | [有界 source 探测调度、单调计时、窗口与结果](/v2/node/diagnostics)；借用同一 SecureNode，不持独立连接或密码状态 |
-| `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理) |
-| `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay) |
+| `meshway-control` | [接入、执行快照、连续性、回执和报告顺序](/v2/node/control)的唯一生产 owner；使用 authority 类型签发 |
+| `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane)；直接消费 authority |
+| `meshway-diagnostics` | [有界 source 探测调度、单调计时、窗口与结果](/v2/node/diagnostics)；直接消费 authority，借用同一 SecureNode，不持独立连接或密码状态 |
+| `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理)；身份／快照来自 authority，穿透 scope 仍来自 control |
+| `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay)；直接消费 authority，穿透类型来自 control；`Host::open(directory, options)` 打开内核 owner／受保护工厂，`attach_control(origin)` 可选挂接 bootstrap resolver／固定 origin 代理 |
 | `meshway-transport-{udp,tcp,vless,trojan}` | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
 | `meshway-tun` | Linux TUN 设备 I/O |
-| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal |
+| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal；直接消费 authority |
 
 daemon 已装配 Mesh-only stream／Native UDP 数据面、系统 DNS 与获准诊断；Linux 验收范围见[运行模式](/v2/node/runtime)。出口转发与 `meshway-netstack` 运行库仍待实现。
 
@@ -154,16 +154,18 @@ Server ──► protocol + configuration + policy + private-storage + 自有领
 authority ──► configuration + policy（邻接许可）+ model + protocol（instance 引用）
 Node control ──► authority（签发）+ control-client + 共享配置／模型 + private-storage
 Node dataplane ──► policy + authority（执行快照）
-Node diagnostics ──► dataplane + control（执行快照）+ protocol/model（任务与测量）
-Node connectivity ──► dataplane（受保护帧 I/O）+ control + policy + underlay + stun + transport providers
-Node underlay ──► control + configuration + private-storage + dns（bootstrap wire）+ tun + transport/tcp/udp + transport-spec
-Node DNS ──► policy + configuration + control（执行快照）+ protocol（发现响应）+ private-storage
+Node diagnostics ──► dataplane + authority（执行快照）+ protocol/model（任务与测量）
+Node connectivity ──► dataplane（受保护帧 I/O）+ authority + control（穿透 scope）+ policy + underlay + stun + transport providers
+Node underlay ──► authority + control（穿透类型／origin 校验）+ configuration + private-storage + dns（resolver 接口）+ tun + transport/tcp/udp + transport-spec
+Node DNS ──► policy + configuration + authority（执行快照）+ protocol（发现响应）+ private-storage
 Node providers ──► transport + transport-spec + tls（按协议需要）
-meshwayd ──► control + connectivity + underlay + dataplane + ipc
+meshwayd ──► control + authority + connectivity + underlay + dataplane + diagnostics + dns + ipc
 meshway CLI ──► ipc
 ```
 
 库不反向依赖 App。provider 通过合同交互，不读取另一 provider 的私有容器；Rust 类型依赖不表示允许跨动态库直接传递 Rust 内部对象。
+
+dataplane、DNS 和 diagnostics 的真实生命周期测试通过 dev-dependency 使用 Control／Server；生产消费接口直接依赖 authority。underlay／connectivity 保留 Control 的穿透类型依赖，但打开内核 owner、受保护 socket 和静态邻接不要求创建 Control 或联系 Server。
 
 ## 复用边界 {#旧实现退出与复用}
 

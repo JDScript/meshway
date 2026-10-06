@@ -2,7 +2,7 @@ use crate::{
     Carrier, Error, Limits, SocketFactory, adjacency, provider,
     scope::{self, Scope},
 };
-use meshway_control::DataPlaneIdentity;
+use meshway_authority::DataPlaneIdentity;
 use meshway_dataplane::secure::PendingFrame;
 use meshway_model::{NodeId, observations::LinkAcquisition};
 use meshway_policy::admission::admit_adjacency;
@@ -266,7 +266,7 @@ struct Shared {
     sockets: Arc<Mutex<BTreeMap<[u8; 32], SocketFact>>>,
     epochs: tokio::sync::watch::Sender<DataPlaneIdentity>,
     gates: Arc<Mutex<Vec<std::sync::Weak<scope::Physical>>>>,
-    socket_epochs: Arc<Mutex<BTreeMap<[u8; 32], meshway_control::ExecutionSnapshot>>>,
+    socket_epochs: Arc<Mutex<BTreeMap<[u8; 32], meshway_authority::ExecutionSnapshot>>>,
     generation: meshway_model::Sequence,
     traversal_endpoints: Arc<Mutex<BTreeMap<[u8; 32], traversal::Endpoint>>>,
     resource_changes: tokio::sync::watch::Sender<()>,

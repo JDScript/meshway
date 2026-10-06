@@ -33,9 +33,19 @@ async fn fixed_origin_https_survives_explicit_network_down() {
     if let Ok(server) = std::env::var("MESHWAY_UNDERLAY_NAMESERVER") {
         options.bootstrap_nameservers = Some(vec![server.parse::<SocketAddr>().unwrap()]);
     }
-    let mut host = Host::open(directory, &origin, options).await.unwrap();
+    let mut host = Host::open(directory, options).await.unwrap();
+    assert!(matches!(
+        host.client_builder(),
+        Err(meshway_underlay::Error::ControlUnavailable)
+    ));
+    host.attach_control(&origin).await.unwrap();
+    assert!(matches!(
+        host.attach_control(&origin).await,
+        Err(meshway_underlay::Error::Conflict)
+    ));
     let mut builder = host
         .client_builder()
+        .unwrap()
         .timeout(std::time::Duration::from_secs(10));
     if let Ok(path) = std::env::var("MESHWAY_UNDERLAY_CA") {
         let certificate = reqwest::Certificate::from_pem(&std::fs::read(path).unwrap()).unwrap();

@@ -24,10 +24,8 @@ def main():
     if shutil.disk_usage(ROOT).free < 50 * 1024 ** 3:
         raise SystemExit("Linux build needs at least 50 GiB of free disk space.")
     target, platform, machine = docker_target()
-    common = Path(run("git", "rev-parse", "--git-common-dir", capture=True).strip())
-    repository = (ROOT / common).resolve().parent
     identity = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    report = repository / ".meshway/validation/packet" / identity
+    report = ROOT / ".meshway/validation/packet" / identity
     for directory in ("bin", "public", "controller", "signals"):
         (report / directory).mkdir(parents=True)
     before = fingerprint()

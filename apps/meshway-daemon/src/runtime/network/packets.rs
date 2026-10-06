@@ -59,7 +59,7 @@ struct Incoming {
     received_at: std::time::Instant,
     bytes: Vec<u8>,
     deadline: Instant,
-    guard: meshway_control::ExecutionSnapshot,
+    guard: meshway_authority::ExecutionSnapshot,
 }
 struct Intent {
     request: DemandRequest,

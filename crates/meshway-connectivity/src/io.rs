@@ -2,7 +2,7 @@
 //! exactly one implementation, in meshway-underlay.
 use crate::Error;
 use futures_util::future::BoxFuture;
-use meshway_control::ExecutionSnapshot;
+use meshway_authority::ExecutionSnapshot;
 use meshway_transport::raw::{Datagram, Stream};
 use std::net::SocketAddr;
 

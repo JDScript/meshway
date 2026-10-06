@@ -3,8 +3,8 @@
 mod actor;
 pub(super) mod intents;
 pub(super) use actor::Attachment;
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::NodeConfiguration;
-use meshway_control::ExecutionSnapshot;
 use meshway_dns::{
     CancellationToken, DiscoveryGateway, OwnerDispatcher, ResolverDemand, ResolverExchange,
     ResolverSource, Scope, Service, SystemDnsBackend, SystemDnsError, SystemDnsOwner,

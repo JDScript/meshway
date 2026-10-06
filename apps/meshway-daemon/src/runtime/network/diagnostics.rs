@@ -73,7 +73,7 @@ impl Diagnostics {
         self.pending_plan = plan;
     }
 
-    pub fn synchronize(&mut self, installed: &meshway_control::ExecutionSnapshot) {
+    pub fn synchronize(&mut self, installed: &meshway_authority::ExecutionSnapshot) {
         let Some(plan) = &self.pending_plan else {
             return;
         };

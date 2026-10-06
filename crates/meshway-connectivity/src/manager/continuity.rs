@@ -1,7 +1,7 @@
 //! Explicit Control-approved handoff of physical resources. Each operation's
 //! Scope stays immutable; only the owner takes a fresh scope for future work.
 use super::*;
-use meshway_control::ExecutionSnapshot;
+use meshway_authority::ExecutionSnapshot;
 use tokio::sync::watch;
 
 impl Shared {

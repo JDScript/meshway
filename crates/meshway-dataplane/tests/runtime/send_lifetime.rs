@@ -209,7 +209,7 @@ async fn dropping_outer_send_cancels_accepted_worker_before_raw_gate_opens() {
 }
 
 #[derive(Debug)]
-struct SnapshotLifetime(meshway_control::ExecutionSnapshot);
+struct SnapshotLifetime(meshway_authority::ExecutionSnapshot);
 impl meshway_transport::SendLifetime for SnapshotLifetime {
     fn is_current(&self) -> bool {
         self.0.ensure_current().is_ok()
@@ -264,7 +264,7 @@ async fn ready_datagram_send_finishes_inline_but_cancellation_inside_io_never_re
 
     #[derive(Debug)]
     struct Channel {
-        snapshot: meshway_control::ExecutionSnapshot,
+        snapshot: meshway_authority::ExecutionSnapshot,
         cancelled: CancellationToken,
     }
     impl meshway_transport::SendLifetime for Channel {

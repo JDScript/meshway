@@ -27,7 +27,7 @@ pub struct DatagramAuthorization {
 }
 struct Binding {
     reference: SocketReference,
-    snapshot: meshway_control::ExecutionSnapshot,
+    snapshot: meshway_authority::ExecutionSnapshot,
 }
 
 pub(super) struct Registry {
@@ -98,7 +98,7 @@ impl DatagramAuthorization {
             },
         })
     }
-    fn check(&self, snapshot: &meshway_control::ExecutionSnapshot) -> Result<()> {
+    fn check(&self, snapshot: &meshway_authority::ExecutionSnapshot) -> Result<()> {
         self.scope.owner_current()?;
         let binding = self.binding.lock().map_err(|_| Error::Worker)?;
         binding
@@ -219,7 +219,7 @@ impl DatagramAuthorization {
     /// caller is the selected-channel owner and supplies new frozen peer guards.
     pub fn handoff(
         &self,
-        snapshot: &meshway_control::ExecutionSnapshot,
+        snapshot: &meshway_authority::ExecutionSnapshot,
         reference: &SocketReference,
         selected: &[(SocketAddr, Arc<dyn SendLifetime>)],
     ) -> Result<()> {

@@ -28,7 +28,7 @@ pub struct Node {
 }
 
 impl Node {
-    pub async fn sync_current(&mut self) -> meshway_control::ExecutionSnapshot {
+    pub async fn sync_current(&mut self) -> meshway_authority::ExecutionSnapshot {
         let target = self.control.sync_configuration().await.unwrap().unwrap();
         assert_eq!(self.control.status().cached, Some(target.clone()));
         if self

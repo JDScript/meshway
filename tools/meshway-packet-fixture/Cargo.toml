@@ -6,6 +6,7 @@ rust-version.workspace = true
 description = "Explicit isolated conformance driver for protected Meshway TUN packet flow"
 
 [dependencies]
+meshway-authority = { path = "../../crates/meshway-authority" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-policy = { path = "../../crates/meshway-policy" }
 meshway-model = { path = "../../crates/meshway-model" }

@@ -1,4 +1,4 @@
-use meshway_control::ExecutionSnapshot;
+use meshway_authority::ExecutionSnapshot;
 use serde::{Deserialize, Serialize};
 use socket2::SockRef;
 use std::{

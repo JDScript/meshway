@@ -1,6 +1,7 @@
 //! Real Server/Control identities and publication, with only raw I/O injected.
+use meshway_authority::DataPlaneIdentity;
 use meshway_configuration::{AccessRule, Input, NetworkConfigurationInput};
-use meshway_control::{Control, DataPlaneIdentity};
+use meshway_control::Control;
 use meshway_control_client::{
     ApplyConfigurationPath, ApproveDeviceAuthorizationPath, Client, GetConfigurationSourcePath,
     GetConfigurationSourceQuery,

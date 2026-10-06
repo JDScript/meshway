@@ -9,10 +9,15 @@ mod proxy;
 mod resolver_exchange;
 pub mod sockets;
 mod tasks;
+#[cfg(test)]
+mod tests;
 
-use meshway_control::ExecutionSnapshot;
+use meshway_authority::ExecutionSnapshot;
 use meshway_private_storage::Directory;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use crate::{Error, Options, Result};
 use kernel::Kernel;
@@ -20,23 +25,47 @@ use proxy::Proxy;
 use sockets::SocketFactory;
 use tasks::Tasks;
 
-/// One actor owns Host. Control clients use its independently driven UDS relay;
+static HOST_OWNED: AtomicBool = AtomicBool::new(false);
+
+struct HostOwner;
+
+impl HostOwner {
+    fn acquire() -> Result<Self> {
+        HOST_OWNED
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| Error::Conflict)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for HostOwner {
+    fn drop(&mut self) {
+        HOST_OWNED.store(false, Ordering::Release);
+    }
+}
+
+/// One actor owns Host. Optional Control clients use its independently driven UDS relay;
 /// data factories are cloneable but retain only opaque, revocable socket scope.
 /// Drop stops socket tasks and drops TUN while retaining negative kernel rules.
 /// Call shutdown to join producers and finish accepted private writes explicitly.
 pub struct Host {
     kernel: Kernel,
-    proxy: Proxy,
+    proxy: Option<Proxy>,
+    directory: Arc<Directory>,
     sockets: SocketFactory,
     tasks: Tasks,
+    // Released after the kernel, proxy and private-directory ownership.
+    _owner: HostOwner,
 }
 
 impl Host {
-    pub async fn open(directory: Arc<Directory>, origin: &str, options: Options) -> Result<Self> {
+    /// Open the sole kernel owner and protected socket factory, without contacting
+    /// a Server or opening a resolver. Call attach_control for a fixed-origin relay.
+    pub async fn open(directory: Arc<Directory>, options: Options) -> Result<Self> {
         options.validate()?;
-        let origin = meshway_control::server_origin(origin).map_err(|_| Error::Origin)?;
+        let owner = HostOwner::acquire()?;
         let path = directory.path().to_owned();
-        // A second Host in the same process must not become a second kernel owner.
+        // The directory lock also excludes other processes from this installation.
         let directory = Arc::new(
             tokio::task::spawn_blocking(move || Directory::open(&path, "underlay.lock"))
                 .await
@@ -54,32 +83,20 @@ impl Host {
         let mut opening = Opening(Some(tasks.clone()));
         let opened = async {
             let kernel = Kernel::open(directory.clone(), options.clone(), tasks.clone()).await?;
-            let resolver = dns::Resolver::open(kernel.shared.clone(), &options).await?;
-            let proxy = Proxy::open(
-                directory,
-                &origin,
-                kernel.shared.clone(),
-                resolver.clone(),
-                options.max_sockets,
-                options.connect_timeout,
-            )
-            .await?;
-            let sockets = SocketFactory {
-                shared: kernel.shared.clone(),
-                resolver,
-                timeout: options.connect_timeout,
-            };
-            Ok::<_, Error>((kernel, proxy, sockets))
+            let sockets = SocketFactory::new(kernel.shared.clone(), options);
+            Ok::<_, Error>((kernel, sockets))
         }
         .await;
         match opened {
-            Ok((kernel, proxy, sockets)) => {
+            Ok((kernel, sockets)) => {
                 opening.0 = None;
                 Ok(Self {
                     kernel,
-                    proxy,
+                    proxy: None,
+                    directory,
                     sockets,
                     tasks,
+                    _owner: owner,
                 })
             }
             Err(error) => {
@@ -90,8 +107,34 @@ impl Host {
         }
     }
 
-    pub fn client_builder(&self) -> reqwest::ClientBuilder {
-        self.proxy.client_builder()
+    /// Attach the bootstrap resolver and fixed-origin Control relay to this
+    /// owner's protected sockets. A live attachment cannot be replaced/rebound.
+    pub async fn attach_control(&mut self, origin: &str) -> Result<()> {
+        if self.proxy.is_some() {
+            return Err(Error::Conflict);
+        }
+        let origin = meshway_control::server_origin(origin).map_err(|_| Error::Origin)?;
+        self.kernel.shared.check()?;
+        let resolver = self.sockets.resolver().await?.clone();
+        self.proxy = Some(
+            Proxy::open(
+                self.directory.clone(),
+                &origin,
+                self.kernel.shared.clone(),
+                resolver,
+                self.sockets.options.max_sockets,
+                self.sockets.options.connect_timeout,
+            )
+            .await?,
+        );
+        Ok(())
+    }
+
+    pub fn client_builder(&self) -> Result<reqwest::ClientBuilder> {
+        self.proxy
+            .as_ref()
+            .map(Proxy::client_builder)
+            .ok_or(Error::ControlUnavailable)
     }
     pub fn sockets(&self) -> SocketFactory {
         self.sockets.clone()
@@ -117,7 +160,7 @@ impl Host {
         self.kernel.tun.as_ref()
     }
 
-    /// Select this around the actor's TUN/packet loop in addition to the Control
+    /// Select this around the actor's TUN/packet loop in addition to the execution
     /// snapshot's invalidation. A foreign kernel mutation stops positive I/O.
     pub async fn invalidated(&self) {
         let snapshot = self
@@ -137,7 +180,7 @@ impl Host {
         }
     }
 
-    /// Install capture under fresh Control authority. Success does not claim
+    /// Install capture under fresh execution authority. Success does not claim
     /// carrier establishment, business DNS installation, or an applied receipt.
     /// A verified direct publication continuation with unchanged capture keeps
     /// the owned TUN and replaces the data-socket epoch. Calling suspend first

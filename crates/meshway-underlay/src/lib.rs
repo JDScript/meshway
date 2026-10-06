@@ -85,6 +85,8 @@ pub enum Error {
     Options,
     #[error("invalid fixed Server origin")]
     Origin,
+    #[error("fixed-origin Control proxy is not attached")]
+    ControlUnavailable,
     #[error("execution snapshot is not current or does not match the installed scope")]
     Expired,
     #[error("unsupported execution target or socket declaration")]
@@ -122,7 +124,6 @@ pub struct Host;
 impl Host {
     pub async fn open(
         _directory: Arc<meshway_private_storage::Directory>,
-        _origin: &str,
         options: Options,
     ) -> Result<Self> {
         options.validate()?;

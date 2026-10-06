@@ -10,6 +10,7 @@ name = "meshwayd"
 path = "src/main.rs"
 
 [dependencies]
+meshway-authority = { path = "../../crates/meshway-authority" }
 chrono.workspace = true
 getrandom.workspace = true
 clap = { workspace = true, features = ["env"] }

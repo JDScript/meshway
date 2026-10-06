@@ -5,7 +5,7 @@ use super::{
     datagram, local, peer,
     support::{Mesh, Node, packet, secure::SecureMesh},
 };
-use meshway_control::DataPlaneIdentity;
+use meshway_authority::DataPlaneIdentity;
 use meshway_dataplane::{
     Engine, Error as EngineError, PendingAction,
     secure::{Carrier, Error, PendingFrame, Received, SecureNode},

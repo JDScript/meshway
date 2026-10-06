@@ -6,6 +6,7 @@ rust-version.workspace = true
 description = "Owned Linux capture routing and protected Node bootstrap/data sockets"
 
 [dependencies]
+meshway-authority = { path = "../meshway-authority" }
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-control = { path = "../meshway-control" }
 meshway-dns = { path = "../meshway-dns" }

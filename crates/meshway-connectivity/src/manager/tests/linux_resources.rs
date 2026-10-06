@@ -86,7 +86,6 @@ async fn host(fixture: &support::Fixture, directory: &std::path::Path) -> Host {
     let directory = Arc::new(Directory::open(directory, "test.lock").unwrap());
     let mut host = Host::open(
         directory,
-        "https://127.0.0.1:8443",
         meshway_underlay::Options {
             bootstrap_nameservers: Some(vec!["192.0.2.53:53".parse().unwrap()]),
             ..Default::default()
