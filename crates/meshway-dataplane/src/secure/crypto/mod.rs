@@ -150,6 +150,9 @@ pub(super) fn encrypt(
     nonce: u64,
     packet: Packet,
 ) -> Result<Vec<u8>, Error> {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("crypto.encrypt");
+    let _profile = PROFILE.enter();
     let plaintext = Zeroizing::new(packet.into_bytes());
     if plaintext.len() > MAX_PLAINTEXT {
         return Err(Error::Unsupported);
@@ -171,6 +174,9 @@ pub(super) fn decrypt(
     bytes: &[u8],
     facts: PacketFacts,
 ) -> Result<Packet, Error> {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("crypto.decrypt_parse");
+    let _profile = PROFILE.enter();
     let expected = bytes
         .len()
         .checked_sub(16)
@@ -196,6 +202,9 @@ fn exact_facts(packet: Packet, facts: PacketFacts) -> Result<Packet, Error> {
 }
 
 fn transcript(frame: &Frame) -> Result<Sha256, Error> {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("crypto.transcript");
+    let _profile = PROFILE.enter();
     let mut hash = Sha256::new();
     hash.update(PROOF);
     hash.update(frame.base()?);
@@ -223,6 +232,9 @@ pub(super) fn append(
     frame: &mut Frame,
     carrier: Carrier,
 ) -> Result<(), Error> {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("crypto.append");
+    let _profile = PROFILE.enter();
     let cfg = identity
         .snapshot()
         .configuration()
@@ -239,7 +251,12 @@ pub(super) fn append(
         signature: [0; 64],
     };
     let digest = proof_digest(&hash, frame.proofs.len(), &proof)?;
-    proof.signature = identity.sign_packet(digest).map_err(|_| Error::Authority)?;
+    proof.signature = {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("crypto.sign");
+        let _profile = PROFILE.enter();
+        identity.sign_packet(digest).map_err(|_| Error::Authority)?
+    };
     frame.proofs.push(proof);
     Ok(())
 }
@@ -290,6 +307,9 @@ fn verify_chain<'a>(
     selected: &LogicalPath,
     key_for: impl Fn(NodeId) -> Result<&'a BoundNodeKey, Error>,
 ) -> Result<NodeId, Error> {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("crypto.verify_chain");
+    let _profile = PROFILE.enter();
     let context = &frame.context;
     if selected.nodes != context.path {
         return Err(Error::Context);
@@ -324,10 +344,15 @@ fn verify_chain<'a>(
         }
         let digest = proof_digest(&hash, index, proof)?;
         let message = packet_proof_message(context.network, signer, key, digest);
-        VerifyingKey::from_bytes(key.public_key.bytes.as_bytes())
-            .map_err(|_| Error::Proof)?
-            .verify_strict(&message, &Signature::from_bytes(&proof.signature))
-            .map_err(|_| Error::Proof)?;
+        {
+            static PROFILE: meshway_logging::profile::Metric =
+                meshway_logging::profile::Metric::new("crypto.verify_signature");
+            let _profile = PROFILE.enter();
+            VerifyingKey::from_bytes(key.public_key.bytes.as_bytes())
+                .map_err(|_| Error::Proof)?
+                .verify_strict(&message, &Signature::from_bytes(&proof.signature))
+                .map_err(|_| Error::Proof)?;
+        }
         extend(&mut hash, proof)?;
     }
     let previous = ordered_node(context, frame.reply, count - 1);

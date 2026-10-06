@@ -151,6 +151,19 @@ impl SendOwner<'_> {
 }
 
 async fn send_inner(
+    sender: SendOwner<'_>,
+    pending: PendingFrame,
+    peer: Option<SocketAddr>,
+    channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
+) -> Result<SendReceipt, Error> {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("carrier.send.poll");
+    PROFILE
+        .poll(send_owned(sender, pending, peer, channel))
+        .await
+}
+
+async fn send_owned(
     mut sender: SendOwner<'_>,
     pending: PendingFrame,
     peer: Option<SocketAddr>,
@@ -260,6 +273,12 @@ impl meshway_transport::SendLifetime for OutputLifetime {
 /// the asynchronous write. Every resumed device poll rechecks those guards.
 /// Exit/NAT forwarding has a separate owner and cannot use local TUN delivery.
 pub async fn deliver(tun: &meshway_tun::Tun, pending: PendingAction) -> Result<(), Error> {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("carrier.deliver.poll");
+    PROFILE.poll(deliver_owned(tun, pending)).await
+}
+
+async fn deliver_owned(tun: &meshway_tun::Tun, pending: PendingAction) -> Result<(), Error> {
     if pending.hop() != Hop::Deliver {
         return Err(Error::Destination);
     }

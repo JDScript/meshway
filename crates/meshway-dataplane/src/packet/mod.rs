@@ -160,6 +160,9 @@ impl Packet {
     pub const MAX_LEN: usize = 40 + u16::MAX as usize;
 
     pub fn parse(bytes: Vec<u8>) -> Result<Self, PacketError> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("packet.parse");
+        let _profile = PROFILE.enter();
         let (source, destination, protocol, offset) = match bytes.first().map(|b| b >> 4) {
             Some(4) => ipv4(&bytes)?,
             Some(6) => ipv6(&bytes)?,

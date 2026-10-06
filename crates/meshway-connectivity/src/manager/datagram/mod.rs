@@ -541,6 +541,16 @@ impl Owner {
         frame: Frame,
         received_at: std::time::Instant,
     ) -> Result<(), Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("manager.udp.dispatch.poll");
+        PROFILE.poll(self.receive_inner(frame, received_at)).await
+    }
+
+    async fn receive_inner(
+        &mut self,
+        frame: Frame,
+        received_at: std::time::Instant,
+    ) -> Result<(), Error> {
         let Some(remote) = frame.peer else {
             return Ok(());
         };
@@ -581,11 +591,21 @@ impl Owner {
         {
             // Source is a demultiplex key only after signed challenge completion.
             // SecureNode remains the sole packet decoder and proof verifier.
-            let _ = self.shared.events.try_send(Event::Frame {
+            meshway_logging::profile::event("manager.udp", "mesh_frame");
+            let result = self.shared.events.try_send(Event::Frame {
                 link: Box::new(channel.fact.clone()),
                 frame,
                 received_at,
             });
+            match result {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    meshway_logging::profile::event("manager.udp.drop", "event_full")
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    meshway_logging::profile::event("manager.udp.drop", "event_closed")
+                }
+            }
         }
         Ok(())
     }

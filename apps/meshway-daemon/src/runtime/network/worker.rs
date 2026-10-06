@@ -46,6 +46,7 @@ pub(super) async fn run(
     let mut dns_failed = false;
     let mut sample_at = None;
     loop {
+        meshway_logging::profile::report();
         if let Some(completion) = pending_completion.take() {
             match completed.try_send(completion) {
                 Ok(()) => {}
@@ -350,7 +351,11 @@ pub(super) async fn run(
                             DataPlane::Stopped
                         }
                     }
-                    Err((problem, _)) => {
+                    Err((problem, failure)) => {
+                        tracing::warn!(?problem, ?failure, refreshing,
+                            publication = %target.ticket.target().execution_publication,
+                            target_current = target.identity.as_ref().is_some_and(|identity| identity.snapshot().ensure_current().is_ok()),
+                            "Node installation did not complete");
                         dns.suspend();
                         close(&mut installed).await;
                         if host.suspend().await.is_err() {
@@ -371,6 +376,11 @@ pub(super) async fn run(
                 diagnostics.invalidate();
                 dns.suspend();
                 let dns_error = matches!(work, Work::DnsFailure);
+                if dns_error {
+                    tracing::warn!(publication = ?guard.as_ref().map(|guard| guard.reference().execution_publication),
+                        execution_current = guard.as_ref().is_some_and(|guard| guard.ensure_current().is_ok()),
+                        "Required DNS component failed; suspending packet plane");
+                }
                 dns_failed |= dns_error;
                 if dns_error && let Some((target, _)) = preparing.take() {
                     let observed_at = chrono::Utc::now();
@@ -464,7 +474,8 @@ pub(super) async fn run(
                 _ = guard.invalidated() => {},
                 _ = dns.failed(), if !dns_failed => {},
                 _ = async {
-                    packets.drive(&mut state.secure, manager, &host, &state.target, &gateway, &mut diagnostics).await;
+                    static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
+                    PROFILE.poll(packets.drive(&mut state.secure, manager, &host, &state.target, &gateway, &mut diagnostics)).await;
                     diagnostics.drive(&mut state.secure, manager, &gateway);
                 } => {},
             }
@@ -510,6 +521,22 @@ fn handoff_deadline(guard: &meshway_control::ExecutionSnapshot) -> Option<tokio:
 /// An explicit measurement by the resource owner. Application observation time
 /// remains immutable; sampling current sockets is distinct from receipt replay.
 fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("host.sample");
+    let _profile = PROFILE.enter();
+    meshway_logging::profile::gauge(
+        "secure.retained_circuits",
+        installed
+            .as_ref()
+            .map(|state| state.secure.retained_circuits() as u64),
+    );
+    meshway_logging::profile::gauge(
+        "flow.retained",
+        installed
+            .as_ref()
+            .map(|state| state.secure.retained_flows() as u64),
+    );
+    meshway_logging::profile::gauge("secure.ready_circuits", None);
     report.facts = None;
     report.dependencies.clear();
     report.observation_dependencies.clear();
@@ -523,6 +550,7 @@ fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
             && let Some(identity) = &state.target.identity
             && let Ok(cfg) = identity.snapshot().configuration()
         {
+            meshway_logging::profile::gauge("secure.ready_circuits", Some(circuits.len() as u64));
             for circuit in circuits {
                 for pair in circuit.path.windows(2) {
                     let peer = if pair[0] == cfg.node_id {
@@ -615,9 +643,22 @@ async fn install(
     } else {
         close(installed).await;
     }
-    let retained = installed
-        .as_mut()
-        .is_some_and(|state| state.secure.reconcile(identity.clone()).is_ok());
+    let retained =
+        installed
+            .as_mut()
+            .is_some_and(|state| match state.secure.reconcile(identity.clone()) {
+                Ok(()) => true,
+                Err(error) => {
+                    if !allow_replacement {
+                        tracing::warn!(?error,
+                        previous = %state.target.ticket.target().execution_publication,
+                        next = %target.ticket.target().execution_publication,
+                        next_current = identity.snapshot().ensure_current().is_ok(),
+                        "Secure owner rejected same-attempt execution refresh");
+                    }
+                    false
+                }
+            });
     tracing::debug!(retained, publication = %target.ticket.target().execution_publication, "Reconciling Node packet execution");
     if !retained && !allow_replacement {
         // Expiry may win after Control offered the refresh. Do not silently

@@ -218,6 +218,9 @@ pub struct UntrustedIncomingHint {
 }
 
 pub fn incoming_hint(bytes: &[u8]) -> Result<UntrustedIncomingHint, Error> {
+    static PROFILE: meshway_logging::profile::Metric =
+        meshway_logging::profile::Metric::new("codec.hint");
+    let _profile = PROFILE.enter();
     let frame = Frame::decode(bytes)?;
     Ok(UntrustedIncomingHint {
         authorization: frame.context.authorization,
@@ -476,6 +479,9 @@ impl SecureNode {
     /// circuit IDs, replay windows, flows or their complete logical paths.
     /// Every later output still checks this carrier against its specific permit.
     pub fn set_carriers(&mut self, carriers: BTreeMap<NodeId, Carrier>) -> Result<(), Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("secure.set_carriers");
+        let _profile = PROFILE.enter();
         let snapshot = self.identity.snapshot();
         let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
         let now = snapshot.now_ms().map_err(|_| Error::Authority)?;
@@ -654,6 +660,9 @@ impl SecureNode {
     }
 
     pub fn receive(&mut self, incoming: &Carrier, bytes: Vec<u8>) -> Result<Received, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("secure.receive");
+        let _profile = PROFILE.enter();
         self.maintain_circuits()?;
         let frame = Frame::decode(&bytes)?;
         let snapshot = self.identity.snapshot();
@@ -995,6 +1004,9 @@ impl SecureNode {
     }
 
     pub fn send(&mut self, id: [u8; 32], packet: Packet) -> Result<PendingFrame, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("secure.send");
+        let _profile = PROFILE.enter();
         self.maintain_circuits()?;
         let mut circuit = self.circuits.remove(&id).ok_or(Error::State)?;
         let result = self.send_inner(&mut circuit, packet);
@@ -1251,6 +1263,9 @@ impl SecureNode {
     // Packet admission collects expired flows with its final FlowTime. Avoid
     // sweeping that same table again here, while retaining circuit fencing.
     fn maintain_circuits(&mut self) -> Result<(), Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("secure.maintain");
+        let _profile = PROFILE.enter();
         self.probes.maintain();
         if self.identity.snapshot().ensure_current().is_err() {
             return Err(Error::Authority);
@@ -1347,6 +1362,9 @@ impl SecureNode {
         path: &[NodeId],
         packet: &Packet,
     ) -> Result<Option<CircuitInfo>, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("secure.local_circuit");
+        let _profile = PROFILE.enter();
         let cfg = self
             .identity
             .snapshot()

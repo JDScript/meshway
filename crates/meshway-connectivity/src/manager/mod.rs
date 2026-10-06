@@ -673,6 +673,9 @@ impl Manager {
     }
 
     pub fn snapshot(&self) -> Result<Snapshot, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("manager.snapshot");
+        let _profile = PROFILE.enter();
         if self.shared.stop.is_cancelled() {
             return Err(Error::Unavailable);
         }
@@ -744,6 +747,9 @@ impl Manager {
     }
 
     pub fn carriers(&self) -> Result<BTreeMap<NodeId, Carrier>, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("manager.carriers");
+        let _profile = PROFILE.enter();
         Ok(self
             .snapshot()?
             .links
@@ -755,7 +761,12 @@ impl Manager {
     /// Never redirects or re-signs a PendingFrame. Exact signed carrier match is
     /// checked before queue admission and again after obtaining the send owner.
     pub async fn send(&self, pending: PendingFrame) -> Result<(), Error> {
-        self.send_with_receipt(pending).await.map(|_| ())
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("manager.send.poll");
+        PROFILE
+            .poll(self.send_with_receipt(pending))
+            .await
+            .map(|_| ())
     }
 
     /// Returns the channel captured at this call, with the formal sender's
@@ -768,6 +779,9 @@ impl Manager {
         pending: PendingFrame,
     ) -> impl std::future::Future<Output = Result<SendReceipt, Error>> + Send + 'static + use<>
     {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("manager.select");
+        let _profile = PROFILE.enter();
         let shared = self.shared.clone();
         let selected = (|| -> Result<_, Error> {
             pending.ensure_current().map_err(|_| Error::Authority)?;

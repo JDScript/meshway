@@ -388,6 +388,9 @@ impl Sender {
     /// group flush attempt. Remaining work is owned by the worker, including
     /// any partial inline write. Ready completions need no worker scheduling.
     pub fn try_send(&mut self, frames: &mut VecDeque<Frame>, context: SendContext) -> Admission {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("transport.submit");
+        let _profile = PROFILE.enter();
         let rejected = |stop| Admission {
             accepted: 0,
             stop: Some(stop),

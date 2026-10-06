@@ -153,6 +153,9 @@ impl Frame {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("codec.encode");
+        let _profile = PROFILE.enter();
         let mut out = self.base()?;
         out.push(self.proofs.len() as u8);
         for proof in &self.proofs {
@@ -165,6 +168,9 @@ impl Frame {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("codec.decode");
+        let _profile = PROFILE.enter();
         if bytes.len() > MAX_FRAME {
             return Err(Error::Wire);
         }

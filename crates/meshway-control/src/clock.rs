@@ -37,6 +37,9 @@ impl Clock {
         offset.checked_add(elapsed).ok_or(Error::Expired)
     }
     pub(super) fn now(&self) -> Result<u64, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::detail("control.clock", 2);
+        let _profile = PROFILE.enter();
         self.observe(now()?, Instant::now())
     }
 

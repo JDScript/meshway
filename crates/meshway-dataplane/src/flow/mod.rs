@@ -401,26 +401,31 @@ impl FlowTable {
         if ingress.sender(config.node_id) != expected_sender {
             return Err(Error::Sender);
         }
-        let hop = match direction {
-            Direction::Forward => admit_forward(
-                config,
-                ingress.demand(),
-                path,
-                origin,
-                ingress.previous(),
-                &facts.traffic,
-                time.now_ms,
-            )?,
-            Direction::Reply => admit_reply(
-                config,
-                ingress.demand(),
-                path,
-                origin,
-                ingress.previous(),
-                &existing.ok_or(Error::Flow)?.forward,
-                &facts.traffic,
-                time.now_ms,
-            )?,
+        let hop = {
+            static PROFILE: meshway_logging::profile::Metric =
+                meshway_logging::profile::Metric::new("policy.packet");
+            let _profile = PROFILE.enter();
+            match direction {
+                Direction::Forward => admit_forward(
+                    config,
+                    ingress.demand(),
+                    path,
+                    origin,
+                    ingress.previous(),
+                    &facts.traffic,
+                    time.now_ms,
+                )?,
+                Direction::Reply => admit_reply(
+                    config,
+                    ingress.demand(),
+                    path,
+                    origin,
+                    ingress.previous(),
+                    &existing.ok_or(Error::Flow)?.forward,
+                    &facts.traffic,
+                    time.now_ms,
+                )?,
+            }
         };
         // Policy owns grant validity. Looking up its expiry here only bounds
         // retention and delayed output; it is not an alternate admission path.

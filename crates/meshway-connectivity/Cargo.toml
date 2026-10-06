@@ -6,6 +6,7 @@ rust-version.workspace = true
 description = "Bounded authorized Node stream connections and authenticated adjacency"
 
 [dependencies]
+meshway-logging = { path = "../meshway-logging" }
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-control = { path = "../meshway-control" }
 meshway-model = { path = "../meshway-model" }

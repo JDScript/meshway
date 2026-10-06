@@ -114,11 +114,25 @@ impl Actor {
                     match command {
                         Some(Command::Hold(cfg, reply)) => {
                             let result = runtime.hold(&cfg).await;
+                            if let Err(error) = result {
+                                tracing::warn!(
+                                    ?error,
+                                    operation = "hold",
+                                    "DNS owner operation failed"
+                                );
+                            }
                             let _ = reply.send(result);
                             continue;
                         }
                         Some(Command::Install(snapshot, demands, reply)) => {
                             let result = runtime.install(*snapshot, &demands).await;
+                            if let Err(error) = result {
+                                tracing::warn!(
+                                    ?error,
+                                    operation = "install",
+                                    "DNS owner operation failed"
+                                );
+                            }
                             let _ = reply.send(result);
                             continue;
                         }
@@ -137,6 +151,13 @@ impl Actor {
                     .await
                     .unwrap_or(Err(SystemDnsError::Backend));
                 if let Err(error) = result {
+                    if *faults.borrow() != Some(error) {
+                        tracing::warn!(
+                            ?error,
+                            operation = "observe",
+                            "DNS owner health check failed"
+                        );
+                    }
                     query_scopes.send_replace(None);
                     faults.send_replace(Some(error));
                 }

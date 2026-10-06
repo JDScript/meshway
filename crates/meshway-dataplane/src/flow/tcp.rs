@@ -43,6 +43,7 @@ impl Side {
         // Never widen history based on an ACK, nor move its frontier backwards
         // for reordered ACKs. All comparisons are offsets within a <2^31 span.
         if !segment.ack() || segment.syn() || !peer.contains(segment.acknowledgement) {
+            meshway_logging::profile::event("tcp.reject", "ack_or_flags");
             return Err(Error::Flow);
         }
         if segment.rst() {
@@ -55,6 +56,14 @@ impl Side {
             };
         }
         if !self.contains(segment.sequence) {
+            meshway_logging::profile::event(
+                "tcp.reject",
+                if segment.sequence.wrapping_sub(self.next) < (1 << 31) {
+                    "future_sequence"
+                } else {
+                    "old_sequence"
+                },
+            );
             return Err(Error::Flow);
         }
         let payload_end = segment
@@ -75,6 +84,7 @@ impl Side {
             if consumed > self.next.wrapping_sub(segment.sequence)
                 || (segment.fin() && self.fin.is_none())
             {
+                meshway_logging::profile::event("tcp.reject", "partial_overlap_or_fin");
                 return Err(Error::Flow);
             }
             return Ok(());

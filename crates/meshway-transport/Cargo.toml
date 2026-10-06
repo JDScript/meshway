@@ -6,6 +6,7 @@ rust-version.workspace = true
 description = "Bounded framed transport I/O and completion ownership for Node providers"
 
 [dependencies]
+meshway-logging = { path = "../meshway-logging" }
 bytes.workspace = true
 futures-util.workspace = true
 meshway-transport-spec = { path = "../meshway-transport-spec" }

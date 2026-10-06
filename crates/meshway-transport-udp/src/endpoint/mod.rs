@@ -111,6 +111,9 @@ impl Datagram for UdpTransport {
         payload: &[u8],
         peer: SocketAddr,
     ) -> Poll<io::Result<usize>> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("udp.send.poll");
+        let _profile = PROFILE.enter();
         self.socket.poll_send_to(cx, payload, peer)
     }
 
@@ -119,6 +122,9 @@ impl Datagram for UdpTransport {
         cx: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<DatagramRead>> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("udp.recv.poll");
+        let _profile = PROFILE.enter();
         loop {
             ready!(self.socket.poll_recv_ready(cx))?;
             // try_io clears Tokio's readiness on EWOULDBLOCK. Calling a raw

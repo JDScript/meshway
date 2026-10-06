@@ -2,6 +2,8 @@
 //! installs a subscriber. stdout remains available for command results/readiness.
 #![forbid(unsafe_code)]
 
+pub mod profile;
+
 use clap::{Args, ValueEnum};
 use std::io::{self, IsTerminal};
 use tracing_subscriber::{EnvFilter, util::SubscriberInitExt};
@@ -40,12 +42,15 @@ pub enum Error {
     Filter,
     #[error("Cannot install the process logging subscriber.")]
     Subscriber,
+    #[error("Profiling requires MESHWAY_PROFILE=0..65536 and MESHWAY_PROFILE_DETAIL=0..2.")]
+    Profile,
 }
 
 impl Options {
     /// Validate before opening application storage or starting background tasks.
     /// Invalid directives fail startup instead of silently enabling another level.
     pub fn init(&self) -> Result<(), Error> {
+        profile::configure()?;
         let filter = EnvFilter::builder()
             .with_regex(false)
             .parse(&self.filter)

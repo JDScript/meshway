@@ -161,6 +161,7 @@ impl Packets {
                 .sum::<usize>()
     }
     pub fn drop_packet(&mut self, reason: &'static str) {
+        meshway_logging::profile::event("host.drop", reason);
         self.dropped = self.dropped.saturating_add(1);
         // Logarithmic sampling remains bounded under malformed/unsupported input.
         if self.dropped.is_power_of_two() {
@@ -175,6 +176,19 @@ impl Packets {
         demand: Option<RequestId>,
     ) {
         self.dropped = self.dropped.saturating_add(1);
+        meshway_logging::profile::event("host.reject", reason);
+        meshway_logging::profile::event(
+            "host.reject.kind",
+            match error {
+                secure::Error::Flow => "flow",
+                secure::Error::Authority => "authority",
+                secure::Error::Expired => "expired",
+                secure::Error::Policy => "policy",
+                secure::Error::Replay => "replay",
+                secure::Error::Proof => "proof",
+                _ => "other",
+            },
+        );
         if self.dropped.is_power_of_two() {
             tracing::debug!(
                 reason,
@@ -206,6 +220,9 @@ impl Packets {
         received_at: std::time::Instant,
         target: &Target,
     ) {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("host.incoming");
+        let _profile = PROFILE.enter();
         let Some(identity) = &target.identity else {
             return;
         };
@@ -243,6 +260,14 @@ impl Packets {
             || self.local.len() + self.incoming.len() >= MAX_PACKETS
             || self.bytes() + bytes.len() > MAX_BYTES
         {
+            meshway_logging::profile::event(
+                "host.cipher.reject",
+                if !known {
+                    "unknown_scope"
+                } else {
+                    "capacity_or_size"
+                },
+            );
             self.drop_packet("cipher_context_or_capacity");
             return;
         }
@@ -327,6 +352,11 @@ impl Packets {
                 }
                 self.incoming.push_back(item);
                 continue;
+            }
+            if meshway_logging::profile::enabled() {
+                static WAIT: meshway_logging::profile::Metric =
+                    meshway_logging::profile::Metric::new("queue.manager_to_secure");
+                WAIT.elapsed(item.received_at.elapsed());
             }
             match secure.receive(&item.carrier, item.bytes) {
                 Ok(Received::Forward(frame))
@@ -455,6 +485,11 @@ impl Packets {
             if item.deadline <= now {
                 self.drop_packet("packet_deadline");
                 continue;
+            }
+            if meshway_logging::profile::enabled() {
+                static WAIT: meshway_logging::profile::Metric =
+                    meshway_logging::profile::Metric::new("queue.tun_attempt_age");
+                WAIT.elapsed((item.deadline - RETENTION).elapsed());
             }
             let facts = item.packet.facts();
             let source_matches = match facts.traffic.source {

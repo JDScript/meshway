@@ -414,6 +414,9 @@ impl Engine {
     /// `None` means only that the packet could initiate a new protocol flow;
     /// it does not authorize its source, destination or a new demand.
     pub fn local_flow(&self, packet: &Packet) -> Result<Option<LocalFlow>, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("flow.lookup");
+        let _profile = PROFILE.enter();
         let config = self.snapshot.configuration()?;
         let found = self.flows.local_flow(
             config,
@@ -461,6 +464,9 @@ impl Engine {
         facts: PacketFacts,
         circuit: Option<[u8; 32]>,
     ) -> Result<PendingRoute, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("flow.admit");
+        let _profile = PROFILE.enter();
         // Prepare collects expired entries once, with this admission's final
         // FlowTime. Authority checks remain independent of that collection.
         self.snapshot.ensure_current()?;

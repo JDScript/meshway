@@ -11,6 +11,8 @@ x-node: &node
     PATH: /opt/meshway:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     MESHWAY_SERVER_URL: https://meshway-dev-api.jdscript.dev
     RUST_LOG: info
+    MESHWAY_PROFILE: ${MESHWAY_PROFILE:-0}
+    MESHWAY_PROFILE_DETAIL: ${MESHWAY_PROFILE_DETAIL:-0}
     MESHWAY_LOG_FORMAT: json
     MESHWAY_NODE_LAB_OWNED: "1"
     MESHWAY_LAB_UPSTREAM_DNS: "1.1.1.1 8.8.8.8"

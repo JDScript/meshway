@@ -8,7 +8,13 @@ description = "Shared tracing setup for Meshway executables"
 [dependencies]
 clap = { workspace = true, features = ["env"] }
 thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "json"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30.1", default-features = false, features = ["time"] }
 
 [lints]
 workspace = true

@@ -81,6 +81,9 @@ impl ExecutionSnapshot {
     }
 
     pub fn ensure_current(&self) -> Result<(), Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::detail("control.guard", 1);
+        let _profile = PROFILE.enter();
         if !self.validity.load(Ordering::Acquire)
             || self.invalidated.is_cancelled()
             || !self.deadlines.iter().all(Deadline::valid)
