@@ -2,7 +2,7 @@ use crate::{Error, NodeOptions, NodeRole, material};
 use futures_util::FutureExt;
 use meshway_dataplane::{
     Packet, carrier,
-    secure::{CircuitAuthorization, PendingFrame, Received, SecureNode},
+    secure::{CircuitAuthorization, Error as SecureError, PendingFrame, Received, SecureNode},
 };
 use meshway_logging::profile::{self, Metric};
 use meshway_model::RequestId;
@@ -33,6 +33,24 @@ struct Driver<'a> {
     /// Kernel housekeeping on the TUN (IGMP, ICMPv6 ND/MLD) that no demand
     /// carries; counted and dropped like the daemon's capture boundary.
     unsupported: u64,
+    /// Per-packet admission rejections (flow/policy/replay/wire) that the
+    /// daemon also drops without stopping the node; authority/state loss stays fatal.
+    rejected: u64,
+}
+
+/// Rejections scoped to one packet or frame. Everything else ends the run.
+fn packet_rejection(error: &SecureError) -> bool {
+    matches!(
+        error,
+        SecureError::Wire
+            | SecureError::Packet
+            | SecureError::Flow
+            | SecureError::Policy
+            | SecureError::Proof
+            | SecureError::Crypto
+            | SecureError::Replay
+            | SecureError::Context
+    )
 }
 
 pub async fn run(
@@ -97,6 +115,7 @@ pub async fn run(
         established: BTreeMap::new(),
         ready: false,
         unsupported: 0,
+        rejected: 0,
     };
     let result = tokio::select! { biased;
         _ = stop.cancelled() => Ok(()),
@@ -106,7 +125,7 @@ pub async fn run(
     sender.shutdown().await?;
     eprintln!(
         "{}",
-        serde_json::json!({"event":"secure-node-exit","unsupportedTunPackets":driver.unsupported})
+        serde_json::json!({"event":"secure-node-exit","unsupportedTunPackets":driver.unsupported,"rejectedPackets":driver.rejected})
     );
     // Keep both the issuer and SecureNode alive through every final I/O fence.
     drop(driver);
@@ -162,7 +181,15 @@ impl Driver<'_> {
             .peer
             .and_then(|peer| self.incoming.get(&peer))
             .ok_or("unexpected secure UDP source")?;
-        match self.node.receive(incoming, frame.payload)? {
+        let received = match self.node.receive(incoming, frame.payload) {
+            Ok(received) => received,
+            Err(error) if packet_rejection(&error) => {
+                self.rejected += 1;
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        match received {
             Received::Forward(frame) => self.output(sender, frame).await?,
             Received::Established { circuit, response } => {
                 let info = self
@@ -212,7 +239,14 @@ impl Driver<'_> {
             .ok_or("TUN read before circuit establishment")?;
         let frame = {
             let _packet = PACKET.enter();
-            self.node.send(circuit, packet)?
+            match self.node.send(circuit, packet) {
+                Ok(frame) => frame,
+                Err(error) if packet_rejection(&error) => {
+                    self.rejected += 1;
+                    return Ok(());
+                }
+                Err(error) => return Err(error.into()),
+            }
         };
         self.output(sender, frame).await
     }
