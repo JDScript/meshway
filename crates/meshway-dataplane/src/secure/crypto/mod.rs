@@ -67,13 +67,10 @@ pub(super) fn key_digest(cfg: &NodeConfiguration, path: &[NodeId]) -> Result<Dig
 
 pub(super) fn build(
     identity: &DataPlaneIdentity,
+    cfg: &NodeConfiguration,
     context: &Context,
     initiator: bool,
 ) -> Result<snow::HandshakeState, Error> {
-    let cfg = identity
-        .snapshot()
-        .configuration()
-        .map_err(|_| Error::Authority)?;
     let prologue = prologue(cfg, context)?;
     let remote = if initiator {
         *context.path.last().ok_or(Error::Context)?
@@ -229,6 +226,7 @@ fn extend(hash: &mut Sha256, proof: &Proof) -> Result<(), Error> {
 
 pub(super) fn append(
     identity: &DataPlaneIdentity,
+    cfg: &NodeConfiguration,
     frame: &mut Frame,
     carrier: Carrier,
     ephemeral: [u8; 32],
@@ -239,10 +237,6 @@ pub(super) fn append(
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("crypto.append");
     let _profile = PROFILE.enter();
-    let cfg = identity
-        .snapshot()
-        .configuration()
-        .map_err(|_| Error::Authority)?;
     let key = &cfg.self_keys.control_key;
     let mut hash = transcript(frame)?;
     for proof in &frame.proofs {

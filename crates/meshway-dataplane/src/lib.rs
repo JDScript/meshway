@@ -12,14 +12,16 @@
 //! transport frames must not be passed off as authenticated end-to-end traffic.
 #![forbid(unsafe_code)]
 
+mod admission;
 mod diagnostics;
+mod engine;
 #[cfg(test)]
 mod fixtures;
 mod flow;
 mod packet;
 
-use flow::{CommittedRoute, FlowTable, FlowTime};
-use meshway_authority::ExecutionSnapshot;
+use flow::{CommittedRoute, FlowTable};
+use meshway_authority::{ExecutionSnapshot, Reading};
 use meshway_model::{NodeId, RequestId};
 use meshway_policy::admission::AdmissionError;
 pub use meshway_policy::admission::Hop;
@@ -309,7 +311,7 @@ impl PendingRoute {
 
     pub(crate) fn attach(self, packet: Packet) -> Result<PendingAction, Error> {
         self.facts.check_packet(&packet)?;
-        self.ensure_current()?;
+        self.check_at(&self.snapshot.reading()?)?;
         Ok(PendingAction {
             pending: self,
             packet,
@@ -318,6 +320,7 @@ impl PendingRoute {
 
     pub(crate) fn constrain(
         &mut self,
+        reading: &Reading<'_>,
         expires_at: Instant,
         expires_at_ms: u64,
         cancellation: tokio_util::sync::CancellationToken,
@@ -328,7 +331,20 @@ impl PendingRoute {
         self.expires_at = self.expires_at.min(expires_at);
         self.permit_expires_at_ms = self.permit_expires_at_ms.min(expires_at_ms);
         self.cancellation = Some(cancellation);
-        self.ensure_current()
+        self.check_at(reading)
+    }
+
+    pub(crate) fn check_at(&self, reading: &Reading<'_>) -> Result<(), Error> {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+            || reading.instant >= self.expires_at
+            || reading.now_ms >= self.permit_expires_at_ms
+        {
+            return Err(Error::Expired);
+        }
+        Ok(())
     }
 
     pub(crate) async fn invalidated(&self) {
@@ -360,171 +376,6 @@ impl fmt::Debug for Engine {
         f.debug_struct("Engine")
             .field("retained_flows", &self.flows.len())
             .finish_non_exhaustive()
-    }
-}
-
-impl Engine {
-    pub fn new(snapshot: ExecutionSnapshot, limits: Limits) -> Result<Self, Error> {
-        snapshot.configuration()?;
-        Ok(Self {
-            snapshot,
-            flows: FlowTable::new(limits.validate()?),
-        })
-    }
-
-    /// Same-target renewal, using the shared reconciliation implementation.
-    pub fn refresh(&mut self, snapshot: ExecutionSnapshot) -> Result<(), Error> {
-        if !self.snapshot.same_execution(&snapshot) {
-            return Err(Error::ExecutionScope);
-        }
-        self.reconcile(snapshot)
-    }
-
-    /// Reconcile a Control-issued successor transactionally. Old queued actions
-    /// keep their original cancelled guard. Retained flow deadlines/idle time
-    /// are unchanged; only a subsequently admitted packet can refresh them.
-    pub fn reconcile(&mut self, snapshot: ExecutionSnapshot) -> Result<(), Error> {
-        let flows = self.reconciled_flows(&snapshot)?;
-        snapshot.continuation_from(&self.snapshot)?;
-        self.flows = flows;
-        self.snapshot = snapshot;
-        Ok(())
-    }
-
-    fn reconciled_flows(&self, snapshot: &ExecutionSnapshot) -> Result<FlowTable, Error> {
-        let old = snapshot.continuation_from(&self.snapshot)?;
-        let now_ms = snapshot.now_ms()?;
-        self.flows.reconciled(
-            old,
-            snapshot.configuration()?,
-            FlowTime {
-                instant: Instant::now(),
-                now_ms,
-                guard_expires_at: snapshot.expires_at(),
-                guard_expires_at_ms: snapshot.expires_at_ms(),
-            },
-        )
-    }
-
-    pub fn process(&mut self, ingress: Ingress, packet: Packet) -> Result<PendingAction, Error> {
-        self.admit_facts(ingress, packet.facts())?.attach(packet)
-    }
-
-    /// Read the unique flow owner without advancing protocol state or deadlines.
-    /// `None` means only that the packet could initiate a new protocol flow;
-    /// it does not authorize its source, destination or a new demand.
-    pub fn local_flow(&self, packet: &Packet) -> Result<Option<LocalFlow>, Error> {
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("flow.lookup");
-        let _profile = PROFILE.enter();
-        let config = self.snapshot.configuration()?;
-        let found = self.flows.local_flow(
-            config,
-            &packet.facts(),
-            FlowTime {
-                instant: Instant::now(),
-                now_ms: self.snapshot.now_ms()?,
-                guard_expires_at: self.snapshot.expires_at(),
-                guard_expires_at_ms: self.snapshot.expires_at_ms(),
-            },
-        )?;
-        let now_ms = self.snapshot.now_ms()?;
-        self.snapshot.ensure_current()?;
-        match found {
-            Some(found) if Instant::now() >= found.expires_at || now_ms >= found.expires_at_ms => {
-                Err(Error::Expired)
-            }
-            Some(found) => Ok(Some(found.route)),
-            None => Ok(None),
-        }
-    }
-
-    /// The secure adapter must authenticate the complete facts/path/producer
-    /// before calling this shared state-changing admission boundary.
-    pub(crate) fn admit_facts(
-        &mut self,
-        ingress: Ingress,
-        facts: PacketFacts,
-    ) -> Result<PendingRoute, Error> {
-        self.admit_inner(ingress, facts, None)
-    }
-
-    pub(crate) fn admit_circuit_facts(
-        &mut self,
-        ingress: Ingress,
-        facts: PacketFacts,
-        circuit: [u8; 32],
-    ) -> Result<PendingRoute, Error> {
-        self.admit_inner(ingress, facts, Some(circuit))
-    }
-
-    fn admit_inner(
-        &mut self,
-        ingress: Ingress,
-        facts: PacketFacts,
-        circuit: Option<[u8; 32]>,
-    ) -> Result<PendingRoute, Error> {
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("flow.admit");
-        let _profile = PROFILE.enter();
-        // Prepare collects expired entries once, with this admission's final
-        // FlowTime. Authority checks remain independent of that collection.
-        self.snapshot.ensure_current()?;
-        let time = FlowTime {
-            instant: Instant::now(),
-            now_ms: self.snapshot.now_ms()?,
-            guard_expires_at: self.snapshot.expires_at(),
-            guard_expires_at_ms: self.snapshot.expires_at_ms(),
-        };
-        let mut prepared =
-            self.flows
-                .prepare(self.snapshot.configuration()?, &ingress, &facts, time)?;
-        if let Some(circuit) = circuit {
-            prepared.bind_circuit(circuit)?;
-        }
-        // A rejected/fenced transaction cannot establish or advance flow state.
-        tracing::trace!(target: "meshway_dataplane::flow::authority_boundary", operation = "commit",
-            "Validating flow admission authority");
-        self.snapshot.ensure_current()?;
-        if self.snapshot.now_ms()? >= prepared.permit_expires_at_ms
-            || Instant::now() >= prepared.expires_at
-        {
-            return Err(Error::Expired);
-        }
-        let expires_at = prepared.expires_at;
-        let permit_expires_at_ms = prepared.permit_expires_at_ms;
-        // Clock reads can fence a guard; the final guard check precedes commit.
-        self.snapshot.ensure_current()?;
-        let checked = self.flows.commit(prepared);
-        Ok(PendingRoute {
-            snapshot: self.snapshot.clone(),
-            expires_at,
-            permit_expires_at_ms,
-            checked,
-            facts,
-            cancellation: None,
-        })
-    }
-
-    /// Host-driven idle cleanup. Reading counters never changes permits/state.
-    /// Invalidated entries are unusable immediately. Authority loss retains inert
-    /// state for a possible Control-approved successor; reconciliation checks
-    /// every original expiry. Explicit invalidated().await/drop still tears down.
-    pub fn maintain(&mut self) -> Result<(), Error> {
-        self.snapshot.ensure_current()?;
-        self.flows.expire(Instant::now(), self.snapshot.now_ms()?);
-        Ok(())
-    }
-
-    /// Number of retained entries; deliberately does not refresh or expire them.
-    pub fn retained_flows(&self) -> usize {
-        self.flows.len()
-    }
-
-    /// Caller-driven cancellation hook; no spawned task or independent lease.
-    pub async fn invalidated(&mut self) {
-        self.snapshot.invalidated().await;
-        self.flows.clear();
     }
 }
 

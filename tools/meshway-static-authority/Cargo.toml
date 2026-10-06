@@ -20,6 +20,7 @@ zeroize = "1.8"
 
 [dev-dependencies]
 meshway-dataplane = { path = "../../crates/meshway-dataplane" }
+tracing.workspace = true
 
 [lints]
 workspace = true

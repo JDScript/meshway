@@ -36,10 +36,10 @@ pub(super) struct Probes {
     rates: BTreeMap<ObservationId, Rate>,
 }
 impl Probes {
-    pub(super) fn maintain(&mut self) {
+    pub(super) fn maintain(&mut self, reading: &Reading<'_>) {
         self.pending
             .retain(|_, request| request.guard.ensure_current().is_ok());
-        self.maintain_rates(Instant::now());
+        self.maintain_rates(reading.instant);
     }
 
     fn maintain_rates(&mut self, now: Instant) {
@@ -89,14 +89,17 @@ impl Probes {
         circuit: [u8; 32],
         measurement: EventId,
         role: RateRole,
+        reading: &Reading<'_>,
     ) -> Result<(), Error> {
-        self.maintain();
+        self.maintain(reading);
         if self.pending.contains_key(&(circuit, measurement)) {
             return Err(Error::Replay);
         }
         if self.pending.len() >= MAX_PENDING {
             return Err(Error::Capacity);
         }
+        // Budget debt starts at actual admission. Using a stale entry instant
+        // here would replenish tokens early after a slow synchronous section.
         self.admit_rate(observation, role, Instant::now())
     }
 }
@@ -147,9 +150,18 @@ impl SecureNode {
         deadline: Instant,
         carrier: &Carrier,
     ) -> Result<PendingFrame, Error> {
-        self.maintain_circuits()?;
+        let snapshot = self.identity.snapshot().clone();
+        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        self.maintain_circuits(&reading, false)?;
         let mut owned = self.circuits.remove(&circuit).ok_or(Error::State)?;
-        let result = self.probe_inner(&mut owned, measurement_id, challenge, deadline, carrier);
+        let result = self.probe_inner(
+            &mut owned,
+            measurement_id,
+            challenge,
+            deadline,
+            carrier,
+            &reading,
+        );
         let result = owned.finish_operation(self.identity.snapshot(), "probe", result);
         self.circuits.insert(circuit, owned);
         result
@@ -162,26 +174,27 @@ impl SecureNode {
         challenge: Digest,
         deadline: Instant,
         carrier: &Carrier,
+        reading: &Reading<'_>,
     ) -> Result<PendingFrame, Error> {
         let snapshot = self.identity.snapshot();
-        circuit.ensure_current(snapshot)?;
+        circuit.check_at(reading)?;
         let CircuitAuthorization::Diagnostic(observation) = circuit.context.authorization else {
             return Err(Error::Policy);
         };
         let State::Endpoint(noise) = &circuit.state else {
             return Err(Error::State);
         };
-        let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+        let cfg = reading.configuration;
         if circuit.context.path.first() != Some(&cfg.node_id) {
             return Err(Error::Context);
         }
-        authorization::source_instance(snapshot, circuit.context.authorization)?;
+        authorization::source_instance(snapshot, cfg, circuit.context.authorization)?;
         if self.carriers.get(&circuit.context.path[1]) != Some(carrier) {
             return Err(Error::Context);
         }
-        self.check_outgoing_carrier(&circuit.context, false)?;
-        let now = Instant::now();
-        let now_ms = snapshot.now_ms().map_err(|_| Error::Authority)?;
+        self.check_outgoing_carrier(&circuit.context, false, reading)?;
+        let now = reading.instant;
+        let now_ms = reading.now_ms;
         let mut guard = circuit.guard(snapshot, false);
         guard.expires_at = guard.expires_at.min(deadline).min(now + MAX_LIFETIME);
         let remaining = u64::try_from(guard.expires_at.saturating_duration_since(now).as_millis())
@@ -189,7 +202,7 @@ impl SecureNode {
         guard.expires_at_ms = guard
             .expires_at_ms
             .min(now_ms.checked_add(remaining).ok_or(Error::Limits)?);
-        guard.ensure_current()?;
+        guard.finish()?;
         let metadata = ProbeMetadata {
             measurement_id,
             expires_at_ms: guard.expires_at_ms,
@@ -199,7 +212,9 @@ impl SecureNode {
             circuit.context.circuit,
             measurement_id,
             RateRole::Source,
+            reading,
         )?;
+        guard.finish()?;
         let sequence = circuit.send[0].take()?;
         let frame = Frame {
             context: circuit.context.clone(),
@@ -213,10 +228,10 @@ impl SecureNode {
             exchange: None,
             auth: Default::default(),
         };
-        let hop = self.handshake_hop(&frame, None)?;
-        let mut output = self.output(circuit, frame, hop, None)?;
+        let hop = self.handshake_hop(&frame, None, reading)?;
+        let mut output = self.output(circuit, frame, hop, None, reading)?;
         output.guard = guard.clone();
-        output.ensure_current()?;
+        output.guard.finish()?;
         self.probes.pending.insert(
             (circuit.context.circuit, measurement_id),
             Association {
@@ -234,6 +249,7 @@ impl SecureNode {
         circuit: &mut Circuit,
         frame: Frame,
         previous: NodeId,
+        reading: &Reading<'_>,
     ) -> Result<Received, Error> {
         if !circuit.state.established() {
             return Err(Error::State);
@@ -243,16 +259,20 @@ impl SecureNode {
         };
         let metadata = frame.probe.ok_or(Error::Wire)?;
         let snapshot = self.identity.snapshot();
-        circuit.ensure_current(snapshot)?;
-        authorization::source_instance(snapshot, circuit.context.authorization)?;
-        let now_ms = snapshot.now_ms().map_err(|_| Error::Authority)?;
+        circuit.check_at(reading)?;
+        authorization::source_instance(
+            snapshot,
+            reading.configuration,
+            circuit.context.authorization,
+        )?;
+        let now_ms = reading.now_ms;
         if now_ms >= metadata.expires_at_ms
             || metadata.expires_at_ms > circuit.expires_at_ms
             || metadata.expires_at_ms - now_ms > MAX_LIFETIME.as_millis() as u64
         {
             return Err(Error::Expired);
         }
-        let hop = self.handshake_hop(&frame, Some(previous))?;
+        let hop = self.handshake_hop(&frame, Some(previous), reading)?;
         let index = usize::from(frame.reply);
         circuit.receive[index].check(frame.sequence)?;
         let sequence = frame.sequence;
@@ -266,7 +286,7 @@ impl SecureNode {
             let guard = request.guard.clone();
             let result = match (&circuit.state, hop) {
                 (State::RelayEstablished, Hop::Forward(_)) => {
-                    let mut output = self.output(circuit, frame, hop, None)?;
+                    let mut output = self.output(circuit, frame, hop, None, reading)?;
                     output.guard = guard.clone();
                     Received::Forward(output)
                 }
@@ -283,7 +303,7 @@ impl SecureNode {
                 }
                 _ => return Err(Error::State),
             };
-            guard.ensure_current()?;
+            guard.finish()?;
             self.probes
                 .pending
                 .get_mut(&key)
@@ -291,21 +311,23 @@ impl SecureNode {
                 .completed = true;
             result
         } else {
+            circuit.ensure_current(snapshot)?;
             self.probes
-                .admit(observation, key.0, key.1, RateRole::Remote)?;
+                .admit(observation, key.0, key.1, RateRole::Remote, reading)?;
             let mut guard = circuit.guard(snapshot, false);
             guard.expires_at_ms = metadata.expires_at_ms;
             guard.expires_at = guard
                 .expires_at
-                .min(Instant::now() + Duration::from_millis(metadata.expires_at_ms - now_ms));
+                .min(reading.instant + Duration::from_millis(metadata.expires_at_ms - now_ms));
             let (result, challenge, completed) = match (&circuit.state, hop) {
                 (State::RelayEstablished, Hop::Forward(_)) => {
-                    let mut output = self.output(circuit, frame, hop, None)?;
+                    let mut output = self.output(circuit, frame, hop, None, reading)?;
                     output.guard = guard.clone();
                     (Received::Forward(output), None, false)
                 }
                 (State::Endpoint(noise), Hop::Deliver) => {
                     let challenge = decrypt(noise, sequence, &frame.body)?;
+                    guard.finish()?;
                     let sequence = circuit.send[1].take()?;
                     let response = Frame {
                         context: circuit.context.clone(),
@@ -319,8 +341,8 @@ impl SecureNode {
                         exchange: None,
                         auth: Default::default(),
                     };
-                    let hop = self.handshake_hop(&response, None)?;
-                    let mut response = self.output(circuit, response, hop, None)?;
+                    let hop = self.handshake_hop(&response, None, reading)?;
+                    let mut response = self.output(circuit, response, hop, None, reading)?;
                     response.guard = guard.clone();
                     (
                         Received::ProbeRequest {
@@ -334,7 +356,7 @@ impl SecureNode {
                 }
                 _ => return Err(Error::State),
             };
-            guard.ensure_current()?;
+            guard.finish()?;
             self.probes.pending.insert(
                 key,
                 Association {

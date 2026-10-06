@@ -21,10 +21,10 @@ pub(super) fn digest(
 
 pub(super) fn source_instance(
     snapshot: &ExecutionSnapshot,
+    cfg: &NodeConfiguration,
     authorization: CircuitAuthorization,
 ) -> Result<(), Error> {
     if let CircuitAuthorization::Diagnostic(id) = authorization {
-        let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
         let permit = cfg.diagnostics.get(&id).ok_or(Error::Context)?;
         if permit.source == cfg.node_id && permit.instance_id != snapshot.instance().instance_id {
             return Err(Error::Context);

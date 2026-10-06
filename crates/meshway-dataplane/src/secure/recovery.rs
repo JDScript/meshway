@@ -50,14 +50,16 @@ impl Stage {
         if output.is_some_and(|frame| frame.bytes.len() > MAX_BYTES) {
             return Err(Error::Capacity);
         }
-        guard.ensure_current()?;
+        guard.finish()?;
         if let Some(frame) = output {
-            frame.ensure_current()?;
+            frame.guard.finish()?;
         }
         Ok(Self {
             fingerprint,
             guard,
             output: output.map(copy),
+            // Pacing begins when the original output is retained, not at an
+            // earlier operation entry (a slow handshake cannot mint a retry).
             budget: Budget::new(Instant::now()),
         })
     }

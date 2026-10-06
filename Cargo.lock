@@ -2184,6 +2184,7 @@ dependencies = [
  "meshway-policy",
  "serde_json",
  "tokio-util",
+ "tracing",
  "uuid",
  "zeroize",
 ]
