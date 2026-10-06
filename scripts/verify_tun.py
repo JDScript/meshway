@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import uuid
 
-from node_lab import ROOT, check_elf, docker_target, run, sha256
+from node_lab import ROOT, base_image, check_elf, docker_target, run, sha256
 
 
 def fingerprint():
@@ -24,14 +24,9 @@ def fingerprint():
 
 
 def pinned_image(platform, directory):
-    # Read the one image declaration without deploying the persistent lab.
-    env = dict(os.environ, MESHWAY_NODE_RELEASE=str(directory), MESHWAY_NODE_PLATFORM=platform)
-    compose = json.loads(run("docker", "compose", "-f", str(ROOT / "dev/node-lab/compose.yaml"),
-                             "config", "--format", "json", capture=True, env=env))
-    image = compose["services"]["lax"]["image"]
-    if "@sha256:" not in image:
-        raise SystemExit("The fixture image must be digest-pinned.")
-    return image
+    # Kernel/packet fixtures need no package installation or persistent-lab
+    # deployment. The locked OS inputs own the one Ubuntu base declaration.
+    return base_image()
 
 
 def main():

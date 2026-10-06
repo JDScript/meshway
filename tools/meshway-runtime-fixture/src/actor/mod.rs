@@ -243,6 +243,20 @@ async fn exercise(
     } else {
         None
     };
+    // Every matrix mode exercises diagnostics before the first OS business send.
+    let mut ping = if role == Role::A {
+        Some(crate::ping_cli::initial(cli, signals, &addresses).await?)
+    } else {
+        if !matches!(
+            signals
+                .wait_for("ping-shared-verified", crate::ping::INITIAL_LIMIT)
+                .await?,
+            Signal::Ready
+        ) {
+            return Err("invalid initial diagnostic completion".into());
+        }
+        None
+    };
     let mut fallback_evidence = None;
     if let Some(traffic) = &mut traffic {
         tracing::info!(
@@ -252,6 +266,7 @@ async fn exercise(
         traffic.first_udp().await?;
         save(cli, "first-demand-status", &command(cli, "status").await?).await?;
         if cli.traversal == crate::TraversalMode::Nat {
+            crate::traversal::publish_installations(cli, signals, role).await?;
             signals.write("traversal-first", &Signal::Ready).await?;
             // Let the controller capture this first flow's exact publication
             // before additional demands legitimately replace its execution.
@@ -335,9 +350,17 @@ async fn exercise(
         // Include the additional subscription's bounded initial warmup; the
         // process-wide deadline still reserves the existing cleanup budget.
         let deadline = Instant::now() + crate::remaining(Duration::from_secs(250))?;
+        let mut installations_published = false;
         loop {
             echo.as_mut().ok_or("missing echo owner")?.check()?;
             verify_tun_index(&tun, tun_index).await?;
+            if cli.traversal == crate::TraversalMode::Nat
+                && !installations_published
+                && matches!(signals.read("traversal-first").await?, Some(Signal::Ready))
+            {
+                crate::traversal::publish_installations(cli, signals, role).await?;
+                installations_published = true;
+            }
             if role == Role::R && tun_received(&tun).await? != initial_rx {
                 return Err(
                     "relay TUN received business plaintext during persistent traffic".into(),
@@ -364,6 +387,29 @@ async fn exercise(
     signals
         .write(&format!("traffic-ready-{}", role.name()), &Signal::Ready)
         .await?;
+    let Signal::Revision { revision } = signals.wait("ping-icmp-revoked").await? else {
+        return Err("invalid ICMP-only revocation boundary".into());
+    };
+    let status = running(cli, revision).await?;
+    publish_status(cli, signals, role, "icmp-revoked", status).await?;
+    if let Some(traffic) = &mut traffic {
+        let path = crate::fallback::original_path(signals).await?;
+        let run = crate::ping_cli::run(cli, crate::ping::Stage::UdpTcpOnly, "b", &path).await?;
+        // UDP/TCP remain authorized and actually work while ICMP is denied.
+        traffic.exchange().await?;
+        signals
+            .write(
+                "ping-udp-tcp-only",
+                &Signal::PingRun {
+                    run: Box::new(run.clone()),
+                },
+            )
+            .await?;
+        ping.as_mut()
+            .ok_or("missing source ping evidence")?
+            .runs
+            .push(run);
+    }
     let Signal::Revision { revision } = signals
         .wait_for("revoked", Duration::from_secs(175))
         .await?
@@ -386,6 +432,20 @@ async fn exercise(
     if let Some(traffic) = &mut traffic {
         route_proof(cli, &addresses[&Role::B], &tun, false, "revoked").await?;
         traffic.blocked().await?;
+        let path = crate::fallback::original_path(signals).await?;
+        let run = crate::ping_cli::run(cli, crate::ping::Stage::Revoked, "b", &path).await?;
+        signals
+            .write(
+                "ping-revoked",
+                &Signal::PingRun {
+                    run: Box::new(run.clone()),
+                },
+            )
+            .await?;
+        ping.as_mut()
+            .ok_or("missing source ping evidence")?
+            .runs
+            .push(run);
         signals.write("revoked-traffic", &Signal::Ready).await?;
     }
     let Signal::Revision { revision } = signals.wait("restored").await? else {
@@ -424,6 +484,28 @@ async fn exercise(
     }
     if let Some(traffic) = &mut traffic {
         traffic.restored().await?;
+        let path = crate::fallback::original_path(signals).await?;
+        let evidence = ping.as_mut().ok_or("missing source ping evidence")?;
+        let sockets_before = traffic.sockets()?;
+        let counts_before = traffic.counts;
+        evidence
+            .runs
+            .push(crate::ping_cli::run(cli, crate::ping::Stage::Restored, "b", &path).await?);
+        let mut child =
+            crate::ping_cli::Live::start(cli, crate::ping::Stage::Interrupted, "b", 1000).await?;
+        child.first_sample().await?;
+        child.interrupt().await?;
+        let run = child.finish(cli, IO).await?;
+        run.validate(&path)?;
+        evidence.runs.push(run);
+        // Same live business sockets must still work after both CLI exit modes.
+        traffic.exchange().await?;
+        evidence.business_continuity = Some(crate::ping::BusinessContinuity {
+            sockets_before,
+            sockets_after: traffic.sockets()?,
+            counts_before,
+            counts_after: traffic.counts,
+        });
     }
     let received = tun_received(&tun)
         .await?
@@ -465,6 +547,7 @@ async fn exercise(
         echo: echo.as_mut().ok_or("missing echo owner")?,
         traffic: &mut traffic,
         dns,
+        ping: &mut ping,
     })
     .await?;
     tun = recovered_tun;
@@ -501,6 +584,9 @@ async fn exercise(
         Some(dns) => Some(dns.down(cli, role).await?),
         None => None,
     };
+    if let Some(ping) = &ping {
+        ping.validate(identity.node_id, &recovery)?;
+    }
     signals
         .write(
             &format!("report-{}", role.name()),
@@ -518,6 +604,7 @@ async fn exercise(
                 dns: dns_evidence,
                 fallback: fallback_evidence,
                 recovery: Box::new(recovery),
+                ping: ping.map(Box::new),
             },
         )
         .await?;
@@ -731,7 +818,7 @@ async fn wait_status(cli: &Cli, predicate: impl Fn(&Status) -> bool) -> Result<S
     }
 }
 
-async fn command(cli: &Cli, operation: &str) -> Result<Status> {
+pub(super) async fn command(cli: &Cli, operation: &str) -> Result<Status> {
     let deadline = if operation == "down" {
         IO
     } else {
@@ -766,7 +853,7 @@ async fn command(cli: &Cli, operation: &str) -> Result<Status> {
     result?
 }
 
-fn private_file(path: &Path) -> Result<std::fs::File> {
+pub(super) fn private_file(path: &Path) -> Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     Ok(std::fs::OpenOptions::new()
         .create(true)
@@ -850,7 +937,7 @@ async fn terminate(child: &mut Child) -> Result<()> {
     Ok(())
 }
 
-async fn kill_join(child: &mut Child) -> Result<()> {
+pub(super) async fn kill_join(child: &mut Child) -> Result<()> {
     let killed = child.start_kill();
     let joined = child.wait().await;
     killed?;
@@ -1045,7 +1132,7 @@ async fn verify_tun_index(name: &str, expected: u32) -> Result<()> {
     Ok(())
 }
 
-async fn save(cli: &Cli, name: &str, value: &impl Serialize) -> Result<()> {
+pub(super) async fn save(cli: &Cli, name: &str, value: &impl Serialize) -> Result<()> {
     tokio::fs::write(
         cli.evidence.join(format!("{name}.json")),
         serde_json::to_vec_pretty(value)?,

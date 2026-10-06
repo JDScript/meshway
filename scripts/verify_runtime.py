@@ -18,8 +18,7 @@ import sys
 import time
 import uuid
 
-from node_lab import ROOT, check_elf, docker_target, run, sha256
-from verify_tun import pinned_image
+from node_lab import ROOT, check_elf, docker_target, lab_dir, run, selected_image, sha256
 from verification_sources import fingerprint as source_fingerprint
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
@@ -191,7 +190,11 @@ def main():
     if args.build_only:
         print(report / "bin")
         return
-    image = pinned_image(platform, report / "bin")
+    # Full runtime actors invoke iproute2 in addition to the Rust binaries.
+    # Use the explicitly built, provenance-checked Ubuntu tools image, never
+    # install packages or launch its persistent-lab supervisor as a side effect.
+    runtime_os = selected_image(lab_dir(), platform)
+    image = runtime_os["imageId"]
     description = json.loads(run("docker", "image", "inspect", image, capture=True))[0]
     if description["Os"] != "linux" or description["Architecture"] != platform.split("/")[1] or description["Config"].get("Volumes"):
         raise RuntimeError("Expected the existing native Linux digest-pinned runtime image without volumes.")
@@ -241,7 +244,7 @@ def main():
     networks = {}
     actor_networks = {}
     routers = {}
-    manifest = {**artifacts, "image": image, "imageId": description["Id"], "run": identity,
+    manifest = {**artifacts, "image": image, "imageId": description["Id"], "runtimeOsAssets": runtime_os, "run": identity,
                 "dirty": bool(run("git", "status", "--porcelain", capture=True).strip()),
                  "passed": False, "processes": {}, "resources": {"containers": containers},
                   "carrier": args.transport,
@@ -264,6 +267,7 @@ def main():
                prepare=False, executable="meshway-runtime-fixture", environment=None):
         dns_actor = args.dns_backend != "off" and role in ("a", "r", "b")
         command = ["docker", "create", "--pull", "never", "--name", f"meshway-runtime-{identity.lower()}-{role}",
+                   "--entrypoint", "",
                    "--label", label, "--platform", platform, "--read-only", "--cap-drop", "ALL",
                    "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m",
                    "--pids-limit", "128", "--tmpfs", "/state:rw,nosuid,nodev,mode=700",
@@ -331,7 +335,7 @@ def main():
         identifier = containers[role]
         with (report / f"{role}.log").open("w") as log:
             result = subprocess.run(["docker", "start", "-a", identifier], cwd=ROOT, text=True,
-                                    stdout=log, stderr=subprocess.STDOUT, timeout=510, close_fds=True)
+                                    stdout=log, stderr=subprocess.STDOUT, timeout=930, close_fds=True)
         state = json.loads(run("docker", "inspect", identifier, capture=True))[0]["State"]
         return {"attachExit": result.returncode, "exitCode": state["ExitCode"], "oomKilled": state["OOMKilled"], "running": state["Running"]}
 
@@ -588,6 +592,15 @@ def main():
                 if {item["NetworkID"] for item in attached} != {actor_networks.get(role, network)}:
                     raise RuntimeError("Actor has an unexpected network attachment/bypass")
                 manifest["resources"].setdefault("actorInspections", {})[role] = inspected_actor
+        proof_names = ["ping-shared-user.json", "ping-permission.json"]
+        if args.traversal == "nat":
+            proof_names.extend(["ping-nat-channel-proofs.json", "traversal-channel-continuity.json"])
+        manifest["pingProofs"] = {}
+        for name in proof_names:
+            path = report / "controller" / name
+            if not path.is_file() or path.stat().st_size > 1024 * 1024:
+                raise RuntimeError("missing or oversized validated ping evidence: " + name)
+            manifest["pingProofs"][name] = {"sha256": sha256(path), "data": json.loads(path.read_text())}
         if args.traversal == "nat":
             stop_routers()
             spec = importlib.util.spec_from_file_location("meshway_traversal_evidence", ROOT / "dev/traversal-fixture/evidence.py")

@@ -532,6 +532,7 @@ async fn real_history_dedup_pagination_coverage_and_artifact_immutability() {
                 occurred_at: now,
                 payload: ObservationPayload::ProbeCompleted {
                     probe: ProbeObservation {
+                        channels: None,
                         measurement_id: event_id,
                         kind: ProbeKind::Path,
                         link_id: None,

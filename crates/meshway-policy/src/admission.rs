@@ -1,4 +1,4 @@
-//! Pure business-packet predicates over an authenticated, installed target.
+//! Pure circuit and business-packet predicates over an installed target.
 //!
 //! The caller must bind `configuration.network_id` and `configuration.node_id`
 //! to its own authenticated network/node, check credentials and lease, and pass
@@ -33,9 +33,9 @@ pub enum Hop {
 pub enum AdmissionError {
     #[error("invalid or disabled configuration")]
     Configuration,
-    #[error("business permit is absent or inconsistent")]
+    #[error("permit is absent or inconsistent")]
     Permit,
-    #[error("business permit has expired")]
+    #[error("permit has expired")]
     Expired,
     #[error("complete path is not permitted")]
     Path,
@@ -101,11 +101,11 @@ fn valid_path(path: &[NodeId]) -> bool {
 }
 
 /// Validate the complete original forward path, independent of the
-/// direction of this packet. No decisions, diagnostic grants or neighbors can
-/// substitute for the current exact business permit.
+/// direction of this frame. The exact tagged grant selects its own namespace;
+/// diagnostics cannot substitute for a business permit at packet admission.
 fn admitted_path(
     configuration: &NodeConfiguration,
-    demand_id: RequestId,
+    authorization: CircuitAuthorization,
     path: &[NodeId],
     origin: NodeId,
     now_ms: u64,
@@ -119,11 +119,8 @@ fn admitted_path(
     {
         return Err(AdmissionError::Configuration);
     }
-    let permit = configuration
-        .permits
-        .get(&demand_id)
-        .ok_or(AdmissionError::Permit)?;
-    if permit.demand_id != demand_id || permit.source != origin {
+    let permit = circuit_permit(configuration, authorization)?;
+    if permit.source != origin {
         return Err(AdmissionError::Permit);
     }
     if now_ms >= permit.expires_at_ms {
@@ -148,19 +145,18 @@ fn admitted_path(
             }
         }
     }
-    let source = addresses(configuration, origin)?;
-    if source != &permit.source_addresses {
-        return Err(AdmissionError::Traffic);
-    }
-    let external = match &permit.target {
-        BusinessTarget::Mesh { node } => {
-            if path.last() != Some(node) {
-                return Err(AdmissionError::Path);
-            }
-            false
+    if let CircuitAuthorization::Business(id) = authorization {
+        let business = &configuration.permits[&id];
+        if addresses(configuration, origin)? != &business.source_addresses {
+            return Err(AdmissionError::Traffic);
         }
-        BusinessTarget::Ip { .. } | BusinessTarget::Domain { .. } => true,
-    };
+    }
+    if let Some(target) = permit.target
+        && path.last() != Some(&target)
+    {
+        return Err(AdmissionError::Path);
+    }
+    let external = permit.target.is_none();
     if external && position + 1 == path.len() && !configuration.exit_enabled {
         return Err(AdmissionError::ExitDisabled);
     }
@@ -217,7 +213,29 @@ pub fn admit_handshake(
     reply: bool,
     now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let (position, external) = admitted_path(configuration, demand_id, path, origin, now_ms)?;
+    admit_circuit_handshake(
+        configuration,
+        CircuitAuthorization::Business(demand_id),
+        path,
+        origin,
+        previous,
+        reply,
+        now_ms,
+    )
+}
+
+/// Admit an authenticated control frame on its complete tagged circuit path.
+/// This grants no IP flow or arbitrary application payload authority.
+pub fn admit_circuit_handshake(
+    configuration: &NodeConfiguration,
+    authorization: CircuitAuthorization,
+    path: &[NodeId],
+    origin: NodeId,
+    previous: Option<NodeId>,
+    reply: bool,
+    now_ms: u64,
+) -> Result<Hop, AdmissionError> {
+    let (position, external) = admitted_path(configuration, authorization, path, origin, now_ms)?;
     let upstream = position.checked_sub(1).map(|index| path[index]);
     let downstream = path.get(position + 1).copied();
     let (expected, next) = if reply {
@@ -314,8 +332,8 @@ pub fn path_carrier(path: &LogicalPath, carrier: &Carrier) -> bool {
 }
 
 /// Admit an authenticated adjacency bootstrap, without granting packet or flow
-/// authority. At least one live business path must contain this exact edge.
-/// Returns the latest matching business deadline, for bounded idle I/O waits.
+/// authority. At least one live business or diagnostic path must contain this
+/// exact edge. Returns the latest matching deadline for bounded idle I/O waits.
 pub fn admit_adjacency(
     configuration: &NodeConfiguration,
     peer: NodeId,
@@ -326,13 +344,36 @@ pub fn admit_adjacency(
         return Err(AdmissionError::Peer);
     }
     let mut expires_at: Option<u64> = None;
-    for (id, permit) in &configuration.permits {
+    for authorization in configuration
+        .permits
+        .keys()
+        .copied()
+        .map(CircuitAuthorization::Business)
+        .chain(
+            configuration
+                .diagnostics
+                .keys()
+                .copied()
+                .map(CircuitAuthorization::Diagnostic),
+        )
+    {
+        let Ok(permit) = circuit_permit(configuration, authorization) else {
+            continue;
+        };
         if permit.expires_at_ms <= now_ms {
             continue;
         }
-        for path in &permit.paths {
-            if admitted_path(configuration, *id, &path.nodes, permit.source, now_ms).is_ok()
-                && admit_carrier(configuration, *id, &path.nodes, peer, carrier).is_ok()
+        for path in permit.paths {
+            if admitted_path(
+                configuration,
+                authorization,
+                &path.nodes,
+                permit.source,
+                now_ms,
+            )
+            .is_ok()
+                && admit_circuit_carrier(configuration, authorization, &path.nodes, peer, carrier)
+                    .is_ok()
             {
                 expires_at = Some(expires_at.unwrap_or(0).max(permit.expires_at_ms));
             }
@@ -351,14 +392,29 @@ pub fn admit_carrier(
     peer: NodeId,
     carrier: &Carrier,
 ) -> Result<(), AdmissionError> {
+    admit_circuit_carrier(
+        configuration,
+        CircuitAuthorization::Business(demand_id),
+        path,
+        peer,
+        carrier,
+    )
+}
+
+/// Check actual carrier parameters against the exact circuit grant's path.
+/// Compose with current handshake admission for identity and expiry checks.
+pub fn admit_circuit_carrier(
+    configuration: &NodeConfiguration,
+    authorization: CircuitAuthorization,
+    path: &[NodeId],
+    peer: NodeId,
+    carrier: &Carrier,
+) -> Result<(), AdmissionError> {
     if !configuration.enabled {
         return Err(AdmissionError::Configuration);
     }
-    let permit = configuration
-        .permits
-        .get(&demand_id)
-        .ok_or(AdmissionError::Permit)?;
-    if permit.demand_id != demand_id || path.first() != Some(&permit.source) {
+    let permit = circuit_permit(configuration, authorization)?;
+    if path.first() != Some(&permit.source) {
         return Err(AdmissionError::Permit);
     }
     let selected = permit
@@ -400,4 +456,56 @@ pub fn admit_carrier(
         return Err(AdmissionError::Peer);
     }
     Ok(())
+}
+
+/// A borrowed circuit-only projection; never grants IP packet admission.
+pub struct CircuitPermit<'a> {
+    pub source: NodeId,
+    /// None denotes an external business destination.
+    pub target: Option<NodeId>,
+    pub paths: &'a [LogicalPath],
+    pub expires_at_ms: u64,
+}
+
+pub fn circuit_permit(
+    configuration: &NodeConfiguration,
+    authorization: CircuitAuthorization,
+) -> Result<CircuitPermit<'_>, AdmissionError> {
+    match authorization {
+        CircuitAuthorization::Business(id) => {
+            let permit = configuration
+                .permits
+                .get(&id)
+                .ok_or(AdmissionError::Permit)?;
+            if permit.demand_id != id {
+                return Err(AdmissionError::Permit);
+            }
+            Ok(CircuitPermit {
+                source: permit.source,
+                target: match permit.target {
+                    BusinessTarget::Mesh { node } => Some(node),
+                    _ => None,
+                },
+                paths: &permit.paths,
+                expires_at_ms: permit.expires_at_ms,
+            })
+        }
+        CircuitAuthorization::Diagnostic(id) => {
+            let permit = configuration
+                .diagnostics
+                .get(&id)
+                .ok_or(AdmissionError::Permit)?;
+            if permit.observation_id != id
+                || permit.replies != DiagnosticReplyPolicy::AuthenticatedExactReversePath
+            {
+                return Err(AdmissionError::Permit);
+            }
+            Ok(CircuitPermit {
+                source: permit.source,
+                target: Some(permit.target),
+                paths: &permit.paths,
+                expires_at_ms: permit.expires_at_ms,
+            })
+        }
+    }
 }

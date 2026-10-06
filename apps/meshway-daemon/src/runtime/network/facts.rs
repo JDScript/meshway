@@ -17,7 +17,7 @@ impl Report {
         });
         let mut state = NodeState {
             system: settings.system.clone(),
-            capabilities: meshway_connectivity::capabilities(),
+            capabilities: super::capabilities(),
             configuration: ConfigurationState {
                 saved,
                 applied,
@@ -143,7 +143,11 @@ impl Report {
                 initiator_node_id: link.carrier.dialer,
                 phase: LinkPhase::Authenticated,
                 business_dependencies: self.dependencies.get(&link.peer).copied().unwrap_or(0),
-                observation_ids: Vec::new(),
+                observation_ids: self
+                    .observation_dependencies
+                    .get(&link.peer)
+                    .cloned()
+                    .unwrap_or_default(),
                 observed_at: self.facts_observed_at,
                 expires_at: expiry,
                 since: None,

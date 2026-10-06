@@ -2443,6 +2443,48 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CreateNodeObservation": {
+        "type": "object",
+        "required": [
+          "instance",
+          "subscriptionId",
+          "target",
+          "service",
+          "selection",
+          "metrics",
+          "intervalMs"
+        ],
+        "properties": {
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          },
+          "intervalMs": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 30000,
+            "minimum": 1000
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetricKind"
+            }
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ObservationPath"
+          },
+          "service": {
+            "$ref": "#/components/schemas/ObservationServiceScope"
+          },
+          "subscriptionId": {
+            "$ref": "#/components/schemas/ObservationSubscriptionId"
+          },
+          "target": {
+            "$ref": "#/components/schemas/NodeObservationTarget"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateObservation": {
         "type": "object",
         "required": [
@@ -3423,6 +3465,15 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "EndpointKind": {
+        "type": "string",
+        "description": "Coarse provenance only; private observer and interface details are excluded.",
+        "enum": [
+          "configured",
+          "interface",
+          "stun"
+        ]
       },
       "EndpointSource": {
         "oneOf": [
@@ -5028,6 +5079,63 @@ export const schemaDocument = {
         "maxLength": 36,
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "LinkAcquisition": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "publishedEndpoint"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "acceptedInbound"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "attemptId",
+              "endpointSource",
+              "type"
+            ],
+            "properties": {
+              "attemptId": {
+                "$ref": "#/components/schemas/UdpTraversalId"
+              },
+              "endpointSource": {
+                "$ref": "#/components/schemas/EndpointKind"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "coordinatedUdp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "LinkEvidence": {
         "type": "string",
@@ -8043,6 +8151,122 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeObservationCancelled": {
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ObservationTask",
+                "description": "The source executor's still-shared task after this subscription ends;\nnull only when no other consumer remains."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeObservationQuery": {
+        "type": "object",
+        "required": [
+          "instanceId",
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeObservationResponse": {
+        "type": "object",
+        "required": [
+          "task",
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/NodeObservationTargetView"
+          },
+          "task": {
+            "$ref": "#/components/schemas/ObservationTask"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeObservationTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "type"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 253
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "name"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "address",
+              "type"
+            ],
+            "properties": {
+              "address": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "meshIp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "NodeObservationTargetView": {
+        "type": "object",
+        "required": [
+          "nodeId",
+          "hostname",
+          "addresses"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeProof": {
         "type": "object",
         "required": [
@@ -9928,6 +10152,66 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ProbeChannel": {
+        "type": "object",
+        "required": [
+          "linkId",
+          "socketId",
+          "peerNodeId",
+          "transport",
+          "localAddress",
+          "remoteAddress",
+          "acquisition"
+        ],
+        "properties": {
+          "acquisition": {
+            "$ref": "#/components/schemas/LinkAcquisition"
+          },
+          "linkId": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "localAddress": {
+            "$ref": "#/components/schemas/SocketAddress"
+          },
+          "peerNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "remoteAddress": {
+            "$ref": "#/components/schemas/SocketAddress"
+          },
+          "socketId": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportProtocol"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProbeChannels": {
+        "type": "object",
+        "required": [
+          "request",
+          "reply"
+        ],
+        "properties": {
+          "reply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProbeChannel",
+                "description": "Null until a reply has actually been observed on a channel."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/ProbeChannel"
+          }
+        },
+        "additionalProperties": false
+      },
       "ProbeKind": {
         "type": "string",
         "enum": [
@@ -9948,6 +10232,17 @@ export const schemaDocument = {
           "outcome"
         ],
         "properties": {
+          "channels": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProbeChannels",
+                "description": "Actual physical request/reply channels, when measured by the executor."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "completedAt": {
             "type": [
               "string",
@@ -11244,6 +11539,22 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RenewNodeObservation": {
+        "type": "object",
+        "required": [
+          "instance",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          }
+        },
+        "additionalProperties": false
+      },
       "ReplyPolicy": {
         "type": "string",
         "enum": [
@@ -11914,6 +12225,11 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "SocketAddress": {
+        "type": "string",
+        "format": "meshway-socket-address",
+        "description": "A numeric socket address with a nonzero port and no IPv6 scope or flow info.\nThis observed fact alone does not establish reachability or grant authority."
       },
       "SocketNetwork": {
         "type": "string",
@@ -12729,7 +13045,8 @@ export const schemaDocument = {
         "type": "object",
         "required": [
           "candidate",
-          "address"
+          "address",
+          "source"
         ],
         "properties": {
           "address": {
@@ -12738,6 +13055,10 @@ export const schemaDocument = {
           },
           "candidate": {
             "$ref": "#/components/schemas/CandidateReference"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EndpointKind",
+            "description": "Coarse origin projected from the referenced original State observation."
           }
         },
         "additionalProperties": false

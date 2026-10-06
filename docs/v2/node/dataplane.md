@@ -40,7 +40,7 @@ SecureNode 的实际 forward 包通过认证与流准入后，CID 与协议状�
 | 边界 | 当前实现 |
 | --- | --- |
 | 端到端身份／加密 | Snow 的 `Noise_IK_25519_ChaChaPoly_SHA256`，静态 X25519 公钥取自本机 Server 执行配置；每次握手使用新 ephemeral |
-| 握手绑定 | network、demand、完整有序 path、随机 circuit ID、permit 授权摘要（排除 expiresAt）、路径上全部控制／数据面 key ID、generation 和公钥 |
+| 握手绑定 | network、明确区分 business demand／diagnostic observation 的授权引用、完整有序 path、随机 circuit ID、permit 授权摘要（排除 expiresAt）、路径上全部控制／数据面 key ID、generation 和公钥 |
 | 早期数据 | 两个 Noise 握手消息的业务 payload 必须为空；握手不创建业务流 |
 | 路径证明 | 按顺序的 Ed25519 逐跳证明，绑定原始 header、ciphertext、此前证明和当前 carrier；接收端验证全部证明 |
 | 承载约束 | carrier 包含实际 dialer、listener、listener key 与协议；验证该连接在所选完整路径的候选集合内，拨号方向与业务方向分别处理 |
@@ -51,7 +51,9 @@ SecureNode 的实际 forward 包通过认证与流准入后，CID 与协议状�
 
 密钥通过 `Control::dataplane_identity` 从有效执行快照取得。包平面签名有独立的 purpose／network／node／key generation transcript，不开放任意控制认证消息签名。该句柄是受信进程内接口；密钥不进入 Debug 或序列化，不能视为恶意插件的内存隔离。
 
-当前 wire 标识为 `MWCIR\0\0\x02`，包平面 proof purpose 为 2，是需继续测量的候选格式，不是稳定插件 ABI。UUID 编码为固定 36-byte 规范 ASCII；数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
+当前 wire 标识为 `MWCIR\0\0\x03`，授权种类与诊断帧进入独立 v3 Noise prologue／proof hash；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。UUID 编码为固定 36-byte 规范 ASCII；数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
+
+诊断使用独立的加密 challenge request／reply，同一 owner 验证原路径和请求关联；不产生业务 FlowTable 准入。实际发送／接收通道、计时、重放与取消边界见[路径诊断](/v2/node/diagnostics)。
 
 `SecureNode::reconcile` 在相同授权、原路径和有效直接交接下保留 Noise 状态、nonce、重放窗口与同一流表。显式授权续租可在旧 UTC／单调期限到达前延长活 circuit 的期限；已关闭／过期 circuit 不复活，握手期限也不由续租重置。已签发输出保留旧 guard；流截止按上节处理。当前逐跳签名的 CPU／带宽成本尚未完成性能验收。
 

@@ -6,16 +6,15 @@ use crate::{
     error::Error,
     execution::{
         Execution, NodePrincipal,
-        connectivity::{Failure, Witness, common_witness},
+        connectivity::{Failure, ScopeRead, Witness, common_witness},
     },
     state::service::Runtime,
     store::Handle,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use meshway_model::{Digest, NodeId, UdpTraversalId, Version};
 use meshway_protocol::connectivity::*;
 use meshway_transport_spec::TransportProtocol;
-use rusqlite::Transaction;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -208,11 +207,9 @@ impl Connectivity {
     where
         T: Reply + Send + 'static,
         F: FnOnce(
-                &Execution,
-                &Transaction<'_>,
+                &mut ScopeRead<'_, '_>,
                 &NodePrincipal,
                 &Runtime,
-                DateTime<Utc>,
             ) -> std::result::Result<Plan<T>, Error>
             + Send
             + 'static,
@@ -229,7 +226,8 @@ impl Connectivity {
                 if runtime.is_closed() {
                     return Err(Error::CLOSED);
                 }
-                let mut plan = operation(&execution, &tx, &principal, &runtime, now)?;
+                let mut scopes = ScopeRead::new(&execution, &tx, now);
+                let mut plan = operation(&mut scopes, &principal, &runtime)?;
                 tx.commit()?;
                 let final_now = u64::try_from(Utc::now().timestamp_millis())
                     .map_err(|_| Error::Internal("system clock before epoch"))?;
@@ -252,14 +250,9 @@ impl Connectivity {
     ) -> std::result::Result<QueryUdpTraversalResponse, Error> {
         let servers = self.stun_servers.clone();
         let health = self.stun_health.clone();
-        self.run(token, move |execution, tx, principal, runtime, now| {
-            let scope = match execution.traversal_caller(
-                tx,
-                principal,
-                &request.instance,
-                &request.configuration,
-                now,
-            ) {
+        self.run(token, move |scopes, principal, runtime| {
+            let now = scopes.now();
+            let scope = match scopes.caller(principal, &request.instance, &request.configuration) {
                 Ok(scope) => scope,
                 Err(Failure::Unavailable(reason)) => {
                     return Ok(Plan::read(QueryUdpTraversalResponse::Unavailable {
@@ -280,7 +273,7 @@ impl Connectivity {
                     && a.participant(principal.node_id()).is_some()
                     && a.terminal.is_none()
             }) {
-                match recheck(execution, tx, runtime, attempt, now) {
+                match recheck(scopes, runtime, attempt) {
                     Ok(()) if principal.expires_at_ms() >= attempt.offer.expires_at_ms => attempts
                         .push(UdpTraversalAttempt {
                             offer: attempt.offer.clone(),
@@ -312,6 +305,7 @@ impl Connectivity {
                     as_of_ms: now.timestamp_millis() as u64,
                     expires_at_ms: scope
                         .deadline_ms
+                        .min(principal.expires_at_ms())
                         .min(now.timestamp_millis() as u64 + 30_000),
                     stun_servers,
                     attempts,
@@ -327,7 +321,7 @@ impl Connectivity {
         token: &str,
         request: PrepareUdpTraversalRequest,
     ) -> std::result::Result<PrepareUdpTraversalResponse, Error> {
-        self.run(token, move |execution, tx, principal, runtime, now| {
+        self.run(token, move |scopes, principal, runtime| {
             let previous = runtime
                 .traversal
                 .entries
@@ -339,7 +333,7 @@ impl Connectivity {
                         && entry.request == request
                 })
                 .map(|entry| entry.offer.attempt_id);
-            match prepare(execution, tx, principal, runtime, request, now) {
+            match prepare(scopes, principal, runtime, request) {
                 Ok((offer, change)) => Ok(Plan {
                     value: PrepareUdpTraversalResponse::Offer { offer },
                     changes: change.into_iter().collect(),
@@ -363,9 +357,9 @@ impl Connectivity {
         id: UdpTraversalId,
         request: UdpTraversalAttemptRequest,
     ) -> std::result::Result<AcceptUdpTraversalResponse, Error> {
-        self.run(token, move |execution, tx, principal, runtime, now| {
-            let check = || -> Result<(&Attempt, usize)> {
-                let attempt = cas(execution, tx, principal, runtime, id, &request, now)?;
+        self.run(token, move |scopes, principal, runtime| {
+            let mut check = || -> Result<(&Attempt, usize)> {
+                let attempt = cas(scopes, principal, runtime, id, &request)?;
                 let index = attempt
                     .participant(principal.node_id())
                     .ok_or(Reason::NotAvailable)?;
@@ -373,7 +367,7 @@ impl Connectivity {
             };
             match check() {
                 Ok((attempt, index)) => {
-                    match recheck(execution, tx, runtime, attempt, now) {
+                    match recheck(scopes, runtime, attempt) {
                         Ok(()) => {}
                         Err(Failure::Unavailable(reason)) => {
                             let response = AcceptUdpTraversalResponse::Unavailable { reason };
@@ -420,11 +414,8 @@ impl Connectivity {
         id: UdpTraversalId,
         request: UdpTraversalAttemptRequest,
     ) -> std::result::Result<CancelUdpTraversalResponse, Error> {
-        self.run(
-            token,
-            move |execution, tx, principal, runtime, now| match cas(
-                execution, tx, principal, runtime, id, &request, now,
-            ) {
+        self.run(token, move |scopes, principal, runtime| {
+            match cas(scopes, principal, runtime, id, &request) {
                 Ok(attempt) => match &attempt.terminal {
                     Some(Terminal::Unavailable(reason)) => {
                         Ok(Plan::read(CancelUdpTraversalResponse::Unavailable {
@@ -442,28 +433,21 @@ impl Connectivity {
                     }))
                 }
                 Err(Failure::Error(error)) => Err(error),
-            },
-        )
+            }
+        })
         .await
     }
 }
 
 fn cas<'a>(
-    execution: &Execution,
-    tx: &Transaction<'_>,
+    scopes: &mut ScopeRead<'_, '_>,
     principal: &NodePrincipal,
     runtime: &'a Runtime,
     id: UdpTraversalId,
     request: &UdpTraversalAttemptRequest,
-    now: DateTime<Utc>,
 ) -> Result<&'a Attempt> {
-    execution.traversal_caller(
-        tx,
-        principal,
-        &request.instance,
-        &request.configuration,
-        now,
-    )?;
+    let now = scopes.now();
+    scopes.caller(principal, &request.instance, &request.configuration)?;
     if request.state_epoch != runtime.hub.epoch {
         return Err(Reason::ScopeChanged.into());
     }
@@ -504,21 +488,14 @@ struct Pair {
     deadline: u64,
 }
 fn pair(
-    execution: &Execution,
-    tx: &Transaction<'_>,
+    scopes: &mut ScopeRead<'_, '_>,
     runtime: &Runtime,
     principal: &NodePrincipal,
     request: &PrepareUdpTraversalRequest,
     selected: Option<&Witness>,
-    now: DateTime<Utc>,
 ) -> Result<Pair> {
-    let local = execution.traversal_caller(
-        tx,
-        principal,
-        &request.instance,
-        &request.configuration,
-        now,
-    )?;
+    let now = scopes.now();
+    let local = scopes.caller(principal, &request.instance, &request.configuration)?;
     if request.state_epoch != runtime.hub.epoch {
         return Err(Reason::ScopeChanged.into());
     }
@@ -529,14 +506,15 @@ fn pair(
     {
         return Err(Reason::NotAvailable.into());
     }
-    let peer = execution.traversal_scope(tx, principal.network_id(), request.peer_id, now)?;
+    let peer = scopes.scope(principal.network_id(), request.peer_id)?;
     let (witness, permit_deadline) = common_witness(
         &local.target.configuration,
         &peer.target.configuration,
         &request.carrier,
         now.timestamp_millis() as u64,
         selected,
-    )
+        |witness| scopes.witness_deadline(&local.target.configuration, witness),
+    )?
     .ok_or(Reason::NotAvailable)?;
     let a =
         runtime
@@ -562,6 +540,7 @@ fn pair(
     let deadline = [
         request.expires_at_ms,
         local.deadline_ms,
+        principal.expires_at_ms(),
         peer.deadline_ms,
         a.deadline_ms,
         b.deadline_ms,
@@ -578,13 +557,8 @@ fn pair(
     })
 }
 
-fn recheck(
-    execution: &Execution,
-    tx: &Transaction<'_>,
-    runtime: &Runtime,
-    attempt: &Attempt,
-    now: DateTime<Utc>,
-) -> Result<()> {
+fn recheck(scopes: &mut ScopeRead<'_, '_>, runtime: &Runtime, attempt: &Attempt) -> Result<()> {
+    let now = scopes.now();
     if let Some(terminal) = &attempt.terminal {
         return Err(match terminal {
             Terminal::Cancelled => Reason::NotAvailable,
@@ -595,12 +569,11 @@ fn recheck(
     if attempt.offer.expires_at_ms <= now.timestamp_millis() as u64 {
         return Err(Reason::AttemptExpired.into());
     }
-    if execution.traversal_reauthorize(tx, &attempt.prepared_by, now)? < attempt.offer.expires_at_ms
-    {
+    if scopes.reauthorize(&attempt.prepared_by)? < attempt.offer.expires_at_ms {
         return Err(Reason::ScopeChanged.into());
     }
     for principal in attempt.accepted.iter().flatten() {
-        if execution.traversal_reauthorize(tx, principal, now)? < attempt.offer.expires_at_ms {
+        if scopes.reauthorize(principal)? < attempt.offer.expires_at_ms {
             return Err(Reason::ScopeChanged.into());
         }
     }
@@ -610,17 +583,17 @@ fn recheck(
         deadline,
         ..
     } = pair(
-        execution,
-        tx,
+        scopes,
         runtime,
         &attempt.prepared_by,
         &attempt.request,
         Some(&attempt.witness),
-        now,
     )?;
     if deadline < attempt.offer.expires_at_ms
         || a.address != attempt.offer.local.address
         || b.address != attempt.offer.peer.address
+        || a.source != attempt.offer.local.source
+        || b.source != attempt.offer.peer.source
     {
         return Err(Reason::ScopeChanged.into());
     }
@@ -628,20 +601,13 @@ fn recheck(
 }
 
 fn prepare(
-    execution: &Execution,
-    tx: &Transaction<'_>,
+    scopes: &mut ScopeRead<'_, '_>,
     principal: &NodePrincipal,
     runtime: &Runtime,
     request: PrepareUdpTraversalRequest,
-    now: DateTime<Utc>,
 ) -> Result<(UdpTraversalOffer, Option<Change>)> {
-    execution.traversal_caller(
-        tx,
-        principal,
-        &request.instance,
-        &request.configuration,
-        now,
-    )?;
+    let now = scopes.now();
+    scopes.caller(principal, &request.instance, &request.configuration)?;
     if request.state_epoch != runtime.hub.epoch {
         return Err(Reason::ScopeChanged.into());
     }
@@ -655,7 +621,7 @@ fn prepare(
         if attempt.request != request {
             return Err(Reason::RequestChanged.into());
         }
-        recheck(execution, tx, runtime, attempt, now)?;
+        recheck(scopes, runtime, attempt)?;
         return Ok((attempt.offer.clone(), None));
     }
     if request.expires_at_ms <= now_ms {
@@ -669,7 +635,7 @@ fn prepare(
         peer: b,
         witness,
         deadline,
-    } = pair(execution, tx, runtime, principal, &request, None, now)?;
+    } = pair(scopes, runtime, principal, &request, None)?;
     if deadline <= now_ms {
         return Err(Reason::AttemptExpired.into());
     }
@@ -724,10 +690,12 @@ fn prepare(
         local: UdpTraversalParticipant {
             candidate: request.local_candidate.clone(),
             address: a.address,
+            source: a.source,
         },
         peer: UdpTraversalParticipant {
             candidate: request.peer_candidate.clone(),
             address: b.address,
+            source: b.source,
         },
         expires_at_ms: deadline,
     };

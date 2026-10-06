@@ -25,15 +25,77 @@ pub struct TaskAdmission {
     pub configuration: meshway_model::ConfigurationRef,
     pub paths: Vec<Vec<meshway_model::NodeId>>,
     pub node_expires_at: DateTime<Utc>,
-    pub session_id: SessionId,
+    pub(crate) principal: SubscriberPrincipal,
     pub authorization_digest: Digest,
-    pub session_expires_at: DateTime<Utc>,
+    pub authorization_expires_at: DateTime<Utc>,
+}
+/// Private subscription ownership; a Node is never a synthetic user session.
+#[derive(Clone)]
+pub(crate) enum SubscriberPrincipal {
+    UserSession {
+        session: SessionId,
+        identity: crate::state::service::ReadIdentity,
+    },
+    NodeInstance {
+        network: NetworkId,
+        node: meshway_model::NodeId,
+        key: meshway_model::KeyId,
+        instance: meshway_model::InstanceId,
+        generation: meshway_model::Version,
+        boot: meshway_model::InstanceId,
+    },
+}
+impl SubscriberPrincipal {
+    pub(crate) fn same_owner(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::UserSession {
+                    session: a,
+                    identity: x,
+                },
+                Self::UserSession {
+                    session: b,
+                    identity: y,
+                },
+            ) => a == b && x.fingerprint() == y.fingerprint(),
+            (
+                Self::NodeInstance {
+                    network: a,
+                    node: b,
+                    key: c,
+                    instance: d,
+                    generation: e,
+                    boot: f,
+                },
+                Self::NodeInstance {
+                    network: g,
+                    node: h,
+                    key: i,
+                    instance: j,
+                    generation: k,
+                    boot: l,
+                },
+            ) => (a, b, c, d, e, f) == (g, h, i, j, k, l),
+            _ => false,
+        }
+    }
+    fn user_session(&self) -> Option<SessionId> {
+        match self {
+            Self::UserSession { session, .. } => Some(*session),
+            _ => None,
+        }
+    }
+    fn user_identity(&self) -> Option<&crate::state::service::ReadIdentity> {
+        match self {
+            Self::UserSession { identity, .. } => Some(identity),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone)]
 struct Subscriber {
     generation: Digest,
-    session: SessionId,
-    identity: crate::state::service::ReadIdentity,
+    principal: SubscriberPrincipal,
     authorization_digest: Digest,
     expires_at: DateTime<Utc>,
     renew_after: DateTime<Utc>,
@@ -42,6 +104,8 @@ struct Subscriber {
 #[derive(Clone)]
 struct StoredTask {
     accepted_at: DateTime<Utc>,
+    segment_high_water: Option<meshway_model::Sequence>,
+    window_high_water: Option<DateTime<Utc>>,
     network: NetworkId,
     task: ObservationTask,
     paths: Vec<Vec<meshway_model::NodeId>>,
@@ -113,7 +177,10 @@ impl Observations {
                     .subscribers
                     .iter()
                     .filter(|(_, subscriber)| {
-                        subscriber.identity.fingerprint() == identity.fingerprint()
+                        subscriber
+                            .principal
+                            .user_identity()
+                            .is_some_and(|owner| owner.fingerprint() == identity.fingerprint())
                             && subscriber.authorization_digest
                                 == scope.observation_authorization_digest
                             && scope.full.contains(&stored.task.source_node_id)
@@ -139,8 +206,23 @@ impl Observations {
         request: CreateObservation,
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, Error> {
+        if !admission
+            .principal
+            .user_identity()
+            .is_some_and(|owner| owner.fingerprint() == identity.fingerprint())
+        {
+            return Err(Error::PermissionDenied);
+        }
+        self.create_admitted(admission, request, now)
+    }
+    fn create_admitted(
+        &mut self,
+        admission: &TaskAdmission,
+        request: CreateObservation,
+        now: DateTime<Utc>,
+    ) -> Result<ObservationTask, Error> {
         self.expire(now);
-        if admission.session_expires_at <= now {
+        if admission.authorization_expires_at <= now {
             return Err(Error::InvalidSession);
         }
         if admission.node_expires_at <= now {
@@ -179,21 +261,20 @@ impl Observations {
         }
         let configuration = admission.configuration.clone();
         let expires_at = (now + Duration::seconds(OBSERVATION_LEASE_SECONDS))
-            .min(admission.session_expires_at)
+            .min(admission.authorization_expires_at)
             .min(admission.node_expires_at);
         let session_tasks = self
             .tasks
             .values()
             .flat_map(|task| task.subscribers.values())
-            .filter(|subscriber| subscriber.session == admission.session_id)
+            .filter(|subscriber| subscriber.principal.same_owner(&admission.principal))
             .count();
         // The client supplies a distinct UUID per tab demand; retries keep it.
         // A reused UUID with different input/owner is a conflict, never renewal.
         for stored in self.tasks.values() {
             if let Some(subscriber) = stored.subscribers.get(&request.subscription_id) {
                 if stored.network != admission.report.network_id
-                    || subscriber.identity.fingerprint() != identity.fingerprint()
-                    || subscriber.session != admission.session_id
+                    || !subscriber.principal.same_owner(&admission.principal)
                     || subscriber.authorization_digest != admission.authorization_digest
                     || stored.task.source_node_id != request.source_node_id
                     || stored.task.target_node_id != request.target_node_id
@@ -221,8 +302,7 @@ impl Observations {
             generation: crate::resources::content_digest(
                 crate::accounts::random_uuid()?.as_bytes(),
             ),
-            session: admission.session_id,
-            identity,
+            principal: admission.principal.clone(),
             authorization_digest: admission.authorization_digest,
             expires_at,
             renew_after: now + Duration::seconds(10),
@@ -244,7 +324,13 @@ impl Observations {
                     && stored.task.configuration == configuration
                     && stored.task.instance_id == admission.report.instance_id
                     && stored.task.expires_at > now
-                    && active(stored.task.phase)
+                    && (active(stored.task.phase)
+                        || stored.task.phase == ObservationPhase::Unsupported
+                            && admission.observation_id == Some(stored.task.id)
+                            && request
+                                .metrics
+                                .iter()
+                                .all(|metric| admission.unsupported_metrics.contains(metric)))
             })
             .map(|stored| stored.task.id);
         if let Some(id) = reusable {
@@ -305,6 +391,8 @@ impl Observations {
             id,
             StoredTask {
                 accepted_at: now,
+                segment_high_water: None,
+                window_high_water: None,
                 network: admission.report.network_id,
                 task: task.clone(),
                 paths,
@@ -354,7 +442,7 @@ impl Observations {
             return Err(Error::ObservationLimit);
         }
         let expires = (now + Duration::seconds(OBSERVATION_LEASE_SECONDS))
-            .min(admission.session_expires_at)
+            .min(admission.authorization_expires_at)
             .min(admission.node_expires_at);
         let stored = self.task_mut(id).ok_or(Error::NotFound)?;
         let subscriber = stored
@@ -389,9 +477,25 @@ impl Observations {
         let subscriber = stored
             .subscribers
             .get(&subscription)
-            .filter(|s| s.session == session)
+            .filter(|s| s.principal.user_session() == Some(session))
             .ok_or(Error::NotFound)?;
         if subscriber.terminal.is_some() {
+            return Ok(());
+        }
+        self.cancel_owned(id, subscription, now)
+    }
+    fn cancel_owned(
+        &mut self,
+        id: ObservationId,
+        subscription: ObservationSubscriptionId,
+        now: DateTime<Utc>,
+    ) -> Result<(), Error> {
+        if self
+            .tasks
+            .get(&id)
+            .and_then(|stored| stored.subscribers.get(&subscription))
+            .is_some_and(|subscriber| subscriber.terminal.is_some())
+        {
             return Ok(());
         }
         let stored = self.task_mut(id).ok_or(Error::NotFound)?;
@@ -421,13 +525,17 @@ impl Observations {
         let affected: Vec<_> = self
             .tasks
             .iter()
-            .filter(|(_, task)| task.subscribers.values().any(|s| s.session == session))
+            .filter(|(_, task)| {
+                task.subscribers
+                    .values()
+                    .any(|s| s.principal.user_session() == Some(session))
+            })
             .map(|(id, _)| *id)
             .collect();
         for id in affected {
             let task = self.task_mut(id).expect("selected observation");
             task.subscribers
-                .retain(|_, subscriber| subscriber.session != session);
+                .retain(|_, subscriber| subscriber.principal.user_session() != Some(session));
         }
         self.expire(Utc::now());
     }
@@ -484,10 +592,7 @@ impl Observations {
                     ReportedObservationPhase::Completed => ObservationPhase::Completed,
                     ReportedObservationPhase::Unsupported => ObservationPhase::Unsupported,
                 };
-                if !active(stored.task.phase) && stored.task.phase != phase
-                    || stored.task.phase == ObservationPhase::Running
-                        && phase == ObservationPhase::Preparing
-                {
+                if !active(stored.task.phase) && stored.task.phase != phase {
                     return Err(Error::StateConflict);
                 }
                 if stored.task.phase == phase && (active(phase) || stored.task.latest.is_none()) {
@@ -495,7 +600,13 @@ impl Observations {
                 }
                 let stored = self.task_mut(id).ok_or(Error::NotFound)?;
                 stored.task.phase = phase;
-                if !active(phase) {
+                if phase == ObservationPhase::Preparing {
+                    stored.task.path = None;
+                    // Retain the accepted segment as a lower bound for the
+                    // executor, without presenting an active path or sample.
+                    stored.task.path_segment = stored.segment_high_water;
+                }
+                if !active(phase) || phase == ObservationPhase::Preparing {
                     stored.task.latest = None;
                 }
                 return Ok(stored.task.clone());
@@ -523,6 +634,27 @@ impl Observations {
         if let Some(segment) = stored.task.path_segment
             && (path_segment < segment
                 || path_segment == segment && stored.task.path.as_ref() != Some(&path))
+        {
+            return Err(Error::StateConflict);
+        }
+        if stored.segment_high_water.is_some_and(|segment| {
+            path_segment < segment
+                || path_segment == segment && stored.task.phase == ObservationPhase::Preparing
+        }) {
+            return Err(Error::StateConflict);
+        }
+        if stored
+            .window_high_water
+            .is_some_and(|end| sample.window_start < end)
+            && stored
+                .task
+                .latest
+                .as_ref()
+                .is_none_or(|latest| latest.measurement_id != sample.measurement_id)
+            && !stored
+                .seen
+                .get(&sample.measurement_id)
+                .is_some_and(|seen| seen.digest == digest)
         {
             return Err(Error::StateConflict);
         }
@@ -569,6 +701,20 @@ impl Observations {
                 return Err(Error::InvalidRequest);
             }
             crate::state::validation::validate_probe(admission, probe, now)?;
+            if let Some(channels) = &probe.channels {
+                let allowed = admission
+                    .current()?
+                    .diagnostic_transports
+                    .get(&id)
+                    .and_then(|paths| paths.get(&path))
+                    .ok_or(Error::InvalidRequest)?;
+                if std::iter::once(&channels.request)
+                    .chain(channels.reply.iter())
+                    .any(|channel| !allowed.contains(channel.transport.as_str()))
+                {
+                    return Err(Error::InvalidRequest);
+                }
+            }
         }
         if let Some(counts) = &sample.probe_counts {
             let total = u64::from(counts.replied_within_deadline)
@@ -633,6 +779,8 @@ impl Observations {
         );
         stored.task.path = Some(path);
         stored.task.path_segment = Some(path_segment);
+        stored.segment_high_water = Some(path_segment);
+        stored.window_high_water = Some(sample.window_end);
         stored.task.latest = Some(sample);
         stored.task.phase = ObservationPhase::Running;
         Ok(stored.task.clone())
@@ -717,10 +865,10 @@ impl Observations {
     ) -> Result<(), Error> {
         let task = self.tasks.get(&id).ok_or(Error::NotFound)?;
         let subscriber = task.subscribers.get(&subscription).ok_or(Error::NotFound)?;
-        let error = if admission.session_expires_at <= now {
+        let error = if admission.authorization_expires_at <= now {
             Some(Error::InvalidSession)
         } else if task.network != admission.report.network_id
-            || subscriber.session != admission.session_id
+            || !subscriber.principal.same_owner(&admission.principal)
             || subscriber.authorization_digest != admission.authorization_digest
         {
             Some(Error::PermissionDenied)

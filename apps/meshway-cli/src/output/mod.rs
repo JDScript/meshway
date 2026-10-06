@@ -1,6 +1,9 @@
 use meshway_ipc::{Phase, Status};
 use std::io::{self, Write};
 
+mod ping;
+pub(crate) use ping::display as ping;
+
 pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
     let mut output = io::stdout().lock();
     if json {

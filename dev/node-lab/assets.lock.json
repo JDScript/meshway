@@ -1,0 +1,31 @@
+{
+  "base": "ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55",
+  "snapshot": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z",
+  "repositories": [
+    {
+      "suite": "noble",
+      "sha256": "26758a13cecfaff9ff274d31ea9a4633674a999bd130c09f6ecd66a4b8071184",
+      "indexes": {
+        "amd64": {"main": "2a6a199e1031a5c279cb346646d594993f35b1c03dd4a82aaa0323980dd92451", "universe": "ba9057fa1b91438cc8a1d26808d00c85389fe101d0c1496254df97236405599a"},
+        "arm64": {"main": "4a1901e6124fb0a111f5dffc8f5c14474f449e2ecfa71f2eaf0b29917edb53f9", "universe": "6df230cf5cfebcbd59e4e2713b8eed07dc0aaed66fb471ebf046cb70ccb07275"}
+      }
+    },
+    {
+      "suite": "noble-security",
+      "sha256": "f56bc4ac548f9cbb0e9301492a4b876875ea3208500988a2941731b020d1f36d",
+      "indexes": {
+        "amd64": {"main": "7068ebb5e7f7f862612a63d66e1178de0d136086ae02bc7fe95947ab09d8b6a1", "universe": "9bd9b7a6aee8c300e179c2764f4a32797c28e8aeee4666bc44b41a5b4ef9f0cf"},
+        "arm64": {"main": "f5a1803a36f9e075300480a6fe20e4c9543e85520a00763b9acd77cde08a80ed", "universe": "a70fd0c674bd016f937e9f060d5d1cd1e200c8a5580219446b5ac1f3164cc2a1"}
+      }
+    },
+    {
+      "suite": "noble-updates",
+      "sha256": "5b6f3196bc0290f28c752d3d19bbc70d345a5fb7bea79718b55407c233df8f3e",
+      "indexes": {
+        "amd64": {"main": "8ea244658162d7a46e9e0d95803a56f127f1d2912c033ce70c0c9610606d3cf2", "universe": "402e69eb0748f6872a039ab4ed62ab2a0157a6af27a38217c50d0f099da8d265"},
+        "arm64": {"main": "a97c157c50f7028f782d4b0646355fd359daa93b3a947118def493c173c73ac0", "universe": "8785f1568dd372e5913e9d88d5733efa980a664d991f42c2e8940a53fabfad00"}
+      }
+    }
+  ],
+  "packages": ["systemd-resolved", "dbus-daemon", "iputils-ping", "traceroute", "iperf", "iperf3", "iproute2", "dnsutils", "curl", "ca-certificates", "util-linux", "procps", "python3"]
+}

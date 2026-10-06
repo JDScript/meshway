@@ -6,6 +6,9 @@
 //! Conflicts retain the journal and negative boundary; they never trigger flushes.
 #![forbid(unsafe_code)]
 
+mod resource;
+pub use resource::resource_compatible;
+
 #[cfg(not(target_os = "linux"))]
 use std::sync::Arc;
 use std::{

@@ -14,9 +14,31 @@ pub(super) struct Context<'a> {
     pub echo: &'a mut Echo,
     pub traffic: &'a mut Option<Traffic>,
     pub dns: &'a mut Option<crate::dns::Probe>,
+    pub ping: &'a mut Option<crate::ping::PingEvidence>,
 }
 
 pub(super) async fn run(context: Context<'_>) -> Result<(Evidence, String)> {
+    let mut live = if context.role == Role::A {
+        let mut live =
+            crate::ping_cli::Live::start(context.cli, crate::ping::Stage::Outage, "b", 1000)
+                .await?;
+        live.first_sample().await?;
+        Some(live)
+    } else {
+        None
+    };
+    let result = exercise(context, &mut live).await;
+    let cleanup = match live {
+        Some(live) => live.abort().await,
+        None => Ok(()),
+    };
+    result.and_then(|value| cleanup.map(|()| value))
+}
+
+async fn exercise(
+    context: Context<'_>,
+    live: &mut Option<crate::ping_cli::Live>,
+) -> Result<(Evidence, String)> {
     let Context {
         cli,
         role,
@@ -29,7 +51,11 @@ pub(super) async fn run(context: Context<'_>) -> Result<(Evidence, String)> {
         echo,
         traffic,
         dns,
+        ping,
     } = context;
+    if role == Role::A {
+        signals.write("ping-outage-ready", &Signal::Ready).await?;
+    }
     let Signal::HttpAvailability {
         available: false,
         observed_at_ms: closed_at_ms,
@@ -120,6 +146,25 @@ pub(super) async fn run(context: Context<'_>) -> Result<(Evidence, String)> {
         observed_at_ms: now_ms()?,
         old_traffic_blocked,
     };
+    if let Some(live) = live.take() {
+        let run = live.finish(cli, crate::IO).await?;
+        run.validate(&path)?;
+        if run.samples().any(|sample| {
+            sample.probe.as_ref().is_some_and(|probe| {
+                probe.outcome == meshway_model::state::ProbeOutcome::Success
+                    && probe.completed_at.is_none_or(|at| {
+                        at.timestamp_millis() > i64::try_from(instance_expiry).unwrap_or(i64::MAX)
+                    })
+            })
+        }) {
+            return Err("old CLI emitted a successful measurement after instance expiry".into());
+        }
+        let evidence = ping.as_mut().ok_or("source ping evidence missing")?;
+        evidence.runs.push(run);
+        evidence
+            .runs
+            .push(crate::ping_cli::run(cli, crate::ping::Stage::Expired, "b", &path).await?);
+    }
     expired.validate()?;
     save(cli, "instance-expired", &expired).await?;
     signals
@@ -210,6 +255,13 @@ pub(super) async fn run(context: Context<'_>) -> Result<(Evidence, String)> {
         }
     }
     let started = Instant::now();
+    if role == Role::A {
+        let run = crate::ping_cli::run(cli, crate::ping::Stage::Recovered, "b", &path).await?;
+        ping.as_mut()
+            .ok_or("source ping evidence missing")?
+            .runs
+            .push(run);
+    }
     let mut old_tcp_blocked = None;
     let mut packet = None;
     let mut new_circuits = Vec::new();
@@ -232,7 +284,10 @@ pub(super) async fn run(context: Context<'_>) -> Result<(Evidence, String)> {
         signals.write("recovery-traffic", &Signal::Ready).await?;
     } else if !matches!(
         signals
-            .wait_for("recovery-traffic", Duration::from_secs(110))
+            .wait_for(
+                "recovery-traffic",
+                Duration::from_secs(110) + crate::ping::STAGE_LIMIT
+            )
             .await?,
         Signal::Ready
     ) {

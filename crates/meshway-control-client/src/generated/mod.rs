@@ -21,6 +21,11 @@ pub struct CancelEnrollmentRequestPath {
 }
 
 #[derive(Clone)]
+pub struct CancelNodeObservationPath {
+    pub r#subscription_id: meshway_protocol::ObservationSubscriptionId,
+}
+
+#[derive(Clone)]
 pub struct CancelObservationPath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#subscription_id: meshway_protocol::ObservationSubscriptionId,
@@ -143,6 +148,16 @@ pub struct GetNetworkStatePath {
 pub struct GetNodePath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#node_id: meshway_protocol::NodeId,
+}
+
+#[derive(Clone)]
+pub struct GetNodeObservationPath {
+    pub r#subscription_id: meshway_protocol::ObservationSubscriptionId,
+}
+#[derive(Clone)]
+pub struct GetNodeObservationQuery {
+    pub r#generation: meshway_protocol::Version,
+    pub r#instance_id: meshway_protocol::InstanceId,
 }
 
 #[derive(Clone)]
@@ -287,6 +302,11 @@ pub struct RemoveMemberPath {
 #[derive(Clone)]
 pub struct RenameNetworkPath {
     pub r#network_id: meshway_protocol::NetworkId,
+}
+
+#[derive(Clone)]
+pub struct RenewNodeObservationPath {
+    pub r#subscription_id: meshway_protocol::ObservationSubscriptionId,
 }
 
 #[derive(Clone)]
@@ -553,6 +573,53 @@ impl crate::Client {
         match response.status {
             204 => response.empty(),
             400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn cancel_node_observation(
+        &self,
+        path: &CancelNodeObservationPath,
+        body: &meshway_protocol::InstanceRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeObservationCancelled,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("subscriptionId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#subscription_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/agent-api/v1/observations/{subscriptionId}/cancel",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -1004,6 +1071,29 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn create_node_observation(
+        &self,
+        body: &meshway_protocol::CreateNodeObservation,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeObservationResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/observations",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            201 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -2058,6 +2148,93 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             401 | 404 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn get_node_observation(
+        &self,
+        path: &GetNodeObservationPath,
+        query: &GetNodeObservationQuery,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeObservationResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("subscriptionId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#subscription_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [
+            (
+                "generation",
+                Some({
+                    let value = serde_json::from_slice::<i64>(
+                        &serde_json::to_vec(&query.r#generation)
+                            .map_err(|_| crate::ClientError::Request)?,
+                    )
+                    .map_err(|_| crate::ClientError::Request)?;
+                    if !(1..=9007199254740991).contains(&value) {
+                        return Err(crate::ClientError::Request);
+                    }
+                    value.to_string()
+                }),
+            ),
+            (
+                "instanceId",
+                Some({
+                    let value = serde_json::from_slice::<String>(
+                        &serde_json::to_vec(&query.r#instance_id)
+                            .map_err(|_| crate::ClientError::Request)?,
+                    )
+                    .map_err(|_| crate::ClientError::Request)?;
+                    if !(value.len() == 36
+                        && value != "00000000-0000-0000-0000-000000000000"
+                        && value.bytes().enumerate().all(|(index, byte)| {
+                            if matches!(index, 8 | 13 | 18 | 23) {
+                                byte == b'-'
+                            } else {
+                                byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                            }
+                        }))
+                        || value.chars().count() < 36
+                        || value.chars().count() > 36
+                    {
+                        return Err(crate::ClientError::Request);
+                    }
+                    value.to_string()
+                }),
+            ),
+        ];
+        let url = self.parameter_url(
+            "/agent-api/v1/observations/{subscriptionId}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -3801,6 +3978,53 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn renew_node_observation(
+        &self,
+        path: &RenewNodeObservationPath,
+        body: &meshway_protocol::RenewNodeObservation,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeObservationResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("subscriptionId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#subscription_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/agent-api/v1/observations/{subscriptionId}/renew",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

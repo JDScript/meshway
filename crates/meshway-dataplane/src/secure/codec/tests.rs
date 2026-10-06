@@ -8,7 +8,9 @@ fn frame() -> Frame {
     Frame {
         context: Context {
             network: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
-            demand: "00000000-0000-4000-8000-000000000004".parse().unwrap(),
+            authorization: CircuitAuthorization::Business(
+                "00000000-0000-4000-8000-000000000004".parse().unwrap(),
+            ),
             path: vec![a, b],
             circuit: [9; 32],
             permit: Digest::from_bytes([7; 32]),
@@ -18,6 +20,7 @@ fn frame() -> Frame {
         reply: false,
         sequence: 0,
         facts: Some(facts),
+        probe: None,
         body: vec![0; facts.len + 16],
         proofs: vec![Proof {
             key: "00000000-0000-4000-8000-000000000005".parse().unwrap(),
@@ -40,13 +43,16 @@ fn every_truncated_prefix_trailing_bytes_and_version_rejected() {
         assert!(Frame::decode(&bytes[..n]).is_err(), "prefix {n}");
     }
     assert_eq!(Frame::decode(&bytes).unwrap().encode().unwrap(), bytes);
-    assert_eq!(bytes[7], 2);
+    assert_eq!(bytes[7], 3);
+    let mut v2 = bytes.clone();
+    v2[7] = 2;
+    assert!(Frame::decode(&v2).is_err());
     let mut v1 = bytes.clone();
     v1[7] = 1;
     assert!(Frame::decode(&v1).is_err());
     assert!(super::super::incoming_hint(&v1).is_err());
     let hint = super::super::incoming_hint(&bytes).unwrap();
-    assert_eq!(hint.demand, frame().context.demand);
+    assert_eq!(hint.authorization, frame().context.authorization);
     assert_eq!(hint.path, frame().context.path);
     assert_eq!(hint.last_carrier, frame().proofs[0].carrier);
     let mut extra = bytes.clone();
@@ -59,7 +65,7 @@ fn every_truncated_prefix_trailing_bytes_and_version_rejected() {
     unknown[8] = 255;
     assert!(Frame::decode(&unknown).is_err());
     let mut oversized_path = frame().encode().unwrap();
-    oversized_path[9 + 108] = 9;
+    oversized_path[10 + 108] = 9;
     assert!(Frame::decode(&oversized_path).is_err());
     let mut nil_network = frame().encode().unwrap();
     nil_network[9..45].copy_from_slice(b"00000000-0000-0000-0000-000000000000");
@@ -72,7 +78,7 @@ fn every_truncated_prefix_trailing_bytes_and_version_rejected() {
 fn canonical_origin_path_proofs_and_handshake_lengths() {
     let mut f = frame();
     let mut bytes = f.encode().unwrap();
-    bytes[9 + 72..9 + 108].copy_from_slice(f.context.path[1].to_string().as_bytes());
+    bytes[10 + 72..10 + 108].copy_from_slice(f.context.path[1].to_string().as_bytes());
     assert!(Frame::decode(&bytes).is_err());
     f.context.path[1] = f.context.path[0];
     assert!(f.encode().is_err());
@@ -130,4 +136,39 @@ fn all_packet_facts_and_carriers_round_trip_without_aliases() {
     let protocol_offset = unknown_carrier.len() - 64 - 3 - 1 - 1;
     unknown_carrier[protocol_offset] = 255;
     assert!(Frame::decode(&unknown_carrier).is_err());
+}
+
+#[test]
+fn diagnostic_kind_metadata_and_fixed_payload_cannot_alias_business_data() {
+    let mut f = frame();
+    let CircuitAuthorization::Business(id) = f.context.authorization else {
+        unreachable!()
+    };
+    let diagnostic = meshway_model::ObservationId::new(id.into_uuid()).unwrap();
+    f.context.authorization = CircuitAuthorization::Diagnostic(diagnostic);
+    assert!(f.encode().is_err());
+    f.kind = Kind::ProbeRequest;
+    f.facts = None;
+    f.probe = Some(ProbeMetadata {
+        measurement_id: meshway_model::EventId::new(id.into_uuid()).unwrap(),
+        expires_at_ms: 10_000,
+    });
+    f.body = vec![0; 48];
+    let bytes = f.encode().unwrap();
+    for n in 0..bytes.len() {
+        assert!(Frame::decode(&bytes[..n]).is_err());
+    }
+    assert_eq!(Frame::decode(&bytes).unwrap().encode().unwrap(), bytes);
+    f.context.authorization = CircuitAuthorization::Business(id);
+    assert!(f.encode().is_err());
+    f.context.authorization = CircuitAuthorization::Diagnostic(diagnostic);
+    f.body.push(0);
+    assert!(f.encode().is_err());
+    f.body.pop();
+    f.reply = true;
+    assert!(f.encode().is_err());
+    f.kind = Kind::ProbeReply;
+    assert!(f.encode().is_ok());
+    f.probe = None;
+    assert!(f.encode().is_err());
 }

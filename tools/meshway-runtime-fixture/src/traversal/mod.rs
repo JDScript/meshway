@@ -23,6 +23,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+mod installation;
+#[cfg(test)]
+mod tests;
+mod verification;
+pub use installation::{Installations, publish_installations};
+
 const BODY_LIMIT: usize = 256 * 1024;
 const EVENT_LIMIT: usize = 4096;
 const PREFIX: &str = "/agent-api/v1/connectivity/udp/";
@@ -30,7 +36,7 @@ const PREFIX: &str = "/agent-api/v1/connectivity/udp/";
 #[derive(Clone, Default)]
 pub struct Audit(Arc<Mutex<Observations>>);
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Observations {
     // Every entry came through the production nodeSession-only authenticated
@@ -40,7 +46,7 @@ struct Observations {
     bytes: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, serde::Deserialize)]
 #[serde(
     tag = "operation",
     rename_all = "camelCase",
@@ -116,6 +122,89 @@ pub async fn observe(State(audit): State<Audit>, request: Request, next: Next) -
 }
 
 impl Audit {
+    /// Bind a CLI-observed physical channel to this run's authenticated immutable
+    /// offer and both acceptances. Candidates alone are never a channel proof.
+    pub fn verify_ping_channel(
+        &self,
+        channel: &meshway_model::observations::ProbeChannel,
+        source: NodeId,
+        instance: meshway_model::InstanceId,
+    ) -> Result<UdpTraversalOffer> {
+        use meshway_model::observations::{EndpointKind, LinkAcquisition};
+        let LinkAcquisition::CoordinatedUdp {
+            attempt_id,
+            endpoint_source: EndpointKind::Stun,
+        } = &channel.acquisition
+        else {
+            return Err("NAT ping channel has no actual STUN traversal provenance".into());
+        };
+        let observations = self.0.lock().map_err(|_| "traversal audit poisoned")?;
+        if observations.failed {
+            return Err("traversal HTTP audit incomplete".into());
+        }
+        for event in &observations.events {
+            let Event::Prepare {
+                response: PrepareUdpTraversalResponse::Offer { offer },
+                ..
+            } = event
+            else {
+                continue;
+            };
+            if offer.attempt_id != *attempt_id || offer.compute_digest()? != offer.digest {
+                continue;
+            }
+            let (local, peer) = if offer.local.candidate.socket.node_id == source {
+                (&offer.local, &offer.peer)
+            } else if offer.peer.candidate.socket.node_id == source {
+                (&offer.peer, &offer.local)
+            } else {
+                continue;
+            };
+            if local.candidate.socket.instance.instance_id != instance
+                || local.candidate.socket.socket_id != channel.socket_id.to_string()
+                || peer.candidate.socket.node_id != channel.peer_node_id
+                || peer.address.parse::<std::net::SocketAddr>()? != channel.remote_address.get()
+                || peer.source != EndpointKind::Stun
+                || offer.carrier.protocol != channel.transport
+            {
+                continue;
+            }
+            let mut active = false;
+            let both = [&offer.local, &offer.peer].into_iter().all(|participant| {
+                let mut accepted_by_participant = false;
+                for event in &observations.events {
+                    let Event::Accept {
+                        request,
+                        response,
+                        received_at_ms,
+                    } = event
+                    else {
+                        continue;
+                    };
+                    let (accepted, is_active) = match response {
+                        AcceptUdpTraversalResponse::Waiting { offer } => (offer, false),
+                        AcceptUdpTraversalResponse::Active { offer } => (offer, true),
+                        _ => continue,
+                    };
+                    let matches = accepted == offer
+                        && request.instance == participant.candidate.socket.instance
+                        && request.configuration == participant.candidate.socket.configuration
+                        && request.version == offer.version
+                        && request.digest == offer.digest
+                        && request.state_epoch == offer.state_epoch
+                        && *received_at_ms < offer.expires_at_ms;
+                    active |= matches && is_active;
+                    accepted_by_participant |= matches;
+                }
+                accepted_by_participant
+            });
+            if both && active {
+                return Ok(offer.clone());
+            }
+        }
+        Err("CLI remote endpoint/socket/attempt not bound to this run's authenticated offer".into())
+    }
+
     fn fail(&self) {
         if let Ok(mut observations) = self.0.lock() {
             observations.failed = true;
@@ -190,105 +279,48 @@ impl Audit {
 
     pub async fn verify(&self, cli: &Cli, nodes: &BTreeMap<Role, NodeId>) -> Result<()> {
         let observer = format!("{}:3478", signals::underlay(cli).await?.controller);
+        let signals = signals::Signals::new(&cli.signals);
         let mut reports = BTreeMap::new();
         for role in Role::ALL {
             let path = cli
                 .evidence
-                .join(format!("traversal-state-first-{}.json", role.name()));
+                .join(format!("state-initial-carrier-{}.json", role.name()));
             if tokio::fs::metadata(&path).await?.len() > BODY_LIMIT as u64 {
                 return Err("traversal State evidence exceeds bound".into());
             }
-            let report: NodeState = serde_json::from_slice(&tokio::fs::read(path).await?)?;
-            reports.insert(nodes[&role], report);
+            let view = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+            let signals::Signal::Installations { evidence } = signals
+                .wait(&format!("traversal-installations-{}", role.name()))
+                .await?
+            else {
+                return Err("missing typed actor installation evidence".into());
+            };
+            if evidence.role != role {
+                return Err("installation evidence actor mismatch".into());
+            }
+            reports.insert(
+                nodes[&role],
+                verification::Current {
+                    view,
+                    installations: *evidence,
+                },
+            );
         }
-        let bytes = {
+        let (bytes, continuity) = {
             let observations = self.0.lock().map_err(|_| "traversal audit poisoned")?;
-            if observations.failed {
-                return Err("traversal HTTP audit incomplete".into());
-            }
-            let mut verified = Vec::new();
-            for (left, right) in [(Role::A, Role::R), (Role::R, Role::B)] {
-                let complete: Vec<_> = observations.events.iter().filter(|event| {
-                let Event::Prepare { request, response: PrepareUdpTraversalResponse::Offer { offer } } = event else { return false; };
-                let local = &offer.local.candidate.socket;
-                let peer = &offer.peer.candidate.socket;
-                if !((local.node_id == nodes[&left] && peer.node_id == nodes[&right])
-                    || (local.node_id == nodes[&right] && peer.node_id == nodes[&left]))
-                    || offer.compute_digest().ok() != Some(offer.digest)
-                    || request.local_candidate != offer.local.candidate
-                    || request.peer_candidate != offer.peer.candidate
-                    || request.instance != local.instance
-                    || request.request_id != offer.request_id
-                    || offer.carrier.protocol != meshway_transport_spec::TransportProtocol::NativeUdp
-                    || local.instance.instance_id == peer.instance.instance_id
-                    || offer.expires_at_ms > request.expires_at_ms {
-                    return false;
-                }
-                let mut active = false;
-                let both = [&offer.local, &offer.peer].iter().all(|participant| {
-                    let socket = &participant.candidate.socket;
-                    let other = if socket.node_id == local.node_id { peer.node_id } else { local.node_id };
-                    let live = reports.get(&socket.node_id).is_some_and(|report| {
-                        report.sockets.get(&socket.socket_id).is_some_and(|physical| {
-                            physical.generation == socket.socket_generation && physical.resource == socket.resource
-                                && physical.configuration.as_ref().or(report.configuration.applied.as_ref()) == Some(&socket.configuration)
-                        }) && report.links.get(&other).is_some_and(|links| links.iter().any(|link| {
-                            link.phase == LinkPhase::Authenticated && link.business_dependencies > 0
-                                && link.socket_id == socket.socket_id && link.transport == meshway_transport_spec::TransportProtocol::NativeUdp.as_str()
-                        }))
-                    });
-                    let publication = observations.events.iter().any(|event| {
-                        let Event::Publication { instance_id, applied, sockets, .. } = event else { return false; };
-                        let Some(published) = sockets.get(&socket.socket_id) else { return false; };
-                        *instance_id == socket.instance.instance_id
-                            && published.configuration.as_ref().or(applied.as_ref()) == Some(&socket.configuration)
-                            && published.generation == socket.socket_generation && published.resource == socket.resource
-                            && published.network == SocketNetwork::Udp
-                            && published.bound_address == "0.0.0.0:35000".parse::<std::net::SocketAddr>().expect("fixed address")
-                            && published.endpoints.iter().any(|candidate| {
-                                candidate.address == participant.address
-                                    && matches!(&candidate.origin, EndpointSource::Stun { observer: actual } if actual == &observer)
-                                    && candidate.expires_at.timestamp_millis() >= i64::try_from(offer.expires_at_ms).unwrap_or(i64::MAX)
-                                    && CandidateReference::from_observation(socket.clone(), published.network, published.bound_address, candidate).ok().as_ref() == Some(&participant.candidate)
-                            })
-                    });
-                    let metadata = observations.events.iter().any(|event| matches!(event,
-                        Event::Query { request, response: QueryUdpTraversalResponse::Current { stun_servers, .. } }
-                        if request.instance == socket.instance && stun_servers.as_slice().iter().any(|server| server.id == "fixture")));
-                    let mut accepted_by_participant = false;
-                    for event in &observations.events {
-                        let Event::Accept { request, response, received_at_ms } = event else { continue; };
-                        let (accepted, is_active) = match response {
-                            AcceptUdpTraversalResponse::Waiting { offer } => (offer, false),
-                            AcceptUdpTraversalResponse::Active { offer } => (offer, true),
-                            _ => continue,
-                        };
-                        let matched = accepted == offer && request.instance == socket.instance
-                            && request.configuration == socket.configuration
-                            && request.state_epoch == offer.state_epoch
-                            && request.version == offer.version && request.digest == offer.digest
-                            && *received_at_ms < offer.expires_at_ms;
-                        active |= matched && is_active;
-                        accepted_by_participant |= matched;
-                    }
-                    live && publication && metadata && accepted_by_participant
-                });
-                both && active
-            }).filter_map(|event| match event {
-                Event::Prepare { response: PrepareUdpTraversalResponse::Offer { offer }, .. } => Some(offer.clone()),
-                _ => None,
-            }).collect();
-                if complete.is_empty() {
-                    return Err(
-                        "missing fixed offer, two Node acceptances, or active traversal attempt"
-                            .into(),
-                    );
-                }
-                verified.extend(complete);
-            }
-            serde_json::to_vec_pretty(&verified)?
+            let (offers, continuity) =
+                verification::verify(&observations, &reports, &observer, nodes)?;
+            (
+                serde_json::to_vec_pretty(&offers)?,
+                serde_json::to_vec_pretty(&continuity)?,
+            )
         };
         tokio::fs::write(cli.evidence.join("traversal-verified-offers.json"), bytes).await?;
+        tokio::fs::write(
+            cli.evidence.join("traversal-channel-continuity.json"),
+            continuity,
+        )
+        .await?;
         Ok(())
     }
 

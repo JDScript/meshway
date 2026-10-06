@@ -36,7 +36,13 @@ pub(super) fn validate(
             }),
             dns_ids,
         )
-        || !cfg.diagnostics.is_empty()
+        || cfg.diagnostics.values().any(|permit| {
+            permit.paths.is_empty()
+                || permit
+                    .paths
+                    .iter()
+                    .any(|path| path.nodes.len() < 2 || !path.nodes.contains(&cfg.node_id))
+        })
         || cfg.permits.values().any(|permit| {
             !matches!(
                 permit.target,

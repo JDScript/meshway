@@ -7,6 +7,20 @@ use meshway_private_storage::Directory;
 use rtnetlink::RouteMessageBuilder;
 use std::{sync::Arc, time::Duration};
 
+fn step<T>(
+    result: crate::Result<T>,
+    kernel: &Kernel,
+    ipv6: bool,
+    address_conflict: bool,
+    name: &'static str,
+) -> T {
+    result.unwrap_or_else(|error| {
+        let expected = kernel.expected.lock().unwrap();
+        panic!("capture ipv6={ipv6} address_conflict={address_conflict} step={name} error={error:?} changing={} requested={} drained={} expected_events={} first_conflict={:?}",
+            expected.changing, expected.requested_drain, expected.drained, expected.events.len(), expected.first_conflict);
+    })
+}
+
 fn local(ip: IpAddr, index: u32) -> RouteMessage {
     let mut route = match ip {
         IpAddr::V4(ip) => RouteMessageBuilder::<Ipv4Addr>::new()
@@ -179,7 +193,13 @@ async fn local_route_preflight_and_live_address_conflicts_preserve_foreign_resou
             execute(kernel.handle.route().del(actual).execute())
                 .await
                 .unwrap();
-            kernel.verify_capture(&pools).await.unwrap();
+            step(
+                kernel.verify_capture(&pools).await,
+                &kernel,
+                ipv6,
+                address_conflict,
+                "preflight_after_foreign_route_removed",
+            );
 
             // Real kernel-generated local routes for an owned TUN are allowed,
             // including after its tentative IPv6 address has become ready.
@@ -219,15 +239,34 @@ async fn local_route_preflight_and_live_address_conflicts_preserve_foreign_resou
                 });
                 kernel.tun = Some(tun);
             }
-            kernel
+            let ready = kernel
                 .address_ready(kernel.tun.as_ref().unwrap().if_index().unwrap(), &addresses)
-                .await
-                .unwrap();
-            kernel.quiesce().await.unwrap();
+                .await;
+            step(
+                ready,
+                &kernel,
+                ipv6,
+                address_conflict,
+                "owned_address_ready",
+            );
+            step(
+                kernel.quiesce().await,
+                &kernel,
+                ipv6,
+                address_conflict,
+                "creation_drain",
+            );
             kernel.expected.lock().unwrap().changing = false;
-            kernel.retain_negative(&pools).await.unwrap();
+            let retained = kernel.retain_negative(&pools).await;
+            step(retained, &kernel, ipv6, address_conflict, "retain_negative");
             // verify() is also used by retained-TUN handoff and explicit down.
-            kernel.verify().await.unwrap();
+            step(
+                kernel.verify().await,
+                &kernel,
+                ipv6,
+                address_conflict,
+                "verify_owned_tun",
+            );
             let outside = foreign_local(
                 if ipv6 { "2001:db8::53" } else { "192.0.2.53" }
                     .parse()
@@ -237,8 +276,20 @@ async fn local_route_preflight_and_live_address_conflicts_preserve_foreign_resou
             execute(kernel.handle.route().add(outside.clone()).execute())
                 .await
                 .unwrap();
-            kernel.quiesce().await.unwrap();
-            kernel.verify().await.unwrap();
+            step(
+                kernel.quiesce().await,
+                &kernel,
+                ipv6,
+                address_conflict,
+                "outside_route_drain",
+            );
+            step(
+                kernel.verify().await,
+                &kernel,
+                ipv6,
+                address_conflict,
+                "verify_outside_route",
+            );
             execute(kernel.handle.route().del(outside).execute())
                 .await
                 .unwrap();
@@ -261,6 +312,14 @@ async fn local_route_preflight_and_live_address_conflicts_preserve_foreign_resou
             tokio::time::timeout(Duration::from_secs(3), kernel.shared.conflict.cancelled())
                 .await
                 .unwrap();
+            let diagnostic = kernel.expected.lock().unwrap().first_conflict.clone();
+            assert!(
+                diagnostic
+                    .as_ref()
+                    .is_some_and(|value| value.starts_with("branch=capture_address ")
+                        || value.starts_with("branch=capture_route ")),
+                "ipv6={ipv6} address_conflict={address_conflict} expected actual foreign capture conflict, first_conflict={diagnostic:?}"
+            );
             assert!(kernel.verify().await.is_err());
             assert!(kernel.down().await.is_err());
             // Only this test's fixture owner removes the exact foreign object.

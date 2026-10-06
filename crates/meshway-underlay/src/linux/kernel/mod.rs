@@ -115,6 +115,7 @@ impl Kernel {
         baseline.sort();
         let bootstrap_sockets = (options.max_sockets / 8).clamp(1, 16);
         let shared = Arc::new(Shared {
+            resources: super::protection::Resources::new(options.max_sockets * 4),
             mark: journal.mark,
             selectors,
             conflict,
@@ -388,13 +389,8 @@ impl Kernel {
         if snapshot.continuation_from(installed).is_err() {
             return Ok(false);
         }
-        let previous = snapshot
-            .continuation_from(installed)
-            .map_err(|_| Error::Expired)?;
-        let next = snapshot.configuration().map_err(|_| Error::Expired)?;
-        let sockets_compatible =
-            previous.listeners == next.listeners && previous.dialers == next.dialers;
-        if sockets_compatible && !token.is_cancelled() {
+        if !token.is_cancelled() {
+            self.shared.resources.handoff(snapshot)?;
             *installed = snapshot.clone();
         } else {
             token.cancel();

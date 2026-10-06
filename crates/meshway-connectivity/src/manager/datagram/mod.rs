@@ -242,6 +242,7 @@ impl Owner {
         capacity: OwnedSemaphorePermit,
         ready_until: Instant,
         supersedes: Replacement,
+        acquisition: LinkAcquisition,
     ) -> Result<bool, Error> {
         self.promote_scoped(
             peer,
@@ -251,6 +252,7 @@ impl Owner {
             capacity,
             ready_until,
             supersedes,
+            acquisition,
             None,
         )
     }
@@ -265,6 +267,7 @@ impl Owner {
         capacity: OwnedSemaphorePermit,
         ready_until: Instant,
         supersedes: Replacement,
+        acquisition: LinkAcquisition,
         attempt: Option<meshway_control::connectivity::AttemptScope>,
     ) -> Result<bool, Error> {
         let dynamic_target = attempt.is_some();
@@ -295,6 +298,7 @@ impl Owner {
             carrier,
             local: self.local,
             remote,
+            acquisition,
         };
         let selected = install_ready(
             &self.shared,
@@ -351,7 +355,7 @@ impl Owner {
             enum Work {
                 Handoff,
                 Tick,
-                Frame(Result<Frame, ReceiveError>),
+                Frame(Result<Frame, ReceiveError>, std::time::Instant),
                 Command(Option<super::traversal::Command>),
             }
             let work = lifetime.run(async {
@@ -362,7 +366,7 @@ impl Owner {
                     _ = updates.changed() => Ok(Work::Handoff),
                     _ = tick.tick() => Ok(Work::Tick),
                     command = async { match &mut self.commands { Some(commands) => commands.recv().await, None => std::future::pending().await } } => Ok(Work::Command(command)),
-                    frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv() => Ok(Work::Frame(frame)),
+                    frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv() => Ok(Work::Frame(frame, std::time::Instant::now())),
                 }
             }).await;
             if matches!(
@@ -379,14 +383,17 @@ impl Owner {
                     Work::Command(Some(command)) => self.traversal_command(command)?,
                     Work::Command(None) => self.commands = None,
                     Work::Tick => self.tick().await?,
-                    Work::Frame(Ok(frame)) => self.receive(frame).await?,
-                    Work::Frame(Err(
-                        ReceiveError::Empty
-                        | ReceiveError::Truncated(_)
-                        | ReceiveError::Oversized
-                        | ReceiveError::InvalidMetadata,
-                    )) => {}
-                    Work::Frame(Err(ReceiveError::Io(error)))
+                    Work::Frame(Ok(frame), received_at) => self.receive(frame, received_at).await?,
+                    Work::Frame(
+                        Err(
+                            ReceiveError::Empty
+                            | ReceiveError::Truncated(_)
+                            | ReceiveError::Oversized
+                            | ReceiveError::InvalidMetadata,
+                        ),
+                        _,
+                    ) => {}
+                    Work::Frame(Err(ReceiveError::Io(error)), _)
                         if matches!(
                             error.kind(),
                             std::io::ErrorKind::ConnectionRefused
@@ -401,7 +408,7 @@ impl Owner {
                         // single destination. Its health scope expires independently.
                         tokio::task::yield_now().await;
                     }
-                    Work::Frame(Err(_)) => return Err(Error::Unavailable),
+                    Work::Frame(Err(_), _) => return Err(Error::Unavailable),
                 }
                 Ok(())
             };
@@ -529,7 +536,11 @@ impl Owner {
         Ok(())
     }
 
-    async fn receive(&mut self, frame: Frame) -> Result<(), Error> {
+    async fn receive(
+        &mut self,
+        frame: Frame,
+        received_at: std::time::Instant,
+    ) -> Result<(), Error> {
         let Some(remote) = frame.peer else {
             return Ok(());
         };
@@ -573,6 +584,7 @@ impl Owner {
             let _ = self.shared.events.try_send(Event::Frame {
                 link: Box::new(channel.fact.clone()),
                 frame,
+                received_at,
             });
         }
         Ok(())
@@ -835,6 +847,7 @@ impl Owner {
             attempt.capacity,
             scope.deadline,
             attempt.supersedes,
+            LinkAcquisition::AcceptedInbound,
         )? {
             if attempt.rebuild {
                 // Authentication and normal selection succeeded. Close/join
@@ -892,6 +905,7 @@ impl Owner {
                 carrier: outbound.carrier.clone(),
                 local: self.local,
                 remote,
+                acquisition: LinkAcquisition::PublishedEndpoint,
             };
             if self
                 .shared
@@ -947,6 +961,7 @@ impl Owner {
             capacity,
             deadline,
             Replacement::Ranked,
+            LinkAcquisition::PublishedEndpoint,
         )? {
             return Err(Error::Unavailable);
         }
@@ -1151,6 +1166,7 @@ impl Owner {
             recovery.capacity,
             recovery.scope.deadline,
             Replacement::Channel(old_id),
+            LinkAcquisition::PublishedEndpoint,
         )?;
         recovery.scope.cancellation.cancel();
         Ok(())
@@ -1453,6 +1469,8 @@ mod tests {
             gates: Arc::new(Mutex::new(Vec::new())),
             socket_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             generation: meshway_model::Sequence::MIN.checked_next().unwrap(),
+            traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
+            resource_changes: tokio::sync::watch::channel(()).0,
         });
         (shared, receiver)
     }

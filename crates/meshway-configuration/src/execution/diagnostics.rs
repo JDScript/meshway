@@ -1,6 +1,14 @@
 use super::*;
 use meshway_model::{InstanceId, ObservationId};
 
+/// Exact authority referenced by a circuit. Diagnostics never impersonate a
+/// business demand, even when their underlying UUID bytes happen to match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CircuitAuthorization {
+    Business(RequestId),
+    Diagnostic(ObservationId),
+}
+
 tagged! { pub enum ObservationServiceScope {
     Tcp { port: Port },
     Udp { port: Port },
@@ -40,4 +48,19 @@ meshway_serde::string_enum! {
 pub enum DiagnosticReplyPolicy {
     AuthenticatedExactReversePath,
 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn business_and_diagnostic_authority_remain_distinct_for_the_same_uuid() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        let business = CircuitAuthorization::Business(id.parse().unwrap());
+        let diagnostic = CircuitAuthorization::Diagnostic(id.parse().unwrap());
+        assert_ne!(business, diagnostic);
+        let authorities = std::collections::BTreeSet::from([business, diagnostic]);
+        assert_eq!(authorities.len(), 2);
+    }
 }

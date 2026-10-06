@@ -14,8 +14,11 @@ use std::{
 };
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
+#[cfg(target_os = "linux")]
+mod linux_resources;
 mod reattachment;
 mod regression;
+mod resources;
 pub(super) mod support;
 mod traversal;
 
@@ -84,7 +87,7 @@ impl Datagram for Endpoint {
 
 struct Factory {
     udp: Mutex<BTreeMap<SocketAddr, UdpSocket>>,
-    tcp: Mutex<Option<TcpListener>>,
+    tcp: Mutex<BTreeMap<SocketAddr, TcpListener>>,
     faults: Arc<Faults>,
     blocked_dialers: Mutex<BTreeSet<NodeId>>,
     acquisitions: AtomicUsize,
@@ -100,7 +103,15 @@ impl Factory {
                     .map(|socket| (socket.local_addr().unwrap(), socket))
                     .collect(),
             ),
-            tcp: Mutex::new(fixture.tcp.take()),
+            tcp: Mutex::new(
+                fixture
+                    .tcp
+                    .take()
+                    .into_iter()
+                    .chain(fixture.extra_tcp.drain(..))
+                    .map(|socket| (socket.local_addr().unwrap(), socket))
+                    .collect(),
+            ),
             faults,
             blocked_dialers: Mutex::new(BTreeSet::new()),
             acquisitions: AtomicUsize::new(0),
@@ -140,6 +151,9 @@ impl SocketFactory for Factory {
             self.acquisitions.fetch_add(1, Ordering::SeqCst);
             let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
             let candidate = &cfg.dialers[key];
+            if self.blocked_dialers.lock().unwrap().contains(&cfg.node_id) {
+                return Err(Error::Unavailable);
+            }
             assert!(matches!(
                 candidate.parameters,
                 DialParameters::NativeTcp { .. }
@@ -163,7 +177,12 @@ impl SocketFactory for Factory {
             let Listener::NativeTcp(listener) = cfg.listeners[key].declaration() else {
                 return Err(Error::Configuration);
             };
-            let socket = self.tcp.lock().unwrap().take().ok_or(Error::Unavailable)?;
+            let address = SocketAddr::new(listener.listen, listener.listen_port.get());
+            let reserved = self.tcp.lock().unwrap().remove(&address);
+            let socket = match reserved {
+                Some(socket) => socket,
+                None => TcpListener::bind(address).await?,
+            };
             assert_eq!(socket.local_addr()?.port(), listener.listen_port.get());
             Ok(Box::new(StreamListener(socket)) as Box<dyn ListenerSocket>)
         })
@@ -243,7 +262,7 @@ async fn frame(manager: &mut Manager) -> (LinkFact, Frame) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match manager.recv().await {
-                Event::Frame { link, frame } => return (*link, frame),
+                Event::Frame { link, frame, .. } => return (*link, frame),
                 Event::Changed => {}
                 Event::Closed => panic!("manager closed"),
             }
@@ -251,6 +270,184 @@ async fn frame(manager: &mut Manager) -> (LinkFact, Frame) {
     })
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_poll() {
+    for protocol in [TransportProtocol::NativeUdp, TransportProtocol::NativeTcp] {
+        let mut fixture =
+            support::Fixture::new(protocol == TransportProtocol::NativeTcp, false).await;
+        let ids = fixture.ids();
+        let faults = Arc::new(Faults::default());
+        faults
+            .blackhole
+            .store(protocol == TransportProtocol::NativeTcp, Ordering::SeqCst);
+        let factory = Factory::new(&mut fixture, faults);
+        let mut b = Manager::start(
+            fixture.identities[1].clone(),
+            factory.clone(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
+            .await
+            .unwrap();
+        linked(&a, 1, protocol).await;
+        linked(&b, 1, protocol).await;
+        let a_link = a.snapshot().unwrap().links[0].clone();
+        let b_link = b.snapshot().unwrap().links[0].clone();
+        assert_eq!(a_link.acquisition, LinkAcquisition::PublishedEndpoint);
+        assert_eq!(b_link.acquisition, LinkAcquisition::AcceptedInbound);
+        while b.events.try_recv().is_ok() {}
+        let mut secure = meshway_dataplane::secure::SecureNode::new(
+            fixture.identities[0].clone(),
+            Default::default(),
+            a.carriers().unwrap(),
+        )
+        .unwrap();
+        let pending = secure
+            .start(fixture.demands[0], vec![ids[0], ids[1]])
+            .unwrap();
+        let before = std::time::Instant::now();
+        let sender = a.shared.links.lock().unwrap()[&ids[1]].sender.clone();
+        let locked = sender.lock().await;
+        let mut sending = Box::pin(a.send_with_receipt(pending));
+        assert!(futures_util::poll!(sending.as_mut()).is_pending());
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let unlocked_at = std::time::Instant::now();
+        drop(locked);
+        let mut sends = JoinSet::new();
+        sends.spawn(sending);
+        let receipt = sends.join_next().await.unwrap().unwrap().unwrap();
+        assert!(receipt.admitted_at >= unlocked_at);
+        assert_eq!(receipt.link, a_link);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while b.events.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let queued_at = std::time::Instant::now();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let Event::Frame {
+            link,
+            frame,
+            received_at,
+        } = b.recv().await
+        else {
+            panic!("completed frame must already be queued before consumer polling");
+        };
+        assert_eq!(*link, b_link);
+        assert!(received_at >= before);
+        assert!(received_at >= receipt.admitted_at);
+        assert!(received_at <= queued_at);
+        let mut receiver = meshway_dataplane::secure::SecureNode::new(
+            fixture.identities[1].clone(),
+            Default::default(),
+            b.carriers().unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            receiver.receive(&link.carrier, frame.payload).unwrap(),
+            meshway_dataplane::secure::Received::Established { .. }
+        ));
+        a.shutdown().await.unwrap();
+        b.shutdown().await.unwrap();
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn owned_receipt_future_outlives_manager_borrow_and_rejects_drop_before_first_poll() {
+    let mut fixture = support::Fixture::new(false, false).await;
+    let ids = fixture.ids();
+    let faults = Arc::new(Faults::default());
+    let factory = Factory::new(&mut fixture, faults.clone());
+    let mut b = Manager::start(
+        fixture.identities[1].clone(),
+        factory.clone(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let send = {
+        let a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
+            .await
+            .unwrap();
+        linked(&a, 1, TransportProtocol::NativeUdp).await;
+        let mut secure = meshway_dataplane::secure::SecureNode::new(
+            fixture.identities[0].clone(),
+            Default::default(),
+            a.carriers().unwrap(),
+        )
+        .unwrap();
+        let pending = secure
+            .start(fixture.demands[0], vec![ids[0], ids[1]])
+            .unwrap();
+        // Return both owners so dropping SecureNode cannot be the reason the
+        // captured send fails. Only the Manager leaves this lexical scope.
+        (a.send_with_receipt(pending), secure)
+    };
+    let (send, _secure) = send;
+    let writes = faults.writes.load(Ordering::SeqCst);
+    let mut sends = JoinSet::new();
+    sends.spawn(send);
+    assert!(matches!(
+        sends.join_next().await.unwrap().unwrap(),
+        Err(Error::Cancelled)
+    ));
+    assert_eq!(faults.writes.load(Ordering::SeqCst), writes);
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn owned_receipt_future_rejects_retained_channel_old_scope_before_first_poll() {
+    let mut fixture = support::Fixture::new(false, false).await;
+    let ids = fixture.ids();
+    let faults = Arc::new(Faults::default());
+    let factory = Factory::new(&mut fixture, faults.clone());
+    let mut b = Manager::start(
+        fixture.identities[1].clone(),
+        factory.clone(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
+        .await
+        .unwrap();
+    linked(&a, 1, TransportProtocol::NativeUdp).await;
+    let original = a.snapshot().unwrap().links[0].clone();
+    let old_scope = a.shared.links.lock().unwrap()[&ids[1]].scope.clone();
+    let mut secure = meshway_dataplane::secure::SecureNode::new(
+        fixture.identities[0].clone(),
+        Default::default(),
+        a.carriers().unwrap(),
+    )
+    .unwrap();
+    let pending = secure
+        .start(fixture.demands[0], vec![ids[0], ids[1]])
+        .unwrap();
+    let delayed = a.send_with_receipt(pending);
+    fixture.controls[0].renew_instance().await.unwrap();
+    let next = fixture.controls[0]
+        .dataplane_identity(fixture.controls[0].execution_snapshot().unwrap())
+        .unwrap();
+    assert!(a.can_reconcile(&next));
+    a.reconcile(next).await.unwrap();
+    assert_eq!(a.snapshot().unwrap().links[0], original);
+    assert!(old_scope.check().is_err());
+    let writes = faults.writes.load(Ordering::SeqCst);
+    let mut sends = JoinSet::new();
+    sends.spawn(delayed);
+    assert!(sends.join_next().await.unwrap().unwrap().is_err());
+    assert_eq!(faults.writes.load(Ordering::SeqCst), writes);
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
 }
 
 #[tokio::test]

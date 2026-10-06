@@ -27,10 +27,15 @@ pub(super) async fn run(
         watch::Sender<Option<super::dns::intents::Plan>>,
     ),
     traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
+    mut diagnostic_paused: watch::Receiver<
+        std::collections::BTreeSet<meshway_model::ObservationId>,
+    >,
+    mut observation_plans: watch::Receiver<Option<super::ObservationPlan>>,
 ) -> Result<(), Problem> {
     let (mut dns, dns_plans) = dns;
     let mut installed: Option<Installed> = None;
     let mut packets = Packets::default();
+    let mut diagnostics = super::diagnostics::Diagnostics::default();
     let mut buffer = vec![0u8; Packet::MAX_LEN];
     let mut generation = meshway_model::Sequence::MIN;
     let mut pending_completion = None;
@@ -47,6 +52,7 @@ pub(super) async fn run(
                     pending_completion = Some(completion)
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
+                    diagnostics.stop().await;
                     let _ = dns.shutdown(&mut host, true).await;
                     close(&mut installed).await;
                     return host.shutdown(true).await.map_err(|_| Problem::Underlay);
@@ -54,6 +60,9 @@ pub(super) async fn run(
             }
         }
         enum Work {
+            ObservationPlan,
+            DiagnosticSent,
+            DiagnosticsPaused,
             Command(Option<Command>),
             Target,
             Invalid,
@@ -73,12 +82,18 @@ pub(super) async fn run(
             .as_ref()
             .filter(|state| state.live)
             .and_then(|state| packets.wake_at(&state.target));
+        if let Some(at) = diagnostics.wake_at() {
+            wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
+        }
         if pending_completion.is_some() {
             let retry = tokio::time::Instant::now() + Duration::from_secs(1);
             wake_at = Some(wake_at.map_or(retry, |at| at.min(retry)));
         }
         let work = tokio::select! { biased;
             command = commands.recv() => Work::Command(command),
+            _ = diagnostics.sent(), if diagnostics.has_sends() => Work::DiagnosticSent,
+            _ = diagnostic_paused.changed() => Work::DiagnosticsPaused,
+            changed = observation_plans.changed() => if changed.is_ok() { Work::ObservationPlan } else { Work::Command(None) },
             changed = targets.changed(), if pending_completion.is_none() => { if changed.is_err() { Work::Command(None) } else { Work::Target } },
             _ = async { match &preparing { Some((_, at)) => tokio::time::sleep_until(*at).await, None => std::future::pending().await } } => Work::DnsTimeout,
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
@@ -110,6 +125,22 @@ pub(super) async fn run(
             } => work,
         };
         match work {
+            Work::Command(Some(Command::DetachPing(subscription))) => {
+                diagnostics.detach(subscription)
+            }
+            Work::ObservationPlan => {
+                diagnostics.plan(observation_plans.borrow_and_update().clone())
+            }
+            Work::Command(Some(Command::AttachPing {
+                subscription,
+                observation,
+                request,
+                lease,
+                progress,
+            })) => diagnostics.attach(subscription, observation, request, lease, progress),
+            Work::DiagnosticsPaused => {
+                diagnostics.set_paused(diagnostic_paused.borrow_and_update().clone())
+            }
             Work::Command(Some(Command::Builder(reply))) => {
                 let _ = reply.send(host.client_builder());
                 continue;
@@ -120,6 +151,7 @@ pub(super) async fn run(
                 continue;
             }
             Work::Command(Some(Command::Shutdown { keep_sink })) => {
+                diagnostics.stop().await;
                 let dns_result = dns
                     .shutdown(&mut host, keep_sink)
                     .await
@@ -132,6 +164,7 @@ pub(super) async fn run(
                 return dns_result.and(host_result);
             }
             Work::Command(None) => {
+                diagnostics.stop().await;
                 let dns_result = dns
                     .shutdown(&mut host, true)
                     .await
@@ -140,6 +173,7 @@ pub(super) async fn run(
                 return dns_result.and(host.shutdown(true).await.map_err(|_| Problem::Underlay));
             }
             Work::Command(Some(Command::Stop { down, reply })) => {
+                diagnostics.stop().await;
                 dns.suspend();
                 preparing = None;
                 dns_plans.send_replace(None);
@@ -180,8 +214,24 @@ pub(super) async fn run(
                     targets.borrow_and_update().clone()
                 };
                 let Some(target) = target else {
+                    diagnostics.invalidate();
                     continue;
                 };
+                let same_scope = target
+                    .identity
+                    .as_ref()
+                    .zip(
+                        installed
+                            .as_ref()
+                            .and_then(|state| state.target.identity.as_ref()),
+                    )
+                    .is_some_and(|(next, old)| {
+                        next.snapshot().same_execution(old.snapshot())
+                            && old.snapshot().ensure_current().is_ok()
+                    });
+                if !same_scope {
+                    diagnostics.invalidate();
+                }
                 let prepare_deadline = preparing
                     .as_ref()
                     .filter(|(_, _)| {
@@ -222,6 +272,7 @@ pub(super) async fn run(
                 // Retained sockets report their own unchanged SocketFact value.
                 let next_generation = generation.checked_next();
                 let Ok(next_generation) = next_generation else {
+                    diagnostics.stop().await;
                     let _ = dns.shutdown(&mut host, true).await;
                     close(&mut installed).await;
                     let _ = host.shutdown(true).await;
@@ -303,6 +354,7 @@ pub(super) async fn run(
             | Work::Packet(Err(_))
             | Work::HardExpired
             | Work::DnsFailure => {
+                diagnostics.invalidate();
                 dns.suspend();
                 let dns_error = matches!(work, Work::DnsFailure);
                 dns_failed |= dns_error;
@@ -368,12 +420,16 @@ pub(super) async fn run(
                 }
                 Err(_) => packets.drop_packet("malformed_ip"),
             },
-            Work::Carrier(Event::Frame { link, frame }) => {
+            Work::Carrier(Event::Frame {
+                link,
+                frame,
+                received_at,
+            }) => {
                 if let Some(state) = &installed {
-                    packets.incoming(link.carrier, frame.payload, &state.target);
+                    packets.incoming(*link, frame.payload, received_at, &state.target);
                 }
             }
-            Work::Carrier(Event::Changed) | Work::Tick => {}
+            Work::Carrier(Event::Changed) | Work::Tick | Work::DiagnosticSent => {}
         }
         if let Some(state) = &mut installed
             && state.live
@@ -388,11 +444,15 @@ pub(super) async fn run(
                 .as_ref()
                 .expect("installed identity")
                 .snapshot();
+            diagnostics.synchronize(guard);
             tokio::select! { biased;
                 _ = host.invalidated() => {},
                 _ = guard.invalidated() => {},
                 _ = dns.failed(), if !dns_failed => {},
-                _ = packets.drive(&mut state.secure, manager, &host, &state.target, &gateway) => {},
+                _ = async {
+                    packets.drive(&mut state.secure, manager, &host, &state.target, &gateway, &mut diagnostics).await;
+                    diagnostics.drive(&mut state.secure, manager, &gateway);
+                } => {},
             }
         }
         let report = sample(&installed, reports.borrow().clone());
@@ -427,6 +487,7 @@ fn handoff_deadline(guard: &meshway_control::ExecutionSnapshot) -> Option<tokio:
 fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
     report.facts = None;
     report.dependencies.clear();
+    report.observation_dependencies.clear();
     report.facts_observed_at = chrono::Utc::now();
     if let Some(state) = installed
         && state.live
@@ -447,7 +508,19 @@ fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
                         None
                     };
                     if let Some(peer) = peer {
-                        *report.dependencies.entry(peer).or_default() += 1;
+                        match circuit.authorization {
+                            meshway_configuration::execution::CircuitAuthorization::Business(_) => {
+                                *report.dependencies.entry(peer).or_default() += 1
+                            }
+                            meshway_configuration::execution::CircuitAuthorization::Diagnostic(
+                                id,
+                            ) => {
+                                let ids = report.observation_dependencies.entry(peer).or_default();
+                                if !ids.contains(&id) {
+                                    ids.push(id);
+                                }
+                            }
+                        }
                     }
                 }
             }

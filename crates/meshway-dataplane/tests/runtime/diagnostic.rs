@@ -1,0 +1,571 @@
+use super::{
+    datagram,
+    support::{request, secure::SecureMesh},
+};
+use meshway_dataplane::secure::{
+    CircuitAuthorization, CircuitState, Error, PendingFrame, Received,
+};
+use meshway_model::{Digest, EventId};
+use std::time::{Duration, Instant};
+
+fn measurement() -> EventId {
+    EventId::new(request().into_uuid()).unwrap()
+}
+fn wire(frame: PendingFrame) -> Vec<u8> {
+    frame.release(|bytes| bytes).unwrap()
+}
+fn forward(result: Result<Received, Error>) -> PendingFrame {
+    let Received::Forward(frame) = result.unwrap() else {
+        panic!("opaque relay")
+    };
+    frame
+}
+
+async fn setup() -> (SecureMesh, meshway_protocol::ObservationTask) {
+    let mut fixture = SecureMesh::start().await;
+    fixture
+        .mesh
+        .server
+        .configure(&fixture.mesh.owner, |cfg| {
+            cfg.access[0].ip.push("icmp:*".into())
+        })
+        .await;
+    fixture.reconcile().await;
+    let task = fixture
+        .mesh
+        .server
+        .observe(&fixture.mesh.owner, fixture.mesh.a.id, fixture.mesh.b.id)
+        .await;
+    fixture.reconcile().await;
+    for node in [&fixture.mesh.a, &fixture.mesh.r, &fixture.mesh.b] {
+        let snapshot = node.control.execution_snapshot().unwrap();
+        let cfg = snapshot.configuration().unwrap();
+        assert_eq!(cfg.diagnostics[&task.id].paths[0].nodes, fixture.mesh.path);
+        assert_eq!(cfg.permits.len(), 1);
+        assert_eq!(
+            cfg.diagnostics[&task.id].instance_id,
+            fixture.mesh.a.instance().instance_id
+        );
+    }
+    (fixture, task)
+}
+
+async fn handshake(fixture: &mut SecureMesh, task: &meshway_protocol::ObservationTask) -> [u8; 32] {
+    let init = fixture
+        .a
+        .start_authorized(
+            CircuitAuthorization::Diagnostic(task.id),
+            fixture.mesh.path.clone(),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    fixture.finish_handshake(init).await
+}
+
+fn terminal_response(fixture: &mut SecureMesh, request: PendingFrame) -> PendingFrame {
+    let request = forward(fixture.r.receive(&fixture.ar.carrier, wire(request)));
+    let Received::ProbeRequest { response, .. } = fixture
+        .b
+        .receive(&fixture.rb.carrier, wire(request))
+        .unwrap()
+    else {
+        panic!("terminal diagnostic")
+    };
+    response
+}
+
+async fn delayed_probe_roundtrip(
+    fixture: &mut SecureMesh,
+    pending: PendingFrame,
+    id: EventId,
+    challenge: Digest,
+    forward_delay: Duration,
+) -> Instant {
+    let circuit = pending.circuit();
+    fixture.ar.dial.send(pending).await;
+    // Delay remote receipt, rather than the source's actual send/admission.
+    tokio::time::sleep(forward_delay).await;
+    let request = fixture.ar.listen.recv().await;
+    let request = forward(fixture.r.receive(&fixture.ar.carrier, request));
+    fixture.rb.dial.send(request).await;
+    let request = fixture.rb.listen.recv().await;
+    let arrived_at = Instant::now();
+    let Received::ProbeRequest { response, .. } =
+        fixture.b.receive(&fixture.rb.carrier, request).unwrap()
+    else {
+        panic!("terminal diagnostic")
+    };
+    fixture.rb.listen.send(response).await;
+    let response = fixture.rb.dial.recv().await;
+    let response = forward(fixture.r.receive(&fixture.rb.carrier, response));
+    fixture.ar.listen.send(response).await;
+    let response = fixture.ar.dial.recv().await;
+    assert!(
+        matches!(fixture.a.receive(&fixture.ar.carrier, response).unwrap(), Received::ProbeReply { circuit: returned, measurement_id, challenge: returned_challenge } if returned == circuit && measurement_id == id && returned_challenge == challenge)
+    );
+    arrived_at
+}
+
+#[tokio::test]
+async fn diagnostic_source_cadence_survives_compressed_remote_arrivals() {
+    let (mut fixture, task) = setup().await;
+    let circuit = handshake(&mut fixture, &task).await;
+    let first_id = measurement();
+    let challenge = Digest::from_bytes([21; 32]);
+    let first = fixture
+        .a
+        .probe(
+            circuit,
+            first_id,
+            challenge,
+            Instant::now() + Duration::from_secs(5),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    let first_arrival = delayed_probe_roundtrip(
+        &mut fixture,
+        first,
+        first_id,
+        challenge,
+        Duration::from_millis(1010),
+    )
+    .await;
+    // Single inflight: the first authenticated reply has completed before the
+    // next source request, which is now permitted by its original 1 Hz cadence.
+    let second_id = measurement();
+    let second = fixture
+        .a
+        .probe(
+            circuit,
+            second_id,
+            challenge,
+            Instant::now() + Duration::from_secs(5),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    let second_arrival =
+        delayed_probe_roundtrip(&mut fixture, second, second_id, challenge, Duration::ZERO).await;
+    assert!(
+        second_arrival.duration_since(first_arrival) < Duration::from_secs(1),
+        "test must exercise compressed arrivals"
+    );
+    for node in [&fixture.a, &fixture.r, &fixture.b] {
+        assert_eq!(node.retained_flows(), 0);
+    }
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn diagnostic_remote_burst_budget_is_shared_across_cids_at_relay_and_terminal() {
+    for terminal in [false, true] {
+        let (mut fixture, task) = setup().await;
+        let circuits = [
+            handshake(&mut fixture, &task).await,
+            handshake(&mut fixture, &task).await,
+            handshake(&mut fixture, &task).await,
+        ];
+        let mut queued = Vec::new();
+        for (index, circuit) in circuits.into_iter().enumerate() {
+            if index > 0 {
+                tokio::time::sleep(Duration::from_millis(1010)).await;
+            }
+            let request = fixture
+                .a
+                .probe(
+                    circuit,
+                    measurement(),
+                    [22; 32].into(),
+                    Instant::now() + Duration::from_secs(8),
+                    &fixture.ar.carrier,
+                )
+                .unwrap();
+            let request = if terminal {
+                // R sees lawful cadence; only B sees the compressed burst.
+                forward(fixture.r.receive(&fixture.ar.carrier, wire(request)))
+            } else {
+                request
+            };
+            queued.push(wire(request));
+        }
+        let last = queued.pop().unwrap();
+        for request in queued {
+            let result = if terminal {
+                fixture.b.receive(&fixture.rb.carrier, request)
+            } else {
+                fixture.r.receive(&fixture.ar.carrier, request)
+            };
+            assert!(matches!(
+                result.unwrap(),
+                Received::ProbeRequest { .. } | Received::Forward(_)
+            ));
+        }
+        // A new CID, valid proof and distinct measurement cannot buy a third
+        // token. Repeated rejected admissions cannot replenish or reset debt.
+        for _ in 0..4 {
+            let result = if terminal {
+                fixture.b.receive(&fixture.rb.carrier, last.clone())
+            } else {
+                fixture.r.receive(&fixture.ar.carrier, last.clone())
+            };
+            assert!(matches!(result, Err(Error::Capacity)));
+        }
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn diagnostic_real_control_full_path_noise_reply_and_business_isolation() {
+    let (mut fixture, task) = setup().await;
+    assert!(
+        fixture
+            .a
+            .start_authorized(
+                CircuitAuthorization::Diagnostic(task.id),
+                vec![fixture.mesh.a.id, fixture.mesh.b.id],
+                &fixture.ar.carrier
+            )
+            .is_err()
+    );
+    let circuit = handshake(&mut fixture, &task).await;
+    let business = fixture.handshake().await;
+    let id = measurement();
+    let challenge = Digest::from_bytes([0x73; 32]);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    assert!(
+        fixture
+            .a
+            .probe(business, id, challenge, deadline, &fixture.ar.carrier)
+            .is_err()
+    );
+    assert!(
+        fixture
+            .b
+            .probe(circuit, id, challenge, deadline, &fixture.rb.carrier)
+            .is_err()
+    );
+    assert!(
+        fixture
+            .a
+            .send(circuit, datagram(&fixture.mesh, false, false))
+            .is_err()
+    );
+    let pending = fixture
+        .a
+        .probe(circuit, id, challenge, deadline, &fixture.ar.carrier)
+        .unwrap();
+    // The actual transport accepts the request before the receipt exists.
+    let before = Instant::now();
+    let receipt = meshway_dataplane::carrier::send_scoped_with_receipt(
+        &mut fixture.ar.dial.sender,
+        pending,
+        Some(fixture.ar.dial.peer),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(receipt.admitted_at >= before && receipt.admitted_at <= Instant::now());
+    let first = fixture.ar.listen.recv().await;
+    assert!(!first.windows(32).any(|bytes| bytes == challenge.as_bytes()));
+    let mut corrupt = first.clone();
+    *corrupt.last_mut().unwrap() ^= 1;
+    assert!(fixture.r.receive(&fixture.ar.carrier, corrupt).is_err());
+    assert!(
+        fixture
+            .b
+            .receive(&fixture.ar.carrier, first.clone())
+            .is_err()
+    );
+    let next = forward(fixture.r.receive(&fixture.ar.carrier, first.clone()));
+    assert!(fixture.r.receive(&fixture.ar.carrier, first).is_err());
+    fixture.rb.dial.send(next).await;
+    let bytes = fixture.rb.listen.recv().await;
+    let Received::ProbeRequest {
+        circuit: terminal,
+        measurement_id,
+        response,
+    } = fixture
+        .b
+        .receive(&fixture.rb.carrier, bytes.clone())
+        .unwrap()
+    else {
+        panic!("probe request")
+    };
+    assert_eq!((terminal, measurement_id), (circuit, id));
+    assert!(fixture.b.receive(&fixture.rb.carrier, bytes).is_err());
+    fixture.rb.listen.send(response).await;
+    let bytes = fixture.rb.dial.recv().await;
+    let response = forward(fixture.r.receive(&fixture.rb.carrier, bytes.clone()));
+    assert!(fixture.r.receive(&fixture.rb.carrier, bytes).is_err());
+    fixture.ar.listen.send(response).await;
+    let bytes = fixture.ar.dial.recv().await;
+    assert!(
+        matches!(fixture.a.receive(&fixture.ar.carrier, bytes.clone()).unwrap(), Received::ProbeReply { circuit: returned, measurement_id, challenge: value } if returned == circuit && measurement_id == id && value == challenge)
+    );
+    assert!(fixture.a.receive(&fixture.ar.carrier, bytes).is_err());
+    for node in [&fixture.a, &fixture.r, &fixture.b] {
+        assert_eq!(node.retained_flows(), 0);
+    }
+    let packet = fixture
+        .a
+        .send(business, datagram(&fixture.mesh, false, false))
+        .unwrap();
+    let next = forward(fixture.r.receive(&fixture.ar.carrier, wire(packet)));
+    assert!(matches!(
+        fixture.b.receive(&fixture.rb.carrier, wire(next)).unwrap(),
+        Received::Packet(_)
+    ));
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn diagnostic_observation_rate_cannot_be_bypassed_with_another_cid() {
+    let (mut fixture, task) = setup().await;
+    let one = handshake(&mut fixture, &task).await;
+    let two = handshake(&mut fixture, &task).await;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let first = fixture
+        .a
+        .probe(
+            one,
+            measurement(),
+            [1; 32].into(),
+            deadline,
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    assert!(matches!(
+        fixture.a.probe(
+            two,
+            measurement(),
+            [2; 32].into(),
+            deadline,
+            &fixture.ar.carrier
+        ),
+        Err(Error::Capacity)
+    ));
+    fixture.a.close(one);
+    assert!(first.release(|_| ()).is_err());
+    assert!(matches!(
+        fixture.a.probe(
+            two,
+            measurement(),
+            [2; 32].into(),
+            deadline,
+            &fixture.ar.carrier
+        ),
+        Err(Error::Capacity)
+    ));
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn diagnostic_continuation_retains_cipher_but_cancels_original_probe_and_reply() {
+    let (mut fixture, task) = setup().await;
+    let circuit = handshake(&mut fixture, &task).await;
+    let request = fixture
+        .a
+        .probe(
+            circuit,
+            measurement(),
+            [3; 32].into(),
+            Instant::now() + Duration::from_secs(5),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    let response = terminal_response(&mut fixture, request);
+    let reply_wire = wire(response);
+    let queued = forward(fixture.r.receive(&fixture.rb.carrier, reply_wire));
+    let old = fixture.mesh.a.control.execution_snapshot().unwrap();
+    fixture.renew().await;
+    assert!(old.ensure_current().is_err());
+    assert!(queued.release(|_| ()).is_err());
+    for node in [&fixture.a, &fixture.r, &fixture.b] {
+        assert_eq!(
+            node.circuit_info(circuit).unwrap().unwrap().state,
+            CircuitState::Established
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(1010)).await;
+    let id = measurement();
+    let request = fixture
+        .a
+        .probe(
+            circuit,
+            id,
+            [4; 32].into(),
+            Instant::now() + Duration::from_secs(3),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    let response = terminal_response(&mut fixture, request);
+    let response = forward(fixture.r.receive(&fixture.rb.carrier, wire(response)));
+    assert!(
+        matches!(fixture.a.receive(&fixture.ar.carrier, wire(response)).unwrap(), Received::ProbeReply { measurement_id, .. } if measurement_id == id)
+    );
+    fixture
+        .mesh
+        .server
+        .cancel_observation(&fixture.mesh.owner, task.subscription_id.unwrap())
+        .await;
+    fixture.reconcile().await;
+    for node in [&fixture.a, &fixture.r, &fixture.b] {
+        assert_eq!(
+            node.circuit_info(circuit).unwrap().unwrap().state,
+            CircuitState::Closed
+        );
+    }
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn diagnostic_original_probe_expiry_rejects_queued_and_late_reply() {
+    let (mut fixture, task) = setup().await;
+    let circuit = handshake(&mut fixture, &task).await;
+    let request = fixture
+        .a
+        .probe(
+            circuit,
+            measurement(),
+            [7; 32].into(),
+            Instant::now() + Duration::from_millis(300),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    let response = terminal_response(&mut fixture, request);
+    let response = forward(fixture.r.receive(&fixture.rb.carrier, wire(response)));
+    let bytes = wire(response);
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(fixture.a.receive(&fixture.ar.carrier, bytes).is_err());
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn diagnostic_cached_handshake_retry_uses_same_cipher_and_original_guard() {
+    let (mut fixture, task) = setup().await;
+    let init = fixture
+        .a
+        .start_authorized(
+            CircuitAuthorization::Diagnostic(task.id),
+            fixture.mesh.path.clone(),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    let circuit = init.circuit();
+    let original = wire(init);
+    let relay = forward(fixture.r.receive(&fixture.ar.carrier, original.clone()));
+    let Received::Established {
+        response: Some(lost),
+        ..
+    } = fixture.b.receive(&fixture.rb.carrier, wire(relay)).unwrap()
+    else {
+        panic!("terminal handshake")
+    };
+    let lost = wire(lost);
+    assert!(fixture.a.retry_handshake(circuit).unwrap().is_none());
+    tokio::time::sleep(Duration::from_millis(260)).await;
+    let retry = fixture.a.retry_handshake(circuit).unwrap().unwrap();
+    let retry_bytes = wire(retry);
+    assert_eq!(retry_bytes, original);
+    let retry = forward(fixture.r.receive(&fixture.ar.carrier, retry_bytes));
+    let Received::Established {
+        response: Some(recovered),
+        ..
+    } = fixture.b.receive(&fixture.rb.carrier, wire(retry)).unwrap()
+    else {
+        panic!("cached terminal response")
+    };
+    let recovered = wire(recovered);
+    assert_eq!(recovered, lost);
+    let recovered = forward(fixture.r.receive(&fixture.rb.carrier, recovered));
+    assert!(
+        matches!(fixture.a.receive(&fixture.ar.carrier, wire(recovered)).unwrap(), Received::Established { circuit: id, response: None } if id == circuit)
+    );
+    let id = measurement();
+    let request = fixture
+        .a
+        .probe(
+            circuit,
+            id,
+            [9; 32].into(),
+            Instant::now() + Duration::from_secs(3),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    let reply = terminal_response(&mut fixture, request);
+    let reply = forward(fixture.r.receive(&fixture.rb.carrier, wire(reply)));
+    assert!(
+        matches!(fixture.a.receive(&fixture.ar.carrier, wire(reply)).unwrap(), Received::ProbeReply { measurement_id, .. } if measurement_id == id)
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn diagnostic_source_instance_replacement_cannot_reuse_old_authority_or_cipher() {
+    let (mut fixture, task) = setup().await;
+    let circuit = handshake(&mut fixture, &task).await;
+    let old = fixture.mesh.a.control.execution_snapshot().unwrap();
+    let capabilities = old.configuration().unwrap().self_keys.capabilities.clone();
+    let queued = fixture
+        .a
+        .probe(
+            circuit,
+            measurement(),
+            [10; 32].into(),
+            Instant::now() + Duration::from_secs(3),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    fixture.mesh.a.control.stop().await.unwrap();
+    assert!(queued.release(|_| ()).is_err());
+    fixture.mesh.a.control.authenticate().await.unwrap();
+    fixture
+        .mesh
+        .a
+        .control
+        .acquire_instance(capabilities)
+        .await
+        .unwrap();
+    let snapshot = fixture.mesh.a.sync_current().await;
+    assert_ne!(snapshot.instance().instance_id, task.instance_id);
+    assert!(
+        fixture
+            .a
+            .reconcile(
+                fixture
+                    .mesh
+                    .a
+                    .control
+                    .dataplane_identity(snapshot.clone())
+                    .unwrap()
+            )
+            .is_err()
+    );
+    let mut fresh = meshway_dataplane::secure::SecureNode::new(
+        fixture.mesh.a.control.dataplane_identity(snapshot).unwrap(),
+        Default::default(),
+        std::collections::BTreeMap::from([(fixture.mesh.r.id, fixture.ar.carrier.clone())]),
+    )
+    .unwrap();
+    assert!(
+        fresh
+            .start_authorized(
+                CircuitAuthorization::Diagnostic(task.id),
+                fixture.mesh.path.clone(),
+                &fixture.ar.carrier
+            )
+            .is_err()
+    );
+    assert!(
+        fresh
+            .probe(
+                circuit,
+                measurement(),
+                [10; 32].into(),
+                Instant::now() + Duration::from_secs(3),
+                &fixture.ar.carrier
+            )
+            .is_err()
+    );
+    drop(fresh);
+    fixture.close().await;
+}

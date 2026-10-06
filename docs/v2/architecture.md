@@ -26,6 +26,7 @@ crates/
   meshway-stun/
   meshway-underlay/
   meshway-dataplane/
+  meshway-diagnostics/
   meshway-tun/
   meshway-dns/
   meshway-ipc/
@@ -101,13 +102,14 @@ Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它�
 | --- | --- |
 | `meshway-control` | [接入、执行快照、连续性、回执和报告顺序](/v2/node/control)的唯一 owner |
 | `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane) |
+| `meshway-diagnostics` | [有界 source 探测调度、单调计时、窗口与结果](/v2/node/diagnostics)；借用同一 SecureNode，不持独立连接或密码状态 |
 | `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理) |
 | `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay) |
 | `meshway-transport-{udp,tcp,vless,trojan}` | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
 | `meshway-tun` | Linux TUN 设备 I/O |
 | `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal |
 
-daemon 已装配 Mesh-only stream／Native UDP 数据面与系统 DNS；Linux 验收范围见[运行模式](/v2/node/runtime)。出口转发、`meshway-netstack` 与 `meshway-diagnostics` 运行库仍待实现。
+daemon 已装配 Mesh-only stream／Native UDP 数据面、系统 DNS 与获准诊断；Linux 验收范围见[运行模式](/v2/node/runtime)。出口转发与 `meshway-netstack` 运行库仍待实现。
 
 组件可独立测试，并可被其他宿主复用。native 导出入口只适配共同 ABI，不复制业务、配置或状态模型。私有文件操作确有多个实际消费者时才抽窄存储原语，不为每张表、每个任务、每种状态各建库。
 
@@ -137,7 +139,7 @@ bootstrap 解析与业务 DNS 具有不同启动条件和权限，当前实现�
 以下简写省略统一的 meshway- 前缀：
 
 transport-spec ──► serde
-model ──► serde
+model ──► serde + transport-spec（测量中的实际承载事实）
 configuration ──► model + transport-spec
 policy ──► configuration + model + transport-spec
 protocol ──► model + configuration
@@ -146,6 +148,7 @@ control-client ──► protocol
 Server ──► protocol + configuration + policy + private-storage + 自有领域／存储模块
 Node control ──► control-client + 共享配置／模型 + private-storage
 Node dataplane ──► policy + control（执行快照）
+Node diagnostics ──► dataplane + control（执行快照）+ protocol/model（任务与测量）
 Node connectivity ──► dataplane（受保护帧 I/O）+ control + policy + underlay + stun + transport providers
 Node underlay ──► control + configuration + private-storage + dns（bootstrap wire）+ tun + transport/tcp/udp + transport-spec
 Node DNS ──► policy + configuration + control（执行快照）+ protocol（发现响应）+ private-storage

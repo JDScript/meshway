@@ -176,6 +176,24 @@ test("generated binary64 schemas retain measurement bounds and nullable absence"
   ]) assert.throws(() => validators({ $defs: { FixtureNumber: schema } }));
 });
 
+test("socket addresses require numeric families, real ports and zero IPv6 scope", async t => {
+  const document = fixture();
+  document.components.schemas.FixtureSocket = { type: "string", format: "meshway-socket-address" };
+  const { packageRoot } = await generatedFixture(t, document);
+  const { zFixtureSocket: address } = await import(pathToFileURL(join(packageRoot, "src/generated/zod.gen.ts")));
+  for (const value of [
+    "0.0.0.0:1", "192.0.2.1:65535", "127.0.0.1:00000080",
+    "[::]:53", "[2001:DB8::1]:443", "[::ffff:192.0.2.1]:53", "[::192.0.2.1]:53",
+    "[::1%0]:53", "[::1%000]:00000080",
+  ]) assert.equal(address.safeParse(value).success, true, value);
+  for (const value of [
+    "example.org:53", "127.000.0.1:53", "127.0.0.1:0", "127.0.0.1:65536",
+    "127.0.0.1:+80", "127.0.0.1: 80", "127.0.0.1:1e2", "127.0.0.1:53\n",
+    "::1:53", "[127.0.0.1]:53", "[::1%]:53", "[::1%1]:53", "[fe80::1%eth0]:53",
+    "[::1\n]:53", "[::1%0\n]:53", "[::1%0%0]:53", "[::1]:0", null, [], {},
+  ]) assert.equal(address.safeParse(value).success, false, JSON.stringify(value));
+});
+
 test("strict generated TypeScript and operation success/error result inference", async t => {
   const { packageRoot, files } = await generatedFixture(t);
   await writeFile(join(packageRoot, "consumer.ts"), `import { ControlClient } from "./src/transport.ts";
@@ -369,7 +387,7 @@ test("parameter declarations, scalar semantics and template binding fail closed"
     d => { d.paths[route].get.parameters[0].style = "spaceDelimited"; },
     d => { d.paths[route].get.parameters[0].allowReserved = true; },
     d => { d.paths[route].get.parameters[0].in = "header"; },
-    d => { d.paths[route].get.parameters[0].required = true; },
+    d => { d.paths[route].get.parameters[0].required = "true"; },
     d => { d.paths[route].get.parameters[0].schema = { type: "array", items: { type: "string" } }; },
     d => { d.paths[route].get.parameters[0].schema = closed({}); },
     d => { d.paths[route].get.parameters[0].schema = { type: ["string", "null"] }; },
@@ -458,4 +476,41 @@ listFixtureMembers(client, path, {token: "secret"}, {token: "secret"});
   const result = spawnSync(process.execPath, [require.resolve("typescript/bin/tsc"), "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess", "--skipLibCheck", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "Bundler", "--allowImportingTsExtensions", "consumer.ts"], { cwd: packageRoot, encoding: "utf8" });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(generatedFiles(parameterFixture()), files);
+});
+
+test("required query scalars retain type and runtime presence checks beside optional parameters", async t => {
+  const document = parameterFixture();
+  const parameters = document.paths["/fixture/networks/{networkId}/members"].get.parameters;
+  for (const parameter of parameters) if (["limit", "revision"].includes(parameter.name)) parameter.required = true;
+  const { packageRoot } = await generatedFixture(t, document);
+  const { listFixtureMembers } = await import(pathToFileURL(join(packageRoot, "src/generated/operations.gen.ts")));
+  const { ControlClient } = await import(pathToFileURL(join(packageRoot, "src/transport.ts")));
+  const requests = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url);
+    response.writeHead(204).end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const client = new ControlClient({ baseUrl: `http://127.0.0.1:${server.address().port}` });
+  const path = { networkId: "12345678-1234-0234-0234-123456789abc" };
+  const auth = { token: "private-token" };
+  assert.equal((await listFixtureMembers(client, path, { limit: 3, revision: 7, enabled: false, cursor: "" }, auth)).ok, true);
+  assert.equal(requests[0], `/fixture/networks/${path.networkId}/members?cursor=&enabled=false&limit=3&revision=7`);
+  for (const query of [{}, { limit: 3 }, { revision: 7 }, { limit: null, revision: 7 }, { limit: 3, revision: undefined }, { limit: 3.5, revision: 7 }]) {
+    assert.deepEqual(await listFixtureMembers(client, path, query, auth), { ok: false, error: { kind: "request" } });
+  }
+  assert.equal(requests.length, 1);
+  await writeFile(join(packageRoot, "consumer.ts"), `import { ControlClient } from "./src/transport.ts";
+import { listFixtureMembers } from "./src/generated/operations.gen.ts";
+declare const client: ControlClient;
+const path = { networkId: "${path.networkId}" };
+listFixtureMembers(client, path, {limit: 3, revision: 7}, {token: "secret"});
+// @ts-expect-error a required scalar cannot be omitted
+listFixtureMembers(client, path, {revision: 7}, {token: "secret"});
+// @ts-expect-error a required shared integer cannot be null
+listFixtureMembers(client, path, {limit: 3, revision: null}, {token: "secret"});
+`);
+  const compiled = spawnSync(process.execPath, [require.resolve("typescript/bin/tsc"), "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess", "--skipLibCheck", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "Bundler", "--allowImportingTsExtensions", "consumer.ts"], { cwd: packageRoot, encoding: "utf8" });
+  assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
 });

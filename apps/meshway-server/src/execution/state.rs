@@ -43,6 +43,18 @@ impl Execution {
         token: &str,
         now: DateTime<Utc>,
     ) -> Result<ReportAdmission, Error> {
+        self.report_with_context(tx, token, now, true)
+    }
+
+    /// Task polling/results cannot use retained publications. State/history
+    /// callers explicitly retain those contexts through the public entrypoint.
+    fn report_with_context(
+        &self,
+        tx: &Transaction<'_>,
+        token: &str,
+        now: DateTime<Utc>,
+        retain_history: bool,
+    ) -> Result<ReportAdmission, Error> {
         let principal = store::authorize_node(
             tx,
             &self.sealer,
@@ -50,7 +62,11 @@ impl Execution {
             super::proof::token_hash(token)?,
             now.timestamp_millis(),
         )?;
-        let mut report = self.node_admission(tx, principal.network, principal.node, now)?;
+        let mut report = if retain_history {
+            self.node_admission(tx, principal.network, principal.node, now)?
+        } else {
+            self.current_node_admission(tx, principal.network, principal.node, now)?
+        };
         report.lease_expires_at = report.lease_expires_at.min(time(principal.expires_at_ms)?);
         Ok(report)
     }
@@ -272,6 +288,19 @@ impl Execution {
         node: NodeId,
         now: DateTime<Utc>,
     ) -> Result<ReportAdmission, Error> {
+        self.current_node_context(tx, network, node, now)
+            .map(|(report, _)| report)
+    }
+
+    /// Return the immutable target already read for current admission so a
+    /// transaction-local consumer does not decrypt the publication again.
+    pub(super) fn current_node_context(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        node: NodeId,
+        now: DateTime<Utc>,
+    ) -> Result<(ReportAdmission, Option<CompiledNode>), Error> {
         let has_instance = store::admission::has_live_instance(
             tx,
             network,
@@ -300,15 +329,14 @@ impl Execution {
                 .flat_map(|n| addresses(&n.addresses))
                 .collect(),
         };
-        if let Some((publication, target)) =
-            store::target_for_node(tx, &self.sealer, network, node)?
-        {
+        let target = store::target_for_node(tx, &self.sealer, network, node)?;
+        if let Some((publication, target)) = &target {
             let eligible = match store::check_publication(
                 tx,
                 &self.sealer,
                 network,
                 node,
-                publication,
+                *publication,
                 now.timestamp_millis(),
             ) {
                 Ok(()) => true,
@@ -325,9 +353,9 @@ impl Execution {
             }
             report
                 .contexts
-                .push(configuration_admission(&target, eligible));
+                .push(configuration_admission(target, eligible));
         }
-        Ok(report)
+        Ok((report, target.map(|(_, target)| target)))
     }
 
     pub(super) fn node_admission(
@@ -386,6 +414,9 @@ fn configuration_admission(
         paths: vec![],
         profiles: BTreeSet::new(),
         neighbor_transports: cfg.neighbor_transports(),
+        path_transports: BTreeMap::new(),
+        diagnostic_transports: BTreeMap::new(),
+        mesh_address_pools: cfg.mesh_address_pools.clone(),
     };
     report.peers = cfg.peers.keys().copied().collect();
     report.paths = cfg
@@ -401,6 +432,73 @@ fn configuration_admission(
         .into_iter()
         .collect();
     report.profiles.insert(cfg.dns.profile.clone());
+    use meshway_configuration::execution::{Carrier, CircuitAuthorization};
+    for (authorization, paths) in cfg
+        .permits
+        .iter()
+        .map(|(id, p)| (CircuitAuthorization::Business(*id), &p.paths))
+        .chain(
+            cfg.diagnostics
+                .iter()
+                .map(|(id, p)| (CircuitAuthorization::Diagnostic(*id), &p.paths)),
+        )
+    {
+        for path in paths
+            .iter()
+            .filter(|path| path.nodes.first() == Some(&cfg.node_id))
+        {
+            let Some(peer) = path.nodes.get(1) else {
+                continue;
+            };
+            let outgoing = cfg
+                .dialers
+                .values()
+                .filter(|dial| dial.peer == *peer)
+                .map(|dial| Carrier {
+                    dialer: cfg.node_id,
+                    listener: *peer,
+                    listener_key: dial.listener_key.clone(),
+                    protocol: dial.parameters.transport(),
+                });
+            let incoming = cfg.listeners.iter().map(|(key, listener)| Carrier {
+                dialer: *peer,
+                listener: cfg.node_id,
+                listener_key: key.clone(),
+                protocol: match listener.declaration() {
+                    Listener::NativeUdp(_) => meshway_transport_spec::TransportProtocol::NativeUdp,
+                    Listener::NativeTcp(_) => meshway_transport_spec::TransportProtocol::NativeTcp,
+                    Listener::Vless(_) => meshway_transport_spec::TransportProtocol::Vless,
+                    Listener::Trojan(_) => meshway_transport_spec::TransportProtocol::Trojan,
+                },
+            });
+            for carrier in outgoing.chain(incoming) {
+                if meshway_policy::admission::admit_circuit_carrier(
+                    cfg,
+                    authorization,
+                    &path.nodes,
+                    *peer,
+                    &carrier,
+                )
+                .is_ok()
+                {
+                    report
+                        .path_transports
+                        .entry(path.nodes.clone())
+                        .or_default()
+                        .insert(carrier.protocol.as_str().into());
+                    if let CircuitAuthorization::Diagnostic(id) = authorization {
+                        report
+                            .diagnostic_transports
+                            .entry(id)
+                            .or_default()
+                            .entry(path.nodes.clone())
+                            .or_default()
+                            .insert(carrier.protocol.as_str().into());
+                    }
+                }
+            }
+        }
+    }
     for (paths, expires) in cfg
         .permits
         .values()
@@ -492,6 +590,32 @@ fn time(ms: u64) -> Result<DateTime<Utc>, Error> {
 }
 
 impl crate::observations::service::ObservationProvider for Execution {
+    fn node_observation_identity(
+        &self,
+        tx: &Transaction<'_>,
+        token: &str,
+        instance: &meshway_protocol::InstanceRequest,
+        now: DateTime<Utc>,
+    ) -> Result<crate::observations::service::NodeObservationIdentity, Error> {
+        self.diagnostic_node_identity(tx, token, instance, now)
+    }
+    fn prepare_node_observation(
+        &self,
+        tx: &Transaction<'_>,
+        token: &str,
+        request: &meshway_protocol::node_observations::CreateNodeObservation,
+        now: DateTime<Utc>,
+    ) -> Result<crate::observations::service::NodeObservationAdmission, Error> {
+        self.prepare_node_diagnostic(tx, token, request, now)
+    }
+    fn node_observation(
+        &self,
+        tx: &Transaction<'_>,
+        subscription: ObservationSubscriptionId,
+        now: DateTime<Utc>,
+    ) -> Result<crate::observations::service::NodeObservationAdmission, Error> {
+        self.node_diagnostic_admission(tx, subscription, now)
+    }
     fn prepare_observation(
         &self,
         tx: &Transaction<'_>,
@@ -523,7 +647,7 @@ impl crate::observations::service::ObservationProvider for Execution {
         authorization: &str,
         now: DateTime<Utc>,
     ) -> Result<ReportAdmission, Error> {
-        self.report_admission_in_transaction(tx, authorization, now)
+        self.report_with_context(tx, authorization, now, false)
     }
     fn observation(
         &self,
@@ -540,10 +664,11 @@ impl crate::observations::service::ObservationProvider for Execution {
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<SessionId, Error> {
-        let ReadIdentity::UserSession { digest, .. } = identity else {
+        let ReadIdentity::UserSession { digest, network } = identity else {
             return Err(Error::PermissionDenied);
         };
-        self.state_scope_in_transaction(tx, identity, now)?;
-        current_session(tx, digest, now.timestamp_millis()).map(|session| session.session_id)
+        let session = current_session(tx, digest, now.timestamp_millis())?;
+        store::admission::membership_role(tx, *network, session.user.id)?;
+        Ok(session.session_id)
     }
 }

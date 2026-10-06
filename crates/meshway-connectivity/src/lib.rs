@@ -13,7 +13,7 @@ pub use io::{
     AcceptedSocket, DatagramAuthorization, DatagramSocket, ListenerSocket, SocketFactory,
     TraversalSocket,
 };
-pub use manager::{Event, LinkFact, ListenerFact, Manager, Snapshot, SocketFact};
+pub use manager::{Event, LinkFact, ListenerFact, Manager, SendReceipt, Snapshot, SocketFact};
 pub use meshway_policy::admission::Carrier;
 
 use meshway_model::state::{Capability, StreamKind, TransportRole};

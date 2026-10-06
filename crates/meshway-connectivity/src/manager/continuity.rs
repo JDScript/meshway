@@ -98,9 +98,15 @@ impl Shared {
         Ok(())
     }
     fn rebind(&self, identity: DataPlaneIdentity) -> Arc<Self> {
+        self.rebind_scoped(identity, self.stop.clone())
+    }
+    pub(super) fn for_owner(&self) -> Arc<Self> {
+        self.rebind_scoped(self.identity.clone(), self.stop.child_token())
+    }
+    fn rebind_scoped(&self, identity: DataPlaneIdentity, stop: CancellationToken) -> Arc<Self> {
         Arc::new(Self {
             identity,
-            stop: self.stop.clone(),
+            stop,
             links: self.links.clone(),
             events: self.events.clone(),
             capacity: self.capacity.clone(),
@@ -111,6 +117,8 @@ impl Shared {
             gates: self.gates.clone(),
             socket_epochs: self.socket_epochs.clone(),
             generation: self.generation,
+            traversal_endpoints: self.traversal_endpoints.clone(),
+            resource_changes: self.resource_changes.clone(),
         })
     }
 
@@ -180,8 +188,38 @@ impl Shared {
             .snapshot()
             .configuration()
             .map_err(|_| Error::Authority)?;
+        let resource = self
+            .sockets
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .get(&fact.socket_id)
+            .map(|socket| socket.reference.resource.clone())
+            .unwrap_or_else(|| {
+                if fact.carrier.listener == previous.node_id {
+                    meshway_model::state::ResourceRef::Listener {
+                        key: fact.carrier.listener_key.clone(),
+                    }
+                } else {
+                    meshway_model::state::ResourceRef::Dial {
+                        key: format!("{}/{}", fact.peer, fact.carrier.listener_key),
+                    }
+                }
+            });
         if previous.peers.get(&fact.peer) != next.peers.get(&fact.peer)
             || !next.peers.contains_key(&fact.peer)
+            || !matches!(
+                fact.carrier.protocol,
+                TransportProtocol::NativeTcp | TransportProtocol::NativeUdp
+            )
+            || !meshway_underlay::resource_compatible(previous, next, &resource)
+            || (fact.carrier.dialer == previous.node_id
+                && !meshway_underlay::resource_compatible(
+                    previous,
+                    next,
+                    &meshway_model::state::ResourceRef::Dial {
+                        key: format!("{}/{}", fact.peer, fact.carrier.listener_key),
+                    },
+                ))
             || link.scope.health.as_ref().is_some_and(|health| {
                 health
                     .lock()
@@ -210,8 +248,8 @@ impl Shared {
 }
 
 impl Manager {
-    /// Conservative whole-resource compatibility. No State or configuration
-    /// equality substitutes for the Control-issued direct lineage proof.
+    /// Whether Control authorizes a differential physical handoff. Individual
+    /// resources and channels are retained only after their exact proof checks.
     pub fn can_reconcile(&self, identity: &DataPlaneIdentity) -> bool {
         if self.shared.stop.is_cancelled() {
             return false;
@@ -224,25 +262,11 @@ impl Manager {
             return false;
         };
         if validate_scale(cfg, self.shared.limits).is_err()
-            || old.listeners != cfg.listeners
-            || old.dialers != cfg.dialers
             || old.mesh_address_pools != cfg.mesh_address_pools
         {
             return false;
         }
-        self.shared.links.lock().is_ok_and(|links| {
-            links.values().all(|link| {
-                // Buffered provider streams need their own per-inner-write
-                // epoch handoff. Native TCP/UDP have one guarded raw poll.
-                if !matches!(
-                    link.fact.carrier.protocol,
-                    TransportProtocol::NativeTcp | TransportProtocol::NativeUdp
-                ) {
-                    return false;
-                }
-                true
-            })
-        })
+        true
     }
 
     pub(super) async fn retain(&mut self, identity: DataPlaneIdentity) -> Result<(), Error> {
@@ -256,7 +280,23 @@ impl Manager {
         if next.same_execution(&previous) && next.expires_at() == previous.expires_at() {
             return Ok(());
         }
+        let retired = self.retire_resources(
+            next.continuation_from(&previous)
+                .map_err(|_| Error::Authority)?,
+            next.configuration().map_err(|_| Error::Authority)?,
+        );
         self.shared = self.shared.rebind(identity.clone());
+        let generation = self
+            .shared
+            .generation
+            .checked_next()
+            .map_err(|_| Error::Capacity)?;
+        Arc::get_mut(&mut self.shared)
+            .ok_or(Error::Worker)?
+            .generation = generation;
+        if let Some((_, current)) = &mut self.traversal {
+            *current = generation;
+        }
         while self.events.try_recv().is_ok() {}
         self.shared.epochs.send_replace(identity);
         for gate in self
@@ -269,6 +309,8 @@ impl Manager {
         {
             gate.wake();
         }
+        self.join_retired(retired).await?;
+        self.install_resources().await?;
         let deadline = previous
             .retention_deadline()
             .map_err(|_| Error::Authority)?;

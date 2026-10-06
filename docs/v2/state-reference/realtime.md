@@ -6,6 +6,8 @@
 
 HTTP 创建／续租／取消任务，网络 SSE 按任务和订阅权限发送结果。连接 SSE 本身不创建探测任务，见[事件流](/v2/api/events#path-observation)。
 
+本机 [`meshway ping`](/v2/node/diagnostics) 使用 Node 实例订阅，复用同一任务与执行器。Node 只能为自身当前实例创建、读取、续租和取消自己的订阅；用户会话订阅与 Node 实例订阅各自鉴权，可共享实际任务但不能互相取消。
+
 ## Start
 
 完整创建请求结构示例。Node ID 须来自当前网络，源、目标服务与完整路径须获当前用户和配置授权：
@@ -106,7 +108,7 @@ tx 提交不等于目标已收到；若还需要目标交付字节，必须由�
 
 握手、保活和诊断探测不计入业务字节。外层加密后的 wire bytes、transport 重传或各段负载可作为另一个指标，不能混入同一个“业务流量”数字。计数器重置／路径变更须重建基线；没有窗口数据时是未知，不补零速率。
 
-Server 将 traffic 列入 `unsupportedMetrics`，样本的 `traffic` 为 null；未计数值不得上报成零。RTT／probeLoss 的源节点须在 acquire 声明 `feature:path-observation` version 1，否则任务为 unsupported。能力声明只表明构建支持，不是测量成功证据。
+Server 将 traffic 列入 `unsupportedMetrics`，样本的 `traffic` 为 null；未计数值不得上报成零。RTT／probeLoss 路径的源、中转与终点须在 acquire 声明 `feature:path-observation` version 1。缺能力且无其他完全支持的获准完整候选时，任务为 unsupported，并且不发布不可执行诊断许可；权限拒绝另行表达。能力声明只表明构建支持，不是测量成功证据。
 
 ## Probe loss
 

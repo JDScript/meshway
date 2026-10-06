@@ -40,6 +40,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "Daemon、CLI 与组件", link: "/v2/node" },
       { text: "Server 接入组件", link: "/v2/node/control" },
       { text: "网络模式与本机运行", link: "/v2/node/runtime" },
+      { text: "Mesh 路径诊断与 ping", link: "/v2/node/diagnostics" },
       { text: "数据面、TUN 与 DNS", link: "/v2/node/dataplane" },
       { text: "三节点 Docker 开发环境", link: "/v2/node/docker-lab" },
       { text: "承载会话与发送边界", link: "/v2/node/transport" },

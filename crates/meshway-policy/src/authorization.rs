@@ -44,3 +44,42 @@ pub fn permit_authorization_digest(permit: &PathPermit) -> Result<Digest, Serial
         replies,
     })
 }
+
+/// Domain-separated diagnostic authority, excluding only its renewable expiry.
+pub fn diagnostic_authorization_digest(
+    permit: &meshway_configuration::execution::DiagnosticPermit,
+) -> Result<Digest, SerializationError> {
+    use meshway_configuration::execution::*;
+    let DiagnosticPermit {
+        observation_id,
+        source,
+        instance_id,
+        target,
+        service,
+        paths,
+        replies,
+        expires_at_ms: _,
+    } = permit;
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Authorization<'a> {
+        domain: &'static str,
+        observation_id: &'a meshway_model::ObservationId,
+        source: &'a meshway_model::NodeId,
+        instance_id: &'a meshway_model::InstanceId,
+        target: &'a meshway_model::NodeId,
+        service: &'a ObservationServiceScope,
+        paths: &'a [LogicalPath],
+        replies: &'a DiagnosticReplyPolicy,
+    }
+    digest(&Authorization {
+        domain: "meshway/diagnostic-authorization/v3",
+        observation_id,
+        source,
+        instance_id,
+        target,
+        service,
+        paths,
+        replies,
+    })
+}

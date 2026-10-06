@@ -73,11 +73,11 @@ impl Registry {
 impl DatagramAuthorization {
     pub(super) fn attach(
         mut endpoint: ProtectedDatagram,
-        scope: Scope,
         resolver: Resolver,
         reference: SocketReference,
     ) -> Result<TraversalDatagram> {
         let local = endpoint.local_addr()?;
+        let scope = endpoint.scope();
         let registry = Arc::new(Registry {
             closed: CancellationToken::new(),
             targets: Mutex::new(Vec::new()),
@@ -99,6 +99,7 @@ impl DatagramAuthorization {
         })
     }
     fn check(&self, snapshot: &meshway_control::ExecutionSnapshot) -> Result<()> {
+        self.scope.owner_current()?;
         let binding = self.binding.lock().map_err(|_| Error::Worker)?;
         binding
             .snapshot
@@ -232,8 +233,7 @@ impl DatagramAuthorization {
             .continuation_from(&binding.snapshot)
             .map_err(|_| Error::Expired)?;
         let next = snapshot.configuration().map_err(|_| Error::Expired)?;
-        if previous.listeners != next.listeners
-            || previous.dialers != next.dialers
+        if !crate::resource_compatible(previous, next, &binding.reference.resource)
             || reference.node_id != binding.reference.node_id
             || reference.instance != binding.reference.instance
             || reference.socket_id != binding.reference.socket_id

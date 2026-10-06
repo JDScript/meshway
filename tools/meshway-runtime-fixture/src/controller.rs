@@ -192,7 +192,18 @@ pub(super) fn validate_report(
             } => {}
         _ => return Err("incomplete runtime actor evidence".into()),
     }
-    if let Signal::Report { node, recovery, .. } = report {
+    if let Signal::Report {
+        node,
+        recovery,
+        ping,
+        ..
+    } = report
+    {
+        match (role, ping) {
+            (Role::A, Some(ping)) => ping.validate(*node, recovery)?,
+            (Role::R | Role::B, None) => {}
+            _ => return Err("ping evidence must be present only for source actor A".into()),
+        }
         recovery.validate(role)?;
         if recovery
             .recovered
@@ -484,6 +495,16 @@ async fn coordinate(
         ip: vec!["udp:42424".into(), "tcp:42425".into(), "udp:42428".into()],
         bidirectional: false,
     }];
+    // Exact diagnostic grants are separate from the unchanged business ports.
+    for target in [Role::B, Role::R] {
+        input.access.push(AccessRule {
+            remark: "Real CLI ICMP diagnostic".into(),
+            src: vec![format!("node:{}", nodes[&Role::A])],
+            dst: vec![format!("node:{}", nodes[&target])],
+            ip: vec!["icmp:*".into()],
+            bidirectional: false,
+        });
+    }
     input.routing.mesh = vec![MeshRoute {
         remark: String::new(),
         src: vec![format!("node:{}", nodes[&Role::A])],
@@ -562,6 +583,7 @@ async fn coordinate(
         ("initial", None),
     )
     .await?;
+    crate::ping_management::initial(cli, &signals, &client, network, token, &nodes, audit).await?;
     if cli.traversal == crate::TraversalMode::Nat {
         signals.ready("traversal-first").await?;
         measured_links(
@@ -628,6 +650,9 @@ async fn coordinate(
     .await?;
     let original = source(&client, network, token).await?;
     let mut allowed = NetworkConfigurationInput::from(&original.configuration);
+    // Isolate ICMP revocation from the later relay address change: changing a
+    // Node's addresses intentionally invalidates its execution continuity.
+    let mut business_only = allowed.clone();
     // The relay no longer owns a Mesh IPv6 address, but must still forward
     // authorized IPv6 ciphertext and retain negative IPv6 capture locally.
     allowed
@@ -636,9 +661,39 @@ async fn coordinate(
         .ok_or("relay configuration absent")?
         .addresses
         .ipv6 = Input::Value(None);
+    business_only
+        .access
+        .retain(|rule| !rule.ip.iter().any(|ip| ip == "icmp:*"));
+    if business_only.access.len() != 1
+        || business_only.access[0].ip != ["tcp:42425", "udp:42424", "udp:42428"]
+    {
+        return Err("ICMP-only revocation widened or changed business permissions".into());
+    }
+    let revision = apply(&client, network, token, original.revision, &business_only).await?;
+    signals
+        .write("ping-icmp-revoked", &Signal::Revision { revision })
+        .await?;
+    applied(
+        cli,
+        &client,
+        network,
+        token,
+        &nodes,
+        revision,
+        ("icmp-revoked", None),
+    )
+    .await?;
+    let Signal::PingRun { run } = signals
+        .wait_for("ping-udp-tcp-only", crate::ping::STAGE_LIMIT + IO)
+        .await?
+    else {
+        return Err("missing UDP/TCP-only diagnostic denial".into());
+    };
+    run.validate(&[nodes[&Role::A], nodes[&Role::R], nodes[&Role::B]])?;
+    crate::ping_management::denied(cli, &client, network, token, &nodes, &run).await?;
     let mut denied = allowed.clone();
     denied.access.clear();
-    let revision = apply(&client, network, token, original.revision, &denied).await?;
+    let revision = apply(&client, network, token, revision, &denied).await?;
     signals
         .write("revoked", &Signal::Revision { revision })
         .await?;
@@ -652,7 +707,18 @@ async fn coordinate(
         ("revoked", None),
     )
     .await?;
-    signals.ready("revoked-traffic").await?;
+    if !matches!(
+        signals
+            .wait_for("revoked-traffic", STARTUP + crate::ping::STAGE_LIMIT)
+            .await?,
+        Signal::Ready
+    ) {
+        return Err("invalid revoked traffic/diagnostic completion".into());
+    }
+    let Signal::PingRun { run } = signals.wait("ping-revoked").await? else {
+        return Err("missing permission-denied CLI evidence".into());
+    };
+    run.validate(&[nodes[&Role::A], nodes[&Role::R], nodes[&Role::B]])?;
     tracing::info!(
         phase = "access-revoked",
         "Server NodeState applied and OS echo rejection verified"
@@ -672,9 +738,17 @@ async fn coordinate(
     )
     .await?;
     for role in Role::ALL {
-        signals
-            .ready(&format!("lease-ready-{}", role.name()))
-            .await?;
+        if !matches!(
+            signals
+                .wait_for(
+                    &format!("lease-ready-{}", role.name()),
+                    STARTUP + crate::ping::STAGE_LIMIT * 2
+                )
+                .await?,
+            Signal::Ready
+        ) {
+            return Err("invalid restored traffic/CLI lifecycle completion".into());
+        }
     }
     if cli.traversal_fallback {
         measured_links(
@@ -688,6 +762,7 @@ async fn coordinate(
         )
         .await?;
     }
+    signals.ready("ping-outage-ready").await?;
     let closed_at_ms = availability.close().await?;
     signals
         .write(
@@ -810,7 +885,7 @@ async fn coordinate(
             signals
                 .wait_for(
                     &format!("recovery-done-{}", role.name()),
-                    Duration::from_secs(150)
+                    Duration::from_secs(150) + crate::ping::STAGE_LIMIT
                 )
                 .await?,
             Signal::Ready

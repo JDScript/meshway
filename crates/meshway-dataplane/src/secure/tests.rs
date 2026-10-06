@@ -10,7 +10,9 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
     Circuit {
         context: Context {
             network: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-            demand: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
+            authorization: CircuitAuthorization::Business(
+                "00000000-0000-4000-8000-000000000002".parse().unwrap(),
+            ),
             path: vec![
                 "00000000-0000-4000-8000-000000000003".parse().unwrap(),
                 "00000000-0000-4000-8000-000000000004".parse().unwrap(),

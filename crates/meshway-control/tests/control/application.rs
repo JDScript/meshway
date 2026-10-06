@@ -525,6 +525,7 @@ async fn runtime_and_control_share_sequence_and_pending_retry_never_duplicates_p
     let observed = Utc::now();
     let mut runtime = facts(&source, true);
     runtime.probes.push(ProbeObservation {
+        channels: None,
         measurement_id: EventId::new(*request().as_uuid()).unwrap(),
         kind: ProbeKind::Path,
         link_id: None,

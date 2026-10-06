@@ -56,13 +56,13 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | Linux Mesh-only | 已验证 TUN capture、Native TCP／Native UDP 静态端点认证邻接、双栈 UDP／TCP 多跳包流、持续续租和失效清理；精确范围见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance)。双 NAT 与同路径 TCP 退路见[连接获取验收](/v2/node/connectivity#路径选择与验收) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
 | Exit／本机 egress | `exitEnabled`、非 Mesh permit、未由 DNS owner 持有的 local egress 或缺少明确 no-exit DNS 执行证明均拒绝安装；出口／NAT 尚未接线 |
-| 诊断 | 非空 diagnostics 拒绝安装；ping 和测量运行器尚未实现 |
+| 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器；独立诊断许可、实际路径／通道与计时见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace、netstack、SOCKS5、动态插件和切网尚未实现 |
 
 仅验证 Mesh IP、无需系统 DNS 的场景，在 Server 配置中明确设置 `magicDNS=false`、`overrideLocal=false`，并保持 `servers`、`default`、`routes`、`searchDomains` 为空。此时不创建 DNS 服务／锚点，也不要求机器运行 resolved。存在 DNS 需求时须完成对应安装；本机后端选择不覆盖云端 DNS 业务配置。`control-only` 不安装系统 DNS。
 
-IPC v2 的公开运行状态：
+IPC v3 的公开运行状态：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -107,11 +107,11 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | --- | --- |
 | `meshway up` | 首次浏览器接入，或用保存的身份重新认证并取得运行资格 |
 | `meshway down` | 停止当前网络并终止相关资格；daemon 与私有身份保留 |
-| `meshway ping <target>` | 尚未实现；需由 daemon 执行获准测量，报告真实路径／来源／结果 |
+| `meshway ping <target>` | 以 `icmp:*` 权限探测完整路径，显示实际 direct／via、通道来源与 RTT；参数见[路径诊断](/v2/node/diagnostics) |
 | `meshway status` | 区分进程、控制联系、saved／applied 和实际通道状态 |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，当前版本为 2，使用 JSON 与长度前缀，单条消息上限 64 KiB。每个连接处理一个请求，连接数、请求等待和命令队列均有上限。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，当前版本为 3，使用 JSON 与长度前缀，单条消息上限 64 KiB。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。
 
 up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更的请求身份以恢复不确定结果。本机 revision 与 Server 配置 revision 分开。已接纳命令的持久化由协调器完成，CLI 断开不会撤回它；读取 status 不写入状态或生成测量。
 
@@ -125,7 +125,7 @@ daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份�
 
 CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除。
 
-ping 的默认服务范围和 Node 凭据诊断合同仍需补齐。不能冒用 Console 会话调用观察接口，也不能用 HTTP 耗时或未建立路径的等待时间伪造 RTT／丢包。
+ping 使用 Node 实例订阅，与 Console 用户订阅共用观察任务。默认服务、取消和计时合同见[路径诊断](/v2/node/diagnostics)；Node 不冒用 Console 会话，HTTP／准备耗时不充当 RTT。
 
 ## 持久与重建
 

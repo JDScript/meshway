@@ -1,10 +1,53 @@
 use crate::{
-    EventId, NodeId, Sequence,
+    Digest, EventId, NodeId, Sequence, SocketAddress, UdpTraversalId,
     state::{ConfigurationRef, ProbeObservation},
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
+
+meshway_serde::string_enum! {
+/// Coarse provenance only; private observer and interface details are excluded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EndpointKind {
+    Configured,
+    Interface,
+    Stun,
+}
+}
+
+meshway_serde::tagged! {
+/// How the actual physical channel was acquired, not business authorization.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkAcquisition {
+    PublishedEndpoint,
+    AcceptedInbound,
+    CoordinatedUdp {
+        #[serde(rename = "attemptId")]
+        attempt_id: UdpTraversalId,
+        #[serde(rename = "endpointSource")]
+        endpoint_source: EndpointKind,
+    },
+}
+}
+
+meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ProbeChannel {
+    pub link_id: Digest,
+    pub socket_id: Digest,
+    pub peer_node_id: NodeId,
+    pub transport: meshway_transport_spec::TransportProtocol,
+    pub local_address: SocketAddress,
+    pub remote_address: SocketAddress,
+    pub acquisition: LinkAcquisition,
+} }
+
+meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ProbeChannels {
+    pub request: ProbeChannel,
+    /// Null until a reply has actually been observed on a channel.
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub reply: Option<ProbeChannel> [required = true],
+} }
 
 meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ObservationEvent {
     pub event_id: EventId,

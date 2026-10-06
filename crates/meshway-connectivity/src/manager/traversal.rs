@@ -18,6 +18,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone)]
 pub(super) struct Endpoint {
     pub commands: mpsc::Sender<Command>,
     pub authorization: Arc<dyn crate::DatagramAuthorization>,
@@ -62,20 +63,28 @@ struct Pending {
     active: bool,
 }
 
-pub(super) async fn run(
-    mut shared: Arc<Shared>,
-    gateway: Arc<dyn TraversalGateway>,
-    endpoints: BTreeMap<[u8; 32], Endpoint>,
-) {
+pub(super) async fn run(mut shared: Arc<Shared>, gateway: Arc<dyn TraversalGateway>) {
     let mut updates = shared.epochs.subscribe();
+    let mut resources = shared.resource_changes.subscribe();
     let mut discover_at = Instant::now();
     let mut after_peer = None;
+    let mut previous_endpoints = Vec::new();
     loop {
+        let endpoints = match shared.traversal_endpoints.lock() {
+            Ok(endpoints) => endpoints.clone(),
+            Err(_) => return,
+        };
+        let current_endpoints: Vec<_> = endpoints.keys().copied().collect();
+        if current_endpoints != previous_endpoints {
+            discover_at = Instant::now();
+            previous_endpoints = current_endpoints;
+        }
         run_epoch(
             shared.clone(),
             &gateway,
             &endpoints,
             &mut updates,
+            &mut resources,
             &mut discover_at,
             &mut after_peer,
         )
@@ -92,6 +101,7 @@ async fn run_epoch(
     gateway: &Arc<dyn TraversalGateway>,
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
     updates: &mut tokio::sync::watch::Receiver<DataPlaneIdentity>,
+    resources: &mut tokio::sync::watch::Receiver<()>,
     discover_at: &mut Instant,
     after_peer: &mut Option<NodeId>,
 ) {
@@ -166,24 +176,7 @@ async fn run_epoch(
                     }
                 }
                 for value in pending.values_mut() {
-                    if value.active || value.offer.ensure_current().is_err() {
-                        continue;
-                    }
-                    match gateway
-                        .request(Operation::Accept(value.offer.clone()))
-                        .await
-                    {
-                        Ok(Reply::Accept(Outcome::Current(AttemptView::Active(active)))) => {
-                            if let Some(endpoint) = endpoints.get(&value.endpoint) {
-                                value.active = endpoint
-                                    .commands
-                                    .try_send(Command::Activate(active))
-                                    .is_ok();
-                            }
-                        }
-                        Ok(Reply::Accept(Outcome::Unavailable(_))) => value.offer.cancel(),
-                        _ => {}
-                    }
+                    accept(gateway, endpoints, value).await;
                 }
                 if Instant::now() >= *discover_at {
                     *discover_at = Instant::now() + Duration::from_secs(8);
@@ -231,6 +224,7 @@ async fn run_epoch(
     };
     tokio::select! { biased;
         _ = updates.changed() => {},
+        _ = resources.changed() => {},
         _ = scope.run(work) => {},
     }
     for (id, value) in pending {
@@ -339,6 +333,38 @@ async fn reserve(
     tokio::select! { biased;
         _ = offer.invalidated() => Err(Error::Authority),
         result = tokio::time::timeout(Duration::from_secs(1), receiver) => result.map_err(|_| Error::Cancelled)?.map_err(|_| Error::Unavailable)?,
+    }
+}
+
+async fn accept(
+    gateway: &Arc<dyn TraversalGateway>,
+    endpoints: &BTreeMap<[u8; 32], Endpoint>,
+    pending: &mut Pending,
+) {
+    if pending.active || pending.offer.ensure_current().is_err() {
+        return;
+    }
+    match gateway
+        .request(Operation::Accept(pending.offer.clone()))
+        .await
+    {
+        Ok(Reply::Accept(Outcome::Current(AttemptView::Active(active))))
+            if pending.offer.ensure_current().is_ok()
+                && active.ensure_current().is_ok()
+                && active.validated_offer().offer() == pending.offer.offer() =>
+        {
+            if let Some(endpoint) = endpoints.get(&pending.endpoint) {
+                pending.active = endpoint
+                    .commands
+                    .try_send(Command::Activate(active))
+                    .is_ok();
+            }
+        }
+        Ok(Reply::Accept(Outcome::Unavailable(_))) => pending.offer.cancel(),
+        // Waiting and uncertain RPC outcomes retain the original receiver slot
+        // and authority. A later accept retries exactly this offer; neither a
+        // new query guard nor prepare alone can authorize activation.
+        _ => {}
     }
 }
 
@@ -490,14 +516,16 @@ async fn prepare(
         };
         if let Ok(Reply::Prepare(Outcome::Current(offer))) = response {
             if reserve(endpoints, endpoint, &offer).await.is_ok() {
-                pending.insert(
-                    offer.offer().attempt_id,
-                    Pending {
-                        offer,
-                        endpoint,
-                        active: false,
-                    },
-                );
+                // Install before the RPC so cancellation/uncertainty always
+                // retains the exact reserved slot in this epoch's cleanup set.
+                // Accept immediately, before another peer's prepare or query
+                // consumes the short bilateral acquisition window.
+                let value = pending.entry(offer.offer().attempt_id).or_insert(Pending {
+                    offer,
+                    endpoint,
+                    active: false,
+                });
+                accept(gateway, endpoints, value).await;
             } else {
                 offer.cancel();
                 let _ = gateway.request(Operation::Cancel(offer)).await;

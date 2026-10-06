@@ -320,6 +320,9 @@ async fn pump(
                     .ok_or("missing endpoint counter")? += 1;
             }
             Received::Established { .. } => return Err("unexpected second handshake".into()),
+            Received::ProbeRequest { .. } | Received::ProbeReply { .. } => {
+                return Err("diagnostic frame on the business-only fixture".into());
+            }
         }
     }
 }

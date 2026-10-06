@@ -49,13 +49,14 @@ async fn new_epoch_dialer_waits_for_selected_owner_handoff_before_acquiring() {
             .check()
             .is_err()
     );
-    let candidates = workers::plans(&next, Default::default())
-        .unwrap()
-        .remove(&ids[1])
-        .unwrap();
+    assert!(
+        workers::plans(&next, Default::default())
+            .unwrap()
+            .contains_key(&ids[1])
+    );
     factory.blocked_dialers.lock().unwrap().insert(ids[0]);
     let before = factory.acquisitions.load(Ordering::SeqCst);
-    let mut acquisition = Box::pin(workers::dial(shared, factory.clone(), ids[1], candidates));
+    let mut acquisition = Box::pin(workers::dial(shared, factory.clone(), ids[1]));
     poll_fn(|cx| {
         assert!(acquisition.as_mut().poll(cx).is_pending());
         Poll::Ready(())

@@ -163,8 +163,52 @@ pub(super) async fn dispatch(
     );
     match result {
         Ok(result) => {
+            use meshway_control::connectivity::{AttemptView, Outcome};
+            let scope_changed = matches!(
+                &result,
+                Reply::Query(Outcome::Unavailable(
+                    meshway_protocol::connectivity::UdpTraversalUnavailableReason::ScopeChanged
+                ))
+            );
+            match &result {
+                Reply::Query(Outcome::Unavailable(reason)) => tracing::debug!(
+                    operation = name,
+                    ?reason,
+                    "Traversal metadata unavailable response"
+                ),
+                Reply::Prepare(Outcome::Current(offer)) => {
+                    let value = offer.offer();
+                    tracing::debug!(operation = name, attempt = %value.attempt_id,
+                        local = %offer.local().candidate.socket.node_id,
+                        peer = %offer.peer().candidate.socket.node_id,
+                        source_instance = %offer.snapshot().instance().instance_id,
+                        publication = %offer.snapshot().reference().execution_publication,
+                        peer_publication = %offer.peer().candidate.socket.configuration.execution_publication,
+                        expires_at_ms = value.expires_at_ms, "Traversal offer returned");
+                }
+                Reply::Accept(Outcome::Current(view)) => {
+                    let (offer, phase) = match view {
+                        AttemptView::Waiting(offer) => (offer, "waiting"),
+                        AttemptView::Active(active) => (active.validated_offer(), "active"),
+                    };
+                    tracing::debug!(operation = name, attempt = %offer.offer().attempt_id,
+                        local = %offer.local().candidate.socket.node_id,
+                        peer = %offer.peer().candidate.socket.node_id,
+                        publication = %offer.snapshot().reference().execution_publication,
+                        expires_at_ms = offer.expires_at_ms(), phase, "Traversal acceptance returned");
+                }
+                Reply::Prepare(Outcome::Unavailable(reason))
+                | Reply::Accept(Outcome::Unavailable(reason)) => {
+                    tracing::debug!(operation = name, ?reason, "Traversal unavailable response")
+                }
+                _ => {}
+            }
             let _ = reply.send(Ok(result));
-            Ok(())
+            if scope_changed {
+                Err(meshway_control::Error::StateScopeChanged)
+            } else {
+                Ok(())
+            }
         }
         Err(error) => {
             let _ = reply.send(Err(Error::Unavailable));

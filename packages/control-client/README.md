@@ -341,7 +341,7 @@ typed errors and malformed real response envelopes. Generator-only synthetic
 fixtures verify code-generation boundaries separately.
 
 The current generator supports the published account/network/Node JSON operations,
-validated scalar path/optional query parameters, and explicitly declared JSON-data
+validated scalar path parameters, required/optional scalar query parameters, and explicitly declared JSON-data
 SSE streams. JSON mutations support POST and DELETE. Undeclared streams and unsupported schema/operation shapes fail
 generation explicitly. Integer schemas must prove a JS-safe range through
 explicit bounds or the supported `int32` format; unbounded `int64` is rejected.

@@ -18,6 +18,7 @@ pub mod management;
 mod management_rules;
 mod networks;
 pub mod node;
+pub mod node_observations;
 mod object;
 pub mod observations;
 mod problem;
@@ -72,6 +73,10 @@ pub use node::{
     NodeRotationRequest, NodeSessionRequest, NodeSessionResponse, NodeSettingsResponse,
     RevokeNodeKeyRequest,
 };
+pub use node_observations::{
+    CreateNodeObservation, NodeObservationCancelled, NodeObservationQuery, NodeObservationResponse,
+    NodeObservationTarget, NodeObservationTargetView, RenewNodeObservation,
+};
 pub use observations::{
     CreateObservation, HistoryAccepted, HistoryPage, HistoryQuery, HistoryReport, ObservationList,
     ObservationResult, ObservationTask,
@@ -83,9 +88,9 @@ pub use auth::{
     RegisterRequest, SessionIssuedResponse, SessionMetadata, UserView,
 };
 pub use meshway_model::{
-    ActivityId, EnrollmentKeyId, EnrollmentRequestId, JoinLinkId, MembershipId, MembershipRole,
-    NetworkId, NodeId, ObservationId, ObservationSubscriptionId, PublicationId, Revision,
-    SessionId, UdpTraversalId, Version,
+    ActivityId, EnrollmentKeyId, EnrollmentRequestId, InstanceId, JoinLinkId, MembershipId,
+    MembershipRole, NetworkId, NodeId, ObservationId, ObservationSubscriptionId, PublicationId,
+    Revision, SessionId, UdpTraversalId, Version,
 };
 pub use networks::{
     CreateNetworkRequest, MemberActions, MemberSummary, NetworkActions, NetworkListResponse,

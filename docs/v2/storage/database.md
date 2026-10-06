@@ -259,10 +259,14 @@ collection_gap 则来自 Node 真实事件，保留原始区间和 dropped，不
 
 | 表 | 字段与用途 |
 | --- | --- |
-| `diagnostic_tasks` | id、network_id、node_id、instance_id、boot_id、revision、reuse_key、payload、dirty；固定执行上下文和共享任务 |
-| `diagnostic_subscriptions` | id、task_id、session_id、membership_id、request_digest、expires_at、cancelled；每个页面需求的独立权限与短租约 |
+| `diagnostic_tasks` | id、network_id、node_id、instance_id、boot_id、revision、reuse_key、payload、compilation、dirty；固定执行上下文、私有编译判定和共享任务 |
+| `diagnostic_subscriptions` | id、task_id、principal_kind、request_digest、expires_at、cancelled；每个需求的独立权限与短租约 |
 
-会话、账户、membership 或配置失效在对应事务取消订阅。维护器撤回诊断发布；已安装许可另受本地短期限约束，Node 普通 renew 不能续活观察。
+`user_session` 主体绑定 session_id／membership_id；`node_instance` 主体绑定 node_network_id、node_id、control_key_id、instance_id、instance_generation、boot_id 和原 request_payload。两类字段互斥，主体与原请求绑定不可更新，Node 不能借共享 task 操作用户订阅。
+
+compilation 区分授权拒绝、能力不足与可执行结果，绑定实际 Source ConfigurationRef 和认证 inventory；它是私有编译判定，不是额外执行许可。Node 只收到当前正式 DiagnosticPermit。
+
+会话、账户、membership、Node key／instance 或配置失效在对应事务取消订阅。维护器撤回诊断发布；已安装许可另受本地短期限约束，Node 普通 renew 不能续活观察。
 
 ## MasterKeyBinding
 

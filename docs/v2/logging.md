@@ -30,7 +30,10 @@ JSON 事件包含 `timestamp`、`level`、`target`、`fields`；`fields.message`
 | daemon | 启动／就绪／退出、已提交的意图及 revision、状态转换、失败类别和重试等待 | 控制轮次是否续租／上报 |
 | CLI | 命令失败、停止等待 | 命令名称 |
 | Server | 监听就绪、关闭、HTTP 5xx 故障 | HTTP 响应状态和响应头就绪耗时 |
+| Connectivity | 组件错误类别 | channel transition；成功安装另记录 schema 1 的实际 channel／socket、端点、carrier、原 acquisition／attempt、Node／instance／配置引用和公钥绑定 |
 
 Server HTTP 使用 `tower-http` 的 `TraceLayer`，span 只包含 method、声明的 route 模板及 Server 生成的 request ID。原始 URI、查询参数、headers、请求／响应 body 均不进入该层日志。SSE 的响应耗时表示开始响应，不表示整个订阅持续时间。
 
 日志调用显式选取字段，不格式化完整设置、协议请求、控制快照或配置。Node 私钥、兑换码、会话 token、密码及配置原文保留在各自私有边界；批准链接或密码重置链接仅由相应命令的明确结果通道交付。日志不作为 saved／applied、执行授权或测量历史的权威来源。
+
+成功 channel 安装记录的 `install_*` 字段来自正式 Manager 的当前 Scope 和实际 LinkFact。`install_attempt_id` 只表示该通道原始的协调获取来源，普通任务日志的 `attempt` 不能替代它；合法续接不会将新 publication 写回原安装记录。隔离验收可将安装事实与原 offer／双边接受及当前 State 精确关联，读取日志本身不延长任何权限或期限。

@@ -2967,6 +2967,7 @@ async fn real_multihop_admission_separates_neighbors_paths_and_receipt_history()
                     .report_admission_in_transaction(&tx, &tokens[index], now)
                     .unwrap();
                 let mut probe = ProbeObservation {
+                    channels: None,
                     measurement_id: EventId::new(random_uuid().unwrap()).unwrap(),
                     kind: ProbeKind::Neighbor,
                     link_id: Some("reported-channel".into()),

@@ -69,7 +69,7 @@ tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
 run = "python3 scripts/node_lab.py build"
 
 [tasks."node:lab"]
-description = "Persistent TUN Nodes: deploy|configure|versions|status|stop (never compiles)"
+description = "Ubuntu TUN Nodes: image-build|deploy|configure|versions|status|stop; deploy never builds"
 run = "python3 scripts/node_lab.py"
 
 [tasks."test:tun:linux"]
@@ -135,6 +135,7 @@ run = "pnpm --filter @meshway/docs build"
 description = "Test local service ownership and lifecycle helpers"
 run = [
   "python3 -B -m unittest discover -s scripts -p 'test_*.py'",
+  "python3 -B -m unittest discover -s dev/traversal-fixture -p 'test_*.py'",
   "pnpm exec tsc -p scripts/dev/tsconfig.json",
   "node --experimental-strip-types --test scripts/dev/seed.test.ts",
 ]

@@ -113,12 +113,7 @@ impl SocketFactory {
             },
         )?;
         let endpoint = self.datagram_listener(snapshot, key).await?;
-        super::DatagramAuthorization::attach(
-            endpoint,
-            self.shared.data(snapshot)?,
-            self.resolver.clone(),
-            reference,
-        )
+        super::DatagramAuthorization::attach(endpoint, self.resolver.clone(), reference)
     }
 
     pub async fn bind_datagram_candidate(
@@ -154,14 +149,18 @@ impl SocketFactory {
                 std::net::Ipv6Addr::UNSPECIFIED.into()
             }
         });
-        let scope = self.shared.data(snapshot)?;
+        let scope = self
+            .shared
+            .data(snapshot)?
+            .for_resource(reference.resource.clone())
+            .physical()?;
         let endpoint = ProtectedDatagram::bind(
-            scope.clone().physical(),
+            scope,
             SocketAddr::new(local, 0),
             &options.socket,
             Some(Vec::new()),
         )?;
-        super::DatagramAuthorization::attach(endpoint, scope, self.resolver.clone(), reference)
+        super::DatagramAuthorization::attach(endpoint, self.resolver.clone(), reference)
     }
 
     fn validate_socket_reference(
@@ -193,7 +192,12 @@ impl SocketFactory {
         key: &str,
         endpoint_index: usize,
     ) -> Result<CandidateHandle> {
-        let scope = self.shared.data(snapshot)?;
+        let scope =
+            self.shared
+                .data(snapshot)?
+                .for_resource(meshway_model::state::ResourceRef::Dial {
+                    key: key.to_owned(),
+                });
         let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
         let candidate = cfg.dialers.get(key).ok_or(Error::Target)?.clone();
         validate_dial(&candidate.parameters)?;
@@ -214,7 +218,12 @@ impl SocketFactory {
     }
 
     pub fn listener(&self, snapshot: &ExecutionSnapshot, key: &str) -> Result<ListenerHandle> {
-        let scope = self.shared.data(snapshot)?;
+        let scope =
+            self.shared
+                .data(snapshot)?
+                .for_resource(meshway_model::state::ResourceRef::Listener {
+                    key: key.to_owned(),
+                });
         let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
         let declaration = cfg.listeners.get(key).ok_or(Error::Target)?.clone();
         validate_listener(declaration.declaration())?;
@@ -251,7 +260,7 @@ impl SocketFactory {
                     continue;
                 }
                 match connect_tcp(
-                    candidate.scope.clone().physical(),
+                    candidate.scope.clone().physical()?,
                     address,
                     local.map(|ip| SocketAddr::new(ip, 0)),
                     socket,
@@ -288,7 +297,7 @@ impl SocketFactory {
             return Err(Error::Target);
         };
         ProtectedDatagram::bind(
-            handle.scope.clone().physical(),
+            handle.scope.clone().physical()?,
             SocketAddr::new(value.listen, value.listen_port.get()),
             &value.socket,
             None,
@@ -342,7 +351,7 @@ impl SocketFactory {
             });
             endpoints.push(DatagramCandidate {
                 endpoint: ProtectedDatagram::bind(
-                    handle.scope.clone().physical(),
+                    handle.scope.clone().physical()?,
                     SocketAddr::new(ip, 0),
                     &options.socket,
                     Some(targets.clone()),
@@ -374,7 +383,7 @@ impl SocketFactory {
         handle.scope.prepare_checked(&SockRef::from(&socket))?;
         let listener = socket.listen(128)?;
         handle.scope.prepare_checked(&SockRef::from(&listener))?;
-        let owned = Owned::new(listener, handle.scope.clone().physical(), capacity)?;
+        let owned = Owned::new(listener, handle.scope.clone().physical()?, capacity)?;
         Ok(ProtectedListener {
             owned,
             options: options.clone(),

@@ -221,8 +221,8 @@ async fn diagnostic_lifecycle_preserves_business_demand_and_unrelated_node_targe
     let after = slice(server.target(&a).await);
     assert_eq!(after.permits, before.permits);
     assert!(after.diagnostics.is_empty());
-    // Replacing the source process fences every old task result, while a build
-    // without the explicit diagnostic feature receives truthful unsupported.
+    // A build without the diagnostic feature receives the existing typed
+    // Unsupported result, without an unexecutable diagnostic publication.
     let mut capabilities = caps();
     capabilities.remove("feature:path-observation");
     let _: InstanceLease = json(
@@ -243,6 +243,7 @@ async fn diagnostic_lifecycle_preserves_business_demand_and_unrelated_node_targe
     )
     .await;
     assert_eq!(unsupported.phase, ObservationPhase::Unsupported);
+    assert_eq!(unsupported.unsupported_metrics, request(&a, &b).metrics);
     assert!(unsupported.latest.is_none());
     server.stop().await;
 }

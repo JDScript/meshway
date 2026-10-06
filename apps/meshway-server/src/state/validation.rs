@@ -343,6 +343,61 @@ pub(crate) fn validate_probe_context(
     probe: &ProbeObservation,
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
+    if probe.kind == ProbeKind::Path && probe.path.len() > 2 && probe.transport.is_some() {
+        // A source's first-hop carrier is not an end-to-end path transport.
+        return Err(Error::InvalidRequest);
+    }
+    if let Some(channels) = &probe.channels {
+        if probe.outcome == ProbeOutcome::Success && channels.reply.is_none()
+            || probe.outcome == ProbeOutcome::Pending && channels.reply.is_some()
+            || probe
+                .transport
+                .as_ref()
+                .is_some_and(|transport| transport != channels.request.transport.as_str())
+        {
+            return Err(Error::InvalidRequest);
+        }
+        for channel in std::iter::once(&channels.request).chain(channels.reply.iter()) {
+            let local = channel.local_address.get();
+            let remote = channel.remote_address.get();
+            if probe.path.get(1) != Some(&channel.peer_node_id)
+                || local.is_ipv4() != remote.is_ipv4()
+                || !context
+                    .neighbor_transports
+                    .get(&channel.peer_node_id)
+                    .is_some_and(|allowed| allowed.contains(channel.transport.as_str()))
+                || probe.kind == ProbeKind::Path
+                    && !context
+                        .path_transports
+                        .get(&probe.path)
+                        .is_some_and(|allowed| allowed.contains(channel.transport.as_str()))
+                || matches!(
+                    channel.acquisition,
+                    meshway_model::observations::LinkAcquisition::CoordinatedUdp { .. }
+                ) && channel.transport != meshway_transport_spec::TransportProtocol::NativeUdp
+            {
+                return Err(Error::InvalidRequest);
+            }
+            // An unconnected shared UDP socket truthfully reports its wildcard
+            // bind. The remote endpoint must always be concrete; never invent
+            // the local egress interface address from a remote observation.
+            for address in [
+                Some(remote),
+                (!local.ip().is_unspecified()
+                    || channel.transport != meshway_transport_spec::TransportProtocol::NativeUdp)
+                    .then_some(local),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                crate::state::connectivity::eligible_address(
+                    &address.to_string(),
+                    &context.mesh_address_pools,
+                )
+                .map_err(|_| Error::InvalidRequest)?;
+            }
+        }
+    }
     if probe.link_id.as_ref().is_some_and(|id| !text(id))
         || probe.transport.as_ref().is_some_and(|transport| {
             !context

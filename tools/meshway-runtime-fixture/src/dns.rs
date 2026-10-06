@@ -161,40 +161,6 @@ impl Probe {
                 )
                 .await?;
             }
-            // Unknown and source-invisible Mesh names must not escape to the
-            // public authority. R is a mandatory relay, not an Access target.
-            for label in ["r", "absent-fixture-node"] {
-                let name = format!("{label}.{}.", domain.trim_end_matches('.'));
-                // Exercise libc's complete refusal window once after all
-                // actors are ready; every phase still checks exact wire REFUSED.
-                if stage == "initial" {
-                    self.lookup(stage, &name, None).await?;
-                }
-                let deadline = tokio::time::Instant::now() + LIMIT;
-                loop {
-                    // Scope replacement deliberately fences an in-flight query
-                    // with SERVFAIL. Retain that observation, then issue a new
-                    // transaction; only an actual REFUSED satisfies visibility.
-                    let code =
-                        tokio::time::timeout_at(deadline, service_rcode(cli, &name)).await??;
-                    self.evidence.samples.push(Sample {
-                        stage: stage.into(),
-                        name: name.clone(),
-                        addresses: Vec::new(),
-                        failed: code != ResponseCode::NoError,
-                        service_rcode: Some(code.into()),
-                    });
-                    if code == ResponseCode::Refused {
-                        break;
-                    }
-                    if code != ResponseCode::ServFail || tokio::time::Instant::now() >= deadline {
-                        return Err(
-                            "source-invisible/unknown Mesh DNS did not return REFUSED".into()
-                        );
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            }
             for suffix in ["office.example", "tcp.example", "fallback.public.test"] {
                 self.lookup(
                     stage,
@@ -204,8 +170,49 @@ impl Probe {
                 .await?;
             }
         }
+        // A→R is now an explicit ICMP target for direct diagnostics. Neither
+        // R nor B has reverse business access to A: a physical adjacency or
+        // original-path reply permission must not make that known name visible.
+        if role != Role::A {
+            self.refused(cli, stage, &format!("a.{}.", domain.trim_end_matches('.')))
+                .await?;
+        }
+        self.refused(
+            cli,
+            stage,
+            &format!("absent-fixture-node.{}.", domain.trim_end_matches('.')),
+        )
+        .await?;
         self.public(role, stage, true).await?;
         self.save(cli).await
+    }
+
+    async fn refused(&mut self, cli: &Cli, stage: &str, name: &str) -> Result<()> {
+        // Exercise libc's refusal window after all actors are ready; every
+        // phase also requires the exact service-level REFUSED response.
+        if stage == "initial" {
+            self.lookup(stage, name, None).await?;
+        }
+        let deadline = tokio::time::Instant::now() + LIMIT;
+        loop {
+            // A fenced in-flight transaction may return SERVFAIL. Preserve it
+            // as an observation, then require REFUSED from a fresh transaction.
+            let code = tokio::time::timeout_at(deadline, service_rcode(cli, name)).await??;
+            self.evidence.samples.push(Sample {
+                stage: stage.into(),
+                name: name.into(),
+                addresses: Vec::new(),
+                failed: code != ResponseCode::NoError,
+                service_rcode: Some(code.into()),
+            });
+            if code == ResponseCode::Refused {
+                return Ok(());
+            }
+            if code != ResponseCode::ServFail || tokio::time::Instant::now() >= deadline {
+                return Err("source-invisible/unknown Mesh DNS did not return REFUSED".into());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     pub async fn expired(&mut self, cli: &Cli, role: Role, domain: &str) -> Result<()> {

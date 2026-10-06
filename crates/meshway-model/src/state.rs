@@ -217,6 +217,8 @@ meshway_serde::object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct Probe
     pub kind: ProbeKind,
     pub link_id: Option<String>,
     pub transport: Option<String>,
+    /// Actual physical request/reply channels, when measured by the executor.
+    pub channels: Option<crate::observations::ProbeChannels>,
     pub path: Vec<NodeId>,
     pub publication_id: PublicationId,
     pub started_at: DateTime<Utc>,

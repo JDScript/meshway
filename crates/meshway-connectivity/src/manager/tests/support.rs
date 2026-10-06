@@ -40,6 +40,7 @@ pub(in crate::manager) struct Fixture {
     pub reverse_udp: Option<UdpSocket>,
     pub extra_udp: Vec<UdpSocket>,
     pub tcp: Option<TcpListener>,
+    pub extra_tcp: Vec<TcpListener>,
     client: Client,
     user_token: WireSecret,
     network: meshway_model::NetworkId,
@@ -48,19 +49,23 @@ pub(in crate::manager) struct Fixture {
 
 impl Fixture {
     pub async fn new(stream: bool, ipv6: bool) -> Self {
-        Self::build(stream, ipv6, false, false, None).await
+        Self::build(stream, ipv6, false, false, None, None).await
     }
 
     pub async fn reverse() -> Self {
-        Self::build(false, false, true, false, None).await
+        Self::build(false, false, true, false, None, None).await
     }
 
     pub async fn multiple_listeners() -> Self {
-        Self::build(false, false, false, true, None).await
+        Self::build(false, false, false, true, None, None).await
     }
 
     pub async fn traversal(stun: SocketAddr) -> Self {
-        Self::build(false, false, true, false, Some(stun)).await
+        Self::build(false, false, true, false, Some(stun), None).await
+    }
+
+    pub async fn traversal_ordered(stun: SocketAddr, indirect_first: bool) -> Self {
+        Self::build(false, false, true, false, Some(stun), Some(indirect_first)).await
     }
 
     async fn build(
@@ -69,6 +74,7 @@ impl Fixture {
         reverse: bool,
         multiple: bool,
         stun: Option<SocketAddr>,
+        indirect_first: Option<bool>,
     ) -> Self {
         use meshway_configuration::execution::{BusinessProtocol, BusinessTarget, DemandDecision};
         let temp = tempfile::tempdir().unwrap();
@@ -99,6 +105,9 @@ impl Fixture {
         let builder = || {
             reqwest::Client::builder()
                 .no_proxy()
+                // This fixture uses its own loopback HTTP Server; constructing
+                // its client must not depend on the container's OS CA package.
+                .tls_certs_only(std::iter::empty())
                 .timeout(Duration::from_secs(10))
         };
         let client = Client::new(&origin, builder(), 16 * 1024 * 1024).unwrap();
@@ -294,7 +303,13 @@ impl Fixture {
             )
             .await
             .unwrap();
-        let demands = [request(), request()];
+        let mut demands = [request(), request()];
+        if let Some(indirect_first) = indirect_first {
+            demands.sort();
+            if indirect_first {
+                demands.swap(0, 1);
+            }
+        }
         for (index, demand) in [(0, demands[0]), (2, demands[1])] {
             let lease = controls[index].status().instance.unwrap();
             let result = controls[index]
@@ -336,6 +351,7 @@ impl Fixture {
             reverse_udp,
             extra_udp,
             tcp,
+            extra_tcp: Vec::new(),
             client,
             user_token: user.token,
             network,

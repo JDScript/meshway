@@ -44,6 +44,14 @@ pub enum Error {
     Tun,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SendReceipt {
+    /// Monotonic instant immediately before the successful transport admission,
+    /// after capacity/lock waits. A receipt exists only after LocalComplete;
+    /// it does not assert peer reception or a successful diagnostic reply.
+    pub admitted_at: std::time::Instant,
+}
+
 pub async fn send(
     sender: &mut Sender,
     pending: PendingFrame,
@@ -61,6 +69,17 @@ pub async fn send_scoped(
     peer: Option<SocketAddr>,
     channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
 ) -> Result<(), Error> {
+    send_scoped_with_receipt(sender, pending, peer, channel)
+        .await
+        .map(|_| ())
+}
+
+pub async fn send_scoped_with_receipt(
+    sender: &mut Sender,
+    pending: PendingFrame,
+    peer: Option<SocketAddr>,
+    channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
+) -> Result<SendReceipt, Error> {
     send_inner(SendOwner::Borrowed(sender), pending, peer, channel).await
 }
 
@@ -72,6 +91,17 @@ pub async fn send_shared(
     peer: SocketAddr,
     channel: Arc<dyn meshway_transport::SendLifetime>,
 ) -> Result<(), Error> {
+    send_shared_with_receipt(sender, pending, peer, channel)
+        .await
+        .map(|_| ())
+}
+
+pub async fn send_shared_with_receipt(
+    sender: &tokio::sync::Mutex<Sender>,
+    pending: PendingFrame,
+    peer: SocketAddr,
+    channel: Arc<dyn meshway_transport::SendLifetime>,
+) -> Result<SendReceipt, Error> {
     send_inner(
         SendOwner::Shared(sender),
         pending,
@@ -91,10 +121,17 @@ impl SendOwner<'_> {
         &mut self,
         frames: &mut VecDeque<Frame>,
         context: SendContext,
-    ) -> meshway_transport::Admission {
+    ) -> (meshway_transport::Admission, std::time::Instant) {
         match self {
-            Self::Borrowed(sender) => sender.try_send(frames, context),
-            Self::Shared(sender) => sender.lock().await.try_send(frames, context),
+            Self::Borrowed(sender) => {
+                let admitted_at = std::time::Instant::now();
+                (sender.try_send(frames, context), admitted_at)
+            }
+            Self::Shared(sender) => {
+                let mut sender = sender.lock().await;
+                let admitted_at = std::time::Instant::now();
+                (sender.try_send(frames, context), admitted_at)
+            }
         }
     }
     async fn capacity(&self, capacity: usize) -> Result<(), Error> {
@@ -118,7 +155,7 @@ async fn send_inner(
     pending: PendingFrame,
     peer: Option<SocketAddr>,
     channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
-) -> Result<(), Error> {
+) -> Result<SendReceipt, Error> {
     use meshway_transport::SendLifetime;
     let guard = pending.io_guard();
     let lifetime = Arc::new(OutputLifetime {
@@ -139,16 +176,19 @@ async fn send_inner(
         .map_err(|_| Error::Cancelled)?;
     let capacity = bytes.capacity();
     let mut frames = VecDeque::from([Frame::new(bytes, peer)]);
-    let completion = loop {
+    let (completion, admitted_at) = loop {
         if !lifetime.is_current() {
             return Err(Error::Cancelled);
         }
-        let admitted = tokio::select! { biased;
+        let (admitted, admitted_at) = tokio::select! { biased;
             _ = lifetime.clone().invalidated() => return Err(Error::Cancelled),
             result = sender.admit(&mut frames, context.clone()) => result,
         };
         if admitted.accepted == 1 {
-            break admitted.completion.ok_or(Error::CompletionLost)?;
+            break (
+                admitted.completion.ok_or(Error::CompletionLost)?,
+                admitted_at,
+            );
         }
         match admitted.stop {
             Some(
@@ -183,7 +223,7 @@ async fn send_inner(
     if !lifetime.is_current() {
         return Err(Error::Cancelled);
     }
-    Ok(())
+    Ok(SendReceipt { admitted_at })
 }
 
 #[derive(Debug)]

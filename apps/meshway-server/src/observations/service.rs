@@ -5,6 +5,7 @@ use crate::state::service::{ReadIdentity, Runtime};
 use chrono::{DateTime, Utc};
 use meshway_model::{ObservationId, ObservationSubscriptionId, SessionId};
 use meshway_protocol::observations::*;
+use meshway_protocol::{InstanceRequest, node_observations::*};
 use rusqlite::Transaction;
 use std::sync::{Arc, Mutex};
 
@@ -38,6 +39,32 @@ pub(crate) enum MaintenanceOwner {
 /// B computes the authorized full path candidates; A checks current session and
 /// source User identity ownership. A network role cannot manufacture a path.
 pub trait ObservationProvider: Send + Sync + 'static {
+    fn node_observation_identity(
+        &self,
+        _: &Transaction<'_>,
+        _: &str,
+        _: &InstanceRequest,
+        _: DateTime<Utc>,
+    ) -> Result<NodeObservationIdentity, Error> {
+        Err(Error::PermissionDenied)
+    }
+    fn prepare_node_observation(
+        &self,
+        _: &Transaction<'_>,
+        _: &str,
+        _: &CreateNodeObservation,
+        _: DateTime<Utc>,
+    ) -> Result<NodeObservationAdmission, Error> {
+        Err(Error::PermissionDenied)
+    }
+    fn node_observation(
+        &self,
+        _: &Transaction<'_>,
+        _: ObservationSubscriptionId,
+        _: DateTime<Utc>,
+    ) -> Result<NodeObservationAdmission, Error> {
+        Err(Error::PermissionDenied)
+    }
     fn synchronize(
         &self,
         _: &Transaction<'_>,
@@ -83,6 +110,15 @@ pub trait ObservationProvider: Send + Sync + 'static {
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<SessionId, Error>;
+}
+pub struct NodeObservationIdentity {
+    pub(crate) principal: super::SubscriberPrincipal,
+    pub(crate) expires_at: DateTime<Utc>,
+}
+pub struct NodeObservationAdmission {
+    pub(crate) admission: TaskAdmission,
+    pub(crate) request: CreateObservation,
+    pub(crate) target: NodeObservationTargetView,
 }
 #[derive(PartialEq, Eq)]
 pub struct SubscriptionLease {
@@ -219,8 +255,11 @@ impl<P: ObservationProvider> ObservationService<P> {
                     let session = provider.observation_session(&tx, &identity, now)?;
                     let subscriber = &stored.subscribers[&request.subscription_id];
                     if stored.network != scope.network_id
-                        || subscriber.session != session
-                        || subscriber.identity.fingerprint() != identity.fingerprint()
+                        || subscriber.principal.user_session() != Some(session)
+                        || !subscriber
+                            .principal
+                            .user_identity()
+                            .is_some_and(|owner| owner.fingerprint() == identity.fingerprint())
                         || stored.task.source_node_id != request.source_node_id
                         || stored.task.target_node_id != request.target_node_id
                         || stored.task.service != request.service
@@ -303,8 +342,10 @@ impl<P: ObservationProvider> ObservationService<P> {
                             .subscribers
                             .iter()
                             .filter(|(id, subscriber)| {
-                                subscriber.session == session
-                                    && subscriber.identity.fingerprint() == identity.fingerprint()
+                                subscriber.principal.user_session() == Some(session)
+                                    && subscriber.principal.user_identity().is_some_and(|owner| {
+                                        owner.fingerprint() == identity.fingerprint()
+                                    })
                                     && subscriber.authorization_digest
                                         == scope.observation_authorization_digest
                                     && selected.is_none_or(|selected| selected == **id)
@@ -394,6 +435,201 @@ impl<P: ObservationProvider> ObservationService<P> {
             })
             .await?
     }
+    pub async fn create_node_observation(
+        &self,
+        authorization: String,
+        request: CreateNodeObservation,
+    ) -> Result<NodeObservationResponse, Error> {
+        let provider = self.provider.clone();
+        let runtime = self.runtime.clone();
+        self.handle
+            .execute(move |connection| {
+                let tx = connection.transaction()?;
+                let now = Utc::now();
+                let mut runtime =
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
+                runtime.observations.expire(now);
+                let prepared =
+                    provider.prepare_node_observation(&tx, &authorization, &request, now)?;
+                reauthorize_all(
+                    &*provider,
+                    &tx,
+                    &mut runtime,
+                    now,
+                    Some(prepared.admission.report.network_id),
+                );
+                let task = runtime.observations.create_admitted(
+                    &prepared.admission,
+                    prepared.request,
+                    now,
+                )?;
+                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
+                tx.commit()?;
+                runtime.committed();
+                runtime.hub.publish_committed(Effect::Observation {
+                    network_id: prepared.admission.report.network_id,
+                    observation_id: task.id,
+                });
+                Ok(NodeObservationResponse {
+                    task,
+                    target: prepared.target,
+                })
+            })
+            .await?
+    }
+
+    pub async fn node_observation(
+        &self,
+        authorization: String,
+        instance: InstanceRequest,
+        subscription: ObservationSubscriptionId,
+        expires_at_ms: Option<u64>,
+    ) -> Result<NodeObservationResponse, Error> {
+        let provider = self.provider.clone();
+        let runtime = self.runtime.clone();
+        self.handle
+            .execute(move |connection| {
+                let tx = connection.transaction()?;
+                let now = Utc::now();
+                let owner =
+                    provider.node_observation_identity(&tx, &authorization, &instance, now)?;
+                let current = provider.node_observation(&tx, subscription, now)?;
+                if !owner.principal.same_owner(&current.admission.principal) {
+                    return Err(Error::PermissionDenied);
+                }
+                let mut runtime =
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
+                runtime.observations.expire(now);
+                reauthorize_all(
+                    &*provider,
+                    &tx,
+                    &mut runtime,
+                    now,
+                    Some(current.admission.report.network_id),
+                );
+                let id = current.admission.observation_id.ok_or(Error::NotFound)?;
+                runtime
+                    .observations
+                    .authorize(id, &current.admission, subscription, now)?;
+                if let Some(ms) = expires_at_ms {
+                    let expiry = i64::try_from(ms)
+                        .ok()
+                        .and_then(DateTime::from_timestamp_millis)
+                        .ok_or(Error::InvalidRequest)?;
+                    let stored = runtime.observations.tasks.get(&id).ok_or(Error::NotFound)?;
+                    let subscriber = stored
+                        .subscribers
+                        .get(&subscription)
+                        .ok_or(Error::NotFound)?;
+                    if expiry <= now
+                        || expiry
+                            > now + chrono::Duration::seconds(super::OBSERVATION_LEASE_SECONDS)
+                        || expiry > owner.expires_at
+                        || expiry > current.admission.node_expires_at
+                        || subscriber.terminal.is_some()
+                        || !super::active(stored.task.phase)
+                    {
+                        return Err(Error::InvalidRequest);
+                    }
+                    // An absolute deadline is the retry identity. Equal/older requests
+                    // never slide the lease or its ten-second renewal threshold.
+                    if expiry > subscriber.expires_at {
+                        if now < subscriber.renew_after || stored.seen.len() >= 4096 {
+                            return Err(Error::ObservationLimit);
+                        }
+                        let stored = runtime.observations.task_mut(id).ok_or(Error::NotFound)?;
+                        let subscriber = stored
+                            .subscribers
+                            .get_mut(&subscription)
+                            .ok_or(Error::NotFound)?;
+                        subscriber.expires_at = expiry;
+                        subscriber.renew_after = now + chrono::Duration::seconds(10);
+                        stored.task.expires_at = stored
+                            .subscribers
+                            .values()
+                            .filter(|s| s.terminal.is_none())
+                            .map(|s| s.expires_at)
+                            .max()
+                            .ok_or(Error::NotFound)?;
+                    }
+                }
+                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
+                reauthorize_all(
+                    &*provider,
+                    &tx,
+                    &mut runtime,
+                    now,
+                    Some(current.admission.report.network_id),
+                );
+                let task = super::subscriber_view(
+                    runtime.observations.tasks.get(&id).ok_or(Error::NotFound)?,
+                    subscription,
+                )?;
+                tx.commit()?;
+                runtime.committed();
+                Ok(NodeObservationResponse {
+                    task,
+                    target: current.target,
+                })
+            })
+            .await?
+    }
+
+    pub async fn cancel_node_observation(
+        &self,
+        authorization: String,
+        instance: InstanceRequest,
+        subscription: ObservationSubscriptionId,
+    ) -> Result<NodeObservationCancelled, Error> {
+        let provider = self.provider.clone();
+        let runtime = self.runtime.clone();
+        self.handle
+            .execute(move |connection| {
+                let tx = connection.transaction()?;
+                let now = Utc::now();
+                let owner =
+                    provider.node_observation_identity(&tx, &authorization, &instance, now)?;
+                let mut runtime =
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
+                runtime.observations.expire(now);
+                let stored = runtime
+                    .observations
+                    .tasks
+                    .values()
+                    .find(|s| s.subscribers.contains_key(&subscription))
+                    .ok_or(Error::NotFound)?;
+                if !stored.subscribers[&subscription]
+                    .principal
+                    .same_owner(&owner.principal)
+                {
+                    return Err(Error::PermissionDenied);
+                }
+                if stored.subscribers[&subscription].terminal != Some(ObservationPhase::Cancelled) {
+                    provider.node_observation(&tx, subscription, now)?;
+                }
+                let id = stored.task.id;
+                let network = stored.network;
+                runtime.observations.cancel_owned(id, subscription, now)?;
+                reauthorize_all(&*provider, &tx, &mut runtime, now, Some(network));
+                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
+                reauthorize_all(&*provider, &tx, &mut runtime, now, Some(network));
+                // Executor view, never another subscriber's ID or lease.
+                let task = runtime
+                    .observations
+                    .tasks
+                    .get(&id)
+                    .filter(|s| {
+                        super::active(s.task.phase)
+                            && s.subscribers.values().any(|s| s.terminal.is_none())
+                    })
+                    .map(|s| s.task.clone());
+                tx.commit()?;
+                runtime.committed();
+                Ok(NodeObservationCancelled { task })
+            })
+            .await?
+    }
+
     pub async fn node_tasks(&self, authorization: String) -> Result<ObservationList, Error> {
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
@@ -548,21 +784,28 @@ fn reauthorize_all<P: ObservationProvider>(
             metrics: stored.task.metrics.clone(),
             interval_ms: stored.task.interval_ms,
         };
-        let current = provider.observation(tx, &subscriber.identity, &request, now);
+        let current = match &subscriber.principal {
+            super::SubscriberPrincipal::UserSession { identity, .. } => {
+                provider.observation(tx, identity, &request, now)
+            }
+            super::SubscriberPrincipal::NodeInstance { .. } => provider
+                .node_observation(tx, subscription, now)
+                .map(|value| value.admission),
+        };
         let valid =
             current.as_ref().is_ok_and(|admission| {
-                admission.authorization_digest == subscriber.authorization_digest
+                admission.principal.same_owner(&subscriber.principal)
+                    && admission.authorization_digest == subscriber.authorization_digest
                     && runtime.observations.tasks.get(&task).is_some_and(|stored| {
                         admission.report.instance_id == stored.task.instance_id
                     })
             });
         if valid
             && let Ok(admission) = current
-            && runtime
-                .observations
-                .tasks
-                .get(&task)
-                .is_some_and(|stored| stored.task.configuration != admission.configuration)
+            && runtime.observations.tasks.get(&task).is_some_and(|stored| {
+                stored.task.configuration != admission.configuration
+                    || stored.task.unsupported_metrics != admission.unsupported_metrics
+            })
         {
             let stored = runtime
                 .observations
@@ -570,9 +813,19 @@ fn reauthorize_all<P: ObservationProvider>(
                 .expect("authorized observation");
             stored.task.configuration = admission.configuration;
             stored.paths = admission.paths;
-            stored.task.phase = ObservationPhase::Preparing;
+            stored.task.phase = if stored
+                .task
+                .metrics
+                .iter()
+                .all(|metric| admission.unsupported_metrics.contains(metric))
+            {
+                ObservationPhase::Unsupported
+            } else {
+                ObservationPhase::Preparing
+            };
+            stored.task.unsupported_metrics = admission.unsupported_metrics;
             stored.task.path = None;
-            stored.task.path_segment = None;
+            stored.task.path_segment = stored.segment_high_water;
             stored.task.latest = None;
         }
         if !valid && let Some(stored) = runtime.observations.task_mut(task) {
@@ -606,6 +859,8 @@ mod tests {
         };
         StoredTask {
             accepted_at: now - chrono::Duration::seconds(1),
+            segment_high_water: None,
+            window_high_water: None,
             network: id(1000),
             task: ObservationTask {
                 id: id(n),
@@ -632,10 +887,12 @@ mod tests {
                 id(200 + n),
                 Subscriber {
                     generation: Digest::from_bytes([1; 32]),
-                    session: id(500),
-                    identity: ReadIdentity::UserSession {
-                        digest: [2; 32],
-                        network: id(1000),
+                    principal: super::super::SubscriberPrincipal::UserSession {
+                        session: id(500),
+                        identity: ReadIdentity::UserSession {
+                            digest: [2; 32],
+                            network: id(1000),
+                        },
                     },
                     authorization_digest: Digest::from_bytes([3; 32]),
                     expires_at: now + chrono::Duration::seconds(30),
@@ -707,9 +964,15 @@ mod tests {
                 configuration: target.configuration.clone(),
                 paths: vec![],
                 node_expires_at: now + chrono::Duration::minutes(2),
-                session_id: id(500),
+                principal: super::super::SubscriberPrincipal::UserSession {
+                    session: id(500),
+                    identity: ReadIdentity::UserSession {
+                        digest: [2; 32],
+                        network: id(1000),
+                    },
+                },
                 authorization_digest: Digest::from_bytes([3; 32]),
-                session_expires_at: now + chrono::Duration::minutes(2),
+                authorization_expires_at: now + chrono::Duration::minutes(2),
             };
             staged.observations.get(&admission, id(1), id(201), now)?;
             assert_eq!(

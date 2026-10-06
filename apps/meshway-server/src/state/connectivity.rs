@@ -15,6 +15,7 @@ pub(crate) struct Candidate {
     pub address: String,
     pub target: SocketAddr,
     pub deadline_ms: u64,
+    pub source: meshway_model::observations::EndpointKind,
 }
 
 impl StateHub {
@@ -143,6 +144,17 @@ impl StateHub {
                 address: candidate.address.clone(),
                 target,
                 deadline_ms,
+                source: match &candidate.origin {
+                    meshway_model::state::EndpointSource::Configured { .. } => {
+                        meshway_model::observations::EndpointKind::Configured
+                    }
+                    meshway_model::state::EndpointSource::Interface { .. } => {
+                        meshway_model::observations::EndpointKind::Interface
+                    }
+                    meshway_model::state::EndpointSource::Stun { .. } => {
+                        meshway_model::observations::EndpointKind::Stun
+                    }
+                },
             });
         }
         Err(Reason::CandidateChanged.into())

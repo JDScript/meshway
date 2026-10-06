@@ -30,6 +30,8 @@ pub(super) struct Event {
 
 #[derive(Default)]
 pub(super) struct Expected {
+    #[cfg(test)]
+    pub first_conflict: Option<String>,
     pub events: VecDeque<Event>,
     pub pools: Vec<ipnet::IpNet>,
     pub tun: Option<(u32, String, usize, Vec<std::net::IpAddr>)>,
@@ -39,6 +41,155 @@ pub(super) struct Expected {
     pub wake: Arc<tokio::sync::Notify>,
     pub requested_drain: u64,
     pub drained: u64,
+}
+
+// Kept inside the kernel-test binary: one fixed-field record on the first
+// rejection, without installing a subscriber or logging raw netlink payloads.
+#[cfg(test)]
+#[derive(Default)]
+struct Facts {
+    kind: &'static str,
+    index: Option<u32>,
+    address: Option<std::net::IpAddr>,
+    local: Option<std::net::IpAddr>,
+    prefix: Option<u8>,
+    flags: Option<u32>,
+}
+#[cfg(test)]
+impl Facts {
+    fn from_payload(payload: &NetlinkPayload<RouteNetlinkMessage>) -> Self {
+        use rtnetlink::packet_route::route::{RouteAddress, RouteAttribute};
+        match payload {
+            NetlinkPayload::InnerMessage(
+                RouteNetlinkMessage::NewAddress(address) | RouteNetlinkMessage::DelAddress(address),
+            ) => Self {
+                kind: if matches!(
+                    payload,
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(_))
+                ) {
+                    "RTM_NEWADDR"
+                } else {
+                    "RTM_DELADDR"
+                },
+                index: Some(address.header.index),
+                address: address.attributes.iter().find_map(|a| {
+                    if let AddressAttribute::Address(ip) = a {
+                        Some(*ip)
+                    } else {
+                        None
+                    }
+                }),
+                local: address.attributes.iter().find_map(|a| {
+                    if let AddressAttribute::Local(ip) = a {
+                        Some(*ip)
+                    } else {
+                        None
+                    }
+                }),
+                prefix: Some(address.header.prefix_len),
+                flags: Some(
+                    address
+                        .attributes
+                        .iter()
+                        .find_map(|a| {
+                            if let AddressAttribute::Flags(flags) = a {
+                                Some(flags.bits())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(u32::from(address.header.flags.bits())),
+                ),
+            },
+            NetlinkPayload::InnerMessage(
+                RouteNetlinkMessage::NewLink(link) | RouteNetlinkMessage::DelLink(link),
+            ) => Self {
+                kind: if matches!(
+                    payload,
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(_))
+                ) {
+                    "RTM_NEWLINK"
+                } else {
+                    "RTM_DELLINK"
+                },
+                index: Some(link.header.index),
+                flags: Some(link.header.flags.bits()),
+                ..Self::default()
+            },
+            NetlinkPayload::InnerMessage(
+                RouteNetlinkMessage::NewRoute(route) | RouteNetlinkMessage::DelRoute(route),
+            ) => Self {
+                kind: if matches!(
+                    payload,
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(_))
+                ) {
+                    "RTM_NEWROUTE"
+                } else {
+                    "RTM_DELROUTE"
+                },
+                index: route.attributes.iter().find_map(|a| {
+                    if let RouteAttribute::Oif(index) = a {
+                        Some(*index)
+                    } else {
+                        None
+                    }
+                }),
+                address: route.attributes.iter().find_map(|a| match a {
+                    RouteAttribute::Destination(RouteAddress::Inet(ip)) => Some((*ip).into()),
+                    RouteAttribute::Destination(RouteAddress::Inet6(ip)) => Some((*ip).into()),
+                    _ => None,
+                }),
+                prefix: Some(route.header.destination_prefix_length),
+                flags: Some(route.header.flags.bits()),
+                ..Self::default()
+            },
+            NetlinkPayload::InnerMessage(
+                RouteNetlinkMessage::NewRule(rule) | RouteNetlinkMessage::DelRule(rule),
+            ) => Self {
+                kind: if matches!(
+                    payload,
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRule(_))
+                ) {
+                    "RTM_NEWRULE"
+                } else {
+                    "RTM_DELRULE"
+                },
+                flags: Some(rule.header.flags.bits()),
+                ..Self::default()
+            },
+            _ => Self {
+                kind: "OTHER",
+                ..Self::default()
+            },
+        }
+    }
+
+    fn reject(&self, state: &mut Expected, branch: &'static str) {
+        if state.first_conflict.is_some() {
+            return;
+        }
+        let known = state.tun.as_ref().map(|(index, _, mtu, addresses)| {
+            (
+                *index,
+                *mtu,
+                addresses.iter().find(|ip| ip.is_ipv4()).copied(),
+                addresses.iter().find(|ip| ip.is_ipv6()).copied(),
+            )
+        });
+        state.first_conflict = Some(format!(
+            "branch={branch} rt_type={} index={:?} address={:?} local={:?} prefix={:?} flags={:?} changing={} known_tun={known:?} requested={} drained={} expected_events={}",
+            self.kind,
+            self.index,
+            self.address,
+            self.local,
+            self.prefix,
+            self.flags,
+            state.changing,
+            state.requested_drain,
+            state.drained,
+            state.events.len(),
+        ));
+    }
 }
 
 impl Expected {
@@ -85,7 +236,21 @@ pub(super) async fn run(
     expected: Arc<Mutex<Expected>>,
     table: u32,
 ) {
-    if monitor(socket, &expected, table).await.is_err() {
+    if let Err(_error) = monitor(socket, &expected, table).await {
+        #[cfg(test)]
+        if let Ok(mut state) = expected.lock() {
+            Facts {
+                kind: match _error {
+                    Error::Io(_) => "IO_ERROR",
+                    Error::Netlink => "NETLINK_ERROR",
+                    Error::Conflict => "CONFLICT",
+                    Error::Worker => "WORKER_ERROR",
+                    _ => "OTHER_ERROR",
+                },
+                ..Facts::default()
+            }
+            .reject(&mut state, "monitor_error");
+        }
         shared.conflict.cancel();
     }
 }
@@ -115,6 +280,14 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                 Err(error) => return Err(error.into()),
             };
             if size == 0 || size >= buffer.len() || source.port_number() != 0 {
+                #[cfg(test)]
+                if let Ok(mut state) = expected.lock() {
+                    Facts {
+                        kind: "DATAGRAM",
+                        ..Facts::default()
+                    }
+                    .reject(&mut state, "invalid_datagram");
+                }
                 return Err(Error::Conflict);
             }
             let mut offset = 0;
@@ -130,6 +303,15 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                 )
                 .map_err(|_| Error::Netlink)?;
                 let mut state = expected.lock().map_err(|_| Error::Worker)?;
+                #[cfg(test)]
+                let facts = Facts::from_payload(&message.payload);
+                macro_rules! conflict {
+                    ($branch:literal) => {{
+                        #[cfg(test)]
+                        facts.reject(&mut state, $branch);
+                        return Err(Error::Conflict);
+                    }};
+                }
                 let owned =
                     state
                         .tun
@@ -145,12 +327,12 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
                         if super::capture::address_conflicts(&state.pools, owned, address) =>
                     {
-                        return Err(Error::Conflict);
+                        conflict!("capture_address");
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route))
                         if super::capture::route_conflicts(&state.pools, owned, route) =>
                     {
-                        return Err(Error::Conflict);
+                        conflict!("capture_route");
                     }
                     _ => {}
                 }
@@ -159,69 +341,91 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                 if let Some(anchor) = &state.anchor {
                     match &message.payload {
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link))
-                            if link.header.index != anchor.identity.index && link.attributes.iter().any(|a| matches!(a, LinkAttribute::IfAlias(v) if v == &anchor.alias)) => return Err(Error::Conflict),
+                            if link.header.index != anchor.identity.index && link.attributes.iter().any(|a| matches!(a, LinkAttribute::IfAlias(v) if v == &anchor.alias)) => conflict!("anchor_alias"),
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
-                            if address.header.index != anchor.identity.index && address.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(std::net::IpAddr::V4(ip)) | AddressAttribute::Local(std::net::IpAddr::V4(ip)) if *ip == anchor.identity.address)) => return Err(Error::Conflict),
+                            if address.header.index != anchor.identity.index && address.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(std::net::IpAddr::V4(ip)) | AddressAttribute::Local(std::net::IpAddr::V4(ip)) if *ip == anchor.identity.address)) => conflict!("anchor_address_collision"),
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRoute(route))
-                            if !state.anchor_deleting && super::anchor::route_conflicts(anchor.identity.address, None, route) => return Err(Error::Conflict),
+                            if !state.anchor_deleting && super::anchor::route_conflicts(anchor.identity.address, None, route) => conflict!("anchor_route_deleted"),
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link))
                             if link.header.index == anchor.identity.index
                                 && !(super::anchor::link_matches(anchor, link)
-                                    || (state.anchor_deleting && super::anchor::deleting_link_matches(anchor, link))) =>
+                                     || (state.anchor_deleting && super::anchor::deleting_link_matches(anchor, link))) =>
                         {
-                            return Err(Error::Conflict);
+                            conflict!("anchor_link_changed");
                         }
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelLink(link))
                             if link.header.index == anchor.identity.index
                                 && !state.anchor_deleting =>
                         {
-                            return Err(Error::Conflict);
+                            conflict!("anchor_link_deleted");
                         }
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
                             if address.header.index == anchor.identity.index
                                 && !super::anchor::address_matches(anchor, address) =>
                         {
-                            return Err(Error::Conflict);
+                            conflict!("anchor_address_changed");
                         }
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelAddress(address))
                             if address.header.index == anchor.identity.index
                                 && !state.anchor_deleting =>
                         {
-                            return Err(Error::Conflict);
+                            conflict!("anchor_address_deleted");
                         }
                         _ => {}
                     }
                 }
                 match message.payload {
-                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRule(rule)) => state
-                        .consume(Event {
-                            rule: true,
-                            deleted: false,
-                            bytes: encode_rule(rule),
-                        })?,
-                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRule(rule)) => state
-                        .consume(Event {
-                            rule: true,
-                            deleted: true,
-                            bytes: encode_rule(rule),
-                        })?,
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRule(rule)) => {
+                        if state
+                            .consume(Event {
+                                rule: true,
+                                deleted: false,
+                                bytes: encode_rule(rule),
+                            })
+                            .is_err()
+                        {
+                            conflict!("unexpected_new_rule");
+                        }
+                    }
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRule(rule)) => {
+                        if state
+                            .consume(Event {
+                                rule: true,
+                                deleted: true,
+                                bytes: encode_rule(rule),
+                            })
+                            .is_err()
+                        {
+                            conflict!("unexpected_del_rule");
+                        }
+                    }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route))
                         if route_table(&route) == table =>
                     {
-                        state.consume(Event {
-                            rule: false,
-                            deleted: false,
-                            bytes: encode_route(route),
-                        })?
+                        if state
+                            .consume(Event {
+                                rule: false,
+                                deleted: false,
+                                bytes: encode_route(route),
+                            })
+                            .is_err()
+                        {
+                            conflict!("unexpected_new_route");
+                        }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRoute(route))
                         if route_table(&route) == table =>
                     {
-                        state.consume(Event {
-                            rule: false,
-                            deleted: true,
-                            bytes: encode_route(route),
-                        })?
+                        if state
+                            .consume(Event {
+                                rule: false,
+                                deleted: true,
+                                bytes: encode_route(route),
+                            })
+                            .is_err()
+                        {
+                            conflict!("unexpected_del_route");
+                        }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelLink(link)) => {
                         if state
@@ -229,7 +433,7 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                             .as_ref()
                             .is_some_and(|(index, _, _, _)| *index == link.header.index)
                         {
-                            return Err(Error::Conflict);
+                            conflict!("tun_link_deleted");
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link))
@@ -246,7 +450,7 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                                     |a| matches!(a, LinkAttribute::Mtu(v) if *v as usize == *mtu),
                                 ))
                         {
-                            return Err(Error::Conflict);
+                            conflict!("tun_link_changed");
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelAddress(address))
@@ -257,7 +461,7 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                             .as_ref()
                             .is_some_and(|(index, _, _, _)| *index == address.header.index)
                         {
-                            return Err(Error::Conflict);
+                            conflict!("tun_address_deleted");
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
@@ -278,7 +482,7 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                                 })
                                 .unwrap_or(u32::from(address.header.flags.bits()));
                             if flags & 0xc8 != 0x80 || !address.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(ip) | AddressAttribute::Local(ip) if known.contains(ip) && address.header.prefix_len == if ip.is_ipv4() { 32 } else { 128 })) {
-                            return Err(Error::Conflict);
+                            conflict!("tun_address_changed");
                         }
                         }
                     }
@@ -290,7 +494,7 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                                 &route,
                             )
                         {
-                            return Err(Error::Conflict);
+                            conflict!("anchor_route_collision");
                         }
                     }
                     NetlinkPayload::InnerMessage(_) | NetlinkPayload::Noop => {}
@@ -301,5 +505,50 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
             // Every received datagram is finite; cooperate even during event floods.
             tokio::task::yield_now().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rtnetlink::packet_route::address::AddressMessage;
+
+    #[test]
+    fn first_conflict_is_bounded_and_omits_unselected_attributes_and_expected_bytes() {
+        let mut address = AddressMessage::default();
+        address.header.index = 9;
+        address.header.prefix_len = 64;
+        address
+            .attributes
+            .push(AddressAttribute::Address("fe80::1234".parse().unwrap()));
+        address
+            .attributes
+            .push(AddressAttribute::Label("unselected-private-label".into()));
+        let facts = Facts::from_payload(&NetlinkPayload::InnerMessage(
+            RouteNetlinkMessage::NewAddress(address),
+        ));
+        let mut expected = Expected {
+            tun: Some((
+                9,
+                "unselected-tun-name".into(),
+                1280,
+                vec!["100.96.0.1".parse().unwrap()],
+            )),
+            requested_drain: 4,
+            drained: 3,
+            ..Default::default()
+        };
+        expected.events.push_back(Event {
+            rule: false,
+            deleted: false,
+            bytes: b"unselected-raw-message".to_vec(),
+        });
+        facts.reject(&mut expected, "tun_address_changed");
+        let first = expected.first_conflict.clone().unwrap();
+        assert!(first.len() < 1024);
+        assert!(first.contains("RTM_NEWADDR") && first.contains("fe80::1234"));
+        assert!(!first.contains("unselected-"));
+        facts.reject(&mut expected, "later_conflict");
+        assert_eq!(expected.first_conflict.as_deref(), Some(first.as_str()));
     }
 }
