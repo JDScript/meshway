@@ -1,12 +1,12 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use meshway_dataplane_perf::{Error, NodeOptions, NodeRole, Stage, plain};
-use std::{net::SocketAddr, time::Duration};
+use meshway_dataplane_perf::{Error, NodeOptions, NodeRole, Stage, plain, secure};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
-#[command(about = "Isolated L2 plain IP-over-UDP performance node")]
+#[command(about = "Isolated L2/L3 TUN-over-UDP performance node")]
 struct Arguments {
     #[arg(long, value_enum)]
     stage: Stage,
@@ -16,6 +16,10 @@ struct Arguments {
     bind: SocketAddr,
     #[arg(long)]
     peer: SocketAddr,
+    #[arg(long)]
+    fixture: Option<PathBuf>,
+    #[arg(long)]
+    material: Option<PathBuf>,
     #[arg(long, default_value_t = 1400)]
     mtu: usize,
     #[arg(long, default_value_t = 32)]
@@ -40,7 +44,25 @@ async fn main() -> Result<(), Error> {
     };
     options.validate()?;
     let stop = CancellationToken::new();
-    let node = plain::run(&options, stop.clone());
+    let node = async {
+        match options.stage {
+            Stage::Plain => plain::run(&options, stop.clone()).await,
+            Stage::Secure => {
+                secure::run(
+                    &options,
+                    args.fixture
+                        .as_deref()
+                        .ok_or("secure stage requires --fixture")?,
+                    args.material
+                        .as_deref()
+                        .ok_or("secure stage requires --material")?,
+                    stop.clone(),
+                )
+                .await
+            }
+            Stage::Manager => Err("requested stage is not implemented".into()),
+        }
+    };
     let shutdown = async {
         tokio::select! {
             result = tokio::signal::ctrl_c() => result?,

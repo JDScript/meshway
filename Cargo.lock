@@ -1903,7 +1903,12 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "futures-util",
+ "getrandom 0.3.4",
+ "meshway-configuration",
+ "meshway-dataplane",
  "meshway-logging",
+ "meshway-model",
+ "meshway-static-authority",
  "meshway-transport",
  "meshway-transport-spec",
  "meshway-transport-udp",
@@ -1912,6 +1917,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+ "zeroize",
 ]
 
 [[package]]

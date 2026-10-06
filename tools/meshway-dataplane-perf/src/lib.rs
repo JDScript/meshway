@@ -1,7 +1,9 @@
 //! Layered performance fixture. Plain is deliberately unauthenticated IP over UDP.
 #![forbid(unsafe_code)]
 
+pub mod material;
 pub mod plain;
+pub mod secure;
 
 use clap::ValueEnum;
 use serde::Serialize;
@@ -23,6 +25,7 @@ pub enum Stage {
 pub enum NodeRole {
     A,
     B,
+    R,
 }
 
 impl NodeRole {
@@ -34,6 +37,7 @@ impl NodeRole {
             match self {
                 Self::A => 1,
                 Self::B => 2,
+                Self::R => 3,
             },
         )
     }
@@ -53,8 +57,11 @@ pub struct NodeOptions {
 
 impl NodeOptions {
     pub fn validate(&self) -> Result<(), Error> {
-        if !matches!(self.stage, Stage::Plain) {
+        if matches!(self.stage, Stage::Manager) {
             return Err("requested stage is not implemented; no substitute is run".into());
+        }
+        if matches!(self.stage, Stage::Plain) && matches!(self.role, NodeRole::R) {
+            return Err("plain stage has no relay".into());
         }
         if !(1280..=65000).contains(&self.mtu) || !(1..=1024).contains(&self.batch) {
             return Err("MTU must be 1280..=65000 and batch 1..=1024".into());

@@ -2,28 +2,50 @@ use std::process::Command;
 
 #[test]
 fn unavailable_stages_fail_before_tun_or_socket_creation() {
-    for stage in ["secure", "manager"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_meshway-dataplane-perf"))
-            .args([
-                "--stage",
-                stage,
-                "--role",
-                "a",
-                "--bind",
-                "127.0.0.1:0",
-                "--peer",
-                "127.0.0.1:41000",
-            ])
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert!(output.stdout.is_empty());
-        assert!(
-            String::from_utf8(output.stderr)
-                .unwrap()
-                .contains("stage is not implemented")
-        );
-    }
+    let output = Command::new(env!("CARGO_BIN_EXE_meshway-dataplane-perf"))
+        .args([
+            "--stage",
+            "manager",
+            "--role",
+            "a",
+            "--bind",
+            "127.0.0.1:0",
+            "--peer",
+            "127.0.0.1:41000",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("stage is not implemented")
+    );
+}
+
+#[test]
+fn secure_requires_public_and_private_fixture_before_io() {
+    let output = Command::new(env!("CARGO_BIN_EXE_meshway-dataplane-perf"))
+        .args([
+            "--stage",
+            "secure",
+            "--role",
+            "a",
+            "--bind",
+            "127.0.0.1:0",
+            "--peer",
+            "127.0.0.1:41000",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("requires --fixture")
+    );
 }
 
 #[test]
