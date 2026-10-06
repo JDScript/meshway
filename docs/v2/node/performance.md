@@ -9,11 +9,11 @@
 | L0 | 进程内受保护 circuit：真实编译器许可、SecureNode 握手、Noise、逐验证者 MAC、流准入与输出 guard；没有 socket、TUN 或控制面 I/O | 已实现；[L0 受保护 circuit](#l0-受保护-circuit)，`perf:circuit` |
 | L1 | 正式协议 provider 的原生 socket I/O，对照公共 datagram Session；代理协议保留自身 TLS／WS | 已实现；[L1 承载对照](#l1-承载对照)，`perf:transport` |
 | L2 | 两个 Linux namespace 中的真实 TUN、Tokio、正式 UDP provider 与 Session，原样转发明文 IP 包 | 已实现；`perf:dataplane` 的 `plain` |
-| L3 | L2 I/O 加正式 SecureNode、真实认证／加密、路径证明与重放处理 | 定义；`secure` 待实现／由其他工作包提供 |
+| L3 | L2 I/O 加正式 SecureNode、真实认证／加密、路径证明与重放处理 | 已实现；[L3 实现与实测](#l3-实现与实测)，`perf:dataplane` 的 `secure` |
 | L4 | L3 加 connectivity Manager 的真实邻接获取、承载调度与生命周期 | 定义；`manager` 待实现／由其他工作包提供 |
 | L5 | 完整 meshwayd、Control／Policy、真实执行资格、Manager、SecureNode、TUN 与系统业务应用 | [常驻三节点 lab](/v2/node/docker-lab)；验收状态见[验收范围](/v2/node/validation) |
 
-L2 的 `raw` 是同一隔离网络中直接运行 iperf3 的内核参照，不经过 Meshway 代码；它不是 L0。L2 `plain` 不启用认证、加密、策略或控制面，也不代表 Meshway 业务数据面的吞吐。L3／L4 枚举预留仅为工具扩展接口，当前请求这些阶段会在创建资源前失败。
+L2 的 `raw` 是同一隔离网络中直接运行 iperf3 的内核参照，不经过 Meshway 代码；它不是 L0。L2 `plain` 不启用认证、加密、策略或控制面，也不代表 Meshway 业务数据面的吞吐。L4 的 `manager` 阶段仅为工具扩展接口，当前请求该阶段会在创建资源前失败。
 
 ## 共同报告口径
 
@@ -136,7 +136,7 @@ iperf3 结果取接收端 `server_output_json.end.sum_received`，并核对 UDP 
 | 编译 | Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4，release，`aarch64-unknown-linux-musl` |
 | 资源 | 每个容器 2 CPU quota、512 MiB 内存；每个 Node 一个 current-thread runtime |
 | 网络／负载 | 同一内部 Docker bridge，两独立 namespace；MTU 1400；TCP 单流，UDP 1200 字节 payload、500 Mbps offered rate |
-| 源码 SHA-256 | `419d2351f50c67e2e275db76435f42d29eb763a9cf135fc9f9dd60675e3484b4` |
+| 源码 SHA-256 | `ccae7ef4d232d4ee…`（完整值见 `results.json`） |
 | Binary SHA-256 | `96e74525c1b6a1d10c5de81e8bd8a228211d7a36c4a5eb8220418d819b6619ca` |
 
 ### Profiling 关闭
@@ -172,7 +172,7 @@ CPU 为两容器合计，100% 表示一核；区间含 warmup。TCP pps 未测�
 
 ## L3 实现与实测
 
-`--stage secure` 工具入口已实现，组合正式 `SecureNode`、`meshway-transport-udp` provider 与公共 `Session`。`secure-direct` 为 A→B，`secure-relay` 为 A→R→B；只有 A、B 打开真实 TUN。R 的隔离容器没有 TUN device 和 `NET_ADMIN`，驱动只调用正式认证／flow 准入并转发 ciphertext。该入口已通过编译与工具测试；下述测量在进入 secure 样本前终止，**尚无本工具 L3 真实包流验收或性能数字**。
+`--stage secure` 工具入口已实现，组合正式 `SecureNode`、`meshway-transport-udp` provider 与公共 `Session`。`secure-direct` 为 A→B，`secure-relay` 为 A→R→B；只有 A、B 打开真实 TUN。R 的隔离容器没有 TUN device 和 `NET_ADMIN`，驱动只调用正式认证／flow 准入并转发 ciphertext。
 
 ### 处理边界
 
@@ -184,23 +184,24 @@ iperf3 的 TCP 控制流和 UDP 负载分别使用精确 `5201` 端口 demand。
 
 Profiling 关闭用于正式吞吐；开启时采用 `MESHWAY_PROFILE=128`、`MESHWAY_PROFILE_DETAIL=1`，导出 `secure.send/receive`、`crypto.*`、`control.guard`、`codec.*` 和 TUN／UDP 边界。secure 驱动在停止并 join I/O 后输出最终累计快照。guard／包定义为所有节点精确 `control.guard` 的 `calls_started` 之和除以端点 `l3.packet.origin` 的同字段之和，包含准备、warmup、空闲与最终输出检查；不是每个成功交付包的固定算法次数。
 
-### 本次测量状态与部分结果
+### L3 实测参考
 
-2026-10-06，运行 `20261006t225342z-06808a5b` 计划 28 个样本，实际保存 **6 个成功 raw/plain 样本、0 个失败样本记录，22 个样本未执行**。整次运行以错误退出：报告器读取了不存在的 profiling 字段 `calls`，真实字段为 `calls_started`。secure-direct／secure-relay 均未开始，两次重复也未完成，不能将该运行作为 L3 验收。
+同一次运行内 raw／plain／secure-direct／secure-relay 使用相同容器配额、MTU、负载与区间；每格为两次独立重复的中位数，profile 关闭。CPU 为所有样本容器 cgroup CPU 之和除以客户端区间（100%＝一核，含 warmup）；UDP 输入固定 500 Mbps，因此 UDP 的差别主要体现在 CPU 与丢包，而不是吞吐。
 
-原始证据保留在 `.meshway/perf/dataplane/20261006t225342z-06808a5b/`。`results.json` 保存六个样本；原 `summary.md` 只保存前五个，第六个样本在生成汇总时失败。两份文件均未改写，也未补造终态成功字段。核对说明与原始错误见同目录 `run-failure.txt`，可读审计报告为 `tools/meshway-dataplane-perf/reports/20261006-l3-attempt.md`。报告字段读取已修正并通过离线回归检查；未重跑测量。
-
-以下每个已填单元格只有一次样本，**不是重复中位数**。CPU 为两容器合计，100% 表示一核，区间含 warmup；raw 保留内核 offload。
-
-| 模式 | Profile 分母 | TCP Mbps | TCP CPU % | UDP Mbps | UDP pps | UDP 丢包 % | UDP CPU % |
+| 模式 | 节点 | TCP Mbps | TCP CPU % | UDP Mbps | UDP pps | UDP 丢包 % | UDP CPU % |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| raw | 0 | 111213.27 | 132.40 | 475.36 | 49516.97 | 4.92 | 123.12 |
-| plain，batch 32 | 0 | 2277.98 | 119.72 | 413.09 | 43030.71 | 17.35 | 146.52 |
-| plain，batch 32 | 128 | 2352.90 | 121.32 | 424.54 | 44223.02 | 15.07 | 147.72 |
-| secure-direct | — | 未测 | — | 未测 | — | — | — |
-| secure-relay | — | 未测 | — | 未测 | — | — | — |
+| raw 内核参照 | 2 | 111,723 | 125 | 451 | 46,948 | 9.9 | 124 |
+| plain（L2） | 2 | 2,181 | 121 | 431 | 44,942 | 13.7 | 146 |
+| secure-direct（L3） | 2 | 314 | 128 | 442 | 46,056 | 11.5 | 308 |
+| secure-relay（L3） | 3 | 213 | 142 | 421 | 43,805 | 15.9 | 420 |
 
-两种 secure 相对 plain 的吞吐、CPU 和丢包差值均未测，缺失不填零。可用 profile 仅来自 plain UDP 的 B 节点一份累计快照：`plain.tun.write`、`plain.udp.recv`、`udp.recv.poll` 的采样自 CPU 分别为 2.830、1.278、1.153 ms；这不是完整双节点或 L3 归因。L3 各阶段 Top 和每包 `control.guard` 次数均未测，不沿用历史 L0 的 142 次／包。
+运行 `20261006t232708z-3d779bfe`，源码 `70c6e220`（含 `90bc1aec` 同步段 Reading）。同参数的前一次运行 `20261006t232019z-cedb8714`（源码 `b99cebed`，不含 `90bc1aec`）为 secure-direct TCP 245 Mbps、UDP CPU 327%；secure-relay TCP 185 Mbps、UDP CPU 435%：共享 guard 读数在真实 I/O 下带来 TCP +28%／+15%，UDP CPU −19／−15 个百分点。
+
+L2→L3 差值（后一次运行）：secure-direct TCP −85.6%，UDP CPU +162 pp；secure-relay TCP −90.2%，UDP CPU +274 pp。TCP 单流在 secure 下没有用满两核配额，吞吐同时受逐包串行等待影响，不能全部归因于密码运算。
+
+profile 开启（1/128）时 secure-direct 的采样自 CPU 最大项依次为：`carrier.deliver.poll` 5.1 µs／次、`crypto.verify_mac_chain` 4.6、`carrier.send.poll` 4.4、`crypto.append_mac` 4.3、`crypto.decrypt_parse` 3.9、`crypto.encrypt` 3.6、`secure.send` 3.3、`secure.receive` 3.1、`flow.admit` 1.0；`secure.maintain` 整次运行只有 8 次。精确 `control.guard` 调用为 secure-direct 约 44 次／源包、secure-relay 约 72 次／源包，其中 SecureNode 操作各 5 次，其余来自 carrier 适配器与 Session 在每次发送／交付 poll 的输出 guard。采样含 observer effect，不能加总当作 profile 关闭的 CPU 预算。
+
+secure 节点退出时报告 TUN 上无 demand 承载的内核维护包（IGMP／ICMPv6）与逐包准入拒绝的计数；两者按 daemon 语义计数丢弃，不中止节点。本次运行 28/28 样本成功。
 
 ### 测量环境
 
@@ -211,10 +212,10 @@ Profiling 关闭用于正式吞吐；开启时采用 `MESHWAY_PROFILE=128`、`ME
 | 编译 | Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4，release，`aarch64-unknown-linux-musl` |
 | 资源 | 每容器 2 CPU quota、512 MiB；每 Node 一个 current-thread runtime |
 | 网络／负载 | 内部 Docker bridge、独立 namespace；MTU 1280，batch 32；TCP 单流；UDP 1200 字节 payload、500 Mbps 输入 |
-| 区间 | warmup 1 秒＋测量 6 秒；计划每配置两次重复，实际仅完成首轮部分样本 |
-| 源码 revision | `7a9debfaa03fe8a05f589db30c12cc7a405c4078`，启动时工作树 clean |
-| 源码 SHA-256 | `fdd3138423db7305d29e52dda6be8852d7891d0f6641fa93f46bf11d5eca4e95` |
-| Node binary SHA-256 | `96bc3dd67723db0090d8afe466902a814301275df2828686c9ac66eafb1922b1` |
-| Fixture binary SHA-256 | `207d7ea31da471b884232479432ab5cd6e75005dd137ec554049eb234a83f6b4` |
+| 区间 | warmup 1 秒＋测量 6 秒；每配置两次重复 |
+| 源码 revision | `70c6e22053b03b739a6ed7ce67dcc436ceb02900`，启动时工作树 clean |
+| 源码 SHA-256 | `ccae7ef4d232d4ee…`（完整值见 `results.json`） |
+| Node binary SHA-256 | `3dcd7a9cf965677f…`（完整值见 `results.json`） |
+| Fixture binary SHA-256 | `a0bb6dfdfc2471e3…`（完整值见 `results.json`） |
 
-退出后重新计算的两个 binary digest 均与报告相同；按本次唯一 label 查询，无残留测试容器或 network。L3 的两种拓扑、重复测量、阶段 profile 和相对 L2 差值仍待实际验收。
+按本次唯一 label 查询，无残留测试容器或 network。L3 结果是单流、2 CPU 配额的隔离 VM 数据，不是硬件保证；L4（Manager）尚未实现。
