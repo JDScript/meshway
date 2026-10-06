@@ -6,17 +6,19 @@
 //! calling thread's current network namespace. The host supplies that namespace
 //! and `/dev/net/tun`; this library never switches namespaces. Optional addresses
 //! cause the kernel to install its normal local/connected routes for this device.
-//! There is no route manager, DNS configuration, packet codec, or forwarding here.
+//! There is no route manager, DNS configuration, business policy, or forwarding here.
 //!
 //! A Tokio runtime with I/O enabled must be entered during creation and remain
 //! alive during I/O. The device owns its descriptor, has no background tasks, and
 //! is removed by the kernel when dropped. There is no adoption, persistence,
-//! descriptor export, multiqueue, offload, Ethernet, or packet-information header.
+//! descriptor export, multiqueue, Ethernet, or packet-information header.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(any(target_os = "linux", test))]
+mod offload;
 
 /// Startup configuration. Names are always allocated by the kernel, preventing
 /// attachment to an existing named interface.
@@ -25,9 +27,16 @@ pub struct Options {
     mtu: u16,
     ipv4: Option<(Ipv4Addr, u8)>,
     ipv6: Option<(Ipv6Addr, u8)>,
+    batch_io: bool,
 }
 
 impl Options {
+    /// Request Linux virtio-net offload, probing the kernel at device creation.
+    /// The default keeps the original per-packet device mode.
+    pub fn with_batch_io(mut self, enabled: bool) -> Self {
+        self.batch_io = enabled;
+        self
+    }
     /// Set the packet MTU, in bytes, in `1280..=65535`.
     ///
     /// The lower bound permits IPv6; IPv6 jumbograms are not supported.
@@ -40,6 +49,7 @@ impl Options {
             mtu,
             ipv4: None,
             ipv6: None,
+            batch_io: false,
         })
     }
 
@@ -91,11 +101,95 @@ pub enum Error {
 pub struct Tun {
     #[cfg(target_os = "linux")]
     device: tun_rs::AsyncDevice,
+    #[cfg(target_os = "linux")]
+    read: tokio::sync::Mutex<linux::ReadState>,
+    capabilities: Capabilities,
     name: String,
     mtu: usize,
 }
 
+/// Actual successfully enabled kernel capabilities, not just requested flags.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Capabilities {
+    pub vnet_header: bool,
+    pub checksum: bool,
+    pub tso4: bool,
+    pub tso6: bool,
+    pub uso4: bool,
+    pub uso6: bool,
+}
+
+/// One bounded delivery batch (32 complete packets, at most 64 KiB).
+#[derive(Default)]
+pub struct PacketBatch {
+    packets: Vec<Vec<u8>>,
+}
+
+impl std::fmt::Debug for PacketBatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PacketBatch")
+            .field("packets", &self.packets.len())
+            .field("bytes", &self.packets.iter().map(Vec::len).sum::<usize>())
+            .finish()
+    }
+}
+
+impl PacketBatch {
+    pub fn packets(&self) -> &[Vec<u8>] {
+        &self.packets
+    }
+    pub fn take(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.packets)
+    }
+}
+
 impl Tun {
+    pub fn capabilities(&self) -> Capabilities {
+        self.capabilities
+    }
+
+    /// Receive immediately available complete packets without waiting to fill
+    /// a batch. Cancellation retains already-read aggregate segments in the
+    /// device's bounded receive state (one aggregate, at most 65,535 bytes and
+    /// 1,024 segments; larger aggregates are errors). Only one receive owner is
+    /// permitted.
+    pub async fn recv_batch(&self, batch: &mut PacketBatch) -> Result<(), Error> {
+        #[cfg(target_os = "linux")]
+        {
+            linux::recv_batch(self, batch).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = batch;
+            Err(Error::Unsupported)
+        }
+    }
+
+    /// Write a compatible adjacent prefix in one syscall. Returns the number
+    /// written; callers continue the suffix with their original output guard.
+    /// At most one syscall is attempted per call; cancellation cannot leave a
+    /// background sender. Completion means local kernel acceptance only.
+    pub async fn send_batch(&self, packets: &[&[u8]]) -> Result<usize, Error> {
+        if packets.is_empty() {
+            return Ok(0);
+        }
+        for packet in packets {
+            if packet.is_empty() || packet.len() > self.mtu {
+                return Err(Error::InvalidPacketSize {
+                    mtu: self.mtu,
+                    actual: packet.len(),
+                });
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            linux::send_batch(self, packets).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(Error::Unsupported)
+        }
+    }
     /// Synchronously create, configure, and enable a new interface.
     ///
     /// Requires an entered Tokio runtime with its I/O driver enabled, an existing
@@ -114,7 +208,7 @@ impl Tun {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (options.mtu, options.ipv4, options.ipv6);
+            let _ = (options.mtu, options.ipv4, options.ipv6, options.batch_io);
             Err(Error::Unsupported)
         }
     }
@@ -122,12 +216,13 @@ impl Tun {
     /// Receive one raw IP datagram emitted by the kernel.
     ///
     /// Buffers smaller than the configured MTU are rejected before reading,
-    /// preserving the queued datagram. With offload disabled the kernel emits
-    /// packets bounded by that MTU. The host must not externally change the
+    /// preserving the queued datagram. Offloaded aggregates are normalized into
+    /// complete packets; remaining segments stay in bounded device state.
+    /// The host must not externally change the
     /// device's MTU or offload settings while it is owned here.
     ///
     /// Cancelling a pending receive does not consume a packet. There are no
-    /// internal read-ahead buffers or spawned workers.
+    /// spawned workers. Offload mode retains at most one read aggregate.
     pub async fn recv(&self, buffer: &mut [u8]) -> Result<usize, Error> {
         if buffer.len() < self.mtu {
             return Err(Error::BufferTooSmall {
@@ -137,7 +232,7 @@ impl Tun {
         }
         #[cfg(target_os = "linux")]
         {
-            Ok(self.device.recv(buffer).await?)
+            linux::recv(self, buffer).await
         }
         #[cfg(not(target_os = "linux"))]
         Err(Error::Unsupported)
@@ -158,13 +253,7 @@ impl Tun {
         }
         #[cfg(target_os = "linux")]
         {
-            let actual = self.device.send(packet).await?;
-            if actual != packet.len() {
-                return Err(Error::ShortWrite {
-                    expected: packet.len(),
-                    actual,
-                });
-            }
+            linux::send_batch(self, &[packet]).await?;
             Ok(())
         }
         #[cfg(not(target_os = "linux"))]

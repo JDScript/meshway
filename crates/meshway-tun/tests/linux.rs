@@ -27,7 +27,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::task::Poll;
 use std::time::Duration;
 
-use meshway_tun::{Error, Options, Tun};
+use meshway_tun::{Error, Options, PacketBatch, Tun};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::time::{sleep, timeout};
 
@@ -37,6 +38,248 @@ const LOCAL_V4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const REMOTE_V4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 2);
 const LOCAL_V6: Ipv6Addr = Ipv6Addr::new(0xfd42, 0x6d65, 0x7368, 0, 0, 0, 0, 1);
 const REMOTE_V6: Ipv6Addr = Ipv6Addr::new(0xfd42, 0x6d65, 0x7368, 0, 0, 0, 0, 2);
+
+#[tokio::test]
+#[ignore = "requires isolated Linux namespace, NET_ADMIN and MESHWAY_TUN_TEST_ISOLATED=1"]
+async fn offload_capabilities_and_normalized_packet_io() {
+    assert_eq!(
+        std::env::var("MESHWAY_TUN_TEST_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let tun = Tun::create(
+        Options::new(MTU)
+            .unwrap()
+            .with_batch_io(true)
+            .with_ipv4(LOCAL_V4, 30)
+            .unwrap()
+            .with_ipv6(LOCAL_V6, 126)
+            .unwrap(),
+    )
+    .unwrap();
+    println!("TUN capabilities: {:?}", tun.capabilities());
+    wait_for_ipv6(tun.name()).await;
+    cancel_empty_receive(&tun).await;
+    exchange(&tun, LOCAL_V4.into(), REMOTE_V4.into()).await;
+    exchange(&tun, LOCAL_V6.into(), REMOTE_V6.into()).await;
+    tcp_offload(&tun, LOCAL_V4.into(), REMOTE_V4.into()).await;
+    tcp_offload(&tun, LOCAL_V6.into(), REMOTE_V6.into()).await;
+    for (local, remote) in [
+        (IpAddr::V4(LOCAL_V4), IpAddr::V4(REMOTE_V4)),
+        (IpAddr::V6(LOCAL_V6), IpAddr::V6(REMOTE_V6)),
+    ] {
+        let socket = UdpSocket::bind(SocketAddr::new(local, 0)).await.unwrap();
+        let port = socket.local_addr().unwrap().port();
+        socket
+            .send_to(b"batch", SocketAddr::new(remote, 42424))
+            .await
+            .unwrap();
+        let mut batch = PacketBatch::default();
+        timeout(WAIT, async {
+            loop {
+                tun.recv_batch(&mut batch).await.unwrap();
+                if batch.packets().iter().any(|packet| {
+                    fixture_udp_payload(packet, local, remote, port, 42424) == Some(b"batch")
+                }) {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let mut packets: Vec<_> = (0..3)
+            .map(|_| udp_packet(remote, local, 42424, port, b"batch"))
+            .collect();
+        // IPv4 ID continuity is required before combining a prefix.
+        if local.is_ipv4() {
+            for (index, packet) in packets.iter_mut().enumerate() {
+                packet[4..6].copy_from_slice(&(index as u16).to_be_bytes());
+                packet[10..12].fill(0);
+                let value = checksum(&packet[..20]);
+                packet[10..12].copy_from_slice(&value.to_be_bytes());
+            }
+        }
+        let refs: Vec<_> = packets.iter().map(Vec::as_slice).collect();
+        let sent = timeout(WAIT, tun.send_batch(&refs)).await.unwrap().unwrap();
+        assert_eq!(sent, if tun.capabilities().uso4 { 3 } else { 1 });
+        for _ in 0..sent {
+            let mut buffer = [0; 100];
+            let (len, _) = timeout(WAIT, socket.recv_from(&mut buffer))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&buffer[..len], b"batch");
+        }
+    }
+}
+
+async fn tcp_offload(tun: &Tun, local: IpAddr, remote: IpAddr) {
+    let (delivered, delivery) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let mut socket = tokio::net::TcpStream::connect(SocketAddr::new(remote, 42424))
+            .await
+            .unwrap();
+        socket.write_all(&vec![0x5a; 8192]).await.unwrap();
+        let mut incoming = vec![0; 3000];
+        socket.read_exact(&mut incoming).await.unwrap();
+        assert!(incoming.iter().all(|byte| *byte == 0x6b));
+        delivered.send(()).unwrap();
+        // Keep the socket open until the test has consumed the payload.
+        std::future::pending::<()>().await;
+    });
+    let ip = if local.is_ipv4() { 20 } else { 40 };
+    let mut buffer = vec![0; MTU];
+    let syn = timeout(WAIT, async {
+        loop {
+            let n = tun.recv(&mut buffer).await.unwrap();
+            if n >= ip + 20
+                && buffer[0] >> 4 == if local.is_ipv4() { 4 } else { 6 }
+                && buffer[if local.is_ipv4() { 9 } else { 6 }] == 6
+                && buffer[ip + 13] & 2 != 0
+            {
+                break buffer[..n].to_vec();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let sequence = u32::from_be_bytes(syn[ip + 4..ip + 8].try_into().unwrap());
+    let port = u16::from_be_bytes(syn[ip..ip + 2].try_into().unwrap());
+    let reply = tcp_reply(
+        remote,
+        local,
+        port,
+        sequence.wrapping_add(1),
+        true,
+        (0, &[]),
+    );
+    tun.send(&reply).await.unwrap();
+    let mut received = 0;
+    let mut maximum_batch = 0;
+    let mut batch = PacketBatch::default();
+    timeout(WAIT, async {
+        while received < 8192 {
+            tun.recv_batch(&mut batch).await.unwrap();
+            maximum_batch = maximum_batch.max(batch.packets().len());
+            for packet in batch.packets() {
+                if packet.len() < ip + 20
+                    || packet[0] >> 4 != if local.is_ipv4() { 4 } else { 6 }
+                    || packet[if local.is_ipv4() { 9 } else { 6 }] != 6
+                {
+                    continue;
+                }
+                let header = ip + usize::from(packet[ip + 12] >> 4) * 4;
+                assert!(packet.len() <= MTU);
+                let mut pseudo = Vec::new();
+                if local.is_ipv4() {
+                    assert_eq!(checksum(&packet[..ip]), 0);
+                    pseudo.extend_from_slice(&packet[12..20]);
+                    pseudo.extend_from_slice(&[0, 6]);
+                    pseudo.extend_from_slice(&((packet.len() - ip) as u16).to_be_bytes());
+                } else {
+                    pseudo.extend_from_slice(&packet[8..40]);
+                    pseudo.extend_from_slice(&((packet.len() - ip) as u32).to_be_bytes());
+                    pseudo.extend_from_slice(&[0, 0, 0, 6]);
+                }
+                pseudo.extend_from_slice(&packet[ip..]);
+                assert_eq!(checksum(&pseudo), 0);
+                if packet.len() == header {
+                    continue;
+                }
+                let actual_sequence =
+                    u32::from_be_bytes(packet[ip + 4..ip + 8].try_into().unwrap());
+                assert_eq!(actual_sequence, sequence.wrapping_add(1 + received as u32));
+                assert!(packet[header..].iter().all(|byte| *byte == 0x5a));
+                received += packet.len() - header;
+            }
+            let ack = tcp_reply(
+                remote,
+                local,
+                port,
+                sequence.wrapping_add(1 + received as u32),
+                false,
+                (0, &[]),
+            );
+            tun.send(&ack).await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    println!("TCP {local}: {received} bytes; largest normalized batch {maximum_batch}");
+    if tun.capabilities().vnet_header {
+        assert!(maximum_batch > 1);
+    }
+    let packets: Vec<_> = (0..3)
+        .map(|index| {
+            tcp_reply(
+                remote,
+                local,
+                port,
+                sequence.wrapping_add(8193),
+                false,
+                (index * 1000, &[0x6b; 1000]),
+            )
+        })
+        .collect();
+    let refs: Vec<_> = packets.iter().map(Vec::as_slice).collect();
+    let sent = tun.send_batch(&refs).await.unwrap();
+    assert_eq!(sent, if tun.capabilities().tso4 { 3 } else { 1 });
+    for packet in &refs[sent..] {
+        tun.send(packet).await.unwrap();
+    }
+    timeout(WAIT, delivery).await.unwrap().unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+}
+
+fn tcp_reply(
+    source: IpAddr,
+    destination: IpAddr,
+    port: u16,
+    ack: u32,
+    syn: bool,
+    data: (u32, &[u8]),
+) -> Vec<u8> {
+    // Start with the shared fixture's IP header, replacing UDP with TCP.
+    let ip = if source.is_ipv4() { 20 } else { 40 };
+    let mut packet = udp_packet(source, destination, 42424, port, &[]);
+    packet.resize(ip + if syn { 24 } else { 20 }, 0);
+    packet[ip..].fill(0);
+    packet[ip..ip + 2].copy_from_slice(&42424_u16.to_be_bytes());
+    packet[ip + 2..ip + 4].copy_from_slice(&port.to_be_bytes());
+    packet[ip + 4..ip + 8]
+        .copy_from_slice(&(if syn { 777_u32 } else { 778 + data.0 }).to_be_bytes());
+    packet[ip + 8..ip + 12].copy_from_slice(&ack.to_be_bytes());
+    packet[ip + 12] = if syn { 0x60 } else { 0x50 };
+    packet[ip + 13] = if syn { 0x12 } else { 0x10 };
+    packet[ip + 14..ip + 16].copy_from_slice(&65535_u16.to_be_bytes());
+    if syn {
+        packet[ip + 20..ip + 24].copy_from_slice(&[2, 4, 0x05, 0xb4]);
+    }
+    packet.extend_from_slice(data.1);
+    let len = packet.len();
+    let mut pseudo = Vec::new();
+    if source.is_ipv4() {
+        packet[9] = 6;
+        packet[4..6].copy_from_slice(&((data.0 / 1000) as u16).to_be_bytes());
+        packet[2..4].copy_from_slice(&(len as u16).to_be_bytes());
+        packet[10..12].fill(0);
+        let value = checksum(&packet[..ip]);
+        packet[10..12].copy_from_slice(&value.to_be_bytes());
+        pseudo.extend_from_slice(&packet[12..20]);
+        pseudo.extend_from_slice(&[0, 6]);
+        pseudo.extend_from_slice(&((len - ip) as u16).to_be_bytes());
+    } else {
+        packet[6] = 6;
+        packet[4..6].copy_from_slice(&((len - ip) as u16).to_be_bytes());
+        pseudo.extend_from_slice(&packet[8..40]);
+        pseudo.extend_from_slice(&((len - ip) as u32).to_be_bytes());
+        pseudo.extend_from_slice(&[0, 0, 0, 6]);
+    }
+    pseudo.extend_from_slice(&packet[ip..]);
+    let value = checksum(&pseudo);
+    packet[ip + 16..ip + 18].copy_from_slice(&value.to_be_bytes());
+    packet
+}
 
 #[tokio::test]
 #[ignore = "requires explicit isolated network namespace, /dev/net/tun, NET_ADMIN, and MESHWAY_TUN_TEST_ISOLATED=1; see file header"]
