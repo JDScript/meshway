@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -45,9 +46,44 @@ def save(path, data):
     temporary.replace(path)
 
 
+def last_profile(path):
+    """Reports are cumulative: retain one final snapshot, never sum snapshots."""
+    result = []
+    for line in path.read_text().splitlines():
+        event = json.loads(line)
+        fields = event.get("fields", {})
+        if "metrics_json" in fields:
+            result = json.loads(fields["metrics_json"])
+    return result
+
+
+def receiver_metrics(data, traffic, payload):
+    # iperf3 3.16's server UDP end.sum has zero bytes even after delivery.
+    # Only sum_received is authoritative; retain the raw JSON beside this view.
+    end = data["server_output_json"]["end"]
+    received = end["sum_received"]
+    if received["sender"] or received["seconds"] <= 0:
+        raise ValueError("missing receiver measurement interval")
+    if traffic == "udp":
+        delivered = received["packets"] - received["lost_packets"]
+        if delivered < 0 or received["bytes"] != delivered * payload:
+            raise ValueError("receiver bytes and delivered UDP packets disagree")
+    return received
+
+
 def image_for(platform, output):
     builder = image_builder()
     digest = builder.source_digest()
+    manifest = output / "image-manifest.json"
+    if manifest.exists():
+        cached = json.loads(manifest.read_text())
+        if cached.get("status") == "built" and cached.get("sourceDigest") == digest and cached.get("platform") == platform:
+            inspected = command("docker", "image", "inspect", cached["imageId"], check=False)
+            if inspected:
+                image = json.loads(inspected)[0]
+                if (image["Os"] + "/" + image["Architecture"] == platform
+                        and image["Config"].get("Labels", {}).get("io.meshway.node-lab.source") == digest):
+                    return cached
     identifiers = command("docker", "image", "ls", "--no-trunc", "--quiet", "--filter",
                           "label=io.meshway.node-lab.source=" + digest).splitlines()
     for identifier in identifiers:
@@ -59,6 +95,10 @@ def image_for(platform, output):
 
 
 def summary(metadata):
+    environment = {k: v for k, v in metadata["environment"].items() if k != "cpuInfo"}
+    if "image" in environment:
+        environment["image"] = {k: v for k, v in environment["image"].items()
+                                if k in ("imageId", "sourceDigest", "base", "platform", "provenance")}
     lines = ["# L2 plain TUN performance", "",
              "Plain = real TUN + Tokio + production UDP Session, without authentication, encryption, policy or Control.",
              "Medians of successful repeats; profiling=0 is the final throughput reference.",
@@ -76,10 +116,28 @@ def summary(metadata):
             return f"{statistics.median(values):.2f}" if values else "—"
         lines.append(f"| {key[0]} | {key[1]} | {key[2]} | {key[3]} | {len(records)} | "
                      f"{med('goodputMbps')} | {med('packetsPerSecond')} | {med('lostPercent')} | {med('cpuPercent')} |")
+    profiles = {}
+    for record in metadata["results"]:
+        if record["status"] != "ok":
+            continue
+        for metrics in record.get("profiles", {}).values():
+            for metric in metrics:
+                times = metric["times"]
+                if times["self_cpu_ns"] is not None and times["self_cpu_samples"]:
+                    total = profiles.setdefault(metric["name"], [0, 0])
+                    total[0] += times["self_cpu_samples"]
+                    total[1] += times["self_cpu_ns"]
+    if profiles:
+        lines.extend(["", "## Sampled self CPU", "",
+                      "Sum of each node's last cumulative snapshot across successful profiling-on samples; excludes unsampled work and any tail after the last report.",
+                      "| Metric | CPU samples | Mean self CPU ns/sample | Sampled self CPU ms |",
+                      "| --- | ---: | ---: | ---: |"])
+        for name, (count, ns) in sorted(profiles.items()):
+            lines.append(f"| {name} | {count} | {ns/count:.2f} | {ns/1e6:.2f} |")
     lines.extend(["", "recvmmsg/sendmmsg and UDP_SEGMENT/UDP_GRO: not implemented; event batches use per-packet syscalls.",
                   f"Failed samples: {sum(r['status'] != 'ok' for r in metadata['results'])}; preserved in results.json, never replaced with zero.",
                   "", "## Environment", "", "```json",
-                  json.dumps({k: v for k, v in metadata["environment"].items() if k != "cpuInfo"}, indent=2), "```", ""])
+                  json.dumps(environment, indent=2), "```", ""])
     return "\n".join(lines)
 
 
@@ -177,14 +235,16 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         data = json.loads((directory / "iperf-client.json").read_text())
         if "error" in data:
             raise RuntimeError(data["error"])
-        received = data["end"]["sum_received"] if traffic == "tcp" else data["end"]["sum"]
-        # UDP end.sum is receiver-reported delivery/loss in this locked iperf3.
-        if traffic == "udp":
-            received = data["server_output_json"]["end"]["sum"]
+        received = receiver_metrics(data, traffic, args.payload)
         record.update(status="ok", goodputMbps=received["bits_per_second"]/1e6,
                       cpuPercent=(after-before)/elapsed*100,
                       packetsPerSecond=((received["packets"]-received["lost_packets"])/received["seconds"] if traffic == "udp" else None),
                       lostPercent=received.get("lost_percent"))
+        for field in ("goodputMbps", "cpuPercent", "packetsPerSecond", "lostPercent"):
+            value = record[field]
+            if value is not None and (not math.isfinite(value) or value < 0):
+                record[field] = None
+                raise RuntimeError("invalid receiver metric: " + field)
         if nodes and any(node.poll() is not None for node in nodes):
             raise RuntimeError("plain node exited during measurement")
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as error:
@@ -208,6 +268,13 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 record.update(status="failed", failure=f"plain node exit {node.returncode}; see stderr")
         for handle in handles:
             handle.close()
+    record["nodeExitCodes"] = [node.returncode for node in nodes]
+    if profile:
+        try:
+            record["profiles"] = {role: last_profile(directory / f"{role}.stderr") for role in ("a", "b")
+                                  if (directory / f"{role}.stderr").exists()}
+        except (ValueError, TypeError) as error:
+            record.update(status="failed", failure="invalid profile output: " + str(error))
     return record
 
 
@@ -235,7 +302,7 @@ def measure(args, output_root):
                     binarySha256=sha256(binary), options=vars(args), results=[],
                     environment=dict(target=target, platform=platform, image=image,
                         rustc=command("rustc", "-Vv"), zig=command("zig", "version"),
-                        cargoZigbuild=command("cargo", "zigbuild", "--version"),
+                        cargoZigbuild=command("cargo-zigbuild", "--version"),
                         cpusPerContainer=args.cpus, memoryPerContainer=args.memory,
                         runtime="Tokio current_thread per node", mtu=args.mtu, udpPayloadBytes=args.payload,
                         udpRate=args.udp_rate, warmupOmittedSeconds=args.omit,
@@ -260,7 +327,9 @@ def measure(args, output_root):
                     save(output / "results.json", metadata)
                     (output / "summary.md").write_text(summary(metadata))
         metadata["sourcesUnchanged"] = source_digest() == before
+        metadata["passed"] = metadata["sourcesUnchanged"] and all(r["status"] == "ok" for r in metadata["results"])
         save(output / "results.json", metadata)
+        (output / "summary.md").write_text(summary(metadata))
     finally:
         command("docker", "network", "rm", network)
     print(output)
