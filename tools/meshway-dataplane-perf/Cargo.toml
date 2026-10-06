@@ -1,0 +1,22 @@
+[package]
+name = "meshway-dataplane-perf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Explicit layered TUN dataplane performance fixture"
+
+[dependencies]
+clap.workspace = true
+futures-util.workspace = true
+meshway-logging = { path = "../../crates/meshway-logging" }
+meshway-tun = { path = "../../crates/meshway-tun" }
+meshway-transport = { path = "../../crates/meshway-transport" }
+meshway-transport-udp = { path = "../../crates/meshway-transport-udp" }
+meshway-transport-spec = { path = "../../crates/meshway-transport-spec" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[lints]
+workspace = true
