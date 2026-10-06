@@ -1,0 +1,25 @@
+[package]
+name = "meshway-static-authority"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "In-memory compiler-backed execution issuer for benchmarks and fixtures only"
+
+[dependencies]
+curve25519-dalek = "4.1"
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
+getrandom.workspace = true
+meshway-authority = { path = "../../crates/meshway-authority" }
+meshway-configuration = { path = "../../crates/meshway-configuration" }
+meshway-model = { path = "../../crates/meshway-model" }
+meshway-policy = { path = "../../crates/meshway-policy" }
+serde_json.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+zeroize = "1.8"
+
+[dev-dependencies]
+meshway-dataplane = { path = "../../crates/meshway-dataplane" }
+
+[lints]
+workspace = true
