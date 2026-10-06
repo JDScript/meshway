@@ -65,7 +65,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 2. RESPONSE 包含 INIT Noise 消息的 SHA256、完整有序 contribution 列表和 Noise response。每个反向签名绑定整个 RESPONSE、此前证明及签名者自己的 contribution。每个节点必须核对原 INIT digest、缓存前缀和自己的公开值；不能仅信任终点重述的列表。
 3. 每个节点只与其他路径节点做成对 X25519 agreement；拒绝全零共享秘密。HKDF-SHA256 的 salt 绑定完整 context、两次 Noise 消息和完整 contribution 列表，info 使用独立 purpose 与有序 signer／verifier 位置。不同方向、会话、授权、路径和 key generation 不共用 MAC key。握手完成后释放临时私钥；关闭时释放并清零本 owner 保留的派生密钥。密钥不进入日志或 wire。
 4. 稳态帧只携带 magic／kind、32-byte CID、方向、64-bit sequence、必要的 packet facts 或 probe metadata、ciphertext、已走 carrier 前缀与剩余验证者的 16-byte tags。原 context 从唯一 SecureNode circuit 表取得；未知 CID 不通过线上字段重建授权。carrier 的 dialer／listener 使用原 path 的位置，仍携带协议和 listener key，接收方严格匹配实际 incoming carrier 及当前 policy。
-5. 对每个后续验证者，发送者从零 tag 开始；每个经过的节点用独立成对方向 key 对 `purpose || SHA256(purpose || frame-base || carrier-prefix) || previous-tag` 做 HMAC-SHA256，取前 16 bytes。验证者用所有此前节点与自己的 keys 按相同顺序重算，常量时间比较自己的 tag。中继验证后移除自己的列，更新其余列。线上 tag 数随剩余节点减少；最多七个。仅持有相邻通道或后续恶意节点的 keys，无法补出被跳过诚实必经点的贡献。此证明要求相应节点参与认证，不证明物理网络地理位置；被攻陷节点可泄露自己的 key。
+5. 对每个后续验证者，发送者从零 tag 开始；每个经过的节点用独立成对方向 key 对 `purpose || SHA256(purpose || frame-base || carrier-prefix) || previous-tag` 做 HMAC-SHA256，取前 16 bytes。验证者用所有此前节点与自己的 keys 按相同顺序重算，常量时间比较自己的 tag。中继验证后移除自己的列，更新其余列。线上 tag 数随剩余节点减少；最多七个。面向诚实验证者，仅持有相邻通道或后续恶意节点的 keys，无法补出被跳过诚实必经点的贡献。每跳验证自己的完整前缀；其他列由对应的后续验证者检查，转发成功不代表终点已验证或交付。此证明要求相应节点参与认证，不证明物理网络地理位置；被攻陷节点可泄露自己的 key。
 
 business 与 diagnostic 共用同一认证实现，probe measurement／deadline 也进入认证 transcript。每包继续执行当前执行资格、permit、实际 carrier、重放与唯一流表检查，最终 I/O 使用原 guard。批量发送不能将这些检查替换为仅一次批次检查。紧凑格式减少封装，但长路径、大 listener key 或较小 underlay MTU 仍可能分片，不能据格式大小宣称所有场景免分片。
 
