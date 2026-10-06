@@ -1,6 +1,6 @@
 # 运行日志
 
-Server、`meshwayd`、`meshway` 和 `reset-password` 使用共同的 `meshway-logging` 配置，组件通过 `tracing` 发送结构化事件。程序入口安装一次 `tracing-subscriber`；嵌入式宿主负责安装自己的 subscriber。
+Server、`meshwayd`、`meshway`、`reset-password` 和 `ip-datasets` 使用共同的 `meshway-logging` 配置，组件通过 `tracing` 发送结构化事件。程序入口安装一次 `tracing-subscriber`；嵌入式宿主负责安装自己的 subscriber。
 
 ## 配置与输出
 

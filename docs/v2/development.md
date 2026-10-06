@@ -12,7 +12,8 @@
 | daemon／CLI 综合验收 | `mise run test:runtime:linux` → `scripts/verify_runtime.py` | 正式 daemon／CLI、Underlay、TUN、系统 DNS、续租／撤销／清理；穿透模式增加独立 NAT 与 pcap 证据 |
 | 常驻开发服务 | `mise run services …` → `scripts/dev.py` | 本工作树的 Server／docs 进程生命周期和健康检查 |
 | 常驻三节点实验环境 | `mise run node:lab …` → `scripts/node_lab.py` | lax／sha／nyc 的独立持久状态与不可变 Linux 程序部署，详见[三节点环境](/v2/node/docker-lab) |
-| 独立性能测量 | `mise run perf:transport …` → `scripts/perf/transport.py` | 显式 release 测量、JSON／Markdown 报告，口径见[承载性能](/v2/node/transport) |
+| Linux Node 程序 | `mise run build:node:linux` → `scripts/node_lab.py build` | 宿主交叉编译常驻 lab 使用的 daemon／CLI |
+| 独立性能测量 | `mise run perf:circuit`／`perf:transport`／`perf:dataplane` → `scripts/perf/{circuit,transport,dataplane}.py` | 显式 release 测量、JSON／Markdown 报告，层级与口径见[分层性能测量](/v2/node/performance) |
 
 三个 `verify_*.py` 是递进的真实隔离验收，各自保留失败定位所需的证据，复用正式实现。性能测量与真实 Linux 隔离验收均由开发者显式运行，不进入常规 `check`。进程健康、控制面接入、真实包流和性能结果分别读取其证据。
 
@@ -119,19 +120,21 @@ mise run test:packet:linux
 mise run node:lab image-build
 mise run test:runtime:linux --build-only
 mise run test:runtime:linux --artifacts /absolute/private/bin --transport native-udp --dns-backend off
+mise run test:runtime:linux --artifacts /absolute/private/bin --transport native-udp --traversal nat \
+  --traversal-image-manifest /absolute/private/os/image-manifest.json
 ```
 
 `--artifacts` 指向 `--build-only` 输出的 `bin` 目录；脚本验证 source manifest、目标架构和二进制摘要，不能把不同源码的产物当作当前结果。各承载／DNS 组合的实际验收范围见[数据面](/v2/node/dataplane)，daemon／CLI 行为见[运行合同](/v2/node/runtime)。
 
 Ubuntu 基础镜像的唯一声明在 `dev/node-lab/assets.lock.json`。纯内核／packet 验收使用固定 base；完整 runtime 的常规 actors 使用显式 `image-build` 选择的 Ubuntu 工具镜像，并覆盖其 entrypoint，仅运行 fixture。DNS 与穿透需要的额外 OS／pcap 支持分别归 `dev/dns-fixture/`、`dev/traversal-fixture/`；共享软件包下载／依赖解析由 `dev/dns-fixture/build.py` 维护，校验锁定的包索引／软件包摘要后以无网络 Docker build 产出 `image-manifest.json`。具体穿透拓扑与调用参数见 `dev/traversal-fixture/README.md`。这些目录提供 OS、namespace 和证据读取支持，业务行为使用正式 Rust 实现。
 
-DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-manifest /absolute/private/os/image-manifest.json`；`off` 模式不传 DNS 镜像。OS 输出目录由 `--output` 指定，保留锁定输入、下载包和镜像清单；image ID／manifest 本身不代表行为验收成功。
+DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-manifest /absolute/private/os/image-manifest.json`；`off` 模式不传 DNS 镜像。穿透模式 `--traversal nat` 要求 `--transport native-udp` 和 `--traversal-image-manifest`（以 `dev/dns-fixture/build.py --lock-file dev/traversal-fixture/assets.lock.json` 构建）；`--traversal-fallback` 另预授权 A–R 的 TCP 退路。OS 输出目录由 `--output` 指定，保留锁定输入、下载包和镜像清单；image ID／manifest 本身不代表行为验收成功。
 
 脚本为运行生成唯一 runId，限制 namespace、资源和挂载，以精确容器／网络身份清理。异常退出后先对照该 run 的报告和资源标签调查，再清理遗留资源；不全量 prune，也不改未知归属的宿主路由、DNS、防火墙或 Docker daemon。
 
 ## 数据、报告与回收
 
-服务目录相对于**执行脚本的工作树**；Node lab、验收和性能报告相对于 `git --git-common-dir` 对应的**仓库公共根目录**。
+服务目录相对于**执行脚本的工作树**；Node lab、隔离验收和 transport 性能报告相对于 `git --git-common-dir` 对应的**仓库公共根目录**，circuit／dataplane 性能报告位于执行脚本的工作树。
 
 | 所属入口 | 数据／报告／缓存位置 | 清理边界 |
 | --- | --- | --- |
@@ -139,6 +142,6 @@ DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-man
 | 隔离 TUN／packet／runtime | 公共根 `.meshway/validation/{tun,packet,runtime}/<runId>/` 的报告、二进制、进程日志、场景数据和证据；工作树 `target/node-kernel-tests/` | 正常 finally 清理精确容器／网络，报告保留；失败查报告及 Docker 实际资源 |
 | OS fixture | 显式 `--output` 目录中的包、Dockerfile、image manifest；Docker 的不可变 image ID | 先确认没有容器／构建引用，再回收该输出和对应镜像 |
 | 常驻 Node lab | 公共根 `.meshway/node-lab/releases/`、`selected`、`operation.lock`、`deploy.json`；工作树 `target/node-linux/`；`meshway-{lax,sha,nyc}-state` named volumes | stop 先清理 TUN 并保留原意图与卷；deploy 核验 namespace 停止证明、复用身份卷并更换不可变程序；完整重新接入时按标签和精确资源身份单独处理 |
-| perf | 公共根 `.meshway/perf/transport/<runId>/` 的原始样本、清单、JSON／Markdown 报告；工作树 `target/transport-perf/` | 保留可追溯报告；运行结束且无引用后回收相应缓存 |
+| perf | transport：公共根 `.meshway/perf/transport/<runId>/`；circuit／dataplane：工作树 `.meshway/perf/{circuit,dataplane}/<runId>/`；各含原始样本、清单、JSON／Markdown 报告；工作树 `target/{transport,circuit,dataplane}-perf/` | 保留可追溯报告；运行结束且无引用后回收相应缓存 |
 
 大型构建前检查磁盘，至少保留 50 GiB；`CARGO_INCREMENTAL=0`，同任务复用指定 target。三个 Linux 验收入口共享 `target/node-kernel-tests`，不同 feature 的可执行测试不并发使用这个 target。回收工作树前确认没有 WIP、进程或挂载引用，并保留已提交分支和必要证据。

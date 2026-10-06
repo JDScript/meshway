@@ -24,6 +24,7 @@
 | StateHub | reports | (NetworkId, NodeId) → StoredReport |
 | StateHub | events／bytes | 统一事件日志与报告总预算 |
 | StoredReport | report | 完整 StateReport，含来源实例／序号／NodeState |
+| StoredReport | instance_generation | 接受时的实例代际 |
 | StoredReport | received_at／expires_at | 原接受时间和有效期 |
 | StoredReport | authenticated_at | 真实认证联系，与报告新鲜度分开 |
 | StoredReport | bytes／next_expiration | 大小及下个子项失效时间 |
@@ -60,13 +61,14 @@ freshness 结合当前时间、实例、配置和撤销计算。单份报告最�
 
 | 对象 | 字段 | 含义 |
 | --- | --- | --- |
-| Subscription | id／principal／networkId | 本进程订阅及已认证作用域 |
-| Subscription | filter／authorizationDigest | 服务端验证的选择与当前裁剪依据 |
-| Subscription | cursor／expiresAt | 发送位置和主体／订阅期限上界 |
+| Subscription | identity／owner | 已认证读取主体，及用于每主体流／断线缓存上限的身份指纹 |
+| Subscription | authorization | 当前裁剪依据的摘要 |
+| Subscription | cursor／deadline | 发送位置和下一次投影的最早自算截止 |
+| Subscription | pending／replay | 当前可交付帧和恢复缓冲（`ReplayBuffer`） |
+| Subscription | disconnected_at | 断线时间，用于有界断线缓存 |
 | EventLog | epoch／sequence／entries | 有界变化记录与可重放下界 |
-| Delivery | pending／replay | 当前订阅可交付帧和恢复缓冲 |
 
-principal 不由客户端声明权限，filter 不能扩权。同步截点、权限缩小和 cursor/reset 由 [SSE 合同](/v2/api/events)统一定义；客户端的已应用 cursor 与服务端发送位置不同。完整秘密配置不广播。
+identity 不由客户端声明权限，订阅输入不能扩权。同步截点、权限缩小和 cursor/reset 由 [SSE 合同](/v2/api/events)统一定义；客户端的已应用 cursor 与服务端发送位置不同。完整秘密配置不广播。
 
 事件日志保留最多 512 项；单帧最多 2 MiB、批次最多 8 MiB。每次发帧重新校验当前权限，包括初始快照和重放缓冲中的帧。
 
@@ -76,10 +78,11 @@ principal 不由客户端声明权限，filter 不能扩权。同步截点、权
 
 | 字段 | 含义 |
 | --- | --- |
-| acceptedAt／network | 接纳时间与作用域 |
+| accepted_at／network | 接纳时间与作用域 |
+| segment_high_water／window_high_water | 已接纳的路径 segment 下界与样本窗口结束时间高水位 |
 | task／paths | 当前任务视图和获准候选完整路径 |
-| subscribers | 独立 ObservationSubscriptionId → 主体、授权依据、generation、expiresAt／renewAfter、终态 |
-| seen | measurementId → 内容摘要、版本与窗口完成状态 |
+| subscribers | 独立 ObservationSubscriptionId → principal、authorization_digest、generation、expires_at／renew_after、terminal |
+| seen | EventId → 内容摘要、版本与窗口是否部分完成 |
 
 同会话多标签页独立续租和取消；共享任务不共享权限。到期／终态停止诊断依赖，短期保留结束视图后移除，不能从重放队列复活旧样本。任务／每会话／全局均有预算。
 

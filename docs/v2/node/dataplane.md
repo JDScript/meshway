@@ -138,9 +138,9 @@ mise run test:tun:linux
 mise run test:packet:linux
 ```
 
-入口在宿主编译 `meshway-packet-fixture`，使用 Controller、A、R、B 四个独立容器／network namespace 和一个隔离 internal bridge。Controller 使用真实 Server Router／HTTPS／生成管理客户端；各 Node 独立持钥接入、取得执行快照并通过正式 Native TCP provider 连接。A／B 的 OS UDP 应用通过各自 TUN 验证 IPv4／IPv6 echo，R 只转发受保护帧，回复遵循 B→R→A。
+入口在宿主编译 `meshway-packet-fixture`，使用 Server、A、R、B 四个独立容器／network namespace 和一个隔离 internal bridge。Server 角色使用真实 Server Router／HTTPS／生成管理客户端；各 Node 独立持钥接入、取得执行快照并通过正式 Native TCP provider 连接。A／B 的 OS UDP 应用通过各自 TUN 验证 IPv4／IPv6 echo，R 只转发受保护帧，回复遵循 B→R→A。
 
-各端只接触自己的私有 state；Node 不持有管理 token 或 Controller TLS 私钥。脚本不发布宿主端口，只给 TUN 端点精确的设备／NET_ADMIN 权限，并清理本轮容器和网络。源码指纹、实际二进制、进程结果及各角色报告保存在 `.meshway/validation/packet/`。该独立入口已验证 v2 内层双栈 UDP／外层 Native TCP；daemon 安装与持续运行另由下一节验证，其他承载、多路径切换、完整 TCP conntrack、MTU／分片与性能分别验收。
+各端只接触自己的私有 state；Node 不持有管理 token 或 Server TLS 私钥。脚本不发布宿主端口，只给 TUN 端点精确的设备／NET_ADMIN 权限，并清理本轮容器和网络。源码指纹、实际二进制、进程结果及各角色报告保存在 `.meshway/validation/packet/`。该独立入口覆盖内层双栈 UDP／外层 Native TCP；daemon 安装与持续运行另由下一节验证，其他承载、多路径切换、完整 TCP conntrack、MTU／分片与性能分别验收。
 
 ### daemon 与内核资源 conformance
 

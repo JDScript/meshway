@@ -25,7 +25,7 @@ meshway ping fd12:3456::2 -c 3 --json
 
 默认探测需要源到目标的 `icmp:*` 权限，按同一 Access、routing、topology 和当前方案计算完整路径，保留必经节点。TCP／UDP 服务权限不能代替 ICMP 权限。输入某个 IPv6 Mesh 地址只负责选择其所属 Node，不强制使用 IPv6 外层承载。
 
-诊断使用独立 `DiagnosticPermit` 和候选 wire v3 的诊断 request／reply，复用同一 SecureNode 的 Noise、逐跳证明和原路径回复。探测不经过两端 OS ICMP 栈，不建立业务 FlowTable 记录；成功说明获准 Node 路径完成了认证往返，不代表某个应用端口接受连接。
+诊断使用独立 `DiagnosticPermit` 和与业务共用的候选 wire（版本见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)）上的诊断 request／reply，复用同一 SecureNode 的 Noise、逐跳证明和原路径回复。探测不经过两端 OS ICMP 栈，不建立业务 FlowTable 记录；成功说明获准 Node 路径完成了认证往返，不代表某个应用端口接受连接。
 
 源、每个中转和终点均需声明并实现 `feature:path-observation` version 1。获准路径缺少必需能力时任务为 unsupported；没有 Access 或违反完整路径时为权限拒绝。具备能力的完整候选仍可使用，不能借缺能力跳过必经点。
 

@@ -1,6 +1,6 @@
 # Server 接入组件
 
-`meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准的持钥接入、认证、实例／lease、需求与续租、目标保存、安装回执和运行状态上报。
+`meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准的持钥接入、认证、实例／lease、需求与续租、目标保存、安装回执、运行状态上报、UDP 穿透协调与 Node 观察订阅。
 
 daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动与接入)。自动调度和 Linux 网络安装由 daemon 协调；SSE 消费、接入密钥方式和换钥尚未接线。组件校验并传递宿主实际能力与安装结果，不自行证明 applied。
 
@@ -30,6 +30,8 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `report_control_state` | 上报宿主提供的系统信息、当前能力和已保存配置；applied、通道、包流和测量保持空值 |
 | `report_runtime_state` | 校验宿主真实 NodeState 的能力／saved／applied 绑定，复用同一 instance sequence 和重试 owner |
 | `retry_state_report` | 重发同一不确定报告，保持 sequence 和观测时间，不制造新样本 |
+| `query_udp_traversal`／`query_connectivity_peers`／`prepare_udp_traversal`／`accept_udp_traversal`／`cancel_udp_traversal` | UDP 穿透协调；契约见[Node 协调契约](/v2/node/connectivity#node-协调契约) |
+| `create_node_observation`／`get_node_observation`／`renew_node_observation`／`cancel_node_observation`／`get_observation_tasks`／`report_observation_result` | Node 观察订阅、任务领取与结果上报；见[Node 订阅 API](/v2/node/diagnostics#node-订阅-api) |
 | `stop` | 先停用本机控制上下文，再请求释放已知实例；请求失败不会恢复本机实例 |
 | `shutdown` | 停止并等待已接纳的私有写入完成 |
 
@@ -57,7 +59,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 ## 执行快照
 
-`ExecutionSnapshot` 只能由当前 `Control::execution_snapshot()` 取得。它绑定网络／节点、instance／generation、精确目标引用和本机失效代际，并保留原始 session、instance 与 execution 三个截止。缓存恢复、读取或 Clone 都不能延长期限。
+`ExecutionSnapshot` 的类型定义于 `meshway-authority`；生产快照只由 `Control::execution_snapshot()` 签发，约束见[架构](/v2/architecture#node-内部共享的基础接口)。它绑定网络／节点、instance／generation、精确目标引用和本机失效代际，并保留原始 session、instance 与 execution 三个截止。缓存恢复、读取或 Clone 都不能延长期限。下列方法属于 authority 类型：
 
 配置／需求改变后，Server 可能先撤回旧 execution lease。`sync_configuration` 只取得并保存新目标，不自动续租。持续运行使用 `refresh_configuration`，通过[原子刷新](/v2/execution#原子执行刷新)同时取得完整目标／delta 和该目标的 lease，避免分开的续租／查询夹入其他发布。已保存目标与当前可运行资格仍分别检查。
 

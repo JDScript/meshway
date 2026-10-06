@@ -13,11 +13,13 @@ Server 是账户、网络配置和执行许可的权威。它聚合 Node 报告�
 | configuration | JSONC／typed ops、校验、私有材料准备、CAS、完整版本与恢复 |
 | execution | 合法需求合并、编译发布、逐节点目标、实例／lease／回执 |
 | state／observations | 报告准入、可见性、SSE、历史与短期诊断任务 |
+| connectivity／stun | STUN 服务与 UDP 穿透 offer 协调 |
+| secrets | 配置密封与主密钥 |
 | resources | 规则集与 GeoIP／DNS 等可信输入的管理边界 |
 | store | 全部 SQL（按领域分子模块，函数以领域类型为输入输出）、事务执行器、当前 schema 初始化与完整性检查 |
 | http | 请求抽取、同源 API、错误和生成声明；不另写领域规则 |
 
-领域模块只做事务编排和内存逻辑，不含 SQL 文本；store 函数不含领域决策。observations 在 Node 接通前保持现状。整应用测试（真实 App／存储／服务、经执行器句柄检查私有存储）在 `app/tests/`，作为 crate 内的 cfg(test) 子模块；黑盒 HTTP 测试在 `tests/`。
+领域模块只做事务编排和内存逻辑，不含 SQL 文本；store 函数不含领域决策。整应用测试（真实 App／存储／服务、经执行器句柄检查私有存储）在 `app/tests/`，作为 crate 内的 cfg(test) 子模块；黑盒 HTTP 测试在 `tests/`。
 
 配置版本只有一个提交入口。管理编辑、Node 接入／身份转换、成员移除和邮箱维护是它的四种 **intent**：intent 决定谁有权、以及如何从当前版本写出目标草稿；之后的材料继承／生成、规范化、范围检查、版本写入和执行发布对所有 intent 相同。范围检查限定每种 intent 允许的差异（编辑不新增节点、身份只能改为非空 Tag；接入只动被接纳的那个节点；移除只删除该成员的 User 设备；邮箱维护只改可读名字和绑定），不重复用另一种算法再算一遍目标。预览走同一条流水线到规范化为止，不生成材料、不写入。身份和权限在最终事务重检；HTTP waiter 取消不丢弃已接纳事务的提交结果。每个事务把它的 effects 和结果一起返回，执行器在 COMMIT 之后统一应用到内存 journal，见[数据库执行与提交](/v2/storage#数据库执行与提交)。
 

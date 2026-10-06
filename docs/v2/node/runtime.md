@@ -2,7 +2,7 @@
 
 ## 启动与接入
 
-`meshwayd`／`meshway` 提供 Server 控制接入与 Linux TUN 运行装配。以下本地示例显式选择 `control-only`，假定已有当前版本 Server 位于 `127.0.0.1:8430`，Console 位于 `127.0.0.1:3001` 并连接该 Server；Server 已配置 `--console-origin http://127.0.0.1:3001`，配置入口见 [Server 运行与维护](/v2/server#运行与维护)：
+`meshwayd`／`meshway` 提供 Server 控制接入与 Linux TUN 运行装配。以下本地示例显式选择 `control-only`，假定已有当前版本 Server 位于 `127.0.0.1:8430`（示例值；开发服务固定 8420，见[开发服务](/v2/development#本机服务)），Console 位于 `127.0.0.1:3001` 并连接该 Server；Server 已配置 `--console-origin http://127.0.0.1:3001`，配置入口见 [Server 运行与维护](/v2/server#运行与维护)：
 
 ```sh
 mise run build:node
@@ -119,7 +119,7 @@ Server HTTP 等待与本机命令处理独立。配置查询通常每 5 秒，�
 
 包事件引起的 circuit 依赖采样在首个待采事件后一秒内合并调度，持续流量不推迟该截止，也不逐包克隆完整 State。明确采样请求、执行生命周期和承载变化仍即时处理；采样调度不延迟包准入／交付或失效检查，实际观测时间以资源 owner 完成采样为准。
 
-期望上线时，网络失败、HTTP 408／429／5xx 按 1–30 秒有界退避自动重试。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。新鲜身份证明遭拒、Controller／key／目标绑定错误、本机记录损坏仍进入 `blocked`；后台残留请求不能绕过该停止状态。
+期望上线时，网络失败、HTTP 408／429／5xx 按 1–30 秒有界退避自动重试。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。新鲜身份证明遭拒、Server（`controllerId`）／key／目标绑定错误、本机记录损坏仍进入 `blocked`；后台残留请求不能绕过该停止状态。
 
 控制失败日志包含实际 operation、错误类别、HTTP status、已解码的 problem code、Server request ID 和恢复决策；不记录响应原文或凭据。显式 `down` 的清理若失败，在外部冲突解决后重新执行 `down` 会触发新的清理尝试，同请求重放仍保持幂等。
 

@@ -1,6 +1,6 @@
 # 插件与能力
 
-本文的动态装载／ABI 是已确定的设计方向，尚未实现。当前 daemon 直接链接 Rust 组件与正式 stream providers；实际 crate 和运行边界见[总体结构](/v2/architecture#node-组件库)。规划中的 netstack、diagnostics 和 plugin host 不构成已安装能力。
+本文的动态装载／ABI 是已确定的设计方向，尚未实现。当前 daemon 直接链接 Rust 组件与正式 stream providers；实际 crate 和运行边界见[总体结构](/v2/architecture#node-组件库)。规划中的 netstack 与 plugin host 不构成已安装能力。
 
 ## 交付与装载
 

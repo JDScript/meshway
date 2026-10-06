@@ -25,7 +25,7 @@ Node 删除不可恢复；恢复目标含已删除 Node 时拒绝。最终差异
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `revision` | Revision | 历史版本 |
-| `createdAt` | Timestamp | 持久提交时间 |
+| `createdAt` | date-time | 持久提交时间 |
 | `createdBy` | ActivityActor | 真实提交主体 |
 | `cause` | ConfigurationChangeCause | networkCreated／edit／restore／enrollment／nodeDeleted／emailSync／memberRemoved／identityTransition |
 | `rollbackFrom` | Revision? | 回滚来源；不是倒退后的版本号 |
@@ -65,7 +65,7 @@ ConfigurationChange 字段为 `path: JsonPointer`、`kind: added | removed | cha
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `id` | ActivityId | 不透明记录 ID |
-| `at` | Timestamp | Server 完成该动作的时间 |
+| `at` | date-time | Server 完成该动作的时间 |
 | `actor` | ActivityActor | 用户或系统 |
 | `action` | ActivityAction | 已知管理动作枚举 |
 | `target` | ActivityTarget | 类型化目标引用，不是任意 metadata |
