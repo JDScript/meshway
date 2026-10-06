@@ -12,6 +12,7 @@ description: 从当前源码、实测与外部实现出发，审视下一步设�
 | 主题 | 我们要回答什么 | 状态 |
 | --- | --- | --- |
 | [Packet：字节账本与固定开销](/v2/discussions/packet) | 每个字段多带多少 bytes、由谁验证、能否移入上下文？如何让开销不随网络／路径规模增长？ | 讨论中：规模约束与条件预算 |
+| [数据面 v5 实现契约](/v2/discussions/dataplane-v5) | 已决定的会话级中继、定长相邻认证、单缓冲流水线与批量 I/O 设计，作为并行实现的共享契约 | 已决定，实现中 |
 | [包流分层、封装与加密](/v2/discussions/packet-layers) | 一个包经过哪些 owner、多少封装和密码操作？哪些成本来自安全语义，哪些来自实现组织？ | 讨论中 |
 | [EasyTier 源码对照](/v2/discussions/easytier) | 同样是 overlay / relay，EasyTier 的帧、密钥、buffer 和调度如何组织？哪些可以类比？ | 固定提交源码研究 |
 

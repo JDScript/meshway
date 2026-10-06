@@ -7,7 +7,9 @@ description: 逐字段解释 packet 多带了什么、谁使用它，以及网�
 
 **设计要求：网络变大，不应让每个业务 packet 携带更多网络信息。** 本页专门讨论线上字节：多塞了什么、为什么需要、谁验证、能否移到本地上下文，以及每包开销能否保持固定。
 
-::: info 讨论中
+::: info 讨论中 · 决定见 v5 契约
+已决定采用会话级中继与定长相邻认证，目标帧开销 86 B；见[数据面 v5 实现契约](/v2/discussions/dataplane-v5)。本页保留推导过程与当前 v4 账本。
+
 当前账本对应 Meshway `97dbb138` 的 candidate-v4 Data 编码。下文的固定开销方案是**条件化预算，不是已决定或已实现的新 wire**。现行行为定义仍见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)；owner、队列、复制与运行成本见[包流分层](/v2/discussions/packet-layers)。
 :::
 
