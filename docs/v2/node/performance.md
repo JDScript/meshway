@@ -169,3 +169,52 @@ CPU 为两容器合计，100% 表示一核；区间含 warmup。TCP pps 未测�
 | `udp.send.poll` | 93873 | 1854.74 | 174.11 |
 
 四个 `plain.*` 外层边界中，TUN write 的采样自 CPU 最大。下钻到正式 provider 后，`udp.send.poll` 是所有已报告指标中最大的采样自 CPU 项。`plain.udp.send` 的自耗时扣除了采到的嵌套 provider／提交工作，不能将它单独解释为 UDP 发送总成本。此次没有内核批量 I/O 或 GSO／GRO 的数字。
+
+## L3 实现与实测
+
+`--stage secure` 工具入口已实现，组合正式 `SecureNode`、`meshway-transport-udp` provider 与公共 `Session`。`secure-direct` 为 A→B，`secure-relay` 为 A→R→B；只有 A、B 打开真实 TUN。R 的隔离容器没有 TUN device 和 `NET_ADMIN`，驱动只调用正式认证／flow 准入并转发 ciphertext。该入口已通过编译与工具测试；下述测量在进入 secure 样本前终止，**尚无本工具 L3 真实包流验收或性能数字**。
+
+### 处理边界
+
+每个节点在自身 namespace 的 0700 私有目录中生成 0600 种子文件，私有材料不进入共享 fixture、stdout 或报告。公开 fixture 包含固定 network／revision／publication、编译与过期时刻、节点地址／监听端口／公钥库存、完整路径及 demand。各进程使用同一 compiler 独立编译，核对完整 `CompiledPublication` 的 SHA-256，再仅签发本节点 identity／snapshot。静态签发只存在于 `tools/meshway-static-authority`，使用真实时钟与原 `ensure_current`；issuer drop 撤销本进程旧快照。
+
+iperf3 的 TCP 控制流和 UDP 负载分别使用精确 `5201` 端口 demand。A 在应用启动前分别发起 Noise circuit；逐验证者 MAC、flow 准入、重放处理和原完整路径回复归唯一 `SecureNode`。固定 Native UDP carrier 经 `set_carriers` 校验。输出复用正式 `carrier::send`／`carrier::deliver`：UDP 的原 output guard 保留到 Session 发送 poll 和完成，TUN 交付每次恢复 poll 都检查原 guard。
+
+每个节点一个 current-thread runtime，TUN／UDP 每轮最多处理 `--batch` 个立即就绪事件，随后 yield。L3 逐帧等待正式 carrier 完成，L2 plain 可一次提交一个明文 batch；L2→L3 差值因此包含 secure 操作、guard 与实际 I/O 调度成本。两者仍为逐包 syscall，没有内核批量 I/O、GSO 或 GRO。SecureNode 使用默认 limits；Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
+
+Profiling 关闭用于正式吞吐；开启时采用 `MESHWAY_PROFILE=128`、`MESHWAY_PROFILE_DETAIL=1`，导出 `secure.send/receive`、`crypto.*`、`control.guard`、`codec.*` 和 TUN／UDP 边界。secure 驱动在停止并 join I/O 后输出最终累计快照。guard／包定义为所有节点精确 `control.guard` 的 `calls_started` 之和除以端点 `l3.packet.origin` 的同字段之和，包含准备、warmup、空闲与最终输出检查；不是每个成功交付包的固定算法次数。
+
+### 本次测量状态与部分结果
+
+2026-10-06，运行 `20261006t225342z-06808a5b` 计划 28 个样本，实际保存 **6 个成功 raw/plain 样本、0 个失败样本记录，22 个样本未执行**。整次运行以错误退出：报告器读取了不存在的 profiling 字段 `calls`，真实字段为 `calls_started`。secure-direct／secure-relay 均未开始，两次重复也未完成，不能将该运行作为 L3 验收。
+
+原始证据保留在 `.meshway/perf/dataplane/20261006t225342z-06808a5b/`。`results.json` 保存六个样本；原 `summary.md` 只保存前五个，第六个样本在生成汇总时失败。两份文件均未改写，也未补造终态成功字段。核对说明与原始错误见同目录 `run-failure.txt`，可读审计报告为 `tools/meshway-dataplane-perf/reports/20261006-l3-attempt.md`。报告字段读取已修正并通过离线回归检查；未重跑测量。
+
+以下每个已填单元格只有一次样本，**不是重复中位数**。CPU 为两容器合计，100% 表示一核，区间含 warmup；raw 保留内核 offload。
+
+| 模式 | Profile 分母 | TCP Mbps | TCP CPU % | UDP Mbps | UDP pps | UDP 丢包 % | UDP CPU % |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| raw | 0 | 111213.27 | 132.40 | 475.36 | 49516.97 | 4.92 | 123.12 |
+| plain，batch 32 | 0 | 2277.98 | 119.72 | 413.09 | 43030.71 | 17.35 | 146.52 |
+| plain，batch 32 | 128 | 2352.90 | 121.32 | 424.54 | 44223.02 | 15.07 | 147.72 |
+| secure-direct | — | 未测 | — | 未测 | — | — | — |
+| secure-relay | — | 未测 | — | 未测 | — | — | — |
+
+两种 secure 相对 plain 的吞吐、CPU 和丢包差值均未测，缺失不填零。可用 profile 仅来自 plain UDP 的 B 节点一份累计快照：`plain.tun.write`、`plain.udp.recv`、`udp.recv.poll` 的采样自 CPU 分别为 2.830、1.278、1.153 ms；这不是完整双节点或 L3 归因。L3 各阶段 Top 和每包 `control.guard` 次数均未测，不沿用历史 L0 的 142 次／包。
+
+### 测量环境
+
+| 环境 | 值 |
+| --- | --- |
+| Kernel／架构 | OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`，aarch64 |
+| Userspace | 锁定 Ubuntu 24.04，iperf3 3.16 |
+| 编译 | Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4，release，`aarch64-unknown-linux-musl` |
+| 资源 | 每容器 2 CPU quota、512 MiB；每 Node 一个 current-thread runtime |
+| 网络／负载 | 内部 Docker bridge、独立 namespace；MTU 1280，batch 32；TCP 单流；UDP 1200 字节 payload、500 Mbps 输入 |
+| 区间 | warmup 1 秒＋测量 6 秒；计划每配置两次重复，实际仅完成首轮部分样本 |
+| 源码 revision | `7a9debfaa03fe8a05f589db30c12cc7a405c4078`，启动时工作树 clean |
+| 源码 SHA-256 | `fdd3138423db7305d29e52dda6be8852d7891d0f6641fa93f46bf11d5eca4e95` |
+| Node binary SHA-256 | `96bc3dd67723db0090d8afe466902a814301275df2828686c9ac66eafb1922b1` |
+| Fixture binary SHA-256 | `207d7ea31da471b884232479432ab5cd6e75005dd137ec554049eb234a83f6b4` |
+
+退出后重新计算的两个 binary digest 均与报告相同；按本次唯一 label 查询，无残留测试容器或 network。L3 的两种拓扑、重复测量、阶段 profile 和相对 L2 差值仍待实际验收。
