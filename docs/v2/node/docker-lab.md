@@ -20,7 +20,7 @@ Compose 显式使用 `--network-mode tun`，先 `cap_drop: ALL`，再声明本 n
 
 PID 1 owner 在私有 mount namespace 中管理 D-Bus、resolved 和 daemon，逆序停止并 join。容器自己的 `/etc` 副本保存在 writable layer，隐藏 Docker 管理的网络文件 bind，原 bind 源不被写入；`/run` 使用容器私有 tmpfs。resolved 提供动态 stub 与 search domains，启动时核对 resolve1 owner PID 和监听契约。bootstrap DNS 显式使用 `1.1.1.1:53`，系统基线上游独立声明为 `1.1.1.1`／`8.8.8.8`。源码修改不代表常驻容器已经部署新程序／参数，实际运行以 versions／status 及接口检查为准。
 
-接入地址为 `https://meshway-dev-api.jdscript.dev/`，转发到本机 Server；批准链接使用 `http://127.0.0.1:3001` 的 Console。`mise run services start server` 的启动命令包含 `--console-origin http://127.0.0.1:3001`；以其他入口启动 Server 时也须配置该参数或 `MESHWAY_CONSOLE_ORIGIN`，否则 Node 如实显示缺少批准链接。Node 不自行拼接 Console URL。身份绑定仍按[Node 控制组件](/v2/node/control)检查。
+Node 使用开发服务的对外 Server 地址，批准链接指向本机 Console，地址见[本机服务](/v2/development#本机服务)。以其他入口启动 Server 时须配置 [Console origin](/v2/server#运行参数)，否则 Node 如实显示缺少批准链接。身份绑定仍按[Node 控制组件](/v2/node/control)检查。
 
 ## 首次启动
 
@@ -94,4 +94,4 @@ mise run node:lab stop
 
 容器日志使用 JSON 和 Docker local driver，每个容器轮转保留最多三个 10 MiB 日志文件；字段规则见[运行日志](/v2/logging)。管理脚本核对精确资源名和所有权标签，遇到同名外部资源会停止操作。
 
-健康检查表示 daemon 的本机 IPC 可响应；实际安装要求 `networkMode=tun`、`dataPlane=ready`、`phase=running` 和非空 `applied`，同时核对容器内真实 TUN 接口及地址。STUN 候选另查 Server State 的 socket、origin 和有效期；无观测保持为空。长时包流／双 NAT 的严格隔离验收入口见[数据面](/v2/node/dataplane#daemon-与内核资源-conformance)，这张共享 bridge 的常驻环境不构成双 NAT 证明。SOCKS5 尚未实现，三个地区名称仅作为开发节点标识，不证明真实地理部署。
+健康检查表示 daemon 的本机 IPC 可响应；实际安装要求 `networkMode=tun`、`dataPlane=ready`、`phase=running` 和非空 `applied`，同时核对容器内真实 TUN 接口及地址。STUN 候选另查 Server State 的 socket、origin 和有效期；无观测保持为空。长时包流／双 NAT 的隔离验收见[验收范围](/v2/node/validation)，这张共享 bridge 的常驻环境不构成双 NAT 证明。SOCKS5 尚未实现，三个地区名称仅作为开发节点标识，不证明真实地理部署。

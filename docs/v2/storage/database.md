@@ -35,7 +35,7 @@ Server 使用 SQLite 保存私有身份、完整配置、执行恢复依据和�
 
 ## PasswordReset
 
-`password_resets` 以 `token_hash` 为主键，保存 `user_id`、`credential_version`、`expires_at`、`revoked_at`、`consumed_at`。主机维护签发、一次性兑换，网络角色不获得全局密码重置权。消费推进账户版本并撤销旧会话。
+`password_resets` 以 `token_hash` 为主键，保存 `user_id`、`credential_version`、`expires_at`、`revoked_at`、`consumed_at`。主机维护签发、一次性兑换。消费推进账户版本并撤销旧会话。
 
 ## Network
 

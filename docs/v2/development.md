@@ -30,7 +30,7 @@ mise run services update server
 mise run services stop docs
 ```
 
-`services` 支持 `start|status|stop|restart|update [server|docs|all]`，以及显式的 `reset server`。省略服务选择时是 `all`，reset 必须写出 `server`。Server 本机地址为 `http://127.0.0.1:8420`，对外为 `https://meshway-dev-api.jdscript.dev`；Console 为 `http://127.0.0.1:3001`，docs 为 `http://127.0.0.1:5173/v2/`。健康检查和开发 seed 直接访问 loopback，不经过外部隧道。
+`services` 支持 `start|status|stop|restart|update [server|docs|all]`，以及显式的 `reset server`。省略服务选择时是 `all`，reset 必须写出 `server`。Server 本机地址为 `http://127.0.0.1:8420`，对外为 `https://meshway-dev-api.jdscript.dev`；Console 为 `http://127.0.0.1:3001`，docs 为 `http://127.0.0.1:5173/v2/`。Server 以 `--console-origin http://127.0.0.1:3001` 启动，设备批准链接指向本机 Console。健康检查和开发 seed 直接访问 loopback，不经过外部隧道。
 
 Console 使用其所属任务运行：
 
@@ -124,7 +124,7 @@ mise run test:runtime:linux --artifacts /absolute/private/bin --transport native
   --traversal-image-manifest /absolute/private/os/image-manifest.json
 ```
 
-`--artifacts` 指向 `--build-only` 输出的 `bin` 目录；脚本验证 source manifest、目标架构和二进制摘要，不能把不同源码的产物当作当前结果。各承载／DNS 组合的实际验收范围见[数据面](/v2/node/dataplane)，daemon／CLI 行为见[运行合同](/v2/node/runtime)。
+`--artifacts` 指向 `--build-only` 输出的 `bin` 目录；脚本验证 source manifest、目标架构和二进制摘要，不能把不同源码的产物当作当前结果。各承载／DNS／NAT 组合的验收状态见[验收范围](/v2/node/validation)，daemon／CLI 行为见[运行合同](/v2/node/runtime)。
 
 Ubuntu 基础镜像的唯一声明在 `dev/node-lab/assets.lock.json`。纯内核／packet 验收使用固定 base；完整 runtime 的常规 actors 使用显式 `image-build` 选择的 Ubuntu 工具镜像，并覆盖其 entrypoint，仅运行 fixture。DNS 与穿透需要的额外 OS／pcap 支持分别归 `dev/dns-fixture/`、`dev/traversal-fixture/`；共享软件包下载／依赖解析由 `dev/dns-fixture/build.py` 维护，校验锁定的包索引／软件包摘要后以无网络 Docker build 产出 `image-manifest.json`。具体穿透拓扑与调用参数见 `dev/traversal-fixture/README.md`。这些目录提供 OS、namespace 和证据读取支持，业务行为使用正式 Rust 实现。
 

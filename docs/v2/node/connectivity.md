@@ -37,13 +37,13 @@ Meshway 共用一套承载会话与受保护数据面，将显式端点建连和
 
 TCP／VLESS／Trojan 会话建立后同样可双向收发。UDP 打洞解决路径可达性，不能据此推导双向业务授权。内层 TCP／UDP 业务独立于外层承载；VLESS-only 等协议限制不会静默启用 UDP 业务承载。
 
-上表是资源与行为边界。当前 Rust 接口见[承载入口](/v2/node/transport#当前-rust-入口)。协调穿透复用现有 Native UDP 声明与 Carrier，不增加 `requiresDialing` 等推测能力字段。MASQUE 尚未接入；穿透的真实环境验收范围见本页下文。
+上表是资源与行为边界。当前 Rust 接口见[承载入口](/v2/node/transport#当前-rust-入口)。协调穿透复用现有 Native UDP 声明与 Carrier，不增加 `requiresDialing` 等推测能力字段。MASQUE 尚未接入；穿透的验收状态见[验收范围](/v2/node/validation)。
 
 ## STUN 与 Server 协调
 
 STUN 使用 RFC 8489 Binding 交换观察 socket 的外部映射；Meshway Server 负责当前主体／网络权限、获准 peer 的候选交换和有期限的尝试协调；Node 使用实际 socket 互发探测并完成认证。
 
-Server 可通过重复的 `--stun-listen IP:PORT` 显式绑定独立 UDP 服务，再以 `--stun-server KEY=HOST:PORT` 发布 hosted 或外部 STUN 端点；IPv6 地址使用方括号。两者默认均为空，监听地址与对外端点分别配置，不从 wildcard bind 或 HTTP 地址猜测。最多四个监听与四个发现服务；端口必须非零。
+Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分别配置，参数见 [Server 运行参数](/v2/server#运行参数)。两者默认均为空；监听地址与对外端点分开声明，不从 wildcard bind 或 HTTP 地址猜测。
 
 `meshway-stun` 提供有界 RFC 8489 Binding 编解码与 UDP Service。它校验事务、消息／属性长度、XOR-MAPPED-ADDRESS 和可选 FINGERPRINT；客户端还验证实际响应来源。Binding 结果是未认证的映射观测，服务按来源 IP、接收包数、输出字节和有限来源表限流。STUN 不承担管理 HTTP 或 Mesh 业务转发。
 
@@ -70,19 +70,13 @@ Server 可通过重复的 `--stun-listen IP:PORT` 显式绑定独立 UDP 服务�
 
 Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发送，由唯一 receiver 分流响应。候选的真实 State 上报获确认后，才参与 offer。双方 Active 后从同一 socket 发包，签名握手额外绑定 offer 的 nonce／digest；接入前再次验证原尝试与接收槽，旧尝试不能借新 channel scope 延期。获取成功后，通道由当前执行许可和认证健康检查维持，不依赖过期的 STUN 观测续命。
 
-## 路径选择与验收
+## 路径选择
 
 普通拨号、反向拨号、协调 UDP 打洞、中继和真正直连分别报告。双方认证成功、真实双向往返与实际承载路径一起构成切换依据；STUN 返回值或已发送探测包不构成成功证明。
 
 打洞失败时仅可使用已允许的其他连接／中继路径。例如逻辑路径要求 A→R→B，A 与 B 的候选即使能直连，也不能绕过 R。新通道和旧通道竞争时，由同一连接 owner 完成选择，业务流保持其原完整路径。
 
-UDP 验收先覆盖 daemon 的显式端点包流，再在隔离 NAT／防火墙环境覆盖候选交换、互探、认证、重连、映射变化、UDP 阻断和中继退路。原有 TCP 业务在获准承载切换时的连续性与取消后的零迟到输出分别验证。
-
-Linux daemon 已通过两个独立 IPv4、端口保持型 Linux conntrack SNAT 的完整验收：UDP 发布端点为空，STUN、互探及认证使用实际承载 socket；内层双栈 UDP／TCP 强制沿 A→R→B，持续和纯接收业务跨越至少 125 秒及原需求期限。验收还包含 Access 撤销／恢复、中转失去本机 IPv6 地址后继续转发 IPv6 密文、Server 失联后的 lease 截止，以及离线精确清理。
-
-同路径退路场景仅预授权 A→R 的 Native TCP 拨号，R→B 保持 Native UDP。初期 TCP 入口不可达；原业务持续 30 秒后开放该入口并阻断精确 A–R UDP 地址对。验收确认原 TCP socket、两个内层 TCP circuit 的 CID 和完整路径跨切换保留，并完成撤销后的重新认证与恢复。State、双方实际接受的固定 offer、双侧抓包、conntrack、防火墙计数和应用回包共同构成证据。
-
-上述 NAT 场景关闭系统 DNS；静态承载与两种系统 DNS 后端的独立组合范围见[数据面验收](/v2/node/dataplane#daemon-与内核资源-conformance)。隔离入口和固定 OS 资产见 `dev/traversal-fixture/README.md`。映射轮换、端点相关映射、外层 IPv6 NAT 及 NAT／系统 DNS 组合仍须独立验收。
+穿透、NAT 与 TCP 退路的验收状态见[验收范围](/v2/node/validation)。
 
 ## MASQUE 范围
 

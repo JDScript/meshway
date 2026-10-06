@@ -36,6 +36,6 @@ Server 管理账户、网络隔离、完整配置、授权和执行发布；Node
 
 ## 范围与命名
 
-Server 的主要控制面流程和 Linux Node 的 Mesh-only TUN、系统 DNS、认证承载及协调 UDP 穿透已有实现与分项验收。已实现能力与未完成项分别见两端入口页，字段的精确运行合同以 Rust 类型、实际路由及生成 OpenAPI／SDK 为准。
+已实现能力和限制见 [Server](/v2/server#当前能力) 与 [Node](/v2/node#当前范围)，Node 验收状态见[验收范围](/v2/node/validation)。字段的精确运行合同以 Rust 类型、实际路由及生成 OpenAPI／SDK 为准。
 
 Server 应用包名是 `meshway-server`。协议中的 `controllerId` 和 `/agent-api/v1` 等名称按生成契约使用。本文档分区描述当前唯一模型，不提供平行的旧策略合同。

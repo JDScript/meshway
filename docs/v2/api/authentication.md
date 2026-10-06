@@ -4,12 +4,7 @@
 
 ## Server 注册设置
 
-| 入口 | 默认 | 含义 |
-| --- | --- | --- |
-| `MESHWAY_REGISTRATION_ENABLED`／`--registration-enabled` | `true` | 允许创建自助注册账户 |
-| `MESHWAY_SESSION_TTL_SECONDS`／`--session-ttl-seconds` | `86400` | 用户会话寿命，整秒，60–2592000 |
-
-这是实例启动配置，不属于 NetworkConfiguration。命令行显式参数优先于环境变量；关闭注册后 Server 拒绝新注册，但已有账户仍可登录、建网和接受加入链接。
+注册开关（`--registration-enabled`，默认开放）与用户会话寿命（`--session-ttl-seconds`，默认 86400 秒）是实例启动配置，定义见 [Server 运行参数](/v2/server#运行参数)。关闭注册后 Server 拒绝新注册，但已有账户仍可登录、建网和接受加入链接。
 
 Server 初始化空库结构后即可提供普通注册，不需要首用户认领。首个用户不自动拥有实例管理权限。邮箱是登录标识，不表示已验证邮箱所有权，也不按后缀自动加入网络。
 
@@ -63,10 +58,11 @@ requestId 是服务端请求／活动关联，不是注册幂等键或秘密恢�
 - 链接不绑定收件人，任何持有人均可能领取。已有有效成员返回 already_member，不消费链接或改变角色。
 - 同一领取者重试仅恢复同一个仍有效 membership；已移除成员不能重放链接恢复。撤销已消费链接不替代移除成员。
 - SPA 可从 fragment 捕获 token 后清理地址栏，以 POST body 兑换；token 不进入查询参数、Referrer、日志、通用缓存或持久草稿。
+- 角色降级同事务吊销该成员签发、仍未使用且未到期、而新角色已无权签发的链接（降为 admin 吊销 admin／owner 链接，降为 member 吊销全部）；已到期链接保持到期状态。`GET members/{membershipId}/role-change-impact/{role}` 按与变更相同的权限和可分配角色检查返回这些链接：`joinLinks` 最多 100 条、`joinLinkCount` 为总数、`version` 为当前成员版本；只读，同角色为空影响。
 
 ## 无邮件账户恢复
 
-Server 主机的授权运维通过密码重置 CLI 签发一次性链接。该命令须取得正常私有存储所有权：先停止占用同一数据目录的 Server，再执行维护，完成后重启服务。参数为 data-dir、email、console-origin 与 expires-in-seconds；寿命默认 900 秒，范围 60–86400 秒。
+Server 主机的授权运维通过 `reset-password` 签发一次性链接；命令、参数与期限见 [Server 运维命令](/v2/server#运维命令)。该命令须取得正常私有存储所有权，执行前停止占用同一数据目录的 Server。
 
 Console 使用 `/reset-password` 页面兑换，API 为 `/api/v1/auth/password-reset/inspect` 和 `/redeem`。链接绑定 User、credentialVersion、期限与一次消费，兑换检查密码规则并撤销旧会话。原值仅通过明确维护命令输出，手动转交，不发邮件或写普通日志。
 
@@ -113,7 +109,9 @@ token 为随机不透明凭据，Server 只存摘要；HTTP 使用 `Authorizatio
 
 设备不收集用户密码或浏览器 session。PKCE 绑定本次请求，不替代长期密钥；批准和兑换均重检当前资格。
 
-返回方式为 `returnMethod: "poll"`。EnrollmentRequestView 包含 hostname、公钥、existing、phase、期限和 `authorizationUrl`，没有 callback 或系统版本字段。`authorizationUrl` 是用户批准该设备的浏览器入口，由 Server 按部署的 [Console origin](/v2/server) 生成为 `<origin>/authorize-device/<enrollmentRequestId>`；Console 在该路径提供批准页。未配置 Console origin 时为 null，设备不自行拼接。DeviceAuthorizationView 复用该 request，approval 仅向批准者、批准网络当前管理员或持有本次设备证明的 query 返回；其他主体为 null。读取不认领请求。
+- 返回方式为 `returnMethod: "poll"`。EnrollmentRequestView 包含 hostname、公钥、existing、phase、期限和 `authorizationUrl`，没有 callback 或系统版本字段。
+- `authorizationUrl` 是用户批准该设备的浏览器入口，Console 在其路径提供批准页；生成规则与 null 语义见 [Console origin](/v2/server#运行参数)。
+- DeviceAuthorizationView 复用该 request，approval 仅向批准者、批准网络当前管理员或持有本次设备证明的 query 返回；其他主体为 null。读取不认领请求。
 
 未批准请求由设备凭证明取消或到期，网页返回不取消全局请求。denyDeviceAuthorization 只允许批准者在兑换前撤回自己的批准；cancelled 是设备取消，withdrawn 是批准撤回。非法状态操作返回 state_conflict，无效证明返回 401。
 
@@ -173,7 +171,7 @@ HTTPS 负责 Server 身份和通道机密性。设备将 enrollment 返回的 co
 - 多网络分别保存密钥和接入绑定；一个凭据不能通过修改 networkId 切换作用域。实例变化不等于新 Node，被替代实例不能继续上报或领取任务。
 - 永久吊销不被旧注册重试、换钥或配置回滚清除。删除 Node 和成员移除中的 User 身份设备删除见[权限](/v2/permissions)。丢失私钥不能只靠公钥恢复身份。
 
-库存中的 desiredExecution 是期望，不代表 saved／applied。密钥创建／吊销时间和操作资格分别表达；Node settings 为同一 revision 的非秘密视图，普通成员仅读取当前自己的 User 身份设备。
+密钥创建／吊销时间和操作资格分别表达；Node settings 为同一 revision 的非秘密视图，普通成员仅读取当前自己的 User 身份设备。
 
 ## 参考
 

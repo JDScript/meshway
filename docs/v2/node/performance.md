@@ -6,14 +6,41 @@
 
 | 层级 | 处理步骤 | 状态与入口 |
 | --- | --- | --- |
-| L0 | 内存中的包编解码、密码与证明原语；没有 socket、TUN 或调度链 | 定义；待实现／由其他工作包提供 |
-| L1 | 正式协议 provider 的原生 socket I/O，对照公共 datagram Session；代理协议保留自身 TLS／WS | 已实现；[承载性能对照](/v2/node/transport#验证与性能对照)，`perf:transport` |
+| L0 | 内存中的包编解码、密码与证明原语；没有 socket、TUN 或调度链 | 定义；测量入口 `mise run perf:circuit` |
+| L1 | 正式协议 provider 的原生 socket I/O，对照公共 datagram Session；代理协议保留自身 TLS／WS | 已实现；[L1 承载对照](#l1-承载对照)，`perf:transport` |
 | L2 | 两个 Linux namespace 中的真实 TUN、Tokio、正式 UDP provider 与 Session，原样转发明文 IP 包 | 已实现；`perf:dataplane` 的 `plain` |
 | L3 | L2 I/O 加正式 SecureNode、真实认证／加密、路径证明与重放处理 | 定义；`secure` 待实现／由其他工作包提供 |
 | L4 | L3 加 connectivity Manager 的真实邻接获取、承载调度与生命周期 | 定义；`manager` 待实现／由其他工作包提供 |
-| L5 | 完整 meshwayd、Control／Policy、真实执行资格、Manager、SecureNode、TUN 与系统业务应用 | [常驻三节点 lab](/v2/node/docker-lab)；验收范围见[数据面](/v2/node/dataplane) |
+| L5 | 完整 meshwayd、Control／Policy、真实执行资格、Manager、SecureNode、TUN 与系统业务应用 | [常驻三节点 lab](/v2/node/docker-lab)；验收状态见[验收范围](/v2/node/validation) |
 
 L2 的 `raw` 是同一隔离网络中直接运行 iperf3 的内核参照，不经过 Meshway 代码；它不是 L0。L2 `plain` 不启用认证、加密、策略或控制面，也不代表 Meshway 业务数据面的吞吐。L3／L4 枚举预留仅为工具扩展接口，当前请求这些阶段会在创建资源前失败。
+
+## 共同报告口径
+
+每次运行保存程序 hash、源码 digest、工具链、平台、参数与逐次原始样本；失败样本保留而不填零。启用 `MESHWAY_PROFILE` 时另保留抽样参数和首尾累积记录，并与插桩关闭的同一程序比较吞吐／进程 CPU，校验 observer 开销与计数边界；细层采样计时含插桩成本，不能直接当作未插桩程序的精确 CPU 占比。采样变量与输出字段见[运行日志](/v2/logging#显式分层性能采样)。
+
+## L1 承载对照
+
+```sh
+mise run perf:transport --protocol all --payload 64 1200 --batch 1 32 \
+  --messages 200000 --warmup 1000 --repeats 3
+```
+
+`scripts/perf/transport.py` 显式构建 `tools/meshway-transport-perf` 的 release 程序（缓存 `target/transport-perf`），共用正式 provider／Session 实现，交替执行 raw／datagram 次序。同仓库测量互斥，每次运行保存独立二进制快照。结果位于仓库公共目录 `.meshway/perf/transport/<run>/`：二进制、`results.json`、`summary.md` 及各次 stdout／stderr。表格为各模式中位数，比值为有效配对重复的比值中位数。
+
+| 协议／封装 | raw 基线 | Meshway datagram 对照 |
+| --- | --- | --- |
+| `tcp`（Native TCP） | 原生 TCP 字节流收发 | 公共 framing 封装／恢复 datagram |
+| `udp`（Native UDP） | 原生 UDP 报文收发 | UDP 承载 datagram，并在对端恢复 |
+| `vless-tcp`（VLESS TCP/TLS） | 完整 VLESS＋TLS 协议 I/O | 同一协议栈承载并恢复 datagram |
+| `vless-ws`（VLESS WebSocket/TLS） | 完整 VLESS＋WS＋TLS 协议 I/O | 同一协议栈承载并恢复 datagram |
+| `trojan`（Trojan TCP/TLS） | 完整 Trojan＋TLS 协议 I/O | 同一协议栈承载并恢复 datagram |
+
+- 负载为本机固定 payload 批量 echo；两种模式使用相同 socket 参数、stream 缓冲上限、连接条件与批量策略。raw 在底层不支持 vectored I/O 时采用同样有界的批量字节缓冲。
+- 吞吐按发起端实际收回的业务 payload 计，排除连接建立和 warmup；消息速率是逻辑消息交付计数；RTT 从批次提交到各条 echo 交付；CPU 时间来自完整子进程（含 warmup／初始化）。分配、复制及峰值内存尚无计数器，明确为 null。
+- 报告把 Mesh 认证、端到端加密、路由、动态 ABI 与 TUN 标为未启用；这些增量成本由 L2 以上分层测量。新增协议须补齐同样的 raw／datagram 对照；其他项目的整机结果只作外部参考。
+
+L1 尚未覆盖的对照轴：每邻接单连接与有界小连接池、接近实际 MTU 的负载与多流、隔离环境中的延迟／丢包／乱序／断连、动态库适配调用、排队取消与承载切换等生命周期、快慢通道与单通道故障等跨流干扰。比较连接数量时须保持全局排队预算一致，并先满足流映射稳定、不重复交付、未认证序号不推进重放窗口等正确性条件。
 
 ## L2 实现
 

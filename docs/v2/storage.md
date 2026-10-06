@@ -28,7 +28,7 @@ Node 接入、成员移除、身份转换、配置提交及执行退出各自在
   → 内存 journal／观察任务更新 → 唤醒该网络的订阅 → 重投影 → SSE 可见
 ```
 
-每个用例是一个事务闭包，返回结果和这次提交应产生的 **effects**（配置通知、授权变化、进度变化、Node 退出、观察样本、资源变化、会话吊销）。执行器只在 COMMIT 成功后、在数据库 owner 线程上按序把 effects 交给内存 runtime；回滚一个 effect 都不产生，HTTP waiter 取消不能把提交和它的 effects 分开。effects 的数量不受 journal 保留容量限制：一次合法的批量删除可以超过 journal 能回放的条数，受影响的订阅者按 [SSE 合同](/v2/api/events)收到 reset。
+预览走同一条流水线到规范化为止，不生成材料、不写入；身份和权限在最终事务重检。每个用例是一个事务闭包，返回结果和这次提交应产生的 **effects**（配置通知、授权变化、进度变化、Node 退出、观察样本、资源变化、会话吊销）。执行器只在 COMMIT 成功后、在数据库 owner 线程上按序把 effects 交给内存 runtime；回滚一个 effect 都不产生，HTTP waiter 取消不能把提交和它的 effects 分开。effects 的数量不受 journal 保留容量限制：一次合法的批量删除可以超过 journal 能回放的条数，受影响的订阅者按 [SSE 合同](/v2/api/events)收到 reset。
 
 已接纳的 SQL 工作独立于 HTTP waiter 完成。重试不重复创建或生成秘密。启动验证当前 schema 与完整性，错误不触发静默重置；结构不符时启动错误指出第一个缺失、多出或定义不同的对象（如 `missing index user_sessions_user_id`、`table activity_events is defined differently from the current schema`），只含对象名，不含数据。没有历史迁移链：开发环境在 schema 变更后重新初始化数据目录。
 

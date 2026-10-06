@@ -24,19 +24,7 @@ User ──< Membership >── Network ──< Node
 
 `access` 定义业务端点权限，`topology` 定义允许的连接图与建连约束，`routing` 定义获准业务的路径。运行中的 links／paths 属于 State。完整字段见[Configuration](/v2/configuration-reference)，执行分工见[按需许可](/v2/execution)。
 
-Node 的有效身份唯一位于 `nodes[id].identity`：
-
-<!-- schema: NodeIdentity -->
-```json
-{ "type": "user", "user": "alice@example.com" }
-```
-
-<!-- schema: NodeIdentity -->
-```json
-{ "type": "tag", "tags": ["tag:backend"] }
-```
-
-可读邮箱引用按用途绑定稳定 UserId／MembershipId。旧成员离网后同邮箱重新加入不会恢复旧策略绑定；Tag→User／改绑 User 需要设备登录证明。Tag 身份不继承原用户授权，创建者记录不产生管理权限。
+Node 的有效身份唯一位于 `nodes[id].identity`，格式见 [NodeIdentity](/v2/configuration-reference/nodes#identity)。可读邮箱引用按用途绑定稳定 UserId／MembershipId；User／Tag 身份的授权与改绑规则见[有效授权身份](/v2/configuration-reference/identity#有效授权身份)。
 
 ## 字段归属速查 {#字段归属速查}
 

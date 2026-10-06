@@ -2,7 +2,7 @@
 
 ## 启动与接入
 
-`meshwayd`／`meshway` 提供 Server 控制接入与 Linux TUN 运行装配。以下本地示例显式选择 `control-only`，假定已有当前版本 Server 位于 `127.0.0.1:8430`（示例值；开发服务固定 8420，见[开发服务](/v2/development#本机服务)），Console 位于 `127.0.0.1:3001` 并连接该 Server；Server 已配置 `--console-origin http://127.0.0.1:3001`，配置入口见 [Server 运行与维护](/v2/server#运行与维护)：
+`meshwayd`／`meshway` 提供 Server 控制接入与 Linux TUN 运行装配。以下本地示例显式选择 `control-only`，假定已有当前版本 Server 位于 `127.0.0.1:8430`（示例值；开发服务固定 8420，见[开发服务](/v2/development#本机服务)），Console 位于 `127.0.0.1:3001` 并连接该 Server，且 Server 已配置对应的 [Console origin](/v2/server#运行参数)：
 
 ```sh
 mise run build:node
@@ -22,7 +22,9 @@ install -d -m 700 .meshway
 ./target/debug/meshway --socket "$PWD/.meshway/node/control.sock" down
 ```
 
-首次 `up` 原样显示 Server 返回的浏览器批准链接，由用户打开；链接来源与 null 语义见 [Server 接入组件](/v2/node/control#接口与顺序)。Server 未配置 Console origin 时，JSON 状态保留 `enrollmentUrl: null`，人类输出提示联系 Server 运维配置入口，状态仍为等待批准。在 Console 登录并选择网络批准后，daemon 自动兑换身份、认证、取得实例、保存配置和发送 saved 回执。`up` 返回批准链接时只表示正在等待批准。此示例的 `controlReady`／`dataPlane=controlOnly` 表示控制流程就绪，`applied=null`；它不安装网络。Linux TUN 使用 `--network-mode tun`（默认值），还须满足下节安装范围与设备／路由权限。
+- 首次 `up` 原样显示 Server 返回的浏览器批准链接并等待批准。Server 未配置 Console origin 时，JSON 状态保留 `enrollmentUrl: null`，人类输出提示联系 Server 运维，状态仍为等待批准。
+- 在 Console 登录并选择网络批准后，daemon 自动兑换身份、认证、取得实例、保存配置和发送 saved 回执。
+- 此示例的 `controlReady`／`dataPlane=controlOnly` 表示控制流程就绪，`applied=null`，不安装网络。Linux TUN 使用 `--network-mode tun`（默认值），还须满足下节安装范围与设备／路由权限。
 
 `meshwayd` 前台运行，SIGINT／SIGTERM 执行关闭与 join。进程退出保留期望状态：退出前为 up，重启后自动重新取得运行资格；显式 down 后重启继续保持下线。CLI 的 Ctrl-C 仅停止等待，不撤回已由 daemon 接纳的持久操作。
 
@@ -53,10 +55,10 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 | 范围 | 当前行为 |
 | --- | --- |
-| Linux Mesh-only | 已验证 TUN capture、Native TCP／Native UDP 静态端点认证邻接、双栈 UDP／TCP 多跳包流、持续续租和失效清理；精确范围见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance)。双 NAT 与同路径 TCP 退路见[连接获取验收](/v2/node/connectivity#路径选择与验收) |
+| Linux Mesh-only | TUN capture、Native TCP／Native UDP 静态端点认证邻接、协调 UDP 穿透、双栈 UDP／TCP 多跳包流、持续续租和失效清理；验收状态见[验收范围](/v2/node/validation) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
 | Exit／本机 egress | `exitEnabled`、非 Mesh permit、未由 DNS owner 持有的 local egress 或缺少明确 no-exit DNS 执行证明均拒绝安装；出口／NAT 尚未接线 |
-| 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器；独立诊断许可、实际路径／通道与计时见[路径诊断](/v2/node/diagnostics) |
+| 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace、netstack、SOCKS5、动态插件和切网尚未实现 |
 
@@ -107,7 +109,7 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | --- | --- |
 | `meshway up` | 首次浏览器接入，或用保存的身份重新认证并取得运行资格 |
 | `meshway down` | 停止当前网络并终止相关资格；daemon 与私有身份保留 |
-| `meshway ping <target>` | 以 `icmp:*` 权限探测完整路径，显示实际 direct／via、通道来源与 RTT；参数见[路径诊断](/v2/node/diagnostics) |
+| `meshway ping <target>` | 获准的端到端 Mesh 探测；参数、授权与输出见[路径诊断](/v2/node/diagnostics) |
 | `meshway status` | 区分进程、控制联系、saved／applied 和实际通道状态 |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
@@ -126,8 +128,6 @@ Server HTTP 等待与本机命令处理独立。配置查询通常每 5 秒，�
 daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错。
 
 CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除。
-
-ping 使用 Node 实例订阅，与 Console 用户订阅共用观察任务。默认服务、取消和计时合同见[路径诊断](/v2/node/diagnostics)；Node 不冒用 Console 会话，HTTP／准备耗时不充当 RTT。
 
 ## 持久与重建
 

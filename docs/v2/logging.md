@@ -46,4 +46,4 @@ daemon 由工作循环每隔至少 5 秒通过 `meshway_profile` target 输出�
 
 `metrics_json` 包含各层 `calls_started`、已完成的 `samples`、累积 wall／thread-CPU 纳秒及其 exclusive（self）值。父层 inclusive 已包含子层，不可再次相加；异步包装统计每次 poll 的运行时间，不包含 poll 之间的等待。线程 CPU 不可测时保持 null，并独立记录 CPU 样本数量；wall 时间可能包含被调度器暂停的时间。`queue.*` 记录已观测的排队年龄，不推断 CPU，`tun_attempt_age` 包括尚未取得路由的调度尝试。`counters_json` 为准确累积的丢弃原因计数，`gauges_json` 为最近一次 owner 采集的保留流／circuit 数量，缺少 owner 时为 null。它们均不是 State／历史业务测量，也不参与权限判断。
 
-性能报告应保留程序 hash、抽样参数、首尾累积记录及实际吞吐／进程 CPU，校验 observer 开销和计数边界；细层的采样计时含插桩成本，不能直接当作未插桩程序的精确 CPU 占比。实验仍按[性能对照](/v2/node/transport#验证与性能对照)显式运行，不加入常规测试的耗时门槛。
+报告口径与各层测量入口见[分层性能测量](/v2/node/performance#共同报告口径)。

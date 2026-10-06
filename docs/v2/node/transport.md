@@ -1,6 +1,6 @@
 # 承载会话与发送边界
 
-当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收。`meshway-connectivity::Manager` 已装配到 daemon 的 stream、Native UDP 静态端点与协调穿透运行路径；Linux 承载上的双栈 UDP／TCP 包流、双 NAT 与同路径 TCP 退路按[连接获取](/v2/node/connectivity#路径选择与验收)的范围分别验收。Mesh circuit、端到端加密和 TUN 接线见[数据面组件](/v2/node/dataplane)，动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
+本页定义承载层的分层、Rust 入口、邻接管理、帧与资源预算，以及发送接纳、完成与取消语义。Mesh circuit、端到端加密和 TUN 见[数据面组件](/v2/node/dataplane)，连接获取见[连接获取](/v2/node/connectivity)，业务入口见 [L3 网络模式](/v2/node/runtime)；动态 ABI 和连接池尚未实现。
 
 ## 分层
 
@@ -151,46 +151,6 @@ publication 是执行目标引用，不直接充当所有连接、业务流或�
 
 当前每 circuit／方向的重放窗口容量仍须结合峰值包率和允许的乱序时间验证；只扩大窗口会增加内存与状态维护成本。未来按流或逻辑子通道细分也需要有界上下文创建、正确的认证绑定和 nonce 空间隔离。物理 socket 不能直接成为端到端安全上下文的唯一身份。
 
-## 验证与性能对照
+## 性能测量 {#验证与性能对照}
 
-性能测量通过专门脚本显式启动并输出机器可读结果及汇总报告，不进入常规单元／集成测试，也不由 `mise run check` 或 `cargo test --all-targets` 启动测量。常规测试验证编解码、截断、顺序、取消、权限和资源回收等正确性，不设置吞吐或耗时性能门槛。
-
-当前入口为 `scripts/perf/transport.py` 和 `tools/meshway-transport-perf`，共用上述正式 provider／session 实现：
-
-```sh
-mise run perf:transport --protocol all --payload 64 1200 --batch 1 32 \
-  --messages 200000 --warmup 1000 --repeats 3
-```
-
-脚本显式构建 release 测量程序，使用独立 `target/transport-perf` 缓存，交替执行 raw／datagram 次序。同仓库测量互斥，每次运行保存独立二进制快照，避免后续构建改变正在比较的程序。结果位于仓库公共目录 `.meshway/perf/transport/<run>/`，包括二进制、`results.json`、`summary.md` 及各次 stdout／stderr；记录源码／二进制 digest、工具链、平台、参数和有效成对结果，失败样本保留而不填零。表格为各模式中位数，比值为有效配对重复的比值中位数。
-
-当前支持 `tcp`、`udp`、`vless-tcp`、`vless-ws`、`trojan` 的本机固定 payload 批量 echo。代理协议的两种模式均保留真实 TLS／协议握手和相同字节流实现。吞吐按发起端实际收回的 payload 计，消息速率是逻辑消息交付计数；RTT 从批次提交到各条 echo 交付，CPU 时间来自完整子进程（含 warmup／初始化）。吞吐区间排除连接建立和 warmup；分配、复制及峰值内存尚无计数器时明确为 null。两种模式使用相同 socket 参数和 stream 缓冲上限；raw 在底层不支持 vectored I/O 时采用同样有界的批量字节缓冲，避免把一批输入误变为逐消息发送。此入口测量公共 transport datagram 适配成本，Mesh 认证、端到端加密、路由、动态 ABI 与 TUN 在报告中明确标为未启用。
-
-每种正式协议及封装都必须提供成对的性能结果，使用同一 transport 实现、连接条件、业务 payload、批量策略与资源预算：
-
-| 协议／封装 | raw 基线 | Meshway datagram 对照 |
-| --- | --- | --- |
-| Native UDP | 原生 UDP 报文收发 | UDP 承载 Meshway datagram，并在对端恢复 |
-| Native TCP | 原生 TCP 字节流收发 | 公共 framing 封装／恢复 Meshway datagram |
-| VLESS TCP/TLS | 完整 VLESS＋TLS 协议 I/O | 同一协议栈承载并恢复 Meshway datagram |
-| VLESS WebSocket/TLS | 完整 VLESS＋WS＋TLS 协议 I/O | 同一协议栈承载并恢复 Meshway datagram |
-| Trojan TCP/TLS | 完整 Trojan＋TLS 协议 I/O | 同一协议栈承载并恢复 Meshway datagram |
-
-raw 保留该协议自身的正常握手、TLS／WS 和协议封装；统计对端实际收到的有效业务 payload，不把额外封装字节计为业务吞吐。每对结果同时比较吞吐／pps、CPU、延迟及分配／复制，测量层级和已启用的处理步骤随报告记录。认证、加密、转发和 TUN 的增量成本另行分层测量。新增协议须补齐同样的 raw／Meshway datagram 对照。其他项目的整机结果作为互通或外部参考，不直接计算为 Meshway 包装损失。
-
-| 对照轴 | 场景 |
-| --- | --- |
-| 连接数 | 每邻接单连接与有界小连接池；业务流保持稳定映射 |
-| 负载 | 小包、常见包长、接近实际 MTU、单流和多流 |
-| 网络 | 无人工损伤的基线，以及隔离环境中的延迟、丢包、乱序和断连 |
-| 调用／批量 | 同一协议实现的直接调用与实际动态库适配；单帧与有界 batch |
-| 生命周期 | 排队取消、半帧失败、目标更新、期限到达和承载切换 |
-| 跨流干扰 | 快慢通道并行、长流与短流混合、单通道故障、允许范围内的乱序及重复帧 |
-
-固定工具链、release 构建、协议与密码实现、主机资源、MTU 和缓冲预算。记录有效业务吞吐、pps、CPU、内存、分配／复制、RTT 分位数、队列与丢弃原因，并区分本机接纳与对端实际接收。连接池、batch 和损伤参数属于实验输入，不能隐式改变业务配置或 VLESS-only 限制。
-
-比较连接数量时保持全局排队预算一致，记录各连接固有的额外内存与握手成本。先检查流映射稳定、重复的数据帧不会重复交付业务、未认证的序号不能推进重放窗口，以及约定乱序范围内的合法慢流不会被快流持续排挤；正确性不成立的结果不参与吞吐择优。
-
-微基准、真实 socket 收发与完整 TUN／SOCKS5 路径分别提供证据。性能对照共用领域实现，仅替换被比较的适配／调度方式；不另写一套省略认证、权限或加密的业务数据面冒充正式结果。
-
-MTU／分片、Mesh 帧布局、加密与重放作用域、异步 ABI、连接池和宿主默认预算仍待验证定版。运行脚本的局部 socket 结果不代表这些完整路径已经验收。
+承载层 raw／datagram 对照（L1）的入口、报告契约与对照轴见[分层性能测量](/v2/node/performance#l1-承载对照)。常规测试只验证编解码、截断、顺序、取消、权限和资源回收等正确性，不设置吞吐或耗时门槛。

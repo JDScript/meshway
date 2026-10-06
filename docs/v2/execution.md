@@ -62,7 +62,7 @@ Node execution lease 最长为 Server 当前时点后 60 秒，并受当前 inst
 
 参与节点按[普通应用流程](/v2/configuration-reference/deployment)独立处理。若必要对端尚未应用相容配置，对应业务等待／拒绝；其他节点仍可完成自己的安装。用户配置应用与后续按需发布按各自 publication 跟踪进度。
 
-NodeConfiguration 使用 dialers 保存具体获准候选，permits 保存路径业务许可，localEgress 保存源节点的精确本机执行绑定，diagnostics 保存独立测量许可，decisions 保存需求结果；capture 与 DNS 证明等字段见[节点配置](/v2/configuration-reference/node-configuration)。
+NodeConfiguration 的候选、许可、本机 egress、诊断与需求结果字段见[节点配置](/v2/configuration-reference/node-configuration)。
 
 ## 路径与会话
 

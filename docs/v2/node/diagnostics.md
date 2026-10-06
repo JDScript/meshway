@@ -70,8 +70,6 @@ Control 以 RPC 开始时的时钟高水位和单调时钟固定已确认的订�
 
 任务领取和结果使用既有 `getNodeTasks`／`reportTaskResult`。授权、30 秒订阅上限、10 秒续租节奏、SSE 与结果窗口的共同定义见 [Realtime Observation](/v2/state-reference/realtime)。
 
-## 验收边界
+## 限制
 
-正式 CLI 在独立 Linux namespace 中验证 hostname／双栈 Mesh IP 选择、direct／完整有序 via、独立 ICMP 权限、用户与 Node 共享任务及独立取消、SIGINT、控制中断后的订阅终态，以及新 instance 下重新探测。Native TCP／UDP 和双 IPv4 端口保持型 SNAT 已有完整运行证据；NAT 将原 State／offer／双方接受、实际通道安装、当前续接和双侧 pcap 逐项关联。
-
-静态／NAT／DNS 组合及实际系统解析的分别验收入口见[数据面 conformance](/v2/node/dataplane#daemon-与内核资源-conformance)。这些结果不代表外层 IPv6 NAT、端点相关映射或 TLS／WS 材料轮换矩阵已完成。
+`control-only` 与非 Linux TUN 运行模式返回 unsupported；traffic 测量为 unsupported。验收状态见[验收范围](/v2/node/validation)。

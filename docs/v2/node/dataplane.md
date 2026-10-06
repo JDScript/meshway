@@ -1,6 +1,6 @@
 # 数据面、TUN 与 DNS 组件
 
-当前库提供策略执行、IP 包处理、DNS 查询生命周期、Linux TUN I/O、资源归属保护和受保护 Mesh circuit。Linux daemon 已分别通过关闭系统 DNS 的 Mesh-only Native TCP／Native UDP 静态承载验收，包含内层 IPv4／IPv6 UDP／TCP、原路径回复、持续续租、撤销与失效清理。安装门槛见[网络模式](/v2/node/runtime#安装范围与状态)，精确验证入口与范围见本页下文。
+本页定义策略准入、受保护 circuit、Linux TUN、underlay 与 DNS 组件的行为。安装门槛见[网络模式](/v2/node/runtime#安装范围与状态)，验收状态见[验收范围](/v2/node/validation)。
 
 ## 策略与包准入
 
@@ -122,46 +122,6 @@ daemon 在使用受管 resolv.conf 时先恢复真实 bootstrap 上游，再依�
 
 bootstrap 名称可使用[启动参数](/v2/node/runtime#启动与接入)的显式 hosts 或真实 nameserver，也读取系统 hosts／真实上游；已知 systemd-resolved stub 可从其上游文件取得真实服务器。未知保护关系的本地 DNS stub 不支持；须提供所需名称的 hosts 地址或显式真实上游。解析失败不回退公共 DNS。宿主系统 DNS、业务 resolver socket 和出口 resolver 不由这些 bootstrap 权限代替。
 
-### TUN 验证入口
-
-显式 Linux 验证入口：
-
-```sh
-mise run test:tun:linux
-```
-
-脚本在宿主交叉编译，容器仅运行预编译测试。使用固定 digest 镜像、独立 network namespace、单独的 TUN device／NET_ADMIN 权限和资源预算，输出二进制哈希、源码指纹及测试报告到仓库私有 `.meshway/validation/tun/`。常规检查不隐式申请设备权限。
-
-### 受保护包流 conformance
-
-```sh
-mise run test:packet:linux
-```
-
-入口在宿主编译 `meshway-packet-fixture`，使用 Server、A、R、B 四个独立容器／network namespace 和一个隔离 internal bridge。Server 角色使用真实 Server Router／HTTPS／生成管理客户端；各 Node 独立持钥接入、取得执行快照并通过正式 Native TCP provider 连接。A／B 的 OS UDP 应用通过各自 TUN 验证 IPv4／IPv6 echo，R 只转发受保护帧，回复遵循 B→R→A。
-
-各端只接触自己的私有 state；Node 不持有管理 token 或 Server TLS 私钥。脚本不发布宿主端口，只给 TUN 端点精确的设备／NET_ADMIN 权限，并清理本轮容器和网络。源码指纹、实际二进制、进程结果及各角色报告保存在 `.meshway/validation/packet/`。该独立入口覆盖内层双栈 UDP／外层 Native TCP；daemon 安装与持续运行另由下一节验证，其他承载、多路径切换、完整 TCP conntrack、MTU／分片与性能分别验收。
-
-### daemon 与内核资源 conformance
-
-```sh
-mise run test:runtime:linux
-```
-
-该入口在宿主编译实际 `meshwayd`、`meshway` 和独立验证 actors。隔离容器中的 Node 通过 CLI 上线和真实 Server 批准；验证程序使用 OS UDP／TCP socket，包处理由 daemon 的正式运行组件执行。
-
-**当前版本边界：**candidate-v4 与有界包处理已完成关闭系统 DNS、Native UDP 静态承载的完整 daemon 验收；常驻 resolved 环境另完成六向双栈系统解析／echo、路径诊断及同路径 TCP 吞吐对照。resolved＋双 NAT＋TCP 退路的整组重验仍受共享观察切换后的通道重新获取或结果发布停滞影响；先前 wire 的同环境负控也可复现。该组合尚不能依据当前重验声明完成，下面其他承载／DNS／NAT 的历史验收范围不自动扩展为当前 wire 的整组通过。
-
-默认场景配置为关闭系统 DNS 的 Mesh-only 网络，强制 A→R→B 及原路径回复；`--transport native-udp` 选择 Native UDP 静态承载。已通过的 daemon 验收包含双栈 UDP／TCP、同一 socket 跨需求添加与至少 125 秒持续续租、独立 UDP 流停止发包后的入站活动续租、Access 撤销／恢复、中转取消 IPv6 地址后继续转发 IPv6 密文、Server 失联后期限截止、拒绝路由保留及离线 `down` 清理。单独的内核测试检查同目的地址的普通／受保护 socket、旧池拒绝边界、journal 恢复及外部同优先级规则冲突；HTTPS bootstrap 另验显式 down 前后的联系。
-
-恢复阶段关闭 Node HTTP 接纳并等待实际 instance／execution 到期，再恢复联系。Native TCP、Native UDP 静态端点、两种系统 DNS 后端、双 NAT 与同路径 TCP 退路分别验证：无需再次 `up`，原身份、进程和 operator revision 保持，取得新 instance、重新 applied／上报 State，并用新的双栈 UDP／TCP OS socket 恢复原路径包流；过期的旧 TCP／cipher 仍拒绝。最后真实停服后再验离线 down。源、终点的新交付计数及中转 TUN 的零明文交付分别记录。
-
-DNS 场景增加 `--dns-backend resolv-conf|resolved` 和 `--dns-image-manifest`，固定 OS 包／镜像由 `dev/dns-fixture/build.py` 离线构建。Native UDP 与显式文件代理、resolved 两种后端分别通过真实 `getaddrinfo`、短名称、可见性 REFUSED、分域 UDP／TCP、系统 UDP→TCP 截断重试、进程重启、上述长时包流、失效阻断及 DNS／接口恢复。独立内核测试还覆盖 DNS 锚点归属、并发读取、取消、恢复和精确删除。
-
-`--transport native-udp --traversal nat` 使用同一 daemon、Control 和包流 owner，增加独立 SNAT 路由器及真实候选协调；`--traversal-fallback` 验证获准的 A–R TCP 退路。两组关闭系统 DNS 的完整验收已通过，精确拓扑、连续性和限制统一见[连接获取验收](/v2/node/connectivity#路径选择与验收)。
-
-容器只运行预编译程序，使用独立 IPv4／IPv6 internal bridge，不发布宿主端口。IP 场景使用 NET_ADMIN／TUN；DNS 场景额外使用私有 mount namespace 建立可原子替换的 `/etc`，并在测试 namespace 内运行私有 D-Bus／resolver。额外 capability 的用途、固定 OS 资产及运行命令记录在 `dev/dns-fixture/README.md` 与报告中；不用 host network 或 privileged，也不改写 Docker 的 resolver bind 源。源码／二进制指纹、各角色结果和精确清理证据保存到 `.meshway/validation/runtime/`。通过结果只覆盖明确配置，不代表出口转发、其他承载或完整 TCP conntrack 已验收。
-
 ## DNS 查询 owner
 
 `meshway-dns` 使用 Hickory 编解码、TCP framing 和 DNS 选择规则。`Owner` 持有同一个执行快照与有限 pending 请求；宿主用唯一 Control driver 执行 `Control::query_dns`，将类型化响应交回 `complete_discovery`。
@@ -202,3 +162,7 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 显式文件代理仅安装本机 stub；没有当前执行许可时，受其接管的普通查询也返回 SERVFAIL，恢复授权后继续，显式 down 恢复原配置。resolved 分域后端未接管的普通解析继续由原系统处理。首期保证覆盖 daemon、lease 失效和进程退出后保留的本机配置；整机重启、系统 resolver 服务停机及应用绕过系统 DNS 的行为随系统服务安装分别验收。
 
 启动参数见[本机运行](/v2/node/runtime#启动与接入)。系统安装、真实系统解析、持续包流与故障恢复分别验证；库和单独内核测试通过不代表整套后端组合验收完成。安装未完成时仍阻断整体 applied。
+
+## 验收范围 {#daemon-与内核资源-conformance}
+
+本页组件的 TUN、受保护包流与 daemon 整组验收状态统一见[验收范围](/v2/node/validation)。
