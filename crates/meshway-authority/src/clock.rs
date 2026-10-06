@@ -37,10 +37,17 @@ impl Clock {
         offset.checked_add(elapsed).ok_or(Error::Expired)
     }
     pub fn now(&self) -> Result<u64, Error> {
+        self.now_with_instant().map(|(wall, _)| wall)
+    }
+
+    /// One wall-clock and one monotonic read, so a caller checking several
+    /// deadlines evaluates them all at the same instant.
+    pub fn now_with_instant(&self) -> Result<(u64, Instant), Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::detail("control.clock", 2);
         let _profile = PROFILE.enter();
-        self.observe(now()?, Instant::now())
+        let monotonic = Instant::now();
+        Ok((self.observe(now()?, monotonic)?, monotonic))
     }
 
     pub async fn wait_until(
@@ -121,7 +128,18 @@ impl Deadline {
         Ok(deadline)
     }
     pub fn valid(&self) -> bool {
-        self.clock.now().is_ok_and(|now| now < self.wall) && Instant::now() < self.monotonic
+        self.clock
+            .now_with_instant()
+            .is_ok_and(|(now, instant)| self.valid_at(now, instant))
+    }
+
+    /// Evaluate against readings taken from this deadline's own clock.
+    pub fn valid_at(&self, now_ms: u64, instant: Instant) -> bool {
+        now_ms < self.wall && instant < self.monotonic
+    }
+
+    pub fn shares_clock(&self, clock: &Arc<Clock>) -> bool {
+        Arc::ptr_eq(&self.clock, clock)
     }
 
     pub fn expires_at(&self) -> Instant {

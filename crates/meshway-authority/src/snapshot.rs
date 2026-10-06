@@ -55,6 +55,15 @@ impl ExecutionSnapshot {
     /// Bind an issuer's current facts. Fails when any deadline has already
     /// passed or validity was withdrawn; an expired snapshot is never returned.
     pub fn issue(issue: Issue) -> Result<Self, Error> {
+        // Every check reads the issuer's clock once and applies it to all three
+        // deadlines; a deadline started on another clock would be misjudged.
+        if !issue
+            .deadlines
+            .iter()
+            .all(|deadline| deadline.shares_clock(&issue.clock))
+        {
+            return Err(Error::Contract);
+        }
         let snapshot = Self {
             target: issue.target,
             instance: issue.instance,
@@ -79,16 +88,29 @@ impl ExecutionSnapshot {
     }
 
     pub fn ensure_current(&self) -> Result<(), Error> {
+        self.current().map(|_| ())
+    }
+
+    /// The full guard with one clock reading, returning the UTC high-water
+    /// milliseconds it was evaluated at.
+    fn current(&self) -> Result<u64, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::detail("control.guard", 1);
         let _profile = PROFILE.enter();
-        if !self.validity.load(Ordering::Acquire)
-            || self.invalidated.is_cancelled()
-            || !self.deadlines.iter().all(Deadline::valid)
-        {
+        if !self.validity.load(Ordering::Acquire) || self.invalidated.is_cancelled() {
             return Err(Error::Expired);
         }
-        Ok(())
+        let (now_ms, instant) = self.clock.now_with_instant()?;
+        if !self.deadlines_valid_at(now_ms, instant) {
+            return Err(Error::Expired);
+        }
+        Ok(now_ms)
+    }
+
+    fn deadlines_valid_at(&self, now_ms: u64, instant: Instant) -> bool {
+        self.deadlines
+            .iter()
+            .all(|deadline| deadline.valid_at(now_ms, instant))
     }
 
     pub fn configuration(&self) -> Result<&NodeConfiguration, Error> {
@@ -126,11 +148,12 @@ impl ExecutionSnapshot {
         let same = Arc::ptr_eq(&self.publication, &old.publication)
             && self.same_execution(old)
             && old.ensure_current().is_ok();
+        let (now_ms, instant) = old.clock.now_with_instant()?;
         if !Weak::ptr_eq(&self.lineage, &old.lineage)
             || !(same || direct)
             || self.instance != old.instance
             || self.generation != old.generation
-            || !old.deadlines.iter().all(Deadline::valid)
+            || !old.deadlines_valid_at(now_ms, instant)
             || !previous.enabled
             || !current.enabled
             || previous.network_id != current.network_id
@@ -146,8 +169,7 @@ impl ExecutionSnapshot {
     }
 
     pub fn now_ms(&self) -> Result<u64, Error> {
-        self.ensure_current()?;
-        self.clock.now()
+        self.current()
     }
 
     /// Current execution permission for a retained physical adjacency. This is
@@ -170,12 +192,13 @@ impl ExecutionSnapshot {
     /// invalidate this snapshot while its original UTC/monotonic lease bounds
     /// still allow an owner to await a direct `continuation_from` handoff.
     pub fn retention_deadline(&self) -> Result<Instant, Error> {
-        if self.lineage.strong_count() == 0 || !self.deadlines.iter().all(Deadline::valid) {
+        let (now_ms, instant) = self.clock.now_with_instant()?;
+        if self.lineage.strong_count() == 0 || !self.deadlines_valid_at(now_ms, instant) {
             return Err(Error::Expired);
         }
         let remaining = self
             .expires_at_ms()
-            .checked_sub(self.clock.now()?)
+            .checked_sub(now_ms)
             .ok_or(Error::Expired)?;
         Ok(self.expires_at().min(
             Instant::now()
