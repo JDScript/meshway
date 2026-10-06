@@ -16,6 +16,7 @@ clap = { workspace = true, features = ["env"] }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-control = { path = "../../crates/meshway-control" }
 meshway-underlay = { path = "../../crates/meshway-underlay" }
+meshway-tun = { path = "../../crates/meshway-tun" }
 meshway-connectivity = { path = "../../crates/meshway-connectivity" }
 meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-diagnostics = { path = "../../crates/meshway-diagnostics" }

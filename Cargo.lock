@@ -1811,6 +1811,7 @@ dependencies = [
  "meshway-protocol",
  "meshway-serde",
  "meshway-server",
+ "meshway-tun",
  "meshway-underlay",
  "reqwest",
  "rustix",
