@@ -114,7 +114,7 @@ Native UDP、stream framing、TLS／WS 与独立控制消息的计费见 [Packet
 
 ## 待讨论问题
 
-以下都为**候选问题，未决定、未实现为新契约**。
+以下列出候选问题；表内注明已采用的内部优化，其余方向**未决定、未实现为新契约**。
 
 | 编号 | 问题 | 当前代价／可以讨论的方向 | 作出决定前要证明什么 |
 | --- | --- | --- | --- |
@@ -122,10 +122,10 @@ Native UDP、stream framing、TLS／WS 与独立控制消息的计费见 [Packet
 | Q2 | 哪些 header 常量应移到 flow context？ | CID 已移除完整 path / key 列表；地址、端口等仍逐包重复，TCP 动态事实也重复出现在加密 IP 内 | 新上下文的创建／确认、容量、过期／吊销、重连和错误复用；flow ID 不能自授权限 |
 | Q3 | 我们需要逐诚实中继的可验证路径参与，还是一般路由选择？ | 当前路径 MAC 对每个未来验证者独立派生 keys。仅验证相邻通道更简单，但不是同一要求 | 恶意中继／串通节点能否伪造源、跳过必经点；“正常路由经过 R”不能替代密码学保证 |
 | Q4 | 同一包能否共用 buffer 与一次解析／hash？ | 当前 owned Vec、frame base 编码、验证后再次编码和发送 coroutine 都值得单独计数。可评估预留 headroom、借用视图、in-place AEAD、认证后缓存解析结果 | buffer 唯一 owner、异步持有期限、敏感明文清理、被改字节与缓存失效、预算按 capacity 计费；不能缓存未验证解析结果当权限 |
-| Q5 | 动态 guard 能否保留而减少重复结构检查？ | 不变配置绑定与动态取消／UTC／单调期限／health 是不同工作，可研究按精确 snapshot 缓存前者 | 缓存键必须覆盖真实主体、路径、carrier、材料与版本；读缓存不延长 lease，最终 I/O 的动态检查仍可触发 |
+| Q5 | 动态 guard 能否保留而减少重复结构检查？ | 不变配置绑定与动态取消／UTC／单调期限／health 是不同工作，可研究按精确 snapshot 缓存前者。已采用：同步段 Reading（`f928e583`），提交／产出前及最终 I/O 保留动态检查 | 缓存键必须覆盖真实主体、路径、carrier、材料与版本；读缓存不延长 lease，最终 I/O 的动态检查仍可触发 |
 | Q6 | 下一步先做 kernel batch，还是先减少 task / lock / queue 交接？ | 当前 32 包是就绪读取和独立 future pipeline，底层仍逐包 syscall；真正 batch 可能摊薄固定成本，也会增加等待和突发 | 每帧期限与取消、部分成功／不确定回执、批次填充延迟、控制工作公平性、内存上限；不能把一份宽松 batch guard 套到全部包 |
 | Q7 | MTU 按哪个最坏段来定？ | 路径长度、地址族、listener key、provider 都影响最大线上长度；握手与稳态应分开 | 所有 cut 的上界、路径变化、IPv6 最小 MTU、PMTUD / 分片行为；不能只把某次 iperf MSS 调小就宣布解决 |
-| Q8 | SO_MARK 与资源检查需要在每次 poll 做到什么粒度？ | 当前每次进入受保护 socket poll 都有 mark 读取／设置／读回，以及多层 scope 检查；应独立计量系统调用数与自耗时 | 实际 descriptor 是否独占、provider／外部变更如何受控、selector 和资源 handoff 如何失效；不能以“socket 私有”为由直接删除冲突与最终 I/O 防护 |
+| Q8 | SO_MARK 与资源检查需要在每次 poll 做到什么粒度？ | 当前每次进入受保护 socket poll 都有 mark 读取／设置／读回，以及多层 scope 检查；应独立计量系统调用数与自耗时。dataplane 已采用：同步段 Reading（`f928e583`）；本项 socket／资源保护粒度仍待独立判断 | 实际 descriptor 是否独占、provider／外部变更如何受控、selector 和资源 handoff 如何失效；不能以“socket 私有”为由直接删除冲突与最终 I/O 防护 |
 
 Packet 的规模要求、字段与条件预算集中见[固定开销讨论](/v2/discussions/packet#固定开销的预算草案)。Q1／Q3 会影响能否移除公开 facts 或替换逐路径增长的认证后缀。
 
@@ -142,7 +142,7 @@ Q1 决定我们**究竟要付哪些必要成本**。如果保留当前每跳业�
 | 事实基线 | Meshway `97dbb138`；图、公式对应 candidate-v4 的 Native UDP Data 路径 |
 | 已有约束 | [端到端／路径／生命周期](/v2/node/dataplane#候选受保护-circuit)、[本机接纳与完成](/v2/node/transport#本机接纳与完成)、[访问控制](/v2/configuration-reference/access) |
 | 外部研究 | [EasyTier 固定提交源码对照](/v2/discussions/easytier)，具体 checkout 信息同时记在仓库 `references/README.md` |
-| 未决定 | Q1–Q8；当前没有由本页批准的语义削减、替代密码方案或新 wire |
+| 未决定 | Q1–Q8 中的其余候选方向；同步段 Reading 已采用，当前没有由本页批准的语义削减、替代密码方案或新 wire |
 | 下一份论据 | 每层 allocations / copied bytes / pps / CPU / queue age；相同主机、资源、路径、包长与 transport 条件的对照 |
 
 新增结论时写明“决定、理由、语义影响、验证结果”，并将确定的行为更新到对应规范。本页保持可继续讨论的问题清单，源码追溯使用上述版本，原始实验保存在私有报告中。

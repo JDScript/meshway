@@ -12,6 +12,8 @@
 
 `meshway-dataplane::Engine` 持有一个[执行快照](/v2/node/control#执行快照)和唯一有界流表。`Packet::parse(Vec<u8>)` 验证包并保留原始 buffer；`process` 产生 `PendingAction`。宿主必须在最终同步发送／交付边界调用其 `release`，等待期间保留 wrapper 并监听 `invalidated()`。
 
+同步操作在入口取得一次 `ExecutionSnapshot::reading()`，本次 policy 判定、流时间和执行／permit／circuit 截止计算共用其中的配置、UTC 高水位与单调时间。流提交、nonce／replay 消耗、circuit 状态提交及产出前仍执行完整动态最终检查；用于最终截止检查的新读数不重新准入或延长入口确定的期限。`Reading` 只由同步内部调用借用，排队输出保存原快照和截止，跨等待的 `release`／carrier I/O 边界继续独立检查原 guard。本地重试 pacing 与 probe 令牌预算仍以实际扣除预算时的单调时间计时，避免慢操作提前补充预算；它们不延长任何授权截止。
+
 流表内部按双向 tuple 索引查询与冲突检查，按单调／UTC 截止索引回收；刷新和删除同步移除旧截止项，索引大小受同一流容量约束。索引只定位候选，不替代当前 permit、完整路径、协议状态和最终输出 guard 检查。读取不刷新 idle／lease，也不创建反向流。
 
 `Ingress::Peer` 的 original origin、packet producer、previous peer 必须由受信身份层提供。网络入口使用下节的 `SecureNode::receive`，验证后进入同一流表；不能把未经认证的 transport payload 直接包装成明文入口输入。
@@ -60,6 +62,8 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 当前 wire 标识为 `MWCIR\0\0\x04`，Noise prologue、握手证明、会话 KDF 和数据认证有各自的 v4 purpose；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。v3／v4 帧不兼容，完整路径节点需要协调升级；不降级到逐包签名或无认证模式。IPC v3 和 HTTP 契约独立于该 wire 版本。
 
 握手 UUID 使用固定 16-byte 非零 UUID，数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。最大握手帧容纳于 4 KiB 握手重试缓存。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
+
+包操作始终即时检查目标 circuit。其他 retained circuits 的维护随宿主操作按最早 UTC／单调截止调度；距离上次扫描达到 100 ms 后，下一次操作必定扫描。新增 circuit、执行交接使下次操作重新扫描，显式 `maintain` 总是扫描。该调度只减少无关状态的回收工作，期限／取消立即约束目标操作及原排队输出，关闭后的 tombstone 仍保留并占用容量。
 
 ### 会话密钥与紧凑数据帧
 
