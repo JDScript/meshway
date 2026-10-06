@@ -1,0 +1,96 @@
+use meshway_model::{
+    KeyId, NodeId,
+    state::{Capability, StreamKind, TransportRole},
+};
+use meshway_static_authority::{
+    NodeMaterial,
+    public_fixture::{PublicFixture, PublicNode},
+    random_uuid,
+};
+use std::{collections::BTreeMap, time::Duration};
+
+#[test]
+fn independent_compilers_match_and_issuer_drop_revokes() {
+    for count in [2, 3] {
+        let mut secrets = Vec::new();
+        let mut nodes = Vec::new();
+        for i in 0..count {
+            let id = NodeId::new(random_uuid().unwrap()).unwrap();
+            let signing = KeyId::new(random_uuid().unwrap()).unwrap();
+            let noise = KeyId::new(random_uuid().unwrap()).unwrap();
+            let capabilities = BTreeMap::from([(
+                "transport:native_udp".into(),
+                Capability::Transport {
+                    roles: vec![TransportRole::Dial, TransportRole::Listen],
+                    streams: vec![StreamKind::Udp],
+                },
+            )]);
+            let material = NodeMaterial::from_seeds(
+                [i + 1; 32],
+                [i + 11; 32],
+                signing,
+                noise,
+                capabilities.clone(),
+            );
+            secrets.push((id, i, signing, noise, capabilities));
+            nodes.push(PublicNode {
+                id,
+                socket: format!("127.0.0.{}:41000", i + 1).parse().unwrap(),
+                trusted: material.trusted().clone(),
+            });
+        }
+        let fixture = PublicFixture::iperf(nodes, Duration::from_secs(60)).unwrap();
+        let bytes = serde_json::to_vec(&fixture).unwrap();
+        let expected = serde_json::to_vec(&fixture.compile().unwrap()).unwrap();
+        for (id, i, signing, noise, capabilities) in secrets {
+            let decoded: PublicFixture = serde_json::from_slice(&bytes).unwrap();
+            let mut tampered = decoded.clone();
+            tampered.publication_digest = meshway_model::Digest::from_bytes([0; 32]);
+            assert!(
+                tampered
+                    .issue(
+                        id,
+                        NodeMaterial::from_seeds(
+                            [i + 1; 32],
+                            [i + 11; 32],
+                            signing,
+                            noise,
+                            capabilities.clone()
+                        )
+                    )
+                    .is_err()
+            );
+            assert!(
+                decoded
+                    .issue(
+                        id,
+                        NodeMaterial::from_seeds(
+                            [i + 2; 32],
+                            [i + 11; 32],
+                            signing,
+                            noise,
+                            capabilities.clone()
+                        )
+                    )
+                    .is_err()
+            );
+            let material =
+                NodeMaterial::from_seeds([i + 1; 32], [i + 11; 32], signing, noise, capabilities);
+            let authority = decoded.issue(id, material).unwrap();
+            assert_eq!(
+                serde_json::to_vec(authority.publication()).unwrap(),
+                expected
+            );
+            let identity = authority.identity(id).unwrap();
+            identity.snapshot().ensure_current().unwrap();
+            drop(authority);
+            assert!(identity.snapshot().ensure_current().is_err());
+        }
+        let mut changed: PublicFixture = serde_json::from_slice(&bytes).unwrap();
+        changed.publication = meshway_model::PublicationId::new(random_uuid().unwrap()).unwrap();
+        assert_ne!(
+            PublicFixture::digest(&changed.compile().unwrap()).unwrap(),
+            fixture.publication_digest
+        );
+    }
+}

@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod fixture;
+pub mod public_fixture;
 
 use ed25519_dalek::SigningKey;
 use meshway_authority::{Clock, DataPlaneIdentity, Deadline, ExecutionSnapshot, Issue, Started};
@@ -26,7 +27,7 @@ use zeroize::Zeroizing;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-/// Random process-private material, paired with its exact compiler inventory.
+/// Process-private material, paired with its exact compiler inventory.
 /// Debug and serialization are deliberately absent.
 pub struct NodeMaterial {
     signing: SigningKey,
@@ -41,35 +42,57 @@ pub fn random_uuid() -> Result<uuid::Uuid, Error> {
 }
 
 impl NodeMaterial {
-    pub fn generate(capabilities: BTreeMap<String, Capability>) -> Result<Self, Error> {
-        let mut seed = Zeroizing::new([0; 32]);
-        getrandom::fill(&mut seed[..]).map_err(|_| "OS randomness unavailable")?;
+    /// Reconstruct only this process's private material against stable public IDs.
+    pub fn from_seeds(
+        signing_seed: [u8; 32],
+        noise_seed: [u8; 32],
+        signing_id: KeyId,
+        noise_id: KeyId,
+        capabilities: BTreeMap<String, Capability>,
+    ) -> Self {
+        let seed = Zeroizing::new(signing_seed);
         let signing = SigningKey::from_bytes(&seed);
-        let mut noise = Zeroizing::new([0; 32]);
-        getrandom::fill(&mut noise[..]).map_err(|_| "OS randomness unavailable")?;
-        let key = |algorithm, bytes| -> Result<BoundNodeKey, Error> {
-            Ok(BoundNodeKey {
-                id: KeyId::new(random_uuid()?)?,
-                generation: Version::MIN,
-                public_key: NodePublicKey {
-                    algorithm,
-                    bytes: Digest::from_bytes(bytes),
-                },
-            })
+        let noise = Zeroizing::new(noise_seed);
+        let key = |id, algorithm, bytes| BoundNodeKey {
+            id,
+            generation: Version::MIN,
+            public_key: NodePublicKey {
+                algorithm,
+                bytes: Digest::from_bytes(bytes),
+            },
         };
         let trusted = TrustedNode {
-            control_key: key(KeyAlgorithm::Ed25519, signing.verifying_key().to_bytes())?,
+            control_key: key(
+                signing_id,
+                KeyAlgorithm::Ed25519,
+                signing.verifying_key().to_bytes(),
+            ),
             dataplane_key: key(
+                noise_id,
                 KeyAlgorithm::X25519,
                 curve25519_dalek::montgomery::MontgomeryPoint::mul_base_clamped(*noise).to_bytes(),
-            )?,
+            ),
             capabilities,
         };
-        Ok(Self {
+        Self {
             signing,
             noise,
             trusted,
-        })
+        }
+    }
+
+    pub fn generate(capabilities: BTreeMap<String, Capability>) -> Result<Self, Error> {
+        let mut seed = Zeroizing::new([0; 32]);
+        getrandom::fill(&mut seed[..]).map_err(|_| "OS randomness unavailable")?;
+        let mut noise = Zeroizing::new([0; 32]);
+        getrandom::fill(&mut noise[..]).map_err(|_| "OS randomness unavailable")?;
+        Ok(Self::from_seeds(
+            *seed,
+            *noise,
+            KeyId::new(random_uuid()?)?,
+            KeyId::new(random_uuid()?)?,
+            capabilities,
+        ))
     }
 
     pub fn trusted(&self) -> &TrustedNode {
@@ -130,6 +153,15 @@ impl StaticAuthority {
             selected_profiles: &BTreeMap::new(),
             now_ms: started.wall(),
         })?;
+        Self::issue_publication(publication, materials, clock, deadlines)
+    }
+
+    fn issue_publication(
+        publication: CompiledPublication,
+        materials: BTreeMap<NodeId, NodeMaterial>,
+        clock: Arc<Clock>,
+        deadlines: [Deadline; 3],
+    ) -> Result<Self, Error> {
         let mut grants = BTreeMap::new();
         for (id, material) in materials {
             let target = publication.nodes.get(&id).ok_or("missing compiled node")?;
