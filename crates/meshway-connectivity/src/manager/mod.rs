@@ -676,14 +676,7 @@ impl Manager {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("manager.snapshot");
         let _profile = PROFILE.enter();
-        if self.shared.stop.is_cancelled() {
-            return Err(Error::Unavailable);
-        }
-        self.shared
-            .identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
+        self.check_view()?;
         let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
         Ok(Snapshot {
             listeners: self.listeners.clone(),
@@ -750,12 +743,24 @@ impl Manager {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("manager.carriers");
         let _profile = PROFILE.enter();
-        Ok(self
-            .snapshot()?
-            .links
-            .into_iter()
-            .map(|link| (link.peer, link.carrier))
+        self.check_view()?;
+        let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
+        Ok(links
+            .values()
+            .filter(|link| link.scope.check().is_ok())
+            .map(|link| (link.fact.peer, link.fact.carrier.clone()))
             .collect())
+    }
+
+    fn check_view(&self) -> Result<(), Error> {
+        if self.shared.stop.is_cancelled() {
+            return Err(Error::Unavailable);
+        }
+        self.shared
+            .identity
+            .snapshot()
+            .ensure_current()
+            .map_err(|_| Error::Authority)
     }
 
     /// Never redirects or re-signs a PendingFrame. Exact signed carrier match is
