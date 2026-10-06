@@ -44,6 +44,7 @@ pub(super) async fn run(
     let mut pause_until: Option<tokio::time::Instant> = None;
     let mut preparing: Option<(Target, tokio::time::Instant)> = None;
     let mut dns_failed = false;
+    let mut sample_at = None;
     loop {
         if let Some(completion) = pending_completion.take() {
             match completed.try_send(completion) {
@@ -72,6 +73,7 @@ pub(super) async fn run(
             Packet(Result<usize, meshway_underlay::Error>),
             Carrier(Event),
             Tick,
+            SampleDue,
         }
         let live = installed.as_ref().is_some_and(|state| state.live);
         let guard = installed
@@ -106,6 +108,7 @@ pub(super) async fn run(
                     }
                 } else { std::future::pending::<()>().await; }
             } => Work::Invalid,
+            _ = async { match sample_at { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::SampleDue,
             work = async {
                 // Packet pressure must not starve incoming handshakes or lease
                 // renewal work. Lifecycle/authority remain the outer priority.
@@ -124,7 +127,17 @@ pub(super) async fn run(
                 }
             } => work,
         };
+        let structural = matches!(
+            &work,
+            Work::Target | Work::DnsTimeout | Work::Carrier(Event::Changed)
+        );
         match work {
+            Work::SampleDue => {
+                let report = sample(&installed, reports.borrow().clone());
+                reports.send_replace(report);
+                sample_at = None;
+                continue;
+            }
             Work::Command(Some(Command::DetachPing(subscription))) => {
                 diagnostics.detach(subscription)
             }
@@ -148,6 +161,7 @@ pub(super) async fn run(
             Work::Command(Some(Command::Sample(reply))) => {
                 let report = sample(&installed, reports.borrow().clone());
                 let _ = reply.send(reports.sample(report));
+                sample_at = None;
                 continue;
             }
             Work::Command(Some(Command::Shutdown { keep_sink })) => {
@@ -455,8 +469,19 @@ pub(super) async fn run(
                 } => {},
             }
         }
-        let report = sample(&installed, reports.borrow().clone());
-        reports.send_replace(report);
+        if structural {
+            let report = sample(&installed, reports.borrow().clone());
+            reports.send_replace(report);
+            sample_at = None;
+        } else {
+            // Packet/diagnostic work may change circuit dependencies. Coalesce
+            // their observation, not packet processing: the first dirty event
+            // sets a deadline that later traffic cannot postpone. The explicit
+            // sample command and lifecycle/carrier changes remain immediate.
+            sample_at.get_or_insert_with(|| {
+                tokio::time::Instant::now() + super::reporting::CHANGE_INTERVAL
+            });
+        }
     }
 }
 

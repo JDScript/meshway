@@ -1,5 +1,6 @@
 //! One bounded owner of forward facts. Preparation is read-only apart from
 //! expired-entry collection; commit happens only after final guard validation.
+mod index;
 mod tcp;
 
 use crate::{Direction, Error, Ingress, Limits, LocalFlow, PacketFacts, Route, Transport};
@@ -152,6 +153,7 @@ impl Prepared {
 pub(super) struct FlowTable {
     limits: Limits,
     entries: BTreeMap<Key, Flow>,
+    index: index::Index,
 }
 
 #[derive(Debug)]
@@ -165,6 +167,7 @@ impl FlowTable {
         Self {
             limits,
             entries: BTreeMap::new(),
+            index: Default::default(),
         }
     }
     pub fn len(&self) -> usize {
@@ -177,11 +180,12 @@ impl FlowTable {
                 "Dataplane flow table cleared");
         }
         self.entries.clear();
+        self.index = Default::default();
     }
     pub fn expire(&mut self, now: Instant, now_ms: u64) {
-        self.entries.retain(|key, flow| {
-            let live = flow.live_at(now, now_ms);
-            if !live && crate::diagnostics::event() {
+        while let Some(key) = self.index.expired(now, now_ms).cloned() {
+            let flow = self.remove(&key).expect("indexed flow");
+            if crate::diagnostics::event() {
                 let cause = if now >= flow.expires_at {
                     "monotonic_or_idle"
                 } else if now_ms >= flow.permit_expires_at_ms {
@@ -195,8 +199,18 @@ impl FlowTable {
                     guard_expires_at_ms = flow.guard_expires_at_ms,
                     "Dataplane flow removed");
             }
-            live
-        });
+        }
+    }
+
+    fn insert(&mut self, key: Key, flow: Flow) -> Option<Flow> {
+        self.index.insert(&key, &flow, self.entries.get(&key));
+        self.entries.insert(key, flow)
+    }
+
+    fn remove(&mut self, key: &Key) -> Option<Flow> {
+        let flow = self.entries.remove(key)?;
+        self.index.remove(key, &flow);
+        Some(flow)
     }
 
     /// Exact tuple lookup in the established table; never refresh or advance it.
@@ -215,7 +229,8 @@ impl FlowTable {
             return Err(Error::Flow);
         }
         let mut found = None;
-        for (key, flow) in &self.entries {
+        for key in self.index.matching(&tuple) {
+            let flow = &self.entries[key];
             if key.network != config.network_id
                 || key.node != config.node_id
                 || key.publication != config.publication
@@ -267,7 +282,7 @@ impl FlowTable {
         new: &NodeConfiguration,
         time: FlowTime,
     ) -> Result<Self, Error> {
-        let mut entries = BTreeMap::new();
+        let mut next = Self::new(self.limits);
         for (key, flow) in &self.entries {
             if time.instant >= flow.expires_at
                 || time.now_ms >= flow.permit_expires_at_ms
@@ -309,14 +324,11 @@ impl FlowTable {
                     ))
                     .ok_or(Error::Limits)?,
             );
-            if entries.insert(key, flow).is_some() {
+            if next.insert(key, flow).is_some() {
                 return Err(Error::ExecutionScope);
             }
         }
-        Ok(Self {
-            limits: self.limits,
-            entries,
-        })
+        Ok(next)
     }
 
     pub fn prepare(
@@ -364,7 +376,7 @@ impl FlowTable {
         // A second permit or candidate is not permission to move a live session
         // or duplicate its protocol state. Bind both demand and original path
         // across the node's entire live tuple/role scope.
-        if self.entries.keys().any(|other| {
+        if self.index.matching(&key.tuple).any(|other| {
             other.network == key.network
                 && other.publication == key.publication
                 && other.node == key.node
@@ -476,9 +488,9 @@ impl FlowTable {
             direction: prepared.direction,
         };
         if prepared.remove {
-            self.entries.remove(&prepared.key);
+            self.remove(&prepared.key);
         } else {
-            self.entries.insert(prepared.key, prepared.flow);
+            self.insert(prepared.key, prepared.flow);
         }
         CommittedRoute {
             hop: prepared.hop,

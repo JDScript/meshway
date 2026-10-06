@@ -1,3 +1,4 @@
+mod collection;
 mod configuration;
 mod continuity;
 mod local;

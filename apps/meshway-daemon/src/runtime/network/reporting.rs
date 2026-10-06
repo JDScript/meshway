@@ -6,7 +6,7 @@ use meshway_protocol::{InstanceRequest, execution::ApplyFailure};
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{sync::watch, time::Instant};
 
-const CHANGE_INTERVAL: Duration = Duration::from_secs(1);
+pub(super) const CHANGE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(PartialEq, Eq)]
 struct Listener {

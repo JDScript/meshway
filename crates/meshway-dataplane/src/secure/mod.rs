@@ -1371,11 +1371,19 @@ impl SecureNode {
         if !origin {
             return Ok(None);
         }
-        Ok(self.ready_circuits()?.into_iter().find(|info| {
-            info.authorization == CircuitAuthorization::Business(demand)
-                && info.path == path
-                && info.role == CircuitRole::Origin
-        }))
+        // Filter immutable bindings before checking liveness or allocating
+        // metadata. Unrelated circuits cannot supply this origin's output.
+        for (id, circuit) in &self.circuits {
+            if circuit.context.authorization == CircuitAuthorization::Business(demand)
+                && circuit.context.path == path
+                && circuit.state.established()
+                && let Some(info) = self.circuit_info(*id)?
+                && info.state == CircuitState::Established
+            {
+                return Ok(Some(info));
+            }
+        }
+        Ok(None)
     }
     pub fn retained_circuits(&self) -> usize {
         self.circuits.len()

@@ -171,10 +171,18 @@ pub(super) fn decrypt(
     bytes: &[u8],
     facts: PacketFacts,
 ) -> Result<Packet, Error> {
-    let mut plaintext = Zeroizing::new(vec![0; MAX_PLAINTEXT]);
+    let expected = bytes
+        .len()
+        .checked_sub(16)
+        .filter(|length| *length <= MAX_PLAINTEXT)
+        .ok_or(Error::Wire)?;
+    let mut plaintext = Zeroizing::new(vec![0; expected]);
     let length = noise
         .read_message(nonce, bytes, &mut plaintext)
         .map_err(|_| Error::Crypto)?;
+    if length != expected {
+        return Err(Error::Crypto);
+    }
     let packet = Packet::parse(plaintext[..length].to_vec()).map_err(|_| Error::Packet)?;
     exact_facts(packet, facts)
 }

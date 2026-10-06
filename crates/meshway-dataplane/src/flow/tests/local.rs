@@ -281,7 +281,7 @@ fn ambiguous_retained_metadata_fails_closed() {
     let mut duplicate = key.clone();
     let flow = flow.clone();
     duplicate.path = vec![node(1), node(3)];
-    table.entries.insert(duplicate, flow);
+    table.insert(duplicate, flow);
     assert!(matches!(
         lookup(&scene, 1, udp(1, 3, 50000, 443)),
         Err(Error::Flow)

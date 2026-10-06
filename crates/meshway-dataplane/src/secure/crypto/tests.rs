@@ -119,6 +119,9 @@ fn exact_noise_plaintext_limit_is_enforced() {
     assert_eq!(bytes.len(), 65_535);
     decrypt(&b, 0, &bytes, facts).unwrap();
     assert!(encrypt(&a, 1, packet(MAX_PLAINTEXT + 1)).is_err());
+    for length in [0, 15, 16, 17, 65_536] {
+        assert!(decrypt(&b, 0, &vec![0; length], facts).is_err());
+    }
 }
 
 #[test]

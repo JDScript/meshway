@@ -12,6 +12,8 @@
 
 `meshway-dataplane::Engine` 持有一个[执行快照](/v2/node/control#执行快照)和唯一有界流表。`Packet::parse(Vec<u8>)` 验证包并保留原始 buffer；`process` 产生 `PendingAction`。宿主必须在最终同步发送／交付边界调用其 `release`，等待期间保留 wrapper 并监听 `invalidated()`。
 
+流表内部按双向 tuple 索引查询与冲突检查，按单调／UTC 截止索引回收；刷新和删除同步移除旧截止项，索引大小受同一流容量约束。索引只定位候选，不替代当前 permit、完整路径、协议状态和最终输出 guard 检查。读取不刷新 idle／lease，也不创建反向流。
+
 `Ingress::Peer` 的 original origin、packet producer、previous peer 必须由受信身份层提供。网络入口使用下节的 `SecureNode::receive`，验证后进入同一流表；不能把未经认证的 transport payload 直接包装成明文入口输入。
 
 ### 包与流边界
