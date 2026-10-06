@@ -29,6 +29,8 @@
 
 从上到下 first-match；无匹配时自动选路。所有备选路径都必须保留必经点。已建立会话及回复固定原完整路径，切换承载不等于改逻辑路径。
 
+匹配使用原业务源与最终目标，不会对 `via` 中的节点递归应用其他 `routing.mesh` 规则。例如 `A→C via B` 与 `A→D via C` 不会自动合并为 A→D 必经 B、C；要表达后者，应让 A→D 命中的规则明确指定 `via=[B,C]`。实际路径仍须使用 topology 允许的边。
+
 与 access／topology 一致，路由规则不要求用户维护 id，定位使用 revision＋JSON Pointer。profile、ruleSet 的命名 key 仍用于引用，不属于规则行 ID。
 
 ## routing.egress
