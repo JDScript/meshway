@@ -76,31 +76,18 @@ impl Scope {
     /// writes internally. Cancellation drops the operation; shared endpoint
     /// ownership stays with its driver.
     pub async fn run<T>(&self, future: impl Future<Output = Result<T, Error>>) -> Result<T, Error> {
+        let edge_deadline = self.edge_deadline()?;
         tokio::pin!(future);
-        let waiting = async {
-            let edge_deadline = self.edge_deadline()?;
-            tokio::select! { biased;
-                _ = self.cancellation.cancelled() => Err(Error::Cancelled),
-                _ = self.snapshot.invalidated_at(edge_deadline) => Err(Error::Authority),
-                _ = tokio::time::sleep_until(self.deadline) => Err(Error::Cancelled),
-                _ = self.health_expired() => Err(Error::Unavailable),
-            }
-        };
-        tokio::pin!(waiting);
-        // Ready I/O still crosses the same synchronous admission and final
-        // checks, without registering deadline/cancellation waiters it will
-        // immediately discard. A pending operation is polled only once per
-        // outer poll, preserving yield_now and cooperative-budget boundaries.
-        let result = poll_fn(|cx| {
-            if let Err(error) = self.check() {
-                return Poll::Ready(Err(error));
-            }
-            match future.as_mut().poll(cx) {
-                Poll::Ready(result) => Poll::Ready(result),
-                Poll::Pending => waiting.as_mut().poll(cx),
-            }
-        })
-        .await?;
+        let result = tokio::select! { biased;
+            _ = self.cancellation.cancelled() => Err(Error::Cancelled),
+            _ = self.snapshot.invalidated_at(edge_deadline) => Err(Error::Authority),
+            _ = tokio::time::sleep_until(self.deadline) => Err(Error::Cancelled),
+            _ = self.health_expired() => Err(Error::Unavailable),
+            result = poll_fn(|cx| {
+                if let Err(error) = self.check() { return Poll::Ready(Err(error)); }
+                future.as_mut().poll(cx)
+            }) => result,
+        }?;
         self.check()?;
         Ok(result)
     }
