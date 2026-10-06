@@ -60,9 +60,9 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | Exit／本机 egress | `exitEnabled`、非 Mesh permit、未由 DNS owner 持有的 local egress 或缺少明确 no-exit DNS 执行证明均拒绝安装；出口／NAT 尚未接线 |
 | 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
-| 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace、netstack、SOCKS5、动态插件和切网尚未实现 |
+| 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切网尚未实现 |
 
-仅验证 Mesh IP、无需系统 DNS 的场景，在 Server 配置中明确设置 `magicDNS=false`、`overrideLocal=false`，并保持 `servers`、`default`、`routes`、`searchDomains` 为空。此时不创建 DNS 服务／锚点，也不要求机器运行 resolved。存在 DNS 需求时须完成对应安装；本机后端选择不覆盖云端 DNS 业务配置。`control-only` 不安装系统 DNS。
+仅验证 Mesh IP、无需系统 DNS 的场景，在 Server 的 [DNS 配置](/v2/configuration-reference/dns)中明确设置 `magicDNS=false`、`overrideLocal=false`，并保持 `servers`、`default`、`routes`、`searchDomains` 为空。此时不创建 DNS 服务／锚点，也不要求机器运行 resolved。存在 DNS 需求时须完成对应安装；本机后端选择不覆盖云端 DNS 业务配置。`control-only` 不安装系统 DNS。
 
 IPC v3 的公开运行状态：
 
@@ -76,30 +76,11 @@ IPC v3 的公开运行状态：
 
 ready／applied 只表示该目标的本机安装结果，不表示 peer 已建立认证通道或应用已收回业务包。Node State 中的 listener／link 来自组件观测；路径、RTT、丢包缺测保持空。安装与报告顺序见 [Control ApplicationTicket](/v2/node/control#安装回执与运行报告)。
 
-## TUN 与规划中的 userspace
+## 业务数据面
 
-| | 系统 TUN | Userspace networking |
-| --- | --- | --- |
-| 应用接入 | OS socket／路由把受管流量送入 TUN | 无 TUN，首版应用通过本机 SOCKS5 使用 Mesh |
-| TCP/IP 栈 | 本机应用通常使用 OS 栈 | 相应流量由用户态栈处理 |
-| 系统条件 | TUN／路由权限，以及所需 DNS、出口转发／NAT 资源 | 用户态 socket／栈资源；不自动接管任意宿主应用 |
-| Meshway 逻辑 | 两种模式共用身份、准入、连接、加密与完整路径规则 | 同左 |
+统一业务数据面采用 **L3 IPv4／IPv6 IP 包**。系统 TUN 由 OS socket／路由把受管流量送入 TUN，需要 TUN／路由权限及所需 DNS 资源；它不隐含内核模块、内核内加密或 eBPF。当前目标不包含 Ethernet 透明桥接、MAC 学习或二层广播域。
 
-```text
-OS 应用／网络栈 ⇄ TUN ───────┐
-                            ├⇄ dataplane ⇄ 获准连接／transport ⇄ peer
-本机 SOCKS5 ⇄ netstack ─────┘
-```
-
-统一业务数据面采用 **L3 IPv4／IPv6 IP 包**。TUN 直接交付 IP 包，SOCKS5 经 netstack 接入同一数据面，共用准入、端到端保护、路径执行和回复规则。当前目标不包含 Ethernet 透明桥接、MAC 学习或二层广播域。
-
-内层 IP 业务与外层承载独立：TCP／UDP 业务不据此强制选择同名 transport，实际承载仍由配置与当前执行许可约束。L3 范围不自动扩展控制面允许的业务协议；Mesh 封装、流／报文适配、MTU／分片与可靠性策略仍待定。
-
-系统 TUN 模式不隐含内核模块、内核内加密或 eBPF。无 TUN 的纯中转也不等于已提供用户态端点栈。Userspace 首版应用入口为本机 SOCKS5，不包含应用内 socket SDK 或公网代理服务。
-
-SOCKS5 的命令范围、监听地址／端口、本机访问认证、域名解析和 UDP 关联生命周期仍待定；这里只确定入口形状，不声明代理已经可用。本机 SOCKS5 使用当前网络的业务权限、DNS 和路由，不能作为绕过准入的直拨通路。
-
-本机权限或 TUN 安装失败不能静默切模式后报告原目标 applied；userspace 不在当前启动参数的可选值中，两种入口的出口能力须分别验证。实现差异不产生服务器／终端节点类别，同一设备一次只启用一张网络。
+内层 IP 业务与外层承载独立：TCP／UDP 业务不据此强制选择同名 transport，实际承载由配置与当前执行许可约束。本机权限或 TUN 安装失败不能静默切换模式后报告原目标 applied。同一设备一次只启用一张网络。
 
 ## CLI 与 IPC
 
@@ -117,17 +98,17 @@ CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件�
 
 up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更的请求身份以恢复不确定结果。本机 revision 与 Server 配置 revision 分开。已接纳命令的持久化由协调器完成，CLI 断开不会撤回它；读取 status 不写入状态或生成测量。
 
-Server HTTP 等待与本机命令处理独立。配置查询通常每 5 秒，实例续租与控制报告通常每 20 秒；真实安装完成、socket／邻接或业务依赖变化还会触发合并后的报告，最多每秒一次。仅观测时间变化不触发新事件，旧报告重试保留原序号／内容／时间，也不确认后来出现的新状态。故障采用有界退避，期限由控制组件独立校验。down 先持久保存本机下线意图，再停止当前资格并尽力释放远端实例；离线时也不能把旧 lease 展示为有效。当前 IPC 不承载业务包。
+daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错。
 
-包事件引起的 circuit 依赖采样在首个待采事件后一秒内合并调度，持续流量不推迟该截止，也不逐包克隆完整 State。明确采样请求、执行生命周期和承载变化仍即时处理；采样调度不延迟包准入／交付或失效检查，实际观测时间以资源 owner 完成采样为准。
+CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除。
+
+## 控制调度与恢复
+
+Server HTTP 等待与本机命令处理独立。配置查询通常每 5 秒，实例续租与控制报告通常每 20 秒；真实安装完成、socket／邻接或业务依赖变化还会触发合并后的报告，最多每秒一次。仅观测时间变化不触发新事件，旧报告重试保留原序号／内容／时间，也不确认后来出现的新状态。故障采用有界退避，期限由控制组件独立校验。down 先持久保存本机下线意图，再停止当前资格并尽力释放远端实例；离线时也不能把旧 lease 展示为有效。当前 IPC 不承载业务包。
 
 期望上线时，网络失败、HTTP 408／429／5xx 按 1–30 秒有界退避自动重试。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。新鲜身份证明遭拒、Server（`controllerId`）／key／目标绑定错误、本机记录损坏仍进入 `blocked`；后台残留请求不能绕过该停止状态。
 
 控制失败日志包含实际 operation、错误类别、HTTP status、已解码的 problem code、Server request ID 和恢复决策；不记录响应原文或凭据。显式 `down` 的清理若失败，在外部冲突解决后重新执行 `down` 会触发新的清理尝试，同请求重放仍保持幂等。
-
-daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错。
-
-CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除。
 
 ## 持久与重建
 
@@ -143,7 +124,7 @@ CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取�
 ## 生命周期
 
 ```text
-取得私有目录／IPC → 启动加载 provider → 接受上线目标
+取得私有目录／IPC → 装配组件与 provider → 接受上线目标
   → 持钥接入与执行目标 → 校验并保存（saved）
   → 先准备底层保护，再安装组件 → applied／failed 与真实 State
 ```
@@ -153,3 +134,11 @@ CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取�
 撤回、期限和 down 独立于挂起的 HTTP 生效。停止准入后取消并等待任务退出；显式 down 清理可证明所属的内核资源与 TUN，期望 up 时的过期／断连／退出保留负向 capture 边界。资源生命周期及 bootstrap 同 IP 隔离见 [Linux underlay](/v2/node/dataplane#linux-underlay)。
 
 崩溃恢复只处理有可验证归属的 journal，不恢复旧流。未知格式或不明归属不能作为删除宿主规则的依据。
+
+## 规划：userspace networking
+
+以下为规划，不是可用功能，`--network-mode` 不接受 userspace：
+
+- 无 TUN，应用通过本机 SOCKS5 接入，由用户态 netstack 处理流量，并接入同一 dataplane，共用身份、准入、端到端保护、完整路径与回复规则。
+- 本机 SOCKS5 使用当前网络的业务权限、DNS 和路由，不能作为绕过准入的直拨通路；不包含应用内 socket SDK 或公网代理服务。
+- 命令范围、监听地址／端口、本机访问认证、域名解析、UDP 关联生命周期、MTU／分片与出口能力尚待定版。

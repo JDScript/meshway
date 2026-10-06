@@ -4,14 +4,12 @@
 
 ## 应用与目录
 
-当前源码结构：
-
 ```text
 apps/
   meshway-server/           # Rust Server
   meshway-daemon/           # binary: meshwayd
   meshway-cli/              # binary: meshway
-  meshway-web-console/     # React pure SPA
+  meshway-web-console/      # React pure SPA
 crates/
   meshway-model/
   meshway-transport-spec/
@@ -38,33 +36,32 @@ crates/
   meshway-tls/
   meshway-transport-vless/
   meshway-transport-trojan/
-tools/meshway-transport-perf/ # 独立运行的性能测量程序
-tools/meshway-packet-fixture/ # 独立运行的隔离 Linux 包流 conformance
-tools/meshway-runtime-fixture/ # 实际 daemon／CLI 与 OS socket conformance
+tools/
+  meshway-static-authority/ # 基准／fixture 的静态执行签发（非生产）
+  meshway-circuit-perf/     # 进程内受保护 circuit CPU 测量（L0）
+  meshway-transport-perf/   # 承载 raw／datagram 对照测量（L1）
+  meshway-dataplane-perf/   # 隔离 Linux TUN 数据面测量（L2）
+  meshway-packet-fixture/   # 隔离 Linux 受保护包流验收
+  meshway-runtime-fixture/  # 实际 daemon／CLI 与 OS socket 验收
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
-scripts/protocol/           # 契约与客户端生成／检查
-scripts/dev.py              # 持久开发服务生命周期
+scripts/                    # 契约生成、开发服务、验收与性能脚本
 mise.toml                   # 工具链版本、workspace 任务与 CI 入口
 references/                 # 独立上游参考 checkout
 ```
+
+daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影；`runtime/control/` 负责调度与单次 Server 控制流程；`runtime/network/` 装配 underlay、Manager、SecureNode、自动需求和安装结果，不另持流表或控制凭据；`ipc/` 负责本机服务和 socket 归属。CLI 的 `arguments`、`commands`、`output` 分别负责参数、等待／退出语义和结果展示，通信使用 `meshway-ipc::Client`。Node 能力范围见 [Node](/v2/node)。
 
 ## 命名规则
 
 **Rust 包根目录名与 `Cargo.toml` 的 package name 相同，统一使用 `meshway-xxx`。** 例如 `crates/meshway-model/Cargo.toml` 定义 `name = "meshway-model"`。
 
-Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名显式声明：`meshway-daemon` → `meshwayd`，`meshway-cli` → `meshway`；Server 目标名为 `meshway-server`。分类目录 `apps`／`crates`、包内 `src`／`tests` 和 Rust 模块仍按职责命名。非 Rust 应用／包遵循其自身包体系。
+Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名显式声明：`meshway-daemon` → `meshwayd`，`meshway-cli` → `meshway`；Server 目标名为 `meshway-server`。分类目录 `apps`／`crates`／`tools`、包内 `src`／`tests` 和 Rust 模块按职责命名。非 Rust 应用／包遵循其自身包体系。
 
-同一包名在 workspace 中唯一。native 薄入口若是独立 Cargo 包，也使用相同目录／包名，例如 `plugins/meshway-plugin-transport-vless`；它不与实现库 `crates/meshway-transport-vless` 共用一个 Cargo 名称。
-
-Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，提供控制接入与 Linux Mesh-only TUN 运行装配。候选实现和验收范围见 [Node](/v2/node)。
-
-daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影；`runtime/control/` 负责调度与单次 Server 控制流程；`runtime/network/` 装配 underlay、Manager、SecureNode、自动需求和安装结果，不另持流表或控制凭据；`ipc/` 负责本机服务和 socket 归属。CLI 的 `arguments`、`commands`、`output` 分别负责参数、等待／退出语义和结果展示，通信使用 `meshway-ipc::Client`。
+同一包名在 workspace 中唯一。规划中的 native 薄入口若成为独立 Cargo 包，将使用独立包名（例如 `meshway-plugin-transport-vless`），不与实现库 `crates/meshway-transport-vless` 共用一个 Cargo 名称。
 
 ## 跨端共享库 {#跨端共享的契约库}
-
-这些库是 Server 和 Node 的共同基础：
 
 | 包名＝目标目录名 | 消费者 | 唯一职责 |
 | --- | --- | --- |
@@ -80,42 +77,38 @@ daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影�
 | `meshway-tls` | Server 材料验证、Node TLS providers | 同一证书／密钥验证、精确叶证书信任、既有流上的 TLS 握手 |
 | `meshway-stun` | Server STUN 服务、Node connectivity | 有界 RFC 8489 Binding 编解码、映射观测与 UDP Service；见[连接获取](/v2/node/connectivity#stun-与-server-协调) |
 
-Server 使用 `policy` 的完整规范化／语义校验入口及编译器；Node 数据面调用它对已发布执行许可的纯判定。Node 无需取得全网配置和秘密后再编译全网。`configuration` 提供规范化阶段的语义 hook，由 `policy` 在同一次处理内注入，保持字段位置、保留依赖和错误优先级；没有 `configuration → policy` 反向依赖或第二套 Access 实现。SQL、账户密码哈希、全局可变容器和平台 I/O 不放进 model。
+Server 使用 `policy` 的完整规范化／语义校验入口及编译器；Node 数据面调用它对已发布执行许可的纯判定，无需取得全网配置和秘密后再编译全网。`configuration` 提供规范化阶段的语义 hook，由 `policy` 在同一次处理内注入，保持字段位置、保留依赖和错误优先级；没有 `configuration → policy` 反向依赖或第二套 Access 实现。SQL、账户密码哈希、全局可变容器和平台 I/O 不放进 model。
+
+Server 验证 VLESS 等配置时使用 `transport-spec`，不链接 Node 的 transport 实现。本机 IPC 不与远端 HTTP 共用 endpoint。
 
 ## Node 内部共享的基础接口
-
-以下接口服务 Node 的实际消费者：
 
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |
 | `meshway-ipc` | daemon、CLI | 本机命令、查询、事件与客户端 |
-| `meshway-authority` | control（签发）、daemon、dataplane、connectivity、underlay、dns、diagnostics、packet-fixture（消费） | `ExecutionSnapshot`、`DataPlaneIdentity`、UTC 高水位 `Clock` 与三重 `Deadline`；只定义绑定与检查，不读存储、不联系 Server |
-| `meshway-transport` | connectivity、dataplane、transport providers | 承载会话、batch／buffer 与背压接口 |
+| `meshway-authority` | control（签发）；daemon、dataplane、connectivity、underlay、dns、diagnostics 及 `tools/` 的 static-authority、packet-fixture（消费） | `ExecutionSnapshot`、`DataPlaneIdentity`、UTC 高水位 `Clock` 与三重 `Deadline`；只定义绑定与检查，不读存储、不联系 Server |
+| `meshway-transport` | connectivity、dataplane、underlay、transport providers | 承载会话、batch／buffer 与背压接口 |
 
-Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它使用 `transport-spec`。本机 IPC 也不与远端 HTTP 共用一套 endpoint。
+`meshway-authority` 的构造入口 `ExecutionSnapshot::issue`／`DataPlaneIdentity::new` 是公开的，但**生产中唯一的签发者是 `meshway-control`**：它把当前 lease、持久私有目标、共享 validity／invalidation 和三重 deadline 绑进快照。`crates/` 内不得出现第二个签发实现；分层基准与 fixture 的静态签发只能位于 `tools/`（`meshway-static-authority`），`meshwayd` 只装配 Control。读取或克隆快照不延长任何期限；该约束由类型保持，签发来源由装配纪律保持。
 
-`meshway-authority` 的构造入口 `ExecutionSnapshot::issue`／`DataPlaneIdentity::new` 是公开的，但**生产中唯一的签发者是 `meshway-control`**：它把当前 lease、持久私有目标、共享 validity／invalidation 和三重 deadline 绑进快照。`crates/` 内不得出现第二个签发实现；分层基准与 fixture 的静态签发只能位于 `tools/`，`meshwayd` 只装配 Control。读取或克隆快照不延长任何期限；该约束由类型保持，签发来源由装配纪律保持。
-
-`meshway-plugin`／`meshway-plugin-host` 是规划中的插件 SDK／装载边界，当前没有对应实现 crate 或可用动态 ABI。
+`meshway-plugin`／`meshway-plugin-host` 是规划中的插件 SDK／装载边界，当前没有对应 crate 或可用动态 ABI，见[插件与能力（规划）](/v2/node/plugins)。
 
 ## Node 组件库
 
-这些是 Node 运行组件，不要求 Server 链接其实现：
+这些是 Node 运行组件，Server 不链接其实现：
 
 | 实际 crate | 实现归属与边界 |
 | --- | --- |
 | `meshway-control` | [接入、执行快照、连续性、回执和报告顺序](/v2/node/control)的唯一生产 owner；使用 authority 类型签发 |
 | `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane)；直接消费 authority |
 | `meshway-diagnostics` | [有界 source 探测调度、单调计时、窗口与结果](/v2/node/diagnostics)；直接消费 authority，借用同一 SecureNode，不持独立连接或密码状态 |
-| `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理)；身份／快照来自 authority，穿透 scope 仍来自 control |
-| `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay)；直接消费 authority，穿透类型来自 control；`Host::open(directory, options)` 打开内核 owner／受保护工厂，`attach_control(origin)` 可选挂接 bootstrap resolver／固定 origin 代理 |
+| `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理)；身份／快照来自 authority，穿透 scope 来自 control |
+| `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay)；直接消费 authority，穿透类型来自 control |
 | `meshway-transport-{udp,tcp,vless,trojan}` | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
 | `meshway-tun` | Linux TUN 设备 I/O |
 | `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal；直接消费 authority |
 
-daemon 已装配 Mesh-only stream／Native UDP 数据面、系统 DNS 与获准诊断；Linux 验收范围见[运行模式](/v2/node/runtime)。出口转发与 `meshway-netstack` 运行库仍待实现。
-
-组件可独立测试，并可被其他宿主复用。native 导出入口只适配共同 ABI，不复制业务、配置或状态模型。私有文件操作确有多个实际消费者时才抽窄存储原语，不为每张表、每个任务、每种状态各建库。
+出口转发与 `meshway-netstack` 运行库尚未实现。
 
 ### 跨入口复用
 
@@ -127,53 +120,65 @@ Node 的每项业务规则和可变状态都有唯一实现归属。多个入口
 | 规则语义、递归路段展开、路径编译与执行许可纯判定 | `meshway-policy` | Server 校验／编译／DNS 可见性、Node 包准入 |
 | 执行快照、lease 时钟与失效代际的类型与检查 | `meshway-authority` | 数据面、DNS 及宿主 I/O 等待／交付检查 |
 | 执行快照的生产签发、连续性交接与 Server 绑定 | `meshway-control` | daemon 装配；基准静态签发限于 `tools/` |
-| 业务准入、端到端保护、路径执行与原路径回复 | `meshway-dataplane` | TUN 和 userspace IP 包入口 |
-| 获准邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan stream、Native UDP 显式端点与协调穿透；连接池待实现 |
+| 业务准入、端到端保护、路径执行与原路径回复 | `meshway-dataplane` | TUN；规划中的 userspace IP 包入口 |
+| 获准邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan stream、Native UDP 显式端点与协调穿透 |
 | 内核 capture／sink、资源归属与用途受限 socket | `meshway-underlay` | Server bootstrap、获准候选、daemon TUN 安装 |
-| 单个承载协议的握手、封装与会话实现 | 对应 `meshway-transport-*` | Rust 调用／协议测试与动态插件导出层 |
-| 业务域名选择、查询与回答生命周期 | `meshway-dns` | loopback UDP／TCP 共用 OwnerDispatcher，daemon 装配系统 DNS；SOCKS5 接线与缓存待实现 |
+| 单个承载协议的握手、封装与会话实现 | 对应 `meshway-transport-*` | Rust 调用、协议测试；规划中的插件导出层 |
+| 业务域名选择、查询与回答生命周期 | `meshway-dns` | loopback UDP／TCP 共用 OwnerDispatcher，daemon 装配系统 DNS |
 | 实际资源、通道、包流和测量事实 | 所属运行组件 | CLI 状态、Node 报告与诊断视图 |
 
-bootstrap 解析与业务 DNS 具有不同启动条件和权限，当前实现见 [Linux underlay](/v2/node/dataplane#linux-underlay)，规划中的插件接口见 [host services](/v2/node/plugins#数据面与-host-services)。Server 事务鉴权、Node 执行准入和 IPC 本机授权分别检查自己的信任边界；共享类型与验证器的复用不取消这些检查。
-
-协议实现位于领域 crate；`apps/` 装配用例，`plugins/` 提供 ABI 薄适配，测试使用生产入口。新增抽象须有明确职责或实际消费者，状态 owner 不因增加一层适配而复制。临时接线在正式入口完成时移除。
+bootstrap 解析与业务 DNS 具有不同启动条件和权限，见 [Linux underlay](/v2/node/dataplane#linux-underlay)。Server 事务鉴权、Node 执行准入和 IPC 本机授权分别检查自己的信任边界；共享类型与验证器的复用不取消这些检查。
 
 ## 依赖方向
 
-```text
-以下简写省略统一的 meshway- 前缀：
+下图列出各包的普通（生产）依赖，省略统一的 `meshway-` 前缀，并省略 `serde` 与 `logging` 两个基础项；其余依赖（含 `tls`、`stun`、`tun`、`transport` 等边界依赖）全部列出。
 
-transport-spec ──► serde
-model ──► serde + transport-spec（测量中的实际承载事实）
+```text
+transport-spec ──► —
+model ──► transport-spec
 configuration ──► model + transport-spec
 policy ──► configuration + model + transport-spec
-protocol ──► model + configuration
+protocol ──► configuration + model
 control-client ──► protocol
+tls ──► transport-spec
+transport ──► transport-spec
+transport-tcp ──► transport + transport-spec
+transport-udp ──► transport + transport-spec
+transport-vless／transport-trojan ──► transport + transport-spec + tls
+ipc ──► model + protocol
 
-Server ──► protocol + configuration + policy + private-storage + 自有领域／存储模块
-authority ──► configuration + policy（邻接许可）+ model + protocol（instance 引用）
-Node control ──► authority（签发）+ control-client + 共享配置／模型 + private-storage
-Node dataplane ──► policy + authority（执行快照）
-Node diagnostics ──► dataplane + authority（执行快照）+ protocol/model（任务与测量）
-Node connectivity ──► dataplane（受保护帧 I/O）+ authority + control（穿透 scope）+ policy + underlay + stun + transport providers
-Node underlay ──► authority + control（穿透类型／origin 校验）+ configuration + private-storage + dns（resolver 接口）+ tun + transport/tcp/udp + transport-spec
-Node DNS ──► policy + configuration + authority（执行快照）+ protocol（发现响应）+ private-storage
-Node providers ──► transport + transport-spec + tls（按协议需要）
-meshwayd ──► control + authority + connectivity + underlay + dataplane + diagnostics + dns + ipc
+Server ──► configuration + model + policy + private-storage + protocol + stun + tls + transport-spec
+authority ──► configuration + model + policy + protocol
+control ──► authority + configuration + control-client + model + policy + private-storage + protocol
+dataplane ──► authority + configuration + model + policy + transport + transport-spec + tun
+diagnostics ──► authority + configuration + dataplane + model + protocol
+dns ──► authority + configuration + model + policy + private-storage + protocol
+underlay ──► authority + configuration + control + dns + model + private-storage
+             + transport + transport-spec + transport-tcp + transport-udp + tun
+connectivity ──► authority + configuration + control + dataplane + model + policy + protocol + stun
+                 + transport + transport-spec + transport-vless + transport-trojan + underlay
+meshwayd ──► authority + configuration + connectivity + control + control-client + dataplane
+             + diagnostics + dns + ipc + model + private-storage + protocol + tun + underlay
 meshway CLI ──► ipc
+
+tools/static-authority ──► authority + configuration + model + policy
+tools/circuit-perf ──► dataplane + static-authority
+tools/transport-perf ──► transport + transport-spec + transport-{tcp,udp,vless,trojan}
+tools/dataplane-perf ──► transport + transport-spec + transport-udp + tun
+tools/packet-fixture ──► authority + configuration + control + control-client + dataplane + model
+                         + policy + protocol + Server + tls + transport + transport-spec + transport-tcp + tun
+tools/runtime-fixture ──► configuration + control-client + dns + ipc + model + packet-fixture
+                          + protocol + Server + transport-spec
 ```
 
-库不反向依赖 App。provider 通过合同交互，不读取另一 provider 的私有容器；Rust 类型依赖不表示允许跨动态库直接传递 Rust 内部对象。
+生产依赖不反向依赖 App。黑盒与生命周期测试可通过 dev-dependency 启动真实 `meshway-server`（control、control-client、dataplane、dns、diagnostics、connectivity），CLI 测试另使用 `meshway-daemon`；`tools/` 的 packet／runtime fixture 以普通依赖链接 Server App。dataplane、DNS 和 diagnostics 的生产消费接口直接依赖 authority；underlay／connectivity 保留 Control 的穿透类型依赖，但打开内核 owner、受保护 socket 和静态邻接不要求创建 Control 或联系 Server。
 
-dataplane、DNS 和 diagnostics 的真实生命周期测试通过 dev-dependency 使用 Control／Server；生产消费接口直接依赖 authority。underlay／connectivity 保留 Control 的穿透类型依赖，但打开内核 owner、受保护 socket 和静态邻接不要求创建 Control 或联系 Server。
+provider 通过合同交互，不读取另一 provider 的私有容器；Rust 类型依赖不表示允许跨动态库直接传递 Rust 内部对象。
 
-## 复用边界 {#旧实现退出与复用}
-
-新 Node 依据本分区实现。引入组件须明确职责、依赖、协议／生命周期约束和行为回归。历史代码可作为经审查的复用材料，但不成为当前合同或目录的约束；运行验证须使用当前 Server 和正式节点生命周期。
-
-## 工程约定
+## 工程约定 {#旧实现退出与复用}
 
 - Rust 使用 Tokio；Server HTTP 使用 Axum，数据库访问见[存储](/v2/storage)。
-- 单文件模块 `foo.rs`，有子模块则 `foo/mod.rs`；私有测试随模块，黑盒测试遵守 Cargo 标准入口。
+- 协议实现位于领域 crate；`apps/` 装配用例，测试使用生产入口。新增抽象须有明确职责或实际消费者，状态 owner 不因增加一层适配而复制。
+- 引入组件须明确职责、依赖、协议／生命周期约束和行为回归。历史代码只作为经审查的复用材料，不成为当前合同或目录的约束。
 - native/FFI 桥接单独审查，业务实现保持安全边界；共享协议不混入 loader 或系统调用。
-- 根 manifest／lock、生成链与联合验收集中维护。完成任务的构建缓存有边界，保留源码与必要证据。
+- 源码组织、测试布局与构建缓存等仓库约定见根目录 `AGENTS.md`。

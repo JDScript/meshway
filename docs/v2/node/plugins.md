@@ -1,6 +1,10 @@
-# 插件与能力
+# 插件与能力（规划）
 
-本文的动态装载／ABI 是已确定的设计方向，尚未实现。当前 daemon 直接链接 Rust 组件与正式 stream providers；实际 crate 和运行边界见[总体结构](/v2/architecture#node-组件库)。规划中的 netstack 与 plugin host 不构成已安装能力。
+::: warning 规划（未实现）
+本页的动态装载、插件 SDK 与 native ABI 是已确定的设计方向，尚未实现，不构成可用接口。
+:::
+
+当前 daemon 直接链接 Rust 组件与正式 transport providers；实际 crate 和运行边界见[总体结构](/v2/architecture#node-组件库)。规划中的 netstack 与 plugin host 不构成已安装能力。
 
 ## 交付与装载
 
@@ -14,25 +18,17 @@
 
 ## 接口
 
-`meshway-plugin` 定义共同 SDK；plugin host 处理装载／生命周期；首版承载接口由 `meshway-transport` 定义。其余组件使用库内的领域接口，后续增加插件种类时再定义对应 ABI。公共描述建议包含 ID、版本、ABI 范围、平台、依赖、capabilities 和 schema 引用，精确编码待定。
+`meshway-plugin` 定义共同 SDK；plugin host 处理装载／生命周期；首版承载接口由 `meshway-transport` 定义。其余组件使用库内的领域接口，后续增加插件种类时再定义对应 ABI。公共描述预计包含 ID、版本、ABI 范围、平台、依赖、capabilities 和 schema 引用，精确编码待定。
 
 Stream／Datagram、发送所有权、背压、取消和连接复用的设计边界见[承载会话](/v2/node/transport)。
 
 Config／State 类型继续由共享库拥有，不用通用 `execute(name, arbitrary JSON)` 替代合同。依赖环和无选择规则的重复 provider 在启动检查中失败；组件不自行加载任意同名库。
 
-## Native ABI
+## Native ABI 约束
 
-建议采用版本化 native ABI。Rust trait object、`Vec`、`String`、Future 和 Tokio 内部值不直接跨动态库边界；Rust 类型依赖不是 ABI 稳定性保证。
+ABI 将版本化。Rust trait object、`Vec`、`String`、Future 和 Tokio 内部值不直接跨动态库边界；Rust 类型依赖不是 ABI 稳定性保证。接口约定需要确定：版本／结构尺寸／入口与兼容判断；不透明句柄的归属与代际；buffer 的借用、转移、释放与有界 batch／背压；异步执行器归属、取消、完成、回调期限与 join；错误与 panic 边界（禁止 Rust unwind 穿过 ABI）。
 
-需要一次明确的接口约定：
-
-- 版本、结构尺寸、入口和兼容判断。
-- 不透明实例／会话／资源句柄的归属与代际。
-- buffer 的借用／转移／释放方，以及有界 batch／背压。
-- 异步执行器归属、取消、完成、回调期限与 join。
-- 错误和 panic 边界，禁止 Rust unwind 穿过 ABI。
-
-loader／导出薄入口是受审 FFI 边界，业务实现保持安全约束。进程内插件按受信代码运行，不提供内存或崩溃隔离；窄 host services 用于表达归属，不声称能安全执行任意第三方代码。
+loader／导出薄入口是受审 FFI 边界，业务实现保持安全约束。进程内插件按受信代码运行，不提供内存或崩溃隔离。
 
 ## 数据面与 host services
 

@@ -9,7 +9,7 @@
 | NodeConfiguration | 从配置与可信依赖编译的节点参数／执行许可 | 由发布和 digest 绑定，不独立编辑 |
 | State | 真实能力、资源、连接、安装结果与观测 | 有来源、实例、序号和期限；不回滚旧运行事实 |
 
-Config 类似 ROM，State 类似 RAM，分别下发；观测历史和恢复依据可以持久化，但不混入管理员配置历史。
+Config 与 State 分别下发；观测历史和恢复依据可以持久化，但不混入管理员配置历史。
 
 ```text
 User ──< Membership >── Network ──< Node

@@ -2,7 +2,7 @@
 
 `meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准的持钥接入、认证、实例／lease、需求与续租、目标保存、安装回执、运行状态上报、UDP 穿透协调与 Node 观察订阅。
 
-daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动与接入)。自动调度和 Linux 网络安装由 daemon 协调；SSE 消费、接入密钥方式和换钥尚未接线。组件校验并传递宿主实际能力与安装结果，不自行证明 applied。
+daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动与接入)。自动调度和 Linux 网络安装由 daemon 协调；组件校验并传递宿主实际能力与安装结果，不自行证明 applied。
 
 ## 接口与顺序
 
@@ -91,10 +91,8 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 远端连接要求 HTTPS；明文 HTTP 仅允许数字 loopback 地址。HTTP builder 由宿主提供并保留其底层 socket／解析保护；生成客户端关闭重定向。原始密钥、兑换码、token、HTTP 响应体和底层错误不会进入组件的普通 Debug／Display 输出。
 
-## 验证
+## 限制
 
-```sh
-mise exec -- cargo test -p meshway-control -p meshway-private-storage --all-targets --locked
-```
+SSE 消费、接入密钥方式和换钥尚未接线。
 
-集成测试启动真实 Server 和独立私有数据库，覆盖批准／兑换、取消、重启恢复、保存／回执、实例释放／重取及永久删除。交付故障在真实事务完成后的 HTTP 响应边界注入，检查兑换与报告重试；它不替代 TUN 或业务包流验收。
+组件测试使用 `mise exec -- cargo test -p meshway-control -p meshway-private-storage --all-targets --locked`，以真实 Server 与独立私有数据库运行；它不替代 TUN 或业务包流验收，见[验收范围](/v2/node/validation)。

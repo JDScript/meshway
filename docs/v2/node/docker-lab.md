@@ -18,7 +18,10 @@
 
 Compose 显式使用 `--network-mode tun`，先 `cap_drop: ALL`，再声明本 namespace 的网络、私有 mount 初始化和系统服务所需 capabilities。`SYS_ADMIN` 只用于创建 private-propagation mount namespace，daemon 与服务子进程启动前从其 bounding set 移除；`SYS_PTRACE` 用于跨 resolved UID 验证真实进程 namespace。保持 `no-new-privileges`，不使用 privileged 或 host network。
 
-PID 1 owner 在私有 mount namespace 中管理 D-Bus、resolved 和 daemon，逆序停止并 join。容器自己的 `/etc` 副本保存在 writable layer，隐藏 Docker 管理的网络文件 bind，原 bind 源不被写入；`/run` 使用容器私有 tmpfs。resolved 提供动态 stub 与 search domains，启动时核对 resolve1 owner PID 和监听契约。bootstrap DNS 显式使用 `1.1.1.1:53`，系统基线上游独立声明为 `1.1.1.1`／`8.8.8.8`。源码修改不代表常驻容器已经部署新程序／参数，实际运行以 versions／status 及接口检查为准。
+- PID 1 owner 在私有 mount namespace 中管理 D-Bus、resolved 和 daemon，逆序停止并 join。
+- 容器自己的 `/etc` 副本保存在 writable layer，隐藏 Docker 管理的网络文件 bind，原 bind 源不被写入；`/run` 使用容器私有 tmpfs。
+- resolved 提供动态 stub 与 search domains，启动时核对 resolve1 owner PID 和监听契约。bootstrap DNS 显式使用 `1.1.1.1:53`，系统基线上游独立声明为 `1.1.1.1`／`8.8.8.8`。
+- 源码修改不代表常驻容器已经部署新程序／参数，实际运行以 versions／status 及接口检查为准。
 
 Node 使用开发服务的对外 Server 地址，批准链接指向本机 Console，地址见[本机服务](/v2/development#本机服务)。以其他入口启动 Server 时须配置 [Console origin](/v2/server#运行参数)，否则 Node 如实显示缺少批准链接。身份绑定仍按[Node 控制组件](/v2/node/control)检查。
 

@@ -72,4 +72,4 @@ Control 以 RPC 开始时的时钟高水位和单调时钟固定已确认的订�
 
 ## 限制
 
-`control-only` 与非 Linux TUN 运行模式返回 unsupported；traffic 测量为 unsupported。验收状态见[验收范围](/v2/node/validation)。
+`traffic` 测量当前为 unsupported；中转 hostname 不额外披露；daemon 重启不恢复旧 CLI ping 意图。验收状态见[验收范围](/v2/node/validation)。

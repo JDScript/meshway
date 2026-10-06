@@ -38,15 +38,14 @@ Console 使用其所属任务运行：
 MESHWAY_CONTROLLER_URL=https://meshway-dev-api.jdscript.dev mise run dev:console
 ```
 
-对外域名只提供 HTTPS 转发。开发启动命令显式发布外部 STUN `dev-public=stun.l.google.com:19302`，由 Node 的实际 UDP socket 查询；该服务及容器配置的 bootstrap DNS `1.1.1.1:53` 都需要实际网络可达。托管 STUN 另需独立、显式配置的 UDP 监听／可达地址；HTTPS 域名可用不证明任何公网 UDP 映射可用。
+对外域名只提供 HTTPS 转发。开发 Server 以 `--stun-server dev-public=stun.l.google.com:19302` 发布外部 STUN，由 Node 的实际 UDP socket 查询，需要实际网络可达；托管 STUN 另需显式的 `--stun-listen`。HTTPS 域名可用不证明任何公网 UDP 映射可用。lab 容器的 bootstrap DNS 见[三节点环境](/v2/node/docker-lab#节点与持久状态)。
 
 ### 生命周期与归属
 
-- `start` 幂等启动或检查健康；缺少 Server 二进制时才构建。`restart` 重启现有程序，`update server` 构建锁定程序后停旧启新。services 的构建同时产出 `meshway-server` 和离线维护工具 `ip-datasets`。这些操作保留整个数据库、私有材料与开发登录文件，不隐式导入或替换部署数据集。
-- 脚本保存真实启动的 argv、tmux 命令、pane、PID、进程启动时间、路径和端口；检查记录、当前进程命令及监听进程树后才能停止。源码中的期望参数改变时，旧记录仍能证明旧进程归属，update 随后按新命令启动。
-- tmux 会话名为 `meshway-server`／`meshway-docs`。缺失或旧格式记录、空启动命令、PID 重用、路径／命令不一致、同名多 pane 会话、外部 listener 均阻断操作。旧手动服务须先按实际进程证据由操作者停止，再用此入口启动；脚本不自动迁移未知进程。
-- 停止只对核验过的进程树发送 SIGINT，超时保留现场。多个工作树共用这些本机端口和会话名，记录中的工作树路径必须匹配。
-- 合并源码、重新编译和更新正在运行的服务是三个独立动作。部署后用 `services status --json` 核对当前服务，再从外部 URL 和 Console 检查实际访问。
+- `start` 幂等启动或检查健康，缺少 Server 二进制时才构建；`restart` 重启现有程序；`update server` 构建锁定程序（同时产出 `meshway-server` 与离线维护工具 `ip-datasets`）后停旧启新。这些操作保留数据库、私有材料与开发登录文件，不隐式导入或替换部署数据集。
+- 脚本记录实际启动命令与进程身份（tmux 会话 `meshway-server`／`meshway-docs`）；记录、进程或工作树路径与预期不符，或端口被外部 listener 占用时，拒绝操作而不迁移未知进程。
+- `stop` 只对核验过的进程树发送 SIGINT，超时保留现场。
+- 合并源码、重新编译和更新正在运行的服务是三个独立动作；部署后用 `services status --json` 核对，再从外部 URL 和 Console 检查实际访问。
 
 ### 显式重置整个开发库
 
@@ -70,11 +69,9 @@ mise run services reset server
 | `carol@example.com` | Member |
 | `dave@example.com` | Member |
 
-账户名称不授予实例全局管理员权限。网络使用 Server 的正常初始配置，没有 seed Node。三节点批准接入后，运行 `mise run node:lab configure` 提交 UDP 与节点间 ICMP 运行配置并保留 Server DNS 意图，见[Ubuntu 三节点环境](/v2/node/docker-lab)。旧账户、网络和 Node 身份属于备份库，原 Node 需要重新接入新网络；reset 不操作 Node 容器或状态卷。
+账户名称不授予实例全局管理员权限。网络使用 Server 的正常初始配置，没有 seed Node；三节点接入后的运行配置见[三节点环境](/v2/node/docker-lab#首次启动)。旧账户、网络和 Node 身份属于备份库，原 Node 需要重新接入新网络；reset 不操作 Node 容器或状态卷。
 
-登录文件的 `server`／`console` 是对外 Server URL 和 Console origin；`email`／`password` 是默认开发登录，`networkId` 是新网络，`accounts` 是上述邮箱到**密码**的映射。若旧文件存在且格式有效，显式 reset 保留这些密码作为 seed；首次创建则生成随机密码。脚本不在命令行参数或普通输出打印密码／token。
-
-旧文件的顶层默认登录可以是另一个旧 Owner，不一定属于四个种子账户；只有顶层邮箱属于这四个账户时，才要求其密码与 `accounts` 中对应值一致。reset 只导入 `accounts` 中精确四个密码，新文件的主登录固定为 `admin@example.com`（Development Owner）；旧非种子 Owner 及原登录文件保留在整库备份中。
+登录文件的 `server`／`console` 是对外 Server URL 和 Console origin；`email`／`password` 是默认开发登录（固定为 `admin@example.com`），`networkId` 是新网络，`accounts` 是上述邮箱到**密码**的映射。若旧文件存在且格式有效，reset 只导入其 `accounts` 中四个种子账户的密码；首次创建则生成随机密码。脚本不在命令行参数或普通输出打印密码／token。
 
 当前 reset 状态保存在 `.meshway/services/server-reset.json`，每次备份另有 `reset.json`；阶段为 `stopping`、`archiving`、`datasets`、`starting`、`seeding`、`complete` 或 `failed`，失败时记录 `failedAt`。journal 的 `datasets` 按种类记录 `sha256`、`source` 和 `installed`；只有对应导入命令成功退出才设为 `true`，`false` 表示未确认完成，不能据此认定失败事务未写入。失败返回非零，保留已有备份、资产快照及部分初始化的新库，不自动重试导入／seed、不自动再次清库。`status` 对未完成 reset 显示 `ready=false`，即使 HTTP 已能响应。
 
@@ -110,8 +107,6 @@ mise run services reset server
 
 归档后、fresh Server 启动前，脚本执行 `target/debug/ip-datasets --data-dir <fresh-path> import --kind <geoip|asn> --file <backup-snapshot> --source=<source>`，通过正式 App owner 导入；不会直接写 SQL，也不在运行中 Server 的数据目录执行导入。内容不符合 MMDB 类型／范围或导入失败时，journal 记录 `failedAt=datasets`，保留现场供检查。
 
-Python 回归验证快照、停服／归档／导入／启动／seed 顺序和失败保留行为；真实数据可用性仍需正式 import 后重启及实际查询验证。维护工具短时打开 App 不代表 Node execution 或真实包流验收。
-
 ## 隔离 Linux 验收与镜像
 
 ```sh
@@ -126,7 +121,13 @@ mise run test:runtime:linux --artifacts /absolute/private/bin --transport native
 
 `--artifacts` 指向 `--build-only` 输出的 `bin` 目录；脚本验证 source manifest、目标架构和二进制摘要，不能把不同源码的产物当作当前结果。各承载／DNS／NAT 组合的验收状态见[验收范围](/v2/node/validation)，daemon／CLI 行为见[运行合同](/v2/node/runtime)。
 
-Ubuntu 基础镜像的唯一声明在 `dev/node-lab/assets.lock.json`。纯内核／packet 验收使用固定 base；完整 runtime 的常规 actors 使用显式 `image-build` 选择的 Ubuntu 工具镜像，并覆盖其 entrypoint，仅运行 fixture。DNS 与穿透需要的额外 OS／pcap 支持分别归 `dev/dns-fixture/`、`dev/traversal-fixture/`；共享软件包下载／依赖解析由 `dev/dns-fixture/build.py` 维护，校验锁定的包索引／软件包摘要后以无网络 Docker build 产出 `image-manifest.json`。具体穿透拓扑与调用参数见 `dev/traversal-fixture/README.md`。这些目录提供 OS、namespace 和证据读取支持，业务行为使用正式 Rust 实现。
+| 目录 | 用途 |
+| --- | --- |
+| `dev/node-lab/assets.lock.json` | Ubuntu 基础镜像的唯一声明；纯内核／packet 验收使用固定 base，完整 runtime 的常规 actors 使用显式 `image-build` 选择的工具镜像并覆盖其 entrypoint |
+| `dev/dns-fixture/` | DNS 场景的额外 OS 支持；`build.py` 维护共享软件包下载／依赖解析，校验锁定的包索引与摘要后以无网络 Docker build 产出 `image-manifest.json` |
+| `dev/traversal-fixture/` | 穿透场景的 NAT 路由器与 pcap 支持；拓扑与调用参数见其 `README.md` |
+
+这些目录只提供 OS、namespace 和证据读取支持，业务行为使用正式 Rust 实现。
 
 DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-manifest /absolute/private/os/image-manifest.json`；`off` 模式不传 DNS 镜像。穿透模式 `--traversal nat` 要求 `--transport native-udp` 和 `--traversal-image-manifest`（以 `dev/dns-fixture/build.py --lock-file dev/traversal-fixture/assets.lock.json` 构建）；`--traversal-fallback` 另预授权 A–R 的 TCP 退路。OS 输出目录由 `--output` 指定，保留锁定输入、下载包和镜像清单；image ID／manifest 本身不代表行为验收成功。
 

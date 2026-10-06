@@ -6,7 +6,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     text: "总体",
     items: [
       { text: "概览", link: "/v2/" },
-      { text: "项目结构与 Shared Crates", link: "/v2/architecture" },
+      { text: "总体结构与 Crates", link: "/v2/architecture" },
       { text: "开发服务、测试与环境", link: "/v2/development" },
       { text: "运行日志", link: "/v2/logging" },
       { text: "数据模型与权威来源", link: "/v2/entities" },
@@ -47,7 +47,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "承载会话与发送边界", link: "/v2/node/transport" },
       { text: "分层性能测量", link: "/v2/node/performance" },
       { text: "连接获取与 UDP 穿透", link: "/v2/node/connectivity" },
-      { text: "插件与能力", link: "/v2/node/plugins" },
+      { text: "插件与能力（规划）", link: "/v2/node/plugins" },
     ],
   },
   {

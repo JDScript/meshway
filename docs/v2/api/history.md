@@ -22,14 +22,14 @@ Node 删除不可恢复；恢复目标含已删除 Node 时拒绝。最终差异
 
 ### ConfigurationRevisionSummary
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `revision` | Revision | 历史版本 |
-| `createdAt` | date-time | 持久提交时间 |
-| `createdBy` | ActivityActor | 真实提交主体 |
-| `cause` | ConfigurationChangeCause | networkCreated／edit／restore／enrollment／nodeDeleted／emailSync／memberRemoved／identityTransition |
-| `rollbackFrom` | Revision? | 回滚来源；不是倒退后的版本号 |
-| `current` | boolean | 是否等于本次读取截点的期望版本 |
+| 字段 | 语义约束（类型以[生成契约](/v2/contracts/openapi.json)为准） |
+| --- | --- |
+| `revision` | 历史版本 |
+| `createdAt` | 持久提交时间 |
+| `createdBy` | 真实提交主体 |
+| `cause` | networkCreated／edit／restore／enrollment／nodeDeleted／emailSync／memberRemoved／identityTransition |
+| `rollbackFrom` | 必填可空；回滚来源，非回滚为 null；不是倒退后的版本号 |
+| `current` | 是否等于本次读取截点的期望版本 |
 
 列表不携带整份 JSONC 或秘密。节点是否应用从 publication／NodeState 查询，不能在 revision 列表写一个缺少范围与来源的全网 applied=true。
 
@@ -39,16 +39,16 @@ cause 表示主触发来源，具体影响由 compare 的 changes 表达。系�
 
 比较默认返回路径／变化类型摘要，不返回任意 JSON before／after 值：
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `requestId` | RequestId | 此次比较请求关联 |
-| `fromRevision` / `toRevision` | Revision | 被比较的确切版本 |
-| `sourceChanged` | boolean | 原始 JSONC 文本或注释是否改变 |
-| `configurationChanged` | boolean | 规范化配置是否改变 |
-| `bindingsChanged` | boolean | 固定用户／资源／数据集绑定是否改变 |
-| `changes` | ConfigurationChange[] | 合法字段路径的变化摘要 |
+| 字段 | 语义约束（类型以[生成契约](/v2/contracts/openapi.json)为准） |
+| --- | --- |
+| `requestId` | 此次比较请求关联 |
+| `fromRevision` / `toRevision` | 被比较的确切版本 |
+| `sourceChanged` | 原始 JSONC 文本或注释是否改变 |
+| `configurationChanged` | 规范化配置是否改变 |
+| `bindingsChanged` | 固定用户／资源／数据集绑定是否改变 |
+| `changes` | 合法字段路径的变化摘要 |
 
-ConfigurationChange 字段为 `path: JsonPointer`、`kind: added | removed | changed`。有序数组重排按数组变化说明，不凭 remark 当主键；秘密字段只报告“已变更”，不把密码或私钥写进差异摘要。完整文本 diff 由获准管理员显式读取两个 source 后查看，脱敏视图不能整份回写。
+ConfigurationChange 包含 `path`（JSON Pointer）与 `kind`（added／removed／changed）。有序数组重排按数组变化说明，不凭 remark 当主键；秘密字段只报告“已变更”，不把密码或私钥写进差异摘要。完整文本 diff 由获准管理员显式读取两个 source 后查看，脱敏视图不能整份回写。
 
 ## 操作历史接口
 
@@ -62,16 +62,16 @@ ConfigurationChange 字段为 `path: JsonPointer`、`kind: added | removed | cha
 
 ### ActivityEvent
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | ActivityId | 不透明记录 ID |
-| `at` | date-time | Server 完成该动作的时间 |
-| `actor` | ActivityActor | 用户或系统 |
-| `action` | ActivityAction | 已知管理动作枚举 |
-| `target` | ActivityTarget | 类型化目标引用，不是任意 metadata |
-| `beforeRevision` | Revision? | 配置变更前版本；不涉及配置则 null |
-| `afterRevision` | Revision? | 配置变更后版本；不涉及配置则 null |
-| `requestId` | RequestId | 同一次逻辑操作的关联，不是授权凭证 |
+| 字段 | 语义约束（类型以[生成契约](/v2/contracts/openapi.json)为准） |
+| --- | --- |
+| `id` | 不透明记录 ID |
+| `at` | Server 完成该动作的时间 |
+| `actor` | 用户或系统 |
+| `action` | 已知管理动作枚举 |
+| `target` | 类型化目标引用，不是任意 metadata |
+| `beforeRevision` | 配置变更前版本；不涉及配置则 null |
+| `afterRevision` | 配置变更后版本；不涉及配置则 null |
+| `requestId` | 同一次逻辑操作的关联，不是授权凭证 |
 
 scope 由所属记录及路径确定。返回时可以按权限投影主体／目标的可读名称，稳定 ID 始终保留；删除或改名不把记录改指向另一个对象。
 
@@ -96,16 +96,12 @@ ActivityTarget 分支为 account(userId, previousEmail)、session(sessionId)、n
 | --- | --- |
 | Revision 列表 | 首次查询时的最大 revision，倒序 keyset 分页 |
 | Activity 列表 | 首次查询时的内部提交序列上界，倒序 keyset 分页 |
-| ObservationHistory | 固定测量时间窗口及接收记录上界，按既定迟到／去重规则查询 |
+| ObservationHistory | 见[观测与历史](/v2/state-reference/observations) |
 
 ActivityListResponse 包含 requestId、items、nextCursor、asOf；ConfigurationRevisionList 另有 currentRevision。cursor 不透明，绑定身份／网络／读取上界；每页重新鉴权，变更身份不能沿用旧 cursor。并发新增记录通过新一轮查询获取。
 
-完整配置版本保留用于恢复。观测历史的裁剪通过 HistoryCoverage 表达，不能用空列表暗示从未有过记录；ActivityListResponse 没有 coverage 字段，不从观测历史类型推导活动保留合同。
+完整配置版本保留用于恢复。ActivityListResponse 没有 coverage 字段，不从观测历史的 HistoryCoverage 推导活动保留合同。
 
 ## SSE 通知
 
-- `configuration.changed` 附新 revision，使版本列表失效；按需重新读取摘要。
-- 操作历史通过 GET 按需重读；不从管理动作名称推断存在对应 SSE 事件。
-- `configuration.progress` 继续表示 Node 应用结果，不当作管理动作提交确认。
-
-SSE 是有界实时通知，持久历史通过 GET 读取；断流不丢失已提交的配置版本／动作记录，重放也不制造新记录。
+`configuration.changed` 附新 revision，使版本列表失效；`configuration.progress` 表示 Node 应用结果，不是管理动作提交确认。操作历史没有对应 SSE 事件，按需通过 GET 重读；断流或重放不丢失也不制造已提交的版本／动作记录，见 [SSE 与初始同步](/v2/api/events)。

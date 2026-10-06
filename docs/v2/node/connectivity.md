@@ -19,7 +19,7 @@ Meshway 共用一套承载会话与受保护数据面，将显式端点建连和
 | transport provider | 在要求的底层连接上完成协议握手、封装与 I/O |
 | `meshway-dataplane` | 唯一业务流表、端到端保护、逐跳证明与原路径回复 |
 
-两类入口不分别维护身份、权限、业务流表或加密状态。候选观测变化不自行修改业务授权；更换物理承载仍须符合当前许可及完整逻辑路径。
+crate 职责总表见[跨入口复用](/v2/architecture#跨入口复用)。两类入口不分别维护身份、权限、业务流表或加密状态。候选观测变化不自行修改业务授权；更换物理承载仍须符合当前许可及完整逻辑路径。
 
 ## Provider 的连接需求
 
@@ -78,10 +78,8 @@ Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发
 
 穿透、NAT 与 TCP 退路的验收状态见[验收范围](/v2/node/validation)。
 
-## MASQUE 范围
+## 规划：MASQUE
 
-MASQUE 后续优先评估 CONNECT-UDP 与现有 datagram 会话的衔接，再决定 CONNECT-IP 的必要范围。HTTP/3 DATAGRAM 与 TCP 上的 Capsule 承载分别报告；通过代理传输不标记为 P2P 直连。
-
-HTTP/3 是标准 Web 协议，但 UDP／443、目标地址、握手元数据、实现指纹及流量形态仍可能被观察；不承诺与浏览器流量不可区分。HTTP 代理／CDN 是否支持 CONNECT-UDP／CONNECT-IP 和 datagram 需真实互通验证。QUIC 或代理 TLS 不替代 Mesh 的端到端保护与业务授权。
+MASQUE 尚未实现。后续优先评估 CONNECT-UDP 与现有 datagram 会话的衔接，再决定 CONNECT-IP 的必要范围；HTTP/3 DATAGRAM 与 TCP 上的 Capsule 承载分别报告，经代理传输不标记为 P2P 直连。HTTP/3 不承诺与浏览器流量不可区分，代理／CDN 的支持需真实互通验证；QUIC 或代理 TLS 不替代 Mesh 的端到端保护与业务授权。
 
 参考：[RFC 8489](https://www.rfc-editor.org/rfc/rfc8489)、[RFC 9297](https://www.rfc-editor.org/rfc/rfc9297)、[RFC 9298](https://www.rfc-editor.org/rfc/rfc9298)、[RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)。

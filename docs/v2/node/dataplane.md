@@ -59,7 +59,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 当前 wire 标识为 `MWCIR\0\0\x04`，Noise prologue、握手证明、会话 KDF 和数据认证有各自的 v4 purpose；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。v3／v4 帧不兼容，完整路径节点需要协调升级；不降级到逐包签名或无认证模式。IPC v3 和 HTTP 契约独立于该 wire 版本。
 
-握手 UUID 使用固定 16-byte 非零 UUID，数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。最大握手帧仍容纳于原 4 KiB 重试缓存。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
+握手 UUID 使用固定 16-byte 非零 UUID，数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。最大握手帧容纳于 4 KiB 握手重试缓存。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
 
 ### 会话密钥与紧凑数据帧
 
@@ -70,6 +70,8 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 5. 对每个后续验证者，发送者从零 tag 开始；每个经过的节点用独立成对方向 key 对 `purpose || SHA256(purpose || frame-base || carrier-prefix) || previous-tag` 做 HMAC-SHA256，取前 16 bytes。验证者用所有此前节点与自己的 keys 按相同顺序重算，常量时间比较自己的 tag。中继验证后移除自己的列，更新其余列。线上 tag 数随剩余节点减少；最多七个。面向诚实验证者，仅持有相邻通道或后续恶意节点的 keys，无法补出被跳过诚实必经点的贡献。每跳验证自己的完整前缀；其他列由对应的后续验证者检查，转发成功不代表终点已验证或交付。此证明要求相应节点参与认证，不证明物理网络地理位置；被攻陷节点可泄露自己的 key。
 
 business 与 diagnostic 共用同一认证实现，probe measurement／deadline 也进入认证 transcript。每包继续执行当前执行资格、permit、实际 carrier、重放与唯一流表检查，最终 I/O 使用原 guard。批量发送不能将这些检查替换为仅一次批次检查。紧凑格式减少封装，但长路径、大 listener key 或较小 underlay MTU 仍可能分片，不能据格式大小宣称所有场景免分片。
+
+### 发送流水线与连续性
 
 运行循环在一次唤醒中最多处理 32 个已就绪 TUN 包或承载事件，并在有界组内推进最多 32 个独立发送。每个发送在入队时捕获实际通道，保留自己的 packet／channel guard、期限、取消与本机完成回执；其中一个 circuit 取消不影响同组其他 circuit 的资格。就绪发送仍执行同步前后检查，只有实际等待时才注册取消等待器。同一轮承载视图仅用于调度，最终发送继续验证实际通道。底层仍逐包 I/O，不将这种调度批量化称为内核 `sendmmsg`／`recvmmsg` 或 GSO 支持。
 
@@ -159,9 +161,9 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 多个系统上游按原顺序在同一查询 ticket／总期限内重试，按剩余上游数量分配剩余时间。网络失败或子期限到达才尝试下一项；权限失效或取消立即停止。UDP→TCP 重试绑定当前选中的上游及其独立 TCP 许可，不借用另一上游的权限。
 
-显式文件代理仅安装本机 stub；没有当前执行许可时，受其接管的普通查询也返回 SERVFAIL，恢复授权后继续，显式 down 恢复原配置。resolved 分域后端未接管的普通解析继续由原系统处理。首期保证覆盖 daemon、lease 失效和进程退出后保留的本机配置；整机重启、系统 resolver 服务停机及应用绕过系统 DNS 的行为随系统服务安装分别验收。
+显式文件代理仅安装本机 stub；没有当前执行许可时，受其接管的普通查询也返回 SERVFAIL，恢复授权后继续，显式 down 恢复原配置。resolved 分域后端未接管的普通解析继续由原系统处理。保证范围覆盖 daemon、lease 失效和进程退出后保留的本机配置；整机重启、系统 resolver 服务停机及应用绕过系统 DNS 的行为不在当前保证范围内。
 
-启动参数见[本机运行](/v2/node/runtime#启动与接入)。系统安装、真实系统解析、持续包流与故障恢复分别验证；库和单独内核测试通过不代表整套后端组合验收完成。安装未完成时仍阻断整体 applied。
+启动参数见[本机运行](/v2/node/runtime#启动与接入)。安装未完成时阻断整体 applied。
 
 ## 验收范围 {#daemon-与内核资源-conformance}
 
