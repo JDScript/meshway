@@ -26,6 +26,7 @@ Server 管理账户、网络隔离、完整配置、授权和执行发布；Node
 | [开发服务、测试与环境](/v2/development) | 如何运行、验证、更新、重置和清理开发环境？ |
 | [Server](/v2/server) | 控制面负责什么，当前实现到哪里？ |
 | [Node](/v2/node) | meshwayd／CLI、网络模式和插件如何组织？ |
+| [设计讨论](/v2/discussions/) | 从包流、封装／加密和固定版本外部源码出发，共同审视下一步设计 |
 | [数据模型](/v2/entities) | Entity、Config、State 的权威来源分别是什么？ |
 | [Configuration](/v2/configuration-reference) | 配置结构、字段、继承与编辑规则是什么？ |
 | [State](/v2/state-reference) | 节点上报什么，如何解释新鲜度与可见范围？ |

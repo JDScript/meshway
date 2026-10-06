@@ -49,6 +49,14 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     ],
   },
   {
+    text: "设计讨论",
+    items: [
+      { text: "讨论入口与问题", link: "/v2/discussions/" },
+      { text: "包流分层、封装与加密", link: "/v2/discussions/packet-layers" },
+      { text: "EasyTier 源码对照", link: "/v2/discussions/easytier" },
+    ],
+  },
+  {
     text: "共享 Configuration 参考",
     collapsed: true,
     items: [
@@ -134,6 +142,7 @@ export default defineConfig({
       { text: "文档", link: "/v2/" },
       { text: "Server", link: "/v2/server" },
       { text: "Node", link: "/v2/node" },
+      { text: "设计讨论", link: "/v2/discussions/" },
       { text: "API", link: "/v2/api" },
     ],
     sidebar: {

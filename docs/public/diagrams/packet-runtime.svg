@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 750" role="img" aria-labelledby="title desc">
+  <title id="title">Meshway 中继稳态包的 owner、队列与 I/O 检查</title>
+  <desc id="desc">UDP 输入经唯一接收 owner、Manager 事件队列和 daemon 调度到 SecureNode 的认证、重放和唯一流表，再经独立发送 future、carrier adapter 和 transport Sender 到受保护 socket。每层框不等于一个线程或一次加密；32 包流水线仍逐包 I/O。原 packet guard 与所选 channel guard 一直约束最后的底层写入。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8" fill="#2563eb"/></marker>
+    <style>text{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;fill:#0f172a}.title{font-size:23px;font-weight:700}.h{font-size:19px;font-weight:650}.t{font-size:17px}.s{font-size:15px;fill:#475569}.box{fill:#fff;stroke:#cbd5e1;stroke-width:1.5}.arrow{stroke:#2563eb;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1120" height="750" rx="18" fill="#f8fafc"/>
+  <text x="30" y="40" class="title">R 上的稳态转发：字节经过哪些 owner？</text>
+  <text x="30" y="68" class="s">框表示职责 / 状态归属，不等于独立线程。Native UDP 示例；中继这条路径不经过 R 的 TUN 明文交付。</text>
+  <rect x="30" y="103" width="310" height="148" rx="12" class="box"/>
+  <text x="50" y="133" class="h">① UDP → Session receiver</text>
+  <text x="50" y="164" class="t">Underlay：受保护物理 I/O</text>
+  <text x="50" y="192" class="t">唯一收取者：完整 datagram</text>
+  <text x="50" y="222" class="s">相邻认证 / health 控制包另行处理</text>
+  <rect x="405" y="103" width="310" height="148" rx="12" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="425" y="133" class="h">② Manager → daemon</text>
+  <text x="425" y="164" class="t">有界事件队列，默认 64</text>
+  <text x="425" y="192" class="t">每轮接收最多 32 个事件</text>
+  <text x="425" y="222" class="s">真实 link / received_at；再验当前通道</text>
+  <rect x="780" y="103" width="310" height="148" rx="12" class="box"/>
+  <text x="800" y="133" class="h">③ Packets → SecureNode</text>
+  <text x="800" y="164" class="t">本机队列总上限 128 包 / 1 MiB</text>
+  <text x="800" y="192" class="t">CID hint 只调度；单次完整 decode</text>
+  <text x="800" y="222" class="s">未知 / 旧资格不借 hint 获得权限</text>
+  <path d="M340 178H405" class="arrow"/><path d="M715 178H780" class="arrow"/>
+  <path d="M935 251V287H185V318" class="arrow"/>
+  <rect x="30" y="318" width="310" height="166" rx="12" fill="#ccfbf1" stroke="#5eead4"/>
+  <text x="50" y="348" class="h">④ 唯一 circuit / Engine / Flow</text>
+  <text x="50" y="379" class="t">验证 MAC / replay / policy / 流</text>
+  <text x="50" y="407" class="t">更新 carrier / MAC 后编码输出</text>
+  <text x="50" y="435" class="t">生成保留原期限的 PendingFrame</text>
+  <text x="50" y="465" class="s">R 不执行 payload Noise 解密 / 加密</text>
+  <rect x="405" y="318" width="310" height="166" rx="12" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="425" y="348" class="h">⑤ 捕获选择 → 独立发送 future</text>
+  <text x="425" y="379" class="t">Manager：实际 link / frozen scope</text>
+  <text x="425" y="407" class="t">最多 32 个；逐项回执 / 取消</text>
+  <text x="425" y="435" class="t">carrier adapter：原 guard 的交集</text>
+  <text x="425" y="465" class="s">就绪走同步前后检查；Pending 才等待</text>
+  <rect x="780" y="318" width="310" height="166" rx="12" class="box"/>
+  <text x="800" y="348" class="h">⑥ Session sender → UDP</text>
+  <text x="800" y="379" class="t">sender mutex / 有界接纳预算</text>
+  <text x="800" y="407" class="t">就绪推进；未完成交原 worker</text>
+  <text x="800" y="435" class="t">Underlay → provider → socket</text>
+  <text x="800" y="465" class="s">逐包系统调用，本机完成 ≠ 对端交付</text>
+  <path d="M340 400H405" class="arrow"/><path d="M715 400H780" class="arrow"/>
+  <rect x="30" y="521" width="1060" height="74" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="50" y="550" class="h">必须跨越等待仍成立的约束</text>
+  <text x="50" y="578" class="t">原 packet / flow / circuit 截止与取消 ＋ 被捕获的 channel scope ＋ 物理资源有效性 → 每次实际 write / flush 前检查</text>
+  <rect x="30" y="616" width="1060" height="104" rx="12" fill="#fff" stroke="#cbd5e1"/>
+  <text x="50" y="646" class="h">这张图引出的性能问题</text>
+  <text x="50" y="675" class="t">哪些字节被重新编码 / 分配？哪里创建 future / waker？同一事实检查了几次？哪一处必须逐包动态判断？</text>
+  <text x="50" y="702" class="s">32 个 send future 不等于一次内核 batch；还需计量 Underlay 每次 poll 的 SO_MARK 读取 / 设置 / 读回检查。</text>
+</svg>

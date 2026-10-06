@@ -1,13 +1,14 @@
 # 网络产品参考源码
 
-拉取日期：2026-09-30。各目录是独立 Git checkout，初次使用 shallow clone；下表记录本次研究实际使用的提交。分支 HEAD 会继续变化，提交 SHA 是本次结论的基线。
+各目录是独立 Git checkout，初次使用 shallow clone；下表记录研究实际使用的提交和拉取日期。分支 HEAD 会继续变化，提交 SHA 是结论基线；上游源码目录不进入主仓库提交。
 
-| 目录 | 上游 | 分支 | 提交 |
-| --- | --- | --- | --- |
-| `tailscale/` | <https://github.com/tailscale/tailscale> | `main` | `ab2380a6312858ccf95451787f33acc9c9fca066` |
-| `headscale/` | <https://github.com/juanfont/headscale> | `main` | `eeaac680bef26585c8cc1569f949e26d0d6aba80` |
-| `sing-box/` | <https://github.com/SagerNet/sing-box> | `testing` | `927770c29f3e3698c711fc150e1066a4a78793a2` |
-| `mihomo/` | <https://github.com/MetaCubeX/mihomo> | `Meta` | `88dcbf7f1614a67c3b36b848ee3592dfa92ada36` |
+| 目录 | 上游 | 分支 | 提交 | 拉取日期 |
+| --- | --- | --- | --- | --- |
+| `tailscale/` | <https://github.com/tailscale/tailscale> | `main` | `ab2380a6312858ccf95451787f33acc9c9fca066` | 2026-09-30 |
+| `headscale/` | <https://github.com/juanfont/headscale> | `main` | `eeaac680bef26585c8cc1569f949e26d0d6aba80` | 2026-09-30 |
+| `sing-box/` | <https://github.com/SagerNet/sing-box> | `testing` | `927770c29f3e3698c711fc150e1066a4a78793a2` | 2026-09-30 |
+| `mihomo/` | <https://github.com/MetaCubeX/mihomo> | `Meta` | `88dcbf7f1614a67c3b36b848ee3592dfa92ada36` | 2026-09-30 |
+| `easytier/` | <https://github.com/EasyTier/Easytier> | `main` | `728ba94b5029240add6204eed591f22e4e039e6b` | 2026-10-06 |
 
 Mihomo 的默认 `main` 在拉取时停留于 2025-02-21，因此额外 fetch 并 checkout 当前更新的 `Meta` 分支。Sing-box 使用上游默认的 `testing` 分支。以上是开发分支快照，不代表稳定发行版。
 
@@ -46,17 +47,29 @@ Mihomo 的默认 `main` 在拉取时停留于 2025-02-21，因此额外 fetch �
 - [`adapter/outbound/base.go`](mihomo/adapter/outbound/base.go):193–218：`dialer-proxy` 通过另一个代理建立连接。
 - [`adapter/outbound/base.go`](mihomo/adapter/outbound/base.go):245–258：连接的 proxy chain 记录。
 
-## 本次研究确认的边界
+### EasyTier：packet、端点会话、中继与 buffer
+
+研究整理与固定提交永久链接见 [EasyTier 源码对照](../docs/v2/discussions/easytier.md)，相关设计问题见[包流分层与加密讨论](../docs/v2/discussions/packet-layers.md)。根 LICENSE 为 GNU LGPL v3；本次只读研究，未构建、运行或复制上游实现到 Meshway。
+
+- [`easytier-core/src/packet/mod.rs`](easytier/easytier-core/src/packet/mod.rs):18–136、331–346、421–450、746–795：16-byte overlay header、28-byte AEAD tail、headroom 与类型转换。
+- [`easytier-core/src/peers/peer_manager.rs`](easytier/easytier-core/src/peers/peer_manager.rs):2505–2858、3010–3196：出站 pipeline、加密、透明 relay 与本地交付。
+- [`easytier-core/src/peers/conn/peer_conn.rs`](easytier/easytier-core/src/peers/conn/peer_conn.rs):689–755、785–1175：secure 的认证等级与直接 Noise XX；[`relay_peer_map.rs`](easytier/easytier-core/src/peers/relay_peer_map.rs):226–379、382–688 为经中继端点 Noise IK 与会话复用。
+- [`easytier-core/src/tunnel/secure_datagram.rs`](easytier/easytier-core/src/tunnel/secure_datagram.rs):391–744：traffic epoch、方向 key、nonce／replay；[`encrypt/ring.rs`](easytier/easytier-core/src/tunnel/encrypt/ring.rs):78–146：就地 AEAD 与空 AAD。
+- [`easytier/src/instance/virtual_nic.rs`](easytier/easytier/src/instance/virtual_nic.rs):46–240、867–923；[`tunnel/mpsc.rs`](easytier/easytier-core/src/tunnel/mpsc.rs):45–108：native buffer 与异步队列／feed／flush。
+- [`easytier/src/tunnel/quic.rs`](easytier/easytier/src/tunnel/quic.rs):93–171、366–484：本提交的自定义 checksum-only QUIC crypto 与 stream framing；不能以 scheme 名推断标准 QUIC AEAD。
+
+## 已核对的比较边界
 
 1. Headscale 是独立的开源控制服务器实现，不是 Tailscale 官方控制面源码。
 2. Tailscale peer relay 是隧道包中继；`grants.via` 是出口/子网路由器/app connector 的路由筛选。二者都不能直接当作任意有序的 `NYC → LAX → SHA` 路径配置。
 3. 域名规则需要 DNS、Fake-IP 或显式代理等输入提供域名上下文；普通 IP 包本身没有域名。
 4. WireGuard、MASQUE CONNECT-IP、MASQUE CONNECT-UDP 和 VMess/VLESS 类代理的承载能力不同，需要显式区分 IP packet、datagram 和 stream。
 5. Proxy chain 的诊断记录不等于操作系统 traceroute 的 IP hop；显示 mesh 中间节点需要转发层处理 TTL/Hop Limit 和 ICMP，或专门设计 overlay 到 IP 的诊断映射。
+6. EasyTier 的传统共享 network-secret 加密、显式 secure pair session 和可选 provider 是不同路径；普通 ciphertext relay 没有发现 Meshway 式完整有序必经点 MAC 证明。小 header、owned buffer 与就地 AEAD 是源码讨论依据，不是同条件吞吐或相同授权语义的证明。
 
 ## 官方文档
 
-[Tailscale 对照](../docs/tailscale-alignment.md)汇总MagicDNS、tags、CLI与连通性依据；Meshway实际交付范围见[当前状态与首版剩余工作](../docs/milestones.md)。研究读取本表固定checkout；没有修改上游源码。
+Meshway 的当前实现与使用入口见 [docs/v2](../docs/v2/index.md)，连通性边界见[连接获取](../docs/v2/node/connectivity.md)。研究读取本表固定 checkout；没有修改上游源码。
 
 - [Tailscale Peer Relays](https://tailscale.com/docs/features/peer-relay)
 - [Tailscale Route filtering with Via](https://tailscale.com/docs/features/access-control/grants/grants-via)

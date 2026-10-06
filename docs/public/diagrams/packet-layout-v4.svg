@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 810" role="img" aria-labelledby="title desc">
+  <title id="title">Meshway v4 数据帧字节账本：1280-byte 内层 IPv4 TCP 包，经一个中继</title>
+  <desc id="desc">R 到 B 的 UDP payload 为 1419 bytes：固定和 PacketFacts 头84 bytes、Noise ciphertext1296 bytes、路径认证后缀39 bytes。外层 IPv4 加 UDP 共28 bytes，总计1447。PacketFacts 在密文之外可见；原完整 IP 包仍在 ciphertext 内。图示块宽不按字节比例。</desc>
+  <defs><style>text{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;fill:#0f172a}.title{font-size:23px;font-weight:700}.h{font-size:19px;font-weight:650}.t{font-size:17px}.s{font-size:15px;fill:#475569}.num{font-size:21px;font-weight:700}.line{stroke:#94a3b8;stroke-width:1.5;fill:none}</style></defs>
+  <rect width="1120" height="810" rx="18" fill="#f8fafc"/>
+  <text x="30" y="40" class="title">线上究竟多了什么？</text>
+  <text x="30" y="68" class="s">R → B · A→R→B · 内层 IPv4/TCP 包 P=1280 · listener key “lab-udp”=7 bytes · 块宽不按比例</text>
+  <text x="30" y="111" class="h">外层 IPv4 packet = 20 + 8 + 1419 = 1447 bytes</text>
+  <rect x="30" y="127" width="115" height="77" rx="8" fill="#dbeafe"/>
+  <text x="87" y="156" text-anchor="middle" class="t">IPv4</text><text x="87" y="186" text-anchor="middle" class="num">20 B</text>
+  <rect x="151" y="127" width="100" height="77" rx="8" fill="#dbeafe"/>
+  <text x="201" y="156" text-anchor="middle" class="t">UDP</text><text x="201" y="186" text-anchor="middle" class="num">8 B</text>
+  <rect x="257" y="127" width="210" height="77" rx="8" fill="#fef3c7"/>
+  <text x="362" y="156" text-anchor="middle" class="t">Mesh header / facts</text><text x="362" y="186" text-anchor="middle" class="num">84 B</text>
+  <rect x="473" y="127" width="388" height="77" rx="8" fill="#ccfbf1"/>
+  <text x="667" y="156" text-anchor="middle" class="t">Noise ciphertext + AEAD tag</text><text x="667" y="186" text-anchor="middle" class="num">1280 + 16 = 1296 B</text>
+  <rect x="867" y="127" width="223" height="77" rx="8" fill="#ede9fe"/>
+  <text x="978" y="156" text-anchor="middle" class="t">carrier 前缀 / MAC</text><text x="978" y="186" text-anchor="middle" class="num">39 B</text>
+  <path d="M257 213v10h833v-10" class="line"/>
+  <text x="674" y="248" text-anchor="middle" class="t">一个 Native UDP payload：完整 MWCIR v4 frame（无额外 u32 transport 长度头）</text>
+  <text x="30" y="292" class="h">展开 header：这些字段在 ciphertext 外，能被中继读取</text>
+  <g fill="#fef3c7" stroke="#fcd34d">
+    <rect x="30" y="310" width="130" height="70" rx="8"/><rect x="167" y="310" width="92" height="70" rx="8"/>
+    <rect x="266" y="310" width="240" height="70" rx="8"/><rect x="513" y="310" width="100" height="70" rx="8"/>
+    <rect x="620" y="310" width="139" height="70" rx="8"/><rect x="766" y="310" width="190" height="70" rx="8"/>
+    <rect x="963" y="310" width="127" height="70" rx="8"/>
+  </g>
+  <g text-anchor="middle" class="t">
+    <text x="95" y="337">magic / v4</text><text x="95" y="364">8 B</text>
+    <text x="213" y="337">kind</text><text x="213" y="364">1 B</text>
+    <text x="386" y="337">CID → 本机已建 context</text><text x="386" y="364">32 B</text>
+    <text x="563" y="337">reply</text><text x="563" y="364">1 B</text>
+    <text x="689" y="337">sequence</text><text x="689" y="364">8 B</text>
+    <text x="861" y="337">PacketFacts</text><text x="861" y="364">30 B</text>
+    <text x="1026" y="337">body length</text><text x="1026" y="364">4 B</text>
+  </g>
+  <text x="30" y="409" class="s">facts：包长、源 / 目的 IP、端口、协议与 TCP seq / ack / flags / payload length；这些信息也存在于加密的原 IP 包中。</text>
+  <text x="30" y="452" class="h">展开路径后缀：已走两条边，只剩终点 B 的验证列</text>
+  <g fill="#ede9fe" stroke="#c4b5fd">
+    <rect x="30" y="470" width="135" height="70" rx="8"/><rect x="172" y="470" width="330" height="70" rx="8"/>
+    <rect x="509" y="470" width="330" height="70" rx="8"/><rect x="846" y="470" width="244" height="70" rx="8"/>
+  </g>
+  <g text-anchor="middle" class="t">
+    <text x="97" y="497">carrier count</text><text x="97" y="524">1 B</text>
+    <text x="337" y="497">A–R 的实际 carrier</text><text x="337" y="524">1 + 1 + 1 + 1 + 7 = 11 B</text>
+    <text x="674" y="497">R–B 的实际 carrier</text><text x="674" y="524">1 + 1 + 1 + 1 + 7 = 11 B</text>
+    <text x="968" y="497">B 的 chained MAC</text><text x="968" y="524">16 B</text>
+  </g>
+  <text x="30" y="569" class="s">carrier：dialer 的 path index、listener 的 path index、protocol、key 长度、key 字节。两条边不必同一拨号方向。</text>
+  <rect x="30" y="600" width="1060" height="175" rx="12" fill="#fff" stroke="#cbd5e1"/>
+  <text x="50" y="630" class="h">会话化已经去掉的重复项，与仍然存在的成本</text>
+  <text x="50" y="660" class="t">数据帧不再携带完整 context / UUID path / key 列表 / Ed25519 签名；CID 只做查找，不授予权限。</text>
+  <text x="50" y="690" class="t">仍有公开 PacketFacts、Noise tag、carrier 前缀和 MAC。MAC 保护元数据，不使元数据保密。</text>
+  <text x="50" y="721" class="t">A → R 有两个未来验证列：1424 B UDP payload；R → B 只剩一列：1419 B。</text>
+  <text x="50" y="751" class="s">不计 Ethernet / VLAN / preamble；TCP、TLS、WebSocket 外层另算。长路径 / 较长 key / 更小 MTU 仍可能分片。</text>
+</svg>
