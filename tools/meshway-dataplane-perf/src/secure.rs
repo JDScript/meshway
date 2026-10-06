@@ -1,6 +1,5 @@
 use crate::{Error, NodeOptions, NodeRole, material};
 use futures_util::FutureExt;
-use meshway_configuration::execution::BusinessProtocol;
 use meshway_dataplane::{
     Packet, carrier,
     secure::{CircuitAuthorization, PendingFrame, Received, SecureNode},
@@ -31,6 +30,9 @@ struct Driver<'a> {
     circuits: BTreeMap<RequestId, [u8; 32]>,
     established: BTreeMap<RequestId, [u8; 32]>,
     ready: bool,
+    /// Kernel housekeeping on the TUN (IGMP, ICMPv6 ND/MLD) that no demand
+    /// carries; counted and dropped like the daemon's capture boundary.
+    unsupported: u64,
 }
 
 pub async fn run(
@@ -94,6 +96,7 @@ pub async fn run(
         circuits: BTreeMap::new(),
         established: BTreeMap::new(),
         ready: false,
+        unsupported: 0,
     };
     let result = tokio::select! { biased;
         _ = stop.cancelled() => Ok(()),
@@ -101,6 +104,10 @@ pub async fn run(
     };
     stop.cancel();
     sender.shutdown().await?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"event":"secure-node-exit","unsupportedTunPackets":driver.unsupported})
+    );
     // Keep both the issuer and SecureNode alive through every final I/O fence.
     drop(driver);
     drop(authority);
@@ -185,17 +192,20 @@ impl Driver<'_> {
     }
 
     async fn outbound(&mut self, sender: &mut Sender, bytes: Vec<u8>) -> Result<(), Error> {
-        let packet = Packet::parse(bytes)?;
+        let Ok(packet) = Packet::parse(bytes) else {
+            self.unsupported += 1;
+            return Ok(());
+        };
         let protocol = packet.facts().traffic.protocol;
-        if !matches!(protocol, BusinessProtocol::Tcp | BusinessProtocol::Udp) {
-            return Err("unexpected iperf packet protocol".into());
-        }
-        let demand = self
+        let Some(demand) = self
             .fixture
             .demands
             .values()
             .find(|demand| demand.protocol == protocol)
-            .ok_or("missing exact demand")?;
+        else {
+            self.unsupported += 1;
+            return Ok(());
+        };
         let circuit = *self
             .established
             .get(&demand.id)
