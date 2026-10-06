@@ -44,7 +44,7 @@ JSON 格式不要求整份 API 读写。typed ops 修改草稿后仍提交完整
 
 执行 publication 的密封 envelope 以 compilerVersion 区分派生格式，当前版本见[编译边界](/v2/execution#编译边界)。读取先验证密封上下文、network／publication／revision／dependencyDigest、节点切片绑定与 digest；当前格式按严格类型解码，失败不降级为旧格式。
 
-Server 仅识别 `meshway-demand-1`／`meshway-demand-2` 为过时派生缓存。启动事务及 publication 消费入口检查其原始完整性与绑定，撤回旧目标并清除相应 execution lease，保留原密封 payload 和历史引用；重新编译从当前源配置与可信依赖产生。账户、配置版本、身份／密钥和需求不会因缓存升级被清除，旧正文也不补新字段充当可执行目标。
+Server 仅识别 `meshway-demand-1`／`meshway-demand-2`／`meshway-demand-3` 为过时派生缓存；demand-3 与当前切片形态相同，按当前规则校验后退役。启动事务及 publication 消费入口检查其原始完整性与绑定，撤回旧目标并清除相应 execution lease，保留原密封 payload 和历史引用；重新编译从当前源配置与可信依赖产生。账户、配置版本、身份／密钥和需求不会因缓存升级被清除，旧正文也不补新字段充当可执行目标。
 
 未知版本、损坏正文、错误绑定或 seal／digest 失败返回错误；启动事务回滚本次失效处理，普通启动不清库。此边界处理派生执行缓存，不构成旧数据库 schema 或旧 HTTP 兼容轨。Node 私有 control 记录的版本升级见[Node 私有存储](/v2/node/control#私有存储与传输)。
 

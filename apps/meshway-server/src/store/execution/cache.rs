@@ -141,7 +141,13 @@ pub(super) fn read(
     {
         return Err(Error::decode("execution cache header"));
     }
-    if envelope.compiler_version == meshway_policy::compile::COMPILER_VERSION {
+    // demand-3 shares the current node configuration shape; only the compiler
+    // (recursive routing) changed, so its slices are checked like current ones
+    // and then retired instead of executed.
+    if matches!(
+        envelope.compiler_version.as_str(),
+        meshway_policy::compile::COMPILER_VERSION | "meshway-demand-3"
+    ) {
         let current: CompiledPublication = decode(plain.as_bytes())?;
         for (node, slice) in &current.nodes {
             let cfg = &slice.configuration;
@@ -155,7 +161,26 @@ pub(super) fn read(
                 return Err(Error::decode("execution cache slice"));
             }
         }
-        return Ok(Stored::Current(current));
+        if current.compiler_version == meshway_policy::compile::COMPILER_VERSION {
+            return Ok(Stored::Current(current));
+        }
+        return Ok(Stored::Obsolete {
+            revision: current.revision,
+            nodes: current
+                .nodes
+                .iter()
+                .map(|(node, slice)| {
+                    (
+                        *node,
+                        ConfigurationRef {
+                            revision: current.revision,
+                            execution_publication: publication,
+                            digest: slice.digest,
+                        },
+                    )
+                })
+                .collect(),
+        });
     }
     if !matches!(
         envelope.compiler_version.as_str(),

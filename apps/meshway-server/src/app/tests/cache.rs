@@ -95,6 +95,30 @@ fn old_publication(
     (serde_json::to_vec(&fields).unwrap(), references)
 }
 
+/// demand-3 kept the current slice shape; only its compiler version differs.
+fn same_shape_publication(
+    current: &CompiledPublication,
+    version: &str,
+) -> (Vec<u8>, BTreeMap<NodeId, ConfigurationRef>) {
+    let mut aged = current.clone();
+    aged.compiler_version = version.to_owned();
+    let references = current
+        .nodes
+        .iter()
+        .map(|(node, slice)| {
+            (
+                *node,
+                ConfigurationRef {
+                    revision: current.revision,
+                    execution_publication: current.publication,
+                    digest: slice.digest,
+                },
+            )
+        })
+        .collect();
+    (serde_json::to_vec(&aged).unwrap(), references)
+}
+
 async fn age(
     app: &App,
     network: NetworkId,
@@ -108,7 +132,11 @@ async fn age(
             params![network.as_uuid().as_bytes().as_slice(), publication.as_uuid().as_bytes().as_slice()], |row| row.get(0)).unwrap();
         let plain = sealer.open_execution(network, publication, &payload).unwrap();
         let compiled: CompiledPublication = serde_json::from_slice(plain.as_bytes()).unwrap();
-        let (old, references) = old_publication(&compiled, &version);
+        let (old, references) = if version == "meshway-demand-3" {
+            same_shape_publication(&compiled, &version)
+        } else {
+            old_publication(&compiled, &version)
+        };
         let sealed = sealer.seal_execution(network, publication, &old).unwrap();
         let tx = db.transaction().unwrap();
         tx.execute("UPDATE execution_publications SET payload=?3 WHERE network_id=?1 AND id=?2",
@@ -179,7 +207,7 @@ async fn startup_retires_only_old_cache_preserves_history_and_reauthenticates_sa
         .await
         .unwrap();
     let old_a = age(&app, network, ap, "meshway-demand-1").await[&a].clone();
-    age(&app, network, bp, "meshway-demand-2").await;
+    age(&app, network, bp, "meshway-demand-3").await;
     let before = app
         .executor
         .handle()
