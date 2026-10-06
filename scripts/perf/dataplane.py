@@ -111,7 +111,12 @@ def summary(metadata):
              "Plain = real TUN + Tokio + production UDP Session, without authentication, encryption, policy or Control.",
              "Medians of successful repeats; profiling=0 is the final throughput reference.",
              "Secure = real SecureNode + guarded carrier adapters + production UDP Session; relay has no TUN.",
+             "wg-direct = kernel WireGuard A-B; wg-relay = A-R/R-B tunnels with R decrypting, routing and re-encrypting (not Meshway ciphertext relay semantics).",
+             "WireGuard has no native mesh relay semantics. It uses kernel multicore workers/softirq and kernel offloads, versus Meshway current-thread userspace nodes.",
+             "WireGuard data overhead is 32 bytes plus padding (excluding outer UDP/IP); Meshway's 139-byte example is IPv4/TCP, two hops, final segment, 7-byte listener keys (direct: 128 bytes). Actual overhead depends on protocol/path/key lengths.",
+             "Raw/WireGuard batch=0 and profile=0 mean not applicable; each kernel reference runs once per traffic/repeat, independently of Meshway batch/profile variants.",
              "CPU is all sample containers' cgroup CPU seconds / full client wall interval ×100 (100%=one core); includes warmup.",
+             "Kernel WireGuard crypto/softirq/kworker CPU may be charged outside these cgroups: total kernel CPU is unmeasured, not zero. Equal container quotas do not bound all kernel work; CPU deltas are cgroup accounting only.",
              "UDP pps is receiver delivered datagrams/s; TCP pps is unmeasured. Raw preserves kernel offloads.", "",
              "| Mode | Batch | Profile 1/N | Traffic | n | Mbps | UDP pps | Loss % | CPU % |",
              "| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |"]
@@ -144,6 +149,22 @@ def summary(metadata):
         base = median(plain, "goodputMbps")
         percent = f"{(median(records, 'goodputMbps')/base-1)*100:+.2f}" if base else "—"
         lines.append(f"| {key[0]} | {key[1]} | {key[2]} | {key[3]} | {delta('goodputMbps')} | {percent} | {delta('cpuPercent')} | {delta('lostPercent')} |")
+    lines.extend(["", "## Meshway secure relative to WireGuard (same run and traffic)", "",
+                  "Secure minus corresponding kernel reference medians (direct/direct, relay/relay); negative throughput means slower. CPU/loss are percentage points. Missing metrics remain unmeasured.",
+                  "The relay comparison changes trust/encryption semantics. CPU subtraction is not a total crypto-cost comparison because kernel work can escape cgroup accounting and quota.",
+                  "| Mode | WG reference | Batch | Profile 1/N | Traffic | Δ Mbps | Δ UDP pps | Δ loss pp | Δ cgroup CPU pp |",
+                  "| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |"])
+    for key, records in sorted(groups.items()):
+        if not key[0].startswith("secure-"):
+            continue
+        reference = key[0].replace("secure-", "wg-", 1)
+        baseline = groups.get((reference, 0, 0, key[3]), [])
+        deltas = []
+        for field in ("goodputMbps", "packetsPerSecond", "lostPercent", "cpuPercent"):
+            left = [r[field] for r in records if r.get(field) is not None]
+            right = [r[field] for r in baseline if r.get(field) is not None]
+            deltas.append(f"{statistics.median(left)-statistics.median(right):+.2f}" if left and right else "—")
+        lines.append(f"| {key[0]} | {reference} | {key[1]} | {key[2]} | {key[3]} | " + " | ".join(deltas) + " |")
     profiles = {}
     for record in metadata["results"]:
         if record["status"] != "ok":
@@ -177,7 +198,7 @@ def summary(metadata):
             guards = calls.get("control.guard")
             value = f"{guards/packets:.2f}" if guards is not None else "—"
             lines.append(f"| {record['directory']} | {guards} | {packets} | {value} |")
-    lines.extend(["", "recvmmsg/sendmmsg and UDP_SEGMENT/UDP_GRO: not implemented; event batches use per-packet syscalls.",
+    lines.extend(["", "Meshway recvmmsg/sendmmsg and UDP_SEGMENT/UDP_GRO: not implemented; event batches use per-packet syscalls. Raw/WireGuard preserve kernel defaults.",
                   f"Failed samples: {sum(r['status'] != 'ok' for r in metadata['results'])}; preserved in results.json, never replaced with zero.",
                   "", "## Provenance", "", "```json",
                   json.dumps({key: metadata.get(key) for key in ("revision", "dirty", "sourceDigest", "binarySha256", "fixtureBinarySha256", "options")}, indent=2), "```",

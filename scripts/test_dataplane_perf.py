@@ -3,8 +3,9 @@ import unittest
 import json
 from pathlib import Path
 import tempfile
+from unittest.mock import patch
 
-from perf.dataplane import last_profile, receiver_metrics, summary
+from perf.dataplane import last_profile, namespace_options, receiver_metrics, summary, wireguard_transfers
 
 
 class DataplaneReportTests(unittest.TestCase):
@@ -79,6 +80,54 @@ class DataplaneReportTests(unittest.TestCase):
                                 "b": [metric("control.guard", 100)]})
         report = summary({"environment": {}, "results": [record]})
         self.assertIn("| secure-relay-sample | 350 | 2 | 175.00 |", report)
+
+    def test_wireguard_delta_pairs_topology_and_traffic_not_meshway_batch(self):
+        common = dict(batch=0, profile=0, traffic="udp", status="ok", goodputMbps=800,
+                      packetsPerSecond=80000, lostPercent=4, cpuPercent=50)
+        report = summary({"environment": {}, "results": [
+            dict(common, mode="wg-direct", goodputMbps=1000),
+            dict(common, mode="wg-direct", goodputMbps=600),
+            dict(common, mode="wg-direct", goodputMbps=0, status="failed"),
+            dict(common, mode="wg-relay", goodputMbps=400, packetsPerSecond=40000),
+            dict(common, mode="wg-direct", traffic="tcp", goodputMbps=9000,
+                 packetsPerSecond=None, lostPercent=None),
+            dict(common, mode="secure-direct", batch=32, goodputMbps=500,
+                 packetsPerSecond=50000, lostPercent=20, cpuPercent=250),
+            dict(common, mode="secure-relay", batch=1, profile=128, goodputMbps=200,
+                 packetsPerSecond=20000, lostPercent=50, cpuPercent=300),
+        ]})
+        self.assertIn("| wg-direct | 0 | 0 | udp | 2 | 800.00 | 80000.00 | 4.00 | 50.00 |", report)
+        self.assertIn("| secure-direct | wg-direct | 32 | 0 | udp | -300.00 | -30000.00 | +16.00 | +200.00 |", report)
+        self.assertIn("| secure-relay | wg-relay | 1 | 128 | udp | -200.00 | -20000.00 | +46.00 | +250.00 |", report)
+        self.assertIn("total kernel CPU is unmeasured, not zero", report)
+
+    def test_missing_wireguard_and_tcp_pps_are_not_zero_deltas(self):
+        common = dict(batch=32, profile=0, traffic="tcp", status="ok", goodputMbps=100,
+                      packetsPerSecond=None, lostPercent=None, cpuPercent=50)
+        report = summary({"environment": {}, "results": [
+            dict(common, mode="secure-direct"), dict(common, mode="secure-relay"),
+            dict(common, mode="wg-direct", batch=0, goodputMbps=400),
+            dict(common, mode="wg-relay", batch=0, status="failed"),
+        ]})
+        self.assertIn("| secure-direct | wg-direct | 32 | 0 | tcp | -300.00 | — | — | +0.00 |", report)
+        self.assertIn("| secure-relay | wg-relay | 32 | 0 | tcp | — | — | — | — |", report)
+
+    def test_wireguard_minimal_namespace_privileges(self):
+        for role in ("a", "b", "r"):
+            options = namespace_options("wg-relay", role)
+            self.assertIn("NET_ADMIN", options)
+            self.assertNotIn("--device", options)
+            self.assertEqual("net.ipv4.ip_forward=1" in options, role == "r")
+        self.assertEqual(namespace_options("secure-relay", "r"), [])
+
+    def test_wireguard_requires_each_hop_bidirectional_authenticated_traffic(self):
+        evidence = {"a": {"wg0": {}}, "r": {"wg0": {}, "wg1": {}}, "b": {"wg0": {}}}
+        with patch("perf.dataplane.command", side_effect=["123 500 600", "123 600 500", "0 0 0"]):
+            with self.assertRaisesRegex(RuntimeError, "handshake or bidirectional"):
+                wireguard_transfers({role: role for role in evidence}, evidence)
+        with patch("perf.dataplane.command", return_value="123 500 600"):
+            wireguard_transfers({role: role for role in evidence}, evidence)
+        self.assertEqual(evidence["r"]["wg1"], dict(handshakeUnixSeconds=123, receivedBytes=500, sentBytes=600))
 
 
 if __name__ == "__main__":
