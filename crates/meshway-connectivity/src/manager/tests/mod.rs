@@ -514,6 +514,123 @@ async fn udp_burst_yields_to_a_one_slot_event_consumer_without_growing_the_queue
 }
 
 #[tokio::test]
+async fn pipelined_owned_sends_keep_independent_circuit_cancellation_and_receipts() {
+    let mut fixture = support::Fixture::new(false, false).await;
+    let ids = fixture.ids();
+    let faults = Arc::new(Faults::default());
+    let factory = Factory::new(&mut fixture, faults.clone());
+    let mut b = Manager::start(
+        fixture.identities[1].clone(),
+        factory.clone(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
+        .await
+        .unwrap();
+    linked(&a, 1, TransportProtocol::NativeUdp).await;
+    linked(&b, 1, TransportProtocol::NativeUdp).await;
+    let mut secure = meshway_dataplane::secure::SecureNode::new(
+        fixture.identities[0].clone(),
+        Default::default(),
+        a.carriers().unwrap(),
+    )
+    .unwrap();
+    let first = secure
+        .start(fixture.demands[0], vec![ids[0], ids[1]])
+        .unwrap();
+    let closed = first.circuit();
+    let second = secure
+        .start(fixture.demands[0], vec![ids[0], ids[1]])
+        .unwrap();
+    let sends = [a.send_with_receipt(first), a.send_with_receipt(second)];
+    let before = faults.writes.load(Ordering::SeqCst);
+    secure.close(closed);
+    let outcomes = tokio::time::timeout(
+        Duration::from_secs(2),
+        futures_util::future::join_all(sends),
+    )
+    .await
+    .unwrap();
+    assert!(outcomes[0].is_err());
+    assert!(outcomes[1].is_ok());
+    assert_eq!(faults.writes.load(Ordering::SeqCst) - before, 1);
+    let (_, received) = frame(&mut b).await;
+    assert!(!received.payload.is_empty());
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn receive_batch_is_bounded_ordered_and_fences_queued_frames_after_control_stop() {
+    let mut fixture = support::Fixture::new(false, false).await;
+    let ids = fixture.ids();
+    let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
+    let limits = Limits {
+        events: 64,
+        session: meshway_transport::Limits::new(128 * 1024, 64, 1024 * 1024, 64, 64).unwrap(),
+        ..Default::default()
+    };
+    let mut b = Manager::start(fixture.identities[1].clone(), factory.clone(), limits)
+        .await
+        .unwrap();
+    let mut a = Manager::start(fixture.identities[0].clone(), factory, limits)
+        .await
+        .unwrap();
+    linked(&a, 1, TransportProtocol::NativeUdp).await;
+    linked(&b, 1, TransportProtocol::NativeUdp).await;
+    while b.events.try_recv().is_ok() {}
+    let (sender, scope, remote) = {
+        let links = a.shared.links.lock().unwrap();
+        let link = &links[&ids[1]];
+        (link.sender.clone(), link.scope.clone(), link.fact.remote)
+    };
+    let mut frames = (0..40u8)
+        .map(|n| Frame::new(vec![0xff, n], Some(remote)))
+        .collect();
+    let admitted = sender.lock().await.try_send(
+        &mut frames,
+        meshway_transport::SendContext {
+            cancellation: scope.cancellation.clone(),
+            deadline: Some(scope.deadline),
+            lifetime: Some(Arc::new(scope)),
+        },
+    );
+    assert_eq!(admitted.accepted, 40);
+    admitted.completion.unwrap().wait().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while b.events.len() < 40 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let first = b.recv_batch().await;
+    assert_eq!(first.len(), 32);
+    let payloads: Vec<_> = first
+        .into_iter()
+        .map(|event| {
+            let Event::Frame { frame, .. } = event else {
+                panic!("authenticated carrier data");
+            };
+            frame.payload
+        })
+        .collect();
+    assert_eq!(
+        payloads,
+        (0..32u8).map(|n| vec![0xff, n]).collect::<Vec<_>>()
+    );
+    assert!(b.events.len() >= 8);
+    fixture.controls[1].stop().await.unwrap();
+    assert!(matches!(b.recv_batch().await.as_slice(), [Event::Closed]));
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn scope_ready_work_keeps_final_fences_and_pending_work_is_polled_once_per_turn() {
     let fixture = support::Fixture::new(false, false).await;
     let snapshot = fixture.identities[0].snapshot().clone();

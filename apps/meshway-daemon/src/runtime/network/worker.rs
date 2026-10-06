@@ -1,4 +1,5 @@
 use super::{Command, Completion, Report, Request, Target, packets::Packets};
+use futures_util::FutureExt as _;
 use meshway_connectivity::{Event, Manager};
 use meshway_dataplane::{Packet, secure::SecureNode};
 use meshway_ipc::{DataPlane, Problem};
@@ -71,8 +72,14 @@ pub(super) async fn run(
             HardExpired,
             DnsTimeout,
             DnsFailure,
-            Packet(Result<usize, meshway_underlay::Error>),
-            Carrier(Event),
+            Packet(
+                Result<
+                    Vec<Result<Packet, meshway_dataplane::PacketError>>,
+                    meshway_underlay::Error,
+                >,
+            ),
+            Carrier(Vec<Event>),
+            CarrierClosed,
             Tick,
             SampleDue,
         }
@@ -115,23 +122,21 @@ pub(super) async fn run(
                 // renewal work. Lifecycle/authority remain the outer priority.
                 tokio::select! {
                     result = async {
-                        match host.tun() { Some(tun) => tun.recv(&mut buffer).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
+                         match host.tun() { Some(tun) => receive_packets(tun, &mut buffer).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
                     }, if live => Work::Packet(result),
                     event = async {
                         match installed.as_mut().and_then(|state| state.manager.as_mut()) {
-                            Some(manager) => manager.recv().await,
+                            Some(manager) => manager.recv_batch().await,
                             None => std::future::pending().await,
                         }
-                    }, if live => Work::Carrier(event),
+                    }, if live => if event.iter().any(|event| matches!(event, Event::Closed)) { Work::CarrierClosed } else { Work::Carrier(event) },
                     _ = async { match wake_at { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::Tick,
                     else => std::future::pending().await,
                 }
             } => work,
         };
-        let structural = matches!(
-            &work,
-            Work::Target | Work::DnsTimeout | Work::Carrier(Event::Changed)
-        );
+        let structural = matches!(&work, Work::Target | Work::DnsTimeout)
+            || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
             Work::SampleDue => {
                 let report = sample(&installed, reports.borrow().clone());
@@ -369,7 +374,7 @@ pub(super) async fn run(
                 reports.send_replace(report);
             }
             Work::Invalid
-            | Work::Carrier(Event::Closed)
+            | Work::CarrierClosed
             | Work::Packet(Err(_))
             | Work::HardExpired
             | Work::DnsFailure => {
@@ -428,7 +433,7 @@ pub(super) async fn run(
                     report.problem = Some(match work {
                         Work::DnsFailure => Problem::Dns,
                         Work::Packet(_) => Problem::Tun,
-                        Work::Carrier(_) => Problem::Transport,
+                        Work::CarrierClosed => Problem::Transport,
                         _ => Problem::Underlay,
                     });
                 }
@@ -437,29 +442,39 @@ pub(super) async fn run(
                 reports.send_replace(report);
                 continue;
             }
-            Work::Packet(Ok(size)) => match Packet::parse(buffer[..size].to_vec()) {
-                Ok(packet) => packets.enqueue(packet),
-                Err(meshway_dataplane::PacketError::Unsupported) => {
-                    packets.drop_packet("unsupported_ip_or_local_control")
-                }
-                Err(_) => packets.drop_packet("malformed_ip"),
-            },
-            Work::Carrier(Event::Frame {
-                link,
-                frame,
-                received_at,
-            }) => {
-                if let Some(state) = &installed {
-                    packets.incoming(
-                        *link,
-                        frame.payload,
-                        received_at,
-                        &state.target,
-                        &state.secure,
-                    );
+            Work::Packet(Ok(received)) => {
+                for packet in received {
+                    match packet {
+                        Ok(packet) => packets.enqueue(packet),
+                        Err(meshway_dataplane::PacketError::Unsupported) => {
+                            packets.drop_packet("unsupported_ip_or_local_control")
+                        }
+                        Err(_) => packets.drop_packet("malformed_ip"),
+                    }
                 }
             }
-            Work::Carrier(Event::Changed) | Work::Tick | Work::DiagnosticSent => {}
+            Work::Carrier(events) => {
+                for event in events {
+                    let Event::Frame {
+                        link,
+                        frame,
+                        received_at,
+                    } = event
+                    else {
+                        continue;
+                    };
+                    if let Some(state) = &installed {
+                        packets.incoming(
+                            *link,
+                            frame.payload,
+                            received_at,
+                            &state.target,
+                            &state.secure,
+                        );
+                    }
+                }
+            }
+            Work::Tick | Work::DiagnosticSent => {}
         }
         if let Some(state) = &mut installed
             && state.live
@@ -504,6 +519,26 @@ pub(super) async fn run(
             });
         }
     }
+}
+
+/// A cancellation-safe TUN read has no read-ahead owner. After the first packet,
+/// drain only immediately-ready reads, bounded to 32; lifecycle work then regains
+/// priority. Packet admission still happens individually in the unique engine.
+async fn receive_packets(
+    tun: &meshway_tun::Tun,
+    buffer: &mut [u8],
+) -> Result<Vec<Result<Packet, meshway_dataplane::PacketError>>, meshway_tun::Error> {
+    let first = tun.recv(buffer).await?;
+    let mut packets = Vec::with_capacity(32);
+    packets.push(Packet::parse(buffer[..first].to_vec()));
+    for _ in 1..32 {
+        let Some(result) = tun.recv(buffer).now_or_never() else {
+            break;
+        };
+        let size = result?;
+        packets.push(Packet::parse(buffer[..size].to_vec()));
+    }
+    Ok(packets)
 }
 
 async fn close(installed: &mut Option<Installed>) {

@@ -25,6 +25,29 @@ const MAX_PACKETS: usize = 128;
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_INTENTS: usize = 64;
 const RETENTION: Duration = Duration::from_secs(20);
+const MAX_SENDS: usize = 32;
+
+// Selection happens at queueing, not when a later poll gets around to the job.
+// Each owned future keeps the formal sender's independent original packet and
+// channel guards; dropping the group cancels each already-admitted operation.
+fn send_job(
+    manager: &Manager,
+    frame: secure::PendingFrame,
+    reason: &'static str,
+) -> impl std::future::Future<
+    Output = (
+        &'static str,
+        Result<meshway_connectivity::SendReceipt, meshway_connectivity::Error>,
+    ),
+> + Send
++ 'static {
+    let send = manager.send_with_receipt(frame);
+    async move {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("manager.send.poll");
+        (reason, PROFILE.poll(send).await)
+    }
+}
 
 struct Queued {
     packet: Packet,
@@ -317,11 +340,12 @@ impl Packets {
         let Some(carriers) = carriers else {
             return;
         };
+        let mut outgoing = Vec::new();
         for _ in 0..self.incoming.len() {
             let Some(item) = self.incoming.pop_front() else {
                 break;
             };
-            if item.deadline <= now || item.guard.ensure_current().is_err() {
+            if item.deadline <= Instant::now() || item.guard.ensure_current().is_err() {
                 self.drop_packet("cipher_deadline");
                 continue;
             }
@@ -372,10 +396,14 @@ impl Packets {
                     }) {
                         diagnostics.forward(manager, frame)
                     } else {
-                        manager.send(frame).await.map_err(|_| ())
+                        outgoing.push(Box::pin(send_job(manager, frame, "cipher_send")));
+                        Ok(())
                     };
                     if sent.is_err() {
                         self.drop_packet("cipher_send");
+                    }
+                    if outgoing.len() == MAX_SENDS {
+                        self.flush_sends(&mut outgoing).await;
                     }
                 }
                 Ok(Received::Established { response: None, .. }) => {}
@@ -406,6 +434,7 @@ impl Packets {
                     }
                 }
                 Ok(Received::Packet(packet)) => {
+                    self.flush_sends(&mut outgoing).await;
                     if packet.hop() != meshway_dataplane::Hop::Deliver {
                         self.drop_packet("unsupported_exit");
                         continue;
@@ -447,6 +476,7 @@ impl Packets {
                 ),
             }
         }
+        self.flush_sends(&mut outgoing).await;
         self.attempts.retain_mut(|attempt| {
             secure
                 .circuit_info(attempt.circuit)
@@ -485,7 +515,7 @@ impl Packets {
             let Some(item) = self.local.pop_front() else {
                 break;
             };
-            if item.deadline <= now {
+            if item.deadline <= Instant::now() {
                 self.drop_packet("packet_deadline");
                 continue;
             }
@@ -601,8 +631,9 @@ impl Packets {
                 match secure.send(circuit.id, item.packet) {
                     Ok(frame) => {
                         self.trace_packet(&frame, &circuit);
-                        if manager.send(frame).await.is_err() {
-                            self.drop_packet("packet_send");
+                        outgoing.push(Box::pin(send_job(manager, frame, "packet_send")));
+                        if outgoing.len() == MAX_SENDS {
+                            self.flush_sends(&mut outgoing).await;
                         }
                     }
                     Err(error) => self.drop_admission("packet_admission", error, Some(demand)),
@@ -635,6 +666,7 @@ impl Packets {
                 self.local.push_back(item);
             }
         }
+        self.flush_sends(&mut outgoing).await;
         for intent in &mut self.intents {
             if let Some(pending) = &mut intent.pending {
                 match pending.try_recv() {
@@ -694,6 +726,22 @@ impl Packets {
                     intent.pending = Some(pending);
                 }
                 intent.retry = now + Duration::from_secs(2);
+            }
+        }
+    }
+
+    async fn flush_sends<F>(&mut self, outgoing: &mut Vec<std::pin::Pin<Box<F>>>)
+    where
+        F: std::future::Future<
+                Output = (
+                    &'static str,
+                    Result<meshway_connectivity::SendReceipt, meshway_connectivity::Error>,
+                ),
+            >,
+    {
+        for (reason, result) in futures_util::future::join_all(outgoing.drain(..)).await {
+            if result.is_err() {
+                self.drop_packet(reason);
             }
         }
     }

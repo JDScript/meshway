@@ -69,6 +69,8 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 business 与 diagnostic 共用同一认证实现，probe measurement／deadline 也进入认证 transcript。每包继续执行当前执行资格、permit、实际 carrier、重放与唯一流表检查，最终 I/O 使用原 guard。批量发送不能将这些检查替换为仅一次批次检查。紧凑格式减少封装，但长路径、大 listener key 或较小 underlay MTU 仍可能分片，不能据格式大小宣称所有场景免分片。
 
+运行循环在一次唤醒中最多处理 32 个已就绪 TUN 包或承载事件，并在有界组内推进最多 32 个独立发送。每个发送在入队时捕获实际通道，保留自己的 packet／channel guard、期限、取消与本机完成回执；其中一个 circuit 取消不影响同组其他 circuit 的资格。就绪发送仍执行同步前后检查，只有实际等待时才注册取消等待器。同一轮承载视图仅用于调度，最终发送继续验证实际通道。底层仍逐包 I/O，不将这种调度批量化称为内核 `sendmmsg`／`recvmmsg` 或 GSO 支持。
+
 诊断使用独立的加密 challenge request／reply，同一 owner 验证原路径和请求关联；不产生业务 FlowTable 准入。实际发送／接收通道、计时、重放与取消边界见[路径诊断](/v2/node/diagnostics)。
 
 `SecureNode::reconcile` 在相同授权、原路径和有效直接交接下保留 Noise／会话 MAC keys、nonce、重放窗口与同一流表。显式授权续租可在旧 UTC／单调期限到达前延长活 circuit 的期限；已关闭／过期 circuit 不复活，握手期限也不由续租重置。已签发输出保留旧 guard；流截止按上节处理。

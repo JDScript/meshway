@@ -836,28 +836,47 @@ impl Manager {
     }
 
     pub async fn recv(&mut self) -> Event {
+        self.receive_events(1).await.pop().expect("one event")
+    }
+
+    /// Drain at most 32 already queued events per wakeup. Each frame receives
+    /// the same current-channel and execution checks as single-event receive.
+    /// The returned facts are observations, not transferable I/O authority.
+    pub async fn recv_batch(&mut self) -> Vec<Event> {
+        self.receive_events(32).await
+    }
+
+    async fn receive_events(&mut self, limit: usize) -> Vec<Event> {
         loop {
-            let event = tokio::select! { biased;
-                _ = self.shared.stop.cancelled() => return Event::Closed,
-                _ = self.shared.identity.snapshot().invalidated() => return Event::Closed,
-                event = self.events.recv() => match event { Some(event) => event, None => return Event::Closed },
+            let mut events = Vec::new();
+            let count = tokio::select! { biased;
+                _ = self.shared.stop.cancelled() => return vec![Event::Closed],
+                _ = self.shared.identity.snapshot().invalidated() => return vec![Event::Closed],
+                count = self.events.recv_many(&mut events, limit) => count,
             };
-            if self.shared.stop.is_cancelled()
+            if count == 0
+                || self.shared.stop.is_cancelled()
                 || self.shared.identity.snapshot().ensure_current().is_err()
             {
-                return Event::Closed;
+                return vec![Event::Closed];
             }
-            if let Event::Frame { link, .. } = &event {
-                let current = self.shared.links.lock().is_ok_and(|links| {
+            events.retain(|event| match event {
+                Event::Frame { link, .. } => self.shared.links.lock().is_ok_and(|links| {
                     links.get(&link.peer).is_some_and(|current| {
                         current.fact.id == link.id && current.scope.check().is_ok()
                     })
-                });
-                if !current {
-                    continue;
-                }
+                }),
+                _ => true,
+            });
+            if self.shared.stop.is_cancelled()
+                || self.shared.identity.snapshot().ensure_current().is_err()
+            {
+                return vec![Event::Closed];
             }
-            return event;
+            if !events.is_empty() {
+                return events;
+            }
+            tokio::task::yield_now().await;
         }
     }
 
