@@ -89,6 +89,7 @@ run = "python3 scripts/perf/transport.py"
 [tasks."perf:circuit"]
 description = "Explicit release in-process protected circuit CPU measurements (L0)"
 run = "python3 scripts/perf/circuit.py"
+
 [tasks."perf:dataplane"]
 description = "Explicit isolated Linux raw/plain TUN dataplane measurements"
 tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
