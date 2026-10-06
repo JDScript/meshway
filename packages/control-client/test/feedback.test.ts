@@ -11,7 +11,7 @@ import {
 } from "../src/index.ts";
 
 test("generated execution and IP lookup failure schemas have independent vocabularies", () => {
-  for (const reason of ["unauthorized", "noPath", "missingCapability", "missingDependency", "missingDns", "invalidProfile", "inactiveNode"]) {
+  for (const reason of ["unauthorized", "noPath", "routingCycle", "routingLimit", "missingCapability", "missingDependency", "missingDns", "invalidProfile", "inactiveNode"]) {
     assert.ok(zDemandDecision.safeParse({ type: "unavailable", reason }).success);
     assert.equal(zLookupResult_AsnData.safeParse({ status: "unavailable", reason }).success, false);
   }

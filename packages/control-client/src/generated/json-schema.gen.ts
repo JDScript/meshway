@@ -13088,6 +13088,8 @@ export const schemaDocument = {
         "enum": [
           "unauthorized",
           "noPath",
+          "routingCycle",
+          "routingLimit",
           "missingCapability",
           "missingDependency",
           "missingDns",

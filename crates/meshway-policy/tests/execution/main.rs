@@ -9,6 +9,7 @@ mod capture;
 mod diagnostics;
 mod dns_egress;
 mod local_egress;
+mod routing;
 fn node(i: u8) -> NodeId {
     format!("00000000-0000-4000-8000-{i:012}").parse().unwrap()
 }
@@ -941,9 +942,11 @@ fn stable_membership_controls_user_groups_topology_and_routing() {
     active.users.insert(email, current);
     let live = run_with_subjects(&c, &inventory(), &ds, &[], &active);
     assert_ne!(inert.dependency_digest, live.dependency_digest);
+    // The group rule chooses 3 for 1→2; the separate 3→2 segment then
+    // matches the wildcard rule and must also traverse 4.
     assert_eq!(
         live.nodes[&node(1)].configuration.permits[&request(1)].paths[0].nodes,
-        vec![node(1), node(3), node(2)]
+        vec![node(1), node(3), node(4), node(2)]
     );
     c.topology.push(TopologyRule {
         remark: String::new(),

@@ -120,7 +120,7 @@ Node 的每项业务规则和可变状态都有唯一实现归属。多个入口
 | 共同逻辑 | 实现归属 | 复用入口 |
 | --- | --- | --- |
 | 上线、下线、网络切换与期望状态协调 | daemon 的运行协调器 | CLI 命令、启动恢复、运行目标变化 |
-| 规则语义、路径编译与执行许可纯判定 | `meshway-policy` | Server 校验／编译／DNS 可见性、Node 包准入 |
+| 规则语义、递归路段展开、路径编译与执行许可纯判定 | `meshway-policy` | Server 校验／编译／DNS 可见性、Node 包准入 |
 | 活动执行快照、lease 时钟与失效代际 | `meshway-control` | 数据面、DNS 及宿主 I/O 等待／交付检查 |
 | 业务准入、端到端保护、路径执行与原路径回复 | `meshway-dataplane` | TUN 和 userspace IP 包入口 |
 | 获准邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan stream、Native UDP 显式端点与协调穿透；连接池待实现 |

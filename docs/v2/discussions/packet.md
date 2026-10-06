@@ -53,7 +53,7 @@ description: 逐字段解释 packet 多带了什么、谁使用它，以及网�
 
 X 是说明用的标识。它在 Data 中占固定空间，节点位置／前后邻居保存在本地；转发到 C 时无需把业务 target 改成 C。验证包自身和当前资格后，各节点按该表执行，回复使用同一会话绑定的反向表。
 
-配置层面，`A→C via B` 与 `A→D via C` 是否递归组合，是**规则求值语义**。当前 [routing.mesh](/v2/configuration-reference/routing#routing-mesh) 按原业务源／最终目标 first-match，不递归展开途经节点的其他 routing 规则；要保证 B、C 都是 A→D 的必经点，应对 A→D 明确指定 `via=[B,C]`。这一点影响路径如何算出，不改变已安装上述路径后可以定长转发的结论。
+配置层面，`A→C via B` 与 `A→D via C` 按 [routing.mesh 的递归路段规则](/v2/configuration-reference/routing#递归路段)展开为 A→B→C→D；各段按实际起终点 first-match，边界已满足，真实循环拒绝。递归求路仍保持原业务 A→D 的身份与 Access。它决定上下文中的完整路径，不要求为递归层数增加 Data 字段。
 
 ### 那么当前为何还有随路径变化的字段
 

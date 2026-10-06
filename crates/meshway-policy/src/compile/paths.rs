@@ -1,4 +1,5 @@
 use super::*;
+use routing::PathError;
 use std::{
     cell::RefCell,
     collections::{BTreeSet, VecDeque},
@@ -22,56 +23,48 @@ impl<'a, 'b> Graph<'a, 'b> {
         &self,
         source: NodeId,
         target: NodeId,
-        via: &[NodeId],
+        via: Option<&[NodeId]>,
         limit: usize,
-    ) -> Result<Vec<LogicalPath>, CompileError> {
-        let mut required = via.to_vec();
-        required.push(target);
-        if required.len() >= MAX_HOPS
-            || required.contains(&source)
-            || required.iter().collect::<BTreeSet<_>>().len() != required.len()
-            || required.iter().any(|id| {
-                !self.input.inventory.contains_key(id)
-                    || self
-                        .input
-                        .configuration
-                        .nodes
-                        .get(id)
-                        .is_none_or(|node| !node.enabled)
-            })
-        {
+    ) -> Result<Vec<LogicalPath>, PathError> {
+        let mut routes = routing::Routes::new(self.input);
+        let required = match via {
+            Some(via) => routes.through(source, target, via)?,
+            None => routes.segment(source, target)?,
+        };
+        if required.iter().any(|id| !self.available(*id)) {
             return Ok(vec![]);
         }
-        let mut queue = VecDeque::from([(vec![source], 0usize)]);
+        let mut queue = VecDeque::from([(vec![source], required)]);
         let mut found = Vec::new();
-        let mut work = 0usize;
-        while let Some((path, next_required)) = queue.pop_front() {
+        let mut truncated = false;
+        'search: while let Some((path, required)) = queue.pop_front() {
             if path.len() >= MAX_HOPS {
                 continue;
             }
             let a = *path.last().ok_or(CompileError::InvalidInput)?;
             // Required waypoint first keeps the common direct case bounded.
-            let candidates = std::iter::once(required[next_required]).chain(
-                self.input
-                    .inventory
-                    .keys()
-                    .copied()
-                    .filter(|n| *n != required[next_required]),
-            );
+            let goal = required[0];
+            let candidates = std::iter::once(goal)
+                .chain(self.input.inventory.keys().copied().filter(|n| *n != goal));
             for b in candidates {
-                work += 1;
-                if work > 16_384 {
-                    return if found.is_empty() {
-                        Err(CompileError::Budget)
-                    } else {
-                        Ok(found)
-                    };
+                if routes.spend().is_err() {
+                    break 'search;
                 }
                 if path.contains(&b)
-                    || required[next_required + 1..].contains(&b)
+                    || required[1..].contains(&b)
+                    || !self.available(b)
                     || !topology_allows(self.input.configuration, self.input.subjects, a, b)
                 {
                     continue;
+                }
+                // A physically possible edge cannot bypass its own routing
+                // requirement, even when introduced by automatic graph search.
+                match routes.segment(a, b) {
+                    Ok(segment) if segment == [b] => {}
+                    Ok(_) | Err(PathError::Cycle) => continue,
+                    Err(PathError::Limit) if routes.exhausted() => break 'search,
+                    Err(PathError::Limit) => continue,
+                    Err(error) => return Err(error),
                 }
                 let ab = transports::candidates(self.input, a, b)?;
                 let ba = transports::candidates(self.input, b, a)?;
@@ -80,18 +73,52 @@ impl<'a, 'b> Graph<'a, 'b> {
                 }
                 let mut extended = path.clone();
                 extended.push(b);
-                let next = next_required + usize::from(b == required[next_required]);
-                if next == required.len() {
+                let mut remaining = if b == goal {
+                    Vec::new()
+                } else {
+                    match routes.segment(b, goal) {
+                        Ok(segment) => segment,
+                        Err(PathError::Cycle) => continue,
+                        Err(PathError::Limit) if routes.exhausted() => break 'search,
+                        Err(PathError::Limit) => continue,
+                        Err(error) => return Err(error),
+                    }
+                };
+                remaining.extend_from_slice(&required[1..]);
+                if extended.len() + remaining.len() > MAX_HOPS
+                    || remaining
+                        .iter()
+                        .any(|id| extended.contains(id) || !self.available(*id))
+                    || remaining.iter().collect::<BTreeSet<_>>().len() != remaining.len()
+                {
+                    continue;
+                }
+                if remaining.is_empty() {
                     found.push(self.materialize(extended)?);
                     if found.len() == limit {
                         return Ok(found);
                     }
                 } else if queue.len() < 2048 {
-                    queue.push_back((extended, next));
+                    queue.push_back((extended, remaining));
+                } else {
+                    truncated = true;
                 }
             }
         }
-        Ok(found)
+        if found.is_empty() && (truncated || routes.exhausted()) {
+            Err(PathError::Limit)
+        } else {
+            Ok(found)
+        }
+    }
+    fn available(&self, node: NodeId) -> bool {
+        self.input.inventory.contains_key(&node)
+            && self
+                .input
+                .configuration
+                .nodes
+                .get(&node)
+                .is_some_and(|n| n.enabled)
     }
     fn materialize(&self, nodes: Vec<NodeId>) -> Result<LogicalPath, CompileError> {
         let mut keys: BTreeMap<NodeId, Vec<String>> = BTreeMap::new();

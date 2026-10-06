@@ -3,6 +3,7 @@
 mod diagnostics;
 mod matching;
 mod paths;
+mod routing;
 mod transports;
 use crate::{SubjectContext, domain_name_matches, domain_suffix_matches, topology_allows};
 pub use matching::profile_allowed;
@@ -10,7 +11,7 @@ use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
 use std::collections::BTreeMap;
 
-pub const COMPILER_VERSION: &str = "meshway-demand-3";
+pub const COMPILER_VERSION: &str = "meshway-demand-4";
 pub const MAX_DEMANDS: usize = 256;
 pub const MAX_PATHS: usize = 4;
 /// Ordered exit candidates have a separate budget from alternatives per exit.
@@ -342,19 +343,7 @@ fn evaluate_with_local(
         ))
     };
     let (targets, via, routing_expiry) = match &demand.target {
-        BusinessTarget::Mesh { node } => {
-            let via = cfg
-                .routing
-                .mesh
-                .iter()
-                .find(|r| {
-                    matching::selectors(cfg, input.subjects, &r.src, demand.source)
-                        && matching::selectors(cfg, input.subjects, &r.dst, *node)
-                })
-                .map(|r| r.via.clone())
-                .unwrap_or_default();
-            (vec![*node], via, demand.expires_at_ms)
-        }
+        BusinessTarget::Mesh { node } => (vec![*node], None, demand.expires_at_ms),
         _ => match match matching::egress_action(input, demand) {
             Ok(action) => action,
             Err(CompileError::UnavailableDependency) => {
@@ -371,7 +360,7 @@ fn evaluate_with_local(
                     .iter()
                     .map(|s| matching::node_selector(s))
                     .collect::<Result<Vec<_>, _>>()?;
-                (targets, via, expires)
+                (targets, Some(via), expires)
             }
         },
     };
@@ -379,11 +368,14 @@ fn evaluate_with_local(
         return unavailable(UnavailableReason::Unauthorized);
     };
     let via = via
-        .iter()
-        .map(|s| matching::node_selector(s))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|via| {
+            via.iter()
+                .map(|s| matching::node_selector(s))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     let mut candidates = Vec::new();
-    let mut exits = Vec::new();
+    let mut reason = UnavailableReason::NoPath;
     if targets.len() > MAX_EXIT_CANDIDATES {
         return Err(CompileError::Budget);
     }
@@ -393,18 +385,17 @@ fn evaluate_with_local(
         }) {
             continue;
         }
-        // Cover ordered exits first, before exploring additional routes to any
-        // one of them. Each exit owns its alternative-path search allocation.
-        if !graph.paths(demand.source, target, &via, 1)?.is_empty() {
-            exits.push(target);
+        // Each ordered exit owns a bounded search. An invalid route produces
+        // no permission, without blocking revocation/publication for other demands.
+        match graph.paths(demand.source, target, via.as_deref(), MAX_PATHS) {
+            Ok(paths) => candidates.extend(paths),
+            Err(routing::PathError::Cycle) => reason = UnavailableReason::RoutingCycle,
+            Err(routing::PathError::Limit) => reason = UnavailableReason::RoutingLimit,
+            Err(routing::PathError::Compile(error)) => return Err(error),
         }
     }
-    for target in exits {
-        // Keep exit priority in the installed result: X's alternatives precede Y.
-        candidates.extend(graph.paths(demand.source, target, &via, MAX_PATHS)?);
-    }
     if candidates.is_empty() {
-        return unavailable(UnavailableReason::NoPath);
+        return unavailable(reason);
     }
     let expires_at_ms = dns_expiry.min(access_expiry).min(routing_expiry);
     Ok((

@@ -596,7 +596,7 @@ export const zPathPermit = z.strictObject({
   ["target"]: zBusinessTarget
 });
 
-export const zUnavailableReason = z.enum(["unauthorized","noPath","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
+export const zUnavailableReason = z.enum(["unauthorized","noPath","routingCycle","routingLimit","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
 
 export const zDemandDecision = z.union([z.strictObject({
   ["permit"]: zPathPermit,

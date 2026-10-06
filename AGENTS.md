@@ -4,6 +4,7 @@
 
 - `apps/meshway-server`：Rust Server；`apps/meshway-web-console`：pure SPA（`@meshway/web-console`）。
 - `crates/meshway-*`：当前共享模型、配置／编译、协议、生成客户端与严格序列化。
+- Mesh routing 由 Policy 按每段实际起终点递归 first-match；via 的段边界视为已满足，真实循环／重复节点拒绝。原业务 Access／身份与原路径回复不改成分段业务；compilerVersion 为 `meshway-demand-4`。配置结构归 Configuration，递归可执行性归 Policy 按需编译，见 `docs/v2/configuration-reference/routing.md`。
 - `packages/`：生成 OpenAPI／TypeScript SDK；`docs/v2/`：当前唯一开发者规范与使用入口。
 - Rust 包根目录和 Cargo 包名统一 `meshway-xxx`。现行 HTTP 根仍是 `/api/v1`／`/agent-api/v1`，目录整理不自行改 wire。
 - Node 已有 `meshwayd`／`meshway`、IPC v3 和唯一 `meshway-control` owner。Linux 默认本机 `--network-mode tun`，可显式选择 `control-only`，失败不回退。Mesh-only TUN capture、Underlay 资源／socket 保护、认证 stream／Native UDP 静态邻接、SecureNode 包流、原子执行刷新、需求／认证续租和真实安装回执已接线。默认 DNS 支持经验证的动态 stub resolved 后端及显式归属的 resolv.conf 代理，独立 DNS 锚点保留至 down；resolver 使用精确执行许可，任何必需组件失败均阻断整体 applied。隔离 Linux 验证覆盖 A→R→B、内层双栈 UDP／TCP、Native TCP／Native UDP、125 秒持续／仅接收流、DNS 实际系统解析／重启恢复、撤销／恢复、lease 失效和离线精确清理；不同承载／DNS 组合按 `docs/v2/node/dataplane.md` 的范围分别验收。owner-only socket 仅允许 root／daemon 同 UID，业务配置归 Server；策略归 policy，唯一流表／Noise／逐跳证明归 dataplane，执行快照及合法连续性交接归 Control。Exit/NAT、出口 resolver／DNS plan、可信外部 DNS association producer、SOCKS5/netstack、切网和插件仍不支持；整机重启／系统 resolver 服务间隙的保护随系统服务安装另验。精确范围见 `docs/v2/node/dataplane.md`、`docs/v2/node/runtime.md`。

@@ -66,7 +66,7 @@ NodeConfiguration 使用 dialers 保存具体获准候选，permits 保存路径
 
 ## 路径与会话
 
-- 每个候选完整路径都满足 access、topology 和 first-match routing，不通过备用路径跳过必经点。
+- 每个候选完整路径都满足原业务 access、topology 和[逐段递归 first-match routing](/v2/configuration-reference/routing#递归路段)，不通过备用路径跳过必经点；路段起点不替代原业务源身份。
 - 当前许可绑定网络、执行发布、认证源身份／地址、业务目的范围和有序 path。
 - 新流可选择不同的获准路径；一经建立／预留的流和回复保留原完整逻辑路径，故障不能偷偷改路。
 - 承载主备可在同一逻辑邻接内切换；源节点自改配置不能让正常接收端认可额外路径或反向新流。
@@ -79,6 +79,6 @@ Server 可复用同一源版本的编译事实，只对合法需求产生有界�
 
 ## 编译边界
 
-当前 policy compilerVersion 为 `meshway-demand-3`。识别出的旧派生缓存失效与历史保留见[执行缓存版本](/v2/storage#执行缓存版本)。
+当前 policy compilerVersion 为 `meshway-demand-4`。识别出的旧派生缓存失效与历史保留见[执行缓存版本](/v2/storage#执行缓存版本)。
 
 编译按网络合并有效需求，出口／每出口路径分别有界；TLS 不相容只排除对应候选，材料缺失不降级。可信 DNS 地址关联及 TTL 参与域名与 IP 需求求值；当前 Server 尚未接入可信 DNS 输入，域名需求因此以缺失依赖结束，见 [Server 当前能力](/v2/server#当前能力)。独立诊断许可不产生普通业务 permit。发布并不表示 Node 已安装或业务连通，运行范围见 [Server](/v2/server) 与 [Node](/v2/node)。

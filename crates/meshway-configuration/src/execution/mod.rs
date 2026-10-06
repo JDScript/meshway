@@ -129,6 +129,10 @@ meshway_serde::string_enum! {
 pub enum UnavailableReason {
     Unauthorized,
     NoPath,
+    /// A recursive routing dependency or repeated required node prevents a path.
+    RoutingCycle,
+    /// The bounded routing expansion or path search cannot complete.
+    RoutingLimit,
     MissingCapability,
     MissingDependency,
     MissingDns,
