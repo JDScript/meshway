@@ -599,8 +599,29 @@ impl Owner {
             });
             match result {
                 Ok(()) => {}
-                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                    meshway_logging::profile::event("manager.udp.drop", "event_full")
+                Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                    // UDP readiness can stay hot while try_send never yields.
+                    // Give the bounded consumer one scheduler turn before
+                    // discarding a burst. Never wait indefinitely here: this
+                    // same driver must continue health/STUN/control processing.
+                    meshway_logging::profile::event("manager.udp", "event_full_yield");
+                    tokio::task::yield_now().await;
+                    if !self.selected(channel) {
+                        meshway_logging::profile::event("manager.udp.drop", "stale_after_yield");
+                    } else {
+                        match self.shared.events.try_send(event) {
+                            Ok(()) => meshway_logging::profile::event(
+                                "manager.udp",
+                                "event_retry_accepted",
+                            ),
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                meshway_logging::profile::event("manager.udp.drop", "event_full")
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                meshway_logging::profile::event("manager.udp.drop", "event_closed")
+                            }
+                        }
+                    }
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     meshway_logging::profile::event("manager.udp.drop", "event_closed")

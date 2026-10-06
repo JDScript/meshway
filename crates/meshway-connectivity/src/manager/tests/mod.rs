@@ -451,6 +451,69 @@ async fn owned_receipt_future_rejects_retained_channel_old_scope_before_first_po
 }
 
 #[tokio::test]
+async fn udp_burst_yields_to_a_one_slot_event_consumer_without_growing_the_queue() {
+    let mut fixture = support::Fixture::new(false, false).await;
+    let ids = fixture.ids();
+    let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
+    let mut b = Manager::start(
+        fixture.identities[1].clone(),
+        factory.clone(),
+        Limits {
+            events: 1,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
+        .await
+        .unwrap();
+    linked(&a, 1, TransportProtocol::NativeUdp).await;
+    linked(&b, 1, TransportProtocol::NativeUdp).await;
+    while b.events.try_recv().is_ok() {}
+    // Register the receiving task before the burst. This test concerns the
+    // authenticated carrier's opaque payload queue, not IP packet admission.
+    assert!(futures_util::poll!(Box::pin(b.recv())).is_pending());
+    let (sender, scope, remote) = {
+        let links = a.shared.links.lock().unwrap();
+        let link = &links[&ids[1]];
+        (link.sender.clone(), link.scope.clone(), link.fact.remote)
+    };
+    let mut frames = (0..4u8)
+        .map(|n| meshway_transport::Frame::new(vec![0xff, n], Some(remote)))
+        .collect::<std::collections::VecDeque<_>>();
+    let admitted = sender.lock().await.try_send(
+        &mut frames,
+        meshway_transport::SendContext {
+            cancellation: scope.cancellation.clone(),
+            deadline: Some(scope.deadline),
+            lifetime: Some(Arc::new(scope)),
+        },
+    );
+    assert_eq!(admitted.accepted, 4);
+    admitted.completion.unwrap().wait().await.unwrap();
+    let received = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut frames = Vec::new();
+        while frames.len() < 4 {
+            if let Event::Frame { frame, .. } = b.recv().await {
+                frames.push(frame.payload);
+            }
+        }
+        frames
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        received,
+        (0..4u8).map(|n| vec![0xff, n]).collect::<Vec<_>>()
+    );
+    assert_eq!(b.events.max_capacity(), 1);
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn real_udp_four_message_loss_shared_listener_and_unpolled_output_fence() {
     let mut fixture = support::Fixture::new(false, false).await;
     let ids = fixture.ids();
