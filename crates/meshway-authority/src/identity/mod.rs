@@ -1,7 +1,7 @@
 //! Scoped cryptographic key operations for the Node's packet plane.
-use crate::{Control, Error, ExecutionSnapshot};
+use crate::{Error, ExecutionSnapshot};
 use ed25519_dalek::{Signer, SigningKey};
-use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId};
+use meshway_model::{BoundNodeKey, Digest, KeyAlgorithm, NetworkId, NodeId, NodePublicKey};
 use std::{fmt, sync::Arc};
 use zeroize::Zeroizing;
 
@@ -10,7 +10,7 @@ struct Material {
     noise: Zeroizing<[u8; 32]>,
 }
 
-/// Key operations tied to the exact live control handoff. Private material is
+/// Key operations tied to the exact live execution handoff. Private material is
 /// never serializable or printable. The host and in-process crypto code remain
 /// trusted; the Noise callback is not a memory-isolation boundary.
 #[derive(Clone)]
@@ -19,33 +19,35 @@ pub struct DataPlaneIdentity {
     material: Arc<Material>,
 }
 
-impl Control {
-    pub fn dataplane_identity(
-        &self,
+impl DataPlaneIdentity {
+    /// Bind private keys to a snapshot whose target registered exactly their
+    /// public halves. The issuer separately proves the snapshot is its current one.
+    pub fn new(
         snapshot: ExecutionSnapshot,
-    ) -> Result<DataPlaneIdentity, Error> {
-        snapshot.ensure_current()?;
-        let current = self.execution_snapshot()?;
-        if !current.same_execution(&snapshot) {
-            return Err(Error::Contract);
-        }
-        let keys = self.record.keys.as_ref().ok_or(Error::Lifecycle)?;
+        signing: SigningKey,
+        noise: Zeroizing<[u8; 32]>,
+    ) -> Result<Self, Error> {
         let cfg = snapshot.configuration()?;
-        if keys.control()? != cfg.self_keys.control_key.public_key
-            || keys.dataplane()? != cfg.self_keys.dataplane_key.public_key
+        let control = NodePublicKey {
+            algorithm: KeyAlgorithm::Ed25519,
+            bytes: Digest::from_bytes(signing.verifying_key().to_bytes()),
+        };
+        let dataplane = NodePublicKey {
+            algorithm: KeyAlgorithm::X25519,
+            bytes: Digest::from_bytes(
+                curve25519_dalek::montgomery::MontgomeryPoint::mul_base_clamped(*noise).to_bytes(),
+            ),
+        };
+        if cfg.self_keys.control_key.public_key != control
+            || cfg.self_keys.dataplane_key.public_key != dataplane
         {
             return Err(Error::Contract);
         }
-        let material = Arc::new(Material {
-            signing: keys.signing_key()?,
-            noise: keys.noise_key()?,
-        });
+        let material = Arc::new(Material { signing, noise });
         snapshot.ensure_current()?;
-        Ok(DataPlaneIdentity { snapshot, material })
+        Ok(Self { snapshot, material })
     }
-}
 
-impl DataPlaneIdentity {
     pub fn snapshot(&self) -> &ExecutionSnapshot {
         &self.snapshot
     }

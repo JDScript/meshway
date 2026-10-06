@@ -1663,6 +1663,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-authority"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "curve25519-dalek",
+ "ed25519-dalek",
+ "meshway-configuration",
+ "meshway-logging",
+ "meshway-model",
+ "meshway-policy",
+ "meshway-protocol",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "zeroize",
+]
+
+[[package]]
 name = "meshway-cli"
 version = "0.1.0"
 dependencies = [
@@ -1750,6 +1768,7 @@ dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "meshway-authority",
  "meshway-configuration",
  "meshway-control-client",
  "meshway-logging",
@@ -1834,6 +1853,7 @@ dependencies = [
  "hickory-proto",
  "hkdf",
  "hmac",
+ "meshway-authority",
  "meshway-configuration",
  "meshway-control",
  "meshway-control-client",

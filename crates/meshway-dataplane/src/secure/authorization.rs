@@ -1,6 +1,6 @@
 use super::{CircuitAuthorization, Error, crypto};
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::NodeConfiguration;
-use meshway_control::ExecutionSnapshot;
 use meshway_model::{Digest, NodeId};
 use meshway_policy::admission::{admit_circuit_handshake, circuit_permit};
 

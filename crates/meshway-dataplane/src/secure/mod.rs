@@ -27,8 +27,8 @@ use crate::{
     AuthenticatedPeer, Direction, Engine, Hop, Ingress, Packet, PendingAction, PendingRoute,
 };
 use codec::{Context, Frame, Kind};
+use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot};
 pub use meshway_configuration::execution::CircuitAuthorization;
-use meshway_control::{DataPlaneIdentity, ExecutionSnapshot};
 use meshway_model::{NodeId, RequestId};
 pub use meshway_policy::admission::Carrier;
 use meshway_policy::admission::{admit_circuit_carrier, admit_circuit_handshake, circuit_permit};
@@ -1475,7 +1475,7 @@ impl SecureNode {
             .ensure_current()
             .map_err(|_| Error::Authority)?;
         self.engine.local_flow(packet).map_err(|error| match error {
-            crate::Error::Control(_) => Error::Authority,
+            crate::Error::Authority(_) => Error::Authority,
             crate::Error::Flow => Error::Flow,
             crate::Error::Expired => Error::Expired,
             _ => Error::Packet,

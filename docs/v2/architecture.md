@@ -21,6 +21,7 @@ crates/
   meshway-control-client/
   meshway-serde/
   meshway-private-storage/
+  meshway-authority/
   meshway-control/
   meshway-connectivity/
   meshway-stun/
@@ -88,9 +89,12 @@ Server 使用 `policy` 的完整规范化／语义校验入口及编译器；Nod
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |
 | `meshway-ipc` | daemon、CLI | 本机命令、查询、事件与客户端 |
+| `meshway-authority` | control（签发）、dataplane、connectivity、underlay、dns、diagnostics（消费） | `ExecutionSnapshot`、`DataPlaneIdentity`、UTC 高水位 `Clock` 与三重 `Deadline`；只定义绑定与检查，不读存储、不联系 Server |
 | `meshway-transport` | connectivity、dataplane、transport providers | 承载会话、batch／buffer 与背压接口 |
 
 Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它使用 `transport-spec`。本机 IPC 也不与远端 HTTP 共用一套 endpoint。
+
+`meshway-authority` 的构造入口 `ExecutionSnapshot::issue`／`DataPlaneIdentity::new` 是公开的，但**生产中唯一的签发者是 `meshway-control`**：它把当前 lease、持久私有目标、共享 validity／invalidation 和三重 deadline 绑进快照。`crates/` 内不得出现第二个签发实现；分层基准与 fixture 的静态签发只能位于 `tools/`，`meshwayd` 只装配 Control。读取或克隆快照不延长任何期限；该约束由类型保持，签发来源由装配纪律保持。
 
 `meshway-plugin`／`meshway-plugin-host` 是规划中的插件 SDK／装载边界，当前没有对应实现 crate 或可用动态 ABI。
 
@@ -121,7 +125,8 @@ Node 的每项业务规则和可变状态都有唯一实现归属。多个入口
 | --- | --- | --- |
 | 上线、下线、网络切换与期望状态协调 | daemon 的运行协调器 | CLI 命令、启动恢复、运行目标变化 |
 | 规则语义、递归路段展开、路径编译与执行许可纯判定 | `meshway-policy` | Server 校验／编译／DNS 可见性、Node 包准入 |
-| 活动执行快照、lease 时钟与失效代际 | `meshway-control` | 数据面、DNS 及宿主 I/O 等待／交付检查 |
+| 执行快照、lease 时钟与失效代际的类型与检查 | `meshway-authority` | 数据面、DNS 及宿主 I/O 等待／交付检查 |
+| 执行快照的生产签发、连续性交接与 Server 绑定 | `meshway-control` | daemon 装配；基准静态签发限于 `tools/` |
 | 业务准入、端到端保护、路径执行与原路径回复 | `meshway-dataplane` | TUN 和 userspace IP 包入口 |
 | 获准邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan stream、Native UDP 显式端点与协调穿透；连接池待实现 |
 | 内核 capture／sink、资源归属与用途受限 socket | `meshway-underlay` | Server bootstrap、获准候选、daemon TUN 安装 |
@@ -146,8 +151,9 @@ protocol ──► model + configuration
 control-client ──► protocol
 
 Server ──► protocol + configuration + policy + private-storage + 自有领域／存储模块
-Node control ──► control-client + 共享配置／模型 + private-storage
-Node dataplane ──► policy + control（执行快照）
+authority ──► configuration + policy（邻接许可）+ model + protocol（instance 引用）
+Node control ──► authority（签发）+ control-client + 共享配置／模型 + private-storage
+Node dataplane ──► policy + authority（执行快照）
 Node diagnostics ──► dataplane + control（执行快照）+ protocol/model（任务与测量）
 Node connectivity ──► dataplane（受保护帧 I/O）+ control + policy + underlay + stun + transport providers
 Node underlay ──► control + configuration + private-storage + dns（bootstrap wire）+ tun + transport/tcp/udp + transport-spec

@@ -153,7 +153,7 @@ impl Control {
         }
         let deadline = match Deadline::from_response(started, response.expires_at_ms) {
             Ok(deadline) => deadline,
-            Err(Error::Expired) => {
+            Err(meshway_authority::Error::Expired) => {
                 // An idempotent replay retains its original Server expiry. Once
                 // proven expired it cannot be recovered by another challenge;
                 // allow the next call to issue a genuinely new session intent.
@@ -170,7 +170,7 @@ impl Control {
             }
             Err(error) => {
                 self.reject_authentication();
-                return Err(error);
+                return Err(error.into());
             }
         };
         // The exclusive Control borrow keeps identity/instance ownership fixed

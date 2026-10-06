@@ -6,13 +6,10 @@
 #![forbid(unsafe_code)]
 
 mod authority;
-mod clock;
 pub mod connectivity;
 mod runtime;
+pub use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot, packet_proof_message};
 pub use runtime::ApplicationTicket;
-mod dataplane_identity;
-pub use authority::ExecutionSnapshot;
-pub use dataplane_identity::{DataPlaneIdentity, packet_proof_message};
 mod demand;
 mod dns;
 mod enrollment;
@@ -23,7 +20,7 @@ pub use observations::ObservationLease;
 mod session;
 mod storage;
 
-use clock::{Clock, Deadline, Started};
+use meshway_authority::{Clock, Deadline, Started, now, reference};
 use meshway_configuration::execution::CompiledNode;
 use meshway_control_client::{Client, ClientError};
 use meshway_model::{ConfigurationRef, state::Capability};
@@ -68,6 +65,15 @@ pub enum Error {
     Expired,
     #[error("Server operation failed: {0}")]
     Server(#[from] ClientError<ErrorResponse>),
+}
+
+impl From<meshway_authority::Error> for Error {
+    fn from(error: meshway_authority::Error) -> Self {
+        match error {
+            meshway_authority::Error::Expired => Self::Expired,
+            meshway_authority::Error::Contract => Self::Contract,
+        }
+    }
 }
 
 /// Public facts only. Cached configuration is not execution authority.
@@ -417,21 +423,8 @@ impl Drop for Control {
 #[cfg(test)]
 mod tests;
 
-fn now() -> Result<u64, Error> {
-    chrono::Utc::now()
-        .timestamp_millis()
-        .try_into()
-        .map_err(|_| Error::Expired)
-}
 fn random_id() -> Result<uuid::Uuid, Error> {
     let mut bytes = [0; 16];
     getrandom::fill(&mut bytes).map_err(|_| Error::Cryptography)?;
     Ok(uuid::Builder::from_random_bytes(bytes).into_uuid())
-}
-fn reference(target: &CompiledNode) -> ConfigurationRef {
-    ConfigurationRef {
-        revision: target.configuration.revision,
-        execution_publication: target.configuration.publication,
-        digest: target.digest,
-    }
 }

@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) struct Clock {
+pub struct Clock {
     born: Instant,
     offset: AtomicU64,
     changed: tokio::sync::Notify,
@@ -36,14 +36,14 @@ impl Clock {
         }
         offset.checked_add(elapsed).ok_or(Error::Expired)
     }
-    pub(super) fn now(&self) -> Result<u64, Error> {
+    pub fn now(&self) -> Result<u64, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::detail("control.clock", 2);
         let _profile = PROFILE.enter();
         self.observe(now()?, Instant::now())
     }
 
-    pub(super) async fn wait_until(
+    pub async fn wait_until(
         &self,
         monotonic: Instant,
         wall: u64,
@@ -72,8 +72,9 @@ impl Clock {
     }
 }
 
+/// The moment a request left, so a response deadline excludes transit time.
 #[derive(Clone)]
-pub(super) struct Started {
+pub struct Started {
     wall: u64,
     monotonic: Instant,
     clock: Arc<Clock>,
@@ -87,15 +88,18 @@ impl Started {
             clock: Arc::clone(clock),
         })
     }
+    pub fn wall(&self) -> u64 {
+        self.wall
+    }
 }
 #[derive(Clone)]
-pub(super) struct Deadline {
+pub struct Deadline {
     wall: u64,
     monotonic: Instant,
     clock: Arc<Clock>,
 }
 impl Deadline {
-    pub(super) async fn ended(&self, cancelled: &tokio_util::sync::CancellationToken) {
+    pub async fn ended(&self, cancelled: &tokio_util::sync::CancellationToken) {
         self.clock
             .wait_until(self.monotonic, self.wall, cancelled)
             .await;

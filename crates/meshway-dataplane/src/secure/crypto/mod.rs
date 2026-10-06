@@ -4,8 +4,8 @@ use super::{
 };
 use crate::{Packet, PacketFacts};
 use ed25519_dalek::{Signature, VerifyingKey};
+use meshway_authority::{DataPlaneIdentity, packet_proof_message};
 use meshway_configuration::execution::{LogicalPath, NodeConfiguration};
-use meshway_control::{DataPlaneIdentity, packet_proof_message};
 use meshway_model::{BoundNodeKey, Digest, KeyAlgorithm, NodeId};
 use meshway_policy::admission::{Carrier, admit_circuit_carrier, circuit_permit, path_carrier};
 use sha2::{Digest as _, Sha256};

@@ -11,7 +11,7 @@ meshway-configuration = { path = "../meshway-configuration" }
 meshway-policy = { path = "../meshway-policy" }
 meshway-model = { path = "../meshway-model" }
 meshway-transport-spec = { path = "../meshway-transport-spec" }
-meshway-control = { path = "../meshway-control" }
+meshway-authority = { path = "../meshway-authority" }
 meshway-transport = { path = "../meshway-transport" }
 meshway-tun = { path = "../meshway-tun" }
 thiserror.workspace = true
@@ -30,6 +30,7 @@ getrandom.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+meshway-control = { path = "../meshway-control" }
 axum.workspace = true
 meshway-control-client = { path = "../meshway-control-client" }
 meshway-protocol = { path = "../meshway-protocol" }

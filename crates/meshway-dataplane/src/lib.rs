@@ -19,7 +19,7 @@ mod flow;
 mod packet;
 
 use flow::{CommittedRoute, FlowTable, FlowTime};
-use meshway_control::ExecutionSnapshot;
+use meshway_authority::ExecutionSnapshot;
 use meshway_model::{NodeId, RequestId};
 use meshway_policy::admission::AdmissionError;
 pub use meshway_policy::admission::Hop;
@@ -170,7 +170,7 @@ pub enum Error {
     #[error("packet does not match the admitted facts")]
     FactsMismatch,
     #[error("execution authority is no longer current: {0}")]
-    Control(#[from] meshway_control::Error),
+    Authority(#[from] meshway_authority::Error),
     #[error("packet admission rejected: {0}")]
     Admission(#[from] AdmissionError),
     #[error("invalid flow limits")]

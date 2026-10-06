@@ -2,7 +2,7 @@ use super::{
     faults::{Fault, Proxy},
     support::Server,
 };
-use meshway_control::{Control, Error};
+use meshway_control::Control;
 use std::time::Duration;
 
 #[tokio::test]
@@ -90,7 +90,10 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
     tokio::time::timeout(Duration::from_secs(1), first.invalidated())
         .await
         .unwrap();
-    assert!(matches!(renewed.configuration(), Err(Error::Expired)));
+    assert!(matches!(
+        renewed.configuration(),
+        Err(meshway_authority::Error::Expired)
+    ));
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
     control.sync_configuration().await.unwrap();
@@ -169,7 +172,10 @@ async fn idle_execution_snapshot_expires_without_polling_control_or_delaying_htt
     tokio::time::timeout(Duration::from_secs(4), snapshot.invalidated())
         .await
         .unwrap();
-    assert!(matches!(snapshot.ensure_current(), Err(Error::Expired)));
+    assert!(matches!(
+        snapshot.ensure_current(),
+        Err(meshway_authority::Error::Expired)
+    ));
     assert_eq!(snapshot.expires_at(), before);
     assert!(control.execution_snapshot().is_err());
     drop(control);

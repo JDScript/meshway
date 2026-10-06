@@ -315,7 +315,7 @@ async fn engine_commit_authority_race_discards_prepared_flow_but_retains_prior_f
     );
     resume.send(()).unwrap();
     let (mut engine, result) = worker.await.unwrap();
-    assert!(matches!(result, Err(EngineError::Control(_))));
+    assert!(matches!(result, Err(EngineError::Authority(_))));
     assert!(engine.maintain().is_err());
     assert_eq!(engine.retained_flows(), 1);
     engine.reconcile(fresh.snapshot().clone()).unwrap();
