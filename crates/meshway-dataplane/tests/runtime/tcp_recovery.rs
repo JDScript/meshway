@@ -197,6 +197,14 @@ async fn tcp_recovers_cancelled_relay_and_endpoint_outputs_across_real_permit_re
             .release(|_| panic!("cancelled ciphertext escaped"))
             .is_err()
     );
+    // Re-deliver the later range before the missing prefix, then carry that
+    // bounded association across a real Control renewal. It cannot authorize
+    // an ACK beyond the still-unfilled gap, even though those bytes were seen.
+    let ahead = packet(&fixture, false, 109, 901, 0x18, b"ijkl");
+    exchange(&mut fixture, circuit, false, ahead).await;
+    fixture.renew().await;
+    let forged_ack = packet(&fixture, true, 901, 113, 0x10, &[]);
+    assert!(fixture.b.send(circuit, forged_ack).is_err());
     let delayed = packet(&fixture, true, 901, 101, 0x10, &[]);
     exchange(&mut fixture, circuit, true, delayed).await;
     for (seq, bytes) in [(101, b"abcdef".as_slice()), (107, b"ghijkl".as_slice())] {

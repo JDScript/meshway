@@ -23,7 +23,9 @@ fn discard_after_relay(scene: &mut Scene, packet: Packet) {
 fn admitted_but_undelivered_data_recovers_with_delayed_ack_and_nonlatest_resegmentation() {
     let mut scene = established();
     discard_after_relay(&mut scene, tcp(false, 101, 901, 0x18, 7));
-    discard_after_relay(&mut scene, tcp(false, 108, 901, 0x18, 3));
+    // Later bytes reach the terminal before the missing prefix. They must be
+    // delivered so its real TCP stack can produce duplicate ACK/SACK feedback.
+    forward(&mut scene, tcp(false, 108, 901, 0x18, 3));
     reply(&mut scene, tcp(true, 901, 101, 0x10, 0)); // OS still expects 101.
     forward(&mut scene, tcp(false, 101, 901, 0x18, 4));
     forward(&mut scene, tcp(false, 105, 901, 0x18, 6)); // Coalesce old boundaries.
@@ -41,13 +43,11 @@ fn admitted_but_undelivered_data_recovers_with_delayed_ack_and_nonlatest_resegme
 }
 
 #[test]
-fn future_and_partial_overlap_segments_are_rejected_without_advancing_the_flow() {
+fn future_data_and_overlap_do_not_authorize_acknowledging_an_unfilled_gap() {
     let mut scene = established();
     forward(&mut scene, tcp(false, 101, 901, 0x18, 10));
     for packet in [
-        tcp(false, 112, 901, 0x10, 0), // Empty ACK past local frontier.
         tcp(false, 100, 901, 0x10, 0), // Before the initial SYN-end floor.
-        tcp(false, 106, 901, 0x18, 6), // Old prefix plus unadmitted suffix.
         tcp(false, 106, 901, 0x11, 0), // Cannot invent FIN inside prior data.
         tcp(false, 111, 902, 0x18, 1), // Future peer ACK.
         tcp(false, 111, 900, 0x18, 1), // ACK before peer SYN end.
@@ -58,9 +58,17 @@ fn future_and_partial_overlap_segments_are_rejected_without_advancing_the_flow()
             Err(Error::Flow)
         ));
     }
+    forward(&mut scene, tcp(false, 120, 901, 0x18, 3));
+    forward(&mut scene, tcp(false, 121, 901, 0x10, 0));
+    assert!(matches!(
+        scene.process(3, None, 3, &[1, 2, 3], tcp(true, 901, 123, 0x10, 0)),
+        Err(Error::Flow)
+    ));
+    forward(&mut scene, tcp(false, 106, 901, 0x18, 6));
+    reply(&mut scene, tcp(true, 901, 112, 0x10, 0));
     forward(&mut scene, tcp(false, 102, 901, 0x18, 8));
-    forward(&mut scene, tcp(false, 111, 901, 0x18, 2));
-    reply(&mut scene, tcp(true, 901, 113, 0x10, 0));
+    forward(&mut scene, tcp(false, 112, 901, 0x18, 8));
+    reply(&mut scene, tcp(true, 901, 123, 0x10, 0));
 }
 
 #[test]

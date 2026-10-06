@@ -112,7 +112,7 @@ fn local_lookup_never_advances_tcp_state_or_refreshes_deadlines() {
     assert_eq!(after.permit_expires_at_ms, before.permit_expires_at_ms);
     assert_eq!(after.guard_expires_at_ms, before.guard_expires_at_ms);
     assert!(matches!(
-        scene.process(1, None, 1, &[1, 2, 3], tcp(false, 108, 901, 0x18, 1)),
+        scene.process(1, Some(2), 3, &[1, 2, 3], tcp(true, 901, 108, 0x10, 0)),
         Err(Error::Flow)
     ));
     forward(&mut scene, tcp(false, 101, 901, 0x18, 7));

@@ -1,13 +1,13 @@
-//! Bounded contiguous TCP sequence association, NOT full conntrack/window
-//! validation. Admission may precede a cancelled output: peer ACKs can lag the
-//! admitted frontier, and retransmissions can split/coalesce admitted bytes.
-//! No reassembly, new out-of-order data, simultaneous-open, TCP Fast Open,
-//! handshake RST, window scaling or SACK inference.
+//! Bounded TCP sequence association, not full TCP/window validation. Admitted
+//! out-of-order ranges let endpoint TCP receive/SACK data after a path loss.
+//! Only gap closure advances the cumulative ACK frontier. No payload reassembly,
+//! simultaneous-open, TCP Fast Open, handshake RST or SACK/window inference.
 use crate::{Direction, Error, TcpSegment};
 
 /// Fixed constant-memory history bound, strictly below the serial half-space.
 /// This is admitted sequence history, not an inferred TCP receive window.
 const HISTORY: u32 = 16 * 1024 * 1024;
+const MAX_AHEAD_RANGES: usize = 64;
 const _: () = assert!(HISTORY > 0 && HISTORY < (1 << 31));
 
 #[derive(Clone)]
@@ -25,6 +25,9 @@ struct Side {
     next: u32,
     /// Sequence consumed by the original FIN; FIN is never reinterpreted as data.
     fin: Option<u32>,
+    /// Disjoint, nonadjacent ranges strictly beyond next, in serial order.
+    /// No buffer retention; empty in the normal contiguous fast path.
+    ahead: Vec<std::ops::Range<u32>>,
 }
 impl Side {
     fn new(segment: TcpSegment) -> Self {
@@ -32,6 +35,7 @@ impl Side {
             floor: segment.end(),
             next: segment.end(),
             fin: None,
+            ahead: Vec::new(),
         }
     }
 
@@ -55,11 +59,16 @@ impl Side {
                 Err(Error::Flow)
             };
         }
-        if !self.contains(segment.sequence) {
+        let span = self.next.wrapping_sub(self.floor);
+        let start = segment.sequence.wrapping_sub(self.floor);
+        let consumed = u32::from(segment.payload_len) + u32::from(segment.fin());
+        let limit = span + HISTORY;
+        let end = start.checked_add(consumed).filter(|end| *end <= limit);
+        if start > limit || end.is_none() {
             meshway_logging::profile::event(
                 "tcp.reject",
                 if segment.sequence.wrapping_sub(self.next) < (1 << 31) {
-                    "future_sequence"
+                    "future_window"
                 } else {
                     "old_sequence"
                 },
@@ -73,31 +82,77 @@ impl Side {
             && ((segment.fin() && payload_end != fin)
                 || (!segment.fin()
                     && segment.payload_len != 0
-                    && payload_end.wrapping_sub(self.floor) > fin.wrapping_sub(self.floor)))
+                    && payload_end.wrapping_sub(self.floor) > fin.wrapping_sub(self.floor))
+                || start > fin.wrapping_sub(self.floor) + 1)
         {
             return Err(Error::Flow);
         }
-        let consumed = u32::from(segment.payload_len) + u32::from(segment.fin());
-        if segment.sequence != self.next || self.fin.is_some() {
-            // Retransmit only a wholly admitted range. Partial overlap followed
-            // by new bytes is unsupported, as is inventing a FIN in old data.
-            if consumed > self.next.wrapping_sub(segment.sequence)
-                || (segment.fin() && self.fin.is_none())
-            {
-                meshway_logging::profile::event("tcp.reject", "partial_overlap_or_fin");
-                return Err(Error::Flow);
-            }
+        if segment.fin()
+            && self.fin.is_none()
+            && (payload_end.wrapping_sub(self.floor) < span
+                || self.ahead.iter().any(|range| {
+                    range.end.wrapping_sub(self.floor) > payload_end.wrapping_sub(self.floor)
+                }))
+        {
+            // FIN cannot reinterpret an already admitted data byte or truncate
+            // previously admitted ahead ranges. Its position is immutable.
+            meshway_logging::profile::event("tcp.reject", "fin_reinterpretation");
+            return Err(Error::Flow);
+        }
+        if consumed == 0 {
+            // A pure ACK can carry SND.NXT after locally dropped data, but it
+            // never records bytes, advances next or invents an ACK allowance.
             return Ok(());
         }
-        // Only new contiguous sequence consumption advances the bounded floor.
-        // Every fallible check precedes mutation; rejected segments are inert.
+        let end = end.ok_or(Error::Flow)?;
+        self.observe(start, end)?;
         if segment.fin() {
             self.fin = Some(payload_end);
         }
-        let span = self.next.wrapping_sub(self.floor) + consumed;
-        self.next = segment.end();
-        if span > HISTORY {
-            self.floor = self.next.wrapping_sub(HISTORY);
+        Ok(())
+    }
+
+    /// Plan the bounded interval update before mutation. Sequence offsets span
+    /// at most 2*HISTORY, far below the ambiguous half-space across u32 wrap.
+    fn observe(&mut self, start: u32, end: u32) -> Result<(), Error> {
+        let span = self.next.wrapping_sub(self.floor);
+        if end <= span {
+            return Ok(());
+        }
+        let upper = self
+            .ahead
+            .partition_point(|range| range.start.wrapping_sub(self.floor) <= end);
+        let merged_end = if upper == 0 {
+            end
+        } else {
+            end.max(self.ahead[upper - 1].end.wrapping_sub(self.floor))
+        };
+        if start <= span {
+            if start < span {
+                meshway_logging::profile::event("tcp.admit", "overlap_suffix");
+            }
+            self.ahead.drain(..upper);
+            self.next = self.floor.wrapping_add(merged_end);
+            if merged_end > HISTORY {
+                self.floor = self.next.wrapping_sub(HISTORY);
+            }
+        } else {
+            let lower = self
+                .ahead
+                .partition_point(|range| range.end.wrapping_sub(self.floor) < start);
+            let retained = self.ahead.len() - (upper - lower);
+            if retained == MAX_AHEAD_RANGES {
+                meshway_logging::profile::event("tcp.reject", "range_capacity");
+                return Err(Error::Capacity);
+            }
+            let merged_start = if lower == upper {
+                start
+            } else {
+                start.min(self.ahead[lower].start.wrapping_sub(self.floor))
+            };
+            let range = self.floor.wrapping_add(merged_start)..self.floor.wrapping_add(merged_end);
+            self.ahead.splice(lower..upper, std::iter::once(range));
+            meshway_logging::profile::event("tcp.admit", "out_of_order");
         }
         Ok(())
     }
@@ -213,6 +268,179 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_gaps_merge_without_acknowledging_unobserved_bytes() {
+        for isn in [100, u32::MAX - 4] {
+            let mut state = established(isn, 900);
+            let base = state.forward.next;
+            state
+                .accept(
+                    Direction::Forward,
+                    segment(base.wrapping_add(4), 901, 0x18, 4),
+                )
+                .unwrap();
+            state
+                .accept(
+                    Direction::Forward,
+                    segment(base.wrapping_add(9), 901, 0x18, 2),
+                )
+                .unwrap();
+            assert_eq!(state.forward.next, base);
+            assert_eq!(state.forward.ahead.len(), 2);
+            state
+                .accept(
+                    Direction::Forward,
+                    segment(base.wrapping_add(6), 901, 0x18, 4),
+                )
+                .unwrap();
+            assert_eq!(state.forward.ahead.len(), 1);
+            assert!(
+                state
+                    .accept(
+                        Direction::Reply,
+                        segment(901, base.wrapping_add(11), 0x10, 0)
+                    )
+                    .is_err()
+            );
+            state
+                .accept(Direction::Reply, segment(901, base, 0x18, 5))
+                .unwrap();
+            state
+                .accept(Direction::Forward, segment(base, 906, 0x18, 5))
+                .unwrap();
+            assert_eq!(state.forward.next, base.wrapping_add(11));
+            assert!(state.forward.ahead.is_empty());
+            state
+                .accept(
+                    Direction::Reply,
+                    segment(906, base.wrapping_add(11), 0x10, 0),
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn gap_capacity_is_bounded_and_filling_holes_releases_slots_transactionally() {
+        let mut state = established(u32::MAX - 63, 900);
+        let base = state.forward.next;
+        for i in 0..MAX_AHEAD_RANGES as u32 {
+            state
+                .accept(
+                    Direction::Forward,
+                    segment(base.wrapping_add(i * 2 + 1), 901, 0x18, 1),
+                )
+                .unwrap();
+        }
+        let original = state.forward.ahead.clone();
+        assert_eq!(state.forward.next, base);
+        assert!(matches!(
+            state.accept(
+                Direction::Forward,
+                segment(base.wrapping_add(129), 901, 0x18, 1)
+            ),
+            Err(Error::Capacity)
+        ));
+        assert_eq!(state.forward.ahead, original);
+        assert!(
+            state
+                .accept(
+                    Direction::Forward,
+                    segment(base.wrapping_add(HISTORY), 901, 0x18, 1)
+                )
+                .is_err()
+        );
+        assert_eq!(state.forward.ahead, original);
+        // An empty ACK does not consume a range slot or advance the frontier.
+        state
+            .accept(
+                Direction::Forward,
+                segment(base.wrapping_add(1000), 901, 0x10, 0),
+            )
+            .unwrap();
+        assert_eq!(state.forward.ahead, original);
+        state
+            .accept(Direction::Forward, segment(base, 901, 0x18, 1))
+            .unwrap();
+        assert_eq!(state.forward.ahead.len(), MAX_AHEAD_RANGES - 1);
+        state
+            .accept(
+                Direction::Forward,
+                segment(base.wrapping_add(129), 901, 0x18, 1),
+            )
+            .unwrap();
+        state
+            .accept(
+                Direction::Forward,
+                segment(base.wrapping_add(2), 901, 0x18, 127),
+            )
+            .unwrap();
+        assert_eq!(state.forward.next, base.wrapping_add(130));
+        assert!(state.forward.ahead.is_empty());
+        state
+            .accept(
+                Direction::Reply,
+                segment(901, base.wrapping_add(130), 0x10, 0),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn out_of_order_fin_keeps_one_boundary_and_cannot_reinterpret_admitted_data() {
+        for reverse in [false, true] {
+            let mut state = established(u32::MAX - 4, u32::MAX - 4);
+            let base = state.forward.next;
+            let direction = if reverse {
+                Direction::Reply
+            } else {
+                Direction::Forward
+            };
+            let other = if reverse {
+                Direction::Forward
+            } else {
+                Direction::Reply
+            };
+            state
+                .accept(direction, segment(base.wrapping_add(4), base, 0x18, 4))
+                .unwrap();
+            let before = bounds(&state);
+            assert!(
+                state
+                    .accept(direction, segment(base.wrapping_add(5), base, 0x11, 0))
+                    .is_err()
+            );
+            assert_eq!(bounds(&state), before);
+            state
+                .accept(direction, segment(base.wrapping_add(4), base, 0x11, 4))
+                .unwrap();
+            assert!(
+                state
+                    .accept(direction, segment(base.wrapping_add(8), base, 0x18, 1))
+                    .is_err()
+            );
+            assert!(
+                state
+                    .accept(direction, segment(base.wrapping_add(7), base, 0x11, 0))
+                    .is_err()
+            );
+            assert!(
+                state
+                    .accept(other, segment(base, base.wrapping_add(9), 0x10, 0))
+                    .is_err()
+            );
+            state
+                .accept(direction, segment(base, base, 0x18, 4))
+                .unwrap();
+            state
+                .accept(other, segment(base, base.wrapping_add(9), 0x10, 0))
+                .unwrap();
+            let completed = bounds(&state);
+            state
+                .accept(direction, segment(base.wrapping_add(6), base, 0x11, 2))
+                .unwrap();
+            assert_eq!(bounds(&state), completed);
+        }
+    }
+
+    #[test]
     fn retained_serial_floor_is_bounded_and_rejected_ack_cannot_expand_or_shrink_it() {
         let mut state = established(u32::MAX - 100, 900);
         // Metadata-only constant-memory state exercise; no packet buffers,
@@ -252,16 +480,20 @@ mod tests {
         state
             .accept(Direction::Forward, segment(floor, 901, 0x18, 60_000))
             .unwrap();
-        for (seq, len) in [
-            (floor.wrapping_sub(1), 1),
-            (next, 0),
-            (next.wrapping_add(1), 0),
-            (floor.wrapping_add(1 << 31), 0),
-            (next.wrapping_sub(1), 2),
+        for (seq, len, accepted, advanced) in [
+            (floor.wrapping_sub(1), 1, false, 0),
+            (next, 0, true, 0),
+            (next.wrapping_add(1), 0, true, 0),
+            (floor.wrapping_add(1 << 31), 0, false, 0),
+            (next.wrapping_sub(1), 2, true, 1),
         ] {
-            let result = state.accept(Direction::Forward, segment(seq, 901, 0x10, len));
-            assert_eq!(result.is_ok(), seq == next && len == 0);
-            assert_eq!(bounds(&state), before);
+            let mut candidate = state.clone();
+            let result = candidate.accept(Direction::Forward, segment(seq, 901, 0x10, len));
+            assert_eq!(result.is_ok(), accepted);
+            assert_eq!(candidate.forward.next, next.wrapping_add(advanced));
+            if !accepted {
+                assert_eq!(bounds(&candidate), before);
+            }
         }
         state
             .accept(Direction::Forward, segment(next, 901, 0x18, 3))

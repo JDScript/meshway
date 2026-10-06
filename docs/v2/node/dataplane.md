@@ -24,12 +24,14 @@
 | IPv6 | 精确长度；最多两个顺序合法、仅含 padding 的扩展头；拒绝 routing header、全部 fragment header 和 jumbogram |
 | 业务协议 | TCP、UDP、ICMP echo；检查端口、协议头及适用 checksum |
 | UDP／ICMP | 回复匹配已建立反向 tuple；echo 另绑定 identifier／sequence |
-| TCP | 三次握手、连续新数据、每方向 16 MiB 有界序号历史内的 ACK／重分段重传、FIN 与已建立 RST；常量内存，支持序号回绕。尚非完整 conntrack，不缓存乱序新数据，不支持 simultaneous-open、TFO 或握手 RST |
+| TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
 | 资源 | 默认 4,096 流、60 秒空闲；最大 65,536 流、24 小时空闲设置；实际寿命仍受 permit 和执行快照约束 |
 
 同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。中继流不能借作本机发起资格；歧义拒绝。
 
 SecureNode 的实际 forward 包通过认证与流准入后，CID 与协议状态在同一流表事务中提交；handshake 完成、读取状态、失败准入和重放均不能建立或改写绑定。`SecureNode::local_circuit` 据此选择本机回包的 cipher，reply 准入再次要求相同 CID，避免从相同 demand／path 的多个本地 Established circuit 中误选未完成全路径交付的旧响应。普通 Engine 流的 cipher 引用为不适用；只有业务源可在旧 cipher 结束后为同一获准路径取得新 cipher。
+
+TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺口补齐前不推进连续 ACK 边界，不能用“最高见过的序号”接受越过缺口的 ACK。空 ACK 不创建区间或推进边界；重叠重分段可以补充新后缀。FIN 的字节位置一经准入不能改变，也不能重新解释已准入的数据；RST 仍要求精确连续前沿。区间容量、窗口边界或协议检查失败不提交状态。此前丢失的包不会因此自动重发，重传和实际接收窗口仍由两端 TCP 拥有。
 
 `Engine::reconcile` 使用 Control 的[直接连续性交接](/v2/node/control#执行快照)，仅保留原授权与完整路径仍相同的活流。比较使用排除 `expiresAt` 的 `permit_authorization_digest`，同时检查路径相关身份、地址与 key 绑定。换 instance、撤回、取消、跳过 publication 或旧期限已到都不迁移状态。
 

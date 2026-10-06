@@ -316,7 +316,7 @@ fn echo_identifier_sequence_and_message_role_are_stateful() {
 }
 
 #[test]
-fn tcp_requires_handshake_acknowledgement_and_in_order_sequence() {
+fn tcp_requires_handshake_and_observed_peer_acknowledgement() {
     let mut scene = Scene::new(BusinessProtocol::Tcp, false, true);
     for packet in [tcp(true, 900, 101, 0x12, 0), tcp(false, 101, 901, 0x10, 0)] {
         assert!(scene.process(1, None, 1, &[1, 2, 3], packet).is_err());
@@ -344,7 +344,7 @@ fn tcp_requires_handshake_acknowledgement_and_in_order_sequence() {
     forward(&mut scene, tcp(false, 101, 901, 0x18, 7));
     forward(&mut scene, tcp(false, 101, 901, 0x18, 7)); // latest segment retransmit
     assert!(matches!(
-        scene.process(3, None, 3, &[1, 2, 3], tcp(true, 902, 108, 0x18, 5)),
+        scene.process(3, None, 3, &[1, 2, 3], tcp(true, 902, 109, 0x18, 5)),
         Err(Error::Flow)
     ));
     reply(&mut scene, tcp(true, 901, 108, 0x18, 5));
