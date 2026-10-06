@@ -163,7 +163,7 @@ def summary(metadata):
             continue
         for metrics in record.get("profiles", {}).values():
             for metric in metrics:
-                calls[metric["name"]] = calls.get(metric["name"], 0) + metric["calls"]
+                calls[metric["name"]] = calls.get(metric["name"], 0) + metric["calls_started"]
         packets = calls.get("l3.packet.origin", 0)
         if packets:
             guards = calls.get("control.guard")

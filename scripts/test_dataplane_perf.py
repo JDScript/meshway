@@ -67,6 +67,19 @@ class DataplaneReportTests(unittest.TestCase):
         self.assertIn("| secure-direct | 32 | 0 | tcp | -40.00 | -40.00 | +0.00 | — |", report)
         self.assertIn("| secure-relay | 32 | 0 | tcp | -60.00 | -60.00 | +0.00 | — |", report)
 
+    def test_real_profile_schema_counts_started_calls(self):
+        def metric(name, calls):
+            return dict(name=name, calls_started=calls,
+                        times=dict(self_cpu_ns=100, self_cpu_samples=1))
+        record = dict(mode="secure-relay", batch=32, profile=128, traffic="udp",
+                      status="ok", directory="secure-relay-sample", goodputMbps=40,
+                      packetsPerSecond=4000, lostPercent=10, cpuPercent=100,
+                      profiles={"a": [metric("control.guard", 200), metric("l3.packet.origin", 2)],
+                                "r": [metric("control.guard", 50)],
+                                "b": [metric("control.guard", 100)]})
+        report = summary({"environment": {}, "results": [record]})
+        self.assertIn("| secure-relay-sample | 350 | 2 | 175.00 |", report)
+
 
 if __name__ == "__main__":
     unittest.main()
