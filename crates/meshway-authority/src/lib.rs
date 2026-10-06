@@ -13,7 +13,7 @@ mod snapshot;
 
 pub use clock::{Clock, Deadline, Started};
 pub use identity::{DataPlaneIdentity, packet_proof_message};
-pub use snapshot::{ExecutionSnapshot, Issue};
+pub use snapshot::{ExecutionSnapshot, Issue, Reading};
 
 use meshway_configuration::execution::CompiledNode;
 use meshway_model::ConfigurationRef;

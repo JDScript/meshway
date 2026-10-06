@@ -33,6 +33,18 @@ pub struct Issue {
     pub predecessor: Option<(Arc<()>, ConfigurationRef)>,
 }
 
+/// The result of one guard evaluation: the configuration it authorizes and the
+/// clock values it was judged at. Borrowed from the snapshot, never stored.
+#[derive(Clone, Copy, Debug)]
+pub struct Reading<'a> {
+    pub configuration: &'a NodeConfiguration,
+    pub now_ms: u64,
+    pub instant: Instant,
+    /// Earliest monotonic/UTC expiry across the snapshot's deadlines.
+    pub expires_at: Instant,
+    pub expires_at_ms: u64,
+}
+
 /// A private target and its original control deadlines. Cloning or reading the
 /// snapshot never extends them. Hosts must check immediately before admitting
 /// work or releasing an output, and select `invalidated` around blocked I/O.
@@ -94,6 +106,15 @@ impl ExecutionSnapshot {
     /// The full guard with one clock reading, returning the UTC high-water
     /// milliseconds it was evaluated at.
     fn current(&self) -> Result<u64, Error> {
+        self.reading().map(|reading| reading.now_ms)
+    }
+
+    /// One complete guard evaluation for one synchronous section of work. The
+    /// caller applies the same configuration and time to every decision in that
+    /// section and still re-checks the snapshot before committing state or
+    /// releasing an output after any await. A reading is not transferable
+    /// authority and must not outlive the section it was taken for.
+    pub fn reading(&self) -> Result<Reading<'_>, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::detail("control.guard", 1);
         let _profile = PROFILE.enter();
@@ -104,7 +125,13 @@ impl ExecutionSnapshot {
         if !self.deadlines_valid_at(now_ms, instant) {
             return Err(Error::Expired);
         }
-        Ok(now_ms)
+        Ok(Reading {
+            configuration: &self.target.configuration,
+            now_ms,
+            instant,
+            expires_at: self.expires_at(),
+            expires_at_ms: self.expires_at_ms(),
+        })
     }
 
     fn deadlines_valid_at(&self, now_ms: u64, instant: Instant) -> bool {
