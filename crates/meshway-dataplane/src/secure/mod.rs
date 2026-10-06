@@ -450,7 +450,10 @@ pub struct SecureNode {
     engine: Engine,
     limits: Limits,
     carriers: BTreeMap<NodeId, Carrier>,
-    circuits: BTreeMap<[u8; 32], Circuit>,
+    // Packet operations temporarily extract entries to borrow the one Engine.
+    // Keep keys/Noise/recovery state at a stable address instead of moving a
+    // multi-kilobyte Circuit (and reserving eleven such values per tree node).
+    circuits: BTreeMap<[u8; 32], Box<Circuit>>,
     probes: probe::Probes,
     cancellation: CancellationToken,
 }
@@ -602,13 +605,13 @@ impl SecureNode {
         let mut noise = crypto::build(&self.identity, &context, true)?;
         let body = crypto::write_handshake(&mut noise, 96)?;
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
-        let mut circuit = Circuit::new(
+        let mut circuit = Box::new(Circuit::new(
             context.clone(),
             State::Initiator(Box::new(noise)),
             snapshot,
             self.limits.handshake_timeout,
             self.cancellation.child_token(),
-        )?;
+        )?);
         let frame = Frame {
             context,
             kind: Kind::Init,
@@ -747,13 +750,13 @@ impl SecureNode {
             return Err(Error::Context);
         }
         let hop = self.handshake_hop(&frame, Some(previous))?;
-        let mut circuit = Circuit::new(
+        let mut circuit = Box::new(Circuit::new(
             frame.context.clone(),
             State::RelayAwaiting,
             snapshot,
             self.limits.handshake_timeout,
             self.cancellation.child_token(),
-        )?;
+        )?);
         let id = circuit.context.circuit;
         let fingerprint = Sha256::digest(frame.encode()?).into();
         let result = (|| {
