@@ -465,8 +465,12 @@ pub(super) async fn run(
             && state.live
             && let Some(manager) = &state.manager
         {
-            if let Ok(carriers) = manager.carriers() {
-                let _ = state.secure.set_carriers(carriers);
+            // One scheduling view per turn. It grants no I/O authority: every
+            // output still captures and checks the Manager's actual channel,
+            // while SecureNode checks its own packet/circuit permit.
+            let carriers = manager.carriers().ok();
+            if let Some(carriers) = &carriers {
+                let _ = state.secure.set_carriers(carriers.clone());
             }
             let guard = state
                 .target
@@ -481,8 +485,8 @@ pub(super) async fn run(
                 _ = dns.failed(), if !dns_failed => {},
                 _ = async {
                     static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
-                    PROFILE.poll(packets.drive(&mut state.secure, manager, &host, &state.target, &gateway, &mut diagnostics)).await;
-                    diagnostics.drive(&mut state.secure, manager, &gateway);
+                    PROFILE.poll(packets.drive(&mut state.secure, manager, carriers.as_ref(), &host, &state.target, &gateway, &mut diagnostics)).await;
+                    diagnostics.drive(&mut state.secure, manager, carriers.as_ref(), &gateway);
                 } => {},
             }
         }

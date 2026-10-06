@@ -256,3 +256,102 @@ async fn shared_send_receipt_starts_after_sender_lock_wait_and_requires_local_co
     sender.lock().await.shutdown().await.unwrap();
     fixture.close().await;
 }
+
+#[tokio::test]
+async fn ready_datagram_send_finishes_inline_but_cancellation_inside_io_never_returns_a_receipt() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio_util::sync::CancellationToken;
+
+    #[derive(Debug)]
+    struct Channel {
+        snapshot: meshway_control::ExecutionSnapshot,
+        cancelled: CancellationToken,
+    }
+    impl meshway_transport::SendLifetime for Channel {
+        fn is_current(&self) -> bool {
+            self.snapshot.ensure_current().is_ok() && !self.cancelled.is_cancelled()
+        }
+        fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            Box::pin(async move {
+                tokio::select! {
+                    _ = self.snapshot.invalidated() => {},
+                    _ = self.cancelled.cancelled() => {},
+                }
+            })
+        }
+    }
+    struct Ready {
+        writes: Arc<AtomicUsize>,
+        cancel: Option<CancellationToken>,
+    }
+    impl meshway_transport::raw::Datagram for Ready {
+        fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
+            Ok("127.0.0.1:23456".parse().unwrap())
+        }
+        fn poll_send_to(
+            &self,
+            _: &mut Context<'_>,
+            bytes: &[u8],
+            _: std::net::SocketAddr,
+        ) -> Poll<io::Result<usize>> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            if let Some(cancel) = &self.cancel {
+                cancel.cancel();
+            }
+            Poll::Ready(Ok(bytes.len()))
+        }
+        fn poll_recv_from(
+            &self,
+            _: &mut Context<'_>,
+            _: &mut [u8],
+        ) -> Poll<io::Result<meshway_transport::raw::DatagramRead>> {
+            Poll::Pending
+        }
+    }
+
+    let mut fixture = SecureMesh::start().await;
+    for invalidate in [false, true] {
+        let pending = fixture
+            .a
+            .start(fixture.mesh.demand, fixture.mesh.path.clone())
+            .unwrap();
+        let snapshot = fixture.mesh.a.control.execution_snapshot().unwrap();
+        let cancelled = CancellationToken::new();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let (sender, _receiver) = Session::datagram(
+            Ready {
+                writes: writes.clone(),
+                cancel: invalidate.then(|| cancelled.clone()),
+            },
+            Limits::new(128 * 1024, 1, 1024 * 1024, 1, 1).unwrap(),
+        )
+        .into_split();
+        let sender = tokio::sync::Mutex::new(sender);
+        let sending = carrier::send_shared_with_receipt(
+            &sender,
+            pending,
+            "127.0.0.1:12345".parse().unwrap(),
+            Arc::new(Channel {
+                snapshot: snapshot.clone(),
+                cancelled,
+            }),
+        );
+        tokio::pin!(sending);
+        let result = poll_fn(|cx| {
+            let Poll::Ready(result) = sending.as_mut().poll(cx) else {
+                panic!("ready I/O required a background hop");
+            };
+            Poll::Ready(result)
+        })
+        .await;
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+        if invalidate {
+            assert!(matches!(result, Err(carrier::Error::Cancelled)));
+        } else {
+            assert!(result.is_ok());
+        }
+        snapshot.ensure_current().unwrap();
+        sender.lock().await.shutdown().await.unwrap();
+    }
+    fixture.close().await;
+}

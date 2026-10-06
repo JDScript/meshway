@@ -215,6 +215,9 @@ impl Diagnostics {
         &mut self,
         secure: &mut SecureNode,
         manager: &Manager,
+        carriers: Option<
+            &std::collections::BTreeMap<meshway_model::NodeId, meshway_connectivity::Carrier>,
+        >,
         gateway: &mpsc::Sender<Request>,
     ) {
         // Drain already-completed admissions before considering probe timers.
@@ -267,10 +270,10 @@ impl Diagnostics {
             }
         }
         self.apply_pauses();
-        if let Ok(carriers) = manager.carriers() {
+        if let Some(carriers) = carriers {
             for action in self.owner.actions(
                 secure,
-                &carriers,
+                carriers,
                 meshway_diagnostics::MAX_TASKS.saturating_sub(self.sends.len()),
             ) {
                 self.send(

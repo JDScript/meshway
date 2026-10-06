@@ -190,13 +190,8 @@ async fn send_owned(
     let capacity = bytes.capacity();
     let mut frames = VecDeque::from([Frame::new(bytes, peer)]);
     let (completion, admitted_at) = loop {
-        if !lifetime.is_current() {
-            return Err(Error::Cancelled);
-        }
-        let (admitted, admitted_at) = tokio::select! { biased;
-            _ = lifetime.clone().invalidated() => return Err(Error::Cancelled),
-            result = sender.admit(&mut frames, context.clone()) => result,
-        };
+        let (admitted, admitted_at) =
+            guarded(&lifetime, sender.admit(&mut frames, context.clone())).await?;
         if admitted.accepted == 1 {
             break (
                 admitted.completion.ok_or(Error::CompletionLost)?,
@@ -209,22 +204,15 @@ async fn send_owned(
                 | AdmissionStop::FrameBudget
                 | AdmissionStop::OperationBudget,
             ) => {
-                tokio::select! { biased;
-                    _ = lifetime.clone().invalidated() => return Err(Error::Cancelled),
-                    result = sender.capacity(capacity) => result?,
-                }
+                guarded(&lifetime, sender.capacity(capacity)).await??;
             }
             Some(reason) => return Err(Error::Admission(reason)),
             None => return Err(Error::CompletionLost),
         }
     };
-    let completed = tokio::select! { biased;
-        _ = lifetime.clone().invalidated() => {
-            cancellation.cancel();
-            return Err(Error::Cancelled);
-        },
-        result = completion.wait() => result.map_err(|_| Error::CompletionLost)?,
-    };
+    let completed = guarded(&lifetime, completion.wait())
+        .await?
+        .map_err(|_| Error::CompletionLost)?;
     if completed.frames.len() != 1
         || !completed
             .frames
@@ -237,6 +225,38 @@ async fn send_owned(
         return Err(Error::Cancelled);
     }
     Ok(SendReceipt { admitted_at })
+}
+
+/// Ready admission/completion needs the same pre/post fences, but no allocated
+/// cancellation waiter. Pending work is polled once per outer poll; its original
+/// lifetime is then registered and retained. Accepted transport work separately
+/// owns that lifetime, even while this caller is alive but no longer polled.
+async fn guarded<T>(
+    lifetime: &Arc<OutputLifetime>,
+    future: impl Future<Output = T>,
+) -> Result<T, Error> {
+    use meshway_transport::SendLifetime;
+    tokio::pin!(future);
+    let mut invalidated = None;
+    poll_fn(|cx| {
+        if !lifetime.is_current() {
+            return Poll::Ready(Err(Error::Cancelled));
+        }
+        if let Poll::Ready(value) = future.as_mut().poll(cx) {
+            return Poll::Ready(if lifetime.is_current() {
+                Ok(value)
+            } else {
+                Err(Error::Cancelled)
+            });
+        }
+        let wait = invalidated.get_or_insert_with(|| lifetime.clone().invalidated());
+        if wait.as_mut().poll(cx).is_ready() {
+            Poll::Ready(Err(Error::Cancelled))
+        } else {
+            Poll::Pending
+        }
+    })
+    .await
 }
 
 #[derive(Debug)]

@@ -288,6 +288,7 @@ impl Packets {
         &mut self,
         secure: &mut SecureNode,
         manager: &Manager,
+        carriers: Option<&BTreeMap<NodeId, Carrier>>,
         host: &meshway_underlay::Host,
         target: &Target,
         gateway: &mpsc::Sender<Request>,
@@ -313,7 +314,7 @@ impl Packets {
             intent.expires_at_ms > now_ms
                 && now.duration_since(intent.last_packet) < Duration::from_secs(60)
         });
-        let Ok(carriers) = manager.carriers() else {
+        let Some(carriers) = carriers else {
             return;
         };
         for _ in 0..self.incoming.len() {
