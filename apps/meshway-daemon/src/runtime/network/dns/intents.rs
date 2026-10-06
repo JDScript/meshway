@@ -205,19 +205,18 @@ impl Registry {
         &mut self,
         plan: &Plan,
         control: &mut Control,
-    ) -> Result<bool, meshway_control::Error> {
+    ) -> Result<(), meshway_control::Error> {
         let snapshot = control.execution_snapshot()?;
         let now_ms = snapshot.now_ms()?;
         let Some(instance) = control.status().instance else {
-            return Ok(false);
+            return Ok(());
         };
         self.reconcile(plan, now_ms, instance.expires_at_ms);
         if self.failed {
-            return Ok(false);
+            return Ok(());
         }
         let cfg = snapshot.configuration()?;
         self.published = cfg.local_egress.keys().copied().collect();
-        let mut changed = false;
         let mut budget = 8;
         for intent in &mut self.intents {
             if let Some(permit) = cfg.local_egress.get(&intent.request.request_id) {
@@ -265,7 +264,6 @@ impl Registry {
                 if let Some(renewal) = intent.renewal.take() {
                     intent.expires_at_ms = renewal.expires_at_ms;
                 }
-                changed = true;
             }
         }
         let waiting = self
@@ -281,7 +279,7 @@ impl Registry {
         if waiting && self.deadline.is_some_and(|at| Instant::now() >= at) {
             self.failed = true;
         }
-        Ok(changed)
+        Ok(())
     }
     pub fn selection(&self, plan: &Plan) -> Option<Selection> {
         if self.plan.as_ref() != Some(plan) {

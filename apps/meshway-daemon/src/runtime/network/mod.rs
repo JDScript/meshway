@@ -456,9 +456,13 @@ impl Handle {
             });
             match applicable {
                 Some(plan) => {
-                    if self.dns_intents.advance(&plan, control).await? {
-                        control.refresh_configuration().await?;
-                    }
+                    // Offer the target already refreshed by this cycle before
+                    // observing a DNS-induced successor. Refreshing again here
+                    // can skip an intermediate business publication that the
+                    // worker has never seen, breaking its checked lineage and
+                    // forcing a TUN/cipher replacement. The next normal refresh
+                    // observes DNS grants; preparing DNS already polls promptly.
+                    self.dns_intents.advance(&plan, control).await?;
                     self.dns_intents.selection(&plan)
                 }
                 None => {
@@ -880,6 +884,9 @@ pub(super) async fn request(
 
 #[cfg(test)]
 pub(in crate::runtime) mod testing;
+
+#[cfg(all(test, target_os = "linux"))]
+mod publication;
 
 #[cfg(test)]
 mod tests {
