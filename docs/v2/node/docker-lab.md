@@ -14,7 +14,7 @@
 
 卷挂载在 `/var/lib/meshway`，保留 Node 密钥、接入请求、Server 绑定、缓存配置和 up/down 意图。容器停止、重启或替换程序均复用原卷。Ubuntu 24.04 工具镜像由 digest 固定的官方基础镜像和校验 SHA 的 snapshot 软件包构建，按不可变 image ID 部署；程序目录只读挂载。每个容器限制为 0.5 CPU、384 MiB 内存、64 个进程，使用独立 bridge 网络。
 
-容器根文件系统可写，包含 `ping`（IPv4／IPv6）、`traceroute`、`iperf`、`iperf3`、`ip`、`dig` 和 `curl`。writable layer 的修改在同一容器重启后保留，重建容器时重新来自锁定镜像；Node 身份另由持久卷保存。
+容器根文件系统可写，包含 `ping`（IPv4／IPv6）、`traceroute`、`iperf`、`iperf3`、`ip`、`wg`（`wireguard-tools`）、`dig` 和 `curl`。`wg` 用于[隔离性能参照](/v2/node/performance#内核-wireguard-参照)，需要 engine 内核提供 WireGuard；镜像不包含 wireguard-go 或 Go 工具链。writable layer 的修改在同一容器重启后保留，重建容器时重新来自锁定镜像；Node 身份另由持久卷保存。
 
 Compose 显式使用 `--network-mode tun`，先 `cap_drop: ALL`，再声明本 namespace 的网络、私有 mount 初始化和系统服务所需 capabilities。`SYS_ADMIN` 只用于创建 private-propagation mount namespace，daemon 与服务子进程启动前从其 bounding set 移除；`SYS_PTRACE` 用于跨 resolved UID 验证真实进程 namespace。保持 `no-new-privileges`，不使用 privileged 或 host network。
 

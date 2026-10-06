@@ -15,6 +15,8 @@
 
 L2 的 `raw` 是同一隔离网络中直接运行 iperf3 的内核参照，不经过 Meshway 代码；它不是 L0。L2 `plain` 不启用认证、加密、策略或控制面，也不代表 Meshway 业务数据面的吞吐。L4 的 `manager` 阶段仅为工具扩展接口，当前请求该阶段会在创建资源前失败。
 
+同一 L2/L3 harness 另含 `wg-direct`／`wg-relay` [内核 WireGuard 参照](#内核-wireguard-参照)，用于同环境、配额与应用口径的实现差值；这不是额外的 Meshway 功能层。
+
 ## 共同报告口径
 
 每次运行保存程序 hash、源码 digest、工具链、平台、参数与逐次原始样本；失败样本保留而不填零。启用 `MESHWAY_PROFILE` 时另保留抽样参数和首尾累积记录，并与插桩关闭的同一程序比较吞吐／进程 CPU，校验 observer 开销与计数边界；细层采样计时含插桩成本，不能直接当作未插桩程序的精确 CPU 占比。采样变量与输出字段见[运行日志](/v2/logging#显式分层性能采样)。
@@ -87,7 +89,7 @@ L1 尚未覆盖的对照轴：每邻接单连接与有界小连接池、接近�
 
 ## 运行
 
-需要本机锁定的 Rust／Zig 工具链，以及支持 `/dev/net/tun` 的 Linux Docker engine。脚本使用普通 Docker bridge 上两个一次性容器的独立 network namespace；仅这些容器拥有 `NET_ADMIN`，没有 host network、privileged 或宿主路由／DNS 修改。
+需要本机锁定的 Rust／Zig 工具链，以及支持 `/dev/net/tun` 和内核 WireGuard 的 Linux Docker engine。脚本使用普通 Docker bridge 上两个或三个一次性容器的独立 network namespace；按模式只授予所需容器 `NET_ADMIN`，没有 host network、privileged 或宿主路由／DNS 修改。
 
 ```sh
 mise run perf:dataplane
@@ -108,15 +110,16 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 | 文件／字段 | 内容 |
 | --- | --- |
 | `results.json` | schemaVersion、Git revision／dirty、源码 digest、binary SHA-256、参数、环境与逐次样本 |
-| `summary.md` | 成功样本中位数，按 stage、batch、profiling、TCP／UDP 分组；失败数量另列 |
+| `summary.md` | 成功样本中位数，按 stage、batch、profiling、TCP／UDP 分组；另列 L2→L3 与 secure−WireGuard 差值、失败数量 |
 | `bin/meshway-dataplane-perf` | 本次固定 Linux release 二进制 |
-| `<sample>/a.stdout`、`b.stdout` | 两个 plain 节点的 readiness；raw 没有节点进程 |
+| `<sample>/a.stdout`、`b.stdout` | plain／secure 端点的 readiness；raw／WireGuard 没有 Meshway 节点进程 |
 | `<sample>/a.stderr`、`b.stderr` | 日志及 profiling 原始 JSON |
 | `<sample>/iperf-client.json`、`iperf-server.json` | iperf3 原始输出；相邻 `.stderr` 保存诊断 |
 | `environment` | 内核、CPU 信息、目标架构、Rust／Zig／iperf3、image 来源、每容器 CPU／内存配额、MTU／包长／速率 |
 | `goodputMbps` | 接收端实收应用 payload 吞吐；不计封装头 |
 | `packetsPerSecond`、`lostPercent` | UDP 接收端交付报文数／秒和丢包；TCP 为 null |
-| `cpuSeconds`、`cpuPercent` | 两个容器 cgroup CPU 增量；百分比为 CPU 秒／完整客户端墙钟时间 × 100，100% 等于一核 |
+| `cpuSeconds`、`cpuPercent` | 所有样本容器 cgroup CPU 增量（直连两容器、中继三容器）；百分比为 CPU 秒／完整客户端墙钟时间 × 100，100% 等于一核；内核 CPU 归属限制见下节 |
+| `results[].wireguard` | 各接口的内核类型／MTU、AllowedIPs、端点、路由、握手时间和双向传输字节；不保存密钥 |
 | `allocations`、`copiedBytes`、`peakMemoryBytes` | 当前未测，明确为 null |
 
 吞吐采用 iperf3 排除 warmup 的接收区间。CPU 覆盖完整客户端区间，包括 warmup 和采集开销，包含节点、iperf3 与容器内辅助命令；不是仅 Node 的 CPU。固定 CPU quota 不等于绑核或独占宿主，结果只代表记录的环境。失败样本与原始日志保留，指标不填零，脚本返回失败。
@@ -124,6 +127,68 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 Profiling 单独记录启用和关闭的样本。`plain.tun.read`、`plain.udp.send`、`plain.udp.recv`、`plain.tun.write` 包装 future 的同步 poll 工作，不计 await 挂起时间；正式 UDP／Session 的更深层指标也保留在同一输出中。自耗时只扣除实际采到的嵌套 scope，应结合 samples、calls 与采样分母解释，不将采样累计纳秒直接当作整次 CPU 时间。最终吞吐取 profiling 关闭样本。
 
 iperf3 结果取接收端 `server_output_json.end.sum_received`，并核对 UDP 实收字节数等于交付报文数乘以固定 payload。不能用 iperf3 3.16 的 UDP `end.sum` 替代该字段；该字段可能在真实收到数据时仍报告零字节。Profiling 报告为累计快照，汇总只取每个节点最后一份，不累加同一进程的多份历史快照。
+
+## 内核 WireGuard 参照
+
+`perf:dataplane` 在同一次运行内测量 raw／plain／wg-direct／wg-relay／secure-direct／secure-relay，复用锁定 Ubuntu 工具镜像、内部 bridge、每容器 CPU／内存配额、`--mtu`、TCP 单流、UDP payload／输入速率和 iperf3 测量区间。WireGuard 只使用内核实现与锁定的 `wireguard-tools`，不存在 userspace 替代路径；内核不支持时样本失败。
+
+| 模式 | 拓扑与处理 |
+| --- | --- |
+| `wg-direct` | A、B 各一个 `wg0`，地址 `100.127.0.1/32`／`100.127.0.2/32`，peer AllowedIPs 仅为对端 `/32`；iperf3 路由走 `wg0` |
+| `wg-relay` | A 的 `wg0` ↔ R 的 `wg0`、R 的 `wg1` ↔ B 的 `wg0`；R 只在自己的 namespace 开启 IPv4 forwarding，将两个端点 `/32` 分别路由到对应隧道。A、B 没有彼此的直接 peer |
+
+每个样本创建新的随机密钥对，在该样本内固定；私钥生成、文件存储均在容器私有 tmpfs 的 0700 目录，文件权限 0600，仅公钥经内存传给对端。报告不保存密钥，容器删除时文件随 tmpfs 消失。所有 WG 容器仅添加 `NET_ADMIN`，无需 `/dev/net/tun`；每个接口均检查 `wireguard` 内核类型、MTU 和实际路由，样本结束核对每段握手及双向传输计数。各重复反转配置顺序；raw／WG 的 batch/profile 均显示 0（不适用），不为每个 Meshway batch/profile 重复内核参照。
+
+### 差值的适用范围
+
+- `summary.md` 以同次运行的 secure-direct−wg-direct、secure-relay−wg-relay 中位数相减，分别给出 TCP／UDP Mbps、UDP pps、丢包百分点与 cgroup CPU 百分点；缺失或失败的参照不补零。开启 profiling 的 secure 差值仍单独标注，正式结论取关闭插桩样本。
+- WireGuard 是内核实现，可用多核 softirq／kworker 和内核 offload；Meshway 每节点为 current-thread userspace runtime，经 TUN 与逐包 socket syscall。相同容器配额不是相同内核执行预算或独占 CPU。
+- CPU 仍为样本容器 `cpu.stat usage_usec` 之和。WireGuard 加解密与网络处理可在 softirq／kworker 中运行，部分 CPU 可能记在其他 cgroup／宿主上下文，并不完整受容器 quota 约束；这里没有 VM 全局归因测量。**内核 CPU 是未完整测得，不是 0；CPU 差值仅是容器记账差值，不能直接称为密码算法成本差。**
+- WireGuard 本身无 Meshway 式中继语义。`wg-relay` 的 R 终止两条隧道，解密 IP 包、路由并重新加密；Meshway R 对端到端 ciphertext 验 MAC／准入并转发，不解密业务内容。中继吞吐之差同时含信任模型与处理步骤差异。
+- WireGuard 稳态 Data 的固定额外开销为 32B（16B 数据头＋16B AEAD tag），另有 padding、外层 UDP/IP。Meshway 的 **139B** 是 IPv4/TCP、两跳、7-byte listener key 的最后一段示例；同条件直连为 128B，协议、路径长度和 listener key 会改变数字，见[逐段字节账本](/v2/discussions/packet#用一条公式覆盖路径的每一段)。因此“32B vs 139B”不能解释为所有实际包的固定差值，也不能把吞吐差值全部归于头部大小。
+
+### WireGuard 同环境实测
+
+2026-10-06，运行 `20261006t234736z-dfa88ba3`，原始证据位于执行工作树的 `.meshway/perf/dataplane/<run>/`。使用以下参数，六种模式各测 TCP／UDP、每格两次独立重复，24/24 样本成功；表格为同次运行的中位数。
+
+```sh
+mise run perf:dataplane -- --batch 32 --profile 0 --repeats 2 \
+  --seconds 6 --omit 1 --mtu 1280 --payload 1200 \
+  --udp-rate 2G --cpus 2 --memory 512m
+```
+
+| 环境／来源 | 值 |
+| --- | --- |
+| Kernel／架构 | OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`，aarch64 |
+| Userspace | 锁定 Ubuntu 24.04，iperf3 3.16，wireguard-tools `1.0.20210914-1ubuntu4` |
+| Image ID | `sha256:9cd28af9b7c80732023e87eefef6be2b40293db4aa644d88e4a6b7929e4cf8f9` |
+| 编译 | Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4，release，`aarch64-unknown-linux-musl` |
+| 资源／网络 | 每容器 2 CPU quota、512 MiB；同一内部 bridge、独立 namespace；MTU 1280 |
+| 负载／区间 | TCP 单流；UDP 1200B payload、2 Gbps 输入；warmup 1 秒＋测量 6 秒；Meshway batch 32、profile 关闭 |
+| 源码 | `5b6968782da71bd44dd523c59c8ec9c632a30997`；启动时 dirty 仅为本页和 docker-lab 文档修改，测量源码 digest 前后一致 |
+| 源码 SHA-256 | `ab03824736fddce5b07e0fe57764c7359f4ce72b2ea12bc3ea5632084578c8cc` |
+| Node binary SHA-256 | `3dcd7a9cf965677f777104ec36811f33378f48faa53a1ad15cc7193af6fd0ae1` |
+| Fixture binary SHA-256 | `a0bb6dfdfc2471e38a460afb457b42e78b06221e7e482f6d4c3df8a94dcfeb28` |
+
+| 模式 | TCP Mbps | TCP cgroup CPU % | UDP Mbps | UDP pps | UDP 丢包 % | UDP cgroup CPU % |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| raw | 91842.76 | 130.00 | 1488.93 | 155096.93 | 25.52 | 152.70 |
+| plain | 2229.39 | 121.52 | 1107.73 | 115388.29 | 44.61 | 188.27 |
+| wg-direct | 2741.54 | 29.07 | 1826.14 | 190222.43 | 8.68 | 150.34 |
+| wg-relay | 4853.50 | 23.61 | 1708.83 | 178003.06 | 14.54 | 130.42 |
+| secure-direct | 321.90 | 137.27 | 467.61 | 48709.13 | 76.61 | 360.51 |
+| secure-relay | 198.76 | 148.98 | 421.37 | 43893.16 | 78.93 | 442.21 |
+
+CPU 按全部样本容器 cgroup 相加，100%＝一核，区间包含 warmup；WireGuard 的低 TCP cgroup CPU 不代表内核加解密成本只有这些。TCP pps 未测。UDP 2G 输入超过此次各实现的实际接收吞吐，使差值不再被 500M 输入遮蔽；raw 自身仍有 25.52% 丢包，不能把 secure 的全部丢包归因于认证／加密，也不能把本表直接当作无损容量或硬件 pps 上限。
+
+**Meshway secure−WireGuard：**由未四舍五入的中位数相减，CPU／丢包单位为百分点。
+
+| 对照 | TCP Δ Mbps | TCP Δ cgroup CPU pp | UDP Δ Mbps | UDP Δ pps | UDP Δ丢包 pp | UDP Δ cgroup CPU pp |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| secure-direct − wg-direct | −2419.64 | +108.20 | −1358.53 | −141513.31 | +67.93 | +210.17 |
+| secure-relay − wg-relay | −4654.74 | +125.36 | −1287.46 | −134109.90 | +64.39 | +311.78 |
+
+此次 WG relay TCP 两次为 4485.23／5221.77 Mbps，高于 direct 的 2771.47／2711.62 Mbps。每条隧道均有握手和双向字节证据，R 的两段路由与转发已核对；仍未隔离内核 offload、软中断／worker 调度与 CPU 分布对该现象的影响，不能据此宣称中继比直连更高效。报告保留真实值，不选择性重测或用文献数字替换。执行前按 30 秒间隔等待已有测量锁，并在完整运行期间保持互斥；按本次唯一 label 核对，无残留容器或 network。
 
 ## L2 实测参考
 
