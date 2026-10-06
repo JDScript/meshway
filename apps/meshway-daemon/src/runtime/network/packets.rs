@@ -233,8 +233,9 @@ impl Packets {
         let Ok(now_ms) = identity.snapshot().now_ms() else {
             return;
         };
-        // Hints only decide bounded scheduling. receive() authenticates every
-        // byte and the actual adjacent carrier before any output or flow change.
+        // Hints only decide bounded scheduling. receive() authenticates packet
+        // content, this verifier's full path prefix and the actual carrier;
+        // downstream MAC columns are checked by their respective verifiers.
         let Ok(hint) = secure.incoming_hint(&bytes) else {
             self.drop_packet("cipher_header");
             return;

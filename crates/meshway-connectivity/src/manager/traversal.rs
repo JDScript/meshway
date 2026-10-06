@@ -460,14 +460,19 @@ async fn prepare(
             break;
         }
         if node.freshness != Freshness::Current {
+            tracing::debug!(%peer, freshness = ?node.freshness, cause = "peer_not_current", "Traversal preparation has no usable candidate");
             continue;
         }
         let Some(VisibleReport::Peer { report }) = node.report else {
+            tracing::debug!(%peer, cause = "peer_report_unavailable", "Traversal preparation has no usable candidate");
             continue;
         };
         let Some(carrier) = carriers.get(&peer) else {
             continue;
         };
+        let mut remote_candidates = 0usize;
+        let mut compatible_sockets = 0usize;
+        let mut local_candidates = 0usize;
         let selected = report
             .endpoints
             .iter()
@@ -481,6 +486,7 @@ async fn prepare(
                         > i64::try_from(now).unwrap_or(i64::MAX)
             })
             .find_map(|remote| {
+                remote_candidates += 1;
                 let address =
                     meshway_control::connectivity::udp_recipient(&remote.candidate.address).ok()?;
                 sockets.iter().find_map(|(id, fact)| {
@@ -489,11 +495,13 @@ async fn prepare(
                     {
                         return None;
                     }
+                    compatible_sockets += 1;
                     fact.endpoints.iter().find_map(|observation| {
                         if observation.expires_at.timestamp_millis() <= i64::try_from(now).ok()? {
                             return None;
                         }
                         let local = fact.candidate(observation).ok()?;
+                        local_candidates += 1;
                         gateway
                             .published(&local)
                             .then(|| (*id, local, remote.candidate_reference.clone()))
@@ -501,6 +509,10 @@ async fn prepare(
                 })
             });
         let Some((endpoint, local, remote)) = selected else {
+            tracing::debug!(%peer, remote_candidates, compatible_sockets, local_candidates,
+                visible_endpoints = report.endpoints.len(), local_sockets = sockets.len(),
+                publication = %context.snapshot().reference().execution_publication,
+                cause = "no_acknowledged_pair", "Traversal preparation has no usable candidate");
             continue;
         };
         let request = prepare_request(context, carrier.clone(), local, remote)
