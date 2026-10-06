@@ -31,6 +31,7 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
         receive: Default::default(),
         cancellation: parent.child_token(),
         recovery: Default::default(),
+        session: Default::default(),
     }
 }
 

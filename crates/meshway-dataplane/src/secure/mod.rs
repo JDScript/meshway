@@ -3,16 +3,17 @@
 //! Noise IK protects IP payloads end to end between the original source and the
 //! terminal node. Relays see authenticated five-tuples, TCP flags/sequence facts,
 //! echo identifiers and packet lengths, plus ciphertext. Every forwarding node
-//! verifies an ordered Ed25519 proof chain over the original full path, frame,
-//! ciphertext and actual carrier descriptors. Replies use that exact path in
+//! verifies ordered Ed25519 proofs during ephemeral session establishment, then
+//! verifier-specific chained MACs over frames and actual carrier descriptors.
+//! Replies use that exact path in
 //! reverse; carrier changes never authorize another logical path.
 //!
 //! This synchronous owner opens no sockets and creates no background tasks.
 //! Hosts retain guarded outputs through I/O readiness and release at their final
 //! synchronous sink. Closing a circuit cancels its queued wire/plaintext outputs;
 //! dropping the node cancels every circuit, independently of Control's lease.
-//! Per-hop signatures prioritize correctness; no performance
-//! acceptance or transport implementation is implied.
+//! Steady-state packets carry a CID and compact carrier path; no per-packet
+//! public-key operation or unauthenticated context reconstruction is used.
 mod authorization;
 mod codec;
 mod crypto;
@@ -20,6 +21,7 @@ mod diagnostics;
 mod probe;
 mod recovery;
 mod replay;
+mod session;
 
 use crate::{
     AuthenticatedPeer, Direction, Engine, Hop, Ingress, Packet, PendingAction, PendingRoute,
@@ -214,19 +216,6 @@ pub enum Received {
 pub struct UntrustedIncomingHint {
     pub authorization: CircuitAuthorization,
     pub path: Vec<NodeId>,
-    pub last_carrier: Carrier,
-}
-
-pub fn incoming_hint(bytes: &[u8]) -> Result<UntrustedIncomingHint, Error> {
-    static PROFILE: meshway_logging::profile::Metric =
-        meshway_logging::profile::Metric::new("codec.hint");
-    let _profile = PROFILE.enter();
-    let frame = Frame::decode(bytes)?;
-    Ok(UntrustedIncomingHint {
-        authorization: frame.context.authorization,
-        path: frame.context.path,
-        last_carrier: frame.proofs.last().ok_or(Error::Wire)?.carrier.clone(),
-    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,6 +269,7 @@ struct Circuit {
     receive: [ReplayWindow; 2],
     cancellation: CancellationToken,
     recovery: recovery::Recovery,
+    session: session::Session,
 }
 impl Drop for Circuit {
     fn drop(&mut self) {
@@ -323,6 +313,7 @@ impl Circuit {
             receive: Default::default(),
             cancellation,
             recovery: Default::default(),
+            session: session::Session::new()?,
         })
     }
     fn guard(&self, snapshot: &ExecutionSnapshot, handshake: bool) -> Guard {
@@ -403,6 +394,7 @@ impl Circuit {
         self.cancellation.cancel();
         self.state = State::Closed;
         self.recovery = Default::default();
+        self.session = Default::default();
     }
 
     fn engine_rejected(&self, operation: &'static str, error: crate::Error) -> Error {
@@ -475,6 +467,25 @@ impl fmt::Debug for SecureNode {
     }
 }
 impl SecureNode {
+    /// A bounded scheduling lookup. Session metadata comes only from this owner;
+    /// packet authentication and replay admission still happen in receive().
+    pub fn incoming_hint(&self, bytes: &[u8]) -> Result<UntrustedIncomingHint, Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("codec.hint");
+        let _profile = PROFILE.enter();
+        let context = if let Some(id) = codec::session_id(bytes)? {
+            let circuit = self.circuits.get(&id).ok_or(Error::State)?;
+            circuit.ensure_current(self.identity.snapshot())?;
+            &circuit.context
+        } else {
+            &Frame::decode(bytes, None)?.context
+        };
+        Ok(UntrustedIncomingHint {
+            authorization: context.authorization,
+            path: context.path.clone(),
+        })
+    }
+
     /// Replace host-observed authenticated carrier availability without changing
     /// circuit IDs, replay windows, flows or their complete logical paths.
     /// Every later output still checks this carrier against its specific permit.
@@ -607,7 +618,10 @@ impl SecureNode {
             probe: None,
             body,
             proofs: Vec::new(),
+            exchange: None,
+            auth: Default::default(),
         };
+        circuit.session.remember_init(&frame)?;
         let pending = self.output(&circuit, frame, hop, None)?;
         pending.ensure_current()?;
         circuit.recovery.init = Some(recovery::Stage::new(
@@ -664,10 +678,28 @@ impl SecureNode {
             meshway_logging::profile::Metric::new("secure.receive");
         let _profile = PROFILE.enter();
         self.maintain_circuits()?;
-        let frame = Frame::decode(&bytes)?;
+        let id = codec::session_id(&bytes)?;
+        let retained = id
+            .as_ref()
+            .and_then(|id| self.circuits.get(id))
+            .map(|circuit| &circuit.context);
+        let frame = Frame::decode(&bytes, retained)?;
         let snapshot = self.identity.snapshot();
         let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
-        let previous = crypto::verify(cfg, &frame, incoming).inspect_err(|error| {
+        let previous = if frame.kind.handshake() {
+            crypto::verify(cfg, &frame, incoming)
+        } else {
+            let circuit = self
+                .circuits
+                .get(&frame.context.circuit)
+                .ok_or(Error::State)?;
+            circuit.ensure_current(snapshot)?;
+            if circuit.context != frame.context {
+                return Err(Error::Context);
+            }
+            circuit.session.verify(cfg, &frame, incoming)
+        }
+        .inspect_err(|error| {
             if diagnostics::event() {
                 tracing::debug!(operation = "verify", ?error,
                     cid = ?frame.context.circuit, authorization = ?frame.context.authorization,
@@ -725,6 +757,7 @@ impl SecureNode {
         let id = circuit.context.circuit;
         let fingerprint = Sha256::digest(frame.encode()?).into();
         let result = (|| {
+            circuit.session.remember_init(&frame)?;
             let result = match hop {
                 Hop::Forward(_) => Received::Forward(self.output(&circuit, frame, hop, None)?),
                 Hop::Deliver | Hop::Exit => {
@@ -759,7 +792,11 @@ impl SecureNode {
                         probe: None,
                         body,
                         proofs: Vec::new(),
+                        exchange: Some(circuit.session.exchange()?),
+                        auth: Default::default(),
                     };
+                    let keys = circuit.session.derive(&response, cfg.node_id)?;
+                    circuit.session.establish(keys);
                     let hop = self.handshake_hop(&response, None)?;
                     circuit.state = State::Endpoint(Box::new(noise));
                     let response = self.output(&circuit, response, hop, None)?;
@@ -816,6 +853,8 @@ impl SecureNode {
                 let fingerprint = Sha256::digest(frame.encode()?).into();
                 match &circuit.state {
                     State::RelayAwaiting => {
+                        let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+                        let keys = circuit.session.derive(&frame, cfg.node_id)?;
                         let output = self.output(circuit, frame, hop, None)?;
                         circuit.guard(snapshot, true).ensure_current()?;
                         circuit.recovery.response = Some(recovery::Stage::new(
@@ -824,6 +863,7 @@ impl SecureNode {
                             Some(&output),
                         )?);
                         circuit.state = State::RelayEstablished;
+                        circuit.session.establish(keys);
                         Ok(Received::Forward(output))
                     }
                     State::Initiator(_) => {
@@ -833,6 +873,7 @@ impl SecureNode {
                         // Noise handshake reads mutate their state even when
                         // failing. Retire this circuit on any such failure.
                         let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+                        let keys = circuit.session.derive(&frame, cfg.node_id)?;
                         let expected =
                             crypto::keys(cfg, *circuit.context.path.last().ok_or(Error::Context)?)?
                                 .1
@@ -853,6 +894,10 @@ impl SecureNode {
                             guard.ensure_current()?;
                             Ok(noise)
                         })?;
+                        // Keep the completed cipher and its MAC keys together,
+                        // even if the later receipt/currentness check loses the
+                        // snapshot to a legal Control successor.
+                        circuit.session.establish(keys);
                         circuit.recovery.response =
                             Some(recovery::Stage::new(fingerprint, guard, None)?);
                         circuit.recovery.init = None;
@@ -1066,6 +1111,8 @@ impl SecureNode {
             probe: None,
             body,
             proofs: Vec::new(),
+            exchange: None,
+            auth: Default::default(),
         };
         self.output(circuit, frame, route.hop(), Some(&route))
     }
@@ -1142,7 +1189,16 @@ impl SecureNode {
             guard.expires_at_ms = guard.expires_at_ms.min(route.permit_expires_at_ms());
         }
         guard.ensure_current()?;
-        crypto::append(&self.identity, &mut frame, carrier.clone())?;
+        if frame.kind.handshake() {
+            crypto::append(
+                &self.identity,
+                &mut frame,
+                carrier.clone(),
+                circuit.session.public(),
+            )?;
+        } else {
+            circuit.session.append(&mut frame, carrier.clone())?;
+        }
         let bytes = frame.encode()?;
         guard.ensure_current()?;
         Ok(PendingFrame {

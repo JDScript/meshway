@@ -1,0 +1,306 @@
+use super::*;
+use crate::{
+    fixtures,
+    secure::{
+        CircuitAuthorization,
+        codec::{HopAuth, Kind, ProbeMetadata, Proof},
+    },
+};
+use meshway_model::{EventId, KeyId, NetworkId, RequestId, Version};
+use meshway_transport_spec::TransportProtocol;
+
+fn node(n: usize) -> NodeId {
+    NodeId::new(uuid::Uuid::from_u128(n as u128 + 1)).unwrap()
+}
+
+struct Fixture {
+    sessions: Vec<Session>,
+    response: Frame,
+    selected: LogicalPath,
+}
+
+impl Fixture {
+    // The handshake signature layer is exercised by crypto/tests and the real
+    // Control/runtime tests. Here its verified contributions feed the actual KDF.
+    fn pending(n: usize) -> Self {
+        let selected = LogicalPath {
+            nodes: (0..n).map(node).collect(),
+            dial_candidates: (0..n - 1)
+                .map(|i| (node(i), vec![format!("{}/udp", node(i + 1))]))
+                .collect(),
+        };
+        let mut sessions: Vec<_> = (0..n).map(|_| Session::new().unwrap()).collect();
+        let mut init = Frame {
+            context: Context {
+                network: NetworkId::new(node(20).into_uuid()).unwrap(),
+                authorization: CircuitAuthorization::Business(
+                    RequestId::new(node(21).into_uuid()).unwrap(),
+                ),
+                path: selected.nodes.clone(),
+                circuit: [1; 32],
+                permit: [2; 32].into(),
+                keys: [3; 32].into(),
+            },
+            kind: Kind::Init,
+            reply: false,
+            sequence: 0,
+            facts: None,
+            probe: None,
+            body: vec![7; 96],
+            proofs: vec![],
+            exchange: None,
+            auth: HopAuth::default(),
+        };
+        for (position, session) in sessions.iter_mut().enumerate() {
+            session.remember_init(&init).unwrap();
+            if position + 1 < n {
+                init.proofs.push(Proof {
+                    key: KeyId::new(node(position).into_uuid()).unwrap(),
+                    generation: Version::MIN,
+                    carrier: carrier(position),
+                    ephemeral: session.public(),
+                    signature: [0; 64],
+                });
+            }
+        }
+        let response = Frame {
+            context: init.context,
+            kind: Kind::Response,
+            reply: true,
+            sequence: 0,
+            facts: None,
+            probe: None,
+            body: vec![8; 48],
+            proofs: vec![],
+            exchange: Some(sessions.last().unwrap().exchange().unwrap()),
+            auth: HopAuth::default(),
+        };
+        Self {
+            sessions,
+            response,
+            selected,
+        }
+    }
+
+    fn establish(&mut self) {
+        for (position, session) in self.sessions.iter_mut().enumerate() {
+            let keys = session.derive(&self.response, node(position)).unwrap();
+            session.establish(keys);
+            assert!(session.pending.is_none());
+        }
+    }
+
+    fn frame(&self, reply: bool) -> Frame {
+        let facts = fixtures::udp(1, 3, 50000, 443).facts();
+        Frame {
+            context: self.response.context.clone(),
+            kind: Kind::Data,
+            reply,
+            sequence: 17,
+            facts: Some(facts),
+            probe: None,
+            body: vec![9; facts.len + 16],
+            proofs: vec![],
+            exchange: None,
+            auth: HopAuth::default(),
+        }
+    }
+}
+
+fn carrier(edge: usize) -> Carrier {
+    Carrier {
+        dialer: node(edge),
+        listener: node(edge + 1),
+        listener_key: "udp".into(),
+        protocol: TransportProtocol::NativeUdp,
+    }
+}
+
+#[test]
+fn every_supported_path_and_direction_verifies_all_prefixes_with_linear_wire_tags() {
+    for n in 2..=8 {
+        let mut f = Fixture::pending(n);
+        f.establish();
+        for reply in [false, true] {
+            let mut frame = f.frame(reply);
+            for i in 0..n - 1 {
+                let from = ordered(n, reply, i);
+                let to = ordered(n, reply, i + 1);
+                let carrier = carrier(from.min(to));
+                f.sessions[from]
+                    .append(&mut frame, carrier.clone())
+                    .unwrap();
+                assert_eq!(frame.auth.tags.len(), n - i - 1);
+                let bytes = frame.encode().unwrap();
+                frame = Frame::decode(&bytes, Some(&frame.context)).unwrap();
+                assert_eq!(
+                    f.sessions[to]
+                        .verify_chain(&frame, &carrier, &f.selected)
+                        .unwrap(),
+                    node(from)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn colluding_origin_and_later_relay_cannot_skip_an_honest_mandatory_node() {
+    let mut f = Fixture::pending(4);
+    f.establish();
+    for reply in [false, true] {
+        let mut frame = f.frame(reply);
+        let source = ordered(4, reply, 0);
+        let malicious = ordered(4, reply, 2);
+        let target = ordered(4, reply, 3);
+        f.sessions[source]
+            .append(&mut frame, carrier(if reply { 2 } else { 0 }))
+            .unwrap();
+        // Remove the honest node's verifier column and claim its carrier without
+        // obtaining its contribution for downstream verifiers. The later relay
+        // can use all its own legitimate pair keys, but still cannot complete it.
+        frame.auth.tags.remove(0);
+        frame.auth.carriers.push(carrier(1));
+        let last = carrier(if reply { 0 } else { 2 });
+        f.sessions[malicious]
+            .append(&mut frame, last.clone())
+            .unwrap();
+        assert_eq!(
+            f.sessions[target].verify_chain(&frame, &last, &f.selected),
+            Err(Error::Proof)
+        );
+    }
+}
+
+#[test]
+fn packet_tampering_wrong_verifier_and_actual_carrier_are_rejected() {
+    let mut f = Fixture::pending(4);
+    f.establish();
+    for tamper in 0..8 {
+        let mut frame = f.frame(false);
+        f.sessions[0].append(&mut frame, carrier(0)).unwrap();
+        match tamper {
+            0 => frame.body[0] ^= 1,
+            1 => frame.sequence += 1,
+            2 => frame.reply = true,
+            3 => frame.facts.as_mut().unwrap().traffic.destination = fixtures::address(4),
+            4 => frame.auth.tags.swap(0, 1),
+            5 => frame.auth.tags[0][0] ^= 1,
+            6 => frame.auth.carriers[0].protocol = TransportProtocol::NativeTcp,
+            _ => frame.context.circuit[0] ^= 1,
+        }
+        assert!(
+            f.sessions[1]
+                .verify_chain(&frame, &carrier(0), &f.selected)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn session_kdf_binds_full_context_and_both_handshake_messages() {
+    for tamper in 0..7 {
+        let mut f = Fixture::pending(3);
+        let keys = f.sessions[0].derive(&f.response, node(0)).unwrap();
+        f.sessions[0].establish(keys);
+        let mut frame = f.frame(false);
+        f.sessions[0].append(&mut frame, carrier(0)).unwrap();
+        match tamper {
+            0 => f.response.context.permit = [13; 32].into(),
+            1 => f.response.context.keys = [14; 32].into(),
+            2 => f.response.context.network = NetworkId::new(node(22).into_uuid()).unwrap(),
+            3 => {
+                f.response.context.authorization =
+                    CircuitAuthorization::Business(RequestId::new(node(23).into_uuid()).unwrap())
+            }
+            4 => f.response.body[0] ^= 1,
+            5 => {
+                f.response.exchange.as_mut().unwrap().init[0] ^= 1;
+                assert!(f.sessions[1].derive(&f.response, node(1)).is_err());
+                continue;
+            }
+            _ => {
+                f.response.exchange.as_mut().unwrap().public[0][0] ^= 1;
+                assert!(f.sessions[1].derive(&f.response, node(1)).is_err());
+                continue;
+            }
+        }
+        let keys = f.sessions[1].derive(&f.response, node(1)).unwrap();
+        f.sessions[1].establish(keys);
+        assert_eq!(
+            f.sessions[1].verify_chain(&frame, &carrier(0), &f.selected),
+            Err(Error::Proof)
+        );
+    }
+}
+
+#[test]
+fn low_order_and_substituted_ephemeral_contributions_never_establish_keys() {
+    for low in [0, 1] {
+        let mut f = Fixture::pending(3);
+        let mut public = [0; 32];
+        public[0] = low;
+        f.response.exchange.as_mut().unwrap().public[2] = public;
+        assert!(matches!(
+            f.sessions[0].derive(&f.response, node(0)),
+            Err(Error::Crypto)
+        ));
+        assert!(matches!(
+            f.sessions[2].derive(&f.response, node(2)),
+            Err(Error::Proof)
+        ));
+    }
+    let mut f = Fixture::pending(3);
+    f.response.exchange.as_mut().unwrap().public[1] = Session::new().unwrap().public();
+    assert!(matches!(
+        f.sessions[1].derive(&f.response, node(1)),
+        Err(Error::Proof)
+    ));
+}
+
+#[test]
+fn diagnostic_mac_binds_measurement_deadline_kind_and_ciphertext() {
+    let mut f = Fixture::pending(3);
+    f.response.context.authorization = CircuitAuthorization::Diagnostic(
+        meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
+    );
+    f.establish();
+    for reply in [false, true] {
+        for tamper in 0..5 {
+            let mut frame = f.frame(reply);
+            frame.kind = if reply {
+                Kind::ProbeReply
+            } else {
+                Kind::ProbeRequest
+            };
+            frame.facts = None;
+            frame.body = vec![7; 48];
+            frame.probe = Some(ProbeMetadata {
+                measurement_id: EventId::new(node(25).into_uuid()).unwrap(),
+                expires_at_ms: 10_000,
+            });
+            let edge = carrier(if reply { 1 } else { 0 });
+            f.sessions[if reply { 2 } else { 0 }]
+                .append(&mut frame, edge.clone())
+                .unwrap();
+            f.sessions[1]
+                .verify_chain(&frame, &edge, &f.selected)
+                .unwrap();
+            match tamper {
+                0 => frame.probe.as_mut().unwrap().expires_at_ms += 1,
+                1 => {
+                    frame.probe.as_mut().unwrap().measurement_id =
+                        EventId::new(node(26).into_uuid()).unwrap()
+                }
+                2 => frame.body[0] ^= 1,
+                3 => frame.kind = Kind::Data,
+                _ => frame.reply = !reply,
+            }
+            assert!(
+                f.sessions[1]
+                    .verify_chain(&frame, &edge, &f.selected)
+                    .is_err()
+            );
+        }
+    }
+}

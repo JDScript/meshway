@@ -182,7 +182,10 @@ async fn authentic_frames_reject_tampering_replay_and_skipped_relay_without_deli
             .is_err()
     );
     let mut tampered = wire.clone();
-    *tampered.last_mut().unwrap() ^= 1;
+    // A -> R -> B carries R's tag followed by B's independent tag.
+    // R must reject its own corrupted verifier column before replay admission.
+    let relay_tag = tampered.len() - 32;
+    tampered[relay_tag] ^= 1;
     assert!(fixture.r.receive(&fixture.ar.carrier, tampered).is_err());
     let Received::Forward(forward) = fixture
         .r
@@ -204,6 +207,24 @@ async fn authentic_frames_reject_tampering_replay_and_skipped_relay_without_deli
         Received::Packet(_)
     ));
     assert!(fixture.b.receive(&fixture.rb.carrier, wire).is_err());
+    // Corruption of B's independent column is detected by B, while R can still
+    // authenticate the original packet. It must never become plaintext output.
+    let mut wire = fixture
+        .a
+        .send(circuit, datagram(&fixture.mesh, false, false))
+        .unwrap()
+        .release(|bytes| bytes)
+        .unwrap();
+    *wire.last_mut().unwrap() ^= 1;
+    let Received::Forward(forward) = fixture.r.receive(&fixture.ar.carrier, wire).unwrap() else {
+        panic!("R validates its own column");
+    };
+    assert!(
+        fixture
+            .b
+            .receive(&fixture.rb.carrier, forward.release(|bytes| bytes).unwrap())
+            .is_err()
+    );
     fixture.close().await;
 }
 

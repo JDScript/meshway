@@ -450,7 +450,13 @@ pub(super) async fn run(
                 received_at,
             }) => {
                 if let Some(state) = &installed {
-                    packets.incoming(*link, frame.payload, received_at, &state.target);
+                    packets.incoming(
+                        *link,
+                        frame.payload,
+                        received_at,
+                        &state.target,
+                        &state.secure,
+                    );
                 }
             }
             Work::Carrier(Event::Changed) | Work::Tick | Work::DiagnosticSent => {}

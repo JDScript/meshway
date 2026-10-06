@@ -12,8 +12,8 @@ use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 const NOISE: &str = "Noise_IK_25519_ChaChaPoly_SHA256";
-const PROLOGUE: &[u8] = b"meshway/circuit/noise-prologue/candidate-v3\0";
-const PROOF: &[u8] = b"meshway/circuit/hop-proof/candidate-v3\0";
+const PROLOGUE: &[u8] = b"meshway/circuit/noise-prologue/candidate-v4\0";
+const PROOF: &[u8] = b"meshway/circuit/hop-proof/candidate-v4\0";
 
 pub(super) fn keys(
     cfg: &NodeConfiguration,
@@ -43,10 +43,10 @@ pub(super) fn prologue(cfg: &NodeConfiguration, context: &Context) -> Result<Vec
 
 fn encode_keys(cfg: &NodeConfiguration, path: &[NodeId], out: &mut Vec<u8>) -> Result<(), Error> {
     for node in path {
-        codec::id(out, node);
+        codec::id(out, node.as_uuid());
         let (control, dataplane) = keys(cfg, *node)?;
         for key in [control, dataplane] {
-            codec::id(out, key.id);
+            codec::id(out, key.id.as_uuid());
             out.extend_from_slice(&key.generation.get().to_be_bytes());
             out.extend_from_slice(key.public_key.bytes.as_bytes());
         }
@@ -60,7 +60,7 @@ pub(super) fn key_digest(cfg: &NodeConfiguration, path: &[NodeId]) -> Result<Dig
     if !(2..=codec::MAX_PATH).contains(&path.len()) {
         return Err(Error::Context);
     }
-    let mut bytes = b"meshway/circuit/key-set/candidate-v3\0".to_vec();
+    let mut bytes = b"meshway/circuit/key-set/candidate-v4\0".to_vec();
     encode_keys(cfg, path, &mut bytes)?;
     Ok(Digest::from_bytes(Sha256::digest(bytes).into()))
 }
@@ -231,7 +231,11 @@ pub(super) fn append(
     identity: &DataPlaneIdentity,
     frame: &mut Frame,
     carrier: Carrier,
+    ephemeral: [u8; 32],
 ) -> Result<(), Error> {
+    if !frame.kind.handshake() {
+        return Err(Error::State);
+    }
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("crypto.append");
     let _profile = PROFILE.enter();
@@ -249,6 +253,7 @@ pub(super) fn append(
         generation: key.generation,
         carrier,
         signature: [0; 64],
+        ephemeral,
     };
     let digest = proof_digest(&hash, frame.proofs.len(), &proof)?;
     proof.signature = {
@@ -276,6 +281,9 @@ pub(super) fn verify(
     frame: &Frame,
     incoming: &Carrier,
 ) -> Result<NodeId, Error> {
+    if !frame.kind.handshake() {
+        return Err(Error::Proof);
+    }
     let context = &frame.context;
     if context.network != cfg.network_id {
         return Err(Error::Context);
@@ -339,6 +347,16 @@ fn verify_chain<'a>(
             return Err(Error::Proof);
         }
         let key = key_for(signer)?;
+        if let Some(exchange) = &frame.exchange {
+            let position = context
+                .path
+                .iter()
+                .position(|node| *node == signer)
+                .ok_or(Error::Proof)?;
+            if exchange.public.get(position) != Some(&proof.ephemeral) {
+                return Err(Error::Proof);
+            }
+        }
         if proof.key != key.id || proof.generation != key.generation {
             return Err(Error::Proof);
         }

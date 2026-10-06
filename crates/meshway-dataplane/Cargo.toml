@@ -21,8 +21,13 @@ tokio-util.workspace = true
 snow = { version = "=0.10.0", default-features = false, features = ["use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 sha2.workspace = true
+hmac = "0.12"
+hkdf = "0.12"
+x25519-dalek = { version = "2.0", default-features = false, features = ["static_secrets", "zeroize"] }
+subtle = "2.6"
 zeroize = "1.8"
 getrandom.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
@@ -34,7 +39,6 @@ meshway-transport-tcp = { path = "../meshway-transport-tcp" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tempfile.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 
 [lints]

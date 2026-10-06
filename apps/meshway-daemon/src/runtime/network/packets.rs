@@ -219,6 +219,7 @@ impl Packets {
         bytes: Vec<u8>,
         received_at: std::time::Instant,
         target: &Target,
+        secure: &SecureNode,
     ) {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("host.incoming");
@@ -234,7 +235,7 @@ impl Packets {
         };
         // Hints only decide bounded scheduling. receive() authenticates every
         // byte and the actual adjacent carrier before any output or flow change.
-        let Ok(hint) = secure::incoming_hint(&bytes) else {
+        let Ok(hint) = secure.incoming_hint(&bytes) else {
             self.drop_packet("cipher_header");
             return;
         };
@@ -322,7 +323,7 @@ impl Packets {
                 self.drop_packet("cipher_deadline");
                 continue;
             }
-            let hint = secure::incoming_hint(&item.bytes).ok();
+            let hint = secure.incoming_hint(&item.bytes).ok();
             let waiting = hint.as_ref().is_some_and(|hint| {
                 let Some(position) = hint.path.iter().position(|node| *node == cfg.node_id) else {
                     return false;

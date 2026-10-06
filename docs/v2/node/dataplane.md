@@ -46,20 +46,32 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 | 端到端身份／加密 | Snow 的 `Noise_IK_25519_ChaChaPoly_SHA256`，静态 X25519 公钥取自本机 Server 执行配置；每次握手使用新 ephemeral |
 | 握手绑定 | network、明确区分 business demand／diagnostic observation 的授权引用、完整有序 path、随机 circuit ID、permit 授权摘要（排除 expiresAt）、路径上全部控制／数据面 key ID、generation 和公钥 |
 | 早期数据 | 两个 Noise 握手消息的业务 payload 必须为空；握手不创建业务流 |
-| 路径证明 | 按顺序的 Ed25519 逐跳证明，绑定原始 header、ciphertext、此前证明和当前 carrier；接收端验证全部证明 |
+| 路径证明 | 握手使用有序 Ed25519 证明认证各节点独立临时 X25519 contribution；稳态使用每个后续验证者独立的 HMAC-SHA256 链，绑定完整原路径会话、包和已走 carrier 前缀 |
 | 承载约束 | carrier 包含实际 dialer、listener、listener key 与协议；验证该连接在所选完整路径的候选集合内，拨号方向与业务方向分别处理 |
 | 重放 | 每 circuit／方向独立的 64-bit nonce 和 1,024 包窗口；nonce 不回绕，只有通过认证与准入的包推进接收窗口 |
 | 生命周期 | circuit、流、permit 与 Control 截止取交集；关闭、销毁、失效同时取消排队密文和待交付明文 |
 
-**隐私范围：**IP 包通过 Noise 在业务两端之间加密。为执行中转检查，外层同时携带签名保护的五元组、有限 TCP／echo 状态和长度；这些元数据不具备机密性。中继不解密业务 payload，目标端解密后必须把真实包解析结果与签名元数据精确比较。
+**隐私范围：**IP 包通过 Noise 在业务两端之间加密。为执行中转检查，外层同时携带认证保护的五元组、有限 TCP／echo 状态和长度；这些元数据不具备机密性。中继不解密业务 payload，目标端解密后必须把真实包解析结果与认证元数据精确比较。
 
 密钥通过 `Control::dataplane_identity` 从有效执行快照取得。包平面签名有独立的 purpose／network／node／key generation transcript，不开放任意控制认证消息签名。该句柄是受信进程内接口；密钥不进入 Debug 或序列化，不能视为恶意插件的内存隔离。
 
-当前 wire 标识为 `MWCIR\0\0\x03`，授权种类与诊断帧进入独立 v3 Noise prologue／proof hash；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。UUID 编码为固定 36-byte 规范 ASCII；数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
+当前 wire 标识为 `MWCIR\0\0\x04`，Noise prologue、握手证明、会话 KDF 和数据认证有各自的 v4 purpose；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。v3／v4 帧不兼容，完整路径节点需要协调升级；不降级到逐包签名或无认证模式。IPC v3 和 HTTP 契约独立于该 wire 版本。
+
+握手 UUID 使用固定 16-byte 非零 UUID，数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。最大握手帧仍容纳于原 4 KiB 重试缓存。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
+
+### 会话密钥与紧凑数据帧
+
+1. 每个节点为该 circuit 生成独立的临时 X25519 密钥，与 Noise 的静态／临时密钥分离。INIT 的每跳签名包含自己的公开 contribution、实际 carrier 和此前完整证明。节点保留已验证的上游 contribution 前缀及自己的 contribution。
+2. RESPONSE 包含 INIT Noise 消息的 SHA256、完整有序 contribution 列表和 Noise response。每个反向签名绑定整个 RESPONSE、此前证明及签名者自己的 contribution。每个节点必须核对原 INIT digest、缓存前缀和自己的公开值；不能仅信任终点重述的列表。
+3. 每个节点只与其他路径节点做成对 X25519 agreement；拒绝全零共享秘密。HKDF-SHA256 的 salt 绑定完整 context、两次 Noise 消息和完整 contribution 列表，info 使用独立 purpose 与有序 signer／verifier 位置。不同方向、会话、授权、路径和 key generation 不共用 MAC key。握手完成后释放临时私钥；关闭时释放并清零本 owner 保留的派生密钥。密钥不进入日志或 wire。
+4. 稳态帧只携带 magic／kind、32-byte CID、方向、64-bit sequence、必要的 packet facts 或 probe metadata、ciphertext、已走 carrier 前缀与剩余验证者的 16-byte tags。原 context 从唯一 SecureNode circuit 表取得；未知 CID 不通过线上字段重建授权。carrier 的 dialer／listener 使用原 path 的位置，仍携带协议和 listener key，接收方严格匹配实际 incoming carrier 及当前 policy。
+5. 对每个后续验证者，发送者从零 tag 开始；每个经过的节点用独立成对方向 key 对 `purpose || SHA256(purpose || frame-base || carrier-prefix) || previous-tag` 做 HMAC-SHA256，取前 16 bytes。验证者用所有此前节点与自己的 keys 按相同顺序重算，常量时间比较自己的 tag。中继验证后移除自己的列，更新其余列。线上 tag 数随剩余节点减少；最多七个。仅持有相邻通道或后续恶意节点的 keys，无法补出被跳过诚实必经点的贡献。此证明要求相应节点参与认证，不证明物理网络地理位置；被攻陷节点可泄露自己的 key。
+
+business 与 diagnostic 共用同一认证实现，probe measurement／deadline 也进入认证 transcript。每包继续执行当前执行资格、permit、实际 carrier、重放与唯一流表检查，最终 I/O 使用原 guard。批量发送不能将这些检查替换为仅一次批次检查。紧凑格式减少封装，但长路径、大 listener key 或较小 underlay MTU 仍可能分片，不能据格式大小宣称所有场景免分片。
 
 诊断使用独立的加密 challenge request／reply，同一 owner 验证原路径和请求关联；不产生业务 FlowTable 准入。实际发送／接收通道、计时、重放与取消边界见[路径诊断](/v2/node/diagnostics)。
 
-`SecureNode::reconcile` 在相同授权、原路径和有效直接交接下保留 Noise 状态、nonce、重放窗口与同一流表。显式授权续租可在旧 UTC／单调期限到达前延长活 circuit 的期限；已关闭／过期 circuit 不复活，握手期限也不由续租重置。已签发输出保留旧 guard；流截止按上节处理。当前逐跳签名的 CPU／带宽成本尚未完成性能验收。
+`SecureNode::reconcile` 在相同授权、原路径和有效直接交接下保留 Noise／会话 MAC keys、nonce、重放窗口与同一流表。显式授权续租可在旧 UTC／单调期限到达前延长活 circuit 的期限；已关闭／过期 circuit 不复活，握手期限也不由续租重置。已签发输出保留旧 guard；流截止按上节处理。
 
 执行快照在同步包处理期间被替换时，该操作及其旧输出立即拒绝；快照失效本身不等于 circuit 的永久关闭。尚在原期限内的密码状态、已提交流状态和 nonce／重放窗口仅作不可执行的待交接状态保留，仍须由上述 Control 连续性检查决定能否接续。未提交的新流丢弃，已消耗的 nonce 不回滚；实际到期、取消、关闭及握手密码处理失败保持原有终止规则。
 

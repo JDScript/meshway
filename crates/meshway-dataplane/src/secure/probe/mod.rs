@@ -210,6 +210,8 @@ impl SecureNode {
             probe: Some(metadata),
             body: encrypt(noise, sequence, challenge)?,
             proofs: Vec::new(),
+            exchange: None,
+            auth: Default::default(),
         };
         let hop = self.handshake_hop(&frame, None)?;
         let mut output = self.output(circuit, frame, hop, None)?;
@@ -314,6 +316,8 @@ impl SecureNode {
                         probe: Some(metadata),
                         body: encrypt(noise, sequence, challenge)?,
                         proofs: Vec::new(),
+                        exchange: None,
+                        auth: Default::default(),
                     };
                     let hop = self.handshake_hop(&response, None)?;
                     let mut response = self.output(circuit, response, hop, None)?;

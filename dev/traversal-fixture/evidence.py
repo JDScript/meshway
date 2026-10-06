@@ -93,7 +93,7 @@ def packets(path):
         elif payload.startswith(b"MWADJv1\0") and len(payload) >= 11:
             kind = {1: "adjacencyInit", 2: "adjacencyChallenge", 3: "adjacencyAck",
                     4: "adjacencyReady", 5: "adjacencyPing", 6: "adjacencyPong"}.get(payload[8], "other")
-        elif payload.startswith(b"MWCIR\0\0\x03"):
+        elif payload.startswith(b"MWCIR\0\0\x04"):
             kind = "meshCiphertext"
         else:
             kind = "other"

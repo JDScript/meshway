@@ -204,7 +204,6 @@ impl ProofFixture {
             ]
             .into(),
         };
-        let facts = fixtures::udp(1, 3, 50000, 443).facts();
         let frame = Frame {
             context: Context {
                 network: NetworkId::new(node(10).into_uuid()).unwrap(),
@@ -216,13 +215,18 @@ impl ProofFixture {
                 permit: Digest::from_bytes([2; 32]),
                 keys: Digest::from_bytes([3; 32]),
             },
-            kind: Kind::Data,
+            kind: if reply { Kind::Response } else { Kind::Init },
             reply,
             sequence: 0,
-            facts: Some(facts),
+            facts: None,
             probe: None,
-            body: vec![5; facts.len + 16],
+            body: vec![5; if reply { 48 } else { 96 }],
             proofs: vec![],
+            exchange: reply.then(|| crate::secure::codec::Exchange {
+                init: [4; 32],
+                public: vec![[1; 32], [2; 32], [3; 32]],
+            }),
+            auth: Default::default(),
         };
         let mut fixture = Self {
             signing,
@@ -251,6 +255,7 @@ impl ProofFixture {
                     protocol: TransportProtocol::NativeUdp,
                 },
                 signature: [0; 64],
+                ephemeral: [position as u8 + 1; 32],
             };
             let digest = proof_digest(&hash, i, &proof).unwrap();
             proof.signature = self.signing[position]
@@ -309,48 +314,17 @@ fn ordered_chain_rejects_missing_reordered_tampered_and_wrong_context_proofs() {
         f.frame.proofs[0].carrier.protocol = TransportProtocol::Vless;
         assert!(f.verify().is_err());
         f.sign();
+        f.frame.proofs[0].ephemeral[0] ^= 1;
+        assert!(f.verify().is_err());
+        f.sign();
+        if reply {
+            f.frame.exchange.as_mut().unwrap().public[1][0] ^= 1;
+            assert!(f.verify().is_err());
+            f.frame.exchange.as_mut().unwrap().public[1][0] ^= 1;
+            f.sign();
+        }
         f.frame.context.path.swap(0, 1);
         assert!(f.verify().is_err());
-    }
-}
-
-#[test]
-fn diagnostic_proofs_bind_grant_kind_measurement_deadline_and_encrypted_challenge() {
-    use crate::secure::{CircuitAuthorization, codec::ProbeMetadata};
-    for reply in [false, true] {
-        for tamper in 0..5 {
-            let mut f = ProofFixture::new(reply);
-            let CircuitAuthorization::Business(id) = f.frame.context.authorization else {
-                unreachable!()
-            };
-            f.frame.context.authorization = CircuitAuthorization::Diagnostic(
-                meshway_model::ObservationId::new(id.into_uuid()).unwrap(),
-            );
-            f.frame.kind = if reply {
-                Kind::ProbeReply
-            } else {
-                Kind::ProbeRequest
-            };
-            f.frame.facts = None;
-            f.frame.probe = Some(ProbeMetadata {
-                measurement_id: meshway_model::EventId::new(id.into_uuid()).unwrap(),
-                expires_at_ms: 10_000,
-            });
-            f.frame.body = vec![7; 48];
-            f.sign();
-            f.verify().unwrap();
-            match tamper {
-                0 => f.frame.body[0] ^= 1,
-                1 => f.frame.probe.as_mut().unwrap().expires_at_ms += 1,
-                2 => {
-                    f.frame.probe.as_mut().unwrap().measurement_id =
-                        meshway_model::EventId::new(node(55).into_uuid()).unwrap()
-                }
-                3 => f.frame.context.authorization = CircuitAuthorization::Business(id),
-                _ => f.frame.context.path.swap(0, 1),
-            }
-            assert!(f.verify().is_err());
-        }
     }
 }
 

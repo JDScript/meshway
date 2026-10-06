@@ -267,7 +267,8 @@ async fn diagnostic_real_control_full_path_noise_reply_and_business_isolation() 
     let first = fixture.ar.listen.recv().await;
     assert!(!first.windows(32).any(|bytes| bytes == challenge.as_bytes()));
     let mut corrupt = first.clone();
-    *corrupt.last_mut().unwrap() ^= 1;
+    let relay_tag = corrupt.len() - 32;
+    corrupt[relay_tag] ^= 1;
     assert!(fixture.r.receive(&fixture.ar.carrier, corrupt).is_err());
     assert!(
         fixture

@@ -1,174 +1,234 @@
 use super::*;
 use crate::fixtures;
 
-fn frame() -> Frame {
+fn frame(kind: Kind) -> Frame {
     let a = "00000000-0000-4000-8000-000000000001".parse().unwrap();
     let b = "00000000-0000-4000-8000-000000000002".parse().unwrap();
-    let facts = fixtures::udp(1, 2, 50000, 443).facts();
-    Frame {
-        context: Context {
-            network: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
-            authorization: CircuitAuthorization::Business(
+    let diagnostic = matches!(kind, Kind::ProbeRequest | Kind::ProbeReply);
+    let context = Context {
+        network: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
+        authorization: if diagnostic {
+            CircuitAuthorization::Diagnostic(
                 "00000000-0000-4000-8000-000000000004".parse().unwrap(),
-            ),
-            path: vec![a, b],
-            circuit: [9; 32],
-            permit: Digest::from_bytes([7; 32]),
-            keys: Digest::from_bytes([8; 32]),
+            )
+        } else {
+            CircuitAuthorization::Business("00000000-0000-4000-8000-000000000004".parse().unwrap())
         },
-        kind: Kind::Data,
-        reply: false,
+        path: vec![a, b],
+        circuit: [9; 32],
+        permit: [7; 32].into(),
+        keys: [8; 32].into(),
+    };
+    let carrier = Carrier {
+        dialer: a,
+        listener: b,
+        listener_key: "udp".into(),
+        protocol: TransportProtocol::NativeUdp,
+    };
+    let facts = (kind == Kind::Data).then(|| fixtures::udp(1, 2, 50000, 443).facts());
+    Frame {
+        context,
+        kind,
+        reply: matches!(kind, Kind::Response | Kind::ProbeReply),
         sequence: 0,
-        facts: Some(facts),
-        probe: None,
-        body: vec![0; facts.len + 16],
-        proofs: vec![Proof {
-            key: "00000000-0000-4000-8000-000000000005".parse().unwrap(),
-            generation: Version::MIN,
-            carrier: Carrier {
-                dialer: a,
-                listener: b,
-                listener_key: "udp".to_owned(),
-                protocol: TransportProtocol::NativeUdp,
-            },
-            signature: [1; 64],
-        }],
+        facts,
+        probe: diagnostic.then(|| ProbeMetadata {
+            measurement_id: EventId::new(a.into_uuid()).unwrap(),
+            expires_at_ms: 10_000,
+        }),
+        body: vec![
+            0;
+            if kind == Kind::Init {
+                96
+            } else {
+                facts.map_or(48, |facts| facts.len + 16)
+            }
+        ],
+        exchange: (kind == Kind::Response).then(|| Exchange {
+            init: [2; 32],
+            public: vec![[3; 32], [4; 32]],
+        }),
+        proofs: if kind.handshake() {
+            vec![Proof {
+                key: KeyId::new(a.into_uuid()).unwrap(),
+                generation: Version::MIN,
+                carrier: carrier.clone(),
+                signature: [1; 64],
+                ephemeral: [3; 32],
+            }]
+        } else {
+            vec![]
+        },
+        auth: if kind.handshake() {
+            HopAuth::default()
+        } else {
+            HopAuth {
+                carriers: vec![carrier],
+                tags: vec![[5; 16]],
+            }
+        },
     }
 }
 
 #[test]
-fn every_truncated_prefix_trailing_bytes_and_version_rejected() {
-    let bytes = frame().encode().unwrap();
-    for n in 0..bytes.len() {
-        assert!(Frame::decode(&bytes[..n]).is_err(), "prefix {n}");
+fn every_kind_rejects_truncation_trailing_bytes_unknown_versions_and_missing_session() {
+    for kind in [
+        Kind::Init,
+        Kind::Response,
+        Kind::Data,
+        Kind::ProbeRequest,
+        Kind::ProbeReply,
+    ] {
+        let f = frame(kind);
+        let bytes = f.encode().unwrap();
+        for n in 0..bytes.len() {
+            assert!(
+                Frame::decode(&bytes[..n], Some(&f.context)).is_err(),
+                "prefix {n}"
+            );
+        }
+        assert_eq!(
+            Frame::decode(&bytes, Some(&f.context))
+                .unwrap()
+                .encode()
+                .unwrap(),
+            bytes
+        );
+        assert_eq!(bytes[7], 4);
+        for version in [1, 2, 3, 5] {
+            let mut wrong = bytes.clone();
+            wrong[7] = version;
+            assert!(Frame::decode(&wrong, Some(&f.context)).is_err());
+            assert!(session_id(&wrong).is_err());
+        }
+        let mut extra = bytes.clone();
+        extra.push(0);
+        assert!(Frame::decode(&extra, Some(&f.context)).is_err());
+        let mut unknown = bytes.clone();
+        unknown[8] = 255;
+        assert!(Frame::decode(&unknown, Some(&f.context)).is_err());
+        if !kind.handshake() {
+            assert!(Frame::decode(&bytes, None).is_err());
+            assert_eq!(session_id(&bytes).unwrap(), Some(f.context.circuit));
+            let mut wrong = f.context.clone();
+            wrong.circuit[0] ^= 1;
+            assert!(Frame::decode(&bytes, Some(&wrong)).is_err());
+        }
     }
-    assert_eq!(Frame::decode(&bytes).unwrap().encode().unwrap(), bytes);
-    assert_eq!(bytes[7], 3);
-    let mut v2 = bytes.clone();
-    v2[7] = 2;
-    assert!(Frame::decode(&v2).is_err());
-    let mut v1 = bytes.clone();
-    v1[7] = 1;
-    assert!(Frame::decode(&v1).is_err());
-    assert!(super::super::incoming_hint(&v1).is_err());
-    let hint = super::super::incoming_hint(&bytes).unwrap();
-    assert_eq!(hint.authorization, frame().context.authorization);
-    assert_eq!(hint.path, frame().context.path);
-    assert_eq!(hint.last_carrier, frame().proofs[0].carrier);
-    let mut extra = bytes.clone();
-    extra.push(0);
-    assert!(Frame::decode(&extra).is_err());
-    let mut unknown = bytes;
-    unknown[7] += 1;
-    assert!(Frame::decode(&unknown).is_err());
-    unknown[7] -= 1;
-    unknown[8] = 255;
-    assert!(Frame::decode(&unknown).is_err());
-    let mut oversized_path = frame().encode().unwrap();
-    oversized_path[10 + 108] = 9;
-    assert!(Frame::decode(&oversized_path).is_err());
-    let mut nil_network = frame().encode().unwrap();
-    nil_network[9..45].copy_from_slice(b"00000000-0000-0000-0000-000000000000");
-    assert!(Frame::decode(&nil_network).is_err());
-    assert!(Frame::decode(&vec![0; MAX_FRAME + 1]).is_err());
-    assert!(super::super::incoming_hint(&vec![0; MAX_FRAME + 1]).is_err());
+    assert!(Frame::decode(&vec![0; MAX_FRAME + 1], None).is_err());
 }
 
 #[test]
-fn canonical_origin_path_proofs_and_handshake_lengths() {
-    let mut f = frame();
-    let mut bytes = f.encode().unwrap();
-    bytes[10 + 72..10 + 108].copy_from_slice(f.context.path[1].to_string().as_bytes());
-    assert!(Frame::decode(&bytes).is_err());
+fn handshake_canonical_context_keys_and_lengths_are_bounded() {
+    let mut f = frame(Kind::Init);
+    let bytes = f.encode().unwrap();
+    let mut bad = bytes.clone();
+    bad[58] = 9;
+    assert!(Frame::decode(&bad, None).is_err());
+    let mut bad = bytes.clone();
+    bad[9..25].fill(0);
+    assert!(Frame::decode(&bad, None).is_err());
+    let mut bad = bytes;
+    bad[42..58].copy_from_slice(f.context.path[1].as_uuid().as_bytes());
+    assert!(Frame::decode(&bad, None).is_err());
     f.context.path[1] = f.context.path[0];
     assert!(f.encode().is_err());
-    let mut f = frame();
+    let mut f = frame(Kind::Init);
     f.proofs.clear();
-    assert!(Frame::decode(&f.encode().unwrap()).is_err());
-    f = frame();
-    f.kind = Kind::Init;
-    f.facts = None;
-    f.body = vec![0; 96];
-    assert!(Frame::decode(&f.encode().unwrap()).is_ok());
-    f.body.push(0);
+    assert!(Frame::decode(&f.encode().unwrap(), None).is_err());
+    for kind in [Kind::Init, Kind::Response] {
+        let mut f = frame(kind);
+        f.body.push(0);
+        assert!(f.encode().is_err());
+        f.body.pop();
+        f.reply = !f.reply;
+        assert!(f.encode().is_err());
+        f.reply = !f.reply;
+        f.sequence = 1;
+        assert!(f.encode().is_err());
+    }
+    let mut f = frame(Kind::Response);
+    f.exchange.as_mut().unwrap().public.pop();
     assert!(f.encode().is_err());
-    f.body.pop();
-    f.reply = true;
-    assert!(f.encode().is_err());
-    f.kind = Kind::Response;
-    f.body = vec![0; 48];
-    assert!(Frame::decode(&f.encode().unwrap()).is_ok());
-    f.sequence = 1;
-    assert!(f.encode().is_err());
+    // Maximum configured listener names and all eight path nodes still fit the
+    // unchanged bounded handshake retry cache, including all contributions.
+    let mut f = frame(Kind::Response);
+    f.context.path = (1..=8)
+        .map(|n| NodeId::new(uuid::Uuid::from_u128(n)).unwrap())
+        .collect();
+    f.exchange.as_mut().unwrap().public = vec![[7; 32]; 8];
+    let mut proof = f.proofs.pop().unwrap();
+    proof.carrier.listener_key = "x".repeat(255);
+    f.proofs = (0..7)
+        .map(|_| Proof {
+            key: proof.key,
+            generation: proof.generation,
+            carrier: proof.carrier.clone(),
+            signature: proof.signature,
+            ephemeral: proof.ephemeral,
+        })
+        .collect();
+    assert!(f.encode().unwrap().len() <= 4096);
 }
 
 #[test]
-fn all_packet_facts_and_carriers_round_trip_without_aliases() {
+fn compact_data_round_trips_facts_carriers_and_rejects_invalid_indexes_and_counts() {
     for packet in [
         fixtures::udp(1, 2, 50000, 443),
         fixtures::tcp(false, 17, 0, 2, 0),
         fixtures::echo(false, 6, 8),
     ] {
-        let mut f = frame();
-        f.facts = Some(packet.facts());
-        f.body = vec![0; packet.facts().len + 16];
         for protocol in [
             TransportProtocol::NativeUdp,
             TransportProtocol::NativeTcp,
             TransportProtocol::Vless,
             TransportProtocol::Trojan,
         ] {
-            f.proofs[0].carrier.protocol = protocol;
+            let mut f = frame(Kind::Data);
+            f.facts = Some(packet.facts());
+            f.body = vec![0; packet.facts().len + 16];
+            f.auth.carriers[0].protocol = protocol;
             let bytes = f.encode().unwrap();
-            let decoded = Frame::decode(&bytes).unwrap();
+            let decoded = Frame::decode(&bytes, Some(&f.context)).unwrap();
             assert_eq!(decoded.facts, f.facts);
-            assert_eq!(decoded.proofs[0].carrier, f.proofs[0].carrier);
+            assert_eq!(decoded.auth.carriers, f.auth.carriers);
             assert_eq!(decoded.encode().unwrap(), bytes);
+            assert!(bytes.len() - f.body.len() < 128);
+            let carrier_at = f.base().unwrap().len() + 1;
+            let mut bad = bytes.clone();
+            bad[carrier_at] = 8;
+            assert!(Frame::decode(&bad, Some(&f.context)).is_err());
+            let mut bad = bytes.clone();
+            bad[carrier_at + 2] = 255;
+            assert!(Frame::decode(&bad, Some(&f.context)).is_err());
+            let mut bad = bytes;
+            bad[carrier_at - 1] = 0;
+            assert!(Frame::decode(&bad, Some(&f.context)).is_err());
         }
     }
-    let mut f = frame();
-    f.proofs[0].carrier.listener_key = "x".repeat(256);
+    let mut f = frame(Kind::Data);
+    f.auth.tags.clear();
     assert!(f.encode().is_err());
-    f = frame();
+    let mut f = frame(Kind::Data);
+    f.auth.carriers[0].listener_key = "x".repeat(256);
+    assert!(f.encode().is_err());
+    let mut f = frame(Kind::Data);
     f.sequence = u64::MAX;
     assert!(f.encode().is_err());
-    let mut unknown_carrier = frame().encode().unwrap();
-    let protocol_offset = unknown_carrier.len() - 64 - 3 - 1 - 1;
-    unknown_carrier[protocol_offset] = 255;
-    assert!(Frame::decode(&unknown_carrier).is_err());
 }
 
 #[test]
-fn diagnostic_kind_metadata_and_fixed_payload_cannot_alias_business_data() {
-    let mut f = frame();
-    let CircuitAuthorization::Business(id) = f.context.authorization else {
-        unreachable!()
-    };
-    let diagnostic = meshway_model::ObservationId::new(id.into_uuid()).unwrap();
-    f.context.authorization = CircuitAuthorization::Diagnostic(diagnostic);
+fn diagnostic_metadata_cannot_alias_business_or_reply_direction() {
+    let mut f = frame(Kind::ProbeRequest);
+    f.context.authorization = frame(Kind::Data).context.authorization;
     assert!(f.encode().is_err());
-    f.kind = Kind::ProbeRequest;
-    f.facts = None;
-    f.probe = Some(ProbeMetadata {
-        measurement_id: meshway_model::EventId::new(id.into_uuid()).unwrap(),
-        expires_at_ms: 10_000,
-    });
-    f.body = vec![0; 48];
-    let bytes = f.encode().unwrap();
-    for n in 0..bytes.len() {
-        assert!(Frame::decode(&bytes[..n]).is_err());
-    }
-    assert_eq!(Frame::decode(&bytes).unwrap().encode().unwrap(), bytes);
-    f.context.authorization = CircuitAuthorization::Business(id);
-    assert!(f.encode().is_err());
-    f.context.authorization = CircuitAuthorization::Diagnostic(diagnostic);
-    f.body.push(0);
-    assert!(f.encode().is_err());
-    f.body.pop();
+    let mut f = frame(Kind::ProbeRequest);
     f.reply = true;
     assert!(f.encode().is_err());
-    f.kind = Kind::ProbeReply;
-    assert!(f.encode().is_ok());
+    let mut f = frame(Kind::ProbeReply);
     f.probe = None;
+    assert!(f.encode().is_err());
+    let mut f = frame(Kind::Data);
+    f.context.authorization = frame(Kind::ProbeRequest).context.authorization;
     assert!(f.encode().is_err());
 }

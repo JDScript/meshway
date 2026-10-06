@@ -6,7 +6,8 @@ const INTERVAL: Duration = Duration::from_millis(250);
 // Covers the largest supported 60s handshake deadline without an unbounded
 // duplicate-triggered response stream. Initial output consumes one slot too.
 const MAX_OUTPUTS: u16 = 256;
-// Candidate-v2's eight-node path and seven maximum-size proofs fit in 4KiB.
+// Candidate-v4's binary IDs, eight contributions and seven maximum-size
+// handshake proofs fit in 4KiB (codec boundary regression).
 // At most two stages per circuit retain an output; circuit capacity bounds the
 // total cache, and maintain releases bytes at the original handshake deadline.
 const MAX_BYTES: usize = 4096;
