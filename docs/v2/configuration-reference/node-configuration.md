@@ -33,7 +33,7 @@ diagnostics 不进入普通业务 permits。没有对应许可时不能发起或
 
 `LocalEgressPermit` 包含 `demandId`、`source`、`target`、`protocol`、`port`、`profile`、`action`（`direct`／`unmanaged`）和 `expiresAt`，仅发布到 source。它是实际本机路由的精确证据，不是 Mesh PathPermit，也不授予中转／出口资格。消费方仍检查 publication、当前执行快照和完整业务绑定；DNS 的密封路由消费见 [resolver 路由](/v2/node/dataplane#service-与-resolver-路由)。
 
-`decisions` 中单独的 `direct`／`unmanaged` 或需求 HTTP 回应仅为反馈，永不直接变成 SocketPermission。当前 daemon 尚不执行 localEgress，非空时按[安装门槛](/v2/node/runtime#安装范围与状态)拒绝。
+`decisions` 中单独的 `direct`／`unmanaged` 或需求 HTTP 回应仅为反馈，永不直接变成 SocketPermission。当前 daemon 仅接受由 DNS owner 持有的 resolver localEgress（见 [resolver 路由](/v2/node/dataplane#service-与-resolver-路由)）；其他非空 localEgress 按[安装门槛](/v2/node/runtime#安装范围与状态)拒绝。
 
 ## DNS 执行内容
 

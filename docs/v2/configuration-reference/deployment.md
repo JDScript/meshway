@@ -43,8 +43,8 @@ publication 固定源 revision、相关身份／公钥、材料、规则集／�
 ### 生命周期
 
 - 一个网络同时可以存在多份有效 publication，每个节点只引用其中一份作为当前目标。新发布只改变受影响节点的引用；一份 publication 直到没有任何节点引用时才撤回。`supersedes` 记录来源，不表示旧发布整体立即失效。
-- 节点取得新目标时，其执行 lease 被清空。`getNodeConfiguration` 只返回目标，不授予 lease；目标 enabled 时，节点须先 `renew` 取得有效执行期限，才能上报 `applied`。
-- `renew` 与 `getNodeConfiguration` 在同一事务内处理本网络已到期的需求，并可能为受影响节点生成刷新发布。因此一次普通配置读取也可能带来新的 publication 与进度通知。
+- 节点取得新目标时，其执行 lease 被清空。`queryNodeConfiguration` 只返回目标，不授予 lease；目标 enabled 时，节点须先经 `renewNodeInstance` 或[原子执行刷新](/v2/execution#原子执行刷新)（`refreshNodeConfiguration`）取得有效执行期限，才能上报 `applied`。
+- `renewNodeInstance`、`refreshNodeConfiguration` 与 `queryNodeConfiguration` 在同一事务内处理本网络已到期的需求，并可能为受影响节点生成刷新发布。因此一次普通配置读取也可能带来新的 publication 与进度通知。
 
 接收方独立检查相容身份、地址、完整路径与许可；依赖未就绪时对应业务等待／拒绝。节点本机按 owner 顺序准备保护和资源，不以部分安装成功宣称整份应用成功。
 
