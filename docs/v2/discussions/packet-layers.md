@@ -1,6 +1,6 @@
 ---
 title: 包流分层、封装与加密 · 设计讨论
-description: 当前 Meshway 包流的逐层图、字节账本、运行成本及待讨论设计问题。
+description: 当前 Meshway 包流的逐层图、密码边界、运行成本及待讨论设计问题。
 ---
 
 # 包流分层、封装与加密
@@ -88,54 +88,15 @@ description: 当前 Meshway 包流的逐层图、字节账本、运行成本及�
 
 ## Packet 字节账本
 
-<figure style="margin:24px 0">
-  <div style="overflow-x:auto;border:1px solid var(--vp-c-divider);border-radius:12px">
-    <img src="/diagrams/packet-layout-v4.svg" alt="1280-byte IPv4 TCP 包在 R 到 B 封装成1419-byte UDP payload，再加外层IPv4与UDP共1447 bytes；头84、Noise body1296、路径后缀39。" style="min-width:960px;width:100%;max-width:none" />
-  </div>
-  <figcaption>图 3 · 字节数为精确推导，矩形宽度不是字节比例。<a href="/diagrams/packet-layout-v4.svg" target="_blank" rel="noopener">打开完整 SVG</a></figcaption>
-</figure>
+逐字段用途、验证者、可移入上下文的内容，以及不随网络规模增长的目标，集中在独立的 [Packet：字节账本与固定开销](/v2/discussions/packet) 中。
 
 ### 用一条公式覆盖路径的每一段
 
-设 `P` 为完整内层 IP 包长，`F` 为 PacketFacts 长度，`n` 为 path 节点数，`k` 为该方向已经走过的边数（1 到 n−1），每条已走 carrier 的 listener key UTF-8 长度为 `Lᵢ`：
-
-```text
-MWCIR Data bytes
-  = P + 71 + F + Σ(4 + Lᵢ) + 16 × (n − k)
-
-71 = magic8 + kind1 + CID32 + reply1 + sequence8
-   + bodyLength4 + NoiseTag16 + carrierCount1
-
-IPv4 TCP facts: F = 30          IPv6 TCP facts: F = 54
-outer IPv4 + UDP: +28           outer IPv6 + UDP: +48
-```
-
-这是当前 Data 编码的推导，不适用于带完整 context／贡献列表的握手帧，也不适用于 Probe metadata。IPv4 / IPv6 外层按无 options / 扩展头计算；不含 Ethernet、VLAN、preamble 等链路开销。
-
-`P=1280`、每个 listener key 均为 `lab-udp`（7 bytes）时：
-
-| 内层／path | 首段 UDP payload | 最后一段 UDP payload | 首段＋外层 IPv4/UDP | 首段＋外层 IPv6/UDP |
-| --- | ---: | ---: | ---: | ---: |
-| IPv4/TCP，2 节点 | 1408 | 1408 | 1436 | 1456 |
-| IPv4/TCP，3 节点 | 1424 | 1419 | 1452 | 1472 |
-| IPv6/TCP，3 节点 | 1448 | 1443 | 1476 | 1496 |
-| IPv4/TCP，8 节点 | 1504 | 1474 | 1532 | 1552 |
-
-每经过一个中继，去掉一个 16-byte verifier tag，但新增一个 carrier 描述；因此后缀不一定只增不减，也不能仅以最后一段估计整条路的 MTU。8 节点示例在 MTU1500 下仍可能分片。
-
-**小包也要算：**以 52-byte 内层 IPv4/TCP ACK 为例，3 节点最后一段仍有同样的 header / tag 开销，变为 **191-byte UDP payload**。大包 Mbps 无法单独描述 ACK、小包和高 pps 的 CPU 成本。
+公式与大小表见 [Packet 逐段账本](/v2/discussions/packet#用一条公式覆盖路径的每一段)。该页区分全网节点数 N 与路径边数 H：当前 Data 不因无关成员增加而变大，但 carrier 前缀／verifier 列仍与路径长度有关。
 
 ### 换 transport 后，外面还有什么
 
-| 承载选择 | 概念上的线上嵌套（外 → 内） | 关键区别 |
-| --- | --- | --- |
-| Native UDP | outer IP / UDP / MWCIR / Noise-encrypted IP | 一个 datagram 一帧；正常 Data 没有额外 channel AEAD 或公共 u32 frame 长度 |
-| Native TCP | outer IP / TCP / u32 frame length / MWCIR / Noise-encrypted IP | 字节流分段边界不等于 Mesh frame；内层 TCP 和外层 TCP 各有自己的重传／有序语义 |
-| VLESS TCP/TLS | outer IP / TCP / TLS / VLESS stream / u32 frame length / MWCIR / Noise-encrypted IP | VLESS CONNECT 是建流协议，不是每个 Mesh 包重复一个完整 CONNECT 头；TLS 为额外外层保护 |
-| VLESS WS/TLS | outer IP / TCP / TLS / WS binary stream / VLESS stream / u32 frame length / MWCIR / Noise-encrypted IP | WS 先适配成连续字节流；WS / TLS record 与 Mesh frame 不必一一对应 |
-| Trojan TCP/TLS | outer IP / TCP / TLS / Trojan stream / u32 frame length / MWCIR / Noise-encrypted IP | 连接握手与稳态 stream 数据分开计费 |
-
-上述嵌套表达层次，不声称每个包都会触发每层新握手、每层都复制一次，或所有 provider 已完成当前 v4 的整组 Linux 验收。协议选项和验证边界见[承载会话](/v2/node/transport)、[支持状态](/v2/configuration-reference/transports)与[当前验收范围](/v2/node/dataplane#daemon-与内核资源-conformance)。
+Native UDP、stream framing、TLS／WS 与独立控制消息的计费见 [Packet 外层预算](/v2/discussions/packet#换-transport-后-外面还有什么)。本页的运行层次与该处的线上嵌套是两个不同维度。
 
 ## 实测支持了什么，仍没说明什么
 
@@ -165,6 +126,8 @@ outer IPv4 + UDP: +28           outer IPv6 + UDP: +48
 | Q6 | 下一步先做 kernel batch，还是先减少 task / lock / queue 交接？ | 当前 32 包是就绪读取和独立 future pipeline，底层仍逐包 syscall；真正 batch 可能摊薄固定成本，也会增加等待和突发 | 每帧期限与取消、部分成功／不确定回执、批次填充延迟、控制工作公平性、内存上限；不能把一份宽松 batch guard 套到全部包 |
 | Q7 | MTU 按哪个最坏段来定？ | 路径长度、地址族、listener key、provider 都影响最大线上长度；握手与稳态应分开 | 所有 cut 的上界、路径变化、IPv6 最小 MTU、PMTUD / 分片行为；不能只把某次 iperf MSS 调小就宣布解决 |
 | Q8 | SO_MARK 与资源检查需要在每次 poll 做到什么粒度？ | 当前每次进入受保护 socket poll 都有 mark 读取／设置／读回，以及多层 scope 检查；应独立计量系统调用数与自耗时 | 实际 descriptor 是否独占、provider／外部变更如何受控、selector 和资源 handoff 如何失效；不能以“socket 私有”为由直接删除冲突与最终 I/O 防护 |
+
+Packet 的规模要求、字段与条件预算集中见[固定开销讨论](/v2/discussions/packet#固定开销的预算草案)。Q1／Q3 会影响能否移除公开 facts 或替换逐路径增长的认证后缀。
 
 ### 建议先对齐 Q1，同时测量 Q4 / Q5 / Q8
 

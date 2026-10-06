@@ -52,6 +52,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     text: "设计讨论",
     items: [
       { text: "讨论入口与问题", link: "/v2/discussions/" },
+      { text: "Packet：字节与固定开销", link: "/v2/discussions/packet" },
       { text: "包流分层、封装与加密", link: "/v2/discussions/packet-layers" },
       { text: "EasyTier 源码对照", link: "/v2/discussions/easytier" },
     ],

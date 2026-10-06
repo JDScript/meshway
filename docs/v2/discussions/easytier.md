@@ -68,7 +68,7 @@ Overlay header 精确为 **16 bytes**；整数在该 header 中为 little-endian
 | --- | ---: | ---: | ---: |
 | EasyTier UDP ＋ overlay AEAD | P＋8（UDP provider）＋16＋28＝**P＋52** | P＋80 | P＋100 |
 | EasyTier TCP ＋ overlay AEAD | P＋4（length）＋16＋28＝**P＋48** 的 stream record | 单 segment 最小预算 P＋88 | 单 segment 最小预算 P＋108 |
-| Meshway v4 Native UDP，3节点最后一段，key=`lab-udp` | [P＋139](/v2/discussions/packet-layers#用一条公式覆盖路径的每一段) | P＋167 | P＋187 |
+| Meshway v4 Native UDP，3节点最后一段，key=`lab-udp` | [P＋139](/v2/discussions/packet#用一条公式覆盖路径的每一段) | P＋167 | P＋187 |
 
 TCP 的 options、ACK、重传、合并和分段另算，不能将其一条 stream record 当作抓包中固定大小的 TCP packet。EasyTier UDP provider 的 8 bytes 为 conn_id4、msg_type1、padding1、len2；TCP provider 的长度为 LE u32。[UDP codec][udp-codec]、[TCP framing][framing]。
 

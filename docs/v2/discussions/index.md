@@ -11,7 +11,8 @@ description: 从当前源码、实测与外部实现出发，审视下一步设�
 
 | 主题 | 我们要回答什么 | 状态 |
 | --- | --- | --- |
+| [Packet：字节账本与固定开销](/v2/discussions/packet) | 每个字段多带多少 bytes、由谁验证、能否移入上下文？如何让开销不随网络／路径规模增长？ | 讨论中：规模约束与条件预算 |
 | [包流分层、封装与加密](/v2/discussions/packet-layers) | 一个包经过哪些 owner、多少封装和密码操作？哪些成本来自安全语义，哪些来自实现组织？ | 讨论中 |
 | [EasyTier 源码对照](/v2/discussions/easytier) | 同样是 overlay / relay，EasyTier 的帧、密钥、buffer 和调度如何组织？哪些可以类比？ | 固定提交源码研究 |
 
-建议先读包流图和字节账本，再从[待讨论问题](/v2/discussions/packet-layers#待讨论问题)选择一项展开。每项决定至少记录：目标语义、所依据的源码／测量、接受与排除的方案、需要补充的验证。
+建议从 [Packet 字节账本](/v2/discussions/packet)开始，再结合[包流与待讨论问题](/v2/discussions/packet-layers#待讨论问题)看各字段承担的产品语义与运行成本。每项决定至少记录：目标语义、所依据的源码／测量、接受与排除的方案、需要补充的验证。

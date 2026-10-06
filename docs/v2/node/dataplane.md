@@ -39,7 +39,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 ## 候选受保护 circuit
 
-逐层图、线上字节账本及待决定的优化问题见[包流分层与加密讨论](/v2/discussions/packet-layers)。本页定义当前行为；讨论中的候选方案不改变这些约束。
+逐层图与运行成本见[包流分层与加密讨论](/v2/discussions/packet-layers)，线上字段与规模约束见 [Packet 字节账本](/v2/discussions/packet)。本页定义当前行为；讨论中的候选方案不改变这些约束。
 
 `meshway-dataplane::secure::SecureNode` 是同一执行快照下的 circuit 和流状态 owner。`start` 发起握手，`receive` 验证承载帧，`send` 接收本机 IP 包；它们使用相同的 `Engine`／`meshway-policy`，中转使用通过认证的 `PacketFacts`，不构造伪造明文包来调用另一套转发实现。
 
