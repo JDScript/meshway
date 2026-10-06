@@ -17,7 +17,7 @@
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | `test:tun:linux` | — | — | — | 真实 TUN 设备创建与双栈包 I/O | 历史通过未重验 |
-| `test:packet:linux` | Native TCP | — | — | A→R→B 内层双栈 UDP echo、R 只转发受保护帧、原路径回复 | 历史通过未重验 |
+| `test:packet:linux` | Native TCP | — | — | A→R→B 内层双栈 UDP echo、R 只转发受保护帧、原路径回复 | 当前 wire 已通过 |
 | `test:runtime:linux` | Native UDP 静态端点 | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 当前 wire 已通过 |
 | `test:runtime:linux` | Native TCP | off | — | daemon 整组：共同场景 | 历史通过未重验 |
 | `test:runtime:linux` | Native UDP 静态端点 | resolv-conf | — | 共同场景＋[DNS 场景](#dns-场景) | 历史通过未重验 |

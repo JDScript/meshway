@@ -6,7 +6,7 @@
 
 | 层级 | 处理步骤 | 状态与入口 |
 | --- | --- | --- |
-| L0 | 内存中的包编解码、密码与证明原语；没有 socket、TUN 或调度链 | 定义；测量入口 `mise run perf:circuit` |
+| L0 | 进程内受保护 circuit：真实编译器许可、SecureNode 握手、Noise、逐验证者 MAC、流准入与输出 guard；没有 socket、TUN 或控制面 I/O | 已实现；[L0 受保护 circuit](#l0-受保护-circuit)，`perf:circuit` |
 | L1 | 正式协议 provider 的原生 socket I/O，对照公共 datagram Session；代理协议保留自身 TLS／WS | 已实现；[L1 承载对照](#l1-承载对照)，`perf:transport` |
 | L2 | 两个 Linux namespace 中的真实 TUN、Tokio、正式 UDP provider 与 Session，原样转发明文 IP 包 | 已实现；`perf:dataplane` 的 `plain` |
 | L3 | L2 I/O 加正式 SecureNode、真实认证／加密、路径证明与重放处理 | 定义；`secure` 待实现／由其他工作包提供 |
@@ -18,6 +18,31 @@ L2 的 `raw` 是同一隔离网络中直接运行 iperf3 的内核参照，不�
 ## 共同报告口径
 
 每次运行保存程序 hash、源码 digest、工具链、平台、参数与逐次原始样本；失败样本保留而不填零。启用 `MESHWAY_PROFILE` 时另保留抽样参数和首尾累积记录，并与插桩关闭的同一程序比较吞吐／进程 CPU，校验 observer 开销与计数边界；细层采样计时含插桩成本，不能直接当作未插桩程序的精确 CPU 占比。采样变量与输出字段见[运行日志](/v2/logging#显式分层性能采样)。
+
+## L0 受保护 circuit
+
+```sh
+mise run perf:circuit
+```
+
+`scripts/perf/circuit.py` 显式构建 `tools/meshway-circuit-perf` 的 release 程序（缓存 `target/circuit-perf`）。单同步线程通过真实 Policy 编译器与 `tools/meshway-static-authority` 的静态签发建立 2–8 节点链，使用正式 `SecureNode` 完成 Noise／MAC circuit 握手与 TCP 流建立，再运行双向稳态包流。每包保留解析、业务流准入、Noise、逐验证者 MAC、codec、当前执行资格检查与原输出 guard；测量范围包含内存接收／交付，不包含 socket、TUN 或控制面 I/O。52-byte 输入为纯 IPv4/TCP ACK，1280-byte 输入携带 1228-byte TCP payload；握手与 warmup 不进入稳态窗口。
+
+默认矩阵为 2／3／5 节点 × 1280／52 字节 × profile 关闭与 1/128 采样，各重复三次。角色成本使用线程 CPU 时钟与单调时钟；接收角色包含上游 frame release 检查，终点包含 guarded 明文交付。报告写入执行脚本所在工作树的 `.meshway/perf/circuit/<run>/`：`results.json` 保存源码 digest、Git revision、二进制 SHA256、工具链、平台、参数、每角色 calls／CPU／wall、逐段帧字节与中位数／p10／p90；`summary.md` 另列 profile 采样的阶段分解。采样分解带 observer effect，不能加总当作 profile 关闭时的 CPU 预算。
+
+### L0 实测参考
+
+Apple M3 Pro、macOS、Rust 1.98.0，profile 关闭，每格为三次独立进程重复的中位数。`36ca2117` 把每次执行资格检查改为单次时钟读取，其余实现相同。
+
+| 节点 | IP 字节 | pps `8f7d0c46` | pps `36ca2117` | 中继 µs/包 `8f7d0c46` → `36ca2117` |
+| ---: | ---: | ---: | ---: | --- |
+| 2 | 1280 | 21,314 | 37,222 | — |
+| 2 | 52 | 28,194 | 68,860 | — |
+| 3 | 1280 | 12,792 | 22,965 | 28.0 → 14.9 |
+| 3 | 52 | 17,766 | 38,239 | 21.2 → 9.6 |
+| 5 | 1280 | 6,931 | 11,827 | 29.9 → 17.1 |
+| 5 | 52 | 8,415 | 17,302 | 25.1 → 12.0 |
+
+两次运行的 profile 采样中，`control.guard`（执行资格检查）均为最大的 self CPU 项，每个单向包在 2／3／5 节点分别触发 87／142／252 次，与包长无关；MAC verify／append 随路径节点数增长；`frame.base()` 重复编码的独立成本约 1 µs/包。线上帧字节与[字节账本](/v2/discussions/packet#用一条公式覆盖路径的每一段)公式逐段一致。
 
 ## L1 承载对照
 

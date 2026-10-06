@@ -8,12 +8,12 @@
 - `crates/meshway-authority` 定义 `ExecutionSnapshot`／`DataPlaneIdentity`／`Clock`／`Deadline` 的类型与检查；生产唯一签发者是 `meshway-control`，`crates/` 不得出现第二个签发实现，基准／fixture 的静态签发只放 `tools/`，`meshwayd` 只装配 Control。
 - `packages/`：生成 OpenAPI／TypeScript SDK；`docs/v2/`：当前唯一开发者规范与使用入口。
 - Rust 包根目录和 Cargo 包名统一 `meshway-xxx`。现行 HTTP 根仍是 `/api/v1`／`/agent-api/v1`，目录整理不自行改 wire。
-- Node 已有 `meshwayd`／`meshway`、IPC v3 和唯一 `meshway-control` owner。Linux 默认本机 `--network-mode tun`，可显式选择 `control-only`，失败不回退。Mesh-only TUN capture、Underlay 资源／socket 保护、认证 stream／Native UDP 静态邻接、SecureNode 包流、原子执行刷新、需求／认证续租和真实安装回执已接线。默认 DNS 支持经验证的动态 stub resolved 后端及显式归属的 resolv.conf 代理，独立 DNS 锚点保留至 down；resolver 使用精确执行许可，任何必需组件失败均阻断整体 applied。隔离 Linux 验证覆盖 A→R→B、内层双栈 UDP／TCP、Native TCP／Native UDP、125 秒持续／仅接收流、DNS 实际系统解析／重启恢复、撤销／恢复、lease 失效和离线精确清理；不同承载／DNS 组合按 `docs/v2/node/dataplane.md` 的范围分别验收。owner-only socket 仅允许 root／daemon 同 UID，业务配置归 Server；策略归 policy，唯一流表／Noise／逐跳证明归 dataplane，执行快照及合法连续性交接归 Control。Exit/NAT、出口 resolver／DNS plan、可信外部 DNS association producer、SOCKS5/netstack、切网和插件仍不支持；整机重启／系统 resolver 服务间隙的保护随系统服务安装另验。精确范围见 `docs/v2/node/dataplane.md`、`docs/v2/node/runtime.md`。
+- Node 已有 `meshwayd`／`meshway`、IPC v3 和唯一 `meshway-control` owner。Linux 默认本机 `--network-mode tun`，可显式选择 `control-only`，失败不回退。Mesh-only TUN capture、Underlay 资源／socket 保护、认证 stream／Native UDP 静态邻接、SecureNode 包流、原子执行刷新、需求／认证续租和真实安装回执已接线。默认 DNS 支持经验证的动态 stub resolved 后端及显式归属的 resolv.conf 代理，独立 DNS 锚点保留至 down；resolver 使用精确执行许可，任何必需组件失败均阻断整体 applied。隔离 Linux 验证覆盖 A→R→B、内层双栈 UDP／TCP、Native TCP／Native UDP、125 秒持续／仅接收流、DNS 实际系统解析／重启恢复、撤销／恢复、lease 失效和离线精确清理；不同承载／DNS 组合的验收状态以 `docs/v2/node/validation.md` 为唯一定义。owner-only socket 仅允许 root／daemon 同 UID，业务配置归 Server；策略归 policy，唯一流表／Noise／逐跳证明归 dataplane，执行快照及合法连续性交接归 Control。Exit/NAT、出口 resolver／DNS plan、可信外部 DNS association producer、SOCKS5/netstack、切网和插件仍不支持；整机重启／系统 resolver 服务间隙的保护随系统服务安装另验。行为定义见 `docs/v2/node/dataplane.md`、`docs/v2/node/runtime.md`，验收状态见 `docs/v2/node/validation.md`。
 - STUN、State 唯一候选归属、双边接受的短时协调 UDP 穿透已接入同一 Manager；Control 合法直接交接保留 Native TCP／UDP 物理通道，旧操作 scope 仍立即失效。双 IPv4 端口保持型 SNAT、空 UDP 发布端点、125 秒包流／仅接收续租与原路径 TCP 退路已完成隔离验收。映射轮换、端点相关映射、外层 IPv6 NAT 与 NAT／系统 DNS 组合分别验收；精确范围见 `docs/v2/node/connectivity.md`。
-- Node 控制联系失败按真实错误分类恢复；网络／暂态响应、运行 session／instance 失效不永久卡入 Contract，当前身份和目标绑定错误仍阻断。静态 TCP／UDP、两种 DNS、双 NAT 与 TCP 退路均已验证 HTTP 中断至实际 instance／execution 到期、无第二次 up 的新资格／State／新包流恢复及旧输出拒绝；范围见 `docs/v2/node/dataplane.md`。
+- Node 控制联系失败按真实错误分类恢复；网络／暂态响应、运行 session／instance 失效不永久卡入 Contract，当前身份和目标绑定错误仍阻断。静态 TCP／UDP、两种 DNS、双 NAT 与 TCP 退路均已验证 HTTP 中断至实际 instance／execution 到期、无第二次 up 的新资格／State／新包流恢复及旧输出拒绝；验收状态见 `docs/v2/node/validation.md`。
 - `meshway ping` 接受节点名／Mesh IP，按 `icmp:*` 和完整 routing／必经路径执行独立 DiagnosticPermit，复用唯一 SecureNode、Noise 与原路径回复；`meshway-diagnostics` 仅拥有有界测量调度／计时。Node 实例与用户订阅共用 ObservationService，真实 channel／STUN acquisition 和单调 RTT 分开于 preparing；订阅确认截止独立于 HTTP，旧输出不换绑新权限。Native TCP／UDP、双 NAT、退路与系统 DNS 场景已有真实 CLI 证据，精确范围见 `docs/v2/node/diagnostics.md`。Underlay／Manager 按资源差量续接，descriptor 取消不可逆；旧 discovery／attempt／输出 guard 仍立即失效。
 - 常驻 Node lab 使用锁定构建的可写 Ubuntu 工具镜像，含 ping／traceroute／iperf／iperf3 和独立 D-Bus／resolved；二进制只读、身份独立持久化。显式 image-build 与 deploy 分离，按真实 daemon PID／hash 核验；不得写 Docker 管理的宿主 DNS bind，详见 `docs/v2/node/docker-lab.md`。
-- 数据面当前候选 wire 为 v4：握手认证独立临时贡献，稳态采用绑定完整路径／实际承载的逐验证者 MAC 链与紧凑帧；IPC 保持 v3。包处理采用每轮最多 32 包／事件和独立 guard 的有界发送流水线。当前版本已验 Native UDP 静态整组、常驻 resolved 六向功能及关闭插桩的同路径吞吐；其他组合的历史／当前重验边界与共享观察恢复缺口以 `docs/v2/node/dataplane.md` 为准。
+- 数据面当前候选 wire 为 v4：握手认证独立临时贡献，稳态采用绑定完整路径／实际承载的逐验证者 MAC 链与紧凑帧；IPC 保持 v3。包处理采用每轮最多 32 包／事件和独立 guard 的有界发送流水线。当前版本已验 Native UDP 静态整组、常驻 resolved 六向功能及关闭插桩的同路径吞吐；其他组合的历史／当前重验边界与共享观察恢复缺口以 `docs/v2/node/validation.md` 为准。
 - 旧 Node、Apple、运行库与实验退出活跃树，保存在冻结 Git 分支及必要证据中。新实现只按明确白名单复用，不恢复长期 legacy 目录或旧 HTTP 兼容轨。Meshing 项目不是本项目依据。
 - 冻结参考：`archive/pre-consolidation-main-007e9deb`、`archive/node-runtime-8da83a7f`、`archive/apple-007e9deb`。未完成配置补全与旧 review WIP 保存在 `archive/wip-*-20261003` 分支，归档提交不代表通过验收；私有证据保存在 `.meshway/worktree-archives/20261003/`。
 
@@ -48,7 +48,7 @@
 
 - 工具链版本和 workspace 任务统一在 `mise.toml`，下载锁定在 `mise.lock`；使用 `mise run`／`mise exec`，本地与 CI 共用 `mise run check`。包内脚本由所属包维护；根目录不另维护一套 pnpm 任务别名。
 - Rust：fmt、严格 Clippy、必要行为测试；协议改动还检查 workspace/all-features、drift、Rust／TS SDK 消费者。当前 workspace 含 Server、共享库和 Node control；控制流程不代替 Node 包流／Apple 接通验收。
-- 性能测量由独立脚本显式运行并出报告，不进入常规测试或 `mise run check`；共用正式实现，基线与分层口径见 `docs/v2/node/transport.md`。
+- 性能测量由独立脚本显式运行并出报告，不进入常规测试或 `mise run check`；共用正式实现，分层口径与报告契约见 `docs/v2/node/performance.md`。
 - Console：严格 TypeScript、格式／lint、领域测试和构建；UI 人工验证，不维护浏览器自动化套件。
 - 文档：`mise run check:docs` 检查构建、链接／锚点、公开 OpenAPI 一致性及标注完整示例；外部链接按需额外核对。
 - 运行服务、身份数据与源码合并分开处理。先核对实际进程／接口；不把重新编译当作部署，不覆盖另一工作流账户／配置。
