@@ -54,6 +54,19 @@ class DataplaneReportTests(unittest.TestCase):
         self.assertIn("| plain | 32 | 0 | tcp | 2 | 110.00 | — | — | 80.00 |", report)
         self.assertIn("| plain | 32 | 128 | tcp | 1 | 40.00 | — | — | 80.00 |", report)
 
+    def test_secure_delta_matches_batch_profile_and_excludes_failed(self):
+        common = dict(batch=32, profile=0, traffic="tcp", status="ok",
+                      packetsPerSecond=None, lostPercent=None, cpuPercent=80)
+        report = summary({"environment": {}, "results": [
+            dict(common, mode="plain", goodputMbps=100),
+            dict(common, mode="secure-direct", goodputMbps=60),
+            dict(common, mode="secure-relay", goodputMbps=40),
+            dict(common, mode="secure-relay", goodputMbps=0, status="failed"),
+            dict(common, mode="plain", goodputMbps=1000, profile=128),
+        ]})
+        self.assertIn("| secure-direct | 32 | 0 | tcp | -40.00 | -40.00 | +0.00 | — |", report)
+        self.assertIn("| secure-relay | 32 | 0 | tcp | -60.00 | -60.00 | +0.00 | — |", report)
+
 
 if __name__ == "__main__":
     unittest.main()

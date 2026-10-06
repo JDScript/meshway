@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit L2 measurements in two disposable Linux container namespaces."""
+"""Explicit L2/L3 measurements in disposable Linux container namespaces."""
 import argparse
 from datetime import datetime, timezone
 import fcntl
@@ -30,7 +30,7 @@ def command(*args, timeout=120, check=True):
 
 def source_digest():
     files = [ROOT / name for name in ("Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock")]
-    for directory in ("crates", "tools/meshway-dataplane-perf", "scripts/perf", "dev/node-lab"):
+    for directory in ("crates", "tools/meshway-dataplane-perf", "tools/meshway-static-authority", "scripts/perf", "dev/node-lab"):
         files.extend(p for p in (ROOT / directory).rglob("*")
                      if p.is_file() and "__pycache__" not in p.parts)
     files.append(ROOT / "scripts/node_lab.py")
@@ -99,10 +99,11 @@ def summary(metadata):
     if "image" in environment:
         environment["image"] = {k: v for k, v in environment["image"].items()
                                 if k in ("imageId", "sourceDigest", "base", "platform", "provenance")}
-    lines = ["# L2 plain TUN performance", "",
+    lines = ["# L2/L3 TUN performance", "",
              "Plain = real TUN + Tokio + production UDP Session, without authentication, encryption, policy or Control.",
              "Medians of successful repeats; profiling=0 is the final throughput reference.",
-             "CPU is both containers' cgroup CPU seconds / full client wall interval ×100 (100%=one core); includes warmup.",
+             "Secure = real SecureNode + guarded carrier adapters + production UDP Session; relay has no TUN.",
+             "CPU is all sample containers' cgroup CPU seconds / full client wall interval ×100 (100%=one core); includes warmup.",
              "UDP pps is receiver delivered datagrams/s; TCP pps is unmeasured. Raw preserves kernel offloads.", "",
              "| Mode | Batch | Profile 1/N | Traffic | n | Mbps | UDP pps | Loss % | CPU % |",
              "| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |"]
@@ -116,6 +117,25 @@ def summary(metadata):
             return f"{statistics.median(values):.2f}" if values else "—"
         lines.append(f"| {key[0]} | {key[1]} | {key[2]} | {key[3]} | {len(records)} | "
                      f"{med('goodputMbps')} | {med('packetsPerSecond')} | {med('lostPercent')} | {med('cpuPercent')} |")
+    lines.extend(["", "## L2 → L3 (same run, batch, profiling and traffic)", "",
+                  "Deltas of medians; CPU and loss deltas are percentage points. Missing comparisons remain unmeasured.",
+                  "| Mode | Batch | Profile 1/N | Traffic | Δ Mbps | Δ throughput % | Δ CPU pp | Δ loss pp |",
+                  "| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |"])
+    for key, records in sorted(groups.items()):
+        if not key[0].startswith("secure-"):
+            continue
+        plain = groups.get(("plain", *key[1:]))
+        if not plain:
+            continue
+        def median(rows, field):
+            values = [r[field] for r in rows if r.get(field) is not None]
+            return statistics.median(values) if values else None
+        def delta(field):
+            left, right = median(records, field), median(plain, field)
+            return f"{left-right:+.2f}" if left is not None and right is not None else "—"
+        base = median(plain, "goodputMbps")
+        percent = f"{(median(records, 'goodputMbps')/base-1)*100:+.2f}" if base else "—"
+        lines.append(f"| {key[0]} | {key[1]} | {key[2]} | {key[3]} | {delta('goodputMbps')} | {percent} | {delta('cpuPercent')} | {delta('lostPercent')} |")
     profiles = {}
     for record in metadata["results"]:
         if record["status"] != "ok":
@@ -124,18 +144,35 @@ def summary(metadata):
             for metric in metrics:
                 times = metric["times"]
                 if times["self_cpu_ns"] is not None and times["self_cpu_samples"]:
-                    total = profiles.setdefault(metric["name"], [0, 0])
+                    total = profiles.setdefault((record["mode"], metric["name"]), [0, 0])
                     total[0] += times["self_cpu_samples"]
                     total[1] += times["self_cpu_ns"]
     if profiles:
         lines.extend(["", "## Sampled self CPU", "",
                       "Sum of each node's last cumulative snapshot across successful profiling-on samples; excludes unsampled work and any tail after the last report.",
-                      "| Metric | CPU samples | Mean self CPU ns/sample | Sampled self CPU ms |",
-                      "| --- | ---: | ---: | ---: |"])
-        for name, (count, ns) in sorted(profiles.items()):
-            lines.append(f"| {name} | {count} | {ns/count:.2f} | {ns/1e6:.2f} |")
+                      "| Mode | Metric | CPU samples | Mean self CPU ns/sample | Sampled self CPU ms |",
+                      "| --- | --- | ---: | ---: | ---: |"])
+        for (mode, name), (count, ns) in sorted(profiles.items()):
+            lines.append(f"| {mode} | {name} | {count} | {ns/count:.2f} | {ns/1e6:.2f} |")
+    lines.extend(["", "## Guard calls per originating IP packet", "",
+                  "Sum of exact control.guard calls / l3.packet.origin calls in each node's final cumulative profile snapshot after I/O shutdown. Includes setup, warmup, handshake/idle guards and output poll fences; not a fixed algorithmic count.",
+                  "| Sample | Guard calls | Origin packets | Calls/packet |", "| --- | ---: | ---: | ---: |"])
+    for record in metadata["results"]:
+        calls = {}
+        if record["status"] != "ok":
+            continue
+        for metrics in record.get("profiles", {}).values():
+            for metric in metrics:
+                calls[metric["name"]] = calls.get(metric["name"], 0) + metric["calls"]
+        packets = calls.get("l3.packet.origin", 0)
+        if packets:
+            guards = calls.get("control.guard")
+            value = f"{guards/packets:.2f}" if guards is not None else "—"
+            lines.append(f"| {record['directory']} | {guards} | {packets} | {value} |")
     lines.extend(["", "recvmmsg/sendmmsg and UDP_SEGMENT/UDP_GRO: not implemented; event batches use per-packet syscalls.",
                   f"Failed samples: {sum(r['status'] != 'ok' for r in metadata['results'])}; preserved in results.json, never replaced with zero.",
+                  "", "## Provenance", "", "```json",
+                  json.dumps({key: metadata.get(key) for key in ("revision", "dirty", "sourceDigest", "binarySha256", "fixtureBinarySha256", "options")}, indent=2), "```",
                   "", "## Environment", "", "```json",
                   json.dumps(environment, indent=2), "```", ""])
     return "\n".join(lines)
@@ -158,12 +195,15 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     nodes = []
     server = None
     handles = []
+    roles = ("a", "r", "b") if mode == "secure-relay" else ("a", "b")
+    secure = mode.startswith("secure-")
     try:
-        for role in ("a", "b"):
+        for role in roles:
             name = f"meshway-dp-{identity}-{role}"
             container = command("docker", "create", "--name", name, "--label", "io.meshway.dataplane-perf=" + identity,
                                 "--platform", platform, "--network", network,
-                                "--cap-drop", "ALL", "--cap-add", "NET_ADMIN", "--device", "/dev/net/tun:/dev/net/tun",
+                                 "--cap-drop", "ALL",
+                                 *([] if role == "r" else ["--cap-add", "NET_ADMIN", "--device", "/dev/net/tun:/dev/net/tun"]),
                                 "--security-opt", "no-new-privileges", "--read-only", "--pids-limit", "128",
                                 "--cpus", str(args.cpus), "--memory", args.memory,
                                 "--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777",
@@ -185,23 +225,44 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             for container in containers.values():
                 command("docker", "exec", container, "ip", "link", "set", "eth0", "mtu", str(args.mtu))
         else:
-            for role, other in (("a", "b"), ("b", "a")):
+            if secure:
+                public_nodes = []
+                for role in roles:
+                    public_nodes.append(json.loads(command("docker", "exec", containers[role],
+                        "/fixtures/meshway-dataplane-fixture", "material", "--directory", "/tmp/private",
+                        "--socket", addresses[role] + ":41000")))
+                save(directory / "public-nodes.json", public_nodes)
+                command("docker", "cp", str(directory / "public-nodes.json"), containers["a"] + ":/tmp/public-nodes.json")
+                fixture = json.loads(command("docker", "exec", containers["a"], "/fixtures/meshway-dataplane-fixture",
+                    "compile", "--input", "/tmp/public-nodes.json", "--seconds", str(args.seconds + args.omit + 120)))
+                save(directory / "fixture.json", fixture)
+                record["publicationDigest"] = fixture["publicationDigest"]
+                for container in containers.values():
+                    command("docker", "cp", str(directory / "fixture.json"), container + ":/tmp/fixture.json")
+            for role in reversed(roles):
+                other = "b" if role == "a" else "a"
                 stdout = (directory / f"{role}.stdout").open("w")
                 stderr = (directory / f"{role}.stderr").open("w")
                 handles.extend([stdout, stderr])
                 nodes.append(subprocess.Popen(["docker", "exec", "--env", f"MESHWAY_PROFILE={profile}",
-                    containers[role], "/fixtures/meshway-dataplane-perf", "--stage", "plain", "--role", role,
+                    "--env", "MESHWAY_PROFILE_DETAIL=1",
+                    containers[role], "/fixtures/meshway-dataplane-perf", "--stage", "secure" if secure else "plain", "--role", role,
                     "--bind", addresses[role] + ":41000", "--peer", addresses[other] + ":41000",
                     "--mtu", str(args.mtu), "--batch", str(batch), "--seconds", str(args.seconds + args.omit + 60),
-                    "--log-format", "json"], cwd=ROOT, stdout=stdout, stderr=stderr))
+                    "--log-format", "json"] + (["--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else []), cwd=ROOT, stdout=stdout, stderr=stderr))
             deadline = time.monotonic() + 15
-            while not all((directory / f"{role}.stdout").read_text().strip() for role in ("a", "b")):
+            while not all((directory / f"{role}.stdout").read_text().strip() for role in roles):
                 if any(node.poll() is not None for node in nodes) or time.monotonic() > deadline:
-                    raise RuntimeError("plain node failed readiness; see process logs")
+                    raise RuntimeError("node failed readiness; see process logs")
                 time.sleep(0.05)
-            for role in ("a", "b"):
-                if not json.loads((directory / f"{role}.stdout").read_text())["ready"]:
+            for role in roles:
+                readiness = json.loads((directory / f"{role}.stdout").read_text())
+                if not readiness["ready"]:
                     raise RuntimeError("invalid node readiness")
+                if secure and readiness["publicationDigest"] != record["publicationDigest"]:
+                    raise RuntimeError("node compiled publication digest differs")
+                if role == "r" and readiness["tun"] is not None:
+                    raise RuntimeError("relay must not open TUN")
         destination = addresses["b"] if mode == "raw" else "100.127.0.2"
         record["route"] = json.loads(command("docker", "exec", containers["a"], "ip", "-j", "route", "get", destination))
         record["links"] = {role: json.loads(command("docker", "exec", container, "ip", "-j", "link"))
@@ -271,7 +332,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     record["nodeExitCodes"] = [node.returncode for node in nodes]
     if profile:
         try:
-            record["profiles"] = {role: last_profile(directory / f"{role}.stderr") for role in ("a", "b")
+            record["profiles"] = {role: last_profile(directory / f"{role}.stderr") for role in roles
                                   if (directory / f"{role}.stderr").exists()}
         except (ValueError, TypeError) as error:
             record.update(status="failed", failure="invalid profile output: " + str(error))
@@ -296,17 +357,22 @@ def measure(args, output_root):
     shutil.copy2(cache / target / "release/meshway-dataplane-perf", binary)
     binary.chmod(0o500)
     check_elf(binary, machine)
+    helper = output / "bin/meshway-dataplane-fixture"
+    shutil.copy2(cache / target / "release/meshway-dataplane-fixture", helper)
+    helper.chmod(0o500)
+    check_elf(helper, machine)
     image = image_for(platform, output_root / "image")
     metadata = dict(schemaVersion=1, revision=command("git", "rev-parse", "HEAD"),
                     dirty=bool(command("git", "status", "--porcelain")), sourceDigest=before,
-                    binarySha256=sha256(binary), options=vars(args), results=[],
+                    binarySha256=sha256(binary), fixtureBinarySha256=sha256(helper), options=vars(args), results=[],
                     environment=dict(target=target, platform=platform, image=image,
                         rustc=command("rustc", "-Vv"), zig=command("zig", "version"),
                         cargoZigbuild=command("cargo-zigbuild", "--version"),
                         cpusPerContainer=args.cpus, memoryPerContainer=args.memory,
                         runtime="Tokio current_thread per node", mtu=args.mtu, udpPayloadBytes=args.payload,
+                        profileDetail=1,
                         udpRate=args.udp_rate, warmupOmittedSeconds=args.omit,
-                        cpuScope="both cgroups over full client wall interval including warmup",
+                        cpuScope="all sample cgroups over full client wall interval including warmup (relay: 3, others: 2)",
                         kernelBatch=False, udpSegment=False, udpGro=False))
     save(output / "results.json", metadata)
     network = "meshway-dp-" + identity
@@ -318,7 +384,8 @@ def measure(args, output_root):
             if subnet.version == 4 and subnet.overlaps(ipaddress.ip_network("100.127.0.0/30")):
                 raise RuntimeError("fixture underlay overlaps the TUN subnet")
         metadata["environment"]["network"] = description["IPAM"]["Config"]
-        configs = [("raw", 0, 0)] + [("plain", b, p) for b in args.batch for p in args.profile]
+        configs = [("raw", 0, 0)] + [(mode, b, p) for mode in ("plain", "secure-direct", "secure-relay")
+                                   for b in args.batch for p in args.profile]
         for repeat in range(args.repeats):
             for mode, batch, profile in (configs if repeat % 2 == 0 else list(reversed(configs))):
                 for traffic in ("tcp", "udp"):
