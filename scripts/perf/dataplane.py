@@ -431,29 +431,14 @@ def wireguard_transfers(containers, evidence):
             item.update(zip(("handshakeUnixSeconds", "receivedBytes", "sentBytes"), map(int, values)))
 
 
-def memory_sampler(container, path, seconds):
+def memory_sampler(container, path, seconds, detail=False):
     # One bounded sampler per isolated namespace; no docker exec per tick.
     # cgroup includes iperf/kernel charges; VmRSS is the actual node process.
-    script = '''
-pid=$(pgrep -f '^/fixtures/meshway-dataplane-perf' | head -1)
-i=0
-while [ "$i" -lt "$1" ] && [ ! -e /tmp/perf-memory-stop ]; do
-  read uptime rest < /proc/uptime
-  read current < /sys/fs/cgroup/memory.current
-  rss=null
-  if [ -n "$pid" ] && [ -r /proc/$pid/status ]; then
-    rss=$(awk '/^VmRSS:/ {print $2 * 1024}' /proc/$pid/status)
-  fi
-  printf '%s,%s,%s\\n' "$uptime" "$current" "${rss:-null}"
-  i=$((i+1))
-  sleep 0.25
-done
-cat /sys/fs/cgroup/memory.events >&2
-'''
+    script = (ROOT / "scripts/perf/dataplane_memory.sh").read_text()
     command("docker", "exec", container, "rm", "-f", "/tmp/perf-memory-stop")
-    with path.open("w") as stdout, path.with_suffix(".events").open("w") as stderr:
+    with path.open("w") as stdout, path.with_suffix(".detail").open("w") as stderr:
         return subprocess.Popen(["docker", "exec", container, "sh", "-c", script,
-                                 "memory-sampler", str(4 * seconds)], cwd=ROOT,
+                                  "memory-sampler", str(4 * seconds), str(int(detail))], cwd=ROOT,
                                 stdout=stdout, stderr=stderr)
 
 
@@ -549,6 +534,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                     containers[role], "/fixtures/meshway-dataplane-perf", "--stage", stage, "--role", role,
                     "--bind", addresses[role] + ":41000", "--peer", addresses[other] + ":41000",
                     "--mtu", str(args.mtu), "--batch", str(batch), "--seconds", str(2 * (args.seconds + args.omit) + 60),
+                    "--flow-idle-seconds", str(args.flow_idle_seconds),
                     "--log-format", "json"] + (["--workers", str(args.workers), "--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else ["--io", record["io"]]), cwd=ROOT, stdout=stdout, stderr=stderr))
             deadline = time.monotonic() + 15
             while not all((origin / f"{role}.stdout").read_text().strip() for role in roles):
@@ -595,7 +581,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         record["hostUptimeInitial"] = command("uptime")
         record["hostNprocInitial"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
         before = {role: cpu_usage(c) for role, c in containers.items()}
-        memory = {role: memory_sampler(c, directory / f"{role}.memory.csv", args.seconds + args.omit + 30)
+        memory = {role: memory_sampler(c, directory / f"{role}.memory.csv", args.seconds + args.omit + 30, args.memory_detail)
                   for role, c in containers.items()}
         start = time.monotonic()
         client_args = ["docker", "exec", containers["a"], "iperf3", "-c", destination, "-J",
@@ -651,6 +637,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         for role, sampler in memory.items():
             command("docker", "exec", containers[role], "touch", "/tmp/perf-memory-stop", check=False)
             sampler.wait(timeout=10)
+            (directory / f"{role}.memory.events").write_text(
+                command("docker", "exec", containers[role], "cat", "/sys/fs/cgroup/memory.events", check=False) + "\n")
         if memory:
             record["memoryByRole"] = {}
             for role in memory:
@@ -751,7 +739,8 @@ def measure(args, output_root):
     before = source_digest()
     cache = ROOT / "target/dataplane-perf"
     subprocess.run(["rustup", "target", "add", target], cwd=ROOT, check=True)
-    subprocess.run(["cargo", "zigbuild", "--release", "--locked", "--target", target, "-p", "meshway-dataplane-perf"],
+    features = ["--features", "allocator-mimalloc"] if args.allocator == "mimalloc" else []
+    subprocess.run(["cargo", "zigbuild", "--release", "--locked", "--target", target, "-p", "meshway-dataplane-perf", *features],
                    cwd=ROOT, check=True, env=dict(os.environ, CARGO_TARGET_DIR=str(cache), CARGO_INCREMENTAL="0"))
     if source_digest() != before:
         raise RuntimeError("sources changed during build")
@@ -828,6 +817,9 @@ def main():
     parser.add_argument("--tcp-streams", type=int, default=1, help="parallel iperf TCP streams (UDP remains one stream)")
     parser.add_argument("--cpus", type=float, default=2)
     parser.add_argument("--memory", default="512m")
+    parser.add_argument("--memory-detail", action="store_true", help="diagnostic: stream cgroup memory.stat and every process status/smaps_rollup at 250ms intervals")
+    parser.add_argument("--allocator", choices=["system", "mimalloc"], default="system", help="tool-only global allocator comparison")
+    parser.add_argument("--flow-idle-seconds", type=int, default=60, help="explicit fixture flow idle bound; raise for long iperf control connections")
     parser.add_argument("--workers", type=int, help="crypto workers per node (default 0 = inline); explicit 1-256 for handoff comparisons")
     parser.add_argument("--quick", action="store_true", help="diagnostic only: allow one repeat and 4s; not a final throughput matrix")
     parser.add_argument("--udp-buffer", type=int, default=0, help="L3 explicit socket buffer request in bytes (0 = provider default)")
@@ -839,7 +831,8 @@ def main():
             or not 1280 <= args.mtu <= 1472 or not 16 <= args.payload <= args.mtu-28
             or any(not 1 <= b <= 1024 for b in args.batch) or any(not 0 <= p <= 65536 for p in args.profile)
             or not 0 < args.cpus <= 32 or not 0 <= args.workers <= 256
-            or not 1 <= args.tcp_streams <= 128 or not 0 <= args.udp_buffer <= 16 * 1024 * 1024):
+            or not 1 <= args.tcp_streams <= 128 or not 0 <= args.udp_buffer <= 16 * 1024 * 1024
+            or not 1 <= args.flow_idle_seconds <= 86400):
         parser.error("measurement bounds invalid (at least 2 repeats, 6s measurement, 1s omitted warmup)")
     output_root = ROOT / ".meshway/perf/dataplane"
     output_root.mkdir(parents=True, exist_ok=True)

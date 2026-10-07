@@ -6,7 +6,11 @@ rust-version.workspace = true
 description = "Explicit layered TUN dataplane performance fixture"
 default-run = "meshway-dataplane-perf"
 
+[features]
+allocator-mimalloc = ["dep:mimalloc"]
+
 [dependencies]
+mimalloc = { version = "=0.1.52", optional = true, default-features = false, features = ["extended"] }
 clap.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true

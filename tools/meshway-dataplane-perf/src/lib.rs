@@ -55,12 +55,17 @@ pub struct NodeOptions {
     pub batch: usize,
     /// Zero runs stateless crypto inline; nonzero uses the same production pool.
     pub workers: usize,
+    /// Explicit fixture flow idle bound, including iperf's idle control stream.
+    pub flow_idle: std::time::Duration,
 }
 
 impl NodeOptions {
     pub fn validate(&self) -> Result<(), Error> {
         if self.workers > 256 {
             return Err("worker count must be 0..=256".into());
+        }
+        if self.flow_idle.is_zero() || self.flow_idle.as_secs() > 86_400 {
+            return Err("flow idle must be 1..=86400 seconds".into());
         }
         if matches!(self.stage, Stage::Plain) && matches!(self.role, NodeRole::R) {
             return Err("plain stage has no relay".into());

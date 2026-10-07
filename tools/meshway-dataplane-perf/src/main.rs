@@ -5,6 +5,11 @@ use meshway_dataplane_perf::{Error, NodeOptions, NodeRole, Stage, plain, secure}
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 
+// Controlled allocator comparison belongs only to this measurement executable.
+#[cfg(feature = "allocator-mimalloc")]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(about = "Isolated L2/L3/L4 TUN-over-UDP performance node")]
 struct Arguments {
@@ -30,6 +35,8 @@ struct Arguments {
     io: plain::IoMode,
     #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(1..=3600))]
     seconds: u64,
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=86400))]
+    flow_idle_seconds: u64,
     #[command(flatten)]
     logging: meshway_logging::Options,
 }
@@ -46,6 +53,7 @@ async fn main() -> Result<(), Error> {
         mtu: args.mtu,
         batch: args.batch,
         workers: args.workers,
+        flow_idle: Duration::from_secs(args.flow_idle_seconds),
     };
     options.validate()?;
     let stop = CancellationToken::new();

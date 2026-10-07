@@ -115,7 +115,13 @@ pub async fn run(
     let authority = fixture.issue(local, material)?;
     let mut node = SecureNode::new(
         authority.identity(local)?,
-        Default::default(),
+        meshway_dataplane::secure::Limits {
+            flows: meshway_dataplane::Limits {
+                idle_timeout: options.flow_idle,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
         BTreeMap::new(),
     )?;
     node.set_carriers(fixture.carriers_for(local)?)?;
@@ -468,6 +474,10 @@ impl Driver<'_> {
                     }
                 }
                 _ = report.tick() => {
+                    #[cfg(feature = "allocator-mimalloc")]
+                    if let Ok(stats) = mimalloc::MiMalloc::stats_json() {
+                        eprintln!("{}", serde_json::json!({"allocatorStats": stats.to_string_lossy()}));
+                    }
                     profile::report();
                     if profile::enabled() {
                         eprintln!("{}", serde_json::json!({"pipelineOccupancy": {
