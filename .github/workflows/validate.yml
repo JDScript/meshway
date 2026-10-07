@@ -1,0 +1,67 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "crates/meshway-connectivity/**"
+      - "crates/meshway-control/**"
+      - "crates/meshway-underlay/**"
+      - "crates/meshway-dataplane/**"
+      - "crates/meshway-dns/**"
+      - "crates/meshway-tun/**"
+      - "crates/meshway-transport*/**"
+      - "apps/meshway-daemon/**"
+      - "apps/meshway-server/src/execution/**"
+      - "apps/meshway-server/src/state/**"
+      - "scripts/verify_*.py"
+      - "scripts/validate_*.py"
+      - "dev/**"
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: "validate:matrix --rows (space separated); empty = full matrix"
+        default: ""
+      short:
+        description: "diagnostic short mode"
+        type: boolean
+        default: false
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    runs-on: [self-hosted, linux, x64, docker, planck]
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run setup
+      - name: Gate rows for pull requests (short mode)
+        if: github.event_name == 'pull_request'
+        run: mise run validate:matrix -- --short --rows nat/off nat+fallback/off
+      - name: Full matrix for main
+        if: github.event_name == 'push'
+        run: mise run validate:matrix
+      - name: Dispatched matrix
+        if: github.event_name == 'workflow_dispatch'
+        run: mise run validate:matrix -- ${{ inputs.short && '--short' || '' }} ${{ inputs.rows && format('--rows {0}', inputs.rows) || '' }}
+      - name: Publish summary
+        if: always()
+        run: |
+          latest=$(ls -td .meshway/validation/matrix/*/ | head -1)
+          cat "$latest/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validate-matrix-${{ github.run_id }}
+          path: .meshway/validation/matrix/*/matrix.json
+          if-no-files-found: ignore

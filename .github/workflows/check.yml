@@ -4,9 +4,16 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, planck]
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4

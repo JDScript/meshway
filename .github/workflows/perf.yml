@@ -1,0 +1,67 @@
+name: Perf
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/meshway-dataplane/**"
+      - "crates/meshway-connectivity/**"
+      - "crates/meshway-transport*/**"
+      - "crates/meshway-tun/**"
+      - "tools/meshway-*-perf/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+    inputs:
+      layers:
+        description: "circuit dataplane crypto (space separated)"
+        default: "circuit dataplane"
+
+concurrency:
+  group: perf
+  cancel-in-progress: false
+
+jobs:
+  perf:
+    runs-on: [self-hosted, linux, x64, docker, planck]
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run setup
+      - name: Guard against a busy host
+        run: |
+          load=$(cut -d' ' -f1 /proc/loadavg)
+          echo "load1=$load" >> "$GITHUB_STEP_SUMMARY"
+          awk -v l="$load" 'BEGIN { exit (l > 8.0) ? 1 : 0 }' || { echo "host load $load too high for measurements"; exit 1; }
+      - name: L0 circuit
+        if: contains(inputs.layers || 'circuit dataplane', 'circuit')
+        run: mise run perf:circuit
+      - name: L3/L4 dataplane fixed scope
+        if: contains(inputs.layers || 'circuit dataplane', 'dataplane')
+        run: mise run perf:dataplane -- --modes secure-direct secure-relay manager-relay plain-batch --batch 32 --profile 0 --repeats 2 --seconds 6 --omit 1 --mtu 1280 --payload 1200 --udp-rate 2G --cpus 2 --memory 512m
+      - name: Crypto primitives
+        if: contains(inputs.layers || '', 'crypto')
+        run: mise run perf:crypto
+      - name: Publish summaries
+        if: always()
+        run: |
+          for d in .meshway/perf/circuit .meshway/perf/dataplane .meshway/perf/crypto; do
+            latest=$(ls -td "$d"/*/ 2>/dev/null | head -1)
+            [ -n "$latest" ] && [ -f "$latest/summary.md" ] && { echo "## $d" >> "$GITHUB_STEP_SUMMARY"; cat "$latest/summary.md" >> "$GITHUB_STEP_SUMMARY"; }
+          done
+          true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-${{ github.run_id }}
+          path: |
+            .meshway/perf/circuit/*/results.json
+            .meshway/perf/dataplane/*/results.json
+            .meshway/perf/crypto/*/results.json
+          if-no-files-found: ignore
