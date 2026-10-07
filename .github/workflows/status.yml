@@ -1,0 +1,36 @@
+name: Status
+
+on:
+  workflow_run:
+    workflows: [Check, Validate, Perf, Build]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: status-index
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_branch != 'ci-results'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    steps:
+      # workflow_run always executes the collector from the default branch.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked python
+      - name: Collect and publish summaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mise exec python -- python3 scripts/ci/collect.py --publish --push
+      - name: Summary
+        run: echo 'Status index updated on ci-results; locally run `mise run status:sync`.' >> "$GITHUB_STEP_SUMMARY"

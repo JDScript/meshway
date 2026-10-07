@@ -1,0 +1,267 @@
+{
+  "schemaVersion": 1,
+  "revision": "a549bdba8ddc391fadf30ab8e2225ca6c887686d",
+  "dirty": true,
+  "sourcesUnchanged": true,
+  "options": {
+    "modes": [
+      "secure-relay",
+      "manager-relay"
+    ],
+    "traffic": [
+      "tcp",
+      "udp"
+    ],
+    "batch": [
+      32
+    ],
+    "profile": [
+      0
+    ],
+    "repeats": 2,
+    "seconds": 6,
+    "omit": 1,
+    "mtu": 1280,
+    "payload": 1200,
+    "udp_rate": "500M",
+    "tcp_streams": 1,
+    "cpus": 2.0,
+    "memory": "512m",
+    "memory_detail": false,
+    "allocator": "mimalloc",
+    "flow_idle_seconds": 60,
+    "workers": 0,
+    "quick": false,
+    "udp_buffer": 0
+  },
+  "results": [
+    {
+      "mode": "secure-relay",
+      "batch": 32,
+      "profile": 0,
+      "traffic": "tcp",
+      "repeat": 0,
+      "status": "ok",
+      "goodputMbps": 1666.8789724035614,
+      "packetsPerSecond": null,
+      "tcpStreams": [
+        {
+          "socket": 5,
+          "start": 0,
+          "end": 6.001359,
+          "seconds": 6.001359,
+          "bytes": 1249902592,
+          "bits_per_second": 1666159404.2282758,
+          "retransmits": 0,
+          "max_snd_cwnd": 4326244,
+          "max_snd_wnd": 8508416,
+          "max_rtt": 25784,
+          "min_rtt": 13245,
+          "mean_rtt": 17434,
+          "sender": true
+        }
+      ],
+      "hostLoadInitial": [
+        4.10205078125,
+        5.80712890625,
+        6.9853515625
+      ],
+      "hostLoadFinal": [
+        4.1533203125,
+        5.76318359375,
+        6.9560546875
+      ]
+    },
+    {
+      "mode": "secure-relay",
+      "batch": 32,
+      "profile": 0,
+      "traffic": "udp",
+      "repeat": 0,
+      "status": "ok",
+      "goodputMbps": 478.2268165205434,
+      "packetsPerSecond": 49815.2933875566,
+      "hostLoadInitial": [
+        4.1533203125,
+        5.76318359375,
+        6.9560546875
+      ],
+      "hostLoadFinal": [
+        3.9755859375,
+        5.671875,
+        6.9091796875
+      ]
+    },
+    {
+      "mode": "manager-relay",
+      "batch": 32,
+      "profile": 0,
+      "traffic": "tcp",
+      "repeat": 0,
+      "status": "ok",
+      "goodputMbps": 1613.734104722921,
+      "packetsPerSecond": null,
+      "tcpStreams": [
+        {
+          "socket": 5,
+          "start": 0,
+          "end": 6.000127,
+          "seconds": 6.000127,
+          "bytes": 1210843136,
+          "bits_per_second": 1614423342.7059128,
+          "retransmits": 0,
+          "max_snd_cwnd": 4317648,
+          "max_snd_wnd": 11186176,
+          "max_rtt": 29562,
+          "min_rtt": 9733,
+          "mean_rtt": 16469,
+          "sender": true
+        }
+      ],
+      "hostLoadInitial": [
+        3.9755859375,
+        5.671875,
+        6.9091796875
+      ],
+      "hostLoadFinal": [
+        4.2802734375,
+        5.68212890625,
+        6.8984375
+      ]
+    },
+    {
+      "mode": "manager-relay",
+      "batch": 32,
+      "profile": 0,
+      "traffic": "udp",
+      "repeat": 0,
+      "status": "ok",
+      "goodputMbps": 462.5721609264839,
+      "packetsPerSecond": 48184.60009650874,
+      "hostLoadInitial": [
+        4.2802734375,
+        5.68212890625,
+        6.8984375
+      ],
+      "hostLoadFinal": [
+        3.9228515625,
+        5.56005859375,
+        6.8408203125
+      ]
+    },
+    {
+      "mode": "manager-relay",
+      "batch": 32,
+      "profile": 0,
+      "traffic": "tcp",
+      "repeat": 1,
+      "status": "ok",
+      "goodputMbps": 1644.0383199798036,
+      "packetsPerSecond": null,
+      "tcpStreams": [
+        {
+          "socket": 5,
+          "start": 0,
+          "end": 6.009226,
+          "seconds": 6.009226,
+          "bytes": 1233780736,
+          "bits_per_second": 1642515340.2451496,
+          "retransmits": 0,
+          "max_snd_cwnd": 4320104,
+          "max_snd_wnd": 7542784,
+          "max_rtt": 18802,
+          "min_rtt": 10617,
+          "mean_rtt": 15689,
+          "sender": true
+        }
+      ],
+      "hostLoadInitial": [
+        3.9228515625,
+        5.56005859375,
+        6.8408203125
+      ],
+      "hostLoadFinal": [
+        4.49462890625,
+        5.6240234375,
+        6.84814453125
+      ]
+    },
+    {
+      "mode": "manager-relay",
+      "batch": 32,
+      "profile": 0,
+      "traffic": "udp",
+      "repeat": 1,
+      "status": "ok",
+      "goodputMbps": 459.6720824057201,
+      "packetsPerSecond": 47882.50858392918,
+      "hostLoadInitial": [
+        4.49462890625,
+        5.6240234375,
+        6.84814453125
+      ],
+      "hostLoadFinal": [
+        4.8984375,
+        5.66943359375,
+        6.849609375
+      ]
+    },
+    {
+      "mode": "secure-relay",
+      "batch": 32,
+      "profile": 0,
+      "traffic": "tcp",
+      "repeat": 1,
+      "status": "ok",
+      "goodputMbps": 1640.6496486324193,
+      "packetsPerSecond": null,
+      "tcpStreams": [
+        {
+          "socket": 5,
+          "start": 0,
+          "end": 6.000615,
+          "seconds": 6.000615,
+          "bytes": 1231028224,
+          "bits_per_second": 1641202742.052273,
+          "retransmits": 0,
+          "max_snd_cwnd": 4358172,
+          "max_snd_wnd": 9806848,
+          "max_rtt": 33198,
+          "min_rtt": 15776,
+          "mean_rtt": 22912,
+          "sender": true
+        }
+      ],
+      "hostLoadInitial": [
+        4.8984375,
+        5.66943359375,
+        6.849609375
+      ],
+      "hostLoadFinal": [
+        5.37451171875,
+        5.74560546875,
+        6.8623046875
+      ]
+    },
+    {
+      "mode": "secure-relay",
+      "batch": 32,
+      "profile": 0,
+      "traffic": "udp",
+      "repeat": 1,
+      "status": "ok",
+      "goodputMbps": 474.3235101235759,
+      "packetsPerSecond": 49408.69897120582,
+      "hostLoadInitial": [
+        5.37451171875,
+        5.74560546875,
+        6.8623046875
+      ],
+      "hostLoadFinal": [
+        5.33544921875,
+        5.72119140625,
+        6.83984375
+      ]
+    }
+  ]
+}

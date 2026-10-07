@@ -1,0 +1,5649 @@
+{
+  "schemaVersion": 1,
+  "revision": "b40fc85d153e58b04bdf185f5d0692dc512bcff0",
+  "dirty": false,
+  "options": {
+    "environment": [
+      "host",
+      "linux"
+    ],
+    "iterations": 100000,
+    "repeats": 5,
+    "cpus": 2,
+    "cpu_set": null
+  },
+  "environments": [
+    {
+      "name": "host",
+      "status": "ok",
+      "samples": [
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 114810,
+          "wallNs": 112521
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 105639947,
+          "wallNs": 105674187
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 103096898,
+          "wallNs": 103101058
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 102964377,
+          "wallNs": 102966287
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 104015371,
+          "wallNs": 104024913
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 91424491,
+          "wallNs": 91431770
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 90994650,
+          "wallNs": 90995653
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 102652525,
+          "wallNs": 102653951
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 102799226,
+          "wallNs": 102802674
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 103225378,
+          "wallNs": 103226560
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 102635306,
+          "wallNs": 102638971
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 89338964,
+          "wallNs": 89340588
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 89430524,
+          "wallNs": 89439389
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 16284925,
+          "wallNs": 16285129
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 16566936,
+          "wallNs": 16567893
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 16599596,
+          "wallNs": 16599784
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 16998077,
+          "wallNs": 16998280
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 16007344,
+          "wallNs": 16007535
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 17378009,
+          "wallNs": 17378226
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 13182682,
+          "wallNs": 13182982
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 8293773,
+          "wallNs": 8293887
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 12169788,
+          "wallNs": 12170026
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 8440143,
+          "wallNs": 8440259
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 15139610,
+          "wallNs": 15139802
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 11498346,
+          "wallNs": 11498606
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 7275089,
+          "wallNs": 7275201
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 4096686,
+          "wallNs": 4096643
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 3933126,
+          "wallNs": 3933190
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 19717038,
+          "wallNs": 19717382
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 18424843,
+          "wallNs": 18425162
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 14269346,
+          "wallNs": 14269519
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 14325017,
+          "wallNs": 14325199
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 23545013,
+          "wallNs": 23545391
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 19064025,
+          "wallNs": 19064331
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 17786750,
+          "wallNs": 17787042
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 579733,
+          "wallNs": 579739
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 163873238,
+          "wallNs": 163881819
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 160456575,
+          "wallNs": 160463817
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 164538641,
+          "wallNs": 164541039
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 163546427,
+          "wallNs": 163552644
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 107268994,
+          "wallNs": 107270133
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 108638100,
+          "wallNs": 108645044
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 162365612,
+          "wallNs": 162376026
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 157138451,
+          "wallNs": 157140236
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 164109048,
+          "wallNs": 164124733
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 160551665,
+          "wallNs": 160559098
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 106120789,
+          "wallNs": 106122284
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 106752002,
+          "wallNs": 106753115
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 48596932,
+          "wallNs": 48597605
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 55906511,
+          "wallNs": 55907156
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 49821387,
+          "wallNs": 49822023
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 56332573,
+          "wallNs": 56333123
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 37344458,
+          "wallNs": 37344891
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 38680803,
+          "wallNs": 38681252
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 60731860,
+          "wallNs": 60732550
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 54629916,
+          "wallNs": 54630547
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 57880319,
+          "wallNs": 57881057
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 54354575,
+          "wallNs": 54355242
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 62789589,
+          "wallNs": 62795751
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 57818128,
+          "wallNs": 57818805
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 127306724,
+          "wallNs": 127311579
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 50156458,
+          "wallNs": 50157108
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 50585930,
+          "wallNs": 50586514
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 66319333,
+          "wallNs": 66325426
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 64459085,
+          "wallNs": 64459817
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 60817991,
+          "wallNs": 60821021
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 60696150,
+          "wallNs": 60696939
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 68680821,
+          "wallNs": 68685101
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 64089713,
+          "wallNs": 64093731
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 138892829,
+          "wallNs": 138897656
+        },
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 108640,
+          "wallNs": 108621
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 16115554,
+          "wallNs": 16115737
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 16457495,
+          "wallNs": 16457692
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 16536205,
+          "wallNs": 16536503
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 17061398,
+          "wallNs": 17061611
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 16135164,
+          "wallNs": 16135347
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 17455849,
+          "wallNs": 17456057
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 100784698,
+          "wallNs": 100786343
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 101512101,
+          "wallNs": 101513285
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 103800300,
+          "wallNs": 103808089
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 104166922,
+          "wallNs": 104168565
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 89980146,
+          "wallNs": 89981288
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 89562565,
+          "wallNs": 89564081
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 102923456,
+          "wallNs": 102924566
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 103418488,
+          "wallNs": 103419663
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 103619900,
+          "wallNs": 103621077
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 103466309,
+          "wallNs": 103467504
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 90258747,
+          "wallNs": 90259832
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 90093556,
+          "wallNs": 90095039
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 13070351,
+          "wallNs": 13070510
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 8172462,
+          "wallNs": 8172595
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 12210538,
+          "wallNs": 12214997
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 8497794,
+          "wallNs": 8498000
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 15297821,
+          "wallNs": 15298174
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 11527206,
+          "wallNs": 11527236
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 7165588,
+          "wallNs": 7165690
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 4027116,
+          "wallNs": 4027171
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 3909175,
+          "wallNs": 3909240
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 19630268,
+          "wallNs": 19630840
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 18406843,
+          "wallNs": 18407162
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 14272886,
+          "wallNs": 14273059
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 14356756,
+          "wallNs": 14356960
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 23663464,
+          "wallNs": 23663742
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 19165505,
+          "wallNs": 19165733
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 17833241,
+          "wallNs": 17833453
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 611192,
+          "wallNs": 611210
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 48779693,
+          "wallNs": 48780247
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 56543284,
+          "wallNs": 56543926
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 49871277,
+          "wallNs": 49871863
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 56395773,
+          "wallNs": 56403163
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 37719830,
+          "wallNs": 37722228
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 39114175,
+          "wallNs": 39114619
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 162488342,
+          "wallNs": 162496959
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 157363862,
+          "wallNs": 157365740
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 162221372,
+          "wallNs": 162230454
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 159913182,
+          "wallNs": 159919429
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 106639282,
+          "wallNs": 106640393
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 106654162,
+          "wallNs": 106655712
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 164108489,
+          "wallNs": 164110193
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 161862630,
+          "wallNs": 161864689
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 164656900,
+          "wallNs": 164658802
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 162471332,
+          "wallNs": 162477178
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 106740862,
+          "wallNs": 106742294
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 108064557,
+          "wallNs": 108071125
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 61421973,
+          "wallNs": 61422661
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 55089758,
+          "wallNs": 55090204
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 58423421,
+          "wallNs": 58430665
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 54298145,
+          "wallNs": 54298761
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 63582701,
+          "wallNs": 63586944
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 57764279,
+          "wallNs": 57768204
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 127271643,
+          "wallNs": 127273089
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 49940377,
+          "wallNs": 49940954
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 50376439,
+          "wallNs": 50377051
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 65824920,
+          "wallNs": 65825648
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 63998403,
+          "wallNs": 63999260
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 60379629,
+          "wallNs": 60380384
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 60327319,
+          "wallNs": 60335984
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 69054903,
+          "wallNs": 69056197
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 64362964,
+          "wallNs": 64364186
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 140382935,
+          "wallNs": 140384620
+        },
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 108980,
+          "wallNs": 108982
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 102877827,
+          "wallNs": 102878985
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 103363969,
+          "wallNs": 103365123
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 103883500,
+          "wallNs": 103884710
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 104343833,
+          "wallNs": 104345108
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 90319798,
+          "wallNs": 90320753
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 90061036,
+          "wallNs": 90061939
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 101769102,
+          "wallNs": 101770278
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 101788933,
+          "wallNs": 101790608
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 102476765,
+          "wallNs": 102477850
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 101813012,
+          "wallNs": 101814249
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 90320657,
+          "wallNs": 90340644
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 89597114,
+          "wallNs": 89598233
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 16279574,
+          "wallNs": 16279779
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 16556365,
+          "wallNs": 16556543
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 16660116,
+          "wallNs": 16660325
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 17015417,
+          "wallNs": 17015620
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 16081654,
+          "wallNs": 16081856
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 17392189,
+          "wallNs": 17396626
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 13225632,
+          "wallNs": 13225773
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 8224823,
+          "wallNs": 8224906
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 12196298,
+          "wallNs": 12196437
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 8436153,
+          "wallNs": 8436249
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 15221740,
+          "wallNs": 15221813
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 11792797,
+          "wallNs": 11793021
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 7279479,
+          "wallNs": 7279591
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 4095926,
+          "wallNs": 4095993
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 3956885,
+          "wallNs": 3956950
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 19784958,
+          "wallNs": 19785223
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 18538153,
+          "wallNs": 18538394
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 14255986,
+          "wallNs": 14256158
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 14351216,
+          "wallNs": 14351390
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 23778914,
+          "wallNs": 23779194
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 19120896,
+          "wallNs": 19121123
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 17826081,
+          "wallNs": 17826283
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 599512,
+          "wallNs": 599739
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 163385486,
+          "wallNs": 163395762
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 161901380,
+          "wallNs": 161903549
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 165231713,
+          "wallNs": 165233610
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 168069745,
+          "wallNs": 168097314
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 107472775,
+          "wallNs": 107473996
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 108776900,
+          "wallNs": 108778705
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 162752113,
+          "wallNs": 162754573
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 158281866,
+          "wallNs": 158287314
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 164490220,
+          "wallNs": 164498459
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 160577985,
+          "wallNs": 160582779
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 105611847,
+          "wallNs": 105616377
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 107061833,
+          "wallNs": 107063050
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 48583552,
+          "wallNs": 48584194
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 55960721,
+          "wallNs": 55968067
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 51160243,
+          "wallNs": 51160794
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 57358367,
+          "wallNs": 57364628
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 37742619,
+          "wallNs": 37743068
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 39150055,
+          "wallNs": 39150510
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 61350853,
+          "wallNs": 61351560
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 55256848,
+          "wallNs": 55257676
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 58523441,
+          "wallNs": 58528297
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 54096194,
+          "wallNs": 54096819
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 63122410,
+          "wallNs": 63124347
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 57350657,
+          "wallNs": 57360808
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 126425790,
+          "wallNs": 126427226
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 49778216,
+          "wallNs": 49778803
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 50623461,
+          "wallNs": 50623966
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 66615153,
+          "wallNs": 66616040
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 64550225,
+          "wallNs": 64550929
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 60927020,
+          "wallNs": 60927813
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 61170952,
+          "wallNs": 61171657
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 69173804,
+          "wallNs": 69174609
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 64831217,
+          "wallNs": 64831933
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 140116374,
+          "wallNs": 140117966
+        },
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 109351,
+          "wallNs": 109321
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 16128714,
+          "wallNs": 16132557
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 16404935,
+          "wallNs": 16405141
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 16523976,
+          "wallNs": 16524083
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 16902957,
+          "wallNs": 16903249
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 15930313,
+          "wallNs": 15936384
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 17258879,
+          "wallNs": 17258974
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 102571355,
+          "wallNs": 102572761
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 101931123,
+          "wallNs": 101932281
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 102727536,
+          "wallNs": 102732754
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 103318469,
+          "wallNs": 103321683
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 89915846,
+          "wallNs": 89916947
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 89586454,
+          "wallNs": 89587372
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 102963337,
+          "wallNs": 102967727
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 103433309,
+          "wallNs": 103437784
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 103514380,
+          "wallNs": 103515545
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 103553169,
+          "wallNs": 103557226
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 90322137,
+          "wallNs": 90323173
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 90472938,
+          "wallNs": 90478056
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 13074412,
+          "wallNs": 13074570
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 8103352,
+          "wallNs": 8103454
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 12072548,
+          "wallNs": 12072725
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 8403213,
+          "wallNs": 8403318
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 15187140,
+          "wallNs": 15187422
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 11770097,
+          "wallNs": 11770350
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 7318119,
+          "wallNs": 7318282
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 4106666,
+          "wallNs": 4106823
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 3980305,
+          "wallNs": 3980461
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 19861569,
+          "wallNs": 19861904
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 18563154,
+          "wallNs": 18563474
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 14308437,
+          "wallNs": 14308709
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 14313287,
+          "wallNs": 14313459
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 23596763,
+          "wallNs": 23597092
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 19075465,
+          "wallNs": 19075722
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 17829711,
+          "wallNs": 17829943
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 758573,
+          "wallNs": 758582
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 48869223,
+          "wallNs": 48872879
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 56015371,
+          "wallNs": 56020278
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 50367900,
+          "wallNs": 50368182
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 57156336,
+          "wallNs": 57156996
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 37835850,
+          "wallNs": 37836289
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 39520047,
+          "wallNs": 39538036
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 163038255,
+          "wallNs": 163040117
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 158133605,
+          "wallNs": 158139712
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 163614957,
+          "wallNs": 163620886
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 160918956,
+          "wallNs": 160926595
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 106501551,
+          "wallNs": 106512411
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 107013153,
+          "wallNs": 107014379
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 164303209,
+          "wallNs": 164308417
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 161267467,
+          "wallNs": 161272220
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 166076126,
+          "wallNs": 166083344
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 164843521,
+          "wallNs": 164845405
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 107590805,
+          "wallNs": 107592217
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 108841051,
+          "wallNs": 108842307
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 61330642,
+          "wallNs": 61331679
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 54797846,
+          "wallNs": 54798490
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 57972820,
+          "wallNs": 57973488
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 54214244,
+          "wallNs": 54214880
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 63938132,
+          "wallNs": 63953869
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 57954569,
+          "wallNs": 57955238
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 127441844,
+          "wallNs": 127446652
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 50185478,
+          "wallNs": 50186059
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 50786541,
+          "wallNs": 50787138
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 66460633,
+          "wallNs": 66461378
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 64536055,
+          "wallNs": 64536788
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 60913581,
+          "wallNs": 60914353
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 60991161,
+          "wallNs": 60996734
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 68618161,
+          "wallNs": 68621121
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 64252054,
+          "wallNs": 64252774
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 139477812,
+          "wallNs": 139483946
+        },
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 109750,
+          "wallNs": 109742
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 103106998,
+          "wallNs": 103112480
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 103426019,
+          "wallNs": 103427624
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 103866921,
+          "wallNs": 103868101
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 104550883,
+          "wallNs": 104560161
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 91241410,
+          "wallNs": 91242507
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 90478558,
+          "wallNs": 90479546
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 102005553,
+          "wallNs": 102006732
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 102353644,
+          "wallNs": 102354808
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 103342198,
+          "wallNs": 103343423
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 102989627,
+          "wallNs": 102992977
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 90022796,
+          "wallNs": 90023909
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 89712435,
+          "wallNs": 89718864
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 16310514,
+          "wallNs": 16310710
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 16603725,
+          "wallNs": 16603924
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 16686766,
+          "wallNs": 16686975
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 17107447,
+          "wallNs": 17107662
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 16141034,
+          "wallNs": 16141238
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 17418779,
+          "wallNs": 17419007
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 13181532,
+          "wallNs": 13181692
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 8271493,
+          "wallNs": 8271607
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 12150858,
+          "wallNs": 12151006
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 8448723,
+          "wallNs": 8448840
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 15162360,
+          "wallNs": 15165342
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 11494716,
+          "wallNs": 11494856
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 7238919,
+          "wallNs": 7239011
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 4063856,
+          "wallNs": 4063922
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 3929536,
+          "wallNs": 3929600
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 19622298,
+          "wallNs": 19622531
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 18365112,
+          "wallNs": 18365352
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 14151566,
+          "wallNs": 14151736
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 14231137,
+          "wallNs": 14231308
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 23394502,
+          "wallNs": 23394789
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 18902594,
+          "wallNs": 18902819
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 17668280,
+          "wallNs": 17668500
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 587262,
+          "wallNs": 587259
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 163243775,
+          "wallNs": 163265871
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 162282211,
+          "wallNs": 162287386
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 166564657,
+          "wallNs": 166582732
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 164525100,
+          "wallNs": 164526901
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 107074544,
+          "wallNs": 107076210
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 108141357,
+          "wallNs": 108146946
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 162492272,
+          "wallNs": 162511200
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 158636807,
+          "wallNs": 158648840
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 164978572,
+          "wallNs": 164980868
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 161153897,
+          "wallNs": 161170399
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 105388027,
+          "wallNs": 105389274
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 106249760,
+          "wallNs": 106250827
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 48787953,
+          "wallNs": 48788587
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 56082362,
+          "wallNs": 56086479
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 50686190,
+          "wallNs": 50686766
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 56509074,
+          "wallNs": 56509805
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 37694609,
+          "wallNs": 37695158
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 39070254,
+          "wallNs": 39070718
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 61344503,
+          "wallNs": 61345219
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 55183498,
+          "wallNs": 55184135
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 58414600,
+          "wallNs": 58419435
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 54414005,
+          "wallNs": 54416764
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 63563512,
+          "wallNs": 63567684
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 57167926,
+          "wallNs": 57168576
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 126660291,
+          "wallNs": 126685381
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 50392550,
+          "wallNs": 50397471
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 50713010,
+          "wallNs": 50716537
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 66313752,
+          "wallNs": 66314636
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 64446784,
+          "wallNs": 64447537
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 60914050,
+          "wallNs": 60919303
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 60983051,
+          "wallNs": 60985784
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 69210643,
+          "wallNs": 69211540
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 64908736,
+          "wallNs": 64910244
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 139552732,
+          "wallNs": 139561418
+        }
+      ],
+      "hostLoadBefore": [
+        4.80078125,
+        4.88427734375,
+        3.5771484375
+      ],
+      "hostLoadAfter": [
+        4.2890625,
+        4.76171875,
+        3.5634765625
+      ]
+    },
+    {
+      "name": "linux",
+      "status": "ok",
+      "samples": [
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 149190,
+          "wallNs": 140922
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 103252998,
+          "wallNs": 103261872
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 102311074,
+          "wallNs": 102312147
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 103854031,
+          "wallNs": 103855681
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 103858341,
+          "wallNs": 103928042
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 91328802,
+          "wallNs": 91329909
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 91894613,
+          "wallNs": 91895628
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 102852836,
+          "wallNs": 102854246
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 103439059,
+          "wallNs": 103440795
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 104715114,
+          "wallNs": 104726124
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 105177946,
+          "wallNs": 105179231
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 90235627,
+          "wallNs": 90236743
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 90611038,
+          "wallNs": 90612088
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 15794702,
+          "wallNs": 15803572
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 16285354,
+          "wallNs": 16285579
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 17127988,
+          "wallNs": 17128283
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 17343188,
+          "wallNs": 17343406
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 15552021,
+          "wallNs": 15552179
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 16871117,
+          "wallNs": 16871399
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 11916647,
+          "wallNs": 11916793
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 7432930,
+          "wallNs": 7433124
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 11899337,
+          "wallNs": 11903532
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 7715410,
+          "wallNs": 7715598
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 14520647,
+          "wallNs": 14521072
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 10514381,
+          "wallNs": 10514611
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 7314899,
+          "wallNs": 7315092
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 4126207,
+          "wallNs": 4126263
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 3980106,
+          "wallNs": 3980071
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 18363893,
+          "wallNs": 18364111
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 18263352,
+          "wallNs": 18263590
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 13981316,
+          "wallNs": 13981454
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 14174326,
+          "wallNs": 14174967
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 21544985,
+          "wallNs": 21552730
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 17542159,
+          "wallNs": 17542368
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 17954551,
+          "wallNs": 17954755
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 970934,
+          "wallNs": 970945
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 163935648,
+          "wallNs": 163938372
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 162849824,
+          "wallNs": 162857935
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 166285457,
+          "wallNs": 166289948
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 163264296,
+          "wallNs": 163266721
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 107437415,
+          "wallNs": 107448246
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 109443093,
+          "wallNs": 109444337
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 162867404,
+          "wallNs": 162869705
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 160098483,
+          "wallNs": 160100623
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 164846261,
+          "wallNs": 164852856
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 160712245,
+          "wallNs": 160714593
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 106622672,
+          "wallNs": 106624344
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 108392679,
+          "wallNs": 108402431
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 51118372,
+          "wallNs": 51119053
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 55755180,
+          "wallNs": 55755824
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 53031190,
+          "wallNs": 53031903
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 56723435,
+          "wallNs": 56723978
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 37233457,
+          "wallNs": 37233910
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 38654673,
+          "wallNs": 38655103
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 59265914,
+          "wallNs": 59266588
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 54936638,
+          "wallNs": 54937162
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 57682208,
+          "wallNs": 57682894
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 53566602,
+          "wallNs": 53569071
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 61936555,
+          "wallNs": 61937789
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 55253649,
+          "wallNs": 55254736
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 127321143,
+          "wallNs": 127322541
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 50204758,
+          "wallNs": 50205390
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 50161959,
+          "wallNs": 50162659
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 65462359,
+          "wallNs": 65463003
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 64558735,
+          "wallNs": 64559559
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 60540150,
+          "wallNs": 60540907
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 60637140,
+          "wallNs": 60637819
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 66634094,
+          "wallNs": 66634861
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 62056005,
+          "wallNs": 62059230
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 0,
+          "iterations": 100000,
+          "cpuNs": 139065430,
+          "wallNs": 139066930
+        },
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 228051,
+          "wallNs": 228063
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 16013154,
+          "wallNs": 16013385
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 16482625,
+          "wallNs": 16482832
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 17258778,
+          "wallNs": 17258984
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 17481959,
+          "wallNs": 17482178
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 15686262,
+          "wallNs": 15686440
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 16924467,
+          "wallNs": 16924669
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 102620946,
+          "wallNs": 102625523
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 103075908,
+          "wallNs": 103077170
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 104683373,
+          "wallNs": 104684574
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 104658253,
+          "wallNs": 104659443
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 89661354,
+          "wallNs": 89662274
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 90023886,
+          "wallNs": 90026829
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 102802996,
+          "wallNs": 102804155
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 103280579,
+          "wallNs": 103281823
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 104793254,
+          "wallNs": 104794446
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 105052795,
+          "wallNs": 105055579
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 90908179,
+          "wallNs": 90909243
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 91276081,
+          "wallNs": 91277119
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 12058048,
+          "wallNs": 12058305
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 7474820,
+          "wallNs": 7475024
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 11930657,
+          "wallNs": 11930903
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 7719960,
+          "wallNs": 7720158
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 14463107,
+          "wallNs": 14463382
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 10397851,
+          "wallNs": 10398059
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 7221618,
+          "wallNs": 7221741
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 4063946,
+          "wallNs": 4064103
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 3954445,
+          "wallNs": 3954671
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 18407963,
+          "wallNs": 18408262
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 18315973,
+          "wallNs": 18316300
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 14052486,
+          "wallNs": 14052746
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 14183726,
+          "wallNs": 14183967
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 21488475,
+          "wallNs": 21488910
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 17471319,
+          "wallNs": 17471528
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 17754100,
+          "wallNs": 17754332
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 956134,
+          "wallNs": 956134
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 51401373,
+          "wallNs": 51402148
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 55897891,
+          "wallNs": 55898417
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 53104299,
+          "wallNs": 53105014
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 56598313,
+          "wallNs": 56598957
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 37338677,
+          "wallNs": 37339112
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 38637283,
+          "wallNs": 38637732
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 162960724,
+          "wallNs": 162962597
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 159433740,
+          "wallNs": 159435633
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 164181549,
+          "wallNs": 164186766
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 161473858,
+          "wallNs": 161475675
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 106572611,
+          "wallNs": 106575463
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 108115647,
+          "wallNs": 108116956
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 163815007,
+          "wallNs": 163821030
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 161668639,
+          "wallNs": 161670527
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 165713675,
+          "wallNs": 165719580
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 164576910,
+          "wallNs": 164578972
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 107686335,
+          "wallNs": 107687570
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 108798830,
+          "wallNs": 108800058
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 59338965,
+          "wallNs": 59339639
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 54981567,
+          "wallNs": 54982223
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 58042670,
+          "wallNs": 58043329
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 53583212,
+          "wallNs": 53583841
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 61685654,
+          "wallNs": 61686355
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 55133528,
+          "wallNs": 55134135
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 127536644,
+          "wallNs": 127538094
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 50120118,
+          "wallNs": 50120728
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 50255549,
+          "wallNs": 50259860
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 65306618,
+          "wallNs": 65307381
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 64634806,
+          "wallNs": 64635611
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 60557680,
+          "wallNs": 60558328
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 60680390,
+          "wallNs": 60681190
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 66775054,
+          "wallNs": 66775763
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 62294886,
+          "wallNs": 62295595
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 1,
+          "iterations": 100000,
+          "cpuNs": 138775778,
+          "wallNs": 138777277
+        },
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 138881,
+          "wallNs": 138862
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 102317494,
+          "wallNs": 102319078
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 103170158,
+          "wallNs": 103171441
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 104794045,
+          "wallNs": 104795276
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 105021755,
+          "wallNs": 105022950
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 90916589,
+          "wallNs": 90921573
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 91082000,
+          "wallNs": 91086826
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 101740532,
+          "wallNs": 101741769
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 102241764,
+          "wallNs": 102242947
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 104710814,
+          "wallNs": 104712104
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 104695404,
+          "wallNs": 104696694
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 90135856,
+          "wallNs": 90136971
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 90729819,
+          "wallNs": 90730860
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 15915973,
+          "wallNs": 15916254
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 16434635,
+          "wallNs": 16434942
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 17243828,
+          "wallNs": 17244144
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 17473269,
+          "wallNs": 17473598
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 15735682,
+          "wallNs": 15735891
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 16973537,
+          "wallNs": 16973750
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 11995957,
+          "wallNs": 11996194
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 7499559,
+          "wallNs": 7499765
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 11985337,
+          "wallNs": 11985554
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 7791341,
+          "wallNs": 7791550
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 14578437,
+          "wallNs": 14578713
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 10501441,
+          "wallNs": 10501691
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 7289879,
+          "wallNs": 7290062
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 4096126,
+          "wallNs": 4096213
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 3998956,
+          "wallNs": 3999111
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 18412572,
+          "wallNs": 18412842
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 18276472,
+          "wallNs": 18276700
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 14014145,
+          "wallNs": 14018195
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 14182436,
+          "wallNs": 14182697
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 21253404,
+          "wallNs": 21253795
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 17363409,
+          "wallNs": 17363586
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 17720120,
+          "wallNs": 17720422
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 962784,
+          "wallNs": 962884
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 163697107,
+          "wallNs": 163699639
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 162826994,
+          "wallNs": 162829005
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 166385648,
+          "wallNs": 166390990
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 164659271,
+          "wallNs": 164661403
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 107213313,
+          "wallNs": 107214563
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 108482548,
+          "wallNs": 108484033
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 162939444,
+          "wallNs": 162952087
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 159983923,
+          "wallNs": 159985961
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 165299414,
+          "wallNs": 165301203
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 160628625,
+          "wallNs": 160630511
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 106124560,
+          "wallNs": 106126256
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 108167078,
+          "wallNs": 108168197
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 51152852,
+          "wallNs": 51153454
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 55675720,
+          "wallNs": 55676243
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 53040150,
+          "wallNs": 53040863
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 56624944,
+          "wallNs": 56629688
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 37230528,
+          "wallNs": 37230940
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 38770424,
+          "wallNs": 38771015
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 59252744,
+          "wallNs": 59253428
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 54931837,
+          "wallNs": 54932532
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 57718548,
+          "wallNs": 57719225
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 53598862,
+          "wallNs": 53599531
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 61972355,
+          "wallNs": 61973050
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 55715991,
+          "wallNs": 55716744
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 127201153,
+          "wallNs": 127202760
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 50261268,
+          "wallNs": 50261961
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 50219519,
+          "wallNs": 50220089
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 65396339,
+          "wallNs": 65397162
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 64551755,
+          "wallNs": 64552490
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 60546329,
+          "wallNs": 60546968
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 60604739,
+          "wallNs": 60605429
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 66353241,
+          "wallNs": 66357957
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 62269996,
+          "wallNs": 62270694
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 2,
+          "iterations": 100000,
+          "cpuNs": 139818993,
+          "wallNs": 139820712
+        },
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 140111,
+          "wallNs": 140122
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 15966653,
+          "wallNs": 15966875
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 16417215,
+          "wallNs": 16417441
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 17279188,
+          "wallNs": 17279405
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 17421669,
+          "wallNs": 17421957
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 15617622,
+          "wallNs": 15617789
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 16938326,
+          "wallNs": 16938620
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 102389304,
+          "wallNs": 102390439
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 103175648,
+          "wallNs": 103176812
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 104777285,
+          "wallNs": 104778496
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 104409352,
+          "wallNs": 104410460
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 89851545,
+          "wallNs": 89852487
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 90176816,
+          "wallNs": 90177972
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 103850171,
+          "wallNs": 103856032
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 105632558,
+          "wallNs": 105633770
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 108100457,
+          "wallNs": 108101697
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 117247264,
+          "wallNs": 117248707
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 91847763,
+          "wallNs": 91849128
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 91458592,
+          "wallNs": 91461222
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 12167198,
+          "wallNs": 12167346
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 7555980,
+          "wallNs": 7556066
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 12149388,
+          "wallNs": 12149676
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 7907172,
+          "wallNs": 7907311
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 14800839,
+          "wallNs": 14801097
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 10588692,
+          "wallNs": 10588792
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 7306029,
+          "wallNs": 7306112
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 4117127,
+          "wallNs": 4117243
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 3999396,
+          "wallNs": 3999452
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 18661384,
+          "wallNs": 18661606
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 18587353,
+          "wallNs": 18587725
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 14289016,
+          "wallNs": 14289149
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 14445487,
+          "wallNs": 14445781
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 21648155,
+          "wallNs": 21648342
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 17698910,
+          "wallNs": 17699231
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 18082341,
+          "wallNs": 18082557
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 980934,
+          "wallNs": 981025
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 51586014,
+          "wallNs": 51586670
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 56117301,
+          "wallNs": 56118060
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 53455902,
+          "wallNs": 53456500
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 57104476,
+          "wallNs": 57105035
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 37469908,
+          "wallNs": 37470345
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 38948424,
+          "wallNs": 38952337
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 163662797,
+          "wallNs": 163664688
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 160117553,
+          "wallNs": 160119454
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 166239147,
+          "wallNs": 166241048
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 162295651,
+          "wallNs": 162297418
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 106918032,
+          "wallNs": 106919278
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 108624279,
+          "wallNs": 108625485
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 163142475,
+          "wallNs": 163147981
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 163305845,
+          "wallNs": 163307783
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 166776769,
+          "wallNs": 166778676
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 164667941,
+          "wallNs": 164669934
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 107585025,
+          "wallNs": 107586259
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 108396899,
+          "wallNs": 108398132
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 59560756,
+          "wallNs": 59564953
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 55115228,
+          "wallNs": 55115844
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 58336661,
+          "wallNs": 58337344
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 54162734,
+          "wallNs": 54164790
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 62025145,
+          "wallNs": 62029961
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 55709060,
+          "wallNs": 55709713
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 127291443,
+          "wallNs": 127292891
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 50262009,
+          "wallNs": 50262590
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 50008687,
+          "wallNs": 50009136
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 65271408,
+          "wallNs": 65272191
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 64319174,
+          "wallNs": 64319895
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 60830481,
+          "wallNs": 60831162
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 60651850,
+          "wallNs": 60652559
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 66793764,
+          "wallNs": 66794444
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 62717928,
+          "wallNs": 62718651
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 3,
+          "iterations": 100000,
+          "cpuNs": 140196965,
+          "wallNs": 140198558
+        },
+        {
+          "operation": "copy",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 140900,
+          "wallNs": 140872
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 103048358,
+          "wallNs": 103051679
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 102819106,
+          "wallNs": 102820286
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 104342583,
+          "wallNs": 104343770
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 105460497,
+          "wallNs": 105461706
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 90892270,
+          "wallNs": 90893223
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 91155711,
+          "wallNs": 91158497
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 102767026,
+          "wallNs": 102768116
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 103186368,
+          "wallNs": 103187542
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 104070211,
+          "wallNs": 104071495
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 103864041,
+          "wallNs": 103865352
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 90630088,
+          "wallNs": 90631129
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 92045364,
+          "wallNs": 92055251
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 16117334,
+          "wallNs": 16117548
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 16570936,
+          "wallNs": 16571214
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 17282659,
+          "wallNs": 17282895
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 17546099,
+          "wallNs": 17546288
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 15723723,
+          "wallNs": 15724011
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 17051038,
+          "wallNs": 17051321
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 12009438,
+          "wallNs": 12009674
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 7518560,
+          "wallNs": 7518765
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 12020478,
+          "wallNs": 12020654
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 7803981,
+          "wallNs": 7804180
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 14580228,
+          "wallNs": 14580504
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 10510152,
+          "wallNs": 10510371
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 7297349,
+          "wallNs": 7297572
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 4096737,
+          "wallNs": 4096893
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 3983805,
+          "wallNs": 3983961
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 18603764,
+          "wallNs": 18604076
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 18496124,
+          "wallNs": 18496334
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 14138386,
+          "wallNs": 14138567
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 14249666,
+          "wallNs": 14249889
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 21549315,
+          "wallNs": 21549590
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 17449099,
+          "wallNs": 17449397
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 52,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 17842881,
+          "wallNs": 17843074
+        },
+        {
+          "operation": "copy",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 995774,
+          "wallNs": 995796
+        },
+        {
+          "operation": "chacha0.10.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 163845118,
+          "wallNs": 163846982
+        },
+        {
+          "operation": "chacha0.10.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 162224672,
+          "wallNs": 162226517
+        },
+        {
+          "operation": "chacha0.10.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 165712655,
+          "wallNs": 165714440
+        },
+        {
+          "operation": "chacha0.10.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 164565780,
+          "wallNs": 164571913
+        },
+        {
+          "operation": "chacha0.10.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 107732726,
+          "wallNs": 107736061
+        },
+        {
+          "operation": "chacha0.10.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 108912790,
+          "wallNs": 108914029
+        },
+        {
+          "operation": "chacha0.11.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 162709773,
+          "wallNs": 162711624
+        },
+        {
+          "operation": "chacha0.11.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 159485501,
+          "wallNs": 159487425
+        },
+        {
+          "operation": "chacha0.11.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 165456434,
+          "wallNs": 165459106
+        },
+        {
+          "operation": "chacha0.11.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 161776679,
+          "wallNs": 161778500
+        },
+        {
+          "operation": "chacha0.11.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 106757532,
+          "wallNs": 106760227
+        },
+        {
+          "operation": "chacha0.11.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 107801736,
+          "wallNs": 107803043
+        },
+        {
+          "operation": "ring.seal.inplace.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 51392983,
+          "wallNs": 51393658
+        },
+        {
+          "operation": "ring.open.inplace.new.copy",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 55689520,
+          "wallNs": 55690154
+        },
+        {
+          "operation": "ring.seal.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 53122670,
+          "wallNs": 53123275
+        },
+        {
+          "operation": "ring.open.alloc.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 56649124,
+          "wallNs": 56649799
+        },
+        {
+          "operation": "ring.aad_tag.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 37379078,
+          "wallNs": 37379513
+        },
+        {
+          "operation": "ring.aad_tag.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 39095385,
+          "wallNs": 39095839
+        },
+        {
+          "operation": "hmac0.12.sha0.10.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 59247915,
+          "wallNs": 59248628
+        },
+        {
+          "operation": "hmac0.12.sha0.10.clone",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 55015377,
+          "wallNs": 55016144
+        },
+        {
+          "operation": "hmac0.13.sha0.11.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 58191470,
+          "wallNs": 58192073
+        },
+        {
+          "operation": "hmac0.13.sha0.11.clone",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 54212914,
+          "wallNs": 54213431
+        },
+        {
+          "operation": "ring.hmac.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 62016586,
+          "wallNs": 62017300
+        },
+        {
+          "operation": "ring.hmac.prekey",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 55664310,
+          "wallNs": 55664963
+        },
+        {
+          "operation": "blake3.keyed.tag16",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 127080942,
+          "wallNs": 127082418
+        },
+        {
+          "operation": "sha0.10.digest",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 49814067,
+          "wallNs": 49814644
+        },
+        {
+          "operation": "sha0.11.digest",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 49902957,
+          "wallNs": 49905955
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 64949017,
+          "wallNs": 64949775
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 64064373,
+          "wallNs": 64065142
+        },
+        {
+          "operation": "hmac0.12.sha0.10.v5.clone",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 60031437,
+          "wallNs": 60032200
+        },
+        {
+          "operation": "hmac0.13.sha0.11.v5.clone",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 60129158,
+          "wallNs": 60129852
+        },
+        {
+          "operation": "ring.hmac.v5.new",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 66387332,
+          "wallNs": 66388107
+        },
+        {
+          "operation": "ring.hmac.v5.prekey",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 62511837,
+          "wallNs": 62512538
+        },
+        {
+          "operation": "blake3.keyed.v5.tag16",
+          "bytes": 1280,
+          "repeat": 4,
+          "iterations": 100000,
+          "cpuNs": 140427175,
+          "wallNs": 140431022
+        }
+      ],
+      "hostLoadBefore": [
+        4.185546875,
+        4.732421875,
+        3.56005859375
+      ],
+      "hostLoadAfter": [
+        3.8603515625,
+        4.60888671875,
+        3.548828125
+      ]
+    }
+  ]
+}

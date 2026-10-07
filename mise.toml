@@ -168,6 +168,10 @@ run = "pnpm --filter @meshway/web-console dev"
 description = "Run the documentation dev server in the foreground"
 run = "pnpm --filter @meshway/docs dev"
 
+[tasks."status:sync"]
+description = "Sync the ci-results summary index into the local documentation site"
+run = "python3 scripts/ci/collect.py --sync"
+
 [tasks.services]
 description = "Manage Server/docs: start|status|stop|restart|update [server|docs|all], or reset server"
 run = "python3 scripts/dev.py"

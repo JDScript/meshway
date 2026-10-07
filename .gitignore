@@ -12,6 +12,7 @@
 .env.*
 !.env.example
 /.meshway/
+/docs/public/status/index.json
 
 # Independent upstream checkouts; retain the reproducible research index.
 /references/*

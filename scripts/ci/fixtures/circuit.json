@@ -1,0 +1,2232 @@
+{
+  "schemaVersion": 1,
+  "layer": "L0",
+  "revision": "335015a17df13348866ab6c7e0fc2b7b72eb2d97",
+  "dirty": false,
+  "options": {
+    "nodes": [
+      2,
+      3,
+      5
+    ],
+    "packet_bytes": [
+      1280,
+      52
+    ],
+    "rounds": 10000,
+    "warmup": 200,
+    "repeats": 3,
+    "profile": "both",
+    "profile_rate": 128
+  },
+  "results": [
+    {
+      "nodes": 2,
+      "packetBytes": 1280,
+      "repeat": 0,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 94870.30160108481,
+      "harnessCpuNs": 210804713,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 51618167,
+            "wallNs": 50405706
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 46416829,
+            "wallNs": 45192610
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 50988529,
+            "wallNs": 49781492
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 45241613,
+            "wallNs": 44030081
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366
+          ],
+          "reply": [
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.7421875,
+        3.330078125,
+        2.38525390625
+      ],
+      "hostLoadAfter": [
+        4.5224609375,
+        3.3076171875,
+        2.3828125
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 1280,
+      "repeat": 0,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 97203.97339126767,
+      "harnessCpuNs": 205726723,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 50358281,
+            "wallNs": 49271954
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 45327199,
+            "wallNs": 44211588
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 49839457,
+            "wallNs": 48746170
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 44270505,
+            "wallNs": 43161805
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366
+          ],
+          "reply": [
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.5224609375,
+        3.3076171875,
+        2.3828125
+      ],
+      "hostLoadAfter": [
+        4.05419921875,
+        3.24755859375,
+        2.37255859375
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 1280,
+      "repeat": 1,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 98189.43204031533,
+      "harnessCpuNs": 203551195,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 49938688,
+            "wallNs": 48974333
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 44763640,
+            "wallNs": 43656489
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 49359641,
+            "wallNs": 48260874
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 43796433,
+            "wallNs": 42700079
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366
+          ],
+          "reply": [
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.05419921875,
+        3.24755859375,
+        2.37255859375
+      ],
+      "hostLoadAfter": [
+        3.66455078125,
+        3.189453125,
+        2.3623046875
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 1280,
+      "repeat": 1,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 99724.0421347441,
+      "harnessCpuNs": 200546663,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 49147263,
+            "wallNs": 48029426
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 44053166,
+            "wallNs": 42922581
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 48599554,
+            "wallNs": 47484260
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 42940604,
+            "wallNs": 41810716
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366
+          ],
+          "reply": [
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.66455078125,
+        3.189453125,
+        2.3623046875
+      ],
+      "hostLoadAfter": [
+        3.66455078125,
+        3.189453125,
+        2.3623046875
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 1280,
+      "repeat": 2,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 99177.7081994362,
+      "harnessCpuNs": 201447587,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 49168948,
+            "wallNs": 48072434
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 44524072,
+            "wallNs": 43396953
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 48683342,
+            "wallNs": 47578238
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 43356965,
+            "wallNs": 42426867
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366
+          ],
+          "reply": [
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.66455078125,
+        3.189453125,
+        2.3623046875
+      ],
+      "hostLoadAfter": [
+        3.66455078125,
+        3.189453125,
+        2.3623046875
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 1280,
+      "repeat": 2,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 95131.74338509033,
+      "harnessCpuNs": 210213281,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 51311943,
+            "wallNs": 50154896
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 46348633,
+            "wallNs": 45143049
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 50686686,
+            "wallNs": 49544650
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 45313653,
+            "wallNs": 44088843
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366
+          ],
+          "reply": [
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.66455078125,
+        3.189453125,
+        2.3623046875
+      ],
+      "hostLoadAfter": [
+        3.48193359375,
+        3.166015625,
+        2.36376953125
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 52,
+      "repeat": 0,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 138969.73066943555,
+      "harnessCpuNs": 143898409,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 36309607,
+            "wallNs": 35229310
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 32917786,
+            "wallNs": 31835166
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 35753106,
+            "wallNs": 34670750
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 31834566,
+            "wallNs": 30748980
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138
+          ],
+          "reply": [
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.48193359375,
+        3.166015625,
+        2.36376953125
+      ],
+      "hostLoadAfter": [
+        3.48193359375,
+        3.166015625,
+        2.36376953125
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 52,
+      "repeat": 0,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 131421.56485681166,
+      "harnessCpuNs": 152158862,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 38260043,
+            "wallNs": 37123801
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 34726844,
+            "wallNs": 33532974
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37861193,
+            "wallNs": 36722950
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33727375,
+            "wallNs": 32547674
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138
+          ],
+          "reply": [
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.48193359375,
+        3.166015625,
+        2.36376953125
+      ],
+      "hostLoadAfter": [
+        3.17333984375,
+        3.11083984375,
+        2.35400390625
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 52,
+      "repeat": 1,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 132301.65910778777,
+      "harnessCpuNs": 151145807,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 38052327,
+            "wallNs": 36943101
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 34528832,
+            "wallNs": 33416664
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37542147,
+            "wallNs": 36434541
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33501607,
+            "wallNs": 32410441
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138
+          ],
+          "reply": [
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.17333984375,
+        3.11083984375,
+        2.35400390625
+      ],
+      "hostLoadAfter": [
+        2.8388671875,
+        3.041015625,
+        2.33935546875
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 52,
+      "repeat": 1,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 138257.17170884696,
+      "harnessCpuNs": 144516301,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 36389785,
+            "wallNs": 35282378
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 33129534,
+            "wallNs": 32023177
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 35895813,
+            "wallNs": 34787591
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 31950020,
+            "wallNs": 30969097
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138
+          ],
+          "reply": [
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.8388671875,
+        3.041015625,
+        2.33935546875
+      ],
+      "hostLoadAfter": [
+        2.8388671875,
+        3.041015625,
+        2.33935546875
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 52,
+      "repeat": 2,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 138438.21098404206,
+      "harnessCpuNs": 144462281,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 36404355,
+            "wallNs": 35306677
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 32779311,
+            "wallNs": 31679040
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 35989173,
+            "wallNs": 34902603
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 31801698,
+            "wallNs": 30708515
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138
+          ],
+          "reply": [
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.8388671875,
+        3.041015625,
+        2.33935546875
+      ],
+      "hostLoadAfter": [
+        2.8388671875,
+        3.041015625,
+        2.33935546875
+      ]
+    },
+    {
+      "nodes": 2,
+      "packetBytes": 52,
+      "repeat": 2,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 133893.98493858697,
+      "harnessCpuNs": 149356860,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 37710368,
+            "wallNs": 36608700
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 33972327,
+            "wallNs": 32871363
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37088497,
+            "wallNs": 35986256
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33049868,
+            "wallNs": 31949781
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138
+          ],
+          "reply": [
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.8388671875,
+        3.041015625,
+        2.33935546875
+      ],
+      "hostLoadAfter": [
+        7.41796875,
+        4.05126953125,
+        2.677734375
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 1280,
+      "repeat": 0,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 75503.20916386376,
+      "harnessCpuNs": 264859937,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 48799787,
+            "wallNs": 47691363
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 43782316,
+            "wallNs": 42674907
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 48420347,
+            "wallNs": 47301962
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 43007820,
+            "wallNs": 41882566
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 61875912,
+            "wallNs": 59661681
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        7.41796875,
+        4.05126953125,
+        2.677734375
+      ],
+      "hostLoadAfter": [
+        7.41796875,
+        4.05126953125,
+        2.677734375
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 1280,
+      "repeat": 0,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 73225.75157245528,
+      "harnessCpuNs": 273110690,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 50062851,
+            "wallNs": 48959167
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 45163636,
+            "wallNs": 44053364
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 49843357,
+            "wallNs": 48751254
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 44424020,
+            "wallNs": 43309923
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 63770718,
+            "wallNs": 61600997
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        7.41796875,
+        4.05126953125,
+        2.677734375
+      ],
+      "hostLoadAfter": [
+        6.578125,
+        3.98291015625,
+        2.67041015625
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 1280,
+      "repeat": 1,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 73538.38669222292,
+      "harnessCpuNs": 271818684,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 49848018,
+            "wallNs": 48760722
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 45217587,
+            "wallNs": 44143794
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 49366083,
+            "wallNs": 48265618
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 43898746,
+            "wallNs": 42806258
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 63829946,
+            "wallNs": 61809175
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        6.578125,
+        3.98291015625,
+        2.67041015625
+      ],
+      "hostLoadAfter": [
+        5.5634765625,
+        3.884765625,
+        2.65869140625
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 1280,
+      "repeat": 1,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 72172.18151987845,
+      "harnessCpuNs": 276374863,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 50910367,
+            "wallNs": 49752473
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 45507997,
+            "wallNs": 44396797
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 50397653,
+            "wallNs": 49235973
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 44705744,
+            "wallNs": 44220144
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 64722049,
+            "wallNs": 62445947
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        5.5634765625,
+        3.884765625,
+        2.65869140625
+      ],
+      "hostLoadAfter": [
+        5.5634765625,
+        3.884765625,
+        2.65869140625
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 1280,
+      "repeat": 2,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 75208.69614086694,
+      "harnessCpuNs": 265866300,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 49100559,
+            "wallNs": 47998396
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 43966252,
+            "wallNs": 42870714
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 48347154,
+            "wallNs": 47242108
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 43123380,
+            "wallNs": 42064828
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 62394606,
+            "wallNs": 60202046
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        5.5634765625,
+        3.884765625,
+        2.65869140625
+      ],
+      "hostLoadAfter": [
+        5.5634765625,
+        3.884765625,
+        2.65869140625
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 1280,
+      "repeat": 2,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 73425.34375745106,
+      "harnessCpuNs": 272363656,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 50183275,
+            "wallNs": 49085051
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 44878179,
+            "wallNs": 43780223
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 49703048,
+            "wallNs": 48608461
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 43796380,
+            "wallNs": 42691189
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 64133098,
+            "wallNs": 61980465
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        5.5634765625,
+        3.884765625,
+        2.65869140625
+      ],
+      "hostLoadAfter": [
+        4.93505859375,
+        3.80517578125,
+        2.6455078125
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 52,
+      "repeat": 0,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 103469.62521366865,
+      "harnessCpuNs": 193246474,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 36741198,
+            "wallNs": 35640092
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 32928035,
+            "wallNs": 31826779
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 36158603,
+            "wallNs": 35055879
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 32216900,
+            "wallNs": 31117399
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 44545811,
+            "wallNs": 42330213
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.93505859375,
+        3.80517578125,
+        2.6455078125
+      ],
+      "hostLoadAfter": [
+        4.93505859375,
+        3.80517578125,
+        2.6455078125
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 52,
+      "repeat": 0,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 99828.7143909915,
+      "harnessCpuNs": 200276712,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 38033954,
+            "wallNs": 36942831
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 34278412,
+            "wallNs": 33170376
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37429974,
+            "wallNs": 36355562
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33514671,
+            "wallNs": 32395738
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 46252535,
+            "wallNs": 43992947
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.93505859375,
+        3.80517578125,
+        2.6455078125
+      ],
+      "hostLoadAfter": [
+        4.47705078125,
+        3.7451171875,
+        2.63818359375
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 52,
+      "repeat": 1,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 100891.14678118727,
+      "harnessCpuNs": 198232353,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 37642419,
+            "wallNs": 36553636
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 33858032,
+            "wallNs": 32745539
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37297177,
+            "wallNs": 36204217
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 32948483,
+            "wallNs": 31831990
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 45469350,
+            "wallNs": 43335821
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.47705078125,
+        3.7451171875,
+        2.63818359375
+      ],
+      "hostLoadAfter": [
+        4.02197265625,
+        3.6708984375,
+        2.62548828125
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 52,
+      "repeat": 1,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 100653.44315952607,
+      "harnessCpuNs": 198627395,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 37670641,
+            "wallNs": 36554032
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 34001815,
+            "wallNs": 32849714
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37150357,
+            "wallNs": 36060331
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 32982831,
+            "wallNs": 31831846
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 45726682,
+            "wallNs": 43443333
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.02197265625,
+        3.6708984375,
+        2.62548828125
+      ],
+      "hostLoadAfter": [
+        4.02197265625,
+        3.6708984375,
+        2.62548828125
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 52,
+      "repeat": 2,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 101163.95605939522,
+      "harnessCpuNs": 197620842,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 37620777,
+            "wallNs": 36495309
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 34032797,
+            "wallNs": 32933055
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37139546,
+            "wallNs": 36032214
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33003164,
+            "wallNs": 31874246
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 45014956,
+            "wallNs": 42819864
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.02197265625,
+        3.6708984375,
+        2.62548828125
+      ],
+      "hostLoadAfter": [
+        4.02197265625,
+        3.6708984375,
+        2.62548828125
+      ]
+    },
+    {
+      "nodes": 3,
+      "packetBytes": 52,
+      "repeat": 2,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 98827.0201216359,
+      "harnessCpuNs": 202372320,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 38542273,
+            "wallNs": 37430087
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 34711340,
+            "wallNs": 33577239
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37961494,
+            "wallNs": 36850540
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33717084,
+            "wallNs": 32587665
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 46499722,
+            "wallNs": 44269766
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        4.02197265625,
+        3.6708984375,
+        2.62548828125
+      ],
+      "hostLoadAfter": [
+        3.71728515625,
+        3.61572265625,
+        2.619140625
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 1280,
+      "repeat": 0,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 49407.23057526939,
+      "harnessCpuNs": 404738080,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 50166898,
+            "wallNs": 49074648
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 44977390,
+            "wallNs": 43898867
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 49610270,
+            "wallNs": 48508951
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 44011636,
+            "wallNs": 42893650
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 63003614,
+            "wallNs": 60821829
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 63199742,
+            "wallNs": 61006720
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 63311580,
+            "wallNs": 61121544
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366,
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366,
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.71728515625,
+        3.61572265625,
+        2.619140625
+      ],
+      "hostLoadAfter": [
+        3.71728515625,
+        3.61572265625,
+        2.619140625
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 1280,
+      "repeat": 0,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 48921.02442493929,
+      "harnessCpuNs": 408781646,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 50419318,
+            "wallNs": 49337909
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 45292419,
+            "wallNs": 44207775
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 50298678,
+            "wallNs": 49206666
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 44603111,
+            "wallNs": 43504892
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 63700426,
+            "wallNs": 61556650
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 63886837,
+            "wallNs": 61736337
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 64249846,
+            "wallNs": 62100892
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366,
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366,
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.71728515625,
+        3.61572265625,
+        2.619140625
+      ],
+      "hostLoadAfter": [
+        3.5205078125,
+        3.57861328125,
+        2.6181640625
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 1280,
+      "repeat": 1,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 48853.974191168476,
+      "harnessCpuNs": 409357808,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 50539985,
+            "wallNs": 49405989
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 45381598,
+            "wallNs": 44172213
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 50094578,
+            "wallNs": 48949680
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 44591108,
+            "wallNs": 43379573
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 63770437,
+            "wallNs": 61482315
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 64161034,
+            "wallNs": 61897489
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 64041510,
+            "wallNs": 61740499
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366,
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366,
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.5205078125,
+        3.57861328125,
+        2.6181640625
+      ],
+      "hostLoadAfter": [
+        3.27978515625,
+        3.52587890625,
+        2.61181640625
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 1280,
+      "repeat": 1,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 50312.584540864715,
+      "harnessCpuNs": 397507462,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 49292666,
+            "wallNs": 48205133
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 44283857,
+            "wallNs": 43205885
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 48899911,
+            "wallNs": 47811349
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 43141512,
+            "wallNs": 42052635
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 61857408,
+            "wallNs": 59704898
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 62170356,
+            "wallNs": 59997736
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 62000746,
+            "wallNs": 59835724
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366,
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366,
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.27978515625,
+        3.52587890625,
+        2.61181640625
+      ],
+      "hostLoadAfter": [
+        3.17724609375,
+        3.50048828125,
+        2.6083984375
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 1280,
+      "repeat": 2,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 49947.45103597682,
+      "harnessCpuNs": 400357052,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 49478707,
+            "wallNs": 48387565
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 44443302,
+            "wallNs": 43341998
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 49031785,
+            "wallNs": 47937331
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 43608968,
+            "wallNs": 42509293
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 62437691,
+            "wallNs": 60254376
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 62529128,
+            "wallNs": 60350175
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 62674117,
+            "wallNs": 60487831
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366,
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366,
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.17724609375,
+        3.50048828125,
+        2.6083984375
+      ],
+      "hostLoadAfter": [
+        3.17724609375,
+        3.50048828125,
+        2.6083984375
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 1280,
+      "repeat": 2,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 48138.94107644863,
+      "harnessCpuNs": 415401023,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 51870839,
+            "wallNs": 50765417
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 46031441,
+            "wallNs": 44936162
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 51061658,
+            "wallNs": 49944637
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 45136576,
+            "wallNs": 44014310
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 64839914,
+            "wallNs": 62648449
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 64801884,
+            "wallNs": 62603727
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 64792749,
+            "wallNs": 62574870
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            1366,
+            1366,
+            1366,
+            1366
+          ],
+          "reply": [
+            1366,
+            1366,
+            1366,
+            1366
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        3.17724609375,
+        3.50048828125,
+        2.6083984375
+      ],
+      "hostLoadAfter": [
+        2.91552734375,
+        3.43359375,
+        2.59619140625
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 52,
+      "repeat": 0,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 68974.91495461961,
+      "harnessCpuNs": 289809556,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 37132801,
+            "wallNs": 36051866
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 33498415,
+            "wallNs": 32548717
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 36589444,
+            "wallNs": 35499974
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 32570770,
+            "wallNs": 31479195
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 44154272,
+            "wallNs": 42002446
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 43927583,
+            "wallNs": 41783004
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 44156650,
+            "wallNs": 42019924
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138,
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138,
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.91552734375,
+        3.43359375,
+        2.59619140625
+      ],
+      "hostLoadAfter": [
+        2.91552734375,
+        3.43359375,
+        2.59619140625
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 52,
+      "repeat": 0,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 65407.883660619445,
+      "harnessCpuNs": 305729288,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 38928338,
+            "wallNs": 37824544
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 35094989,
+            "wallNs": 33952624
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 38280234,
+            "wallNs": 37168743
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 34066903,
+            "wallNs": 32900807
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 46785663,
+            "wallNs": 44572842
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 46976350,
+            "wallNs": 44773520
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 46900063,
+            "wallNs": 44678786
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138,
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138,
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.91552734375,
+        3.43359375,
+        2.59619140625
+      ],
+      "hostLoadAfter": [
+        2.62060546875,
+        3.35302734375,
+        2.57861328125
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 52,
+      "repeat": 1,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 64588.48104872885,
+      "harnessCpuNs": 309638254,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 39426045,
+            "wallNs": 38300713
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 35469228,
+            "wallNs": 34323028
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 38969490,
+            "wallNs": 37832338
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 34462946,
+            "wallNs": 33310924
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 47732951,
+            "wallNs": 45490381
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 47575992,
+            "wallNs": 45323298
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 47319825,
+            "wallNs": 45042669
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138,
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138,
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.62060546875,
+        3.35302734375,
+        2.57861328125
+      ],
+      "hostLoadAfter": [
+        2.52490234375,
+        3.3076171875,
+        2.57177734375
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 52,
+      "repeat": 1,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 68205.32817090843,
+      "harnessCpuNs": 293207149,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 37538688,
+            "wallNs": 36443588
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 33989121,
+            "wallNs": 32900953
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37189307,
+            "wallNs": 36077734
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33167643,
+            "wallNs": 32058847
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 44392709,
+            "wallNs": 42203193
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 44735855,
+            "wallNs": 42551053
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 44374653,
+            "wallNs": 42203817
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138,
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138,
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.52490234375,
+        3.3076171875,
+        2.57177734375
+      ],
+      "hostLoadAfter": [
+        2.52490234375,
+        3.3076171875,
+        2.57177734375
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 52,
+      "repeat": 2,
+      "profileRate": 0,
+      "status": "ok",
+      "packetsPerSecond": 67993.2866284501,
+      "harnessCpuNs": 294112753,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 37633274,
+            "wallNs": 36527335
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 34177524,
+            "wallNs": 33012241
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37010153,
+            "wallNs": 35890705
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33146045,
+            "wallNs": 31981879
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 44488144,
+            "wallNs": 42268742
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 44616397,
+            "wallNs": 42403569
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 44857575,
+            "wallNs": 42626039
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138,
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138,
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.52490234375,
+        3.3076171875,
+        2.57177734375
+      ],
+      "hostLoadAfter": [
+        2.52490234375,
+        3.3076171875,
+        2.57177734375
+      ]
+    },
+    {
+      "nodes": 5,
+      "packetBytes": 52,
+      "repeat": 2,
+      "profileRate": 128,
+      "status": "ok",
+      "packetsPerSecond": 66893.39491641839,
+      "harnessCpuNs": 298980692,
+      "measured": {
+        "roles": {
+          "A.receive": {
+            "calls": 10000,
+            "cpuNs": 38209178,
+            "wallNs": 37099820
+          },
+          "A.send": {
+            "calls": 10000,
+            "cpuNs": 34276730,
+            "wallNs": 33186234
+          },
+          "B.receive": {
+            "calls": 10000,
+            "cpuNs": 37669262,
+            "wallNs": 36555464
+          },
+          "B.send": {
+            "calls": 10000,
+            "cpuNs": 33387185,
+            "wallNs": 32267624
+          },
+          "R1.forward": {
+            "calls": 20000,
+            "cpuNs": 45688266,
+            "wallNs": 43514546
+          },
+          "R2.forward": {
+            "calls": 20000,
+            "cpuNs": 45807595,
+            "wallNs": 43619900
+          },
+          "R3.forward": {
+            "calls": 20000,
+            "cpuNs": 45977459,
+            "wallNs": 43784604
+          }
+        },
+        "frameBytes": {
+          "forward": [
+            138,
+            138,
+            138,
+            138
+          ],
+          "reply": [
+            138,
+            138,
+            138,
+            138
+          ]
+        },
+        "deliveredPackets": 20000
+      },
+      "hostLoadBefore": [
+        2.52490234375,
+        3.3076171875,
+        2.57177734375
+      ],
+      "hostLoadAfter": [
+        2.2900390625,
+        3.23095703125,
+        2.55419921875
+      ]
+    }
+  ]
+}
