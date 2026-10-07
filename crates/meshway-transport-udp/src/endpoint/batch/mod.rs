@@ -7,17 +7,22 @@ use std::{
     collections::VecDeque,
     io::{self, IoSlice, IoSliceMut},
     net::SocketAddr,
+    ops::Range,
     os::fd::AsRawFd,
     sync::{Arc, Mutex},
     task::{Context, Poll, ready},
 };
 use tokio::{io::Interest, net::UdpSocket};
 
+#[cfg(test)]
+mod tests;
+
 const COUNT: usize = 32;
 const SIZE: usize = 65536;
 
 struct Received {
-    bytes: Vec<u8>,
+    slot: usize,
+    range: Range<usize>,
     read: DatagramRead,
 }
 
@@ -40,7 +45,39 @@ impl std::fmt::Debug for State {
 }
 
 fn unsupported(error: &io::Error) -> bool {
-    matches!(error.raw_os_error(), Some(22 | 92 | 95 | 38))
+    use nix::errno::Errno;
+    matches!(
+        error.raw_os_error().map(Errno::from_raw),
+        Some(Errno::EINVAL | Errno::ENOPROTOOPT | Errno::EOPNOTSUPP | Errno::ENOSYS)
+    )
+}
+
+fn gso_prefix(packets: &[DatagramSend<'_>]) -> (usize, usize) {
+    let Some(first) = packets.first() else {
+        return (0, 0);
+    };
+    let limit = match first.peer {
+        SocketAddr::V6(peer) if peer.ip().to_ipv4_mapped().is_none() => 65527,
+        _ => 65507,
+    };
+    let size = first.payload.len();
+    let mut count = 0;
+    let mut bytes = 0;
+    for packet in packets.iter().take(COUNT) {
+        if packet.peer != first.peer
+            || packet.payload.is_empty()
+            || packet.payload.len() > size
+            || packet.payload.len() > limit - bytes
+        {
+            break;
+        }
+        bytes += packet.payload.len();
+        count += 1;
+        if packet.payload.len() < size {
+            break;
+        }
+    }
+    (count, bytes)
 }
 
 fn invalid() -> io::Error {
@@ -92,24 +129,11 @@ impl State {
         let caps = self.capabilities();
         let packets = &packets[..packets.len().min(COUNT)];
         let size = packets[0].payload.len();
-        let mut gso_count = 0;
-        let mut bytes = 0;
-        if caps.udp_segment && size > 0 && size <= u16::MAX as usize {
-            for packet in packets {
-                if packet.peer != packets[0].peer
-                    || packet.payload.is_empty()
-                    || packet.payload.len() > size
-                    || bytes + packet.payload.len() > 65535
-                {
-                    break;
-                }
-                bytes += packet.payload.len();
-                gso_count += 1;
-                if packet.payload.len() < size {
-                    break;
-                }
-            }
-        }
+        let (gso_count, bytes) = if caps.udp_segment {
+            gso_prefix(packets)
+        } else {
+            (0, 0)
+        };
         let gso = gso_count > 1;
         let mmsg = !gso && caps.sendmmsg != Some(false);
         let result = socket.try_io(Interest::WRITABLE, || {
@@ -178,8 +202,23 @@ impl State {
                 Ok(1)
             }
         });
+        self.send_result(cx, gso, mmsg, result)
+    }
+
+    fn send_result(
+        &self,
+        cx: &mut Context<'_>,
+        gso: bool,
+        mmsg: bool,
+        result: io::Result<usize>,
+    ) -> Poll<io::Result<usize>> {
         match result {
-            Err(error) if unsupported(&error) && (gso || mmsg) => {
+            // UDP_SEGMENT needs driver Tx checksum support. EIO only means
+            // capability loss for that send, never for ordinary I/O or probes.
+            Err(error)
+                if (unsupported(&error) && (gso || mmsg))
+                    || (gso && error.raw_os_error() == Some(nix::errno::Errno::EIO as i32)) =>
+            {
                 let mut caps = self.caps.lock().expect("UDP capability lock");
                 if gso {
                     caps.udp_segment = false;
@@ -263,26 +302,29 @@ impl State {
             caps.recvmmsg = Some(true);
             caps.mmsg_receives += 1;
         }
-        for ((read, segment), buffer) in messages.into_iter().zip(&rx.scratch) {
+        for (slot, (read, segment)) in messages.into_iter().enumerate() {
             if let Some(segment) = segment {
                 self.caps.lock().expect("UDP capability lock").gro_receives += 1;
                 if read.truncated || read.copied_len == 0 || read.copied_len.div_ceil(segment) > 64
                 {
                     return Poll::Ready(Err(invalid()));
                 }
-                for bytes in buffer[..read.copied_len].chunks(segment) {
+                for start in (0..read.copied_len).step_by(segment) {
+                    let end = (start + segment).min(read.copied_len);
                     rx.pending.push_back(Received {
-                        bytes: bytes.to_vec(),
+                        slot,
+                        range: start..end,
                         read: DatagramRead {
-                            copied_len: bytes.len(),
-                            original_len: Some(bytes.len()),
+                            copied_len: end - start,
+                            original_len: Some(end - start),
                             ..read
                         },
                     });
                 }
             } else {
                 rx.pending.push_back(Received {
-                    bytes: buffer[..read.copied_len].to_vec(),
+                    slot,
+                    range: 0..read.copied_len,
                     read,
                 });
             }
@@ -301,10 +343,8 @@ impl State {
     ) -> Poll<io::Result<DatagramRead>> {
         let mut rx = self.rx.lock().expect("UDP receive lock");
         ready!(self.fill(socket, cx, &mut rx))?;
-        Poll::Ready(Ok(copy(
-            rx.pending.pop_front().expect("filled receive queue"),
-            buffer,
-        )))
+        let packet = rx.pending.pop_front().expect("filled receive queue");
+        Poll::Ready(Ok(copy(packet, &rx.scratch, buffer)))
     }
 
     pub fn poll_recv(
@@ -323,18 +363,20 @@ impl State {
             let Some(packet) = rx.pending.pop_front() else {
                 break;
             };
-            reads.push(copy(packet, buffer));
+            reads.push(copy(packet, &rx.scratch, buffer));
         }
         Poll::Ready(Ok(reads))
     }
 }
 
-fn copy(packet: Received, buffer: &mut [u8]) -> DatagramRead {
-    let n = buffer.len().min(packet.bytes.len());
-    buffer[..n].copy_from_slice(&packet.bytes[..n]);
+fn copy(packet: Received, scratch: &[Vec<u8>], buffer: &mut [u8]) -> DatagramRead {
+    // fill never overwrites scratch while any pending range still refers to it.
+    let bytes = &scratch[packet.slot][packet.range];
+    let n = buffer.len().min(bytes.len());
+    buffer[..n].copy_from_slice(&bytes[..n]);
     DatagramRead {
         copied_len: n,
-        truncated: packet.read.truncated || n < packet.bytes.len(),
+        truncated: packet.read.truncated || n < bytes.len(),
         ..packet.read
     }
 }
