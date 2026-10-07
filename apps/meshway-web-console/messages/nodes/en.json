@@ -119,11 +119,9 @@
   "nodes_enrollment_revoke_done": "Revoked the enrolment key",
   "nodes_tab_settings": "Settings",
   "nodes_asn_not_applicable": "ASN not applicable",
-  "nodes_asn_not_found": "Not in ASN data",
-  "nodes_asn_unavailable": "No ASN data",
+  "nodes_asn_not_found": "No ASN known",
   "nodes_geo_empty": "No region",
   "nodes_geo_not_applicable": "Not a public address",
-  "nodes_geo_not_found": "Not in GeoIP",
   "nodes_candidate_expired": "Expired",
   "nodes_candidate_expires": "expires {at}",
   "nodes_candidate_observed": "observed {at}",
@@ -190,7 +188,6 @@
   "nodes_location": "Location",
   "nodes_location_asn": "Provider",
   "nodes_location_address": "Based on",
-  "nodes_location_dataset": "Dataset",
   "nodes_location_observed": "Observed",
   "nodes_location_none": "No location",
   "nodes_location_source": "Source",
@@ -282,5 +279,6 @@
   "nodes_last_seen": "Last seen {time}",
   "nodes_tab_diagnostics": "Diagnostics",
   "nodes_report": "Report",
-  "nodes_state_sequence": "Report number"
+  "nodes_state_sequence": "Report number",
+  "nodes_location_place": "Place"
 }

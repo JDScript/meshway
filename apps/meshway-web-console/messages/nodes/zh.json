@@ -119,11 +119,9 @@
   "nodes_enrollment_revoke_done": "已撤销接入密钥",
   "nodes_tab_settings": "设置",
   "nodes_asn_not_applicable": "ASN 不适用",
-  "nodes_asn_not_found": "ASN 里查不到",
-  "nodes_asn_unavailable": "没有 ASN 数据",
+  "nodes_asn_not_found": "查不到 ASN",
   "nodes_geo_empty": "没有地区信息",
   "nodes_geo_not_applicable": "非公网地址",
-  "nodes_geo_not_found": "GeoIP 里查不到",
   "nodes_candidate_expired": "已过期",
   "nodes_candidate_expires": "{at}到期",
   "nodes_candidate_observed": "观测于{at}",
@@ -190,7 +188,6 @@
   "nodes_location": "位置",
   "nodes_location_asn": "运营商",
   "nodes_location_address": "依据的地址",
-  "nodes_location_dataset": "数据集",
   "nodes_location_observed": "观测于",
   "nodes_location_none": "没有位置信息",
   "nodes_location_source": "来源",
@@ -282,5 +279,6 @@
   "nodes_last_seen": "最后在线 {time}",
   "nodes_tab_diagnostics": "诊断",
   "nodes_report": "报告",
-  "nodes_state_sequence": "报告序号"
+  "nodes_state_sequence": "报告序号",
+  "nodes_location_place": "地点"
 }

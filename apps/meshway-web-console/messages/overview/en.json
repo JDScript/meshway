@@ -12,7 +12,7 @@
   "overview_globe_unavailable": "This browser cannot draw the globe (WebGL is not available); located nodes are not drawn.",
   "overview_no_links": "No node reports a current link.",
   "overview_unlocated": "Unlocated",
-  "overview_unlocated_noPosition": "GeoIP gives only a region: {place}",
+  "overview_unlocated_noPosition": "geojs gives only a region: {place}",
   "overview_unlocated_unknown": "The server gives no reason",
   "overview_current_links": "Current links",
   "overview_links_undrawn": "{count} with an unlocated end, not drawn",
@@ -22,9 +22,8 @@
   "overview_link_since": "Since {time}",
   "overview_link_initiator": "Dialled by {node}",
   "overview_link_unlocated_end": "Not drawn",
-  "overview_location_approximate": "Approximate GeoIP location",
+  "overview_location_approximate": "Approximate location",
   "overview_location_address": "From address",
-  "overview_location_dataset": "Dataset",
   "overview_location_observed": "Observed",
   "overview_location_expires": "Valid until",
   "overview_location_accuracy": "Within about {km} km",
@@ -59,5 +58,6 @@
   "overview_history_current": "Also current",
   "overview_summary": "{nodes} nodes · {links} links",
   "overview_expand": "Expand network state",
-  "overview_collapse": "Collapse network state"
+  "overview_collapse": "Collapse network state",
+  "overview_location_by": "Looked up with"
 }

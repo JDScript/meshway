@@ -15,6 +15,7 @@ import { startBoot } from "@/state/boot"
 import { anyDraftHeld } from "@/state/configuration-draft"
 import { watchDebugMode } from "@/state/debug"
 import { startDebugTrace } from "@/state/debug-trace"
+import { forgetGeo, watchGeoLookup } from "@/state/geo-lookup"
 import { applyPreferences, useLocale } from "@/state/preferences"
 import {
   onSessionChange,
@@ -64,7 +65,11 @@ declare module "@tanstack/react-router" {
 // Route matches loaded under one sign-in are never shown under another: a
 // reused match would render its page at once, before its loader has run
 // for the new sign-in, and the loader's read would be cancelled under it.
-onSessionChange(() => router.clearCache())
+onSessionChange(() => {
+  router.clearCache()
+  // Where nodes are is kept per sign-in.
+  forgetGeo()
+})
 
 // The controller rejected this tab's session: every read drops and the
 // sign-in says why.
@@ -83,6 +88,7 @@ window.addEventListener("beforeunload", (event) => {
 watchStoredSession()
 applyPreferences()
 watchDebugMode()
+watchGeoLookup()
 startDebugTrace(queryClient)
 startBoot()
 for (const [name, value] of Object.entries(LAYOUT_VARIABLES))

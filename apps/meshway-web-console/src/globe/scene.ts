@@ -1,10 +1,10 @@
 // What the globe shows, independent of how it is rendered.
 //
 // Position and connection evidence stay strictly apart:
-// - a node is on the globe only with the controller's derived location (a
-//   GeoIP result for an underlay IP the node observed); every other node is
-//   left off the globe and listed as unlocated. Names, Mesh IPs and an
-//   administrator's country are never locations.
+// - a node is on the globe only where geojs places the address the server
+//   rests its location on (an underlay IP the node observed); every other
+//   node is left off the globe and listed as unlocated. Names, Mesh IPs and
+//   an administrator's country are never locations.
 // - links are the channels the nodes' current State reports, styled by
 //   their reported phase and the controller's evidence; history links come
 //   from recorded link events and are drawn apart. Grants, allowed
@@ -13,7 +13,7 @@
 
 import type { NodeStatus } from "@/lib/nodes/status"
 
-/** Where the controller's GeoIP places a node; approximate, never GPS. */
+/** Where geojs places a node's address; approximate, never GPS. */
 export type GeoPlacement = {
   lat: number
   lng: number

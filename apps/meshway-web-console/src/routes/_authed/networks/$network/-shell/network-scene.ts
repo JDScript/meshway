@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useMatch } from "@tanstack/react-router"
 import { useEffect, useMemo } from "react"
 
+import { useAddressGeo } from "@/api/queries/ip-geo"
 import { nodesQuery } from "@/api/queries/nodes"
 import { networkStateQuery } from "@/api/queries/state"
 import { recentLinksOf, useHistory } from "@/api/queries/use-history"
@@ -9,6 +10,7 @@ import { EMPTY_SCENE } from "@/globe/scene"
 import { shortId } from "@/lib/format"
 import {
   linkKey,
+  locationAddresses,
   mapNodes,
   mergeRecentLinks,
   overviewScene,
@@ -26,7 +28,7 @@ const HISTORY_FILTER = {
 
 /**
  * What the globe shows of a network, on every one of its pages: the nodes
- * the controller located, the links their State reports, and the history
+ * where geojs places them, the links their State reports, and the history
  * layer's links once a window is chosen. The overview reads the same to
  * state what the globe cannot show.
  */
@@ -47,9 +49,14 @@ export function useNetworkScene(networkId: string) {
       shortId(id),
     [listed, state.data]
   )
+  const addresses = useMemo(
+    () => (state.data ? locationAddresses(state.data) : new Map()),
+    [state.data]
+  )
+  const geoOf = useAddressGeo(addresses)
   const nodes = useMemo(
-    () => (state.data ? mapNodes(state.data, listed) : []),
-    [state.data, listed]
+    () => (state.data ? mapNodes(state.data, listed, geoOf) : []),
+    [state.data, listed, geoOf]
   )
   const historyLinks = useMemo(
     () => (window ? mergeRecentLinks(recentLinksOf(history.pages)) : null),

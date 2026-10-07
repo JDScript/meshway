@@ -34,7 +34,8 @@ its generated client only, and only what the controller delivers:
   editable when `actions.rename`; the ID, creation date and role; leaving)
   and `activity` (for `manageMembers`), and the account (email and ID,
   changing the email and the password, the sessions with ending one, the
-  others or all, the account's activity). `/join` accepts a join link;
+  others or all, the account's activity, whether this browser looks up
+  node locations). `/join` accepts a join link;
   `/reset-password` takes a reset link the controller's host issued. The
   network menu switches networks (a page at a time) and creates one.
 - Members: each member's `actions` alone decide what is offered (a role
@@ -143,18 +144,18 @@ its generated client only, and only what the controller delivers:
     latest, none applied —, its links connected of all with a way to the
     transport tab, the problems it reports, listed in red); the node (owner
     or tags, OS and architecture, Agent version, ID, reported hostname,
-    routing profile, joined); its addresses (IPv4, IPv6, the controller's
-    location or why it has none, the provider: the AS of the address the
-    location rests on, or of the one address observed; with more than one
-    address, each with its place and AS).
+    routing profile, joined); its addresses (IPv4, IPv6, where geojs places
+    the address the server rests its location on or why that is not known,
+    the provider: the AS of that address, or of the one address seen; with
+    more than one address, each with its place and AS).
   - diagnostics, what the status rests on: the report's times (received,
     recorded by the node, valid until, last sign-in), instance and report
     number; the inventory's `desiredExecution` (the configuration the
     server assigns: revision, publication, digest), never itself saved or
     applied, said against the report's saved and applied (applied, only
     saved, another one, no report); saved / applied / in progress against
-    the current revision; what the location was derived from (address,
-    source, observed, valid until, dataset).
+    the current revision; what the location rests on (address, source,
+    observed, valid until) and where geojs places it.
   - settings: hostname, remark, enabled, exit, tags (a User identity given
     tags becomes a Tag identity; the last tag cannot be taken), Mesh
     addresses within the pools (empty: no address of that family), and the
@@ -287,12 +288,13 @@ its generated client only, and only what the controller delivers:
   content is never treated as empty. Renaming a set or a profile renames
   its references.
 - Overview (`getNetworkState`, `listNodes` for names,
-  `queryObservationHistory`): a node is on the globe only with the
-  controller's `derived.location` and its coordinates; pointing at one
-  shows the place, the address it rests on and its source (STUN or
-  interface), observation and expiry, and the dataset. Every other node is
-  listed under 待定位 with the controller's `locationAbsent` (a GeoIP result
-  without coordinates names its region). Current links (`StateView.links`)
+  `queryObservationHistory`): a node is on the globe only where geojs
+  places the address the server rests its location on (`derived.location`);
+  pointing at one shows the place, the address and its source (STUN or
+  interface), observation and expiry, and that geojs.io looked it up. Every
+  other node is listed under 待定位 with the reason: the server's
+  `locationAbsent`, or that the lookup is off, under way or failed (an
+  answer without coordinates names its region). Current links (`StateView.links`)
   are drawn only between located ends, styled by evidence, then phase
   (matched, one end, conflicting, expired, preparing, failed, closed), and
   never animated: nothing travels along a line, and `inUse` is a listed
@@ -369,13 +371,24 @@ its generated client only, and only what the controller delivers:
   Refusals are worded by code for the call (403, 409, 429, 404). Nothing is
   measured by the console, and nothing is shown that the controller did not
   send.
-- Places and networks (`lib/geo.ts`, one wording on every page): a GeoIP
-  result most specific first, the country by its name in the reader's
-  language ("Shibuya City, Tokyo, 日本"); an AS as `AS63949` and its
-  organization; an endpoint in the transport tab with its country and AS
-  number, the rest on hover. The datasets are imported on the Server's
-  host (`ip-datasets`); a node has a location only once it reports a
-  public endpoint.
+- Places and networks: the server shows the addresses it has seen for a
+  node, public or not, and the one its location rests on; this browser asks
+  geojs.io (`api/geojs.ts`, MaxMind GeoLite data) where each public one is
+  and its network. Only those addresses are sent, those asked for about the
+  same time in one request, without credentials or a referrer; an answer
+  is checked against a schema, and geojs's "nil" coordinates and AS64512
+  "Unknown" mean unknown. Answers are kept in this browser for a week
+  (`state/geo-lookup.ts`, at most 500 addresses) and forgotten when the
+  sign-in ends or changes. The lookups are on unless turned off in the
+  account page (this browser, every tab); off forgets what they found, and
+  nodes are then unlocated for that reason. In words (`lib/geo.ts`, one
+  wording on every page): a place most specific first, the country by its
+  name in the reader's language ("Shibuya City, Tokyo, 日本"); an AS as
+  `AS63949` and its organization; an endpoint in the transport tab with
+  its country and AS number, the rest on hover. A node has a location only
+  once it reports a public endpoint. The server keeps its own GeoIP only
+  for the automatic routing profile; the two may place an address
+  differently.
 - Not delivered by the controller: the install script and Agent releases;
   nothing stands in for them.
   What the console needs from the V2 API is in `v2-api-needs.md`.

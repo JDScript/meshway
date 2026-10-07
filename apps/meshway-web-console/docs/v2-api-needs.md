@@ -44,7 +44,7 @@
   - 服务端给出保活间隔，reset 和关闭都带原因。
   - SSE 与 GET 复用同一组片段类型。
 - **State 与历史**：
-  - 位置由 Controller 根据 endpoint IP 用 GeoIP 推导，带来源和时间；拿不到时给出缺失原因。
+  - 服务端从节点的实测地址（STUN、合格的公网网卡地址）选出位置所依据的地址，带来源和时间；选不出时给出缺失原因。地点和 ASN 由 console 在浏览器里向 geojs.io 查询：只发公网地址；默认开启，可在本浏览器关闭；结果在本浏览器保存 7 天，退出登录时清除。服务端的 GeoIP 只留给自动方案（`routing.egress.auto`），两边对同一地址的地区可能不同。
   - links 和 paths 的聚合保留每个报告者的证据。两端都报告自己是发起方时判为 `conflicting`，`inUse` 为 null；等 Node 数据面定义 linkId 协商后再调整。
   - 历史层通过 `history/query` 的 `recentLinks` 模式读取，不进入默认的实时流。
 - **域名经出口**：`autogroup:internet` 覆盖域名目的地（路由规则和规则集里的名称），与执行期按解析地址判定一致；只有 CIDR 授权的来源仍需 `domain:`。access 不引用规则集。
@@ -59,7 +59,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 网络、成员（改角色前确认要撤销的加入链接）、加入链接（签发人、使用者）和网络活动；
 - 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
 - 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
-- GeoIP／ASN：数据集由服务端主机的 `ip-datasets` 导入；console 显示 `derived.location`（地球与节点概况）和 `derived.ipInfo`（运营商、各地址、传输页 endpoint 的国家与 AS 号）。现在的 Node 还不上报 endpoint，所以真实节点仍没有位置；脚本节点上报 STUN endpoint 已验证整条链路（DB-IP Lite 数据集）。
+- 地点与 ASN：console 不再读服务端的 GeoIP 结果（`derived.location.data`、`datasetId`、`ipInfo` 的查询结果），只用 `derived.location` 的地址和 `derived.ipInfo` 的键（`notApplicable` 视为非公网，不发出），向 geojs.io 查询。在服务端按下面"请后端调整"改完之前，`derived.location` 只在服务端自己的 GeoIP 有结果时才出现，没有数据集的部署里节点仍然没有位置。8420 的三个节点还没有上报 endpoint，地球上暂时没有节点。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
 - 接入密钥和设备授权（`authorizationUrl` 打开的就是 console 的授权页）；
 - 按 revision 的部署进度；
@@ -148,6 +148,16 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - ~~旧版本保存的配置在新版本里打不开~~：已修。`RouteMatch.domain`、inline `RuleSet.domain` 和 `RuleSetData.domain` 为空时不再序列化，旧版本的规范 JSON 和 artifact 摘要逐字不变，不需要迁移；`2a4bd0cc` 之后新建、含 `domain` 的版本照常。另外所有映射成 503 的服务端错误现在都记一条 error 日志（安全的类别标签，例如 `stored value could not be decoded: configuration_versions.configuration`），不再无声。8420 可以升级了。
 - ~~新增 Problem code 没有同步 console~~：`mise run check` 本来就包含 console 的 typecheck，`548ffc9d` 是 Node 合并时没有跑完整检查。规则不变：改 `ProblemCode`／`IssueCode` 的人补 console 的消息并跑 `mise run check` 再合（我这边 `invalid_domain` 就是这样处理的）。
 - ~~`createEnrollmentKey` 用 `binding_conflict` 表示请求 ID 冲突~~：已改为 `request_id_conflict`；同一 `requestId` 同内容仍返回同一 key 的元数据（`secretDelivery: unavailable`）。`binding_conflict` 只剩设备接入请求／兑换的绑定不匹配。
+
+### 请后端调整
+
+- **State 不再返回 GeoIP／ASN**（产品决定：地点由 console 查 geojs.io，服务端的 GeoIP 只给 `routing.egress.auto` 用）。
+  - `derived.location` 只描述依据的地址：`{ address, endpointSource, observedAt, expiresAt, sourceSocketId, sourceGeneration }`，去掉 `data` 和 `datasetId`。只要有合格的实测地址就给出，不依赖数据集。
+  - 多个合格地址时，选择不能再依赖它们的地区是否一致：请定一个确定的选择规则，或者在不止一个时返回 `ambiguousObservation`。
+  - `derived.locationAbsent` 只留 `noObservation`、`observationExpired`、`ambiguousObservation`。
+  - `derived.ipInfo` 换成只标明是否公网的映射，例如 `addressScope: { [ip]: "public" | "nonPublic" | "mesh" }`，仍只含调用者可见的 endpoint IP。console 只把 `public` 的地址发给 geojs。
+  - `ip-datasets` 和数据集保留给自动方案；`docs/v2/state-reference/ip-info.md`、`endpoints.md` 的 GeoIP 段落和开发环境的数据集说明随之改写。
+  - console 的读取集中在 `src/lib/geo.ts` 的 `nodeAddresses`，改完后只需调整这一处和缺失原因的文案。
 
 ### 需要真实 Node 复核
 

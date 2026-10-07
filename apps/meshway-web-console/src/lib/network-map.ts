@@ -1,6 +1,5 @@
 import type {
   AggregatedLink,
-  GeoObservation,
   LinkEvidence,
   LinkPhase,
   LocationAbsentReason,
@@ -10,26 +9,43 @@ import type {
 } from "@meshway/control-client"
 
 import type { LinkLook, Scene, SceneLink, SceneNode } from "@/globe/scene"
+import {
+  nodeAddresses,
+  type AddressGeo,
+  type AddressScope,
+  type GeoOf,
+  type LocationAddress,
+} from "@/lib/geo"
 import { nodeStatus, type NodeStatus } from "@/lib/nodes/status"
 
-// The overview's reading of the network's State: which nodes the
-// controller located, which it did not and why, and which links can be
-// drawn between located ends. Nothing here is estimated: a node without the
-// controller's position is unlocated, a link with an unlocated end is
-// counted, never drawn at an invented place.
+// The overview's reading of the network's State: which nodes are located,
+// which are not and why, and which links can be drawn between located ends.
+// A node is located where geojs places the address the server rests its
+// location on. Nothing here is estimated: a node without that position is
+// unlocated, a link with an unlocated end is counted, never drawn at an
+// invented place.
 
 /**
- * Why a node is not on the globe: the controller's `locationAbsent`, or
- * `noPosition` when its GeoIP result names a place but no coordinates.
+ * Why a node is not on the globe: the server's `locationAbsent`; that this
+ * browser does not look up locations, is looking it up or could not; or
+ * `noPosition` when geojs names a place but no coordinates.
  */
-export type Unlocated = LocationAbsentReason | "noPosition" | "unknown"
+export type Unlocated =
+  | LocationAbsentReason
+  | "lookupOff"
+  | "lookupPending"
+  | "lookupFailed"
+  | "noPosition"
+  | "unknown"
 
 export type MapNode = {
   id: string
   name: string
   status: NodeStatus
-  /** The controller's derived location; set even without coordinates. */
-  location: GeoObservation | null
+  /** The address the server rests its location on. */
+  location: LocationAddress | null
+  /** Where geojs places that address, or why that is not known. */
+  geo: AddressGeo | null
   /** Set exactly when the node is not on the globe. */
   unlocated: Unlocated | null
   receivedAt: string | null
@@ -50,30 +66,59 @@ export const EVIDENCE_ORDER: readonly LinkEvidence[] = [
   "expired",
 ]
 
+/** The addresses the nodes' locations rest on (all public): what the globe looks up. */
+export function locationAddresses(state: StateView): Map<string, AddressScope> {
+  return new Map(
+    Object.values(state.nodes).flatMap((view) => {
+      const { location } = nodeAddresses(view.derived)
+      return location ? [[location.address, "public" as const]] : []
+    })
+  )
+}
+
+function unlocatedOf(
+  location: LocationAddress | null,
+  locationAbsent: LocationAbsentReason | null,
+  geo: AddressGeo | null
+): Unlocated | null {
+  if (!location) return locationAbsent ?? "unknown"
+  switch (geo?.kind) {
+    case "found":
+      return geo.geo.position ? null : "noPosition"
+    case "pending":
+      return "lookupPending"
+    case "failed":
+      return "lookupFailed"
+    case "off":
+      return "lookupOff"
+    case "notPublic":
+    case undefined:
+      return "unknown"
+  }
+}
+
 /**
  * Every node in the State, named by its configured hostname; a node the
  * account cannot list (a peer of its own device) takes its status from its
- * report alone.
+ * report alone. `geoOf` says where the addresses of `locationAddresses` are.
  */
 export function mapNodes(
   state: StateView,
-  inventory: ReadonlyMap<string, NodeInventoryView>
+  inventory: ReadonlyMap<string, NodeInventoryView>,
+  geoOf: GeoOf
 ): MapNode[] {
   return Object.entries(state.nodes)
     .map(([id, view]): MapNode => {
-      const location = view.derived.location ?? null
-      const placed = location?.data.position != null
+      const { location, locationAbsent } = nodeAddresses(view.derived)
+      const geo = location ? geoOf(location.address) : null
       const listed = inventory.get(id) ?? null
       return {
         id,
         name: listed?.hostname ?? view.hostname,
         status: nodeStatus(listed, view),
         location,
-        unlocated: placed
-          ? null
-          : location
-            ? "noPosition"
-            : (view.derived.locationAbsent ?? "unknown"),
+        geo,
+        unlocated: unlocatedOf(location, locationAbsent, geo),
         receivedAt: view.receivedAt ?? null,
         lastAuthenticatedAt: view.lastAuthenticatedAt ?? null,
       }
@@ -82,15 +127,15 @@ export function mapNodes(
 }
 
 function sceneNode(node: MapNode): SceneNode {
-  const position = node.location?.data.position
+  const position = node.geo?.kind === "found" ? node.geo.geo.position : null
   return {
     id: node.id,
     name: node.name,
     placement: position
       ? {
-          lat: position.latitude,
-          lng: position.longitude,
-          accuracyKm: position.accuracyRadiusKm ?? null,
+          lat: position.lat,
+          lng: position.lng,
+          accuracyKm: position.accuracyKm,
         }
       : null,
     status: node.status,

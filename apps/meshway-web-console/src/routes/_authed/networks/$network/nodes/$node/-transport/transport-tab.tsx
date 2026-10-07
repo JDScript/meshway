@@ -6,8 +6,10 @@ import type {
 } from "@meshway/control-client"
 import { type UseQueryResult } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
+import { useMemo } from "react"
 
 import { failureText } from "@/api/failure"
+import { useAddressGeo } from "@/api/queries/ip-geo"
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import { RefList, RefRow } from "@/components/chrome/ref-row"
 import { EmptyLine, Section } from "@/components/chrome/section"
@@ -15,6 +17,7 @@ import { StatusDot } from "@/components/chrome/status-dot"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime, relativeTime } from "@/lib/format"
+import { NO_ADDRESSES, nodeAddresses, type GeoOf } from "@/lib/geo"
 import {
   isPast,
   listenerRuntime,
@@ -39,7 +42,7 @@ import { m } from "@/paraglide/messages.js"
 import { useNodeConfiguration } from "../-draft"
 import { statusText } from "../../-labels"
 import { ConfiguredListeners } from "./listeners"
-import { EndpointGeo, Runtime, SocketBlock, type IpInfoOf } from "./runtime"
+import { EndpointGeo, Runtime, SocketBlock } from "./runtime"
 
 /** A time as when, with how long ago or until; "expired" once past. */
 function TimeFact({
@@ -83,7 +86,11 @@ export function NodeTransport({
   const now = useNow(1_000)
   const configuration = useNodeConfiguration(networkId, nodeId, network)
   const view = stateOf(state.data, nodeId)
-  const ipInfo = view?.derived.ipInfo ?? {}
+  const addresses = useMemo(
+    () => (view ? nodeAddresses(view.derived).scopes : NO_ADDRESSES),
+    [view]
+  )
+  const geoOf = useAddressGeo(addresses)
   const report = reportOf(view)
   const names = (id: string) => {
     const configured =
@@ -120,13 +127,13 @@ export function NodeTransport({
         nodeId={nodeId}
         configuration={configuration}
         report={full}
-        ipInfo={ipInfo}
+        geoOf={geoOf}
         now={now}
       />
       {full ? (
         <ReportedOnly
           report={full}
-          ipInfo={ipInfo}
+          geoOf={geoOf}
           configured={
             configuration.state.kind === "manager"
               ? Object.keys(
@@ -160,7 +167,7 @@ export function NodeTransport({
                     </span>
                     <EndpointGeo
                       address={endpoint.candidate.address}
-                      ipInfo={ipInfo}
+                      geoOf={geoOf}
                     />
                   </span>
                   <span className="text-meta text-muted-foreground">
@@ -231,12 +238,12 @@ function ReportLine({
 /** What the report has that no configured listener names: dial and coordination sockets, listeners not configured. */
 function ReportedOnly({
   report,
-  ipInfo,
+  geoOf,
   configured,
   now,
 }: {
   report: NodeState
-  ipInfo: IpInfoOf
+  geoOf: GeoOf
   /** The listener keys the current configuration holds; null when not readable. */
   configured: readonly string[] | null
   now: number
@@ -254,7 +261,7 @@ function ReportedOnly({
               return runtime ? (
                 <div key={key} className="flex flex-col gap-1">
                   <span className="px-1 font-mono text-row">{key}</span>
-                  <Runtime runtime={runtime} ipInfo={ipInfo} now={now} />
+                  <Runtime runtime={runtime} geoOf={geoOf} now={now} />
                 </div>
               ) : null
             })}
@@ -271,12 +278,7 @@ function ReportedOnly({
                 <span className="px-1 text-meta text-muted-foreground">
                   {resourceText(socket.resource)}
                 </span>
-                <SocketBlock
-                  id={id}
-                  socket={socket}
-                  ipInfo={ipInfo}
-                  now={now}
-                />
+                <SocketBlock id={id} socket={socket} geoOf={geoOf} now={now} />
               </div>
             ))}
           </div>

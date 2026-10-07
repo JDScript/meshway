@@ -171,5 +171,8 @@
   "state_role_relay": "Relay",
   "state_role_target": "Target",
   "location_source_stun": "STUN observation",
-  "location_source_interface": "Interface address"
+  "location_source_interface": "Interface address",
+  "geo_pending": "Looking up the location",
+  "geo_failed": "The location lookup failed",
+  "geo_off": "This browser does not look up locations"
 }

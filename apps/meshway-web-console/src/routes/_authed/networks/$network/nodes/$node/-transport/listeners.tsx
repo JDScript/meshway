@@ -25,6 +25,7 @@ import {
   withListener,
   type ListenerEdit,
 } from "@/lib/configuration/node-operations"
+import type { GeoOf } from "@/lib/geo"
 import {
   draftOfView,
   editable as formEditable,
@@ -48,7 +49,7 @@ import { m } from "@/paraglide/messages.js"
 import { useNodeConfiguration } from "../-draft"
 import { presetLabel, protocolLabel } from "../../-labels"
 import { ListenerEditor } from "./listener-editor"
-import { Runtime, type IpInfoOf } from "./runtime"
+import { Runtime } from "./runtime"
 
 type Facts = {
   kind: string
@@ -157,13 +158,13 @@ export function ConfiguredListeners({
   nodeId,
   configuration,
   report,
-  ipInfo,
+  geoOf,
   now,
 }: {
   nodeId: string
   configuration: ReturnType<typeof useNodeConfiguration>
   report: NodeState | null
-  ipInfo: IpInfoOf
+  geoOf: GeoOf
   now: number
 }) {
   const { state, change } = configuration
@@ -212,7 +213,7 @@ export function ConfiguredListeners({
                 facts={factsOfView(view)}
                 mark={null}
                 report={report}
-                ipInfo={ipInfo}
+                geoOf={geoOf}
                 now={now}
                 actions={null}
                 notes={null}
@@ -331,7 +332,7 @@ export function ConfiguredListeners({
               mark={mark}
               removed={edit?.kind === "remove"}
               report={report}
-              ipInfo={ipInfo}
+              geoOf={geoOf}
               now={now}
               notes={notesWithin(
                 state.notes,
@@ -437,7 +438,7 @@ function ListenerBlock({
   mark,
   removed = false,
   report,
-  ipInfo,
+  geoOf,
   now,
   actions,
   notes,
@@ -447,7 +448,7 @@ function ListenerBlock({
   mark: string | null
   removed?: boolean
   report: NodeState | null
-  ipInfo: IpInfoOf
+  geoOf: GeoOf
   now: number
   actions: ReactNode
   notes: ReturnType<typeof notesWithin> | null
@@ -531,7 +532,7 @@ function ListenerBlock({
       {notes ? <Notes notes={notes} /> : null}
       {report ? (
         runtime ? (
-          <Runtime runtime={runtime} ipInfo={ipInfo} now={now} />
+          <Runtime runtime={runtime} geoOf={geoOf} now={now} />
         ) : (
           <EmptyLine size="sm">{m.nodes_listener_unreported()}</EmptyLine>
         )

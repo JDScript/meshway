@@ -8,9 +8,11 @@ import type {
 } from "@meshway/control-client"
 import { test } from "vitest"
 
+import type { AddressGeo, GeoOf } from "@/lib/geo"
 import {
   countBy,
   linkLook,
+  locationAddresses,
   mapNodes,
   mergeRecentLinks,
   overviewScene,
@@ -61,14 +63,15 @@ const listed = (
   },
 ]
 
-const located = (lat: number, lng: number): NodeStateView => ({
+/** A node whose location the server rests on `address`; its own GeoIP data are not used. */
+const located = (address: string): NodeStateView => ({
   hostname: "located",
   freshness: "current",
   derived: {
     ipInfo: {},
     location: {
-      address: "203.0.113.7",
-      data: { country: "JP", position: { latitude: lat, longitude: lng } },
+      address,
+      data: { country: "US", position: { latitude: 1, longitude: 2 } },
       datasetId: "dddddddd-0000-4000-8000-000000000004",
       endpointSource: "stun",
       observedAt: "2026-10-03T00:00:00Z",
@@ -78,6 +81,30 @@ const located = (lat: number, lng: number): NodeStateView => ({
     },
   },
 })
+
+/** What geojs says of an address: a country, and coordinates when given. */
+const found = (lat?: number, lng?: number): AddressGeo => ({
+  kind: "found",
+  geo: {
+    country: "JP",
+    region: null,
+    city: null,
+    position:
+      lat !== undefined && lng !== undefined
+        ? { lat, lng, accuracyKm: null }
+        : null,
+    asn: null,
+  },
+})
+
+const geoOf =
+  (answers: Record<string, AddressGeo>): GeoOf =>
+  (ip) =>
+    answers[ip] ?? null
+
+const TOKYO = "203.0.113.7"
+const SEOUL = "203.0.113.8"
+const PLACES = geoOf({ [TOKYO]: found(35.7, 139.7), [SEOUL]: found(37.5, 127) })
 
 const state = (
   nodes: Record<string, NodeStateView>,
@@ -110,52 +137,91 @@ const link = (
   ...patch,
 })
 
-test("only a node with the controller's coordinates is located; the others keep the controller's reason", () => {
+test("a node is located where geojs places the server's address; the others say why not", () => {
+  const view = state({
+    [A]: located(TOKYO),
+    [B]: {
+      hostname: "b",
+      freshness: "awaiting_report",
+      derived: { ipInfo: {}, locationAbsent: "noObservation" },
+    },
+    [C]: located("203.0.113.9"),
+    "dddddddd-0000-4000-8000-000000000004": located("203.0.113.10"),
+    "eeeeeeee-0000-4000-8000-000000000005": located("203.0.113.11"),
+    "ffffffff-0000-4000-8000-000000000006": located("203.0.113.12"),
+  })
+  assert.deepEqual([...locationAddresses(view).keys()].sort(), [
+    "203.0.113.10",
+    "203.0.113.11",
+    "203.0.113.12",
+    TOKYO,
+    "203.0.113.9",
+  ])
+  const nodes = mapNodes(
+    view,
+    new Map([listed(A, "tokyo"), listed(C, "seoul", false)]),
+    geoOf({
+      [TOKYO]: found(35.7, 139.7),
+      "203.0.113.9": found(),
+      "203.0.113.10": { kind: "off" },
+      "203.0.113.11": { kind: "failed" },
+      "203.0.113.12": { kind: "pending" },
+    })
+  )
+  const byId = new Map(nodes.map((node) => [node.id, node.unlocated]))
+  assert.equal(byId.get(A), null)
+  assert.equal(byId.get(B), "noObservation")
+  // A country without coordinates is not a place on the globe.
+  assert.equal(byId.get(C), "noPosition")
+  assert.equal(byId.get("dddddddd-0000-4000-8000-000000000004"), "lookupOff")
+  assert.equal(byId.get("eeeeeeee-0000-4000-8000-000000000005"), "lookupFailed")
+  // The server's own coordinates do not stand in while geojs is asked.
+  assert.equal(
+    byId.get("ffffffff-0000-4000-8000-000000000006"),
+    "lookupPending"
+  )
+  const scene = overviewScene(nodes, [], null)
+  assert.deepEqual(scene.nodes.find((node) => node.id === A)?.placement, {
+    lat: 35.7,
+    lng: 139.7,
+    accuracyKm: null,
+  })
+})
+
+test("a node is named by the inventory and takes its status from it", () => {
   const nodes = mapNodes(
     state({
-      [A]: located(35.7, 139.7),
+      [A]: located(TOKYO),
       [B]: {
         hostname: "b",
         freshness: "awaiting_report",
-        derived: { ipInfo: {}, locationAbsent: "datasetUnavailable" },
+        derived: { ipInfo: {}, locationAbsent: "noObservation" },
       },
-      [C]: {
-        hostname: "c",
-        freshness: "current",
-        derived: {
-          ...located(0, 0).derived,
-          location: {
-            ...located(0, 0).derived.location!,
-            data: { country: "KR", position: null },
-          },
-        },
-      },
+      [C]: located(SEOUL),
     }),
-    new Map([listed(A, "tokyo"), listed(C, "seoul", false)])
+    new Map([listed(A, "tokyo"), listed(C, "seoul", false)]),
+    PLACES
   )
   const byId = new Map(nodes.map((node) => [node.id, node]))
-  assert.equal(byId.get(A)?.unlocated, null)
   assert.equal(byId.get(A)?.name, "tokyo")
   assert.equal(byId.get(A)?.status, "current")
-  assert.equal(byId.get(B)?.unlocated, "datasetUnavailable")
   // A peer the inventory does not list is named by the State.
   assert.equal(byId.get(B)?.name, "b")
   // A peer the inventory does not list: its report alone says its status.
   assert.equal(byId.get(B)?.status, "awaiting_report")
   // Turned off in the inventory, whatever its report says.
   assert.equal(byId.get(C)?.status, "disabled")
-  // A country without coordinates is not a place on the globe.
-  assert.equal(byId.get(C)?.unlocated, "noPosition")
 })
 
 test("a link is drawn only between two located nodes", () => {
   const nodes = mapNodes(
     state({
-      [A]: located(35.7, 139.7),
-      [B]: located(37.5, 127),
+      [A]: located(TOKYO),
+      [B]: located(SEOUL),
       [C]: { hostname: "c", freshness: "current", derived: { ipInfo: {} } },
     }),
-    new Map()
+    new Map(),
+    PLACES
   )
   const scene = overviewScene(nodes, [link(A, B, "1"), link(A, C, "2")], null)
   assert.deepEqual(
@@ -232,11 +298,12 @@ test("both ends' records of one link merge; the latest event decides open or clo
 test("the scene draws history links apart from current ones, never both for one link, in lanes", () => {
   const nodes = mapNodes(
     state({
-      [A]: located(35.7, 139.7),
-      [B]: located(37.5, 127),
+      [A]: located(TOKYO),
+      [B]: located(SEOUL),
       [C]: { hostname: "c", freshness: "current", derived: { ipInfo: {} } },
     }),
-    new Map()
+    new Map(),
+    PLACES
   )
   const history = mergeRecentLinks([
     {

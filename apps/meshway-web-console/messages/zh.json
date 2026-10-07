@@ -171,5 +171,8 @@
   "state_role_relay": "中继",
   "state_role_target": "终点",
   "location_source_stun": "STUN 观测",
-  "location_source_interface": "网卡地址"
+  "location_source_interface": "网卡地址",
+  "geo_pending": "正在查询位置",
+  "geo_failed": "位置查询失败",
+  "geo_off": "本浏览器不查询位置"
 }

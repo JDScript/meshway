@@ -14,13 +14,14 @@ import { m } from "@/paraglide/messages.js"
 import { ActivityList } from "./-activity-list"
 import { DebugMode } from "./-debug-mode"
 import { EmailForm } from "./-email-form"
+import { GeoLookup } from "./-geo-lookup"
 import { PasswordForm } from "./-password-form"
 import { SessionList } from "./-session-list"
 
 /**
  * This account as the controller reports it: its email and ID, changing
  * the email and the password, its sessions and what happened to it, and
- * this browser's debug mode.
+ * this browser's node location lookups and debug mode.
  */
 export function AccountWorkspace({ onClose }: { onClose: () => void }) {
   const account = useQuery(accountQuery())
@@ -65,6 +66,7 @@ export function AccountWorkspace({ onClose }: { onClose: () => void }) {
           <PasswordForm email={user?.email ?? null} />
           <SessionList />
           <ActivityList />
+          <GeoLookup />
           <DebugMode />
         </div>
       </div>

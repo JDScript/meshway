@@ -1,11 +1,7 @@
-import type {
-  EndpointCandidate,
-  IpInfo,
-  SocketState,
-} from "@meshway/control-client"
+import type { EndpointCandidate, SocketState } from "@meshway/control-client"
 
 import { agoTime, relativeTime } from "@/lib/format"
-import { asnText, geoText, hostOf, shortGeoText } from "@/lib/geo"
+import { asnText, geoText, hostOf, shortGeoText, type GeoOf } from "@/lib/geo"
 import { candidateExpired, listenerRuntime } from "@/lib/nodes/state-model"
 import {
   endpointSourceText,
@@ -15,16 +11,13 @@ import {
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
-/** The State's GeoIP and ASN results for the node's addresses, by IP. */
-export type IpInfoOf = Readonly<Record<string, IpInfo>>
-
 export function Runtime({
   runtime,
-  ipInfo,
+  geoOf,
   now,
 }: {
   runtime: NonNullable<ReturnType<typeof listenerRuntime>>
-  ipInfo: IpInfoOf
+  geoOf: GeoOf
   now: number
 }) {
   const { state } = runtime
@@ -74,7 +67,7 @@ export function Runtime({
               key={id}
               id={id}
               socket={socket}
-              ipInfo={ipInfo}
+              geoOf={geoOf}
               now={now}
             />
           ) : (
@@ -91,12 +84,12 @@ export function Runtime({
 export function SocketBlock({
   id,
   socket,
-  ipInfo,
+  geoOf,
   now,
 }: {
   id: string
   socket: SocketState
-  ipInfo: IpInfoOf
+  geoOf: GeoOf
   now: number
 }) {
   return (
@@ -126,7 +119,7 @@ export function SocketBlock({
             <CandidateRow
               key={`${candidate.address}-${index}`}
               candidate={candidate}
-              ipInfo={ipInfo}
+              geoOf={geoOf}
               now={now}
             />
           ))}
@@ -138,11 +131,11 @@ export function SocketBlock({
 
 function CandidateRow({
   candidate,
-  ipInfo,
+  geoOf,
   now,
 }: {
   candidate: EndpointCandidate
-  ipInfo: IpInfoOf
+  geoOf: GeoOf
   now: number
 }) {
   const expired = candidateExpired(candidate, now)
@@ -162,7 +155,7 @@ function CandidateRow({
         >
           {candidate.address}
         </span>
-        <EndpointGeo address={candidate.address} ipInfo={ipInfo} />
+        <EndpointGeo address={candidate.address} geoOf={geoOf} />
       </span>
       <span className="truncate text-meta text-muted-foreground max-sm:col-start-1">
         {endpointSourceText(candidate.origin)}
@@ -189,21 +182,20 @@ function CandidateRow({
 /** An endpoint's country and AS number, the place and network in full on hover; nothing when neither is known. */
 export function EndpointGeo({
   address,
-  ipInfo,
+  geoOf,
 }: {
   address: string
-  ipInfo: IpInfoOf
+  geoOf: GeoOf
 }) {
-  const host = hostOf(address)
-  const info = Object.hasOwn(ipInfo, host) ? ipInfo[host] : undefined
-  const geo = info ? shortGeoText(info) : null
-  if (!info || geo === null) return null
+  const geo = geoOf(hostOf(address))
+  const short = geo ? shortGeoText(geo) : null
+  if (!geo || short === null) return null
   return (
     <span
       className="truncate text-meta text-muted-foreground"
-      title={`${geoText(info)} · ${asnText(info)}`}
+      title={`${geoText(geo)} · ${asnText(geo)}`}
     >
-      {geo}
+      {short}
     </span>
   )
 }

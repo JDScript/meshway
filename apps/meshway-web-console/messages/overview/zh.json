@@ -12,7 +12,7 @@
   "overview_globe_unavailable": "这个浏览器无法绘制地球（WebGL 不可用），已定位的节点不会画出。",
   "overview_no_links": "节点没有报告当前连接。",
   "overview_unlocated": "待定位",
-  "overview_unlocated_noPosition": "GeoIP 只给出地区：{place}",
+  "overview_unlocated_noPosition": "geojs 只给出地区：{place}",
   "overview_unlocated_unknown": "服务端没有给出原因",
   "overview_current_links": "当前连接",
   "overview_links_undrawn": "{count} 条有一端待定位，未画出",
@@ -22,9 +22,8 @@
   "overview_link_since": "建立于 {time}",
   "overview_link_initiator": "{node} 发起",
   "overview_link_unlocated_end": "未画出",
-  "overview_location_approximate": "GeoIP 近似位置",
+  "overview_location_approximate": "近似位置",
   "overview_location_address": "依据地址",
-  "overview_location_dataset": "数据集",
   "overview_location_observed": "观测",
   "overview_location_expires": "有效至",
   "overview_location_accuracy": "约 {km} km 范围",
@@ -41,5 +40,6 @@
   "overview_history_current": "仍在当前连接中",
   "overview_summary": "{nodes} 个节点 · {links} 条连接",
   "overview_expand": "展开网络状态",
-  "overview_collapse": "收起网络状态"
+  "overview_collapse": "收起网络状态",
+  "overview_location_by": "查询来源"
 }

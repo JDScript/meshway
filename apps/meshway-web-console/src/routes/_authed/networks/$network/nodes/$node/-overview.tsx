@@ -1,19 +1,23 @@
-import type {
-  DerivedNodeState,
-  NodeInventoryView,
-  StateView,
-} from "@meshway/control-client"
+import type { NodeInventoryView, StateView } from "@meshway/control-client"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { ArrowUpRightIcon } from "lucide-react"
 
 import { failureText } from "@/api/failure"
+import { useAddressGeo } from "@/api/queries/ip-geo"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
-import { asnText, geoText, placeText } from "@/lib/geo"
+import {
+  asnText,
+  geoText,
+  NO_ADDRESSES,
+  nodeAddresses,
+  type GeoOf,
+  type NodeAddresses,
+} from "@/lib/geo"
 import {
   configurationSync,
   nodeLinks,
@@ -96,6 +100,8 @@ export function NodeOverview({
     (link) => link.phase === "authenticated"
   ).length
   const problems = full?.problems ?? []
+  const addresses = view ? nodeAddresses(view.derived) : null
+  const geoOf = useAddressGeo(addresses?.scopes ?? NO_ADDRESSES)
 
   return (
     <div className="flex flex-col gap-8">
@@ -238,32 +244,41 @@ export function NodeOverview({
           </div>
           <div className={WIDE}>
             <Tile label={m.nodes_location()}>
-              {view ? <Place derived={view.derived} /> : muted("—")}
+              {addresses ? (
+                <Place addresses={addresses} geoOf={geoOf} />
+              ) : (
+                muted("—")
+              )}
             </Tile>
           </div>
           <div className={WIDE}>
             <Tile label={m.nodes_location_asn()}>
-              {view ? <Provider derived={view.derived} /> : muted("—")}
+              {addresses ? (
+                <Provider addresses={addresses} geoOf={geoOf} />
+              ) : (
+                muted("—")
+              )}
             </Tile>
           </div>
         </div>
-        {view && Object.keys(view.derived.ipInfo).length > 1 ? (
+        {addresses && addresses.scopes.size > 1 ? (
           // More than one address: each with where it is and its network.
           <ul className="flex flex-col gap-1">
-            {Object.entries(view.derived.ipInfo)
-              .sort(([a], [b]) => (a < b ? -1 : 1))
-              .map(([ip, info]) => (
+            {[...addresses.scopes.keys()].sort().map((ip) => {
+              const geo = geoOf(ip)
+              return geo ? (
                 <li
                   key={ip}
                   className="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,1fr)] items-baseline gap-x-3 rounded-tile bg-fill-subtle px-3.5 py-2 text-meta"
                 >
                   <span className="truncate font-mono">{ip}</span>
-                  <span className="truncate">{geoText(info)}</span>
+                  <span className="truncate">{geoText(geo)}</span>
                   <span className="truncate text-muted-foreground">
-                    {asnText(info)}
+                    {asnText(geo)}
                   </span>
                 </li>
-              ))}
+              ) : null
+            })}
           </ul>
         ) : null}
       </Section>
@@ -271,28 +286,31 @@ export function NodeOverview({
   )
 }
 
-function Place({ derived }: { derived: DerivedNodeState }) {
-  if (derived.location)
-    return placeText(derived.location.data) ?? m.nodes_geo_empty()
-  return muted(
-    derived.locationAbsent
-      ? locationAbsentLabel[derived.locationAbsent]()
-      : m.nodes_location_none()
-  )
+type Whereabouts = { addresses: NodeAddresses; geoOf: GeoOf }
+
+/** Where geojs places the address the location rests on, or why that is not known. */
+function Place({ addresses, geoOf }: Whereabouts) {
+  if (!addresses.location)
+    return muted(
+      addresses.locationAbsent
+        ? locationAbsentLabel[addresses.locationAbsent]()
+        : m.nodes_location_none()
+    )
+  const geo = geoOf(addresses.location.address)
+  if (!geo) return muted("—")
+  return geo.kind === "found" ? geoText(geo) : muted(geoText(geo))
 }
 
-/** The network of the address the location rests on, or of the one address observed. */
-function Provider({ derived }: { derived: DerivedNodeState }) {
-  const addresses = Object.keys(derived.ipInfo)
+/** The network of the address the location rests on, or of the one address seen. */
+function Provider({ addresses, geoOf }: Whereabouts) {
+  const seen = [...addresses.scopes.keys()]
   const address =
-    derived.location?.address ??
-    (addresses.length === 1 ? addresses[0] : undefined)
-  const info =
-    address !== undefined && Object.hasOwn(derived.ipInfo, address)
-      ? derived.ipInfo[address]
-      : undefined
-  if (!info) return muted("—")
-  return info.asn.status === "available" ? asnText(info) : muted(asnText(info))
+    addresses.location?.address ?? (seen.length === 1 ? seen[0] : undefined)
+  const geo = address === undefined ? null : geoOf(address)
+  if (!geo) return muted("—")
+  return geo.kind === "found" && geo.geo.asn
+    ? asnText(geo)
+    : muted(asnText(geo))
 }
 
 function Address({ label, value }: { label: string; value: string | null }) {

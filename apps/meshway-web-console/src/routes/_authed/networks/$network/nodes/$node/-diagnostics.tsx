@@ -6,15 +6,23 @@ import type {
   StateView,
 } from "@meshway/control-client"
 import type { UseQueryResult } from "@tanstack/react-query"
+import { useMemo } from "react"
 
 import { failureText } from "@/api/failure"
+import { useAddressGeo } from "@/api/queries/ip-geo"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime, relativeTime } from "@/lib/format"
-import { LOCATION_SOURCE } from "@/lib/geo"
+import {
+  geoText,
+  LOCATION_SOURCE,
+  NO_ADDRESSES,
+  nodeAddresses,
+  type AddressScope,
+} from "@/lib/geo"
 import {
   configurationFacts,
   desiredAgainst,
@@ -306,7 +314,15 @@ function Location({
   derived: DerivedNodeState
   now: number
 }) {
-  const location = derived.location
+  const { location, locationAbsent } = nodeAddresses(derived)
+  const address = location?.address ?? null
+  const asked = useMemo(
+    (): ReadonlyMap<string, AddressScope> =>
+      address === null ? NO_ADDRESSES : new Map([[address, "public"]]),
+    [address]
+  )
+  const geoOf = useAddressGeo(asked)
+  const geo = address === null ? null : geoOf(address)
   return (
     <Section title={m.nodes_location()}>
       {location ? (
@@ -324,17 +340,15 @@ function Location({
             <When at={location.expiresAt} now={now} expiry />
           </Tile>
           <div className="col-span-2">
-            <Tile label={m.nodes_location_dataset()}>
-              <span className="font-mono font-normal">
-                {location.datasetId}
-              </span>
+            <Tile label={m.nodes_location_place()}>
+              {geo ? geoText(geo) : "—"}
             </Tile>
           </div>
         </div>
       ) : (
         <EmptyLine>
-          {derived.locationAbsent
-            ? locationAbsentLabel[derived.locationAbsent]()
+          {locationAbsent
+            ? locationAbsentLabel[locationAbsent]()
             : m.nodes_location_none()}
         </EmptyLine>
       )}

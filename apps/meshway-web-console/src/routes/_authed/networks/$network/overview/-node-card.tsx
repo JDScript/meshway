@@ -7,14 +7,18 @@ import type { MapNode } from "@/lib/network-map"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
+/** Where geojs places a node's address; "—" when it names no place. */
+const place = (node: MapNode) =>
+  (node.geo?.kind === "found" ? placeText(node.geo.geo) : null) ?? "—"
+
 /**
- * A located node pointed at on the globe: where the controller's GeoIP
- * places it and on what that rests (the endpoint, its source and validity,
- * the dataset). Clicking the node opens it.
+ * A located node pointed at on the globe: where geojs places it and on
+ * what that rests (the address, its source and validity). Clicking the
+ * node opens it.
  */
 export function NodeCard({ node }: { node: MapNode }) {
   const location = node.location
-  const position = location?.data.position
+  const position = node.geo?.kind === "found" ? node.geo.geo.position : null
   return (
     <div className="flex flex-col gap-3 p-4">
       <div className="flex min-w-0 items-center gap-2">
@@ -32,13 +36,13 @@ export function NodeCard({ node }: { node: MapNode }) {
             {m.overview_location_approximate()}
           </dt>
           <dd className="min-w-0 truncate">
-            {(location && placeText(location.data)) ?? "—"}
-            {position?.accuracyRadiusKm != null ? (
+            {place(node)}
+            {position?.accuracyKm != null ? (
               <span className="text-muted-foreground">
                 {" "}
                 ·{" "}
                 {m.overview_location_accuracy({
-                  km: String(Math.round(position.accuracyRadiusKm)),
+                  km: String(Math.round(position.accuracyKm)),
                 })}
               </span>
             ) : null}
@@ -61,10 +65,8 @@ export function NodeCard({ node }: { node: MapNode }) {
             {m.overview_location_expires()}
           </dt>
           <dd className="tabular-nums">{dateTime(location.expiresAt)}</dd>
-          <dt className="text-muted-foreground">
-            {m.overview_location_dataset()}
-          </dt>
-          <dd className="min-w-0 truncate font-mono">{location.datasetId}</dd>
+          <dt className="text-muted-foreground">{m.overview_location_by()}</dt>
+          <dd>geojs.io</dd>
         </dl>
       ) : null}
     </div>
@@ -91,8 +93,6 @@ export function GroupCard({
 }) {
   const ids = new Set(nodes.map((node) => node.id))
   const between = links.filter((link) => ids.has(link.a) && ids.has(link.b))
-  const place = (node: MapNode) =>
-    (node.location && placeText(node.location.data)) ?? "—"
   const address = (node: MapNode) =>
     node.location
       ? `${node.location.address} · ${LOCATION_SOURCE[node.location.endpointSource]()}`
