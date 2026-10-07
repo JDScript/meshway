@@ -2,7 +2,7 @@ use crate::{
     Control, Error,
     identity::{self, Keys},
 };
-use meshway_configuration::execution::CompiledNode;
+use meshway_configuration::execution::{CompiledNode, validate_obsolete_slice};
 use meshway_protocol::{EnrollmentIntent, EnrollmentResponse, WireSecret};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -199,110 +199,16 @@ fn validate_obsolete(raw: &RawValue, binding: &EnrollmentResponse) -> Result<(),
         configuration: &'a RawValue,
     }
     let slice: Slice<'_> = decode(raw.get().as_bytes())?;
-    let _: serde::de::IgnoredAny = decode(slice.configuration.get().as_bytes())?;
-    let fields: std::collections::BTreeMap<String, &RawValue> =
-        decode(slice.configuration.get().as_bytes())?;
-    const FIELDS: &[&str] = &[
-        "networkId",
-        "nodeId",
-        "revision",
-        "publication",
-        "dependencyDigest",
-        "enabled",
-        "hostname",
-        "identity",
-        "addresses",
-        "selfKeys",
-        "listeners",
-        "dialers",
-        "peers",
-        "permits",
-        "diagnostics",
-        "decisions",
-        "dns",
-        "exitEnabled",
-    ];
-    if FIELDS.iter().any(|key| !fields.contains_key(*key))
-        || fields.keys().any(|key| !FIELDS.contains(&key.as_str()))
-    {
-        return Err(Error::Record);
-    }
-    validate_old_fields(&fields)?;
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Header {
-        network_id: meshway_model::NetworkId,
-        node_id: meshway_model::NodeId,
-        revision: meshway_model::Revision,
-        publication: meshway_model::PublicationId,
-        dependency_digest: meshway_model::Digest,
-        self_keys: meshway_configuration::execution::TrustedNode,
-    }
-    let header: Header = decode(slice.configuration.get().as_bytes())?;
-    let _ = (
-        header.revision,
-        header.publication,
-        header.dependency_digest,
-    );
+    let header =
+        validate_obsolete_slice(slice.configuration, slice.digest).map_err(|_| Error::Record)?;
     if header.network_id != binding.network_id
         || header.node_id != binding.node_id
         || header.self_keys.control_key != binding.keys.control
         || header.self_keys.dataplane_key != binding.keys.dataplane
-        || slice.digest.as_bytes()
-            != Sha256::digest(slice.configuration.get().as_bytes()).as_slice()
     {
         return Err(Error::Record);
     }
     Ok(())
-}
-
-fn validate_old_fields(
-    fields: &std::collections::BTreeMap<String, &RawValue>,
-) -> Result<(), Error> {
-    use meshway_configuration::execution::*;
-    use meshway_configuration::{
-        DnsConfiguration, NodeAddresses, NodeIdentity, transport::PreparedListener,
-    };
-    use meshway_model::{NodeId, ObservationId, RequestId};
-    use std::collections::BTreeMap;
-    fn field<T: serde::de::DeserializeOwned>(
-        fields: &BTreeMap<String, &RawValue>,
-        key: &str,
-    ) -> Result<(), Error> {
-        serde_json::from_str::<T>(fields.get(key).ok_or(Error::Record)?.get())
-            .map(|_| ())
-            .map_err(|_| Error::Record)
-    }
-    fn map<K: serde::de::DeserializeOwned + Ord, V: serde::de::DeserializeOwned>(
-        fields: &BTreeMap<String, &RawValue>,
-        key: &str,
-    ) -> Result<(), Error> {
-        let mut decoder =
-            serde_json::Deserializer::from_str(fields.get(key).ok_or(Error::Record)?.get());
-        let _: BTreeMap<K, V> =
-            meshway_serde::unique_map(&mut decoder).map_err(|_| Error::Record)?;
-        decoder.end().map_err(|_| Error::Record)
-    }
-    field::<bool>(fields, "enabled")?;
-    field::<String>(fields, "hostname")?;
-    field::<NodeIdentity>(fields, "identity")?;
-    field::<NodeAddresses>(fields, "addresses")?;
-    map::<String, PreparedListener>(fields, "listeners")?;
-    map::<String, DialCandidate>(fields, "dialers")?;
-    map::<NodeId, PeerConfiguration>(fields, "peers")?;
-    map::<RequestId, PathPermit>(fields, "permits")?;
-    map::<ObservationId, DiagnosticPermit>(fields, "diagnostics")?;
-    map::<RequestId, DemandDecision>(fields, "decisions")?;
-    field::<bool>(fields, "exitEnabled")?;
-    let dns: BTreeMap<String, &RawValue> =
-        decode(fields.get("dns").ok_or(Error::Record)?.get().as_bytes())?;
-    if dns.len() != 4 {
-        return Err(Error::Record);
-    }
-    field::<DnsConfiguration>(&dns, "settings")?;
-    map::<String, NodeAddresses>(&dns, "meshHosts")?;
-    field::<Vec<TrustedDnsAssociation>>(&dns, "associations")?;
-    field::<String>(&dns, "profile")
 }
 
 fn archive(directory: &meshway_private_storage::Directory, bytes: &[u8]) -> Result<(), Error> {

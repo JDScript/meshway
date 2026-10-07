@@ -10,8 +10,10 @@ use std::{collections::BTreeMap, net::IpAddr};
 mod admission;
 mod delta;
 mod diagnostics;
+mod obsolete;
 pub use delta::*;
 pub use diagnostics::*;
+pub use obsolete::{ObsoleteSliceError, ObsoleteSliceHeader, validate_obsolete_slice};
 
 object! {
 /// Actual socket establishment orientation, independent of business direction.

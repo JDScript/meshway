@@ -13,7 +13,7 @@ meshway-model = { path = "../meshway-model" }
 meshway-serde = { path = "../meshway-serde" }
 meshway-transport-spec = { path = "../meshway-transport-spec" }
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
 thiserror.workspace = true
 utoipa.workspace = true

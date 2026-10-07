@@ -2,12 +2,13 @@
 //! execution configurations; no old runtime or authorization is reconstructed.
 use super::{id, now};
 use crate::{error::Error, secrets::Sealer};
-use meshway_configuration::execution::{CompiledNode, CompiledPublication};
+use meshway_configuration::execution::{
+    CompiledNode, CompiledPublication, ObsoleteSliceError, validate_obsolete_slice,
+};
 use meshway_model::{ConfigurationRef, Digest, NetworkId, NodeId, PublicationId, Revision};
 use rusqlite::{Transaction, params};
 use serde::Deserialize;
 use serde_json::value::RawValue;
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 
 const LIMIT: usize = 16 * 1024 * 1024;
@@ -211,47 +212,16 @@ fn validate_obsolete(
     node: NodeId,
     slice: &Slice<'_>,
 ) -> Result<(), Error> {
-    // Traverse opaque fields too: serde's ordinary IgnoredAny alone would hide
-    // duplicates. MapOnly carries duplicate checks through the entire tree.
-    let _: serde::de::IgnoredAny = decode(slice.configuration.get().as_bytes())?;
-    let fields: BTreeMap<String, &RawValue> = decode(slice.configuration.get().as_bytes())?;
-    const FIELDS: &[&str] = &[
-        "networkId",
-        "nodeId",
-        "revision",
-        "publication",
-        "dependencyDigest",
-        "enabled",
-        "hostname",
-        "identity",
-        "addresses",
-        "selfKeys",
-        "listeners",
-        "dialers",
-        "peers",
-        "permits",
-        "diagnostics",
-        "decisions",
-        "dns",
-        "exitEnabled",
-    ];
-    if FIELDS.iter().any(|key| !fields.contains_key(*key))
-        || fields.keys().any(|key| !FIELDS.contains(&key.as_str()))
-    {
-        return Err(Error::decode("obsolete execution cache fields"));
-    }
-    validate_old_fields(&fields)?;
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Header {
-        network_id: NetworkId,
-        node_id: NodeId,
-        revision: Revision,
-        publication: PublicationId,
-        dependency_digest: Digest,
-        self_keys: meshway_configuration::execution::TrustedNode,
-    }
-    let header: Header = decode(slice.configuration.get().as_bytes())?;
+    let header = validate_obsolete_slice(slice.configuration, slice.digest).map_err(|error| {
+        Error::decode(match error {
+            ObsoleteSliceError::Decode => "execution cache",
+            ObsoleteSliceError::Fields => "obsolete execution cache fields",
+            ObsoleteSliceError::Field => "obsolete execution cache field",
+            ObsoleteSliceError::Map => "obsolete execution cache map",
+            ObsoleteSliceError::Dns => "obsolete DNS cache",
+            ObsoleteSliceError::DigestMismatch => "obsolete execution cache slice",
+        })
+    })?;
     if header.network_id != envelope.network_id
         || header.node_id != node
         || header.revision != envelope.revision
@@ -260,74 +230,10 @@ fn validate_obsolete(
         || header.self_keys.control_key.public_key.algorithm != meshway_model::KeyAlgorithm::Ed25519
         || header.self_keys.dataplane_key.public_key.algorithm
             != meshway_model::KeyAlgorithm::X25519
-        || slice.digest.as_bytes()
-            != Sha256::digest(slice.configuration.get().as_bytes()).as_slice()
     {
         return Err(Error::decode("obsolete execution cache slice"));
     }
     Ok(())
-}
-
-fn validate_old_fields(fields: &BTreeMap<String, &RawValue>) -> Result<(), Error> {
-    use meshway_configuration::execution::*;
-    use meshway_configuration::{
-        DnsConfiguration, NodeAddresses, NodeIdentity, transport::PreparedListener,
-    };
-    use meshway_model::{ObservationId, RequestId};
-    fn field<T: serde::de::DeserializeOwned>(
-        fields: &BTreeMap<String, &RawValue>,
-        key: &str,
-    ) -> Result<(), Error> {
-        serde_json::from_str::<T>(
-            fields
-                .get(key)
-                .ok_or(Error::decode("obsolete execution cache field"))?
-                .get(),
-        )
-        .map(|_| ())
-        .map_err(|_| Error::decode("obsolete execution cache field"))
-    }
-    fn map<K: serde::de::DeserializeOwned + Ord, V: serde::de::DeserializeOwned>(
-        fields: &BTreeMap<String, &RawValue>,
-        key: &str,
-    ) -> Result<(), Error> {
-        let mut decoder = serde_json::Deserializer::from_str(
-            fields
-                .get(key)
-                .ok_or(Error::decode("obsolete execution cache field"))?
-                .get(),
-        );
-        let _: BTreeMap<K, V> = meshway_serde::unique_map(&mut decoder)
-            .map_err(|_| Error::decode("obsolete execution cache map"))?;
-        decoder
-            .end()
-            .map_err(|_| Error::decode("obsolete execution cache map"))
-    }
-    field::<bool>(fields, "enabled")?;
-    field::<String>(fields, "hostname")?;
-    field::<NodeIdentity>(fields, "identity")?;
-    field::<NodeAddresses>(fields, "addresses")?;
-    map::<String, PreparedListener>(fields, "listeners")?;
-    map::<String, DialCandidate>(fields, "dialers")?;
-    map::<NodeId, PeerConfiguration>(fields, "peers")?;
-    map::<RequestId, PathPermit>(fields, "permits")?;
-    map::<ObservationId, DiagnosticPermit>(fields, "diagnostics")?;
-    map::<RequestId, DemandDecision>(fields, "decisions")?;
-    field::<bool>(fields, "exitEnabled")?;
-    let dns: BTreeMap<String, &RawValue> = decode(
-        fields
-            .get("dns")
-            .ok_or(Error::decode("obsolete DNS cache"))?
-            .get()
-            .as_bytes(),
-    )?;
-    if dns.len() != 4 {
-        return Err(Error::decode("obsolete DNS cache"));
-    }
-    field::<DnsConfiguration>(&dns, "settings")?;
-    map::<String, NodeAddresses>(&dns, "meshHosts")?;
-    field::<Vec<TrustedDnsAssociation>>(&dns, "associations")?;
-    field::<String>(&dns, "profile")
 }
 
 pub(super) fn retire(
