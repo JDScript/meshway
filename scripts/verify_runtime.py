@@ -18,7 +18,7 @@ import uuid
 
 from node_lab import ROOT, check_elf, docker_target, lab_dir, run, selected_image, sha256, verify_image
 from verification_sources import fingerprint as source_fingerprint
-from validation_support import build_lock, report_directory, bind_access_options, export_evidence, mount_namespace_options
+from validation_support import build_lock, report_directory, bind_access_options, export_evidence, mount_namespace_options, link_artifact
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
@@ -153,8 +153,7 @@ def import_artifacts(source_dir, directory, target, platform, machine, source):
         check_elf(binary, machine)
         if sha256(binary) != manifest["sha256"][name]:
             raise RuntimeError("Prebuilt binary does not match its source manifest.")
-        shutil.copyfile(binary, directory / name)
-        (directory / name).chmod(0o500)
+        link_artifact(binary, directory / name)
     write_json(directory / "source-manifest.json", manifest)
     return manifest
 

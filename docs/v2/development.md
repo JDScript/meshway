@@ -145,6 +145,8 @@ mise run validate:matrix --parallel 2 --short --rows nat/off nat+fallback/off
 
 `scripts/validate_matrix.py` 的 `ROWS` 是可执行行的唯一声明，与[验收矩阵](/v2/node/validation#验收矩阵)的九个隔离入口对应。`--rows` 使用行 ID，省略时运行全部；重复 ID 只执行一次。runtime 构建一次，七个 runtime 行和 packet 的内嵌 daemon 检查都使用同一 `--artifacts`；packet／TUN 各构建一次。三个入口共享 `target/node-kernel-tests/build.lock`，只在构建及复制产物阶段持锁；导入已经冻结且逐文件校验的产物与执行阶段不持构建锁。
 
+构建阶段从可变 Cargo target 复制并冻结产物。导入阶段仍校验源码／目标／二进制摘要，同一文件系统以硬链接共享只读可执行文件，避免每行复制多 GiB 的 debug 程序；跨文件系统才复制。容器对程序目录只读挂载，可写的外来产物不作为冻结输入接受。
+
 `--parallel N` 默认是可用 CPU 数除以 8 向下取整、最少 1。依据是每个 runtime 行的 controller／A／R／B 各限制 2 CPU；NAT 行另外包含两个轻量路由器，需为宿主及路由器留出余量。并发不改变 fixture 的进程内期限，不保证高负载下仍通过。每行记录启动 `uptime`、1／5／15 分钟 load、耗时、报告 ID、失败阶段摘录和遗留资源；矩阵显式使用有界并发替代 standalone runtime／packet 的串行低负载门槛。与历史串行数据比较时应同时读取负载和源码指纹。
 
 各行、packet 内嵌 daemon、容器、bridge、挂载目录、私有 D-Bus／DNS 都有独立 run ID／namespace；固定监听端口只存在于各自 namespace，不发布宿主端口。IPv4 地址由 Docker IPAM 分配，IPv6 为每个 bridge 的随机 documentation prefix；共享 `/dev/net/tun` 不共享接口。实际并发受 CPU／内存、Docker 地址池剩余 bridge 数及 IO 影响；单个 NAT 行最多三个 bridge。失败不取消其他行，退出码表示全部选中行及清理是否通过。

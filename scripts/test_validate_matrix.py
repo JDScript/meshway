@@ -17,6 +17,19 @@ from validation_support import import_artifact
 
 
 class MatrixTests(unittest.TestCase):
+    def test_imported_binaries_share_only_frozen_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source = directory / "built"
+            source.write_bytes(b"frozen fixture")
+            with self.assertRaisesRegex(RuntimeError, "frozen"):
+                support.link_artifact(source, directory / "mutable")
+            source.chmod(0o500)
+            destination = directory / "imported"
+            support.link_artifact(source, destination)
+            self.assertEqual(source.stat().st_ino, destination.stat().st_ino)
+            self.assertEqual(destination.read_bytes(), b"frozen fixture")
+
     def test_rootful_evidence_export_is_labelled_private_and_exact(self):
         with tempfile.TemporaryDirectory() as temporary:
             report = Path(temporary)

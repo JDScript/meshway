@@ -1,6 +1,7 @@
 """Shared fixture output, immutable artifacts and build-cache ownership."""
 import contextlib
 import datetime
+import errno
 import fcntl
 import functools
 import json
@@ -56,8 +57,20 @@ def import_artifact(directory, destination, source, target, platform, machine):
             or manifest.get("sha256") != {binary.name: sha256(binary)}):
         raise RuntimeError("Prebuilt fixture does not match source/target/hash")
     check_elf(binary, machine)
-    shutil.copyfile(binary, destination)
-    destination.chmod(0o500)
+    link_artifact(binary, destination)
+
+
+def link_artifact(source, destination):
+    """Share frozen, read-only build outputs within a filesystem; never link Cargo's mutable target."""
+    if source.stat().st_mode & 0o222:
+        raise RuntimeError("Imported artifacts must be frozen read-only build outputs")
+    try:
+        os.link(source, destination)
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+        shutil.copyfile(source, destination)
+        destination.chmod(0o500)
 
 
 @functools.lru_cache(maxsize=1)
