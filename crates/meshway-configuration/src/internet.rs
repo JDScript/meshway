@@ -40,11 +40,6 @@ pub fn internet_ranges() -> &'static [IpNet] {
     })
 }
 
-/// Union coverage, including adjacent grants that together cover a target.
-pub fn address_set_covers(grants: &[IpNet], target: &IpNet) -> bool {
-    AddressSet::new(grants.iter().copied()).covers(target)
-}
-
 /// An aggregated set of address ranges. Building it merges adjacent and
 /// nested grants once; each coverage query is then a binary search, so
 /// checking thousands of destinations against thousands of grants stays

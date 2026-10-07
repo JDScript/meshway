@@ -25,33 +25,6 @@ pub fn rebind_node_user_references(
     }
 }
 
-/// Rename only identity/selector references. DNS, remarks, addresses, endpoint
-/// names and protocol fields are never rewritten by string coincidence.
-pub fn rename_user_references(c: &mut NetworkConfigurationInput, old: &str, new: &str) {
-    visit(c, &mut |s| {
-        if s == old {
-            *s = new.into();
-        }
-    });
-}
-
-/// Simultaneous stable-binding substitutions, including exchanged email names.
-/// The caller resolves all mappings by UserId AND MembershipId before calling.
-pub fn rebind_user_references(c: &mut NetworkConfigurationInput, names: &BTreeMap<String, String>) {
-    visit(c, &mut |s| {
-        if let Some(name) = names.get(s) {
-            *s = name.clone();
-        }
-    });
-}
-fn visit(c: &mut NetworkConfigurationInput, f: &mut impl FnMut(&mut String)) {
-    for node in c.nodes.values_mut() {
-        if let NodeIdentity::User { user } = &mut node.identity {
-            f(user);
-        }
-    }
-    visit_policy(c, f);
-}
 fn visit_policy(c: &mut NetworkConfigurationInput, f: &mut impl FnMut(&mut String)) {
     fn many(values: &mut [String], f: &mut impl FnMut(&mut String)) {
         for s in values {
