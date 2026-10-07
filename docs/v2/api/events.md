@@ -82,6 +82,8 @@ updated 复用 UserEntitiesView／NodeEntitiesView，removed 按 nodes／members
 - 断线立即释放活动流名额，每个身份保留至多四份、至多一分钟的断线重放缓存。缓存淘汰后携带旧 cursor 会重新同步。
 - 会话失效、成员被移除、Node lease 失效和正常服务关闭发送相应 `stream.closed` 后 EOF；角色变化及流的最长生命周期以 EOF 要求重新鉴权连接，不把仍有效的用户会话标成失效。连接已断开或进程异常终止时可能只能观察到 EOF。
 
+当前 Server 在 Node 身份／会话资格遭拒时发送 `session_expired`，在实例／执行资格冲突时发送 `node_lease_expired`；`membership_revoked` 当前用于用户 SSE 的成员失权，其他拒绝也可能只有 EOF。客户端随后仍须通过正常 HTTP 校验当前身份。Access 规则撤销不是成员移除，Node 身份仍有效时继续控制同步，不据此把 Node 永久置为阻断。
+
 ## 生成声明 {#openapi}
 
 成功响应是字符串字节流。OpenAPI 3.1 使用 `x-meshway-sse` 的 `eventSchema` 指向逐帧 JSON 类型；普通错误响应仍是 ErrorResponse。
