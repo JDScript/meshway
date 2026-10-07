@@ -128,7 +128,7 @@ Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代�
 
 `Options::new(mtu)` 接受 1280–65535 bytes，可为新设备设置 IPv4／IPv6 地址及前缀。地址带来的本地／直连路由由该 namespace 的内核产生。创建需要已启用 I/O 的 Tokio runtime、既有 `/dev/net/tun` 和相应设备权限。
 
-`recv`／`send` 保留单包接口，短写不续写为第二个报文。daemon 请求 `with_batch_io(true)`，通过 `recv_batch`／`send_batch` 使用 Linux vnet_hdr；按真实能力回退。拆合与能力口径见[批量 TUN](/v2/node/performance#tun-批量接口与能力验证)。multiqueue 和 packet-information header 仍关闭。外部修改设备 MTU／offload 不受支持；IPv6 DAD 就绪由宿主等待。
+`recv`／`send` 保留单包接口，短写不续写为第二个报文。daemon 请求 `with_batch_io(true)`，通过 `recv_batch`／`send_batch` 使用 Linux vnet_hdr；按真实能力回退。GSO 拆分与 GRO 合并复用固定版本 tun-rs 移植的 wireguard-go 实现；Meshway 只适配缓冲、批量预算及一次写入的前缀完成语义。拆合与能力口径见[批量 TUN](/v2/node/performance#tun-批量接口与能力验证)。multiqueue 和 packet-information header 仍关闭。外部修改设备 MTU／offload 不受支持；IPv6 DAD 就绪由宿主等待。
 
 ### Linux underlay
 

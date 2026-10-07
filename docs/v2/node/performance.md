@@ -109,8 +109,10 @@ L1 尚未覆盖的对照轴：每邻接单连接与有界小连接池、接近�
 
 - `recv_batch(&mut PacketBatch)` 每次交付最多 32 个完整 IP 包／64 KiB，不等待凑批。一个内核超包的剩余分段留在有界接收状态中；逐包 `recv` 也可消费这些分段。当前超包上限为 65,535 字节／1,024 段，超限返回错误。
 - `send_batch(&[&[u8]])` 返回一次写入的前缀包数；调用者对剩余后缀继续使用原输出 guard。一次调用至多写一个超包，不兼容时写一个普通包。此结果只表示本机内核接纳。
-- TCP／UDP 的 IPv4／IPv6 拆分重建长度与校验和；TCP 同时调整序号及末段标志。合并只接受相邻、同流、校验和有效且序号／IPv4 ID 连续的包，短尾段结束合并。IP 分片、IPv4 options、IPv6 扩展头、TCP SYN／RST／URG 等不参与合并。
-- 运行库仍使用独立包分配；这里不声明单缓冲或零复制已完成。
+- TUN 拆合实现归固定版本 tun-rs：单次 read 后使用 `VirtioNetHdr`／`gso_split`，写入前使用 `GROTable::apply_gro` 复用其 wireguard-go 合并规则。TCP／UDP 的 IPv4／IPv6 拆分重建长度与校验和；TCP 调整连续序号，FIN／PSH 仅保留在末段。Meshway 检查 flags、实际 IP／transport header、GSO 类型、offset、MTU 和分段数量，不信任 kernel 的 `hdr_len`；CHECKSUM_PARTIAL 使用 tun-rs 的 checksum 原语。接收槽按真实分段大小分配、复用，最多 1,024 段；已拆分包直接移交 `PacketBatch`，剩余分段由设备状态持有。保留 UDP 零 checksum 编码为 `0xffff`、非首段清 CWR 并更新 checksum 的边界处理；未协商 TSO_ECN，不声明 ECN TSO 支持。
+- GRO 要求同地址族、源／目标地址与端口；TCP 还要求 ACK 值相同、TCP options 长度与内容一致、序号相接，标志只能是 ACK 或 ACK+PSH。IP ToS／Traffic Class、TTL／Hop Limit 及 IPv4 DF／保留位必须相容。输入 IP 长度与实际缓冲长度一致，并在合并前校验传输层 checksum。IP 分片、IPv4 options、IPv6 扩展头、TCP SYN／FIN／RST／URG／ECE／CWR、纯 ACK 无 payload 不合并；PSH 和短尾段只能位于聚合末尾。UDP 仅向同流的最后一组合并，短尾后不再追加，且依赖实际 USO 能力。
+- tun-rs 允许 TCP 按序号向前拼接，允许跨输入中的其他流寻找同流；不要求 IPv4 ID 连续、IPv6 flow label 或 TCP window 相同。Meshway 额外保留 IPv4 header checksum、UDP length 和 TCP reserved／NS 位的严格合并准入检查，并对候选输入前缀重新求 GRO，直到首个聚合恰好覆盖整个前缀，保证一次调用只写这一组且返回真实合并包数；不会将非连续输入索引误报为已写前缀。该返回值可用于逐批报告，不能由 capability 推算合并数。
+- `send_multiple` 会遍历多个输出且只返回字节总数，因此适配层使用 `apply_gro` 后的一次异步写入。发送缓冲预留 `VIRTIO_NET_HDR_LEN` headroom，并遵守 `ExpandBuffer` 的容量约定。公开发送接口借用不可变包，需复制到可变 staging；tun-rs 内部 GRO 也有候选包复制，GSO 拆分需写入独立包缓冲，不声明零复制。混合流前缀收缩时需要重新准备候选；常规完整可合并前缀只求 GRO 一次。
 
 OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`、aarch64 的独立无网络容器验证结果：`IFF_VNET_HDR`、`CSUM`、`TSO4`、`TSO6`、`USO4`、`USO6` 均成功启用。真实内核 TCP IPv4／IPv6 各发送 8,192 字节，观察到至少 5 个规范化分段，逐段序号、长度与校验和通过；双栈 TCP 三包合并写入后应用完整收到 3,000 字节，IPv4／IPv6 UDP 三包合并写入均由内核恢复为三个应用报文。对应入口为 `meshway-tun` 的显式隔离测试 `offload_capabilities_and_normalized_packet_io`；原逐包设备生命周期／双栈 I/O 测试同时通过。L2 吞吐与 CPU 对照见[内核批量实测](#l2-内核批量实测)。
 

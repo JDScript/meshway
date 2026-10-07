@@ -17,8 +17,6 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(any(target_os = "linux", test))]
-mod offload;
 
 /// Startup configuration. Names are always allocated by the kernel, preventing
 /// attachment to an existing named interface.
@@ -103,6 +101,8 @@ pub struct Tun {
     device: tun_rs::AsyncDevice,
     #[cfg(target_os = "linux")]
     read: tokio::sync::Mutex<linux::ReadState>,
+    #[cfg(target_os = "linux")]
+    write: tokio::sync::Mutex<linux::WriteState>,
     capabilities: Capabilities,
     name: String,
     mtu: usize,

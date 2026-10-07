@@ -32,6 +32,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::time::{sleep, timeout};
 
+mod upstream;
+
 const MTU: usize = 1500;
 const WAIT: Duration = Duration::from_secs(5);
 const LOCAL_V4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
@@ -42,6 +44,10 @@ const REMOTE_V6: Ipv6Addr = Ipv6Addr::new(0xfd42, 0x6d65, 0x7368, 0, 0, 0, 0, 2)
 #[tokio::test]
 #[ignore = "requires isolated Linux namespace, NET_ADMIN and MESHWAY_TUN_TEST_ISOLATED=1"]
 async fn offload_capabilities_and_normalized_packet_io() {
+    verify_offload().await;
+}
+
+async fn verify_offload() {
     assert_eq!(
         std::env::var("MESHWAY_TUN_TEST_ISOLATED").as_deref(),
         Ok("1")
@@ -86,18 +92,9 @@ async fn offload_capabilities_and_normalized_packet_io() {
         })
         .await
         .unwrap();
-        let mut packets: Vec<_> = (0..3)
+        let packets: Vec<_> = (0..3)
             .map(|_| udp_packet(remote, local, 42424, port, b"batch"))
             .collect();
-        // IPv4 ID continuity is required before combining a prefix.
-        if local.is_ipv4() {
-            for (index, packet) in packets.iter_mut().enumerate() {
-                packet[4..6].copy_from_slice(&(index as u16).to_be_bytes());
-                packet[10..12].fill(0);
-                let value = checksum(&packet[..20]);
-                packet[10..12].copy_from_slice(&value.to_be_bytes());
-            }
-        }
         let refs: Vec<_> = packets.iter().map(Vec::as_slice).collect();
         let sent = timeout(WAIT, tun.send_batch(&refs)).await.unwrap().unwrap();
         assert_eq!(sent, if tun.capabilities().uso4 { 3 } else { 1 });
@@ -109,7 +106,37 @@ async fn offload_capabilities_and_normalized_packet_io() {
                 .unwrap();
             assert_eq!(&buffer[..len], b"batch");
         }
+
+        // Upstream GRO can join indices 0 and 2 across another flow. The public
+        // API must still write only a prefix and report its exact packet count.
+        let other = UdpSocket::bind(SocketAddr::new(local, 0)).await.unwrap();
+        let other_packet = udp_packet(
+            remote,
+            local,
+            42424,
+            other.local_addr().unwrap().port(),
+            b"other",
+        );
+        let mixed = [&packets[0][..], &other_packet[..], &packets[1][..]];
+        assert_eq!(tun.send_batch(&mixed).await.unwrap(), 1);
+        let mut buffer = [0; 100];
+        assert_eq!(socket.recv(&mut buffer).await.unwrap(), 5);
+        assert!(
+            timeout(Duration::from_millis(30), socket.recv(&mut buffer))
+                .await
+                .is_err()
+        );
+        assert!(
+            timeout(Duration::from_millis(30), other.recv(&mut buffer))
+                .await
+                .is_err()
+        );
+        assert_eq!(tun.send_batch(&mixed[1..]).await.unwrap(), 1);
+        assert_eq!(other.recv(&mut buffer).await.unwrap(), 5);
+        assert_eq!(tun.send_batch(&mixed[2..]).await.unwrap(), 1);
+        assert_eq!(socket.recv(&mut buffer).await.unwrap(), 5);
     }
+    upstream::reject_invalid_kernel_headers().await;
 }
 
 async fn tcp_offload(tun: &Tun, local: IpAddr, remote: IpAddr) {
@@ -142,6 +169,7 @@ async fn tcp_offload(tun: &Tun, local: IpAddr, remote: IpAddr) {
     })
     .await
     .unwrap();
+    upstream::assert_checksums(&syn);
     let sequence = u32::from_be_bytes(syn[ip + 4..ip + 8].try_into().unwrap());
     let port = u16::from_be_bytes(syn[ip..ip + 2].try_into().unwrap());
     let reply = tcp_reply(
@@ -397,6 +425,12 @@ async fn owned_devices_ipv4_ipv6_packet_io() {
     })
     .await
     .expect("remaining owned interface was not removed on drop");
+
+    // The locked test:tun:linux runner selects this exact lifecycle test.
+    // Keep the offload regressions on that real isolated-kernel path too.
+    upstream::verify_codec();
+    verify_offload().await;
+    assert_eq!(interfaces(), initial);
 }
 
 fn interfaces() -> BTreeSet<String> {
@@ -487,6 +521,7 @@ async fn exchange(tun: &Tun, local: IpAddr, remote: IpAddr) {
                     == Some(payload.as_slice())
                 {
                     assert_eq!(len, header_len + payload.len());
+                    upstream::assert_checksums(&packet[..len]);
                     break;
                 }
             }
