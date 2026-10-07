@@ -125,7 +125,7 @@ WireGuard relay 解密 IP、routing 后再加密；Meshway relay 不解密业务
 
 ### 共同报告口径
 
-结果在执行工作树 `.meshway/perf/dataplane/<run>/`；共享测量锁在 Git 公共目录所在主工作区 `.meshway/perf/dataplane/measurement.lock`，其他 worktree 占用时轮询。测量前检查 `uptime`，宿主一分钟 load <4 才开始当前收尾对照，并保留各样本首尾 load；构建／全量检查与 Docker 测量分开，锁不保证宿主独占。
+结果在执行工作树 `.meshway/perf/dataplane/<run>/`；共享测量锁在 Git 公共目录所在主工作区 `.meshway/perf/dataplane/measurement.lock`，其他 worktree 占用时轮询。测量前检查 `uptime`，当前收尾对照优先选择宿主一分钟 load <4；若连续 >6 超过10分钟，可在 <8 时使用明确标注的共享负载例外，保存等待历史、准入门槛及各样本首尾 load。构建／全量检查与 Docker 测量分开，锁不保证宿主独占；测量中负载再次升高仍按真实值保留。
 
 | 文件／字段 | 契约 |
 | --- | --- |
@@ -195,22 +195,35 @@ OrbStack 同轮 raw 自身丢包27.39%，不能把全部 UDP 丢包归给转发�
 | 层／环境／路径 | TCP Mbps | UDP pps | UDP输入／成功数 TCP/UDP | 报告 |
 | --- | ---: | ---: | --- | --- |
 | L3 OrbStack 2 CPU direct | 1,693.69 | 141,833 | 2G，2/2 | `20261007t082302z-a2aff6a7` |
-| L3 OrbStack 2 CPU relay | 1,482.99 | 96,874* | 2G，2/1 | 同上 |
+| L3 OrbStack 2 CPU relay | 1,653.76 | 49,612 | 500M，2/2 | `20261007t204126z-cbe7469c`，inline／mimalloc |
 | L3 Planck 2 CPU direct | 2,292 | 199,927 | 2G，2/2 | `planck-20261007t070435z-a3f07ece` |
 | L3 Planck 2 CPU relay | 2,127 | 195,072 | 2G，2/2 | 同上 |
-| L4 OrbStack 2 CPU direct | 1,468.05 | 49,025 | 500M，2/2 | `20261007t112743z-6f3b2103` |
-| L4 OrbStack 2 CPU relay | 1,291.42* | 49,326 | 500M，1/2 | 同上，L3 relay为1,586.03 Mbps |
-| L4 Planck | 未测 | 未测 | 未测 | 不用L3推算 |
 
-*单次成功不构成两次重复验收。* P 两核报告10/12成功，relay与plain UDP各一次严格接收账本失败；Y报告23/24成功，relay TCP一次OOM。L3 direct在这些窗口达到1 Gbps／100k pps，但2G有丢包，不是无损容量。P的四核完整矩阵12/12成功，direct为1,675.20 Mbps／139,511 pps、relay为1,427.12／95,674；配额增大不等于专用核。
+P 两核报告10/12成功，relay与plain UDP各一次严格接收账本失败；历史relay为1,482.99 Mbps／96,874 pps（UDP仅一次成功）。direct在其窗口达到1 Gbps／100k pps，但2G有丢包，不是无损容量。P的四核完整矩阵12/12成功，direct为1,675.20 Mbps／139,511 pps、relay为1,427.12／95,674；配额增大不等于专用核。新relay使用500M输入，不能以49,612 pps解释为容量回退。
 
 Planck使用旧`5a30247d`及1 worker，L3 direct／relay RTT4.3／2.9 ms、重传786／322；P／Y默认inline在该主机未重验。不能将跨架构数字视为同版本比较。
 
+### L4 最终配对
+
+| 环境／路径 | TCP Mbps | UDP pps | UDP输入／成功数 TCP/UDP | 报告 |
+| --- | ---: | ---: | --- | --- |
+| OrbStack 2 CPU direct | 1,468.05 | 49,025 | 500M，2/2 | `20261007t112743z-6f3b2103`，历史Y |
+| OrbStack 2 CPU relay | **1,628.89** | 48,034 | 500M，2/2 | `20261007t204126z-cbe7469c`，inline／mimalloc |
+| Planck | 未测 | 未测 | 未测 | 不用L3推算 |
+
+最终relay报告使用源码`a549bdba`，固定binary `ff48e9332c727ab7be5dcea93dbb5646ff35c9122717e9a70d5a7521e310dd61`，源码digest首尾一致。命令为上方正式配对参数另加 **`--batch 32 --allocator mimalloc`**；其他参数不变。8/8成功，L4/L3 TCP中位数比 **0.985×**，逐重复配对为 **0.968×／1.002×**，均达到≥0.9目标。L3／L4 TCP cgroup CPU为234.60%／257.38%，全部TCP重传0；RTT分别17.43／22.91 ms和16.47／15.69 ms，仍不构成低延迟验收。UDP丢包分别4.71%／7.74%，不是无损容量。最高节点RSS为24.45／30.82 MiB，全部OOM事件为0。
+
+本工作包构建／检查退出后测量，所有样本使用共享锁。此前连续高load超过10分钟的等待证据使本轮可用<8例外；实际首尾一分钟load **3.92–5.37**，Manager两次TCP分别在<4的准入窗口开始。`results[].measurementGate` 保存门槛／连续高负载证据／等待历史，原始`hostUptimeInitial/Final`保存实际值；未获得独占CPU。
+
+指定默认batch `[1,32]`的完整system矩阵`20261007t200717z-b0529f91`为14/16，另有UDP账本不一致与TCP超时；其batch32 TCP四个样本均成功，L4/L3为**0.982×**。改动前同allocator的配对`20261007t194733z-3512cfe3`为**0.677×**（947.86／1400.59 Mbps），首尾load7.22–7.55；改后该组为6.70–7.07，不能将全部差值归于代码。mimalloc完整两batch矩阵仍出现严格UDP账本／readiness `Context`失败；最终8格报告是独立的batch32完整配对，未拼接或替换这些失败。
+
 ### Manager 队列归因
 
-Y 同轮batch1的500M L4/L3为**0.844×**（1,330.95／1,576.92 Mbps）；batch32缺完整成功配对。2G batch32为0.795×。**≥0.9×目标尚未通过完整验收。** profile128诊断 `20261007t105907z-45f2114a`→`20261007t113645z-ea3b934c` 中，R的选链→首次poll从208.35降至12.96 µs，release→credit从290.85降至120.64 µs，而接收批首→事件消费从169.38增至1,646.66 µs。Session全部内联完成，接纳→首poll约0.23 µs，不是逐批必经后台任务。
+Y的历史batch1 500M L4/L3为0.844×，2G batch32为0.795×。profile128诊断 `20261007t105907z-45f2114a`→`20261007t113645z-ea3b934c` 中，R的选链→首次poll从208.35降至12.96 µs，release→credit从290.85降至120.64 µs，而接收批首→事件消费从169.38增至1,646.66 µs；更深队列吸收突发也增加等待。Session接纳→首poll约0.23 µs，不是逐批必经后台任务。
 
-Y已按批发布、每批一次通知，保持未准入事件帧／capacity双限与独立控制槽；加大小包队列吸收突发也增加排队。后测R的763,629帧对应29,582次批发布、4,969次真实waker回调、63,537次poll；这些口径不同。队列满丢弃186→36、时间预算由丢弃变为保留后缀让出，TCP重传113→0；统计窗口不逐包配对。行为边界见[Manager控制预算](/v2/node/connectivity#udp-控制消息预算)。
+当前事件消费者直接移交就绪批前缀，并在已有两批积压时提前给消费者调度机会，不等到1024槽耗尽；原硬上限、FIFO、部分消费预约、控制优先、32-credit和AA查询节流均保留。L3/L4工具同时对齐正式daemon：新输入出队后直接进入32包／200 µs owner量子，省去中间额外yield；处理／输出后仍让出，暂停业务时控制事件不触发此捷径。**这项驱动对齐消除的是harness额外调度成本，不能全部宣传为daemon加速。**
+
+同为batch32、profile128、4+1秒quick、system allocator，且都已含批队列改动，移除中间yield前后为`20261007t195140z-b8ef50ff`→`20261007t195437z-a1d41cb4`：R接收批首→消费 **3671.20→33.40 µs**，输入→prepare **28.35→2.51 µs**，选链→首poll **19.31→6.97 µs**，release→credit **190.86→93.91 µs**。后测消费后占用为20,031次空、2,454次9–32、7次33–64，未观察到>64；真实waker回调3476、批发布22495、poll64306，不能互称。各墙钟含采样／排队且互相嵌套，不能加总为CPU。行为定义见[Manager控制预算](/v2/node/connectivity#udp-控制消息预算)。
 
 ### WireGuard 同环境参照
 
@@ -253,7 +266,7 @@ musl system工具的Manager／Secure OOM复现，节点RSS约495／501 MiB，其
 
 ## 已知限制
 
-- L4/L3 ≥0.9目标、满载低延迟和relay UDP100k pps尚无完整通过结论；500M输入不能证明更高容量。P/Y/Planck的OOM、严格UDP账本失败和readiness `Context`失败均保留；allocator长窗口不将历史失败改为成功。
+- L4/L3 ≥0.9已在上述batch32配对达到；两batch完整矩阵仍有严格UDP账本不一致、readiness `Context`及system TCP超时，根因未全部解决。满载低延迟和relay无损100k pps未验收，500M输入不能证明更高容量。P/Y/Planck的OOM证据保留，allocator长窗口不将历史失败改为成功。
 - quota不是绑核或独占；历史宿主load曾达8–17，VM uptime epoch变化也未隔离，不能把跨轮差值全部归于实现。当前表保留当时版本，最新x86／L5及全部承载／DNS组合需独立重验。
 - UDP namespace计数含iperf与warmup，不等于外层socket丢包；GRO counter也不一一对应内层包。P relay/plain外层socket drops为0时应用socket仍可溢出。CPU／吞吐／采样区间不同，不能直接相除作精确单包成本。
 - 动态ABI、连接池与全局相同排队预算、多流干扰、延迟／丢包／乱序／断连、排队取消／承载切换尚无完整L1性能对照。新增协议仍需原生同栈参照。
@@ -279,5 +292,7 @@ musl system工具的Manager／Secure OOM复现，节点RSS约495／501 MiB，其
 - 匿名驻留OOM：`20261007t114803z-ecc32829`、`20261007t115323z-c3a556d2`、`20261007t115938z-1ad9d6ec`；TUN复用未消除Manager OOM：`20261007t120135z-c468fa67`；mimalloc对照`20261007t115612z-a39f29af`；最终65秒UDP／TCP`20261007t120528z-4e6dbc7a`、`20261007t120850z-b929c046`；readiness失败`20261007t120831z-c24ecf26`；profile0统计关闭复验`20261007t121817z-371ba8a5`。
 - Planck旧后端：crypto `planck-20261007T051345Z-51ab43c8`、L0 `planck-20261007T050400Z-6ba8cc86`、2 CPU `planck-20261007t051440z-9e6608ff`（direct1967 Mbps）、4 CPU `planck-20261007t051807z-677968b0`（8/12含OOM）。新`5a30247d`：L0 `planck-20261007T070124Z-c7b84c03`、2 CPU `planck-20261007t070435z-a3f07ece`、4 CPU `planck-20261007t070907z-4a6a085e`（direct2339 Mbps）、WG校准`planck-20261007t071046z-078a1483`。AVX2／SHA-NI经断点核实，sha2升级在x86没有ARM旧soft路径那样的增益。
 - L5 `20261007T085207Z-main-4c4e231f`：TCP277／330 Mbps，旧v4同路径49 Mbps；早于P部署。原始私有分析另位于crypto assessment、`m-validation`／`o-validation`／`p-validation`目录，不以构建或测试数量替代业务验收。
+- PT基线`20261007t194733z-3512cfe3`（4/4 TCP）；quick队列／驱动对照`20261007t195014z-e08810ee`、`20261007t195140z-b8ef50ff`、`20261007t195349z-3bd58940`、`20261007t195409z-21d2ce07`、`20261007t195437z-a1d41cb4`；readiness失败`20261007t195216z-ee78d209`；中断的门槛包装器诊断`20261007t193208z-bc24b15d`仅保留单次TCP，不作矩阵。
+- PT默认两batch完整system矩阵`20261007t200717z-b0529f91`（14/16）；同参数加mimalloc `20261007t203245z-9d0dfd94`（15/16，batch32 TCP比1.0355）、`20261007t203839z-f49921ac`（14/16，readiness／UDP账本失败）；最终独立batch32 `20261007t204126z-cbe7469c`（8/8，0.985×）。同版本fmt／严格workspace Clippy、connectivity／dataplane／daemon测试（4线程）、脚本与文档检查通过；Linux双栈packet证据`20261007T195548Z-860ac766`。保留所有失败，不跨轮拼样本。
 
 </details>
