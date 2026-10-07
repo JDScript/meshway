@@ -196,6 +196,15 @@
   --globe-guide: oklch(0.35 0.01 270);
   --globe-graticule: oklch(0.6 0.01 270);
   --globe-star: oklch(0.4 0.01 270);
+  /* The globe's night side, the warm band where the sun rises or sets, the moon. */
+  --globe-night: oklch(0.88 0.012 265);
+  --globe-twilight: oklch(0.8 0.11 58);
+  --globe-moon: oklch(0.86 0.012 85);
+  /* The sky behind it, at the reader's time of day (state/sky.ts). */
+  --sky-day: oklch(0.985 0.012 230);
+  --sky-night: oklch(0.93 0.014 275);
+  --sky-dawn: oklch(0.9 0.06 15);
+  --sky-dusk: oklch(0.88 0.08 60);
   --link-confirmed: var(--signal);
   --link-pulse: var(--signal-glow);
   --link-one-sided: oklch(0.7 0.15 65);
@@ -263,6 +272,13 @@
   --globe-guide: oklch(0.85 0.008 270);
   --globe-graticule: oklch(0.5 0.01 270);
   --globe-star: oklch(0.92 0.01 270);
+  --globe-night: oklch(0.095 0.006 270);
+  --globe-twilight: oklch(0.42 0.1 42);
+  --globe-moon: oklch(0.9 0.012 85);
+  --sky-day: oklch(0.2 0.035 245);
+  --sky-night: oklch(0.06 0.004 270);
+  --sky-dawn: oklch(0.28 0.08 5);
+  --sky-dusk: oklch(0.3 0.09 45);
   --link-configured: oklch(0.55 0.01 270);
   --link-one-sided: oklch(0.8 0.15 75);
   --link-degraded: oklch(0.68 0.2 22);
@@ -327,28 +343,63 @@
    * globe itself). Light: soft daylight from two corners. Both carry a fine
    * film grain so large areas never read as flat fills.
    */
+  /*
+   * The sky: day or night and a dawn or dusk glow on the horizon at the
+   * reader's time of day (--sky-* on <html>, state/sky.ts), within the
+   * theme's colours; by day in a light theme and by night in a dark one
+   * when the time is not known.
+   */
   .globe-backdrop {
+    --sky: color-mix(
+      in oklab,
+      var(--sky-day) calc(var(--sky-daylight, 1) * 100%),
+      var(--sky-night)
+    );
+    --sky-glow-colour: color-mix(
+      in oklab,
+      var(--sky-dawn) calc(var(--sky-rising, 0) * 100%),
+      var(--sky-dusk)
+    );
     isolation: isolate;
     background:
+      radial-gradient(
+        120% 55% at 50% 108%,
+        color-mix(
+          in oklab,
+          var(--sky-glow-colour) calc(var(--sky-glow, 0) * 85%),
+          transparent
+        ),
+        transparent 75%
+      ),
       radial-gradient(
         52% 58% at 58% 46%,
         color-mix(in oklab, var(--globe-atmosphere) 26%, transparent),
         transparent 72%
       ),
-      radial-gradient(
-        90% 80% at 0% 0%,
-        oklch(0.995 0.004 250),
-        transparent 65%
-      ),
+      radial-gradient(90% 80% at 0% 0%, var(--sky), transparent 65%),
       radial-gradient(
         90% 80% at 100% 100%,
         oklch(0.955 0.012 75 / 0.65),
         transparent 60%
       ),
-      var(--background);
+      color-mix(in oklab, var(--sky) 35%, var(--background));
   }
   .dark .globe-backdrop {
+    --sky: color-mix(
+      in oklab,
+      var(--sky-day) calc(var(--sky-daylight, 0) * 100%),
+      var(--sky-night)
+    );
     background:
+      radial-gradient(
+        120% 55% at 50% 108%,
+        color-mix(
+          in oklab,
+          var(--sky-glow-colour) calc(var(--sky-glow, 0) * 90%),
+          transparent
+        ),
+        transparent 75%
+      ),
       radial-gradient(
         52% 58% at 58% 46%,
         color-mix(in oklab, var(--globe-atmosphere) 18%, transparent),
@@ -359,6 +410,7 @@
         transparent 40%,
         oklch(0.06 0.004 270) 100%
       ),
+      radial-gradient(110% 90% at 15% 0%, var(--sky), transparent 70%),
       var(--background);
   }
   .globe-backdrop::after {
@@ -899,4 +951,124 @@
 [data-slot="drawer-popup"].glass[data-nested-drawer-open]
   [data-slot="drawer-content"] {
   opacity: 1;
+}
+
+/*
+ * Theme shift (state/theme-shift.ts): a change of theme is a sunrise or a
+ * sunset. The new page's snapshot is revealed through a soft horizon that
+ * rises from the bottom (to light) or falls from the top (to dark); the
+ * band rides just inside it, warm dawn or dusk light.
+ */
+@property --horizon {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+:root {
+  --theme-shift-ms: 1600ms;
+  --ease-horizon: cubic-bezier(0.45, 0.05, 0.25, 1);
+}
+html[data-theme-shift]::view-transition-old(root),
+html[data-theme-shift]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+html[data-theme-shift]::view-transition-new(root) {
+  animation: horizon-pass var(--theme-shift-ms) var(--ease-horizon) both;
+}
+html[data-theme-shift="sunrise"]::view-transition-new(root) {
+  -webkit-mask-image: linear-gradient(
+    to top,
+    #000 calc(var(--horizon) - 16vh),
+    transparent calc(var(--horizon) + 16vh)
+  );
+  mask-image: linear-gradient(
+    to top,
+    #000 calc(var(--horizon) - 16vh),
+    transparent calc(var(--horizon) + 16vh)
+  );
+}
+html[data-theme-shift="sunset"]::view-transition-new(root) {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 calc(var(--horizon) - 16vh),
+    transparent calc(var(--horizon) + 16vh)
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(var(--horizon) - 16vh),
+    transparent calc(var(--horizon) + 16vh)
+  );
+}
+@keyframes horizon-pass {
+  from {
+    --horizon: -18vh;
+  }
+  to {
+    --horizon: 118vh;
+  }
+}
+.theme-shift-band {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 2147483647;
+  height: 44vh;
+  pointer-events: none;
+  opacity: 0;
+}
+.theme-shift-band[data-running] {
+  animation:
+    horizon-pass var(--theme-shift-ms) var(--ease-horizon) both,
+    band-glow var(--theme-shift-ms) ease-in-out both;
+}
+/* Its middle sits 12vh behind the edge, on the side already turned. */
+.theme-shift-band[data-shift="sunrise"] {
+  bottom: calc(var(--horizon) - 34vh);
+  background: radial-gradient(
+    80% 50% at 50% 50%,
+    oklch(0.86 0.1 50 / 0.55),
+    oklch(0.9 0.07 15 / 0.25) 45%,
+    transparent 72%
+  );
+}
+.theme-shift-band[data-shift="sunset"] {
+  top: calc(var(--horizon) - 34vh);
+  background: radial-gradient(
+    80% 50% at 50% 50%,
+    oklch(0.62 0.15 45 / 0.5),
+    oklch(0.42 0.12 330 / 0.3) 45%,
+    transparent 72%
+  );
+}
+@keyframes band-glow {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  18%,
+  82% {
+    opacity: 1;
+  }
+}
+
+/* The theme button's sun and moon: the one showing stands on its horizon, the other waits below it. */
+.theme-icon__sun,
+.theme-icon__moon {
+  transform-box: view-box;
+  transform-origin: 12px 12px;
+  transition:
+    transform 700ms var(--ease-horizon),
+    opacity 500ms ease;
+}
+.theme-icon[data-dark="true"] .theme-icon__sun,
+.theme-icon[data-dark="false"] .theme-icon__moon {
+  transform: translateY(15px) rotate(30deg);
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-icon__sun,
+  .theme-icon__moon {
+    transition: none;
+  }
 }

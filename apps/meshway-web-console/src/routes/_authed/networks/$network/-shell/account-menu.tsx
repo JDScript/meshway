@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { useParams } from "@tanstack/react-router"
-import { LogOutIcon, UserRoundIcon } from "lucide-react"
+import { LogOutIcon, SunMoonIcon, UserRoundIcon } from "lucide-react"
 
 import { sessionQuery } from "@/api/queries/auth"
 import { InitialAvatar } from "@/components/chrome/avatar"
+import { ThemeChoice } from "@/components/chrome/preferences"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -12,6 +13,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useSignOut } from "@/hooks/use-sign-out"
@@ -49,6 +53,15 @@ export function AccountMenu() {
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         {networkId ? <AccountItem networkId={networkId} /> : null}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <SunMoonIcon />
+            {m.theme_appearance()}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="min-w-48">
+            <ThemeChoice />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         <DropdownMenuItem onClick={() => void signOut()}>
           <LogOutIcon />
           {m.sign_out()}

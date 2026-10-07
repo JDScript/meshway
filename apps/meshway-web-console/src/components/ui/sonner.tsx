@@ -7,16 +7,16 @@ import {
 } from "lucide-react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
-import { useTheme } from "@/state/preferences"
+import { useDark } from "@/state/preferences"
 
 // Adapted from the shadcn registry `sonner` (which assumes next-themes) to the
 // console's own theme preference and the glass surface.
 const Toaster = (props: ToasterProps) => {
-  const theme = useTheme()
+  const dark = useDark()
 
   return (
     <Sonner
-      theme={theme}
+      theme={dark ? "dark" : "light"}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4 text-success" />,
