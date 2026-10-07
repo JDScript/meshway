@@ -48,6 +48,11 @@ async fn handle(
         handle_ping(stream, request, pings, stop).await;
         return;
     }
+    let deadline = if matches!(request.command, Command::RotateKey { .. }) {
+        tokio::time::Instant::now() + Duration::from_secs(65)
+    } else {
+        deadline
+    };
     let _ = tokio::time::timeout_at(deadline, one_shot(&mut stream, commands, view, request)).await;
 }
 
@@ -102,17 +107,24 @@ async fn one_shot(
     } else {
         let action = match request.command {
             Command::Status => None,
-            Command::Up { expected_revision } => Some((Action::Up, expected_revision)),
-            Command::Down { expected_revision } => Some((Action::Down, expected_revision)),
+            Command::Up {
+                expected_revision,
+                enrollment_key,
+            } => Some((Action::Up, expected_revision, enrollment_key)),
+            Command::Down { expected_revision } => Some((Action::Down, expected_revision, None)),
+            Command::RotateKey { expected_revision } => {
+                Some((Action::RotateKey, expected_revision, None))
+            }
             Command::Ping { .. } => return,
         };
-        if let Some((action, expected)) = action {
+        if let Some((action, expected, enrollment_key)) = action {
             let (reply, result) = oneshot::channel();
             match commands.try_send(Mutation {
                 action,
                 expected,
                 id: request.request_id,
                 reply,
+                enrollment_key,
             }) {
                 Ok(()) => result.await.unwrap_or(Err(ErrorCode::Stopping)),
                 Err(mpsc::error::TrySendError::Full(_)) => Err(ErrorCode::Busy),
@@ -123,7 +135,7 @@ async fn one_shot(
         }
     };
     let response = Response {
-        version: VERSION,
+        version: request.version,
         request_id: request.request_id,
         result: match result {
             Ok(()) => ResultBody::Status {

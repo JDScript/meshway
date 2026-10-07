@@ -6,6 +6,12 @@ use meshway_ipc::{DataPlane, NetworkMode, Phase, Problem, Status};
 use meshway_model::Version;
 use tokio::sync::watch;
 
+#[derive(Clone, Copy)]
+pub(super) struct RotationOutcome {
+    pub id: meshway_model::RequestId,
+    pub result: Result<(), meshway_ipc::ErrorCode>,
+}
+
 #[derive(Clone)]
 pub(super) struct Report {
     pub revision: Version,
@@ -15,6 +21,7 @@ pub(super) struct Report {
     pub problem: Option<Problem>,
     pub retry_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
+    pub rotation: Option<RotationOutcome>,
 }
 impl Report {
     pub fn initial(revision: Version) -> Self {
@@ -26,6 +33,7 @@ impl Report {
             problem: None,
             retry_at: None,
             observed_at: Utc::now(),
+            rotation: None,
         }
     }
 }
@@ -36,6 +44,7 @@ pub(crate) struct View {
     pub(super) server: String,
     pub(super) network_mode: NetworkMode,
     pub(super) network: watch::Receiver<super::network::Report>,
+    pub(super) events: watch::Receiver<super::control::events::EventStatus>,
 }
 impl View {
     pub fn status(&self) -> Status {
@@ -45,6 +54,7 @@ impl View {
         let control = report.control.as_ref().map(StatusSnapshot::status);
         let current = report.revision == desired.revision;
         let network = self.network.borrow().clone();
+        let events = self.events.borrow().clone();
         let network_bound = control
             .as_ref()
             .is_some_and(|control| network.bound_to(control));
@@ -143,6 +153,12 @@ impl View {
                 && desired.up
                 && !desired.shutdown
                 && control.as_ref().is_some_and(|c| c.authenticated),
+            event_stream: if desired.up && !desired.shutdown {
+                events.state
+            } else {
+                meshway_ipc::EventStreamState::Disconnected
+            },
+            last_event_at: events.last_event_at,
             instance: if current && desired.up && !desired.shutdown {
                 control.as_ref().and_then(|c| c.instance.clone())
             } else {

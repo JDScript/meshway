@@ -51,14 +51,11 @@ pub async fn run(
     let socket = Socket::bind(Arc::clone(&store.directory), store.record.socket).await?;
     store.socket(socket.identity())?;
     let settings = Arc::new(settings);
-    let initial = Desired {
-        revision: store.record.revision,
-        up: store.record.desired_up,
-        shutdown: false,
-        retry_enrollment: false,
-    };
+    let initial = store.record.desired(false);
     let (desired, desired_rx) = watch::channel(initial);
     let (reported, report_rx) = watch::channel(Report::initial(store.record.revision));
+    let mut completions = report_rx.clone();
+    let (event_status, event_rx) = watch::channel(control::events::EventStatus::default());
     let (network_reported, network_report) = watch::channel(network::Report::stopped());
     let view = View {
         desired: desired_rx.clone(),
@@ -66,6 +63,7 @@ pub async fn run(
         server: settings.server.clone(),
         network_mode: settings.network_mode,
         network: network_report,
+        events: event_rx,
     };
     let (commands, mut received) = mpsc::channel::<Mutation>(16);
     let (pings, mut ping_requests) = mpsc::channel::<PingRequest>(8);
@@ -78,6 +76,7 @@ pub async fn run(
         store.directory.clone(),
         network_reported,
         control_ping_requests,
+        event_status,
     ));
     let mut listener = tokio::spawn(ipc::serve(
         socket,
@@ -90,6 +89,7 @@ pub async fn run(
     let mut listener_done = false;
     let mut control_done = false;
     let mut failure = None;
+    let mut rotations = Vec::new();
     tracing::info!(socket = %settings.data_dir.join("control.sock").display(), "Local IPC ready");
     if writeln!(
         std::io::stdout().lock(),
@@ -114,8 +114,16 @@ pub async fn run(
             },
             command = received.recv() => {
                 let Some(command) = command else { break; };
-                if apply(&mut store, &desired, &view, command).await.is_err() {
+                if apply(&mut store, &desired, &view, command, &mut rotations).await.is_err() {
                     failure = Some("Node intent persistence failed.");
+                }
+            },
+            updated = completions.changed() => {
+                if updated.is_ok() {
+                    let report = completions.borrow_and_update().clone();
+                    if complete(&mut store, &desired, &report, &mut rotations).await.is_err() {
+                        failure = Some("Node operation receipt persistence failed.");
+                    }
                 }
             },
             ping = ping_requests.recv() => {
@@ -156,11 +164,17 @@ pub async fn run(
     while let Some(command) = received.recv().await {
         if failure.is_some() {
             let _ = command.reply.send(Err(ErrorCode::Storage));
-        } else if apply(&mut store, &desired, &view, command).await.is_err() {
+        } else if apply(&mut store, &desired, &view, command, &mut rotations)
+            .await
+            .is_err()
+        {
             failure = Some("Node intent persistence failed.");
         }
     }
     desired.send_modify(|plan| plan.shutdown = true);
+    for (_, reply) in rotations.drain(..) {
+        let _ = reply.send(Err(ErrorCode::Stopping));
+    }
     stop_ipc.send_replace(true);
     while ping_forwarders.join_next().await.is_some() {}
     if !listener_done {
@@ -194,9 +208,48 @@ async fn apply(
     desired: &watch::Sender<Desired>,
     view: &View,
     command: Mutation,
+    rotations: &mut RotationWaiters,
 ) -> Result<(), ()> {
+    if command.action == Action::RotateKey && rotations.len() >= 16 {
+        let _ = command.reply.send(Err(ErrorCode::Busy));
+        return Ok(());
+    }
+    let has_key = command.enrollment_key.is_some();
     let blocked = matches!(view.status().phase, Phase::Blocked);
-    let mutation = store.mutation(command.action, command.id, command.expected, blocked);
+    let mutation = store.mutation(
+        command.action,
+        command.id,
+        command.expected,
+        blocked,
+        command.enrollment_key,
+    );
+    if command.action == Action::RotateKey && mutation.as_ref().is_ok_and(|record| record.is_some())
+    {
+        let state = view
+            .report
+            .borrow()
+            .control
+            .as_ref()
+            .map(meshway_control::StatusSnapshot::status);
+        let rejected = if state.as_ref().is_some_and(|state| state.reload_required) {
+            Some(ErrorCode::Storage)
+        } else if state.as_ref().is_none_or(|state| state.binding.is_none()) {
+            Some(ErrorCode::NotReady)
+        } else {
+            None
+        };
+        if let Some(code) = rejected {
+            let _ = command.reply.send(Err(code));
+            return Ok(());
+        }
+    }
+    if has_key
+        && mutation.as_ref().is_ok_and(|record| record.is_some())
+        && (view.report.borrow().control.is_none() || view.status().identity.is_some())
+    {
+        let _ = command.reply.send(Err(ErrorCode::NotReady));
+        return Ok(());
+    }
     let result = match mutation {
         Err(code) => Err(code),
         Ok(None) => Ok(()),
@@ -205,12 +258,7 @@ async fn apply(
                 let _ = command.reply.send(Err(ErrorCode::Storage));
                 return Err(());
             }
-            desired.send_replace(Desired {
-                revision: store.record.revision,
-                up: store.record.desired_up,
-                shutdown: false,
-                retry_enrollment: command.action == Action::Up,
-            });
+            desired.send_replace(store.record.desired(command.action == Action::Up));
             tracing::info!(
                 request_id = %command.id,
                 revision = store.record.revision.get(),
@@ -223,6 +271,68 @@ async fn apply(
     if let Err(code) = result {
         tracing::warn!(request_id = %command.id, error = ?code, "Node intent rejected");
     }
+    if result.is_ok() && command.action == Action::RotateKey {
+        if let Some(rotation) = &store.record.rotation
+            && rotation.id == command.id
+        {
+            if let Some(result) = rotation.result {
+                let _ = command.reply.send(result);
+            } else {
+                rotations.push((command.id, command.reply));
+            }
+            return Ok(());
+        }
+        let _ = command.reply.send(Err(ErrorCode::Conflict));
+        return Ok(());
+    }
     let _ = command.reply.send(result);
+    Ok(())
+}
+
+type RotationWaiters = Vec<(
+    meshway_model::RequestId,
+    tokio::sync::oneshot::Sender<Result<(), ErrorCode>>,
+)>;
+
+async fn complete(
+    store: &mut Store,
+    desired: &watch::Sender<Desired>,
+    report: &Report,
+    waiters: &mut RotationWaiters,
+) -> Result<(), ()> {
+    if let Some(outcome) = report.rotation
+        && store
+            .record
+            .rotation
+            .as_ref()
+            .is_some_and(|rotation| rotation.id == outcome.id && rotation.result.is_none())
+    {
+        let mut record = store.record.clone();
+        record.rotation.as_mut().expect("pending rotation").result = Some(outcome.result);
+        store.commit(record).await.map_err(|_| ())?;
+        desired.send_replace(store.record.desired(false));
+        let mut pending = Vec::new();
+        for (id, reply) in waiters.drain(..) {
+            if id == outcome.id {
+                let _ = reply.send(outcome.result);
+            } else {
+                pending.push((id, reply));
+            }
+        }
+        *waiters = pending;
+    }
+    if report.revision == store.record.revision
+        && report.phase == Phase::ControlReady
+        && report
+            .control
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.status().binding.is_some())
+        && store.record.enrollment_key.is_some()
+    {
+        let mut record = store.record.clone();
+        record.enrollment_key = None;
+        store.commit(record).await.map_err(|_| ())?;
+        desired.send_modify(|plan| plan.enrollment_key = None);
+    }
     Ok(())
 }

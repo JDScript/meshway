@@ -41,6 +41,7 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     assert!(initial.applied.is_none() && !initial.authenticated);
     let up_id = request_id();
     let up = Command::Up {
+        enrollment_key: None,
         expected_revision: initial.revision,
     };
     call(&daemon.socket, up.clone(), up_id).await.unwrap();
@@ -238,6 +239,7 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     // The instance release is best-effort: the authenticated Server can go
     // offline before daemon shutdown without turning a clean join into failure.
     let up = Command::Up {
+        enrollment_key: None,
         expected_revision: down.revision,
     };
     call(&daemon.socket, up, request_id()).await.unwrap();
@@ -323,6 +325,7 @@ async fn status_and_down_remain_responsive_while_server_http_is_stalled() {
     call(
         &daemon.socket,
         Command::Up {
+            enrollment_key: None,
             expected_revision: initial.revision,
         },
         request_id(),

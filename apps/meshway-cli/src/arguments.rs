@@ -23,7 +23,13 @@ pub(crate) enum Command {
         count: u16,
     },
     /// Request online control; prints the browser URL when approval is needed.
-    Up,
+    Up {
+        /// One-use enrollment key, @file, or - / @- for stdin. Prefer file/stdin.
+        #[arg(long, value_name = "KEY|@FILE|-", allow_hyphen_values = true)]
+        enrollment_key: Option<String>,
+    },
+    /// Atomically rotate both identity keys through the daemon's durable owner.
+    RotateKey,
     /// Persist offline intent and stop the active Node instance.
     Down,
     /// Read actual daemon, identity, lease and saved configuration state.

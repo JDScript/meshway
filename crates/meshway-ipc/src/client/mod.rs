@@ -52,8 +52,13 @@ impl Client {
     /// Submit once. A dropped waiter or a timeout does not cancel daemon intent;
     /// callers must inspect current status before deciding whether to retry.
     pub async fn call(&self, command: Command) -> Result<Status, ClientError> {
+        let timeout = if matches!(command, Command::RotateKey { .. }) {
+            Duration::from_secs(70)
+        } else {
+            REQUEST_TIMEOUT
+        };
         let request = request(command)?;
-        tokio::time::timeout(REQUEST_TIMEOUT, self.exchange(&request))
+        tokio::time::timeout(timeout, self.exchange(&request))
             .await
             .map_err(|_| ClientError::Timeout)?
     }
@@ -129,8 +134,22 @@ async fn read_response(
     request_id: RequestId,
 ) -> Result<Response, ClientError> {
     let response: Response = crate::read(stream).await.map_err(ClientError::Read)?;
-    if response.version != VERSION || response.request_id != request_id {
+    if response.request_id != request_id {
         return Err(ClientError::Response);
+    }
+    if response.version != VERSION {
+        return Err(
+            if matches!(
+                response.result,
+                ResultBody::Error {
+                    code: ErrorCode::Version
+                }
+            ) {
+                ClientError::Remote(ErrorCode::Version)
+            } else {
+                ClientError::Response
+            },
+        );
     }
     Ok(response)
 }

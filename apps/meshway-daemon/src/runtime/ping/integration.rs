@@ -315,6 +315,7 @@ impl Fixture {
         let (_report, report) = watch::channel(report);
         let (_network, network) = watch::channel(network);
         let view = status::View {
+            events: watch::channel(super::super::control::events::EventStatus::default()).1,
             desired,
             report,
             network,

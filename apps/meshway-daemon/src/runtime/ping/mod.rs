@@ -104,6 +104,8 @@ pub(super) enum Readiness {
 #[cfg(test)]
 pub(in crate::runtime) fn test_intent() -> (watch::Sender<super::intent::Desired>, Intent) {
     let (desired, receiver) = watch::channel(super::intent::Desired {
+        enrollment_key: None,
+        rotation: None,
         revision: meshway_model::Version::MIN,
         up: true,
         shutdown: false,

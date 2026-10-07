@@ -17,7 +17,21 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
             if status.desired_up { "up" } else { "down" },
             status.authenticated
         )?;
+        writeln!(
+            output,
+            "Event stream: {:?}  last event: {}",
+            status.event_stream,
+            status
+                .last_event_at
+                .map(|time| time.to_rfc3339())
+                .unwrap_or_else(|| "none".into())
+        )?;
         if let Some(identity) = &status.identity {
+            writeln!(
+                output,
+                "Control key generation: {}",
+                identity.keys.control.generation.get()
+            )?;
             writeln!(
                 output,
                 "Network: {}  Node: {}",

@@ -55,7 +55,23 @@ pub(super) async fn cycle(
     report: bool,
     reset: &mut bool,
     mut network: Option<&mut network::Handle>,
+    enrollment_key: Option<&meshway_ipc::EnrollmentKey>,
 ) -> Result<Cycle, Failure> {
+    if control.status().binding.is_none()
+        && let Some(key) = enrollment_key
+    {
+        let hostname = control
+            .pending_hostname()
+            .unwrap_or(&settings.hostname)
+            .to_owned();
+        control
+            .enroll_with_key(
+                &hostname,
+                meshway_protocol::WireSecret::new(key.expose().to_owned()),
+            )
+            .await
+            .map_err(|e| failure::at("enroll_with_key", e, true))?;
+    }
     if control.key_enrollment_pending() {
         control
             .resume_key_enrollment()

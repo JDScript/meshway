@@ -10,7 +10,7 @@ async fn next(stream: &mut meshway_control::NodeEvents) -> meshway_control::Even
 }
 
 #[tokio::test]
-async fn real_watch_ready_and_configuration_change_request_the_existing_refresh() {
+async fn real_watch_ignores_unchanged_projection_and_refreshes_configuration_change() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let mut control = refresh::control(&server, &owner, &server.origin, "events").await;

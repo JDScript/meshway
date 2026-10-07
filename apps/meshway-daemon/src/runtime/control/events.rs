@@ -1,7 +1,15 @@
 //! Host-owned single watch task, bounded delivery and independent reconnect delay.
 use meshway_control::{Control, EventNotice};
+use meshway_ipc::EventStreamState;
 use std::time::Duration;
+use tokio::sync::watch;
 use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
+
+#[derive(Clone, Default)]
+pub(in crate::runtime) struct EventStatus {
+    pub state: EventStreamState,
+    pub last_event_at: Option<chrono::DateTime<chrono::Utc>>,
+}
 
 pub(super) struct Events {
     task: Option<JoinHandle<bool>>,
@@ -9,10 +17,17 @@ pub(super) struct Events {
     sender: mpsc::Sender<EventNotice>,
     retry_at: Instant,
     backoff: u64,
+    status: watch::Sender<EventStatus>,
 }
 
 impl Default for Events {
     fn default() -> Self {
+        Self::new(watch::channel(EventStatus::default()).0)
+    }
+}
+
+impl Events {
+    pub fn new(status: watch::Sender<EventStatus>) -> Self {
         let (sender, receiver) = mpsc::channel(1);
         Self {
             task: None,
@@ -20,13 +35,14 @@ impl Default for Events {
             receiver,
             retry_at: Instant::now(),
             backoff: 1,
+            status,
         }
     }
-}
 
-impl Events {
     pub async fn advance(&mut self, control: &Control) {
         if self.task.as_ref().is_some_and(JoinHandle::is_finished) {
+            self.status
+                .send_modify(|value| value.state = EventStreamState::Reconnecting);
             if self
                 .task
                 .take()
@@ -44,9 +60,24 @@ impl Events {
             && let Ok(mut stream) = control.watch_node()
         {
             let sender = self.sender.clone();
+            let status = self.status.clone();
+            status.send_modify(|value| value.state = EventStreamState::Reconnecting);
             self.task = Some(tokio::spawn(async move {
                 let started = Instant::now();
+                match stream.connect().await {
+                    Ok(true) => {
+                        status.send_modify(|value| value.state = EventStreamState::Connected)
+                    }
+                    Ok(false) => return false,
+                    Err(notice) => {
+                        let _ = sender.send(*notice).await;
+                        return false;
+                    }
+                }
                 while let Some(notice) = stream.next().await {
+                    if notice.received_event() {
+                        status.send_modify(|value| value.last_event_at = Some(chrono::Utc::now()));
+                    }
                     if notice.refresh_requested()
                         || notice.is_terminal()
                         || matches!(notice.kind(), "sync.reset" | "config.snapshot")
@@ -58,6 +89,7 @@ impl Events {
                         );
                     }
                     if notice.is_terminal() {
+                        status.send_modify(|value| value.state = EventStreamState::Reconnecting);
                         let _ = sender.send(notice).await;
                         break;
                     }
@@ -68,6 +100,7 @@ impl Events {
                         }
                     }
                 }
+                status.send_modify(|value| value.state = EventStreamState::Reconnecting);
                 started.elapsed() >= Duration::from_secs(10)
             }));
         }
@@ -85,6 +118,8 @@ impl Events {
         while self.receiver.try_recv().is_ok() {}
         self.retry_at = Instant::now();
         self.backoff = 1;
+        self.status
+            .send_modify(|value| value.state = EventStreamState::Disconnected);
     }
 }
 

@@ -32,6 +32,7 @@ async fn blocked_down_retries_real_dns_reservation_cleanup_without_going_online(
     call(
         &daemon.socket,
         Command::Up {
+            enrollment_key: None,
             expected_revision: initial.revision,
         },
         request_id(),

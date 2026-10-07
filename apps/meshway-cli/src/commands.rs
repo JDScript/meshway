@@ -23,11 +23,16 @@ pub(crate) enum Error {
     PingUnsuccessful,
     #[error("Ping failed: {0:?}.")]
     PingFailed(meshway_ipc::PingError),
+    #[error(
+        "Cannot read enrollment key input; use a valid key, readable @file, or piped stdin (-)."
+    )]
+    EnrollmentKeyInput,
 }
 
 pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
     let command = match arguments.command {
-        CliCommand::Up => "up",
+        CliCommand::Up { .. } => "up",
+        CliCommand::RotateKey => "rotate-key",
         CliCommand::Down => "down",
         CliCommand::Status { .. } => "status",
         CliCommand::Ping { .. } => "ping",
@@ -60,6 +65,15 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
     }
     let mut status = client.call(Command::Status).await?;
     match arguments.command {
+        CliCommand::RotateKey => {
+            status = client
+                .call(Command::RotateKey {
+                    expected_revision: status.revision,
+                })
+                .await?;
+            display(&status, arguments.json)?;
+            Ok(())
+        }
         CliCommand::Ping { .. } => {
             unreachable!("ping is handled without reading or mutating Node intent")
         }
@@ -71,11 +85,18 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
             tokio::time::sleep(Duration::from_secs(1)).await;
             status = client.call(Command::Status).await?;
         },
-        CliCommand::Up | CliCommand::Down => {
-            let up = matches!(arguments.command, CliCommand::Up);
+        CliCommand::Up { .. } | CliCommand::Down => {
+            let up = matches!(arguments.command, CliCommand::Up { .. });
+            let enrollment_key = match arguments.command {
+                CliCommand::Up {
+                    enrollment_key: Some(value),
+                } => Some(enrollment_key_input(value).await?),
+                _ => None,
+            };
             let command = if up {
                 Command::Up {
                     expected_revision: status.revision,
+                    enrollment_key,
                 }
             } else {
                 Command::Down {
@@ -108,4 +129,49 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
             Ok(())
         }
     }
+}
+
+async fn enrollment_key_input(value: String) -> Result<meshway_ipc::EnrollmentKey, Error> {
+    use std::io::Read;
+    let mut input = String::new();
+    if value == "-" || value == "@-" {
+        use std::os::fd::AsFd;
+        let file = std::fs::File::from(
+            std::io::stdin()
+                .as_fd()
+                .try_clone_to_owned()
+                .map_err(|_| Error::EnrollmentKeyInput)?,
+        );
+        if file
+            .metadata()
+            .map_err(|_| Error::EnrollmentKeyInput)?
+            .is_file()
+        {
+            file.take(4097)
+                .read_to_string(&mut input)
+                .map_err(|_| Error::EnrollmentKeyInput)?;
+        } else {
+            // Tokio's audited pipe adapter sets nonblocking mode. No detached
+            // blocking stdin worker can hold up Ctrl-C or runtime shutdown.
+            use tokio::io::AsyncReadExt;
+            tokio::net::unix::pipe::Receiver::from_file(file)
+                .map_err(|_| Error::EnrollmentKeyInput)?
+                .take(4097)
+                .read_to_string(&mut input)
+                .await
+                .map_err(|_| Error::EnrollmentKeyInput)?;
+        }
+    } else if let Some(path) = value.strip_prefix('@') {
+        std::fs::File::open(path)
+            .map_err(|_| Error::EnrollmentKeyInput)?
+            .take(4097)
+            .read_to_string(&mut input)
+            .map_err(|_| Error::EnrollmentKeyInput)?;
+    } else {
+        input = value;
+    }
+    if input.len() > 4096 {
+        return Err(Error::EnrollmentKeyInput);
+    }
+    meshway_ipc::EnrollmentKey::new(input.trim().to_owned()).map_err(|_| Error::EnrollmentKeyInput)
 }

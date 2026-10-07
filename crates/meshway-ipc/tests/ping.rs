@@ -103,6 +103,7 @@ fn nested_ping_payloads_are_closed_typed_objects() {
 fn status() -> Value {
     json!({
         "processId":1,"revision":1,"desiredUp":false,"phase":"down","server":"https://server.test",
+        "eventStream":"disconnected","lastEventAt":null,
         "observedAt":"2026-10-05T00:00:00Z","enrollmentRequestId":null,"enrollmentUrl":null,
         "identity":null,"authenticated":false,"instance":null,"saved":null,"applied":null,
         "dataPlane":"stopped","networkMode":"tun","lastError":null,"retryAt":null
@@ -126,6 +127,8 @@ async fn status_stays_object_only_through_tagged_buffering_and_nullable_fields_a
         null,
         null,
         false,
+        "disconnected",
+        null,
         null,
         null,
         null,
@@ -150,6 +153,8 @@ async fn status_stays_object_only_through_tagged_buffering_and_nullable_fields_a
         "applied",
         "lastError",
         "retryAt",
+        "eventStream",
+        "lastEventAt",
     ] {
         let mut missing = good.clone();
         missing["result"]["status"]
@@ -166,6 +171,7 @@ async fn status_stays_object_only_through_tagged_buffering_and_nullable_fields_a
         ("dataPlane", json!({"stopped":null})),
         ("networkMode", json!({"tun":null})),
         ("lastError", json!({"network":null})),
+        ("eventStream", json!("unknown")),
     ] {
         let mut malformed = good.clone();
         malformed["result"]["status"][field] = invalid;

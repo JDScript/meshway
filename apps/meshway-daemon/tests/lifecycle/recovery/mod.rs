@@ -28,6 +28,7 @@ impl Fixture {
         support::call(
             &daemon.socket,
             Command::Up {
+                enrollment_key: None,
                 expected_revision: initial.revision,
             },
             request_id(),

@@ -1,8 +1,10 @@
-//! Local control messages. These carry public status, never Node credentials.
+//! Local control messages. Responses carry public status; Up may carry a
+//! one-use admission secret over the authorized private socket.
 #![forbid(unsafe_code)]
 #[cfg(unix)]
 mod client;
 mod codec;
+mod secret;
 use chrono::{DateTime, Utc};
 #[cfg(unix)]
 pub use client::{Client, ClientError, PingStream};
@@ -19,10 +21,11 @@ pub use meshway_protocol::NodeObservationTarget as PingTarget;
 use meshway_protocol::{
     EnrollmentResponse, InstanceLease, NodeObservationTarget, NodeObservationTargetView,
 };
+pub use secret::EnrollmentKey;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-pub const VERSION: u16 = 3;
+pub const VERSION: u16 = 4;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -36,6 +39,12 @@ meshway_serde::tagged! {
 pub enum Command {
     Status,
     Up {
+        #[serde(rename = "expectedRevision")]
+        expected_revision: Version,
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "enrollmentKey")]
+        enrollment_key: Option<EnrollmentKey>,
+    },
+    RotateKey {
         #[serde(rename = "expectedRevision")]
         expected_revision: Version,
     },
@@ -125,6 +134,28 @@ pub enum ErrorCode {
     Stopping,
     #[error("Daemon could not commit its private state.")]
     Storage,
+    #[error("Node identity is not ready for this operation.")]
+    NotReady,
+    #[error("An earlier identity operation is awaiting recovery.")]
+    Pending,
+    #[error("Server could not be reached; inspect identity status before retrying.")]
+    Network,
+    #[error("Server temporarily rejected the identity operation.")]
+    ServerBusy,
+    #[error("Server rejected the identity credentials.")]
+    Credentials,
+    #[error("The identity response did not match the expected binding.")]
+    Contract,
+}
+}
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EventStreamState {
+    Connected,
+    Reconnecting,
+    #[default]
+    Disconnected,
 }
 }
 meshway_serde::string_enum! {
@@ -214,6 +245,9 @@ meshway_serde::object! { #[derive(Clone, Debug)] pub struct Status {
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
     pub identity: Option<EnrollmentResponse> [required = true],
     pub authenticated: bool,
+    pub event_stream: EventStreamState,
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub last_event_at: Option<DateTime<Utc>> [required = true],
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
     pub instance: Option<InstanceLease> [required = true],
     #[serde(deserialize_with = "meshway_serde::required_nullable")]

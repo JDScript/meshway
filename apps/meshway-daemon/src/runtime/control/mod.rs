@@ -1,6 +1,6 @@
 //! Drive the control owner with bounded retries and cancellable desired-state waits.
 mod cycle;
-mod events;
+pub(super) mod events;
 mod failure;
 mod observations;
 mod scheduling;
@@ -57,6 +57,7 @@ fn publish(
             .and_then(|d| chrono::Duration::from_std(d).ok())
             .map(|d| chrono::Utc::now() + d),
         observed_at: chrono::Utc::now(),
+        rotation: None,
     });
 }
 
@@ -97,6 +98,7 @@ pub(super) async fn run(
     directory: Arc<meshway_private_storage::Directory>,
     network_reported: watch::Sender<network::Report>,
     mut pings: tokio::sync::mpsc::Receiver<super::PingSession>,
+    event_status: watch::Sender<events::EventStatus>,
 ) -> Result<(), &'static str> {
     let mut control: Option<Control> = None;
     let mut network: Option<network::Handle> = None;
@@ -109,7 +111,7 @@ pub(super) async fn run(
     let mut shutdown_failure = None;
     let mut pending_failure = None;
     let mut observations = observations::Subscriptions::default();
-    let mut events = events::Events::default();
+    let mut events = events::Events::new(event_status);
     loop {
         if plan.shutdown || desired.has_changed().is_err() {
             break;
@@ -202,7 +204,49 @@ pub(super) async fn run(
             }
         }
         let driver = control.as_mut().expect("control opened above");
-        if !plan.up {
+        if let Some(id) = plan.rotation {
+            events.stop().await;
+            observations.stop();
+            stop(driver, false).await;
+            if let Some(network) = &mut network {
+                let _ = network.stop(false).await;
+            }
+            let result = driver
+                .rotate_keys_with_request(id)
+                .await
+                .map(|_| ())
+                .map_err(|error| {
+                    let local = match &error {
+                        Error::Pending => Some(meshway_ipc::ErrorCode::Pending),
+                        Error::Lifecycle => Some(meshway_ipc::ErrorCode::NotReady),
+                        _ => None,
+                    };
+                    let problem = failure::at("rotate_keys", error, true).problem;
+                    local.unwrap_or(match problem {
+                        Problem::Network => meshway_ipc::ErrorCode::Network,
+                        Problem::ServerBusy => meshway_ipc::ErrorCode::ServerBusy,
+                        Problem::Credentials => meshway_ipc::ErrorCode::Credentials,
+                        Problem::Storage => meshway_ipc::ErrorCode::Storage,
+                        Problem::Clock | Problem::Apply => meshway_ipc::ErrorCode::NotReady,
+                        _ => meshway_ipc::ErrorCode::Contract,
+                    })
+                });
+            publish(
+                &reported,
+                &plan,
+                Some(driver),
+                Phase::Synchronizing,
+                None,
+                None,
+                None,
+            );
+            reported.send_modify(|report| {
+                report.rotation = Some(super::status::RotationOutcome { id, result })
+            });
+            let _ = desired
+                .wait_for(|next| next.shutdown || next.rotation != Some(id))
+                .await;
+        } else if !plan.up {
             stop(driver, true).await;
             let cleanup = match &mut network {
                 Some(network) => network.stop(true).await,
@@ -259,6 +303,7 @@ pub(super) async fn run(
                     last_report.is_none_or(|t| t.elapsed() >= REPORT),
                     &mut reset,
                     network.as_mut(),
+                    plan.enrollment_key.as_ref(),
                 ).await?;
                     Ok::<_, failure::Failure>(result)
                 } => Some(result),

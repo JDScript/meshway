@@ -3,7 +3,7 @@ use crate::{Control, Error};
 use meshway_control_client::{Client, ClientError, EventStream, StreamOptions};
 use meshway_model::{ConfigurationRef, InstanceId, NetworkId, NodeId, Revision};
 use meshway_protocol::{ErrorResponse, NodeEvent, StreamEvent, WireSecret, events::ClosedReason};
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 /// A notice retains its authentication scope even while queued at the host.
@@ -15,6 +15,9 @@ pub struct EventNotice {
 }
 
 impl EventNotice {
+    pub fn received_event(&self) -> bool {
+        self.result.is_ok()
+    }
     /// Static event name for credential-free host diagnostics.
     pub fn kind(&self) -> &'static str {
         match &self.result {
@@ -69,12 +72,23 @@ struct Interest {
     target: Option<ConfigurationRef>,
     revision: Option<Revision>,
     keys: meshway_protocol::NodeKeyMetadata,
+    peer_keys: BTreeMap<NodeId, meshway_protocol::NodeKeyMetadata>,
     instance: Option<InstanceId>,
 }
 
 impl Interest {
     fn changed(&mut self, event: &NodeEvent) -> bool {
         match &event.0 {
+            StreamEvent::EntitiesSnapshot { entities, .. } => {
+                let keys = entities
+                    .nodes
+                    .iter()
+                    .map(|(id, node)| (*id, node.keys.clone()))
+                    .collect();
+                let changed = self.peer_keys != keys;
+                self.peer_keys = keys;
+                changed
+            }
             StreamEvent::ConfigSnapshot { configuration, .. } => {
                 let changed = configuration.network_id != self.network
                     || configuration.node_id != self.node
@@ -96,7 +110,15 @@ impl Interest {
                     self.keys = node.keys.clone();
                     self.target = node.desired_execution.clone();
                 }
-                changed || removed.nodes.contains(&self.node)
+                let mut keys_changed = false;
+                for (id, node) in &updated.nodes {
+                    keys_changed |= self.peer_keys.get(id) != Some(&node.keys);
+                    self.peer_keys.insert(*id, node.keys.clone());
+                }
+                for id in &removed.nodes {
+                    keys_changed |= self.peer_keys.remove(id).is_some();
+                }
+                changed || keys_changed || removed.nodes.contains(&self.node)
             }
             StreamEvent::StateDelta {
                 updated, removed, ..
@@ -109,8 +131,13 @@ impl Interest {
                 }
                 changed || removed.contains(&self.node)
             }
-            StreamEvent::ConfigurationChanged { revision, .. } => {
-                let changed = self.revision.is_none_or(|old| *revision > old);
+            StreamEvent::ConfigurationChanged {
+                network_id,
+                revision,
+                ..
+            } => {
+                let changed =
+                    *network_id != self.network || self.revision.is_none_or(|old| *revision > old);
                 self.revision = Some(*revision);
                 changed
             }
@@ -126,20 +153,50 @@ impl Interest {
 }
 
 impl NodeEvents {
+    /// Open exactly once using the existing protected pool. HTTP acceptance is
+    /// separate from receiving the first validated event. Cancellation is EOF.
+    pub async fn connect(&mut self) -> Result<bool, Box<EventNotice>> {
+        if self.ended || self.scope.is_cancelled() {
+            return Ok(false);
+        }
+        if self.stream.is_some() {
+            return Ok(true);
+        }
+        let options = StreamOptions::default();
+        let result = tokio::select! { biased;
+            _ = self.scope.cancelled() => return Ok(false),
+            result = self.client.watch_node(self.token.expose(), &options) => result,
+        };
+        match result {
+            Ok(stream) => {
+                self.stream = Some(stream);
+                Ok(true)
+            }
+            Err(error) => {
+                self.ended = true;
+                Err(Box::new(EventNotice {
+                    owner: self.owner.clone(),
+                    scope: self.scope.clone(),
+                    result: Err(error),
+                    refresh: false,
+                }))
+            }
+        }
+    }
+
     pub async fn next(&mut self) -> Option<EventNotice> {
         if self.ended || self.scope.is_cancelled() {
             self.stream = None;
             return None;
         }
+        match self.connect().await {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(notice) => return Some(*notice),
+        }
         let result = tokio::select! { biased;
             _ = self.scope.cancelled() => None,
             result = async {
-                if self.stream.is_none() {
-                    match self.client.watch_node(self.token.expose(), &StreamOptions::default()).await {
-                        Ok(stream) => self.stream = Some(stream),
-                        Err(error) => return Some(Err(error)),
-                    }
-                }
                 self.stream.as_mut().expect("opened stream").next().await.map(|result| result.map(|delivery| delivery.data))
             } => result,
         };
@@ -172,6 +229,21 @@ impl Control {
     pub fn watch_node(&self) -> Result<NodeEvents, Error> {
         let instance = self.current_instance()?;
         let binding = self.record.binding.as_ref().ok_or(Error::Lifecycle)?;
+        let mut peer_keys = self
+            .cached_target()
+            .into_iter()
+            .flat_map(|target| target.configuration.peers.iter())
+            .map(|(id, peer)| {
+                (
+                    *id,
+                    meshway_protocol::NodeKeyMetadata {
+                        control: peer.control_key.clone(),
+                        dataplane: peer.dataplane_key.clone(),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        peer_keys.insert(binding.node_id, binding.keys.clone());
         Ok(NodeEvents {
             interest: Interest {
                 network: binding.network_id,
@@ -184,6 +256,7 @@ impl Control {
                     .cached_target()
                     .map(|target| target.configuration.revision),
                 keys: binding.keys.clone(),
+                peer_keys,
                 instance: Some(instance.instance_id),
             },
             owner: self.application_owner.clone(),
@@ -222,6 +295,28 @@ impl Control {
                 return Ok(false);
             }
         };
+        self.ready()?;
+        if let Some(binding) = &self.record.binding {
+            let wrong = match &event.0 {
+                StreamEvent::ConfigSnapshot { configuration, .. } => {
+                    configuration.network_id != binding.network_id
+                        || configuration.node_id != binding.node_id
+                }
+                StreamEvent::ConfigurationChanged { network_id, .. }
+                | StreamEvent::ResourcesChanged { network_id, .. } => {
+                    *network_id != binding.network_id
+                }
+                StreamEvent::EntitiesDelta { updated, .. } => updated
+                    .nodes
+                    .get(&binding.node_id)
+                    .is_some_and(|node| node.network_id != binding.network_id),
+                _ => false,
+            };
+            if wrong {
+                self.fence();
+                return Err(Error::Contract);
+            }
+        }
         match event.0 {
             StreamEvent::Closed { reason } => match reason {
                 ClosedReason::SessionExpired | ClosedReason::NodeLeaseExpired => {
