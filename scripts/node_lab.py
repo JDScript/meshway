@@ -553,12 +553,21 @@ def check_snapshot(journal, containers, statuses, *, deployed=False):
             raise DevError(f"meshway-{node}: previously down Node intent changed; journal retained.")
         needs_down = entry["recreate"] and entry["networkMode"] == "tun"
         if needs_down and journal["phase"] in ("composing", "restoring") and original:
-            if not entry["quiesced"] or status["desiredUp"] or status["dataPlane"] != "stopped":
+            if not entry["quiesced"] or status["desiredUp"] or not (status["dataPlane"] == "stopped"
+                                                                      or underlay_blocked(status)):
                 raise DevError(f"meshway-{node}: old TUN namespace is not stopped; journal retained.")
         if journal["phase"] == "preparing":
             allowed_down = (needs_down or entry.get("stopReceipt") is not None) and entry["downRequested"]
             if status["desiredUp"] != entry["desiredUp"] and not allowed_down:
                 raise DevError(f"meshway-{node}: original Node intent changed; journal retained.")
+
+
+def underlay_blocked(status):
+    """A Node whose underlay never started in this process owns no kernel
+    resources in its namespace; recreating the container destroys that
+    namespace and the new daemon still judges the journal itself."""
+    return (not status["desiredUp"] and status["phase"] == "blocked"
+            and status["dataPlane"] == "failed" and status.get("lastError") == "underlay")
 
 
 def deploy(lab):
@@ -596,10 +605,19 @@ def deploy(lab):
             if statuses[node]["desiredUp"]:
                 entry["downRequested"] = True
                 save(lab / "deploy.json", journal)
-                run("docker", "exec", entry["containerId"], "/opt/meshway/meshway", "down", "--json", timeout=45)
+                try:
+                    run("docker", "exec", entry["containerId"], "/opt/meshway/meshway", "down", "--json", timeout=45)
+                except subprocess.CalledProcessError:
+                    # The CLI exits nonzero when the intent is committed but the
+                    # Node still reports a problem; only a blocked underlay that
+                    # never installed anything is accepted below.
+                    containers, statuses = snapshot(journal)
+                    if not underlay_blocked(statuses[node]):
+                        raise
             containers, statuses = snapshot(journal)
             check_snapshot(journal, containers, statuses)
-            if statuses[node]["desiredUp"] or statuses[node]["dataPlane"] != "stopped":
+            if statuses[node]["desiredUp"] or not (statuses[node]["dataPlane"] == "stopped"
+                                                    or underlay_blocked(statuses[node])):
                 raise DevError(f"meshway-{node}: down did not confirm stopped data plane; journal retained.")
             entry["quiesced"] = True
             save(lab / "deploy.json", journal)

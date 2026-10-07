@@ -82,7 +82,7 @@ mise run node:lab versions
 
 构建产物按不可变 release 目录保存在仓库公共目录 `.meshway/node-lab/releases/`；每份 `build.json` 记录 Git revision、dirty 标记、Rust source digest、target 和二进制 SHA-256。构建期间 Rust 源码变动则不发布该产物。`versions` 以 IPC Status 的真实 daemon processId 核验 `/proc/<pid>/exe`、启动时间、namespace 和只读 release，另报告实际 image ID；PID 1 是系统服务 owner，不用它的 executable 冒充 daemon。
 
-程序更新由 Compose 重建需要更新的容器，身份卷继续保留。对需重建的已 up TUN 节点，部署器先通过 CLI down 清理旧 namespace 的所属资源，再重建并恢复原 up 意图；失败保留部署进度，不能把旧 namespace journal 当作新 namespace 的资源证明。初始 down 节点保持下线。同一配置未重建的容器不下线。重建可能改变 bridge IP，因此随后运行 `configure` 更新 Server 中的显式端点。`deploy` 不执行 Rust 编译或构建镜像。
+程序更新由 Compose 重建需要更新的容器，身份卷继续保留。对需重建的已 up TUN 节点，部署器先通过 CLI down 清理旧 namespace 的所属资源，再重建并恢复原 up 意图；失败保留部署进度，不能把旧 namespace journal 当作新 namespace 的资源证明。唯一例外是 down 后 daemon 报告 `phase=blocked`、`dataPlane=failed`、`lastError=underlay`：该进程的 underlay 从未启动，namespace 内没有它所属的内核资源，重建即销毁该 namespace，新 daemon 仍按自己的 journal 规则（见[运行](/v2/node/runtime)的崩溃恢复）判断能否启动。初始 down 节点保持下线。同一配置未重建的容器不下线。重建可能改变 bridge IP，因此随后运行 `configure` 更新 Server 中的显式端点。`deploy` 不执行 Rust 编译或构建镜像。
 
 ## 状态、日志与停止
 

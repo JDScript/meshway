@@ -32,6 +32,7 @@ class Deploy(unittest.TestCase):
         self.fail_down = False
         self.fail_down_before = False
         self.down_still_active = False
+        self.down_blocked_underlay = False
         self.fail_compose = False
         self.partial_compose = False
         self.fail_up = False
@@ -173,6 +174,11 @@ class Deploy(unittest.TestCase):
                 self.statuses[node].update(desiredUp=False, dataPlane="stopped", phase="down", applied=None, authenticated=False)
                 if self.down_still_active:
                     self.statuses[node]["dataPlane"] = "ready"
+                if self.down_blocked_underlay:
+                    # The intent commits, but a daemon whose underlay never
+                    # started reports the problem and the CLI exits nonzero.
+                    self.statuses[node].update(dataPlane="failed", phase="blocked", lastError="underlay")
+                    raise subprocess.CalledProcessError(1, args)
                 if self.fail_down:
                     raise subprocess.CalledProcessError(1, args)
             elif command == "up":
@@ -411,6 +417,19 @@ class Deploy(unittest.TestCase):
             self.deploy()
         self.assertEqual(self.actions, ["down:lax"])
         self.assertEqual(node_lab.deploy_journal(self.lab)["phase"], "preparing")
+
+    def test_blocked_underlay_without_installation_counts_as_quiesced(self):
+        self.change("lax")
+        self.down_blocked_underlay = True
+        self.deploy()
+        self.assertEqual(self.actions, ["down:lax", "compose", "up:lax"])
+        self.assertEqual(node_lab.deploy_journal(self.lab)["phase"], "complete")
+
+    def test_blocked_underlay_with_desired_up_is_not_quiesced(self):
+        self.assertFalse(node_lab.underlay_blocked(
+            {"desiredUp": True, "phase": "blocked", "dataPlane": "failed", "lastError": "underlay"}))
+        self.assertFalse(node_lab.underlay_blocked(
+            {"desiredUp": False, "phase": "blocked", "dataPlane": "failed", "lastError": "tun"}))
 
     def test_compose_failure_and_partial_recreation_resume_original_up(self):
         for partial in (False, True):
