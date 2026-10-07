@@ -183,7 +183,7 @@ impl SecureNode {
         if self.carriers.get(&circuit.context.path[1]) != Some(carrier) {
             return Err(Error::Context);
         }
-        self.check_outgoing_carrier(&circuit.context, false, reading)?;
+        Self::check_outgoing_carrier(&self.carriers, &circuit.context, false, reading)?;
         let now = reading.instant;
         let now_ms = reading.now_ms;
         let mut guard = circuit.guard(snapshot, false);

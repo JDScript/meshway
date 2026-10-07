@@ -548,6 +548,13 @@ pub struct SecureNode {
     cancellation: CancellationToken,
     output_epoch: Arc<()>,
 }
+
+#[derive(Clone, Copy)]
+struct OutputOwner<'a> {
+    identity: &'a DataPlaneIdentity,
+    carriers: &'a BTreeMap<NodeId, Carrier>,
+    epoch: &'a Arc<()>,
+}
 impl Drop for SecureNode {
     fn drop(&mut self) {
         self.cancellation.cancel();
@@ -1162,8 +1169,18 @@ impl SecureNode {
         reading: &Reading<'_>,
     ) -> Result<pipeline::SendJob, Error> {
         self.maintain_circuits(reading, false)?;
-        let mut circuit = self.circuits.remove(&id).ok_or(Error::State)?;
-        let result = self.send_inner(&mut circuit, packet, reading);
+        let circuit = self.circuits.get_mut(&id).ok_or(Error::State)?;
+        let result = Self::send_inner(
+            OutputOwner {
+                identity: &self.identity,
+                carriers: &self.carriers,
+                epoch: &self.output_epoch,
+            },
+            &mut self.engine,
+            circuit,
+            packet,
+            reading,
+        );
         let result = circuit.finish_operation(self.identity.snapshot(), "send", result);
         if let Err(error) = &result
             && diagnostics::event()
@@ -1173,12 +1190,12 @@ impl SecureNode {
                 publication = %self.identity.snapshot().reference().execution_publication,
                 "Dataplane secure admission rejected");
         }
-        self.circuits.insert(id, circuit);
         result
     }
 
     fn send_inner(
-        &mut self,
+        owner: OutputOwner<'_>,
+        engine: &mut Engine,
         circuit: &mut Circuit,
         packet: Packet,
         reading: &Reading<'_>,
@@ -1196,19 +1213,18 @@ impl SecureNode {
         let facts = packet.facts();
         let local = reading.configuration.node_id;
         let reply = local != circuit.context.path[0];
-        self.check_outgoing_carrier(&circuit.context, reply, reading)?;
+        Self::check_outgoing_carrier(owner.carriers, &circuit.context, reply, reading)?;
         let ingress = Ingress::Local {
             demand,
             path: circuit.context.path.clone(),
         };
-        let route = self
-            .engine
+        let route = engine
             .admit_circuit_facts(
                 ingress,
                 facts,
                 reading,
                 circuit.context.circuit,
-                &circuit.guard(self.identity.snapshot(), false),
+                &circuit.guard(owner.identity.snapshot(), false),
             )
             .map_err(|error| circuit.engine_rejected("send", error))?;
         if (route.route().direction == Direction::Reply) != reply {
@@ -1216,7 +1232,7 @@ impl SecureNode {
         }
         // Flow and cryptographic state have distinct irreversible commit points.
         // Neither a later output failure nor a scope handoff rolls either back.
-        circuit.ensure_current(self.identity.snapshot())?;
+        circuit.ensure_current(owner.identity.snapshot())?;
         let sequence = circuit.send[usize::from(reply)].take()?;
         let frame = Frame {
             context: circuit.context.clone(),
@@ -1230,7 +1246,7 @@ impl SecureNode {
             auth: Default::default(),
         };
         let (next, carrier, guard) =
-            self.output_scope(circuit, &frame, route.hop(), Some(&route), reading)?;
+            Self::output_scope(owner, circuit, &frame, route.hop(), Some(&route), reading)?;
         let mac = circuit.session.prepare_append(&frame, &carrier)?;
         guard.finish()?;
         Ok(pipeline::SendJob {
@@ -1270,7 +1286,7 @@ impl SecureNode {
     // Check scheduling failures before stateful flow admission. This derives
     // only adjacency; policy remains the sole carrier authorization owner.
     fn check_outgoing_carrier(
-        &self,
+        carriers: &BTreeMap<NodeId, Carrier>,
         context: &Context,
         reply: bool,
         reading: &Reading<'_>,
@@ -1287,7 +1303,7 @@ impl SecureNode {
             context.path.get(position + 1)
         };
         if let Some(next) = next {
-            let carrier = self.carriers.get(next).ok_or(Error::Unsupported)?;
+            let carrier = carriers.get(next).ok_or(Error::Unsupported)?;
             admit_circuit_carrier(cfg, context.authorization, &context.path, *next, carrier)
                 .map_err(|_| Error::Policy)?;
         }
@@ -1302,7 +1318,18 @@ impl SecureNode {
         route: Option<&PendingRoute>,
         reading: &Reading<'_>,
     ) -> Result<PendingFrame, Error> {
-        let (next, carrier, guard) = self.output_scope(circuit, &frame, hop, route, reading)?;
+        let (next, carrier, guard) = Self::output_scope(
+            OutputOwner {
+                identity: &self.identity,
+                carriers: &self.carriers,
+                epoch: &self.output_epoch,
+            },
+            circuit,
+            &frame,
+            hop,
+            route,
+            reading,
+        )?;
         if frame.kind.handshake() {
             crypto::append(
                 &self.identity,
@@ -1326,7 +1353,7 @@ impl SecureNode {
     }
 
     fn output_scope(
-        &self,
+        owner: OutputOwner<'_>,
         circuit: &Circuit,
         frame: &Frame,
         hop: Hop,
@@ -1336,8 +1363,8 @@ impl SecureNode {
         let Hop::Forward(next) = hop else {
             return Err(Error::State);
         };
-        let snapshot = self.identity.snapshot();
-        let carrier = self.carriers.get(&next).ok_or(Error::Unsupported)?.clone();
+        let snapshot = owner.identity.snapshot();
+        let carrier = owner.carriers.get(&next).ok_or(Error::Unsupported)?.clone();
         admit_circuit_carrier(
             reading.configuration,
             frame.context.authorization,
@@ -1357,7 +1384,7 @@ impl SecureNode {
             guard.expires_at_ms = guard.expires_at_ms.min(route.permit_expires_at_ms());
         }
         guard.check_at(reading)?;
-        guard.section = Some(self.output_epoch.clone());
+        guard.section = Some(owner.epoch.clone());
         Ok((next, carrier, guard))
     }
 

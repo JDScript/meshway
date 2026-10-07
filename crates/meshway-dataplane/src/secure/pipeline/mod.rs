@@ -214,7 +214,7 @@ impl SecureNode {
             return Err(Error::Authority);
         }
         let id = opened.circuit;
-        let mut circuit = self.circuits.remove(&id).ok_or(Error::State)?;
+        let circuit = self.circuits.get_mut(&id).ok_or(Error::State)?;
         let result = (|| {
             circuit.check_at(&reading)?;
             // The immutable MAC-key allocation identifies this exact owner's
@@ -246,7 +246,12 @@ impl SecureNode {
                 let CircuitAuthorization::Business(demand) = circuit.context.authorization else {
                     return Err(Error::Policy);
                 };
-                self.check_outgoing_carrier(&circuit.context, opened.reply, &reading)?;
+                Self::check_outgoing_carrier(
+                    &self.carriers,
+                    &circuit.context,
+                    opened.reply,
+                    &reading,
+                )?;
                 let path = &circuit.context.path;
                 let ingress = Ingress::Peer {
                     demand,
@@ -286,8 +291,6 @@ impl SecureNode {
             circuit.receive[index].commit(sequence);
             Ok(result)
         })();
-        let result = circuit.finish_operation(self.identity.snapshot(), "receive", result);
-        self.circuits.insert(id, circuit);
-        result
+        circuit.finish_operation(self.identity.snapshot(), "receive", result)
     }
 }
