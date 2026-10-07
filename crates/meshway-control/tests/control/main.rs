@@ -3,6 +3,7 @@ mod application;
 mod authority;
 mod cache;
 mod dns;
+mod events;
 mod faults;
 mod recovery;
 mod refresh;

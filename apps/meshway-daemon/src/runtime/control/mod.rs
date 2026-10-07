@@ -1,5 +1,6 @@
 //! Drive the control owner with bounded retries and cancellable desired-state waits.
 mod cycle;
+mod events;
 mod failure;
 mod observations;
 mod scheduling;
@@ -108,6 +109,7 @@ pub(super) async fn run(
     let mut shutdown_failure = None;
     let mut pending_failure = None;
     let mut observations = observations::Subscriptions::default();
+    let mut events = events::Events::default();
     loop {
         if plan.shutdown || desired.has_changed().is_err() {
             break;
@@ -263,6 +265,7 @@ pub(super) async fn run(
             };
             match outcome {
                 Some(Ok(result)) => {
+                    events.advance(driver).await;
                     tracing::debug!(
                         renewed = result.renewed,
                         reported = result.reported,
@@ -295,6 +298,7 @@ pub(super) async fn run(
                         &mut observations,
                         &settings,
                         &mut last_report,
+                        &mut events,
                     )
                     .await
                     {
@@ -328,6 +332,7 @@ pub(super) async fn run(
                     }
                 }
                 Some(Err(error)) => {
+                    events.stop().await;
                     let delay = error
                         .retry
                         .then(|| error.retry_after.unwrap_or(Duration::from_secs(backoff)));
@@ -369,6 +374,7 @@ pub(super) async fn run(
                             &mut observations,
                             &settings,
                             &mut last_report,
+                            &mut events,
                         )
                         .await
                     } else {
@@ -409,6 +415,7 @@ pub(super) async fn run(
             }
         }
         stop(control.as_mut().expect("control exists"), false).await;
+        events.stop().await;
         observations.stop();
         pending_failure = None;
         if let Some(network) = &mut network {
@@ -429,6 +436,7 @@ pub(super) async fn run(
         backoff = 1;
     }
     let keep_sink = desired.borrow().up;
+    events.stop().await;
     observations.stop();
     pings.close();
     while let Some(ping) = pings.recv().await {
@@ -504,11 +512,30 @@ async fn wait_work(
     observations: &mut observations::Subscriptions,
     settings: &Settings,
     last_report: &mut Option<Instant>,
+    events: &mut events::Events,
 ) -> Waiting {
     let mut window = scheduling::Window::new(delay);
     let mut local_at = Instant::now() + Duration::from_secs(1);
+    let mut event_budget = 32;
     loop {
+        if desired.borrow().shutdown
+            || desired.borrow().revision != plan.revision
+            || desired.has_changed().is_err()
+        {
+            return Waiting::Change;
+        }
+        if event_budget == 0 {
+            return Waiting::Timer;
+        }
         let waiting = tokio::select! { biased;
+            notice = events.next(), if control.is_some() => {
+                event_budget -= 1;
+                match control.as_deref_mut().expect("event Control").receive_event(notice) {
+                    Ok(true) => return Waiting::Timer,
+                    Ok(false) => continue,
+                    Err(error) => return Waiting::Failed(failure::at("watch_node", error, false)),
+                }
+            },
             ping = pings.recv() => { if let Some(ping) = ping { return Waiting::Ping(ping); } else { return Waiting::Change; } },
             waiting = window
             .wait(

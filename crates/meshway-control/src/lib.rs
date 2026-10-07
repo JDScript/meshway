@@ -13,6 +13,8 @@ pub use runtime::ApplicationTicket;
 mod demand;
 mod dns;
 mod enrollment;
+mod events;
+pub use events::{EventNotice, NodeEvents};
 mod execution;
 mod identity;
 mod observations;
@@ -63,6 +65,8 @@ pub enum Error {
     InvalidDnsName,
     #[error("the current session or instance has expired")]
     Expired,
+    #[error("Node membership was revoked")]
+    MembershipRevoked,
     #[error("Server operation failed: {0}")]
     Server(#[from] ClientError<ErrorResponse>),
 }
@@ -117,6 +121,7 @@ pub struct Control {
     application: Option<ApplicationTicket>,
     connectivity: connectivity::Authority,
     observations: observations::Registry,
+    events_cancel: tokio_util::sync::CancellationToken,
 }
 
 struct Session {
@@ -178,6 +183,7 @@ impl Control {
             application: None,
             connectivity: connectivity::Authority::default(),
             observations: observations::Registry::default(),
+            events_cancel: tokio_util::sync::CancellationToken::new(),
         })
     }
 
@@ -299,6 +305,7 @@ impl Control {
     }
 
     fn fence(&mut self) {
+        self.reset_events();
         self.observations = observations::Registry::default();
         self.invalidate_snapshots();
         self.instance = None;
@@ -415,6 +422,7 @@ impl StatusSnapshot {
 }
 impl Drop for Control {
     fn drop(&mut self) {
+        self.events_cancel.cancel();
         self.validity.store(false, Ordering::Release);
         self.invalidated.cancel();
     }

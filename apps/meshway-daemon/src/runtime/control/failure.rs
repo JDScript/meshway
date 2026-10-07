@@ -35,6 +35,7 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         Error::Server(ClientError::Http { status: 409, problem: Some(body) })
         if body.status == 409 && matches!(body.problem, meshway_protocol::Problem::RequestConflict { .. }));
     let (problem, retry, reset) = match &error {
+        Error::MembershipRevoked => (Problem::Credentials, false, true),
         Error::StateScopeChanged => (Problem::Apply, true, false),
         Error::Server(_) if matches!(status, Some(401 | 403 | 404 | 409)) => {
             let retry = !authenticating || authentication_conflict;
@@ -103,6 +104,7 @@ fn details(error: &Error) -> (&'static str, Option<u16>, Option<&'static str>) {
             ClientError::Request => ("client_request", None, None),
         },
         Error::Expired => ("expired", None, None),
+        Error::MembershipRevoked => ("membership_revoked", None, None),
         Error::Lifecycle => ("lifecycle", None, None),
         Error::Contract => ("contract", None, None),
         Error::StateScopeChanged => ("state_scope_changed", None, None),
