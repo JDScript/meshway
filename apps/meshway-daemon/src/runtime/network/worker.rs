@@ -132,6 +132,7 @@ pub(super) async fn run(
                 // Packet pressure must not starve incoming handshakes or lease
                 // renewal work. Lifecycle/authority remain the outer priority.
                 tokio::select! {
+                    _ = pool.ready(), if live && pool.has_pending() => Work::Tick,
                     result = async {
                          match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
                     }, if live => Work::Packet(result),

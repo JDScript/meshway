@@ -323,6 +323,8 @@ impl Packets {
         let Some(carriers) = carriers else {
             return;
         };
+        self.complete_crypto(secure, manager, host, snapshot, pool)
+            .await;
         // Continue a bounded scan on the next turn, including ready suffixes
         // left after a full batch. Waiting packets are scanned only once per
         // external event, rather than creating an unbounded busy loop.
@@ -336,13 +338,22 @@ impl Packets {
         };
         let incoming_count = self.incoming.len().min(per_direction);
         let local_count = self.local.len().min(per_direction);
+        let mut incoming_done = 0;
+        let mut local_done = 0;
+        let quantum = std::time::Instant::now();
         let mut outgoing = Vec::new();
         let mut ready = Vec::new();
-        let mut jobs = VecDeque::new();
         for _ in 0..incoming_count {
             let Some(item) = self.incoming.pop_front() else {
                 break;
             };
+            incoming_done += 1;
+            if item.bytes.get(8) == Some(&3)
+                && (!pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200))
+            {
+                self.incoming.push_back(item);
+                continue;
+            }
             if item.deadline <= Instant::now() || item.guard.ensure_current().is_err() {
                 self.drop_packet("cipher_deadline");
                 continue;
@@ -386,8 +397,11 @@ impl Packets {
             let result = if item.bytes.get(8) == Some(&3) {
                 match secure.prepare_receive(&item.carrier, item.bytes) {
                     Ok(job) => {
-                        jobs.push_back(secure::pipeline::Job::Receive(job));
-                        None
+                        assert!(pool.submit(secure::pipeline::Job::Receive(job)).is_none());
+                        if pool.available().is_multiple_of(8) {
+                            pool.flush();
+                        }
+                        continue;
                     }
                     Err(error) => Some(Err(error)),
                 }
@@ -396,17 +410,11 @@ impl Packets {
             };
             ready.push((item.link, item.received_at, hint, result));
         }
-        let mut opened = pool.run(&mut jobs).await.into_iter();
+        pool.flush();
         let mut deliveries = Vec::new();
         let mut reply_demands = Vec::new();
         for (link, received_at, hint, result) in ready {
-            let result = result.unwrap_or_else(|| {
-                match opened.next().expect("one result per receive job") {
-                    Ok(secure::pipeline::Output::Receive(opened)) => secure.commit_receive(opened),
-                    Ok(secure::pipeline::Output::Send(_)) => Err(secure::Error::State),
-                    Err(error) => Err(error),
-                }
-            });
+            let result = result.expect("synchronous control result");
             match result {
                 Ok(Received::Forward(frame))
                 | Ok(Received::Established {
@@ -537,12 +545,14 @@ impl Packets {
                     .map_or(info.expires_at.into(), |at| at.min(info.expires_at).into());
             }
         }
-        let mut sealing = VecDeque::new();
-        let mut circuits = Vec::new();
         for _ in 0..local_count {
+            if !pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200) {
+                break;
+            }
             let Some(item) = self.local.pop_front() else {
                 break;
             };
+            local_done += 1;
             if item.deadline <= Instant::now() {
                 self.drop_packet("packet_deadline");
                 continue;
@@ -656,8 +666,15 @@ impl Packets {
                     self.local.push_back(item);
                     continue;
                 }
-                sealing.push_back((circuit.id, item.packet));
-                circuits.push(circuit);
+                match secure.prepare_send_packet(circuit.id, item.packet) {
+                    Ok(job) => {
+                        assert!(pool.submit(secure::pipeline::Job::Send(job)).is_none());
+                        if pool.available().is_multiple_of(8) {
+                            pool.flush();
+                        }
+                    }
+                    Err(error) => self.drop_admission("packet_admission", error, Some(demand)),
+                }
             } else {
                 if path.first() == Some(&cfg.node_id)
                     && path.get(1).is_some_and(|next| carriers.contains_key(next))
@@ -686,34 +703,11 @@ impl Packets {
                 self.local.push_back(item);
             }
         }
-        let sealed = pool
-            .run_prepared(&mut sealing, |(id, packet)| {
-                secure
-                    .prepare_send_packet(id, packet)
-                    .map(secure::pipeline::Job::Send)
-            })
-            .await;
-        for (result, circuit) in sealed.into_iter().zip(circuits) {
-            match result {
-                Ok(secure::pipeline::Output::Send(frame)) => {
-                    self.trace_packet(&frame, &circuit);
-                    outgoing.push(frame);
-                }
-                Err(error) => self.drop_admission(
-                    "packet_admission",
-                    error,
-                    match circuit.authorization {
-                        CircuitAuthorization::Business(demand) => Some(demand),
-                        CircuitAuthorization::Diagnostic(_) => None,
-                    },
-                ),
-                _ => self.drop_packet("packet_crypto"),
-            }
-        }
         self.flush_sends(manager, &mut outgoing).await;
+        pool.flush();
         self.scan_remaining = self
             .scan_remaining
-            .saturating_sub(incoming_count + local_count)
+            .saturating_sub(incoming_done + local_done)
             .min(self.local.len() + self.incoming.len());
         for intent in &mut self.intents {
             if let Some(pending) = &mut intent.pending {
@@ -792,6 +786,71 @@ impl Packets {
             if manager.send_batch(data).await.is_err() {
                 for _ in 0..count {
                     self.drop_packet("batch_send");
+                }
+            }
+        }
+    }
+
+    async fn complete_crypto(
+        &mut self,
+        secure: &mut SecureNode,
+        manager: &Manager,
+        host: &meshway_underlay::Host,
+        snapshot: &meshway_authority::ExecutionSnapshot,
+        pool: &mut secure::pipeline::Pool,
+    ) {
+        let mut outgoing = Vec::new();
+        let mut deliveries = Vec::new();
+        let mut replies = Vec::new();
+        let mut credits = Vec::new();
+        for output in pool.take_ready() {
+            let (output, credit) = output.into_parts();
+            credits.push(credit);
+            let result = match output {
+                Ok(secure::pipeline::Output::Send(frame)) => {
+                    if let Ok(Some(circuit)) = secure.circuit_info(frame.circuit()) {
+                        self.trace_packet(&frame, &circuit);
+                    }
+                    Ok(Received::Forward(frame))
+                }
+                Ok(secure::pipeline::Output::Receive(opened)) => secure.commit_receive(opened),
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(Received::Forward(frame)) => outgoing.push(frame),
+                Ok(Received::Packet(packet)) if packet.hop() == meshway_dataplane::Hop::Deliver => {
+                    if packet.route().direction == meshway_dataplane::Direction::Reply {
+                        replies.push(packet.route().demand);
+                    }
+                    deliveries.push(packet);
+                }
+                Err(error) => self.drop_admission("crypto_admission", error, None),
+                _ => self.drop_packet("crypto_output"),
+            }
+        }
+        self.flush_sends(manager, &mut outgoing).await;
+        if !deliveries.is_empty()
+            && let Some(tun) = host.tun()
+        {
+            let count = deliveries.len();
+            if meshway_dataplane::carrier::deliver_batch(tun, deliveries)
+                .await
+                .is_err()
+            {
+                for _ in 0..count {
+                    self.drop_packet("tun_delivery");
+                }
+            } else if snapshot.ensure_current().is_ok()
+                && let Ok(now_ms) = snapshot.now_ms()
+            {
+                for demand in replies {
+                    if let Some(intent) = self.intents.iter_mut().find(|intent| {
+                        intent.request.request_id == demand
+                            && intent.expires_at_ms > now_ms
+                            && intent.last_packet.elapsed() < Duration::from_secs(60)
+                    }) {
+                        intent.last_packet = Instant::now();
+                    }
                 }
             }
         }
