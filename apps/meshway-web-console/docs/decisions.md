@@ -674,6 +674,14 @@ above the held screen.
   cross-fades over 2 s (one View Transition, the globe left out); the
   button's sun sets as its moon rises. With less motion, or a hidden tab, it
   changes at once.
+- An easter egg, the little planet: five quick clicks on the globe (not on
+  a node) swap it on or off, said in a toast and kept in `localStorage`
+  (`look`). It is a look within either theme (html.planet): a pastel day
+  and a plum night for the interface; the globe's surface painted with sea,
+  meadow, dry land, ice, surf and drifting clouds; each node a lighthouse
+  whose lamp is its status (lit online, blinking for a look, out when
+  gone), several in one place a bubble with their number. Everything else
+  is as in the usual globe.
 
 ## Development aids
 

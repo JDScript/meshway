@@ -1,6 +1,7 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  CanvasTexture,
   Color,
   Float32BufferAttribute,
   Group,
@@ -9,10 +10,13 @@ import {
   LineDashedMaterial,
   LineSegments,
   Mesh,
+  NoColorSpace,
   PlaneGeometry,
   Points,
+  RepeatWrapping,
   ShaderMaterial,
   Vector3,
+  type Texture,
 } from "three"
 
 import { mostUrgentTone, statusTone } from "@/lib/nodes/status"
@@ -247,6 +251,7 @@ const surfaceShader = () =>
       uOpacity: { value: 0 },
       uRimStrength: { value: 0.85 },
       ...sunlight(),
+      ...planetLook(),
     },
     vertexShader: /* glsl */ `
       varying vec3 vNormal;
@@ -263,6 +268,7 @@ const surfaceShader = () =>
       uniform float uOpacity;
       uniform float uRimStrength;
       ${SUNLIGHT}
+      ${PLANET}
       varying vec3 vNormal;
       varying vec3 vWorld;
       void main() {
@@ -272,13 +278,89 @@ const surfaceShader = () =>
         // Day and night where the sun is: the night side darker, a warm band
         // along the line between (warmer while the theme turns).
         float facing = dot(normal, uSun);
-        vec3 base = mix(uNight, uSurface, smoothstep(-0.12, 0.22, facing));
+        vec3 surface = uPlanet > 0.0 ? mix(uSurface, planetDay(normal), uPlanet) : uSurface;
+        // The planet's light comes in two soft steps, as if painted.
+        float day = mix(
+          smoothstep(-0.12, 0.22, facing),
+          smoothstep(-0.04, 0.06, facing) * 0.7 + smoothstep(0.4, 0.5, facing) * 0.3,
+          uPlanet
+        );
+        // The planet's night keeps its colours under a plum shade.
+        vec3 night = mix(uNight, surface * 0.32 + uNight * 0.75, uPlanet);
+        vec3 base = mix(night, surface, day);
         float band = exp(-pow(facing / 0.09, 2.0));
         base = mix(base, uTwilight, band * (uBand + 0.2 * uShift));
         gl_FragColor = vec4(mix(base, uRim, rim * uRimStrength), uOpacity);
         #include <colorspace_fragment>
       }`,
   })
+
+/**
+ * The little planet look on the surface: land and sea from a soft mask of
+ * the land dots, meadow and dry land by latitude, white at the poles, surf
+ * along the coasts, a darker edge on the land side, and clouds drifting
+ * slowly. `uPlanet` mixes it in (0 the usual globe, 1 the planet).
+ */
+const planetLook = () => ({
+  uPlanet: { value: 0 },
+  uMask: { value: null as Texture | null },
+  uSea: { value: new Color() },
+  uMeadow: { value: new Color() },
+  uDry: { value: new Color() },
+  uSurf: { value: new Color() },
+  uCloud: { value: new Color() },
+  uTime: { value: 0 },
+})
+const PLANET = /* glsl */ `
+  uniform float uPlanet;
+  uniform sampler2D uMask;
+  uniform vec3 uSea;
+  uniform vec3 uMeadow;
+  uniform vec3 uDry;
+  uniform vec3 uSurf;
+  uniform vec3 uCloud;
+  uniform float uTime;
+  float planetHash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+  }
+  float planetNoise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(planetHash(i), planetHash(i + vec3(1, 0, 0)), f.x),
+          mix(planetHash(i + vec3(0, 1, 0)), planetHash(i + vec3(1, 1, 0)), f.x), f.y),
+      mix(mix(planetHash(i + vec3(0, 0, 1)), planetHash(i + vec3(1, 0, 1)), f.x),
+          mix(planetHash(i + vec3(0, 1, 1)), planetHash(i + vec3(1, 1, 1)), f.x), f.y),
+      f.z);
+  }
+  float planetFbm(vec3 p) {
+    return 0.5 * planetNoise(p) + 0.25 * planetNoise(p * 2.07)
+      + 0.125 * planetNoise(p * 4.28) + 0.0625 * planetNoise(p * 8.87);
+  }
+  vec3 planetDay(vec3 up) {
+    // The inverse of cartesian(): lat and lng of the surface point.
+    float lat = degrees(asin(clamp(up.y, -1.0, 1.0)));
+    float lng = 90.0 - degrees(atan(up.z, up.x));
+    vec2 uv = vec2(fract((lng + 180.0) / 360.0), (lat + 90.0) / 180.0);
+    float mask = texture2D(uMask, uv).r;
+    float land = smoothstep(0.42, 0.52, mask);
+    float a = abs(lat) + (planetFbm(up * 5.0) - 0.5) * 16.0;
+    vec3 ground = mix(uMeadow, uDry, smoothstep(14.0, 22.0, a) * (1.0 - smoothstep(30.0, 38.0, a)));
+    ground = mix(ground, uSurf, smoothstep(64.0, 72.0, a));
+    ground *= 0.94 + 0.12 * planetFbm(up * 22.0);
+    // A darker edge on the land side of the coast, surf on the sea side.
+    float edge = smoothstep(0.52, 0.47, mask) * land;
+    ground = mix(ground, ground * 0.78, edge);
+    float surf = smoothstep(0.3, 0.42, mask) * (1.0 - land);
+    vec3 sea = mix(uSea, uSea * 1.08, smoothstep(0.0, 0.35, mask));
+    sea = mix(sea, uSurf, surf * 0.75);
+    vec3 c = mix(sea, ground, land);
+    vec3 drift = vec3(uTime * 0.006, 0.0, uTime * 0.003);
+    float cloud = smoothstep(0.56, 0.72, planetFbm(up * 3.2 + drift));
+    return mix(c, uCloud, cloud * 0.85);
+  }`
 
 /**
  * The sun's light on the globe, shared by the surface, the land and the
@@ -648,6 +730,51 @@ export function createGlobeEngine(
   }
   guides.visible = look.guides
   layer.add(guides)
+
+  // The little planet's land mask, from the land dots: drawn sharp, then
+  // softened once (a filter on every dot would stall the GPU).
+  const dots = document.createElement("canvas")
+  dots.width = 1024
+  dots.height = 512
+  const dotsContext = dots.getContext("2d")
+  if (dotsContext) {
+    dotsContext.fillStyle = "#fff"
+    const perDegree = 1024 / 360
+    dotsContext.beginPath()
+    for (const { lat, lng } of landPoints()) {
+      const x = ((lng + 180) / 360) * 1024
+      const y = ((90 - lat) / 180) * 512
+      const ry = 1.15 * perDegree
+      const rx = ry / Math.max(0.12, Math.cos((lat * Math.PI) / 180))
+      // Across the seam, drawn on both sides.
+      for (const shift of x - rx < 0
+        ? [0, 1024]
+        : x + rx > 1024
+          ? [0, -1024]
+          : [0]) {
+        dotsContext.moveTo(x + shift + rx, y)
+        dotsContext.ellipse(x + shift, y, rx, ry, 0, 0, Math.PI * 2)
+      }
+    }
+    dotsContext.fill()
+  }
+  const maskCanvas = document.createElement("canvas")
+  maskCanvas.width = 1024
+  maskCanvas.height = 512
+  const maskContext = maskCanvas.getContext("2d")
+  if (maskContext) {
+    maskContext.fillStyle = "#000"
+    maskContext.fillRect(0, 0, 1024, 512)
+    maskContext.filter = "blur(2.5px)"
+    maskContext.drawImage(dots, 0, 0)
+  }
+  const mask = new CanvasTexture(maskCanvas)
+  mask.wrapS = RepeatWrapping
+  mask.colorSpace = NoColorSpace
+  surface.uniforms.uMask = { value: mask }
+  /** 0 the usual globe to 1 the little planet, eased in and out. */
+  let planet = 0
+  let planetTo = 0
 
   // City lights: the land samples near a city, each glowing by its nearness.
   const cityPoints = CITIES.split(";").map((entry) => {
@@ -1041,7 +1168,15 @@ export function createGlobeEngine(
       : alert
         ? 1
         : 0
-    landMaterial.uniforms.uOpacity = { value: 1 - 0.55 * alertFade }
+    planet = motion
+      ? planet + (planetTo - planet) * (1 - Math.exp(-dt / 0.5))
+      : planetTo
+    if (Math.abs(planet - planetTo) < 0.001) planet = planetTo
+    surface.uniforms.uPlanet = { value: planet }
+    surface.uniforms.uTime = { value: motion ? time / 1000 : 0 }
+    landMaterial.uniforms.uOpacity = {
+      value: (1 - 0.55 * alertFade) * (1 - 0.9 * planet),
+    }
     cityMaterial.uniforms.uOpacity = { value: extras * (1 - alertFade) }
     cityMaterial.uniforms.uStrength = { value: 0.45 + 0.55 * turn }
     alertRing.visible = alertFade > 0.002
@@ -1393,6 +1528,11 @@ export function createGlobeEngine(
       material.uniforms.uNightAlpha = { value: 0.55 - 0.15 * turn }
     }
     cityMaterial.uniforms.uColor = { value: color(colors.city) }
+    surface.uniforms.uSea = { value: color(colors.sea) }
+    surface.uniforms.uMeadow = { value: color(colors.meadow) }
+    surface.uniforms.uDry = { value: color(colors.dry) }
+    surface.uniforms.uSurf = { value: color(colors.surf) }
+    surface.uniforms.uCloud = { value: color(colors.cloud) }
     alertTones = {
       missing: color(colors.attention),
       failed: color(colors.destructive),
@@ -1509,6 +1649,9 @@ export function createGlobeEngine(
       applyColors(input.colors)
     }
     colorsTo = input.colors
+    planetTo = input.colors.planet ? 1 : 0
+    if (!previous) planet = planetTo
+    container.dataset.look = input.colors.planet ? "planet" : "globe"
     if (alertTones && input.alert)
       alertMaterial.uniforms.uColor = { value: alertTones[input.alert.tone] }
 
@@ -1597,6 +1740,7 @@ export function createGlobeEngine(
         cometMaterial,
         cityGeometry,
         cityMaterial,
+        mask,
         alertRing.geometry,
         alertMaterial,
         ...guideMaterials,

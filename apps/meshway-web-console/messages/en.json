@@ -14,6 +14,8 @@
   "copied": "Copied",
   "globe_region": "Network globe",
   "globe_group_label": "{name} +{others}",
+  "planet_on": "You found the little planet · five quick clicks on the globe to go back",
+  "planet_off": "Back to the usual globe",
   "login_title": "Sign in",
   "login_submit": "Sign in",
   "login_missing": "Enter your email and password.",

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 
 import { usePrefersReducedMotion } from "@/hooks/use-media-query"
 import { m } from "@/paraglide/messages.js"
@@ -9,9 +10,28 @@ import {
   useBootPhase,
 } from "@/state/boot"
 import { pointAtOnGlobe, selectFromGlobe, useGlobe } from "@/state/globe"
+import { togglePlanet } from "@/state/preferences"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
 import type { GlobeEngine } from "./engine"
+
+/** Clicks on the globe within this long of each other count towards the easter egg. */
+const TAPS_MS = 600
+const TAPS = 5
+
+/** A click on the globe (not a node): deselects; five quick ones swap the little planet look. */
+function makeGlobeClick() {
+  let taps: number[] = []
+  return (nodeId: string | null) => {
+    selectFromGlobe(nodeId)
+    if (nodeId !== null) return
+    const now = performance.now()
+    taps = [...taps.filter((at) => now - at < TAPS_MS * TAPS), now]
+    if (taps.length < TAPS) return
+    taps = []
+    toast(togglePlanet() ? m.planet_on() : m.planet_off(), { id: "planet" })
+  }
+}
 
 /** Theme colours, re-read whenever the root's theme class changes. */
 function useGlobeColors(): GlobeColors {
@@ -50,7 +70,7 @@ export function GlobeStage() {
         if (disposed) return
         created = createGlobeEngine(
           element,
-          selectFromGlobe,
+          makeGlobeClick(),
           pointAtOnGlobe,
           markRevealed
         )

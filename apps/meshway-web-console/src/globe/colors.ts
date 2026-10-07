@@ -7,6 +7,8 @@ export type Rgb = { r: number; g: number; b: number }
 export type GlobeColors = {
   /** Additive light reads well on dark backgrounds only. */
   dark: boolean
+  /** The little planet look (html.planet). */
+  planet: boolean
   surface: Rgb
   rim: Rgb
   land: Rgb
@@ -18,6 +20,12 @@ export type GlobeColors = {
   night: Rgb
   twilight: Rgb
   city: Rgb
+  /** The little planet's sea, meadow, dry land, surf and clouds. */
+  sea: Rgb
+  meadow: Rgb
+  dry: Rgb
+  surf: Rgb
+  cloud: Rgb
   /** A page not found (attention) or failed (destructive): the signal-lost rings. */
   attention: Rgb
   destructive: Rgb
@@ -40,6 +48,11 @@ export const RGB_KEYS = [
   "night",
   "twilight",
   "city",
+  "sea",
+  "meadow",
+  "dry",
+  "surf",
+  "cloud",
   "attention",
   "destructive",
   "confirmed",
@@ -60,6 +73,11 @@ const TOKENS: Record<(typeof RGB_KEYS)[number], string> = {
   night: "--globe-night",
   twilight: "--globe-twilight",
   city: "--globe-city",
+  sea: "--planet-sea",
+  meadow: "--planet-meadow",
+  dry: "--planet-dry",
+  surf: "--planet-surf",
+  cloud: "--planet-cloud",
   attention: "--status-attention",
   destructive: "--destructive",
   confirmed: "--link-confirmed",
@@ -89,6 +107,7 @@ export function readGlobeColors(): GlobeColors {
   }
   const colors: GlobeColors = {
     dark: document.documentElement.classList.contains("dark"),
+    planet: document.documentElement.classList.contains("planet"),
     surface: resolve(TOKENS.surface),
     rim: resolve(TOKENS.rim),
     land: resolve(TOKENS.land),
@@ -99,6 +118,11 @@ export function readGlobeColors(): GlobeColors {
     night: resolve(TOKENS.night),
     twilight: resolve(TOKENS.twilight),
     city: resolve(TOKENS.city),
+    sea: resolve(TOKENS.sea),
+    meadow: resolve(TOKENS.meadow),
+    dry: resolve(TOKENS.dry),
+    surf: resolve(TOKENS.surf),
+    cloud: resolve(TOKENS.cloud),
     attention: resolve(TOKENS.attention),
     destructive: resolve(TOKENS.destructive),
     confirmed: resolve(TOKENS.confirmed),

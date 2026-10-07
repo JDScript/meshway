@@ -20,6 +20,8 @@ export type Theme = "system" | "light" | "dark"
 export const THEMES: readonly Theme[] = ["system", "light", "dark"]
 
 const THEME_KEY = "theme"
+/** The hidden little planet look (an easter egg: five quick clicks on the globe). */
+const LOOK_KEY = "look"
 const DARK_SCHEME = "(prefers-color-scheme: dark)"
 
 export const isTheme = (value: unknown): value is Theme =>
@@ -34,8 +36,18 @@ function storedTheme(): Theme {
   }
 }
 
+function storedPlanet(): boolean {
+  try {
+    return window.localStorage.getItem(LOOK_KEY) === "planet"
+  } catch {
+    return false
+  }
+}
+
 type Preferences = {
   theme: Theme
+  /** The little planet look, within either theme. */
+  planet: boolean
   /** The system's colour scheme, followed while the theme is `system`. */
   systemDark: boolean
   locale: Locale
@@ -43,6 +55,7 @@ type Preferences = {
 
 const preferencesStore = createStore<Preferences>(() => ({
   theme: storedTheme(),
+  planet: storedPlanet(),
   systemDark: window.matchMedia(DARK_SCHEME).matches,
   locale: getLocale(),
 }))
@@ -62,6 +75,19 @@ export function setTheme(theme: Theme) {
 /** The other one of dark and light, from whatever shows now. */
 export const toggleTheme = () =>
   setTheme(isDark(preferencesStore.getState()) ? "light" : "dark")
+
+/** Turns the little planet look on or off; returns whether it is on now. */
+export function togglePlanet(): boolean {
+  const planet = !preferencesStore.getState().planet
+  try {
+    if (planet) window.localStorage.setItem(LOOK_KEY, "planet")
+    else window.localStorage.removeItem(LOOK_KEY)
+  } catch {
+    // A preference only.
+  }
+  preferencesStore.setState({ planet })
+  return planet
+}
 
 export function switchLocale(locale: Locale) {
   if (locale === preferencesStore.getState().locale) return
@@ -99,6 +125,11 @@ export function applyPreferences() {
   let first = true
   const show = (preferences: Preferences) => {
     const dark = isDark(preferences)
+    const planet = root.classList.contains("planet")
+    if (planet !== preferences.planet)
+      shiftTheme(!first, () =>
+        root.classList.toggle("planet", preferences.planet)
+      )
     if (root.classList.contains(dark ? "dark" : "light")) return
     shiftTheme(!first, () => {
       root.classList.remove("light", "dark")
@@ -119,11 +150,13 @@ export function applyPreferences() {
       preferencesStore.setState({ systemDark: event.matches })
     )
   window.addEventListener("storage", (event) => {
-    if (event.storageArea !== window.localStorage || event.key !== THEME_KEY)
-      return
-    preferencesStore.setState({
-      theme: isTheme(event.newValue) ? event.newValue : "system",
-    })
+    if (event.storageArea !== window.localStorage) return
+    if (event.key === THEME_KEY)
+      preferencesStore.setState({
+        theme: isTheme(event.newValue) ? event.newValue : "system",
+      })
+    if (event.key === LOOK_KEY)
+      preferencesStore.setState({ planet: event.newValue === "planet" })
   })
   window.addEventListener("keydown", (event) => {
     if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return
