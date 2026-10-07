@@ -31,6 +31,108 @@ mise run perf:circuit
 
 默认矩阵为 2／3／5 节点 × 1280／52 字节 × profile 关闭与 1/128 采样，各重复三次。角色成本使用线程 CPU 时钟与单调时钟；接收角色包含上游 frame release 检查，终点包含 guarded 明文交付。报告写入执行脚本所在工作树的 `.meshway/perf/circuit/<run>/`：`results.json` 保存源码 digest、Git revision、二进制 SHA256、工具链、平台、参数、每角色 calls／CPU／wall、逐段帧字节与中位数／p10／p90；`summary.md` 另列 profile 采样的阶段分解。采样分解带 observer effect，不能加总当作 profile 关闭时的 CPU 预算。
 
+### L0 CPU 归因
+
+`mise run perf:crypto:l0 -- --environment host`（或 `linux`）对正式 `meshway-circuit-perf` 做独立 release（保留函数调试信息）构建，固定 2／3 节点、1280B、1000 轮 warmup，分别保存 profile 关闭和 `MESHWAY_PROFILE=128` 的三次重复。macOS 另用用户安装的 `samply` 记录每拓扑 500,000 轮的 1 kHz 调用栈；Linux 复用锁定 node-lab image、zigbuild、无网络／只读容器和 2 CPU quota，镜像缺少 perf 时使用现有日志插桩。二进制、命令、原始 stdout／stderr、采样文件与 `results.json`／`summary.md` 位于 `.meshway/perf/crypto/<run>-l0-<environment>/`。
+
+- 无插桩的线程 CPU／实际单向交付包是总预算；A／B send、receive 和 R forward 分别使用真实角色计时，不均分总量。
+- 原生栈采样的 self-time 是叶函数权重；inclusive 的父子项不可相加。函数内联、未解析符号及样本窗口必须在归因报告说明；初始化／warmup 不混入稳态归因。
+- 日志插桩使用首尾累计差值、精确 calls 和采样平均时间，top 15 是已有 scope 的 self CPU 估计。它没有 `Frame::validate`、每次 BTreeMap 查找或 memcpy 的独立计时，不能伪造函数级细分或用 macOS 的占比代替 Linux。
+- AEAD、含 key schedule 的相邻 HMAC、codec、其它 SHA256、flow／replay／guard、缓冲／复制与其它分别报告；无法分离的项保留所属父项并标为未独立测得。插桩前后的 CPU 差值用于展示 observer effect，不归一化伪装成精确的生产成本。
+
+`scripts/perf/crypto_analysis.py` 读取两环境 L0、原语 `results.json` 和 samply 的预符号化 sidecar。对每个主线程去除最初 200ms／最后 100ms，以 thread CPU delta 加权；用未插桩总预算乘原生采样比例，得到可加总但仍有统计误差的函数／类别估计。按调用栈将嵌套 codec 和缓冲工作划归自身类别，再识别 HMAC、AEAD、其它 SHA、guard 和 flow／policy；其余（含 harness 计时／fixture、通用分配和未归类包装）保留为其它。JSON 保存所有叶函数和 top 15；Markdown 汇总类别、角色、现有插桩 scope 和每条替换路线的算术差值。
+
+#### CPU 归因实测
+
+2026-10-07 UTC，Apple M3 Pro／macOS 27.0、Rust 1.98.0。报告 `20261007T041204Z-ce95fe75-l0-host` 的两拓扑各 6 个日志对照进程及各一次原生采样均成功；源码 digest 首尾一致。下表以每个单向交付 1280B IP 包计，合计所有路径角色；类别为原生采样比例乘 profile-off 总 CPU。两拓扑分别有 21,815／36,139 个有效 CPU 样本，约 4.0%／4.1% 的叶样本未解析（保留其父级归因）；不是逐调用精确计时。
+
+| 类别 | 2 节点 µs／包（占比） | 3 节点 µs／包（占比） |
+| --- | ---: | ---: |
+| AEAD seal | 2.691（12.82%） | 2.764（8.55%） |
+| AEAD open | 2.817（13.42%） | 2.877（8.90%） |
+| 相邻 HMAC，含 key schedule | 7.743（36.89%） | 15.557（48.10%） |
+| Frame validate／encode／decode | 0.057（0.27%） | 0.199（0.62%） |
+| Packet parse／checksum | 0.158（0.75%） | 0.214（0.66%） |
+| BTreeMap／flow／replay／policy | 1.788（8.52%） | 2.664（8.24%） |
+| guard／authority | 1.538（7.33%） | 2.205（6.82%） |
+| PacketBuffer／池／内存移动 | 1.917（9.13%） | 2.551（7.89%） |
+| 其它，含 harness／通用分配／未归类包装 | 2.279（10.86%） | 3.308（10.23%） |
+| **profile-off 总 CPU** | **20.989** | **32.339** |
+
+未采到稳态的独立其它 SHA256 调用，不补零；SHA256 压缩叶函数（`sha2::sha256::compress256`）分别占 36.58%／47.68%，归属 HMAC。其次是 ChaCha `ApplyBlocksCtx`（15.39%／10.19%）和 soft Poly1305 `compute_block`（8.90%／5.85%）。完整 top 15、所有叶函数和复制调用者保存在 `.meshway/perf/crypto/assessment.json`／`.md`。`memmove` 中 `prepare_send_at`＋`commit_receive` 的调用者合计约 0.964／1.456 µs，包含 Rust 聚合值移动，不能等同于 IP payload 复制，也不能直接视为全部可省成本。
+
+Linux 使用 OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`、aarch64、锁定 Ubuntu 镜像 `46773dba…`，每容器 2 CPU quota。镜像没有 perf，使用现有 1/128 插桩。默认报告 `20261007T041746Z-e9770af4-l0-linux` 和固定 guest CPU 0 的补测 `20261007T042914Z-29702971-l0-linux` 使用同一 binary `cd9b0c63…`，各 12/12 成功、源码未变。
+
+| 环境／affinity | 2 节点 profile off／128 µs/包 | 3 节点 profile off／128 µs/包 |
+| --- | ---: | ---: |
+| macOS，默认 | 20.989／20.769 | 32.339／33.881 |
+| Linux，默认 | 23.635／26.436 | 51.157／98.560 |
+| Linux，guest CPU 0 | 61.755／65.265 | 95.544／92.996 |
+
+固定 guest CPU 仍未消除环境差异；未测宿主频率、vCPU 调度／steal 的贡献，不把这种变化归因于代码。固定 CPU 0 的采样估计中，2／3 节点 AEAD seal 为 7.304／6.929 µs、open 为 7.632／7.310 µs、HMAC 为 22.494／45.272 µs；guard 为 9.113／12.478 µs，codec 为 0.966／1.861 µs。它们含 observer effect，不能当作 profile-off 的可加总分区。Linux 的 BTreeMap、replay、Frame validate、池与复制未独立计时，保留在父 scope；函数映射及 top 15 scope 见同一 assessment。
+
+### 原语微基准
+
+```sh
+mise run perf:crypto
+# 仅主机，或调整固定迭代／批次重复数：
+mise run perf:crypto -- --environment host --iterations 100000 --repeats 5
+```
+
+`tools/meshway-crypto-bench` 的显式 example 使用工具自身的 dev-dependencies；生产 crates 的密码依赖不变。`scripts/perf/crypto.py` 在 host 与 aarch64 Linux 的无网络、只读、去除 capabilities 的独立容器中运行同一固定迭代实现，复用 dataplane 的 zigbuild／锁定镜像及跨 worktree measurement lock。基准不进入 `mise run check`；严格 Clippy 仍检查该 example。
+
+两个 crypto 测量任务均接受 `--cpu-set 0`，可选固定 Linux guest CPU；CPU quota 仍由 `--cpus`（L0 固定 2）控制。这不固定物理宿主核心，也不提供宿主独占；报告保留 affinity、首尾宿主 load average 与全部批次分位数。跨环境和大幅波动的样本不以单一倍率归因于实现。
+
+| 项目 | 测量边界 |
+| --- | --- |
+| AEAD | ChaCha20-Poly1305 0.10.1／0.11.0 与 ring 0.17；每次创建 key object，seal／open 分别测量；in-place 复用分配，alloc 包含输入 clone／分配／释放；open.inplace 包含恢复密文复制 |
+| HMAC | Hmac／SHA256 0.12／0.10 与 0.13／0.11、ring HMAC-SHA256；每次重新 key 与预 key clone／context 分别测量 |
+| 候选相邻认证 | BLAKE3 keyed hash 截 16B；三个 AEAD 实现对空明文、frame AAD、`zero32 || sequence LE64` nonce 生成 16B tag；只测原语，不代表 wire 已选择或协议已验收 |
+| 长度 | 原始 52／1280B；另以 `.v5` 标识相同 IP 长度：HMAC／BLAKE3 为完整 MAC transcript（69B domain／字段＋`IP bytes + 16` ciphertext），HMAC 保留正式实现的六次 update 边界；AEAD-tag 为真实 54B Data header＋ciphertext，计入 sequence 字段更新，nonce 与该 sequence 一致 |
+| 时钟与样本 | 每批固定迭代，用线程 CPU 与单调墙钟；计时外校验跨实现 ciphertext／tag／plaintext 一致，预热 1000 次；报告独立批次中位数／p10／p90，不解释为逐操作尾延迟 |
+| 可比性 | copy baseline 单独列出，不自动扣除；seal／tag 在每个测量流递增 nonce，open 重复验证固定公开测试密文；不用于真实秘密 |
+
+原语窗口不含 Frame 校验、policy、重放或 tag 比较；HMAC 各字段与 BLAKE3 连续 transcript 在窗口外准备，AEAD-tag 的现成 wire AAD 只在每次调用更新 sequence。候选构造在生产中可能需要的 transcript 布局调整不由这些数字代替。
+
+报告目录 `.meshway/perf/crypto/<run>/` 包含不可变 host／Linux 二进制、原始输出、`results.json` 和 `summary.md`。JSON 记录 schemaVersion、Git revision／dirty、源码 digest、工具链／RUSTFLAGS、平台／镜像／quota、二进制 SHA256、命令、逐批原始 CPU／wall／iterations 和聚合值；失败记录保留原因，未测不填零。x86_64 无本机环境时明确未测。Lock 变化随实现提交核对，不由新版本数字推断性能。
+
+本工具锁定的 aarch64 后端：chacha20 0.9.1 只有显式 `chacha20_force_neon` 才选择 NEON，0.10.2 在 `target_feature=neon` 时默认选择 NEON；Poly1305 0.8.0／0.9.1 均没有 aarch64 NEON 后端。sha2 0.10.9 在 aarch64 需要 `asm` feature，0.11.0 默认通过 `cpufeatures` 检测 SHA2 后选择 `aarch64_sha2`，否则 soft；Apple ARM64 的 SHA2 检查恒为 true，Linux 使用 `getauxval(AT_HWCAP)`。本工具不强制全局 target CPU／backend cfg，0.11 AEAD 显式启用 zeroize，保留 key 清零成本。依赖中的平台实现可含审计过的 native／unsafe，本工具自身 `forbid(unsafe_code)`。
+
+路线比较只使用同环境实测差值：每个单向交付包有一次 seal、一次 open、`2 × (节点数 − 1)` 次相邻 MAC。端点各承担一次 AEAD 与一次 MAC，中继承担两次 MAC。仅替换 AEAD／HMAC 实现、预 key HMAC、改变相邻 MAC 算法分别计算；微基准差值是被替换原语预算的算术估计，不是改后 L0／真实 I/O 的已验收吞吐。guard、flow、replay、nonce 与输出边界不因原语加速而省略。
+
+非密码成本的解释边界：当前 Data 路径已就地编解码，不调用握手用 `frame.base()`，不能再把旧 v4 的 body 复制／重编码当作现行待消除项。代码路径中源和终点各调用两次 `Frame::validate`，每个中继四次；只读上下文／path 的 clone、owner 借用协调所需的 circuit remove／insert 和重复结构校验是可进一步测量的候选，不表示整项 CPU 均可删除。PacketPool 的加锁／归还、脏区清零、真实边界 guard 及 flow／replay 最终提交分别保留语义。L0 还包括每包 fixture 构造、角色计时和交付账本；减少这些 harness 成本不会自动加速生产 SecureNode。
+
+#### 原语实测与路线预算
+
+主机采用 `20261007T041129Z-22f1f285` 的成功 host 样本（5 批）；该次 Linux 工具激活失败原样保留。Linux 采用固定 guest CPU 0／2 CPU quota 的完整补测 `20261007T042800Z-e67a4e49`（7 批）。每批 100,000 次，Rust 基准源码相同；脚本和 binary digest 分别记录。Linux 原默认 affinity 的完整报告 `20261007T042418Z-fde40664` 也保留，不跨轮择优拼接。下表是所选两组的 CPU 中位数，µs/op；AEAD 为 in-place（open 含恢复密文复制），MAC／候选 tag 的 `.v5` 行按实际 IP 长度对应的 transcript／wire AAD 计。
+
+| 原语 | macOS 52B | macOS 1280B | Linux 52B | Linux 1280B |
+| --- | ---: | ---: | ---: | ---: |
+| AEAD 0.10.1 seal／open | 0.261／0.271 | 2.524／2.609 | 0.295／0.294 | 2.754／2.781 |
+| AEAD 0.11.0 seal／open | 0.493／0.469 | 2.085／2.127 | 0.508／0.512 | 2.184／2.281 |
+| ring AEAD seal／open | 0.215／0.222 | 0.917／0.888 | 0.238／0.240 | 0.978／0.937 |
+| HMAC SHA2 0.10，new／clone | 0.893／0.589 | 3.572／3.350 | 0.939／0.624 | 4.028／3.499 |
+| HMAC SHA2 0.11，new／clone | 0.174／0.125 | 0.693／0.641 | 0.180／0.129 | 0.699／0.641 |
+| ring HMAC，new／prekey | 0.208／0.157 | 0.658／0.607 | 0.275／0.230 | 0.750／0.720 |
+| BLAKE3 keyed tag | 0.190 | 1.395 | 0.195 | 1.407 |
+| 空明文 AEAD-tag，0.10／0.11／ring | 0.229／0.333／0.231 | 1.114／1.201／0.530 | 0.250／0.376／0.246 | 1.194／1.303／0.571 |
+
+原始长度的 HMAC／SHA256、alloc seal／open、copy baseline 和各行 p10／p90 均保存在完整报告。Linux 固定 guest CPU 后仍有大幅批次波动：1280B 旧 HMAC new 的 p10–p90 为 3.816–7.481 µs，ring seal 为 0.938–3.282 µs；不能把中位数称为稳定的物理 CPU 上限。x86_64 与 aws-lc-rs 未测。
+
+以下只对同环境原语中位数做加减，AEAD 均选择 ring，正数为每个单向 1280B 包的**原语预算节省**。MAC 选择中的“新”指 HMAC 0.13／SHA2 0.11；不是已更换生产实现的 L0 数字。
+
+| 路线 | macOS 2／3 节点节省 µs | Linux 2／3 节点节省 µs |
+| --- | ---: | ---: |
+| (i) AEAD 切换＋新 HMAC，每次 new | 9.085／14.842 | 10.277／16.935 |
+| (ii) AEAD 切换＋旧 HMAC 预 key | 3.771／4.213 | 4.677／5.735 |
+| (ii) AEAD 切换＋新 HMAC 预 key | 9.189／15.049 | 10.394／17.168 |
+| (iii) AEAD 切换＋相邻 ring AEAD-tag | 9.411／15.494 | 10.533／17.446 |
+| (iii) AEAD 切换＋相邻 BLAKE3 | 7.681／12.034 | 8.862／14.103 |
+
+例如路线 (i) 在 macOS 的源／终点分别省 4.485／4.600 µs，每个中继省 5.757 µs；Linux 对应原语加减为 5.105／5.173／6.657 µs。macOS 52B 两节点的路线 (i)／新预 key (ii)／AEAD-tag (iii) 分别省 1.535／1.632／1.421 µs，Linux 为 1.629／1.730／1.496 µs。所有路线含同 repeat 加减的分位数，但这些不是置信区间。尤其 Linux L0 与原语采集期间执行条件不一致，不用原语差值推算其替换后 L0 总 CPU。
+
+这组实测首先支持无 wire 变化的密码后端替换：单纯预 key 旧 software SHA256 的收益远小于硬件 SHA256；仅升级 AEAD 0.11 不能获得 ring 的大包成本，52B 还更慢。相邻 AEAD-tag 相比新预 key HMAC 在 macOS 两节点 1280B 仅多省 0.222 µs，52B 则多花 0.212 µs；BLAKE3 大包也高于硬件 HMAC。算法／wire 改变仍需独立决定与实现验收，当前没有由这些微基准得出的必要性。
+
 ### L0 历史 v4 实测参考
 
 Apple M3 Pro、macOS、Rust 1.98.0，profile 关闭，每格为三次独立进程重复的中位数；guard 次数来自 profile 采样的精确调用计数。`36ca2117` 把每次执行资格检查改为单次时钟读取；`90bc1aec` 让每个同步操作共用入口一次 `Reading`，并按截止调度其他 circuit 的维护扫描。
