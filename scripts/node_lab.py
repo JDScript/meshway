@@ -534,6 +534,10 @@ def check_snapshot(journal, containers, statuses, *, deployed=False):
         original = container["Id"] == entry["containerId"]
         expected_hash = journal["plan"]["hashes"][node]
         current_hash = container["Config"]["Labels"].get("com.docker.compose.config-hash")
+        if entry["identity"] is None and status["identity"] is not None and entry["containerId"] is not None:
+            # A blocked original daemon reported no identity; the first identity
+            # observed on the same state volume becomes the plan's identity.
+            entry["identity"] = node_identity(status["identity"])
         if (node_identity(status["identity"]) != entry["identity"]
                 or (entry["deployedContainerId"] is not None and container["Id"] != entry["deployedContainerId"])
                 or (not original and journal["phase"] == "preparing")

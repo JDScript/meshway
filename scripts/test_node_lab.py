@@ -33,6 +33,7 @@ class Deploy(unittest.TestCase):
         self.fail_down_before = False
         self.down_still_active = False
         self.down_blocked_underlay = False
+        self.recreated_identity = {}
         self.fail_compose = False
         self.partial_compose = False
         self.fail_up = False
@@ -124,6 +125,8 @@ class Deploy(unittest.TestCase):
                 previous = self.statuses.get(node)
                 self.statuses[node] = self.status(node, up=previous["desiredUp"] if previous else False)
                 self.statuses[node]["identity"] = previous["identity"] if previous else None
+                if self.recreated_identity.get(node):
+                    self.statuses[node]["identity"] = self.recreated_identity[node]
                 if self.partial_compose:
                     raise subprocess.CalledProcessError(1, args)
             return subprocess.CompletedProcess(args, 0, "", "")
@@ -424,6 +427,17 @@ class Deploy(unittest.TestCase):
         self.deploy()
         self.assertEqual(self.actions, ["down:lax", "compose", "up:lax"])
         self.assertEqual(node_lab.deploy_journal(self.lab)["phase"], "complete")
+
+    def test_blocked_daemon_without_identity_adopts_first_observed_identity(self):
+        self.change("lax")
+        self.down_blocked_underlay = True
+        self.statuses["lax"]["identity"] = None
+        self.recreated_identity["lax"] = {"nodeId": "lax-identity", "networkId": "lab-network"}
+        self.deploy()
+        self.assertEqual(self.actions, ["down:lax", "compose", "up:lax"])
+        journal = node_lab.deploy_journal(self.lab)
+        self.assertEqual(journal["phase"], "complete")
+        self.assertEqual(journal["nodes"]["lax"]["identity"], {"nodeId": "lax-identity", "networkId": "lab-network"})
 
     def test_blocked_underlay_with_desired_up_is_not_quiesced(self):
         self.assertFalse(node_lab.underlay_blocked(
