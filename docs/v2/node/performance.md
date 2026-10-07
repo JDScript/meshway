@@ -97,7 +97,7 @@ L1 尚未覆盖的对照轴：每邻接单连接与有界小连接池、接近�
 - TCP／UDP 的 IPv4／IPv6 拆分重建长度与校验和；TCP 同时调整序号及末段标志。合并只接受相邻、同流、校验和有效且序号／IPv4 ID 连续的包，短尾段结束合并。IP 分片、IPv4 options、IPv6 扩展头、TCP SYN／RST／URG 等不参与合并。
 - 运行库仍使用独立包分配；这里不声明单缓冲或零复制已完成。
 
-OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`、aarch64 的独立无网络容器验证结果：`IFF_VNET_HDR`、`CSUM`、`TSO4`、`TSO6`、`USO4`、`USO6` 均成功启用。真实内核 TCP IPv4／IPv6 各发送 8,192 字节，单次读取均观察到至少 5 个规范化分段，逐段序号、长度与校验和通过；IPv4／IPv6 UDP 三包合并写入均由内核恢复为三个应用报文。对应入口为 `meshway-tun` 的显式隔离测试 `offload_capabilities_and_normalized_packet_io`；原逐包设备生命周期／双栈 I/O 测试同时通过。此项是 TUN 正确性及能力验证，吞吐、CPU 和 syscall／包的 L2 对照尚未测量。
+OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`、aarch64 的独立无网络容器验证结果：`IFF_VNET_HDR`、`CSUM`、`TSO4`、`TSO6`、`USO4`、`USO6` 均成功启用。真实内核 TCP IPv4／IPv6 各发送 8,192 字节，观察到至少 5 个规范化分段，逐段序号、长度与校验和通过；双栈 TCP 三包合并写入后应用完整收到 3,000 字节，IPv4／IPv6 UDP 三包合并写入均由内核恢复为三个应用报文。对应入口为 `meshway-tun` 的显式隔离测试 `offload_capabilities_and_normalized_packet_io`；原逐包设备生命周期／双栈 I/O 测试同时通过。L2 吞吐与 CPU 对照见[内核批量实测](#l2-内核批量实测)。
 
 ## 运行
 
@@ -142,6 +142,39 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 Profiling 单独记录启用和关闭的样本。`plain.tun.read`、`plain.udp.send`、`plain.udp.recv`、`plain.tun.write` 包装 future 的同步 poll 工作，不计 await 挂起时间；正式 UDP／Session 的更深层指标也保留在同一输出中。自耗时只扣除实际采到的嵌套 scope，应结合 samples、calls 与采样分母解释，不将采样累计纳秒直接当作整次 CPU 时间。最终吞吐取 profiling 关闭样本。
 
 iperf3 结果取接收端 `server_output_json.end.sum_received`，并核对 UDP 实收字节数等于交付报文数乘以固定 payload。不能用 iperf3 3.16 的 UDP `end.sum` 替代该字段；该字段可能在真实收到数据时仍报告零字节。Profiling 报告为累计快照，汇总只取每个节点最后一份，不累加同一进程的多份历史快照。
+
+## L2 内核批量实测
+
+报告 `.meshway/perf/dataplane/20261007t000720z-1a8f5ee7/`（UTC），源码 `68ee8e35a4e2dfd1bfc95f268137c13372f5fc27`，启动时工作树 clean、测量期间源码未变。相同二进制、两次独立重复，中位数，profile 关闭；共 20 个 raw／plain／secure 样本全部成功。命令：
+
+```sh
+mise run perf:dataplane -- --batch 32 --profile 0 --repeats 2 \
+  --seconds 6 --omit 1 --mtu 1280 --payload 1200 --udp-rate 2G \
+  --cpus 2 --memory 512m
+```
+
+| 模式 | TCP Mbps | TCP CPU % | UDP Mbps | UDP pps | UDP 丢包 % | UDP CPU % | syscall／包 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| raw 内核参照 | 110,612.96 | 119.70 | 1,543.95 | 160,828.59 | 22.80 | 148.05 | 未测 |
+| plain per-packet | 2,279.77 | 120.32 | 1,041.04 | 108,441.69 | 47.93 | 183.22 | 未测 |
+| plain batch | 3,800.39 | 152.62 | 1,083.66 | 112,881.15 | 45.84 | 180.25 | 未测 |
+
+Batch 的 TCP 吞吐增加 **66.7%**，CPU 增加 32.30 个百分点；UDP pps 增加 **4.1%**，CPU 减少 2.97 个百分点。CPU 为两容器合计，100% 表示一核，含 warmup；此结果不表示 batch 降低所有负载的绝对 CPU。UDP 输入为 2 Gbps，raw 自身也有 22.80% 丢包，不能把全部丢包归因于转发器。TCP pps 未测，`/proc` I/O 计数不覆盖完整 UDP syscall 口径，因此不推算 syscall／包。
+
+### 实际能力与使用证据
+
+| 能力 | OrbStack 结果 | 证据 |
+| --- | --- | --- |
+| TUN `IFF_VNET_HDR`／`CSUM` | 已启用 | 每个 batch 节点首尾 capability 均为 true；双栈内核包校验和验证通过 |
+| TUN `TSO4`／`TSO6` | 已启用 | 双栈真实 TCP 拆分与三包合并交付测试通过 |
+| TUN `USO4`／`USO6` | 已启用 | 双栈 UDP 三包合并后恢复三个应用报文 |
+| UDP `UDP_SEGMENT`／`UDP_GRO` | 已启用且实际使用 | TCP 样本累计 276,462 次 GSO 发送、275,986 个 GRO 超包；UDP 样本分别为 72,176／55,186 |
+| UDP `sendmmsg`／`recvmmsg` | 实际成功 | TCP 样本累计 22,615／155,242 次；UDP 样本累计 190,979／101,832 次 |
+| mmsg／逐包回退 | 隔离测试通过 | 显式禁用上层能力后验证双栈消息边界、来源、短尾段与截断 |
+
+计数为每种负载的两次重复、两个节点退出时累计值之和，包含准备／warmup／回复；它们证明实际使用，不能当作测量区间内的精确 syscall／应用包比值。L2 应用负载使用 IPv4，IPv6 offload 由独立内核测试证明；能力启用不表示每类负载都使用全部 offload。
+
+环境为 OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`、aarch64、锁定 Ubuntu 24.04／iperf3 3.16；Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4，Linux musl release。每容器 2 CPU quota／512 MiB，每节点 current-thread runtime，MTU 1280，UDP payload 1200 字节，省略 1 秒 warmup 后测量 6 秒。Node binary SHA-256 为 `66ea7252510f38710181516e747ba0c622ee9cc2ca458181b1af9c43d97b1c94`；完整源码 digest、fixture hash、image 来源、首尾能力和逐次原始样本见 `results.json`。按唯一运行 label 核对无残留容器或 network。
 
 ## 内核 WireGuard 参照
 
