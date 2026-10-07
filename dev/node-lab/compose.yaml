@@ -28,8 +28,8 @@ x-node: &node
     net.ipv6.conf.all.disable_ipv6: 0
     net.ipv6.conf.default.disable_ipv6: 0
   security_opt: [no-new-privileges:true]
-  cpus: 0.5
-  mem_limit: 384m
+  cpus: 2
+  mem_limit: 512m
   pids_limit: 64
   stop_grace_period: 45s
   healthcheck:
