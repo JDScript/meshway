@@ -9,6 +9,10 @@ use std::str::FromStr;
 
 pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x05";
 pub(super) const MAX_PATH: usize = 8;
+static ENCODE: meshway_logging::profile::Metric =
+    meshway_logging::profile::Metric::new("codec.encode");
+static DECODE: meshway_logging::profile::Metric =
+    meshway_logging::profile::Metric::new("codec.decode");
 
 /// Fixed session routing prefix only; never an authentication decision.
 pub(super) fn session_id(bytes: &[u8]) -> Result<Option<[u8; 32]>, Error> {
@@ -135,9 +139,7 @@ impl Frame {
         if self.kind != Kind::Data {
             return self.encode().map(Into::into);
         }
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("codec.encode");
-        let _profile = PROFILE.enter();
+        let _profile = ENCODE.enter();
         self.validate()?;
         if !self.proofs.is_empty() {
             return Err(Error::Wire);
@@ -168,9 +170,7 @@ impl Frame {
         if bytes.get(8) != Some(&3) {
             return Self::decode(&bytes, retained);
         }
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("codec.decode");
-        let _profile = PROFILE.enter();
+        let _profile = DECODE.enter();
         let view = data::DataView::decode(&bytes)?;
         let context = retained
             .filter(|context| &context.circuit == view.circuit)
@@ -273,9 +273,7 @@ impl Frame {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("codec.encode");
-        let _profile = PROFILE.enter();
+        let _profile = ENCODE.enter();
         let mut out = self.base()?;
         if self.kind.handshake() {
             out.push(self.proofs.len() as u8);
@@ -298,9 +296,7 @@ impl Frame {
         if bytes.get(8) == Some(&3) {
             return Self::decode_owned(bytes.into(), retained);
         }
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("codec.decode");
-        let _profile = PROFILE.enter();
+        let _profile = DECODE.enter();
         if bytes.len() > MAX_FRAME {
             return Err(Error::Wire);
         }
