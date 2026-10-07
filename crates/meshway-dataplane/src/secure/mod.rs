@@ -540,7 +540,9 @@ pub struct SecureNode {
     engine: Engine,
     limits: Limits,
     carriers: BTreeMap<NodeId, Carrier>,
-    circuits: BTreeMap<[u8; 32], Circuit>,
+    // Stable allocation for the owner state: remove/restore coordinates borrows
+    // without moving replay windows, recovery state and session metadata per packet.
+    circuits: BTreeMap<[u8; 32], Box<Circuit>>,
     probes: probe::Probes,
     maintenance: maintenance::Maintenance,
     cancellation: CancellationToken,
@@ -754,7 +756,7 @@ impl SecureNode {
             Some(&pending),
         )?);
         pending.guard.finish()?;
-        self.circuits.insert(circuit_id, circuit);
+        self.circuits.insert(circuit_id, Box::new(circuit));
         self.maintenance.changed();
         Ok(pending)
     }
@@ -984,7 +986,7 @@ impl SecureNode {
             // the same CID. Keep the responder failure tombstone.
             circuit.retire_for("handshake", "initial_output_failed");
         }
-        self.circuits.insert(id, circuit);
+        self.circuits.insert(id, Box::new(circuit));
         self.maintenance.changed();
         result
     }
