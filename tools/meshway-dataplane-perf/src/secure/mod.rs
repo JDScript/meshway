@@ -27,6 +27,21 @@ static PACKET: Metric = Metric::new("l3.packet.origin");
 static DELIVER: Metric = Metric::new("l3.packet.deliver");
 static OWNER: Metric = Metric::new("l3.owner.poll");
 
+fn observe_batch(category: &'static str, count: usize) {
+    if count != 0 {
+        profile::event(
+            category,
+            match count {
+                1 => "1",
+                2..=4 => "2-4",
+                5..=8 => "5-8",
+                9..=16 => "9-16",
+                _ => "17-32",
+            },
+        );
+    }
+}
+
 enum Input {
     Send([u8; 32], Packet),
     Receive(meshway_dataplane::secure::Carrier, meshway_transport::Frame),
@@ -153,6 +168,23 @@ pub async fn run(
 }
 
 impl Driver<'_> {
+    fn reject(&mut self, error: SecureError) {
+        self.rejected += 1;
+        profile::event(
+            "l3.reject",
+            match error {
+                SecureError::Wire => "wire",
+                SecureError::Packet => "packet",
+                SecureError::Flow => "flow",
+                SecureError::Policy => "policy",
+                SecureError::Proof => "proof",
+                SecureError::Crypto => "crypto",
+                SecureError::Replay => "replay",
+                SecureError::Context => "context",
+                _ => "other",
+            },
+        );
+    }
     fn capture_tun(&self) -> Option<&Tun> {
         #[cfg(target_os = "linux")]
         if let Some(host) = &self.host {
@@ -214,6 +246,7 @@ impl Driver<'_> {
         frames: Vec<(meshway_dataplane::secure::Carrier, meshway_transport::Frame)>,
     ) -> Result<(), Error> {
         let mut ready = Vec::new();
+        observe_batch("l3.udp.read.batch", frames.len());
         let mut at = profile::enabled().then(std::time::Instant::now);
         for (incoming, frame) in frames {
             if frame.payload.get(8) == Some(&3) {
@@ -237,7 +270,7 @@ impl Driver<'_> {
             let received = match result {
                 Ok(received) => received,
                 Err(error) if packet_rejection(&error) => {
-                    self.rejected += 1;
+                    self.reject(error);
                     continue;
                 }
                 Err(error) => return Err(error.into()),
@@ -330,10 +363,20 @@ impl Driver<'_> {
                 .set_carriers(io.carriers(self.fixture, self.local)?)?;
             self.complete_crypto(io, &mut pool).await?;
             let quantum = std::time::Instant::now();
+            let mut prepared = 0;
             for _ in 0..self.pending.len().min(32) {
                 if !pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200) {
+                    profile::event(
+                        "l3.backpressure",
+                        if pool.can_submit() {
+                            "quantum"
+                        } else {
+                            "credit"
+                        },
+                    );
                     break;
                 }
+                prepared += 1;
                 let (input, at) = self.pending.pop_front().expect("pending prefix");
                 if let Some(at) = at {
                     static WALL: Metric = Metric::new("l3.input_head_to_prepare.wall");
@@ -358,10 +401,11 @@ impl Driver<'_> {
                             pool.flush();
                         }
                     }
-                    Err(error) if packet_rejection(&error) => self.rejected += 1,
+                    Err(error) if packet_rejection(&error) => self.reject(error),
                     Err(error) => return Err(error.into()),
                 }
             }
+            observe_batch("l3.prepare.batch", prepared);
             pool.flush();
             self.complete_crypto(io, &mut pool).await?;
             if !self.pending.is_empty() && pool.can_submit() {
@@ -380,6 +424,7 @@ impl Driver<'_> {
                     }
                 }, if self.pending.len() < 32 => {
                     read?;
+                    observe_batch("l3.tun.read.batch", batch.packets().len());
                     let mut at = profile::enabled().then(std::time::Instant::now);
                     for bytes in batch.take() {
                         let mut packet = buffers.acquire(bytes.len())?;

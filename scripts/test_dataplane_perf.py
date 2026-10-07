@@ -6,10 +6,30 @@ import tempfile
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from perf.dataplane import MODES, configurations, image_for, last_profile, namespace_options, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
+from perf.dataplane import MODES, configurations, image_for, last_profile, namespace_options, network_counters, network_delta, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
 
 
 class DataplaneReportTests(unittest.TestCase):
+    def test_kernel_counters_keep_udp_and_tun_loss_distinct(self):
+        snmp = "Udp: InDatagrams InErrors RcvbufErrors SndbufErrors\nUdp: 900 17 16 0"
+        dev = "header\nheader\n tun0: 100 2 0 0 0 0 0 0 200 3 0 7 0 0 0 0"
+        with patch("perf.dataplane.command", side_effect=[snmp, dev, "socket memory", "socket drops"]):
+            before = network_counters("owned")
+        after = json.loads(json.dumps(before))
+        after["protocols"]["Udp"]["RcvbufErrors"] += 5
+        after["interfaces"]["tun0"]["txDropped"] += 9
+        delta = network_delta(before, after)
+        self.assertEqual(delta["protocols"]["Udp"]["RcvbufErrors"], 5)
+        self.assertEqual(delta["interfaces"]["tun0"]["txDropped"], 9)
+        self.assertEqual(delta["interfaces"]["tun0"]["rxDropped"], 0)
+        self.assertEqual(before["sockets"], "socket memory")
+        self.assertEqual(before["udpTable"], "socket drops")
+
+    def test_misaligned_kernel_counter_headers_are_rejected(self):
+        with patch("perf.dataplane.command", side_effect=["Udp: InErrors\nTcp: 1", "header\nheader"]):
+            with self.assertRaisesRegex(ValueError, "layout"):
+                network_counters("owned")
+
     def test_untagged_complete_image_is_reused_but_partial_layers_are_not(self):
         complete = dict(Id="complete", Os="linux", Architecture="arm64",
                         Config=dict(Entrypoint=["/usr/local/lib/meshway-lab/entrypoint.sh"]))

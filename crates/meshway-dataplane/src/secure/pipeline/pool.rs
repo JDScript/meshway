@@ -186,6 +186,9 @@ impl Pool {
                             }
                             Work::Stream(mut jobs) => {
                                 for (circuit, sequence, job, mut credit) in jobs.drain(..) {
+                                    if let Some(trace) = &mut credit.1 {
+                                        trace.started();
+                                    }
                                     // Every completion owns one of the globally bounded
                                     // credits; even an unpolled owner cannot fill this queue.
                                     let result = std::panic::catch_unwind(
@@ -257,6 +260,9 @@ impl Pool {
         self.outstanding.fetch_add(1, Ordering::AcqRel);
         let mut credit = Credit(self.outstanding.clone(), super::timing::Trace::new());
         if self.senders.is_empty() || job.inline() {
+            if let Some(trace) = &mut credit.1 {
+                trace.started();
+            }
             let result = job.run();
             if let Some(trace) = &mut credit.1 {
                 trace.ready();

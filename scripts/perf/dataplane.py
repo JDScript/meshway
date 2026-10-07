@@ -133,6 +133,36 @@ def receiver_metrics(data, traffic, payload):
     return received
 
 
+def network_counters(container):
+    snmp = command("docker", "exec", container, "cat", "/proc/net/snmp")
+    dev = command("docker", "exec", container, "cat", "/proc/net/dev")
+    protocols = {}
+    lines = snmp.splitlines()
+    for header, values in zip(lines[::2], lines[1::2]):
+        names, numbers = header.split(), values.split()
+        if names[0] != numbers[0] or len(names) != len(numbers):
+            raise ValueError("invalid /proc/net/snmp counter layout")
+        protocols[names[0][:-1]] = dict(zip(names[1:], map(int, numbers[1:])))
+    interfaces = {}
+    fields = ("rxBytes", "rxPackets", "rxErrors", "rxDropped", "rxFifo", "rxFrame", "rxCompressed", "rxMulticast",
+              "txBytes", "txPackets", "txErrors", "txDropped", "txFifo", "txCollisions", "txCarrier", "txCompressed")
+    for line in dev.splitlines()[2:]:
+        name, values = line.split(":", 1)
+        numbers = list(map(int, values.split()))
+        if len(numbers) != len(fields):
+            raise ValueError("invalid /proc/net/dev counter layout")
+        interfaces[name.strip()] = dict(zip(fields, numbers))
+    return dict(at=time.monotonic(), protocols=protocols, interfaces=interfaces,
+                sockets=command("docker", "exec", container, "ss", "-u", "-a", "-n", "-m"),
+                udpTable=command("docker", "exec", container, "cat", "/proc/net/udp", "/proc/net/udp6"))
+
+
+def network_delta(before, after):
+    return {group: {name: {field: value - before[group][name][field] for field, value in counters.items()}
+                    for name, counters in after[group].items() if name in before[group]}
+            for group in ("protocols", "interfaces")}
+
+
 def image_for(platform, output):
     builder = image_builder()
     digest = builder.source_digest()
@@ -532,6 +562,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 raise RuntimeError("iperf server failed readiness")
             time.sleep(0.05)
         threads_before = {role: node_threads(c) for role, c in containers.items()} if secure else {}
+        network_before = {role: network_counters(c) for role, c in containers.items()}
         record["hostLoadInitial"] = os.getloadavg()
         record["hostUptimeInitial"] = command("uptime")
         record["hostNprocInitial"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
@@ -546,6 +577,10 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             completed = subprocess.run(client_args, cwd=ROOT, stdout=stdout, stderr=stderr, timeout=args.seconds + args.omit + 25)
         elapsed = time.monotonic() - start
         after = {role: cpu_usage(c) for role, c in containers.items()}
+        network_after = {role: network_counters(c) for role, c in containers.items()}
+        record["networkCounters"] = {role: dict(before=network_before[role], after=network_after[role],
+                                               delta=network_delta(network_before[role], network_after[role]))
+                                     for role in containers}
         record["hostLoadFinal"] = os.getloadavg()
         record["hostUptimeFinal"] = command("uptime")
         record["hostNprocFinal"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
@@ -565,6 +600,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         if "error" in data:
             raise RuntimeError(data["error"])
         received = receiver_metrics(data, traffic, args.payload)
+        if traffic == "tcp":
+            record["tcpStreams"] = [stream["sender"] for stream in data["end"]["streams"]]
         record.update(status="ok", goodputMbps=received["bits_per_second"]/1e6,
                        cpuPercent=total_cpu/elapsed*100,
                       packetsPerSecond=((received["packets"]-received["lost_packets"])/received["seconds"] if traffic == "udp" else None),
@@ -610,7 +647,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         for node in ([] if keep else nodes):
             node.wait(timeout=10)
             if node.returncode:
-                record.update(status="failed", failure=f"plain node exit {node.returncode}; see stderr")
+                record.update(status="failed", failure=record.get("failure", f"plain node exit {node.returncode}; see stderr"))
         for handle in handles:
             handle.close()
         if origin != directory:

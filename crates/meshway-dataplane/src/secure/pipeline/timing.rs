@@ -32,6 +32,7 @@ pub(crate) fn batch(category: &'static str, count: usize) {
 
 pub(super) struct Trace {
     at: Instant,
+    worker_at: Option<Instant>,
     released: bool,
 }
 
@@ -40,14 +41,25 @@ impl Trace {
         start().map(|at| {
             Box::new(Self {
                 at,
+                worker_at: None,
                 released: false,
             })
         })
+    }
+    pub fn started(&mut self) {
+        static WALL: Metric = Metric::new("pipeline.submit_to_worker.wall");
+        let now = Instant::now();
+        WALL.elapsed(now.duration_since(self.at));
+        self.worker_at = Some(now);
     }
     pub fn ready(&mut self) {
         static WALL: Metric = Metric::new("pipeline.submit_to_ready.wall");
         let now = Instant::now();
         WALL.elapsed(now.duration_since(self.at));
+        if let Some(at) = self.worker_at.take() {
+            static WORK: Metric = Metric::new("pipeline.worker.wall");
+            WORK.elapsed(now.duration_since(at));
+        }
         self.at = now;
     }
     pub fn release(&mut self) {
