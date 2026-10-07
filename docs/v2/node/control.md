@@ -129,8 +129,6 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 
 ## 限制
 
-事件驱动候选尚未通过 Native UDP／DNS off 的完整 runtime 重验：共享观察的新样本交接及 Access 恢复后的 applied 收敛存在超时。已有定时控制基线的验收不自动覆盖本候选；组件／生命周期测试通过不代表这项整组验收完成。
-
 IPC v4 与 CLI／daemon 同版本发布；旧版本请求返回 `ErrorCode::Version`。事件连接状态与最近有效事件接收时间只是观测，不代表执行许可，见[公开运行状态](/v2/node/runtime#安装范围与状态)。
 
 组件测试使用 `mise exec -- cargo test -p meshway-control -p meshway-private-storage --all-targets --locked`，以真实 Server 与独立私有数据库运行；它不替代 TUN 或业务包流验收，见[验收范围](/v2/node/validation)。
