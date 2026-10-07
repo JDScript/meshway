@@ -155,6 +155,8 @@ Linux rootful Docker 的容器 root 与非 root 宿主 UID 不同：fixture 只�
 
 启用 Docker AppArmor 的 Linux 上，仅 DNS actor 使用 `apparmor=unconfined`，使既有 `SYS_ADMIN` 能力可以执行其私有 mount namespace 中的挂载；保留 capability 限制、只读根、no-new-privileges 及 Docker 默认 seccomp，其他 actor 仍使用默认 AppArmor。
 
+`underlay-negative` 内核测试故意把远端 underlay peer 地址加入 sink；其独立 namespace 的 IPv4 `rp_filter` 固定为 0（含 Docker endpoint 的接口设置），避免宿主继承的 loose RPF 在 marked-socket 检查之前丢弃回复。其他 actor 保留其默认设置，不改宿主 sysctl。Planck 上同一正式内核测试的隔离 A/B 已证明：`rp_filter=2` 超时，`0` 通过；此设置是该负向 fixture 的环境基线。
+
 矩阵根据 Docker Linux 架构选择 `amd64`／`arm64` 的锁定 OS 输入；默认在工作树 `.meshway/validation/os/` 按输入摘要构建并缓存所需镜像。也可显式传 `--runtime-image-manifest`、`--dns-image-manifest`、`--traversal-image-manifest`；runtime 镜像使用 node-lab 的正式 provenance 校验，不改变常驻 lab 的选中镜像。TUN／packet 直接入口也支持 `--build-only`、`--artifacts`；所有入口可用 `--report-dir` 指定新的私有目录。
 
 `--short` 将 runtime 持续／纯接收包流窗口由 125 秒改为 30 秒，退路触发由 30 秒改为 5 秒。报告及矩阵 `scope=diagnostic-short`，其余业务场景、真实 instance 到期等待、DNS、撤销恢复和清理仍执行。短模式不要求已经越过原需求期限；未观测到需求延长时 `laterExpiryMs=null`，不填造测量。它**不构成验收**，且整行耗时仍可能为数分钟。单独入口同样可运行 `mise run test:runtime:linux --short …`。

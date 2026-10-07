@@ -285,14 +285,25 @@ def main():
     def create(role, arguments, address=None, address6=None, private=False, tun=False, admin=False,
                prepare=False, executable="meshway-runtime-fixture", environment=None):
         dns_actor = args.dns_backend != "off" and role in ("a", "r", "b")
+        attachment = actor_networks.get(role, network) if address else "none"
+        if role == "underlay-negative":
+            # This test deliberately captures its *underlay peer* with a sink.
+            # Host-inherited loose RPF otherwise drops replies using that sink,
+            # before the marked-socket contract can be observed. Scope the
+            # baseline to this one disposable namespace, never a host sysctl.
+            attachment = (f"name={attachment},driver-opt=com.docker.network.endpoint.sysctls="
+                          "net.ipv4.conf.IFNAME.rp_filter=0")
         command = ["docker", "create", "--pull", "never", "--name", f"meshway-runtime-{identity.lower()}-{role}",
                    "--entrypoint", "",
                    "--label", label, "--platform", platform, "--read-only", "--cap-drop", "ALL",
                    "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m",
                    "--pids-limit", "128", "--tmpfs", "/state:rw,nosuid,nodev,mode=700",
                    "--env", "TMPDIR=/state",
-                    "--network", actor_networks.get(role, network) if address else "none"]
+                   "--network", attachment]
         command.extend(bind_access_options())
+        if role == "underlay-negative":
+            command.extend(["--sysctl", "net.ipv4.conf.all.rp_filter=0",
+                            "--sysctl", "net.ipv4.conf.default.rp_filter=0"])
         if address:
             command.extend(["--ip", str(address)])
         if address6:
