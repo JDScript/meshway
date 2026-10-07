@@ -633,9 +633,7 @@ async fn coordinate(
         "waiting for persistent UDP/TCP beyond original demand lifetime"
     );
     if !matches!(
-        signals
-            .wait_for("traffic", cli.traffic_wait())
-            .await?,
+        signals.wait_for("traffic", cli.traffic_wait()).await?,
         Signal::Ready
     ) {
         return Err("invalid traffic completion".into());
