@@ -33,8 +33,8 @@ pub struct Receiver {
 }
 
 impl Receiver {
-    /// Pull a bounded immediately available batch. A provider may return one
-    /// frame; stream framing retains its existing cancellation-safe cursor.
+    /// Pull a bounded immediately available batch. Stream framing drains only
+    /// ready frames and retains its cancellation-safe cursor and deferred EOF.
     pub async fn recv_batch(&mut self) -> Result<Vec<Frame>, ReceiveError> {
         if self.closed {
             return Err(ReceiveError::Closed);

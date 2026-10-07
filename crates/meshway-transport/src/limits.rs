@@ -19,6 +19,8 @@ use thiserror::Error;
 /// separate host budget. There is no receive worker or unbounded completion
 /// queue. These scratch bounds are additional to the admitted Vec-capacity
 /// budget; encoding does not acquire another admission permit.
+/// Stream batch reads may also retain one decoded maximum-size frame when it
+/// does not fit the current 64 KiB batch, or one deferred receive error.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
     max_frame_bytes: usize,

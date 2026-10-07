@@ -20,7 +20,11 @@ use crate::output::{OutputScope, ScopedStream};
 use crate::{CancelReason, Frame, Limits, SendContext, raw};
 
 enum Reader {
-    Stream(FramedRead<ReadHalf<Box<dyn raw::Stream>>, LengthDelimitedCodec>),
+    Stream {
+        reader: FramedRead<ReadHalf<Box<dyn raw::Stream>>, LengthDelimitedCodec>,
+        deferred: Option<Result<Frame, super::ReceiveError>>,
+        batch_count: usize,
+    },
     Datagram {
         endpoint: Arc<dyn raw::Datagram>,
         buffer: Vec<u8>,
@@ -181,11 +185,11 @@ impl Shared {
             stop,
             peer: Some(peer),
             output: Some(output),
-            reader: Mutex::new(Some(Reader::Stream(FramedRead::with_capacity(
-                read,
-                codec(limits),
-                buffer_bytes.min(64 * 1024),
-            )))),
+            reader: Mutex::new(Some(Reader::Stream {
+                reader: FramedRead::with_capacity(read, codec(limits), buffer_bytes.min(64 * 1024)),
+                deferred: None,
+                batch_count: limits.max_batch_frames().min(32),
+            })),
             writer: Mutex::new(Some(Writer::Stream(write))),
         }
     }
@@ -398,9 +402,40 @@ impl Shared {
     ) -> Poll<Result<Vec<Frame>, super::ReceiveError>> {
         use super::ReceiveError;
         if self.is_stream() {
-            return self
-                .poll_recv(cx)
-                .map(|result| result.map(|frame| vec![frame]));
+            let count = match lock(&self.reader).as_ref() {
+                Some(Reader::Stream { batch_count, .. }) => *batch_count,
+                _ => return Poll::Ready(Err(ReceiveError::Closed)),
+            };
+            let mut frames = Vec::new();
+            let mut bytes = 0;
+            while frames.len() < count {
+                match self.poll_recv(cx) {
+                    Poll::Pending if frames.is_empty() => return Poll::Pending,
+                    Poll::Pending => break,
+                    Poll::Ready(result) => {
+                        let defer = !frames.is_empty()
+                            && match &result {
+                                Ok(frame) => bytes + frame.payload.len() > 65536,
+                                Err(_) => true,
+                            };
+                        if defer {
+                            if let Some(Reader::Stream { deferred, .. }) =
+                                lock(&self.reader).as_mut()
+                            {
+                                *deferred = Some(result);
+                            }
+                            break;
+                        }
+                        let frame = result?;
+                        bytes += frame.payload.len();
+                        frames.push(frame);
+                        if bytes >= 65536 {
+                            break;
+                        }
+                    }
+                }
+            }
+            return Poll::Ready(Ok(frames));
         }
         let mut reader = lock(&self.reader);
         let Some(Reader::Datagram {
@@ -444,19 +479,28 @@ impl Shared {
         use super::ReceiveError;
         let mut reader = lock(&self.reader);
         match reader.as_mut() {
-            Some(Reader::Stream(reader)) => match ready!(Pin::new(reader).poll_next(cx)) {
-                Some(Ok(payload)) if payload.is_empty() => Poll::Ready(Err(ReceiveError::Empty)),
-                Some(Ok(payload)) => Poll::Ready(Ok(Frame::new(payload.to_vec(), self.peer))),
-                Some(Err(error))
-                    if error
-                        .get_ref()
-                        .is_some_and(|source| source.is::<LengthDelimitedCodecError>()) =>
-                {
-                    Poll::Ready(Err(ReceiveError::Oversized))
+            Some(Reader::Stream {
+                reader, deferred, ..
+            }) => {
+                if let Some(result) = deferred.take() {
+                    return Poll::Ready(result);
                 }
-                Some(Err(error)) => Poll::Ready(Err(ReceiveError::Io(error))),
-                None => Poll::Ready(Err(ReceiveError::Closed)),
-            },
+                match ready!(Pin::new(reader).poll_next(cx)) {
+                    Some(Ok(payload)) if payload.is_empty() => {
+                        Poll::Ready(Err(ReceiveError::Empty))
+                    }
+                    Some(Ok(payload)) => Poll::Ready(Ok(Frame::new(payload.to_vec(), self.peer))),
+                    Some(Err(error))
+                        if error
+                            .get_ref()
+                            .is_some_and(|source| source.is::<LengthDelimitedCodecError>()) =>
+                    {
+                        Poll::Ready(Err(ReceiveError::Oversized))
+                    }
+                    Some(Err(error)) => Poll::Ready(Err(ReceiveError::Io(error))),
+                    None => Poll::Ready(Err(ReceiveError::Closed)),
+                }
+            }
             Some(Reader::Datagram {
                 endpoint, buffer, ..
             }) => {

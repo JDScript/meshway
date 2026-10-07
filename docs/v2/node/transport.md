@@ -123,7 +123,7 @@ BatchCompletion::outcome() -> BatchOutcome
 
 `ScopedFrame` 保留 `Frame`、原 `SendContext` 与宿主提供的 `ChannelScope`。同一批接纳前缀必须拥有同一 scope 标识及目的端点，scope 不一致处返回 `ChannelScopeMismatch`；scope 标识本身不授予权限。宿主按已认证通道的冻结 scope 创建标识，换代创建新标识，不能仅按 socket／peer 复用。Session 将每帧上下文及调用上下文取交集：保留全部取消／lifetime，截止取最早值。任何成员失效均阻止后续 I/O，完成等待者停止轮询也不能导致迟发。
 
-每批最多 32 帧／64 KiB，并服从更小的会话预算；容量按原 Vec capacity、帧数和一个操作继续计费。只提交当前就绪数据，不等待凑批；握手、health、STUN 等控制消息由宿主使用独立逐帧操作，不能加入业务批次。一次批次只有一个 completion；`BatchOutcome::LocalComplete` 要求全部已接纳帧本机完成，全部未开始为 `NotStarted`，部分完成或尝试后的失败为整批 `Uncertain`。原逐帧结果仍供兼容入口使用；批次完成仍不代表对端交付。Stream 保持原长度 framing／flush／半帧失败关闭规则，批量接收在其默认路径可返回单个完整帧。
+每批最多 32 帧／64 KiB，并服从更小的会话预算；容量按原 Vec capacity、帧数和一个操作继续计费。只提交当前就绪数据，不等待凑批；握手、health、STUN 等控制消息由宿主使用独立逐帧操作，不能加入业务批次。一次批次只有一个 completion；`BatchOutcome::LocalComplete` 要求全部已接纳帧本机完成，全部未开始为 `NotStarted`，部分完成或尝试后的失败为整批 `Uncertain`。原逐帧结果仍供兼容入口使用；批次完成仍不代表对端交付。Stream 保持原长度 framing／flush／半帧失败关闭规则；批量接收只读取就绪完整帧，半帧保留在 codec。已读到但超出本批字节预算的一帧（允许单个更大的合法帧），或有效前缀后的 EOF／错误，留至下一次接收，不能吞掉有效前缀或越过错误继续读取。
 
 发送资源同时按帧数、字节数和在途操作数计入有界预算。provider 的协议内部缓冲也须有上限，不能通过另建队列绕过预算。队列满时由上层按业务类别执行有界等待或显式丢弃，不持续分配内存等待 Server 或网络恢复。
 

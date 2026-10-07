@@ -26,6 +26,55 @@ fn peer() -> SocketAddr {
 }
 
 #[tokio::test]
+async fn stream_receive_batch_keeps_partial_codec_and_delivers_prefix_before_eof() {
+    let (stream, mut remote) = tokio::io::duplex(128);
+    let mut session = Session::stream(stream, peer(), limits());
+    remote.write_all(&[0, 0]).await.unwrap();
+    {
+        let mut read = Box::pin(session.receiver().recv_batch());
+        assert!(futures_util::poll!(&mut read).is_pending());
+    }
+    let encoded = wire(&[b"one", b"two"]);
+    remote.write_all(&encoded[2..]).await.unwrap();
+    remote.shutdown().await.unwrap();
+    let frames = session.receiver().recv_batch().await.unwrap();
+    assert_eq!(
+        frames
+            .iter()
+            .map(|frame| frame.payload.as_slice())
+            .collect::<Vec<_>>(),
+        [b"one", b"two"]
+    );
+    assert!(matches!(
+        session.receiver().recv().await,
+        Err(ReceiveError::Closed)
+    ));
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn stream_receive_batch_preserves_next_frame_at_byte_boundary() {
+    let (stream, mut remote) = tokio::io::duplex(100_000);
+    let mut session = Session::stream(
+        stream,
+        peer(),
+        Limits::new(50_000, 3, 150_000, 1, 3).unwrap(),
+    );
+    remote
+        .write_all(&wire(&[&vec![1; 40_000], &vec![2; 40_000]]))
+        .await
+        .unwrap();
+    let frames = session.receiver().recv_batch().await.unwrap();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].payload, vec![1; 40_000]);
+    assert_eq!(
+        session.receiver().recv().await.unwrap().payload,
+        vec![2; 40_000]
+    );
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn scoped_batch_preserves_scope_boundary_and_original_suffix() {
     use crate::{BatchOutcome, ChannelScope, ScopedFrame};
     let (stream, mut remote) = tokio::io::duplex(128);
