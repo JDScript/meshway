@@ -26,6 +26,63 @@ fn peer() -> SocketAddr {
 }
 
 #[tokio::test]
+async fn datagram_receive_coalesces_ready_scratch_prefixes_and_defers_error() {
+    struct Endpoint(Mutex<VecDeque<io::Result<Vec<u8>>>>);
+    impl crate::raw::Datagram for Endpoint {
+        fn local_addr(&self) -> io::Result<SocketAddr> {
+            Ok(peer())
+        }
+        fn poll_send_to(
+            &self,
+            _: &mut Context<'_>,
+            _: &[u8],
+            _: SocketAddr,
+        ) -> Poll<io::Result<usize>> {
+            Poll::Pending
+        }
+        fn poll_recv_from(
+            &self,
+            _: &mut Context<'_>,
+            bytes: &mut [u8],
+        ) -> Poll<io::Result<crate::raw::DatagramRead>> {
+            let Some(result) = self.0.lock().unwrap().pop_front() else {
+                return Poll::Pending;
+            };
+            let packet = result?;
+            bytes[..packet.len()].copy_from_slice(&packet);
+            Poll::Ready(Ok(crate::raw::DatagramRead {
+                source: peer(),
+                copied_len: packet.len(),
+                original_len: Some(packet.len()),
+                truncated: false,
+            }))
+        }
+    }
+    // One scratch buffer under this storage budget, four-frame public batch.
+    let limits = Limits::new(65536, 4, 65536, 1, 4).unwrap();
+    let mut input: VecDeque<_> = (0..5).map(|n| Ok(vec![n; 16])).collect();
+    input.push_back(Err(io::ErrorKind::ConnectionRefused.into()));
+    input.push_back(Ok(vec![9; 16]));
+    let mut session = Session::datagram(Endpoint(Mutex::new(input)), limits);
+    let first = session.receiver().recv_batch().await.unwrap();
+    assert_eq!(
+        first.iter().map(|f| f.payload[0]).collect::<Vec<_>>(),
+        [0, 1, 2, 3]
+    );
+    let prefix = session.receiver().recv_batch().await.unwrap();
+    assert_eq!(prefix.len(), 1);
+    assert_eq!(prefix[0].payload[0], 4);
+    assert!(
+        matches!(session.receiver().recv().await, Err(ReceiveError::Io(error)) if error.kind() == io::ErrorKind::ConnectionRefused)
+    );
+    assert_eq!(
+        session.receiver().recv_batch().await.unwrap()[0].payload[0],
+        9
+    );
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn stream_receive_batch_keeps_partial_codec_and_delivers_prefix_before_eof() {
     let (stream, mut remote) = tokio::io::duplex(128);
     let mut session = Session::stream(stream, peer(), limits());

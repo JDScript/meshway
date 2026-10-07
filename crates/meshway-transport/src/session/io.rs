@@ -29,7 +29,9 @@ enum Reader {
         buffer: Vec<u8>,
         batch_buffers: Vec<Vec<u8>>,
         batch_count: usize,
+        scratch_count: usize,
         pending: VecDeque<Frame>,
+        deferred: Option<super::ReceiveError>,
     },
 }
 
@@ -204,10 +206,12 @@ impl Shared {
                 endpoint: endpoint.clone(),
                 buffer: vec![0; limits.max_frame_bytes()],
                 batch_buffers: Vec::new(),
-                batch_count: limits.max_batch_frames().min(32).min(
+                batch_count: limits.max_batch_frames().min(32),
+                scratch_count: limits.max_batch_frames().min(32).min(
                     (limits.max_bytes().min(2 * 1024 * 1024) / limits.max_frame_bytes()).max(1),
                 ),
                 pending: VecDeque::new(),
+                deferred: None,
             })),
             writer: Mutex::new(Some(Writer::Datagram(endpoint))),
         }
@@ -426,7 +430,9 @@ impl Shared {
             buffer,
             batch_buffers,
             batch_count,
+            scratch_count,
             pending,
+            deferred,
         }) = reader.as_mut()
         else {
             return Poll::Ready(Err(ReceiveError::Closed));
@@ -434,32 +440,61 @@ impl Shared {
         if !pending.is_empty() {
             return Poll::Ready(Ok(drain_datagrams(pending)));
         }
+        if let Some(error) = deferred.take() {
+            return Poll::Ready(Err(error));
+        }
         if batch_buffers.is_empty() {
-            batch_buffers.extend((0..*batch_count).map(|_| vec![0; buffer.len()]));
+            // Scratch capacity is independent of the delivered batch size.
+            // Reuse a small scratch across ready polls instead of forcing a
+            // task handoff after every scratch-sized prefix.
+            batch_buffers.extend((0..*scratch_count).map(|_| vec![0; buffer.len()]));
         }
-        let reads = ready!(endpoint.poll_recv_batch(cx, batch_buffers))?;
-        if reads.is_empty() || reads.len() > batch_buffers.len() {
-            return Poll::Ready(Err(ReceiveError::InvalidMetadata));
+        let mut bytes = 0;
+        while pending.len() < *batch_count && bytes < 65536 {
+            let count = batch_buffers.len().min(*batch_count - pending.len());
+            let received = match endpoint.poll_recv_batch(cx, &mut batch_buffers[..count]) {
+                Poll::Pending if pending.is_empty() => return Poll::Pending,
+                Poll::Pending => break,
+                Poll::Ready(result) => result.map_err(ReceiveError::Io).and_then(|reads| {
+                    if reads.is_empty() || reads.len() > count {
+                        return Err(ReceiveError::InvalidMetadata);
+                    }
+                    let mut frames = Vec::with_capacity(reads.len());
+                    for (received, buffer) in reads.into_iter().zip(&*batch_buffers) {
+                        if received.truncated {
+                            return Err(ReceiveError::Truncated(received));
+                        }
+                        if received.copied_len > buffer.len()
+                            || received.original_len != Some(received.copied_len)
+                        {
+                            return Err(ReceiveError::InvalidMetadata);
+                        }
+                        if received.copied_len == 0 {
+                            return Err(ReceiveError::Empty);
+                        }
+                        frames.push(Frame::new(
+                            buffer[..received.copied_len].to_vec(),
+                            Some(received.source),
+                        ));
+                    }
+                    Ok(frames)
+                }),
+            };
+            match received {
+                Ok(frames) => {
+                    bytes += frames
+                        .iter()
+                        .map(|frame| frame.payload.len())
+                        .sum::<usize>();
+                    pending.extend(frames);
+                }
+                Err(error) if pending.is_empty() => return Poll::Ready(Err(error)),
+                Err(error) => {
+                    *deferred = Some(error);
+                    break;
+                }
+            }
         }
-        let mut frames = Vec::with_capacity(reads.len());
-        for (received, buffer) in reads.into_iter().zip(batch_buffers) {
-            if received.truncated {
-                return Poll::Ready(Err(ReceiveError::Truncated(received)));
-            }
-            if received.copied_len > buffer.len()
-                || received.original_len != Some(received.copied_len)
-            {
-                return Poll::Ready(Err(ReceiveError::InvalidMetadata));
-            }
-            if received.copied_len == 0 {
-                return Poll::Ready(Err(ReceiveError::Empty));
-            }
-            frames.push(Frame::new(
-                buffer[..received.copied_len].to_vec(),
-                Some(received.source),
-            ));
-        }
-        pending.extend(frames);
         Poll::Ready(Ok(drain_datagrams(pending)))
     }
 
@@ -493,10 +528,14 @@ impl Shared {
                 endpoint,
                 buffer,
                 pending,
+                deferred,
                 ..
             }) => {
                 if let Some(frame) = pending.pop_front() {
                     return Poll::Ready(Ok(frame));
+                }
+                if let Some(error) = deferred.take() {
+                    return Poll::Ready(Err(error));
                 }
                 let received = ready!(endpoint.poll_recv_from(cx, buffer))?;
                 if received.truncated {

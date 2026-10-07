@@ -32,12 +32,10 @@ impl Manager {
                 if !frame.is_data() {
                     return Err(Error::Configuration);
                 }
-                frame.ensure_current().map_err(|_| Error::Authority)?;
                 let link = links.get(&frame.next()).ok_or(Error::Unavailable)?;
                 if &link.fact.carrier != frame.carrier() {
                     return Err(Error::Unavailable);
                 }
-                link.scope.check()?;
                 groups
                     .entry(link.fact.id)
                     .or_insert_with(|| Group {
@@ -49,6 +47,12 @@ impl Manager {
                     })
                     .frames
                     .push(frame);
+            }
+            // Every original packet guard is checked together by release_batch
+            // at the actual output boundary. Selection only freezes links;
+            // check each selected channel once, rather than once per frame.
+            for group in groups.values() {
+                group.scope.check()?;
             }
             Ok(groups)
         })();

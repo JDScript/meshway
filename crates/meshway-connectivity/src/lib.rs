@@ -41,10 +41,10 @@ impl Default for Limits {
             connections: 64,
             listeners: 16,
             candidates: 128,
-            events: 64,
+            events: 1024,
             handshake_timeout: Duration::from_secs(5),
             retry_backoff: Duration::from_secs(1),
-            session: meshway_transport::Limits::new(128 * 1024, 16, 512 * 1024, 16, 16)
+            session: meshway_transport::Limits::new(128 * 1024, 34, 512 * 1024, 16, 32)
                 .expect("fixed valid session limits"),
         }
     }

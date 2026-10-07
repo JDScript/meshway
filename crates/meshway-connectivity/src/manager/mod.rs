@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 mod batch;
 mod continuity;
 mod datagram;
+mod events;
 mod resources;
 #[cfg(test)]
 mod tests;
@@ -261,8 +262,8 @@ struct Shared {
     identity: DataPlaneIdentity,
     stop: CancellationToken,
     links: Arc<Mutex<LinkTable>>,
-    events: mpsc::Sender<Event>,
-    control_events: mpsc::Sender<Event>,
+    events: events::Sender,
+    control_events: events::Sender,
     capacity: Arc<Semaphore>,
     limits: Limits,
     control_budget: Arc<Mutex<datagram::ControlBudget>>,
@@ -298,16 +299,24 @@ impl Shared {
             .await
     }
 
-    fn event_sender(&self, event: &Event) -> &mpsc::Sender<Event> {
+    fn event_sender(&self, event: &Event) -> &events::Sender {
+        if Self::business_event(event) {
+            &self.events
+        } else {
+            &self.control_events
+        }
+    }
+
+    fn business_event(event: &Event) -> bool {
         match event {
             // Scheduling hint only. SecureNode still authenticates and admits it.
             Event::Frame { frame, .. }
                 if !(frame.payload.starts_with(b"MWCIR\0\0\x05")
                     && frame.payload.get(8).is_some_and(|kind| *kind != 3)) =>
             {
-                &self.events
+                true
             }
-            _ => &self.control_events,
+            _ => false,
         }
     }
 }
@@ -320,8 +329,8 @@ pub struct Manager {
     factory: Arc<dyn SocketFactory>,
     shared: Arc<Shared>,
     listeners: Vec<ListenerFact>,
-    events: mpsc::Receiver<Event>,
-    control_events: mpsc::Receiver<Event>,
+    events: events::Receiver,
+    control_events: events::Receiver,
     owners: BTreeMap<resources::Key, resources::Owner>,
     traversal: Option<(
         Arc<dyn crate::traversal::TraversalGateway>,
@@ -361,8 +370,14 @@ impl Manager {
         )>,
     ) -> Result<Self, Error> {
         limits.validate()?;
-        let (tx, events) = mpsc::channel(limits.events);
-        let (control_tx, control_events) = mpsc::channel(32);
+        // More small-packet slots absorb scheduling bursts without expanding
+        // the former 64-frame maximum storage exposure (8 MiB by default).
+        let frame = limits.session.max_frame_bytes();
+        let bytes = (frame * limits.events.min(64))
+            .min(8 * 1024 * 1024)
+            .max(frame);
+        let (tx, events) = events::channel(limits.events, bytes);
+        let (control_tx, control_events) = events::channel(32, frame * 32);
         let (epochs, _) = tokio::sync::watch::channel(identity.clone());
         let generation = traversal
             .as_ref()
@@ -889,14 +904,20 @@ impl Manager {
             {
                 return vec![Event::Closed];
             }
-            events.retain(|event| match event {
-                Event::Frame { link, .. } => self.shared.links.lock().is_ok_and(|links| {
-                    links.get(&link.peer).is_some_and(|current| {
-                        current.fact.id == link.id && current.scope.check().is_ok()
-                    })
-                }),
-                _ => true,
-            });
+            {
+                let Ok(links) = self.shared.links.lock() else {
+                    return vec![Event::Closed];
+                };
+                let mut checked = BTreeMap::new();
+                events.retain(|event| match event {
+                    Event::Frame { link, .. } => *checked.entry(link.id).or_insert_with(|| {
+                        links.get(&link.peer).is_some_and(|current| {
+                            current.fact.id == link.id && current.scope.check().is_ok()
+                        })
+                    }),
+                    _ => true,
+                });
+            }
             if self.shared.stop.is_cancelled()
                 || self.shared.identity.snapshot().ensure_current().is_err()
             {
@@ -920,7 +941,9 @@ impl Manager {
                             0 => "0",
                             1..=8 => "1-8",
                             9..=32 => "9-32",
-                            _ => "33+",
+                            33..=64 => "33-64",
+                            65..=256 => "65-256",
+                            _ => "257+",
                         },
                     );
                     if let Some(Event::Frame { received_at, .. }) = events.first() {

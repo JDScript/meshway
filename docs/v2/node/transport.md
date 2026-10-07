@@ -52,7 +52,7 @@ Native UDP 复用同一 context、codec 和签名实现，并增加监听方签�
 
 UDP 通道使用新鲜 nonce 的认证 Ping／Pong 检查存活，默认间隔 2 秒、健康窗口 6 秒；`send_to` 成功不构成可达证明。失效后按获准候选尝试其他承载。业务帧的实际目的地址由已认证通道固定，其后台发送同时检查原包期限、peer 通道和 endpoint 生命周期；外层等待者未继续被轮询也不能产生失效后的迟到输出。
 
-默认预算为 64 连接、16 listener、128 候选和 64 事件；握手期限 5 秒，重试退避 1 秒。事件与 snapshot 来自真实 listener／link 生命周期，不制造 RTT／丢包数据。停止取消并 join 任务，guard 在阻塞 I/O 中持续检查。
+默认预算为 64 连接、16 listener、128 候选；事件的帧／容量双重上限与批次语义见[UDP 控制消息预算](/v2/node/connectivity#udp-控制消息预算)。握手期限 5 秒，重试退避 1 秒。事件与 snapshot 来自真实 listener／link 生命周期，不制造 RTT／丢包数据。停止取消并 join 任务，guard 在阻塞 I/O 中持续检查。
 
 Control 认可的直接 publication／续租交接可保留 Native TCP／UDP 的实际 socket、Session、channel ID 与认证 transcript。交接要求资源声明及原绑定可保留，并逐 peer 重验当前邻接权限、注册材料与原健康期限；失去资格的 peer 退休。socket ID／generation 随实际描述符生命周期变化，配置引用随获准交接更新；原 STUN 观测不重新计时。
 
@@ -96,6 +96,8 @@ Linux `UdpTransport::adopt_batch` 对未指定（0）的接收／发送 socket b
 `Datagram::poll_send_batch` 返回完整发送的前缀数量；`poll_recv_batch` 填充接收缓冲前缀并逐报文返回来源、长度和截断信息。默认实现每次处理一个报文，provider 可实现内核批量。Linux UDP 同目的、等长帧（最后一段可短）通过 `UDP_SEGMENT` 一次 `sendmsg` 发送；聚合 payload 按目的地址限制为 IPv4 65,507 字节、IPv6 65,527 字节，IPv4-mapped IPv6 按 IPv4 处理。`UDP_GRO` cmsg 拆回独立报文。不适合 GSO 时使用 `sendmmsg`；接收使用 `recvmmsg` 并解析每个消息的 cmsg；不支持 mmsg 时回退 `sendmsg`／`recvmsg`。仅 `UDP_SEGMENT` 发送的 `EIO` 按驱动 Tx checksum 能力不足关闭 GSO；普通发送／接收的 `EIO` 与所有路径的 `EMSGSIZE` 仍报错。一次批量 poll 至多一个数据 syscall，能力回退在下一次 poll 执行，因此受保护 socket 每次 syscall 前仍经过 scope／mark 检查。
 
 `capabilities()` 区分成功启用的 GSO／GRO、已由真实调用验证的 mmsg（未探测为 `None`），并记录成功的 GSO／GRO／mmsg 调用次数。批量 UDP provider 的 scratch 上限为 32 × 64 KiB，已接收剩余报文以槽位／区间元数据保留在同一 scratch 中，最多 2,048 个分段，耗尽前不执行下一次接收 syscall；交付时直接复制到调用者缓冲，不再逐段分配／复制 pending payload。逐包 API 同样保留 GRO 中未取走的报文。Session 的批量接收 scratch 按帧长取最多 32 个，容量不超过 `min(maxBytes, 2 MiB)`（允许单个更大的合法帧），使用时分配。交付批次仍不超过 32 帧／64 KiB；超过本批字节上限的已读帧保留到下一次接收，逐包入口也先消费这个前缀。截断或不一致的批量接收元数据返回错误，不交付伪造的完整帧。
+
+Session 的一次 datagram `recv_batch` 可重复消费立即就绪的 provider 前缀，直至 32 帧／64 KiB 或更小的批量配置，不等待凑批。小 scratch 不强制产生额外任务交接；每次 provider poll 仍独立经过原 socket scope 检查，scratch 容量上限不变。已交付前缀之后遇到错误时，先返回有效前缀，再由下次单包或批量接收返回该错误，之后才允许新 I/O。
 
 Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP 各自具有其协议语义；握手及控制消息的重试单独定义。当前重放窗口见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)，性能与更大乱序范围仍须验证。
 

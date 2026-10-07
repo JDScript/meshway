@@ -187,7 +187,10 @@ impl Owner {
             frames,
             limits.max_bytes().min(1024 * 1024),
             limits.max_operations().min(frames),
-            limits.max_batch_frames().min(frames),
+            limits
+                .max_batch_frames()
+                .min(frames)
+                .min(shared.limits.events),
         )
         .map_err(|_| Error::Limits)?;
         let (mut sender, receiver) = Session::datagram(
@@ -575,14 +578,51 @@ impl Owner {
         for frame in control {
             self.receive(frame, received_at).await?;
         }
-        let started = std::time::Instant::now();
+        // Give an already notified consumer one scheduling turn before a
+        // received burst overflows its bounded business queue. Never wait for
+        // capacity: a paused consumer still causes explicit business drops.
+        if self.shared.events.capacity() < data.len() {
+            meshway_logging::profile::event("manager.udp.dispatch", "consumer_turn");
+            tokio::task::yield_now().await;
+        }
+        let mut started = std::time::Instant::now();
+        let mut checked = BTreeMap::new();
+        let mut events = Vec::new();
         for frame in data {
             if started.elapsed() >= Duration::from_micros(200) {
-                meshway_logging::profile::event("manager.udp.drop", "dispatch_time_budget");
-                continue;
+                // Descheduling is not packet congestion. Retain the bounded
+                // already-read suffix across a fair turn, then recheck its
+                // original channel when dispatch resumes.
+                meshway_logging::profile::event("manager.udp.dispatch", "quantum_yield");
+                self.dispatch_batch(std::mem::take(&mut events));
+                tokio::task::yield_now().await;
+                started = std::time::Instant::now();
+                checked.clear();
             }
-            self.receive(frame, received_at).await?;
+            let Some(remote) = frame.peer else {
+                continue;
+            };
+            let Some(channel) = self.channels.get(&remote) else {
+                continue;
+            };
+            if *checked
+                .entry(remote)
+                .or_insert_with(|| self.selected(channel))
+            {
+                let event = Event::Frame {
+                    link: Box::new(channel.fact.clone()),
+                    frame,
+                    received_at,
+                };
+                if Shared::business_event(&event) {
+                    meshway_logging::profile::event("manager.udp", "mesh_frame");
+                    events.push(event);
+                } else {
+                    self.dispatch_event(event);
+                }
+            }
         }
+        self.dispatch_batch(events);
         // One fair scheduling turn per bounded batch, rather than one per
         // rejected business packet while control waits in the socket backlog.
         tokio::task::yield_now().await;
@@ -634,24 +674,56 @@ impl Owner {
         {
             // Source is a demultiplex key only after signed challenge completion.
             // SecureNode remains the sole packet decoder and proof verifier.
-            meshway_logging::profile::event("manager.udp", "mesh_frame");
-            let event = Event::Frame {
-                link: Box::new(channel.fact.clone()),
-                frame,
-                received_at,
-            };
-            let result = self.shared.event_sender(&event).try_send(event);
-            match result {
-                Ok(()) => {}
-                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                    meshway_logging::profile::event("manager.udp.drop", "event_full");
-                }
-                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                    meshway_logging::profile::event("manager.udp.drop", "event_closed")
+            self.dispatch(channel, frame, received_at);
+        }
+        Ok(())
+    }
+
+    fn dispatch(&self, channel: &Channel, frame: Frame, received_at: std::time::Instant) {
+        let event = Event::Frame {
+            link: Box::new(channel.fact.clone()),
+            frame,
+            received_at,
+        };
+        self.dispatch_event(event);
+    }
+
+    fn dispatch_event(&self, event: Event) {
+        meshway_logging::profile::event("manager.udp", "mesh_frame");
+        match self.shared.event_sender(&event).try_send(event) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                meshway_logging::profile::event("manager.udp.drop", "event_full");
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                meshway_logging::profile::event("manager.udp.drop", "event_closed");
+            }
+        }
+    }
+
+    fn dispatch_batch(&self, mut events: Vec<Event>) {
+        if events.is_empty() {
+            return;
+        }
+        let count = events.len();
+        let accepted = count.min(self.shared.events.capacity());
+        events.truncate(accepted);
+        let mut dropped = count - accepted;
+        let mut reason = "event_full";
+        if accepted != 0 {
+            match self.shared.events.try_send_batch(events) {
+                Ok(()) => meshway_logging::profile::event("manager.event_queue", "publish_batch"),
+                Err(error) => {
+                    if matches!(error, mpsc::error::TrySendError::Closed(_)) {
+                        reason = "event_closed";
+                    }
+                    dropped += accepted;
                 }
             }
         }
-        Ok(())
+        for _ in 0..dropped {
+            meshway_logging::profile::event("manager.udp.drop", reason);
+        }
     }
 
     async fn repeat_intro(&mut self, remote: SocketAddr, kind: Kind, body: &[u8]) -> bool {
@@ -1517,9 +1589,9 @@ mod tests {
     use meshway_transport_udp::UdpTransport;
     use tokio::net::UdpSocket;
 
-    fn shared(identity: DataPlaneIdentity) -> (Arc<Shared>, mpsc::Receiver<Event>) {
+    fn shared(identity: DataPlaneIdentity) -> (Arc<Shared>, super::super::events::Receiver) {
         let (epochs, _) = tokio::sync::watch::channel(identity.clone());
-        let (events, receiver) = mpsc::channel(64);
+        let (events, receiver) = super::super::events::channel(64, 8 * 1024 * 1024);
         let shared = Arc::new(Shared {
             identity,
             stop: CancellationToken::new(),
