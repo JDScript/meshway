@@ -35,52 +35,6 @@ mise run build:node:linux
 
 `cargo-bloat 0.12.1` 分析时强制 `strip=false`，其 File 列不能替代正式 release 文件体积；正式产物在分析前单独保存。Linux 分析沿用锁定 Zig linker：分析工具调用的 `cargo build` 需转交同参数的 `cargo zigbuild`，不能拿 host 符号表代表 Linux。crate／函数占比按可归属的 `.text` 符号计，不把内联、单态化、合并符号或未归属的 native 代码当作完整依赖成本。生成客户端类型还可能出现在 serde 单态化函数中，按符号名称统计只能给出可见部分，不能与 crate 行直接相加。
 
-#### ARM64 release 实测
-
-报告 `20261007T192625Z`，Apple M3 Pro／macOS 27.0，Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4。基线使用 `60cab2bb` 的冻结源码归档，结果使用 `2a58dc9f` 的 ring HTTP 装配和上述 release profile；两种 target 均在该主机构建。最终 host 产物另按冻结后的源码重建核对，SHA-256 与测量快照一致。
-
-| Target | 程序 | 基线 MiB | 结果 MiB | 缩小 |
-| --- | --- | ---: | ---: | ---: |
-| `aarch64-apple-darwin` | `meshwayd` | 15.724 | 6.722 | 57.25% |
-| `aarch64-apple-darwin` | `meshway` | 3.245 | 1.725 | 46.84% |
-| `aarch64-unknown-linux-musl` | `meshwayd` | 23.426 | 12.264 | 47.65% |
-| `aarch64-unknown-linux-musl` | `meshway` | 2.703 | 1.544 | 42.90% |
-
-两个程序共同构建的首次命令墙钟：host **396.9 → 343.3 秒**，Linux **396.8 → 364.0 秒**。各阶段使用独立的 Cargo target 缓存，复用已安装工具链、registry 和 Zig 缓存；宿主并非独占，时间包含当时调度／资源竞争。`cargo-bloat` 因 strip 覆盖触发的重构建独立记录，未混入这两行时间。
-
-host／Linux 的 `.text` 分别为 **8,485,968 → 4,888,396 B**、**17,477,828 → 10,774,972 B**。以下为 Linux 的 crate 归属，KiB／占 `.text`；LTO 会改变内联、单态化与符号归属，需连同总大小阅读。
-
-| 归属 | 基线 KiB／% | 结果 KiB／% |
-| --- | ---: | ---: |
-| aws-lc-sys | 490.9／2.88 | 0／0 |
-| ring | 145.6／0.85 | 131.6／1.25 |
-| reqwest＋hyper 系列 | 522.6／3.06 | 186.5／1.77 |
-| Hickory 系列 | 678.7／3.98 | 426.1／4.05 |
-| zbus | 838.4／4.91 | 310.5／2.95 |
-| Tokio | 752.0／4.41 | 479.8／4.56 |
-| serde_json | 292.3／1.71 | 534.7／5.08 |
-| meshway-control-client | 41.6／0.24 | 64.0／0.61 |
-| meshway-protocol，共享 DTO | 108.5／0.64 | 214.6／2.04 |
-
-正常依赖图和 lockfile 中的 aws-lc-rs／aws-lc-sys 均已移除。生成操作按源码方法名匹配 `runtime::Client` 的可见符号，Linux 为 20,600 → 27,196 B；含共享 DTO 名称的可见单态化为 786,468 → 500,076 B。它们与上表重叠，生成类型的独占成本未能独立分离。Server 的 reqwest JSON 支持限测试，SSE 使用的 stream 保留在 control-client；Hickory、zbus 和 Tokio 的已使用能力保留。完整两 target 的 crate 前 25、函数前 30、全部符号 JSON、SHA-256、源摘要与命令位于 `.meshway/perf/binary-size/20261007T192625Z/`。
-
-#### Release profile 的 L0 对照
-
-同一 Apple M3 Pro／macOS 27.0、Rust 1.98.0，基线 `60cab2bb` 与结果 `2a58dc9f` 均运行 `mise run perf:circuit` 默认 36 格矩阵，全部成功，源码摘要首尾一致。下表取 profile 关闭、每格三个独立进程的中位数；CPU 为 harness 线程 CPU／实际单向交付 IP 包，包含所有路径角色。L0 的正式数据面与测量源码相同，此处比较 release profile。
-
-| 节点 | IP 字节 | 基线 → fat LTO pps | 基线 → fat LTO CPU µs／包 |
-| ---: | ---: | ---: | ---: |
-| 2 | 52 | 203,136 → 217,362 | 4.921 → 4.600 |
-| 2 | 1280 | 119,683 → 124,215 | 8.338 → 8.048 |
-| 3 | 52 | 144,692 → 151,280 | 6.911 → 6.606 |
-| 3 | 1280 | 94,589 → 89,202 | 10.572 → 11.205 |
-| 5 | 52 | 91,177 → 96,032 | 10.966 → 10.413 |
-| 5 | 1280 | 56,331 → 59,041 | 17.722 → 16.930 |
-
-3 节点／1280B 短窗口出现约 6% CPU 上升，因此对同一对不可变二进制追加 **9 组交错顺序、100,000 轮、1000 轮 warmup、无插桩**的配对复测。基线／fat LTO 的 CPU 中位数为 **10.935／10.505 µs／包**；逐组 CPU 比值的中位数为 **0.9674**，8/9 组下降，未复现短窗口回退。其余默认格 CPU 中位数下降约 3.5%–6.5%。保留 fat LTO；这些结果只覆盖 L0，宿主调度／频率未固定。
-
-完整报告为同一体积证据目录中的 `baseline-l0/`、`final-l0/`、`l0-paired-3n1280/`。两程序 SHA-256 分别为 `4ed1dd399fdbbb1fd8fef233a17c030e1dd76837140494e65c1d61bf502dce7f` 与 `7677bb88eb512484fbdeb2828f80459e098f4a62164052f81590e9081fab9441`；逐次样本和 p10／p90 原样保留。
-
 ### L0 受保护 circuit
 
 ```sh
@@ -327,6 +281,52 @@ Circuit稳定分配和共享Context后原生L0两／三节点总CPU为8.235／11
 musl system工具的Manager／Secure OOM复现，节点RSS约495／501 MiB，其中匿名约487／495 MiB；另一个R为519.33 MiB RSS、511.19 MiB匿名并有换出页。iperf匿名不足0.4 MiB，不能解释节点RSS。OrbStack启动参数`cgroup.memory=nokmem,nosocket`关闭部分内核记账，kernel/sock/slab零值不代表实际无占用；记账边界见[内存](/v2/node/dataplane#进程与容器内存记账)。
 
 仅TUN复用不足以消除Manager OOM；mimalloc工具加TUN复用的65+1秒独立窗口：4 CPU Manager UDP118,763 pps／RSS32.74 MiB，Secure direct154,441／23.77 MiB；2 CPU Manager TCP1320.18 Mbps／34.70 MiB。全部OOM/max/Swap为0，匿名页平台化。关闭allocator统计的复验为Manager122,410 pps／RSS33.82 MiB、cgroup45.83 MiB；稳定不依赖读取统计。此为单次内存回归，不代替完整矩阵。生产选择仅Linux musl daemon入口，库不装全局allocator；原生C分配不自动替换。
+
+### 二进制体积（ARM64 实测）
+
+报告 `20261007T192625Z`，Apple M3 Pro／macOS 27.0，Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4。基线使用 `60cab2bb` 的冻结源码归档，结果使用 `2a58dc9f` 的 ring HTTP 装配和上述 release profile；两种 target 均在该主机构建。最终 host 产物另按冻结后的源码重建核对，SHA-256 与测量快照一致。
+
+| Target | 程序 | 基线 MiB | 结果 MiB | 缩小 |
+| --- | --- | ---: | ---: | ---: |
+| `aarch64-apple-darwin` | `meshwayd` | 15.724 | 6.722 | 57.25% |
+| `aarch64-apple-darwin` | `meshway` | 3.245 | 1.725 | 46.84% |
+| `aarch64-unknown-linux-musl` | `meshwayd` | 23.426 | 12.264 | 47.65% |
+| `aarch64-unknown-linux-musl` | `meshway` | 2.703 | 1.544 | 42.90% |
+
+两个程序共同构建的首次命令墙钟：host **396.9 → 343.3 秒**，Linux **396.8 → 364.0 秒**。各阶段使用独立的 Cargo target 缓存，复用已安装工具链、registry 和 Zig 缓存；宿主并非独占，时间包含当时调度／资源竞争。`cargo-bloat` 因 strip 覆盖触发的重构建独立记录，未混入这两行时间。
+
+host／Linux 的 `.text` 分别为 **8,485,968 → 4,888,396 B**、**17,477,828 → 10,774,972 B**。以下为 Linux 的 crate 归属，KiB／占 `.text`；LTO 会改变内联、单态化与符号归属，需连同总大小阅读。
+
+| 归属 | 基线 KiB／% | 结果 KiB／% |
+| --- | ---: | ---: |
+| aws-lc-sys | 490.9／2.88 | 0／0 |
+| ring | 145.6／0.85 | 131.6／1.25 |
+| reqwest＋hyper 系列 | 522.6／3.06 | 186.5／1.77 |
+| Hickory 系列 | 678.7／3.98 | 426.1／4.05 |
+| zbus | 838.4／4.91 | 310.5／2.95 |
+| Tokio | 752.0／4.41 | 479.8／4.56 |
+| serde_json | 292.3／1.71 | 534.7／5.08 |
+| meshway-control-client | 41.6／0.24 | 64.0／0.61 |
+| meshway-protocol，共享 DTO | 108.5／0.64 | 214.6／2.04 |
+
+正常依赖图和 lockfile 中的 aws-lc-rs／aws-lc-sys 均已移除。生成操作按源码方法名匹配 `runtime::Client` 的可见符号，Linux 为 20,600 → 27,196 B；含共享 DTO 名称的可见单态化为 786,468 → 500,076 B。它们与上表重叠，生成类型的独占成本未能独立分离。Server 的 reqwest JSON 支持限测试，SSE 使用的 stream 保留在 control-client；Hickory、zbus 和 Tokio 的已使用能力保留。完整两 target 的 crate 前 25、函数前 30、全部符号 JSON、SHA-256、源摘要与命令位于 `.meshway/perf/binary-size/20261007T192625Z/`。
+
+### Release profile 的 L0 对照
+
+同一 Apple M3 Pro／macOS 27.0、Rust 1.98.0，基线 `60cab2bb` 与结果 `2a58dc9f` 均运行 `mise run perf:circuit` 默认 36 格矩阵，全部成功，源码摘要首尾一致。下表取 profile 关闭、每格三个独立进程的中位数；CPU 为 harness 线程 CPU／实际单向交付 IP 包，包含所有路径角色。L0 的正式数据面与测量源码相同，此处比较 release profile。
+
+| 节点 | IP 字节 | 基线 → fat LTO pps | 基线 → fat LTO CPU µs／包 |
+| ---: | ---: | ---: | ---: |
+| 2 | 52 | 203,136 → 217,362 | 4.921 → 4.600 |
+| 2 | 1280 | 119,683 → 124,215 | 8.338 → 8.048 |
+| 3 | 52 | 144,692 → 151,280 | 6.911 → 6.606 |
+| 3 | 1280 | 94,589 → 89,202 | 10.572 → 11.205 |
+| 5 | 52 | 91,177 → 96,032 | 10.966 → 10.413 |
+| 5 | 1280 | 56,331 → 59,041 | 17.722 → 16.930 |
+
+3 节点／1280B 短窗口出现约 6% CPU 上升，因此对同一对不可变二进制追加 **9 组交错顺序、100,000 轮、1000 轮 warmup、无插桩**的配对复测。基线／fat LTO 的 CPU 中位数为 **10.935／10.505 µs／包**；逐组 CPU 比值的中位数为 **0.9674**，8/9 组下降，未复现短窗口回退。其余默认格 CPU 中位数下降约 3.5%–6.5%。保留 fat LTO；这些结果只覆盖 L0，宿主调度／频率未固定。
+
+完整报告为同一体积证据目录中的 `baseline-l0/`、`final-l0/`、`l0-paired-3n1280/`。两程序 SHA-256 分别为 `4ed1dd399fdbbb1fd8fef233a17c030e1dd76837140494e65c1d61bf502dce7f` 与 `7677bb88eb512484fbdeb2828f80459e098f4a62164052f81590e9081fab9441`；逐次样本和 p10／p90 原样保留。
 
 ## 已知限制
 
