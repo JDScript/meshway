@@ -124,6 +124,7 @@ pub struct Control {
     client: Client,
     clock: Arc<Clock>,
     validity: Arc<AtomicBool>,
+    context_validity: Arc<AtomicBool>,
     invalidated: tokio_util::sync::CancellationToken,
     // Private owner/barrier and publication identity, independent of guard
     // invalidations during the lease -> durable-target transaction.
@@ -188,6 +189,7 @@ impl Control {
             client,
             clock: Arc::new(Clock::new()?),
             validity: Arc::new(AtomicBool::new(true)),
+            context_validity: Arc::new(AtomicBool::new(true)),
             invalidated: tokio_util::sync::CancellationToken::new(),
             lineage: Arc::new(()),
             publication: Arc::new(()),
@@ -254,6 +256,7 @@ impl Control {
         StatusSnapshot {
             status,
             validity: Arc::clone(&self.validity),
+            context_validity: Arc::clone(&self.context_validity),
             session: self.session.as_ref().map(|s| s.deadline.clone()),
             instance: self.instance.as_ref().map(|i| i.deadline.clone()),
             execution: self
@@ -331,6 +334,7 @@ impl Control {
     }
 
     fn fence(&mut self) {
+        self.invalidate_status_context();
         self.reset_events();
         self.observations = observations::Registry::default();
         self.invalidate_snapshots();
@@ -340,6 +344,11 @@ impl Control {
         self.report = None;
         self.report_sequence = 0;
         self.application = None;
+    }
+
+    fn invalidate_status_context(&mut self) {
+        self.context_validity.store(false, Ordering::Release);
+        self.context_validity = Arc::new(AtomicBool::new(true));
     }
 
     fn registered<T>(
@@ -451,6 +460,7 @@ pub fn server_origin(value: &str) -> Result<String, Error> {
 pub struct StatusSnapshot {
     status: Status,
     validity: Arc<AtomicBool>,
+    context_validity: Arc<AtomicBool>,
     session: Option<Deadline>,
     instance: Option<Deadline>,
     execution: Option<Deadline>,
@@ -458,13 +468,14 @@ pub struct StatusSnapshot {
 impl StatusSnapshot {
     pub fn status(&self) -> Status {
         let mut value = self.status.clone();
-        value.authenticated &= self.validity.load(Ordering::Acquire)
+        value.authenticated &= self.context_validity.load(Ordering::Acquire)
             && self.session.as_ref().is_some_and(Deadline::valid);
         if !value.authenticated || !self.instance.as_ref().is_some_and(Deadline::valid) {
             value.instance = None;
         }
         if let Some(instance) = &mut value.instance
-            && !self.execution.as_ref().is_some_and(Deadline::valid)
+            && (!self.validity.load(Ordering::Acquire)
+                || !self.execution.as_ref().is_some_and(Deadline::valid))
         {
             instance.execution_expires_at_ms = None;
         }
@@ -473,6 +484,7 @@ impl StatusSnapshot {
 }
 impl Drop for Control {
     fn drop(&mut self) {
+        self.context_validity.store(false, Ordering::Release);
         self.events_cancel.cancel();
         self.validity.store(false, Ordering::Release);
         self.invalidated.cancel();

@@ -278,6 +278,7 @@ impl Control {
         if target {
             self.invalidate_guards();
         } else {
+            self.invalidate_status_context();
             self.invalidate_snapshots();
         }
         let mut buffer = Buffer(Zeroizing::new(Vec::with_capacity(LIMIT)));

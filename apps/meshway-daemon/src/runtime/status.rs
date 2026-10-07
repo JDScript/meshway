@@ -76,7 +76,15 @@ impl View {
             } else {
                 DataPlane::Preparing
             }
-        } else if network_current {
+        } else if network_current
+            || (report.phase != Phase::Blocked
+                && control
+                    .as_ref()
+                    .is_some_and(|control| network.same_instance(control)))
+        {
+            // Component installation state is distinct from execution authority.
+            // A target handoff may invalidate output while the installed TUN is
+            // retained. The worker alone reports actual preparing/suspended.
             network.plane
         } else if report.phase == Phase::Blocked
             || (network_bound && network.plane == DataPlane::Failed)
@@ -123,7 +131,7 @@ impl View {
                 && matches!(phase, Phase::ControlReady | Phase::Running)
             {
                 phase = Phase::Blocked;
-            } else if phase == Phase::ControlReady
+            } else if matches!(phase, Phase::ControlReady | Phase::Running)
                 && !(network_current
                     && data_plane == DataPlane::Stopped
                     && network.applied().is_some())

@@ -108,6 +108,8 @@ async fn atomic_refresh_survives_renewal_burst_after_commit_before_delivery_with
     b.refresh_configuration().await.unwrap();
     b.acknowledge_saved().await.unwrap();
     let original = b.execution_snapshot().unwrap();
+    let original_status = b.snapshot();
+    let original_instance = original_status.status().instance.unwrap();
     assert_eq!(original.configuration().unwrap().permits.len(), 4);
     let deadline = a.status().instance.unwrap().expires_at_ms;
     a.renew_demand(&RenewDemandRequest {
@@ -142,6 +144,16 @@ async fn atomic_refresh_survives_renewal_burst_after_commit_before_delivery_with
         granted = refresh.await.unwrap().unwrap();
     }
     let held = b.execution_snapshot().unwrap();
+    let refreshing_status = original_status.status();
+    assert!(refreshing_status.authenticated);
+    let retained_instance = refreshing_status.instance.unwrap();
+    assert_eq!(retained_instance.instance_id, original_instance.instance_id);
+    assert_eq!(retained_instance.generation, original_instance.generation);
+    assert!(retained_instance.execution_expires_at_ms.is_none());
+    assert!(
+        original.ensure_current().is_err(),
+        "status cannot resurrect output authority"
+    );
     assert_eq!(held.reference(), granted);
     held.continuation_from(&original).unwrap();
     assert_eq!(

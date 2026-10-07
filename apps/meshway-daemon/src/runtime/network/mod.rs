@@ -84,6 +84,12 @@ impl Report {
                 .is_none_or(|guard| guard.ensure_current().is_ok())
     }
     pub fn bound_to(&self, control: &meshway_control::Status) -> bool {
+        self.same_instance(control)
+            && control.instance.as_ref().is_some_and(|instance| {
+                instance.target.as_ref() == self.ticket.as_ref().map(ApplicationTicket::target)
+            })
+    }
+    pub fn same_instance(&self, control: &meshway_control::Status) -> bool {
         let Some(ticket) = &self.ticket else {
             return false;
         };
@@ -91,7 +97,6 @@ impl Report {
             && control.instance.as_ref().is_some_and(|instance| {
                 instance.instance_id == ticket.instance().instance_id
                     && instance.generation == ticket.instance().generation
-                    && instance.target.as_ref() == Some(ticket.target())
             })
     }
     pub fn applied(&self) -> Option<ConfigurationRef> {

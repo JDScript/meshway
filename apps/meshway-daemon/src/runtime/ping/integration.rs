@@ -107,6 +107,8 @@ pub(in crate::runtime) struct Fixture {
     pub(in crate::runtime) controls: Vec<Control>,
     pub(in crate::runtime) request: CreateNodeObservation,
     old_status: meshway_control::StatusSnapshot,
+    old_ticket: meshway_control::ApplicationTicket,
+    old_guard: meshway_authority::ExecutionSnapshot,
     task: ObservationTask,
     lease: ObservationLease,
     fault: Arc<Fault>,
@@ -270,6 +272,8 @@ impl Fixture {
             metrics: vec![MetricKind::Rtt, MetricKind::ProbeLoss],
             interval_ms: 30_000,
         };
+        let old_ticket = controls[0].begin_application().await.unwrap();
+        let old_guard = controls[0].execution_snapshot().unwrap();
         let old_status = controls[0].snapshot();
         let response = controls[0].create_node_observation(&request).await.unwrap();
         let lease = controls[0]
@@ -292,6 +296,8 @@ impl Fixture {
             controls,
             request,
             old_status,
+            old_ticket,
+            old_guard,
             task,
             lease,
             fault: faults,
@@ -320,14 +326,29 @@ impl Fixture {
         desired: watch::Receiver<crate::runtime::intent::Desired>,
     ) {
         use crate::runtime::{network, status};
-        assert!(!self.old_status.status().authenticated);
-        assert!(self.old_status.status().instance.is_none());
+        assert!(self.old_status.status().authenticated);
+        assert_eq!(
+            self.old_status.status().instance.unwrap().instance_id,
+            self.request.instance.instance_id
+        );
+        assert!(
+            self.old_status
+                .status()
+                .instance
+                .unwrap()
+                .execution_expires_at_ms
+                .is_none()
+        );
+        assert!(self.old_guard.ensure_current().is_err());
         assert!(source_instance(&self.controls[0]).is_ok());
         let mut report = status::Report::initial(desired.borrow().revision);
         report.phase = Phase::Running;
         report.control = Some(self.old_status.clone());
         let mut network = network::Report::stopped();
         network.plane = DataPlane::Ready;
+        network.ticket = Some(self.old_ticket.clone());
+        network.guard = Some(self.old_guard.clone());
+        network.completion = Some(Ok(()));
         let (_report, report) = watch::channel(report);
         let (_network, network) = watch::channel(network);
         let view = status::View {
@@ -340,7 +361,12 @@ impl Fixture {
         };
         let mut status = view.status();
         assert_eq!(status.phase, Phase::Synchronizing);
-        assert!(status.instance.is_none());
+        assert!(status.authenticated);
+        assert_eq!(
+            status.instance.as_ref().unwrap().instance_id,
+            self.request.instance.instance_id
+        );
+        assert_eq!(status.data_plane, DataPlane::Ready);
         assert!(status.applied.is_none());
         assert!(can_queue(&status));
         status.data_plane = DataPlane::Failed;
