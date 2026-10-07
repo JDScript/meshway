@@ -31,7 +31,6 @@ maxminddb = "0.26"
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
 rusqlite.workspace = true
-rustix.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 serde_yaml_ng = "0.10"

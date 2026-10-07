@@ -7,7 +7,6 @@ description = "Bounded framed transport I/O and completion ownership for Node pr
 
 [dependencies]
 meshway-logging = { path = "../meshway-logging" }
-bytes.workspace = true
 futures-util.workspace = true
 meshway-transport-spec = { path = "../meshway-transport-spec" }
 socket2.workspace = true

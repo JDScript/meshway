@@ -1826,7 +1826,6 @@ dependencies = [
 name = "meshway-configuration"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "ipnet",
  "jsonc-parser",
  "meshway-model",
@@ -1953,7 +1952,6 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
- "futures-util",
  "getrandom 0.3.4",
  "meshway-authority",
  "meshway-configuration",
@@ -2288,7 +2286,6 @@ dependencies = [
  "rcgen",
  "reqwest",
  "rusqlite",
- "rustix",
  "rustls",
  "serde",
  "serde_json",
@@ -2356,7 +2353,6 @@ dependencies = [
 name = "meshway-transport"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "futures-util",
  "meshway-logging",
  "meshway-transport-spec",

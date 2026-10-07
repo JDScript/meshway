@@ -6,7 +6,6 @@ rust-version.workspace = true
 description = "Meshway configuration contracts, normalization, serialization and execution deltas"
 
 [dependencies]
-chrono.workspace = true
 ipnet.workspace = true
 jsonc-parser = { version = "=0.33.1", features = ["serde"] }
 meshway-model = { path = "../meshway-model" }
