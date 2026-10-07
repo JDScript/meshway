@@ -628,6 +628,22 @@ profile 开启（1/128）时 secure-direct 的采样自 CPU 最大项依次为�
 
 secure 节点退出时报告 TUN 上无 demand 承载的内核维护包（IGMP／ICMPv6）与逐包准入拒绝的计数；两者按 daemon 语义计数丢弃，不中止节点。本次运行 28/28 样本成功。
 
+### x86_64 同口径参照
+
+同一 harness、同参数在原生 x86_64 Linux 主机（AMD Ryzen 9 9950X，kernel 6.8，Docker 29.8，`x86_64-unknown-linux-musl`）上的结果；源码 `d0e60ba9`（ring／硬件 SHA2 后端替换之前）加 harness 修复 `335015a1`／`b40fc85d`。主机为多用户共享机，各窗口 1 分钟 load 2.3–8.6，不是独占环境；aarch64 对照列来自前述 OrbStack VM 报告，期间源码不同，跨架构差值不能全部归因于 CPU。
+
+| 口径 | aarch64 VM | x86_64 主机 |
+| --- | ---: | ---: |
+| 原语 1280 B：AEAD 0.10.1 seal／ring AEAD seal | 2.524／0.917 µs | 1.639／0.488 µs |
+| 原语 1280 B：HMAC sha2 0.10 预 key／sha2 0.11 预 key | 3.350／0.641 µs | 0.609／0.610 µs |
+| L0 2／3／5 节点 1280 B（inline，profile off） | 46,722／32,378／20,965 pps | 99,178／75,209／49,947 pps |
+| L3 secure-direct 2 CPU：TCP／UDP | 558 Mbps／48,662 pps | 1,967 Mbps／159,426 pps |
+| L3 secure-relay 2 CPU：TCP／UDP | 402 Mbps／43,373 pps | 1,836 Mbps／158,570 pps |
+| plain-batch 2 CPU：TCP／UDP | 3,592 Mbps／110,879 pps | 17,224 Mbps／207,543 pps |
+| 内核 WireGuard direct／relay 2 CPU：TCP | 2,742／4,854 Mbps | 4,525／4,249 Mbps |
+
+x86_64 的 RustCrypto 后端经调试器断点核实为 AVX2（ChaCha／Poly1305）与 SHA-NI（sha2 0.10／0.11），ring 为 AVX2 与硬件 SHA；因此 x86 上 sha2 升级无增益，ring AEAD 仍约 3× 于 RustCrypto。UDP 行在 x86 上接近 2G 输入速率上限（raw 207,799 pps），丢包 22–24%，不是无损容量。4 CPU 配额矩阵 8/12 成功：secure UDP 接收端在 512 MiB 下 3 次退出 137（其中 1 次有 Docker OOM 事件），plain-batch TCP 1 次发送未完成；根因未定，失败样本完整保留。报告：crypto `planck-20261007T051345Z-51ab43c8`、L0 `planck-20261007T050400Z-6ba8cc86`、L3 2 CPU `planck-20261007t051440z-9e6608ff`、4 CPU `planck-20261007t051807z-677968b0`（本地 `.meshway/perf/<kind>/`）。
+
 ### 测量环境
 
 | 环境 | 值 |
