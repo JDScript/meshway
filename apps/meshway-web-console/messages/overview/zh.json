@@ -9,6 +9,7 @@
   "overview_nodes": "节点",
   "overview_links": "连接",
   "overview_no_nodes": "此网络还没有节点。",
+  "overview_globe_unavailable": "这个浏览器无法绘制地球（WebGL 不可用），已定位的节点不会画出。",
   "overview_no_links": "节点没有报告当前连接。",
   "overview_unlocated": "待定位",
   "overview_unlocated_noPosition": "GeoIP 只给出地区：{place}",

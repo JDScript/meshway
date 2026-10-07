@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react"
 
 import { usePrefersReducedMotion } from "@/hooks/use-media-query"
 import { m } from "@/paraglide/messages.js"
-import { markEngineReady, markRevealed, useBootPhase } from "@/state/boot"
+import {
+  markEngineReady,
+  markEngineUnavailable,
+  markRevealed,
+  useBootPhase,
+} from "@/state/boot"
 import { pointAtOnGlobe, selectFromGlobe, useGlobe } from "@/state/globe"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
@@ -40,23 +45,28 @@ export function GlobeStage() {
     let disposed = false
     let created: GlobeEngine | null = null
     let observer: ResizeObserver | null = null
-    void import("./engine").then(({ createGlobeEngine }) => {
-      if (disposed) return
-      created = createGlobeEngine(
-        element,
-        selectFromGlobe,
-        pointAtOnGlobe,
-        markRevealed
-      )
-      const instance = created
-      observer = new ResizeObserver(([entry]) => {
-        if (entry)
-          instance.resize(entry.contentRect.width, entry.contentRect.height)
+    import("./engine")
+      .then(({ createGlobeEngine }) => {
+        if (disposed) return
+        created = createGlobeEngine(
+          element,
+          selectFromGlobe,
+          pointAtOnGlobe,
+          markRevealed
+        )
+        const instance = created
+        observer = new ResizeObserver(([entry]) => {
+          if (entry)
+            instance.resize(entry.contentRect.width, entry.contentRect.height)
+        })
+        observer.observe(element)
+        instance.resize(element.clientWidth, element.clientHeight)
+        setEngine(instance)
       })
-      observer.observe(element)
-      instance.resize(element.clientWidth, element.clientHeight)
-      setEngine(instance)
-    })
+      // No WebGL, or the renderer's files did not load: no globe, the rest goes on.
+      .catch(() => {
+        if (!disposed) markEngineUnavailable()
+      })
     return () => {
       disposed = true
       observer?.disconnect()

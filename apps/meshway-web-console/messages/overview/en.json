@@ -9,6 +9,7 @@
   "overview_nodes": "Nodes",
   "overview_links": "Links",
   "overview_no_nodes": "This network has no nodes yet.",
+  "overview_globe_unavailable": "This browser cannot draw the globe (WebGL is not available); located nodes are not drawn.",
   "overview_no_links": "No node reports a current link.",
   "overview_unlocated": "Unlocated",
   "overview_unlocated_noPosition": "GeoIP gives only a region: {place}",

@@ -19,6 +19,7 @@ import { STATUS_ORDER } from "@/lib/nodes/status"
 import { evidenceLabel, linkPhaseLabel, statusLabel } from "@/lib/state-labels"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
+import { useGlobeAvailable } from "@/state/boot"
 import { highlightOnGlobe } from "@/state/globe"
 
 import { Group } from "./-group"
@@ -55,6 +56,7 @@ export function StatusCard({
   mobile: boolean
 }) {
   const now = useNow(5_000)
+  const globe = useGlobeAvailable()
   const [open, setOpen] = useState(!mobile)
   const links = state?.links ?? []
   const unlocated = nodes.filter((node) => node.unlocated !== null)
@@ -164,6 +166,12 @@ export function StatusCard({
               </span>
             </dd>
           </dl>
+
+          {globe ? null : (
+            <p className="text-row text-muted-foreground">
+              {m.overview_globe_unavailable()}
+            </p>
+          )}
 
           {nodes.length === 0 ? (
             <p className="text-row text-muted-foreground">

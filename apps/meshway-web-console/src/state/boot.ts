@@ -19,6 +19,8 @@ const MIN_LOADING_MS = 900
 type Boot = {
   phase: BootPhase
   engineReady: boolean
+  /** False when this browser cannot draw the globe (no WebGL, or its renderer did not load). */
+  globe: boolean
   routesReady: boolean
   minimumElapsed: boolean
 }
@@ -26,6 +28,7 @@ type Boot = {
 const bootStore = createStore<Boot>(() => ({
   phase: "loading",
   engineReady: false,
+  globe: true,
   routesReady: false,
   minimumElapsed: false,
 }))
@@ -39,7 +42,8 @@ function met(condition: Partial<Omit<Boot, "phase">>) {
       next.engineReady &&
       next.routesReady &&
       next.minimumElapsed
-    return due ? { ...next, phase: "revealing" } : next
+    // Without a globe there is nothing to reveal: the interface comes in at once.
+    return due ? { ...next, phase: next.globe ? "revealing" : "ready" } : next
   })
 }
 
@@ -50,6 +54,10 @@ export function startBoot() {
 
 /** The globe renderer has drawn its first frame. */
 export const markEngineReady = () => met({ engineReady: true })
+
+/** The globe cannot be drawn here; the console goes on without it. */
+export const markEngineUnavailable = () =>
+  met({ engineReady: true, globe: false })
 
 /** The first route's data are in. */
 export const markRoutesReady = () => met({ routesReady: true })
@@ -62,6 +70,10 @@ export function markRevealed() {
 
 export const useBootPhase = (): BootPhase =>
   useStore(bootStore, (boot) => boot.phase)
+
+/** Whether this browser draws the globe (false once its renderer failed). */
+export const useGlobeAvailable = (): boolean =>
+  useStore(bootStore, (boot) => boot.globe)
 
 /** The interface is in (the first load is over). */
 export const useBooted = (): boolean =>
