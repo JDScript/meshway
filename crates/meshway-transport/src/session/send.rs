@@ -151,6 +151,8 @@ struct Reservation {
 }
 
 struct Operation {
+    observed_at: Option<std::time::Instant>,
+    first_poll_at: Option<std::time::Instant>,
     batch_io: bool,
     frames: VecDeque<Frame>,
     completed: VecDeque<CompletedFrame>,
@@ -204,6 +206,15 @@ impl Operation {
     }
 
     fn poll_inner(&mut self, io: &Shared, cx: &mut Context<'_>) -> Poll<()> {
+        if let Some(at) = self.observed_at
+            && self.first_poll_at.is_none()
+        {
+            let now = std::time::Instant::now();
+            static WALL: meshway_logging::profile::Metric =
+                meshway_logging::profile::Metric::new("transport.admission_to_first_poll.wall");
+            WALL.elapsed(now.duration_since(at));
+            self.first_poll_at = Some(now);
+        }
         let mut budget = PollBudget::fresh();
         let mut reports_left = 128;
         loop {
@@ -274,6 +285,17 @@ impl Operation {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => self.fail(io, error),
                 Poll::Ready(Ok(())) => {
+                    if self.observed_at.take().is_some()
+                        && let Some(at) = self.first_poll_at.take()
+                    {
+                        // Includes readiness/guard waits until the first successful
+                        // raw write prefix. This is not CPU time or a syscall count.
+                        static WALL: meshway_logging::profile::Metric =
+                            meshway_logging::profile::Metric::new(
+                                "transport.first_poll_to_write.wall",
+                            );
+                        WALL.elapsed(at.elapsed());
+                    }
                     let count = match &self.progress {
                         Progress::Stream(progress) => progress.staged,
                         Progress::Datagram { count, .. } => *count,
@@ -647,7 +669,17 @@ impl Sender {
             .try_acquire_many_owned(u32::try_from(bytes).expect("validated byte budget"))
             .expect("exclusive admission owns available byte permits");
         let (completion, result) = oneshot::channel();
+        let observed_at = if meshway_logging::profile::enabled() {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .is_multiple_of(128)
+                .then(std::time::Instant::now)
+        } else {
+            None
+        };
         let mut operation = Operation {
+            observed_at,
+            first_poll_at: None,
             batch_io,
             frames: frames.drain(..accepted).collect(),
             completed: VecDeque::with_capacity(accepted),

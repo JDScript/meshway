@@ -1,4 +1,5 @@
 use super::*;
+use crate::secure::pipeline::timing;
 use meshway_transport::{BatchOutcome, ChannelScope, ScopedFrame, SendLifetime};
 
 pub async fn send_batch(
@@ -78,6 +79,8 @@ async fn send(
                 lifetime: Some(lifetime.clone()),
             };
             let mut frames = VecDeque::with_capacity(pending.len());
+            timing::batch("carrier.send.batch", pending.len());
+            let released_at = timing::start();
             let buffers = PendingFrame::release_batch(pending).map_err(|_| Error::Cancelled)?;
             for (bytes, guard) in buffers.into_iter().zip(&lifetime.packets) {
                 // Every original guard is retained by the common OutputLifetime;
@@ -106,6 +109,15 @@ async fn send(
                     }
                 };
                 if admitted.accepted != 0 {
+                    if first_admission.is_none()
+                        && let Some(released_at) = released_at
+                    {
+                        static WALL: meshway_logging::profile::Metric =
+                            meshway_logging::profile::Metric::new(
+                                "carrier.release_to_admission.wall",
+                            );
+                        WALL.elapsed(at.duration_since(released_at));
+                    }
                     first_admission.get_or_insert(at);
                     let completion = admitted.completion.ok_or(Error::CompletionLost)?;
                     let completed = guarded(&lifetime, completion.wait())
@@ -113,6 +125,13 @@ async fn send(
                         .map_err(|_| Error::CompletionLost)?;
                     if !matches!(completed.outcome(), BatchOutcome::LocalComplete) {
                         return Err(Error::Incomplete);
+                    }
+                    if released_at.is_some() {
+                        static WALL: meshway_logging::profile::Metric =
+                            meshway_logging::profile::Metric::new(
+                                "carrier.admission_to_completion.wall",
+                            );
+                        WALL.elapsed(at.elapsed());
                     }
                     continue;
                 }
@@ -168,11 +187,18 @@ pub async fn deliver_batch(
                 .collect();
             let mut offset = 0;
             while offset < pending.len() {
+                let at = timing::start();
                 let written = guarded(&lifetime, tun.send_batch(&slices[offset..]))
                     .await?
                     .map_err(|_| Error::Tun)?;
                 if written == 0 || written > slices.len() - offset {
                     return Err(Error::Tun);
+                }
+                timing::batch("carrier.tun.written.batch", written);
+                if let Some(at) = at {
+                    static WALL: meshway_logging::profile::Metric =
+                        meshway_logging::profile::Metric::new("carrier.tun.write.wall");
+                    WALL.elapsed(at.elapsed());
                 }
                 offset += written;
             }

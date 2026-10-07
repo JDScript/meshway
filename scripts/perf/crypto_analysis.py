@@ -88,7 +88,7 @@ def sampled(profile, symbols, budget_us):
     for lib in profile["libs"]:
         data = libraries.get((lib["debugName"], normalize(lib["breakpadId"])))
         lookups.append({address: data["symbol_table"][index] for address, index in data["known_addresses"]} if data else {})
-    own, groups, role_groups, copies = Counter(), Counter(), {}, Counter()
+    own, owner, groups, role_groups, copies = Counter(), Counter(), Counter(), {}, Counter()
     samples_seen = 0
     unresolved = 0
     for thread in profile["threads"]:
@@ -137,6 +137,9 @@ def sampled(profile, symbols, budget_us):
             samples_seen += 1
             unresolved += int(stack[0].startswith("0x"))
             own[stack[0]] += weight
+            if any("SecureNode::" + name in frame.replace(">", "") for frame in stack
+                   for name in ("prepare_send", "prepare_receive", "commit_receive")):
+                owner[stack[0]] += weight
             if "memmove" in stack[0] or "memcpy" in stack[0]:
                 caller = next((name for name in stack[1:] if name.lstrip("<").startswith(
                     ("meshway_dataplane::", "meshway_circuit_perf::", "meshway_static_authority::"))), "unresolved caller")
@@ -156,7 +159,8 @@ def sampled(profile, symbols, budget_us):
                 groups=scale(groups), roles={role: scale(counts) for role, counts in role_groups.items()},
                 copyCallers=scale(dict(copies.most_common())),
                 functions=[dict(function=name, **values) for name, values in scale(dict(own.most_common())).items()],
-                top15=[dict(function=name, **values) for name, values in scale(dict(own.most_common(15))).items()])
+                top15=[dict(function=name, **values) for name, values in scale(dict(own.most_common(15))).items()],
+                ownerTop15=[dict(function=name, **values) for name, values in scale(dict(owner.most_common(15))).items()])
 
 
 def summary(report):

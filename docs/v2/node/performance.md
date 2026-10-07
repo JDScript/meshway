@@ -301,6 +301,14 @@ iperf3 结果取接收端 `server_output_json.end.sum_received`，并核对 UDP 
 
 `nodeThreads` 使用每节点 Linux task CPU 计数的前后差值，按自己的快照墙钟区间计算 `cpuActivePercent`；worker 的值可相加。其余墙钟比例同时含阻塞、可运行但未获 CPU、quota 限流，不能称为精确的线程休眠占比。该口径与包含 iperf／内核记账的 cgroup CPU 分开。每样本另记录宿主首尾 load average；配额不提供宿主独占。
 
+### 流水线墙钟观察
+
+profile 开启时，`pipeline.submit_to_ready.wall`、`pipeline.ready_to_release.wall` 与 `pipeline.release_to_credit_drop.wall` 分别观察提交后至 crypto 完成、完成后至 owner 取出保序前缀、取出后至最终 TX/TUN credit 释放。按调用线程每 128 次抽取一次，跨线程只传递单调时刻，不推断 CPU；最后一项含 owner commit、批内等待及 I/O，错误／取消也可能释放 credit，须核对同次拒绝计数。`l3.input_head_to_prepare.wall` 只观察各输入批首包，不能称为全部包的平均排队。
+
+`carrier.release_to_admission.wall` 与 `carrier.admission_to_completion.wall` 为抽样批次的 release→Session 准入、准入→本机完成；`transport.admission_to_first_poll.wall` 与 `transport.first_poll_to_write.wall` 为 Session 内部准入→首次 poll、首次 poll→首个成功 raw write 前缀，后者包含 readiness 等待、原 guard 与 syscall。`carrier.tun.write.wall` 包含一次成功 TUN 写入及其 readiness 等待。这些批次指标与 per-packet credit 指标互相嵌套，不直接相加，也不是内核 syscall-only 精确计时。
+
+`pipeline.dispatch.batch`、`pipeline.release.batch`、`carrier.send.batch` 与 `carrier.tun.written.batch` 为实际非空批次的累计次数，桶为 1／2–4／5–8／9–16／17–32；TUN 使用真实返回的已写前缀数。TCP checkpoint 与 UDP final 之间取差值，避免复用进程时重复累计。关闭 profile 不读取这些墙钟或分配采样记录。
+
 ## L2 内核批量实测
 
 报告 `.meshway/perf/dataplane/20261007t002750z-1171958b/`（UTC），源码 `791e5e299a3af19c1ac98ec6b5f149586ef429ff`，启动时工作树 clean、测量期间源码未变。相同二进制、两次独立重复，中位数，profile 关闭；共 20 个 raw／plain／secure 样本全部成功。命令：

@@ -73,7 +73,7 @@ struct Key([u8; 32], bool, usize);
 
 /// Retain through final TX/TUN completion, including failed/cancelled outputs.
 /// Dropping the credit frees capacity; a completion notification alone does not.
-pub struct Credit(Arc<AtomicUsize>);
+pub struct Credit(Arc<AtomicUsize>, Option<Box<super::timing::Trace>>);
 impl Drop for Credit {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::Release);
@@ -175,13 +175,16 @@ impl Pool {
                                 let _ = work.complete.send(results);
                             }
                             Work::Stream(mut jobs) => {
-                                for (circuit, sequence, job, credit) in jobs.drain(..) {
+                                for (circuit, sequence, job, mut credit) in jobs.drain(..) {
                                     // Every completion owns one of the globally bounded
                                     // credits; even an unpolled owner cannot fill this queue.
                                     let result = std::panic::catch_unwind(
                                         std::panic::AssertUnwindSafe(|| job.run()),
                                     )
                                     .unwrap_or(Err(Error::State));
+                                    if let Some(trace) = &mut credit.1 {
+                                        trace.ready();
+                                    }
                                     complete.lock().expect("completion slots").push_back((
                                         circuit,
                                         sequence,
@@ -236,16 +239,13 @@ impl Pool {
         lane.submitted += 1;
         lane.completed.push_back(None);
         self.outstanding.fetch_add(1, Ordering::AcqRel);
-        let credit = Credit(self.outstanding.clone());
+        let mut credit = Credit(self.outstanding.clone(), super::timing::Trace::new());
         if self.senders.is_empty() {
-            self.collect((
-                circuit,
-                sequence,
-                Ready {
-                    result: job.run(),
-                    credit,
-                },
-            ));
+            let result = job.run();
+            if let Some(trace) = &mut credit.1 {
+                trace.ready();
+            }
+            self.collect((circuit, sequence, Ready { result, credit }));
         } else {
             self.queued.push_back((circuit, sequence, job, credit));
         }
@@ -264,6 +264,7 @@ impl Pool {
                         break;
                     };
                     jobs.extend(self.queued.drain(..self.queued.len().min(8)));
+                    super::timing::batch("pipeline.dispatch.batch", jobs.len());
                     permit.send(Work::Stream(jobs));
                     accepted = true;
                     break;
@@ -316,12 +317,15 @@ impl Pool {
                 if !lane.completed.front().is_some_and(Option::is_some) {
                     break;
                 }
-                let output = lane
+                let mut output = lane
                     .completed
                     .pop_front()
                     .flatten()
                     .expect("completed prefix");
                 lane.released += 1;
+                if let Some(trace) = &mut output.credit.1 {
+                    trace.release();
+                }
                 outputs.push(output);
             }
             if lane.completed.front().is_some_and(Option::is_some) {
@@ -335,6 +339,7 @@ impl Pool {
                 self.free_lanes.push(lane);
             }
         }
+        super::timing::batch("pipeline.release.batch", outputs.len());
         outputs
     }
 
@@ -412,7 +417,7 @@ mod tests {
             ordinal,
             Ready {
                 result: Err(error),
-                credit: Credit(pool.outstanding.clone()),
+                credit: Credit(pool.outstanding.clone(), None),
             },
         ));
     }

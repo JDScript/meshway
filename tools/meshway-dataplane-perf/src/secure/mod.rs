@@ -37,7 +37,7 @@ struct Driver<'a> {
     options: &'a NodeOptions,
     fixture: &'a PublicFixture,
     node: SecureNode,
-    pending: VecDeque<Input>,
+    pending: VecDeque<(Input, Option<std::time::Instant>)>,
     io_capabilities: serde_json::Value,
     tun: Option<Tun>,
     #[cfg(target_os = "linux")]
@@ -214,9 +214,11 @@ impl Driver<'_> {
         frames: Vec<(meshway_dataplane::secure::Carrier, meshway_transport::Frame)>,
     ) -> Result<(), Error> {
         let mut ready = Vec::new();
+        let mut at = profile::enabled().then(std::time::Instant::now);
         for (incoming, frame) in frames {
             if frame.payload.get(8) == Some(&3) {
-                self.pending.push_back(Input::Receive(incoming, frame));
+                self.pending
+                    .push_back((Input::Receive(incoming, frame), at.take()));
             } else {
                 ready.push(self.node.receive(&incoming, frame.payload));
             }
@@ -331,7 +333,11 @@ impl Driver<'_> {
                 if !pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200) {
                     break;
                 }
-                let input = self.pending.pop_front().expect("pending prefix");
+                let (input, at) = self.pending.pop_front().expect("pending prefix");
+                if let Some(at) = at {
+                    static WALL: Metric = Metric::new("l3.input_head_to_prepare.wall");
+                    WALL.elapsed(at.elapsed());
+                }
                 let job = match input {
                     Input::Send(circuit, packet) => {
                         let _packet = PACKET.enter();
@@ -388,10 +394,11 @@ impl Driver<'_> {
                     }
                 }, if self.pending.len() < 32 => {
                     read?;
+                    let mut at = profile::enabled().then(std::time::Instant::now);
                     for bytes in batch.take() {
                         let mut packet = buffers.acquire(bytes.len())?;
                         packet.copy_from_slice(&bytes);
-                        if let Some((circuit, packet)) = self.outbound(packet)? { self.pending.push_back(Input::Send(circuit, packet)); }
+                        if let Some((circuit, packet)) = self.outbound(packet)? { self.pending.push_back((Input::Send(circuit, packet), at.take())); }
                     }
                 }
                 _ = retry.tick(), if !self.ready && matches!(self.options.role, NodeRole::A) => {
