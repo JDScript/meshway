@@ -8,6 +8,7 @@ use meshway_transport_spec::TransportProtocol;
 use std::str::FromStr;
 
 pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x05";
+pub(super) const DATA_HEADER: usize = data::HEADER;
 pub(super) const MAX_PATH: usize = 8;
 static ENCODE: meshway_logging::profile::Metric =
     meshway_logging::profile::Metric::new("codec.encode");

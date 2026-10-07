@@ -36,7 +36,10 @@ impl Settings {
             server,
             hostname,
             network_mode: meshway_ipc::NetworkMode::Tun,
-            underlay: meshway_underlay::Options::default(),
+            underlay: meshway_underlay::Options {
+                mtu: meshway_dataplane::secure::DEFAULT_INNER_MTU,
+                ..meshway_underlay::Options::default()
+            },
             dns: meshway_dns::SystemDnsSettings::default(),
             system: SystemState {
                 hostname: machine_hostname,

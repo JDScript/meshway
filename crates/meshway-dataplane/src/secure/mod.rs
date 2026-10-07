@@ -48,6 +48,12 @@ use zeroize::Zeroizing;
 pub const MAX_FRAME: usize = 128 * 1024;
 /// Noise's 65535-byte message limit minus its 16-byte authentication tag.
 pub const MAX_PLAINTEXT: usize = 65_519;
+/// Fixed steady-state Data frame overhead per IP packet: 54-byte header, 16-byte
+/// AEAD tag and 16-byte adjacent MAC. Independent of path length and relays.
+pub const DATA_FRAME_OVERHEAD: usize = codec::DATA_HEADER + 16 + 16;
+/// Largest inner MTU that keeps one Data frame inside a 1500-byte underlay
+/// link over IPv6/UDP (40 + 8 bytes); IPv4 underlays leave 20 more bytes.
+pub const DEFAULT_INNER_MTU: usize = 1500 - 40 - 8 - DATA_FRAME_OVERHEAD;
 
 /// Bounded static labels: no raw keys, packet contents or configuration errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

@@ -29,7 +29,7 @@ magic/version 8 | kind 1 | flags 1 | CID 32 | sequence 8 | body length 4
 ```
 
 - `flags`：bit0 reply 方向；其余保留为 0，接收方拒绝非零保留位。
-- 开销 **86 B**，与路径长度、listener key、内层地址族无关；P=1280 时 UDP payload 1366 B，外层 IPv4 包 1394 B。
+- 开销 **86 B**，与路径长度、listener key、内层地址族无关；P=1280 时 UDP payload 1366 B，外层 IPv4 包 1394 B。`meshwayd` 的默认内层 MTU 由此导出：`DEFAULT_INNER_MTU` = 1500 − 48（IPv6/UDP）− 86 = 1366，任何 1500 字节底层链路上的任何路径都不分片。
 - 中继不解析 ciphertext；终点解密后 `Packet::parse` 并做业务准入，源在加密前做业务准入。
 - Probe 帧保留自己的 metadata 字段；握手帧保留完整 context 与证明。
 

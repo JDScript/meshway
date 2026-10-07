@@ -138,7 +138,7 @@ Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代�
 
 ### Linux underlay
 
-`meshway-underlay::Host` 是一个 namespace 内本节点 capture／socket 保护的唯一 owner；daemon 驱动其 install／suspend／down／shutdown。Host 独占私有目录锁与 journal，使用新建的 Node-owned TUN、IPv4 `/32`／IPv6 `/128` 地址，默认 MTU 1280。已有 TUN 不接管。
+`meshway-underlay::Host` 是一个 namespace 内本节点 capture／socket 保护的唯一 owner；daemon 驱动其 install／suspend／down／shutdown。Host 独占私有目录锁与 journal，使用新建的 Node-owned TUN、IPv4 `/32`／IPv6 `/128` 地址。`Options::default()` 的 MTU 为 IPv6 最小值 1280；`meshwayd` 装配时使用 `meshway_dataplane::secure::DEFAULT_INNER_MTU` = 1366，即 1500 字节底层链路减去 IPv6/UDP 外层 48 字节与固定 86 字节 Data 帧开销，与路径长度无关。暂无命令行覆盖。已有 TUN 不接管。
 
 `Host::open(directory, options)` 只打开内核 owner 与受保护 `SocketFactory`，不要求 Server origin，也不打开 bootstrap resolver／HTTP 代理；同进程即使使用不同私有目录也不能打开第二个 Host。需要控制联系时，再调用 `host.attach_control(origin)` 初始化 bootstrap resolver 和固定 origin 的私有 UDS relay；同一 Host 不允许替换已有 attachment。`client_builder()` 在未挂接时返回 `ControlUnavailable`。候选 socket 可独立使用同一工厂，按需加载 resolver，并继续以候选的有效执行 scope 解析／收发；不存在未保护工厂。Host 的 Drop／shutdown 同时撤销所有工厂克隆和所属任务。
 

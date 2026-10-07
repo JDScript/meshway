@@ -184,6 +184,8 @@ fn fixed_data_layout_round_trips_and_rejects_reserved_flags_and_lengths() {
             assert_eq!(decoded.auth.tag, f.auth.tag);
             assert_eq!(decoded.encode().unwrap(), bytes);
             assert_eq!(bytes.len(), packet.as_bytes().len() + 86);
+            assert_eq!(crate::secure::DATA_FRAME_OVERHEAD, 86);
+            assert_eq!(crate::secure::DEFAULT_INNER_MTU, 1366);
             assert_eq!(&bytes[..8], MAGIC);
             assert_eq!(bytes[8], 3);
             assert_eq!(bytes[9], u8::from(reply));
