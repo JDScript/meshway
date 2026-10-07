@@ -322,7 +322,6 @@ async fn complete(
         *waiters = pending;
     }
     if report.revision == store.record.revision
-        && report.phase == Phase::ControlReady
         && report
             .control
             .as_ref()
