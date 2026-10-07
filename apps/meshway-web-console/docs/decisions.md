@@ -646,9 +646,11 @@ they need `motion`.
   whenever surfaces change, so motion never stops dead or restarts.
 - The light is a sun placed for the theme, not the time: light faces the
   day, the night just reaching the right limb; dark faces the night, its
-  cities lit (the tz database's principal cities, `globe/cities.gen.ts` by
-  `scripts/generate-cities.ts`), stars out, a crescent of day on the left
-  limb. The day falls off softly towards the line between and warms just
+  cities lit, stars out, a crescent of day on the left limb. The lights are
+  the land dots lit by the people around them, weighed by how lit their
+  country is (GDP per head), with a bright core at each city of a million
+  or more (Natural Earth populated places and countries,
+  `globe/cities.gen.ts` by `scripts/generate-cities.ts`). The day falls off softly towards the line between and warms just
   before it, as on a lit sphere; nothing is painted along it.
 - The engine chunk is lazy-loaded (~145 kB gzip, almost all three.js).
   Where it cannot run (no WebGL, or its chunk did not load) the first load

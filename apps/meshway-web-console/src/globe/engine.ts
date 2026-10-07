@@ -26,7 +26,7 @@ import type { BootPhase } from "@/state/boot"
 import { sameInsets, type GlobeState } from "@/state/globe"
 import { THEME_SHIFT_MS } from "@/state/theme-shift"
 
-import { CITIES } from "./cities.gen"
+import { cityLights } from "./city-lights"
 import { css, RGB_KEYS, type GlobeColors, type Rgb } from "./colors"
 import { landPoints } from "./land"
 import {
@@ -127,8 +127,6 @@ const COMET_FADE_MS = 900
  * day on the left limb. A change of theme turns it from one to the other.
  */
 const SUN = { light: 40, dark: 140, raised: 18 }
-/** City lights: land samples within this many degrees of a city glow at night. */
-const CITY_REACH = 3.2
 /** A page that cannot be: the globe, centred above its card, takes at most this share of the space left. */
 const ALERT_FIT = 0.36
 /** Its search ring turns once in this long. */
@@ -538,8 +536,8 @@ const searchShader = () =>
   })
 
 /**
- * City lights: warm points over land near cities, lit only on the night
- * side and facing the camera; brighter under a dark theme.
+ * City lights (city-lights.ts): warm points, lit only on the night side and
+ * facing the camera, brighter under a dark theme; a city's core is whiter.
  */
 const cityShader = () =>
   new ShaderMaterial({
@@ -555,28 +553,37 @@ const cityShader = () =>
     },
     vertexShader: /* glsl */ `
       attribute float aGlow;
+      attribute float aSize;
+      attribute float aCore;
       uniform float uScale, uPixelRatio, uStrength;
       ${SUNLIGHT}
       varying float vAlpha;
+      varying float vCore;
       void main() {
         vec4 world = modelMatrix * vec4(position, 1.0);
         vec4 mv = viewMatrix * world;
         vec3 up = normalize(world.xyz);
         float facing = dot(up, normalize(cameraPosition - world.xyz));
         float night = 1.0 - smoothstep(-0.12, 0.06, dot(up, uSun));
-        vAlpha = aGlow * night * smoothstep(0.0, 0.5, facing) * uStrength;
-        gl_PointSize = max(1.6, 1.7 * aGlow * (uScale / -mv.z)) * uPixelRatio;
+        vAlpha = pow(aGlow, 0.75) * night * smoothstep(0.0, 0.5, facing) * uStrength;
+        vCore = aCore;
+        gl_PointSize = max(1.2, aSize * (uScale / -mv.z)) * uPixelRatio;
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
       uniform vec3 uColor;
       uniform float uOpacity;
       varying float vAlpha;
+      varying float vCore;
       void main() {
         float d = length(gl_PointCoord - 0.5);
-        float a = smoothstep(0.5, 0.0, d) * vAlpha * uOpacity;
+        // A core: a bright centre in a soft halo; a lit dot: a soft dot.
+        float soft = smoothstep(0.5, 0.0, d);
+        float a = mix(soft, soft * soft * 0.7 + smoothstep(0.18, 0.04, d), vCore)
+          * vAlpha * uOpacity;
         if (a < 0.004) discard;
-        gl_FragColor = vec4(uColor, a);
+        vec3 c = mix(uColor, vec3(1.0, 0.96, 0.86), vCore * smoothstep(0.25, 0.0, d) * 0.7);
+        gl_FragColor = vec4(c, min(a, 1.0));
         #include <colorspace_fragment>
       }`,
   })
@@ -785,34 +792,43 @@ export function createGlobeEngine(
   let planet = 0
   let planetTo = 0
 
-  // City lights: the land samples near a city, each glowing by its nearness.
-  const cityPoints = CITIES.split(";").map((entry) => {
-    const [lat = 0, lng = 0] = entry.split(",").map(Number)
-    return cartesian(lat, lng, 0)
-  })
-  const reach = Math.cos((CITY_REACH * Math.PI) / 180) * GLOBE_RADIUS ** 2
-  const lit: number[] = []
-  const glows: number[] = []
-  for (const { lat, lng } of landPoints()) {
-    const at = cartesian(lat, lng, 0)
-    let best = -Infinity
-    for (const city of cityPoints) {
-      const d = at[0] * city[0] + at[1] * city[1] + at[2] * city[2]
-      if (d > best) best = d
-    }
-    if (best < reach) continue
-    // 0 at the reach, 1 on the city.
-    const nearness = (best - reach) / (GLOBE_RADIUS ** 2 - reach)
-    lit.push(...cartesian(lat, lng, 0.006))
-    glows.push(0.35 + 0.65 * nearness)
-  }
+  // City lights: lit land dots, then the cores drawn over them.
+  const lights = cityLights()
   const cityGeometry = new BufferGeometry()
-  cityGeometry.setAttribute("position", new Float32BufferAttribute(lit, 3))
-  cityGeometry.setAttribute("aGlow", new Float32BufferAttribute(glows, 1))
+  cityGeometry.setAttribute(
+    "position",
+    new Float32BufferAttribute(
+      lights.flatMap(({ lat, lng, core }) =>
+        cartesian(lat, lng, core ? 0.007 : 0.006)
+      ),
+      3
+    )
+  )
+  cityGeometry.setAttribute(
+    "aGlow",
+    new Float32BufferAttribute(
+      lights.map((light) => light.glow),
+      1
+    )
+  )
+  cityGeometry.setAttribute(
+    "aSize",
+    new Float32BufferAttribute(
+      lights.map((light) => light.size),
+      1
+    )
+  )
+  cityGeometry.setAttribute(
+    "aCore",
+    new Float32BufferAttribute(
+      lights.map((light) => (light.core ? 1 : 0)),
+      1
+    )
+  )
   const cityMaterial = cityShader()
-  const cityLights = new Points(cityGeometry, cityMaterial)
-  cityLights.renderOrder = 2
-  layer.add(cityLights)
+  const cityPoints = new Points(cityGeometry, cityMaterial)
+  cityPoints.renderOrder = 2
+  layer.add(cityPoints)
 
   // Signal lost: a search ring around the globe, facing the camera.
   const alertMaterial = searchShader()
@@ -1557,7 +1573,7 @@ export function createGlobeEngine(
       material.uniforms.uNight = { value: color(night.night) }
       material.uniforms.uTwilight = { value: color(colors.twilight) }
       material.uniforms.uBand = { value: 0.22 + 0.13 * turn }
-      material.uniforms.uNightAlpha = { value: 0.55 - 0.15 * turn }
+      material.uniforms.uNightAlpha = { value: 0.55 - 0.3 * turn }
     }
     cityMaterial.uniforms.uColor = { value: color(night.city) }
     surface.uniforms.uSea = { value: color(day.sea) }

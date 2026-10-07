@@ -1,5 +1,6 @@
-import { fibonacciPoint, LAND_SAMPLES } from "./fibonacci"
-import { LAND_BITS } from "./land-dots.gen"
+// With extensions: scripts/generate-cities.ts runs this under Node too.
+import { fibonacciPoint, LAND_SAMPLES } from "./fibonacci.ts"
+import { LAND_BITS } from "./land-dots.gen.ts"
 
 /** Land dots of the decorative base layer, rebuilt from the generated bitset. */
 export function landPoints(): { lat: number; lng: number }[] {
