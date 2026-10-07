@@ -77,6 +77,10 @@ impl Cli {
     fn fallback_delay(&self) -> Duration {
         Duration::from_secs(if self.short { 5 } else { 30 })
     }
+
+    fn traffic_wait(&self) -> Duration {
+        self.traffic_duration() + Duration::from_secs(125)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]

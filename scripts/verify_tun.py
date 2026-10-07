@@ -9,7 +9,7 @@ import shutil
 import subprocess
 
 from node_lab import ROOT, base_image, check_elf, docker_target, run, sha256
-from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact
+from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact, bind_access_options
 
 
 def fingerprint():
@@ -73,7 +73,7 @@ def main():
                "--sysctl", "net.ipv6.conf.all.disable_ipv6=0",
                "--sysctl", "net.ipv6.conf.default.disable_ipv6=0",
                "--env", "MESHWAY_TUN_TEST_ISOLATED=1",
-               "--mount", f"type=bind,source={report},target=/fixtures,readonly", image,
+               "--mount", f"type=bind,source={report},target=/fixtures,readonly", *bind_access_options(), image,
                "/fixtures/linux-tun-tests", "--ignored", "--exact",
                "owned_devices_ipv4_ipv6_packet_io", "--nocapture"]
     manifest = {"revision": run("git", "rev-parse", "HEAD", capture=True).strip(),

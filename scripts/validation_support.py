@@ -2,10 +2,12 @@
 import contextlib
 import datetime
 import fcntl
+import functools
 import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import uuid
 
 from node_lab import ROOT, check_elf, run, sha256
@@ -56,3 +58,51 @@ def import_artifact(directory, destination, source, target, platform, machine):
     check_elf(binary, machine)
     shutil.copyfile(binary, destination)
     destination.chmod(0o500)
+
+
+@functools.lru_cache(maxsize=1)
+def rootful_bind_access():
+    if sys.platform != "linux" or os.geteuid() == 0:
+        return False
+    security = json.loads(run("docker", "info", "--format", "{{json .SecurityOptions}}", capture=True))
+    return not any("rootless" in option or "userns" in option for option in security)
+
+
+def bind_access_options():
+    # Linux rootful container UID 0 differs from the owner of private host binds.
+    # Keep actors root (DNS bus policy and NET_ADMIN), without widening the binds.
+    return ["--cap-add", "DAC_OVERRIDE"] if rootful_bind_access() else []
+
+
+def export_evidence(report, image, platform, kind, identity, paths=None):
+    """Return only this run's evidence to its host owner, after writers have joined.
+
+    A ready marker can be exported individually while its router remains alive.
+    The helper has no network, production identity, host path beyond this report,
+    or privilege beyond CHOWN/DAC_OVERRIDE. Never follows evidence symlinks.
+    """
+    if not rootful_bind_access():
+        return
+    if report.is_symlink() or report.stat().st_uid != os.getuid():
+        raise RuntimeError("Evidence export requires the current user's report directory")
+    targets = ["/evidence"]
+    if paths:
+        targets = []
+        for path in paths:
+            relative = path.relative_to(report)
+            if ".." in relative.parts:
+                raise RuntimeError("Evidence export escaped the owned report")
+            targets.append("/evidence/" + relative.as_posix())
+    command = ["docker", "create", "--pull", "never", "--platform", platform,
+               "--name", f"meshway-{kind}-{identity.lower()}-export-{uuid.uuid4().hex[:8]}",
+               "--label", f"io.meshway.{kind}-fixture={identity}",
+               "--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "CHOWN",
+               "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges",
+               "--cpus", "1", "--memory", "64m", "--pids-limit", "32", "--entrypoint", "/bin/chown",
+               "--mount", f"type=bind,source={report},target=/evidence", image,
+               "-hR", f"{os.getuid()}:{os.getgid()}", *targets]
+    container = run(*command, capture=True).strip()
+    try:
+        run("docker", "start", "-a", container, capture=True)
+    finally:
+        run("docker", "rm", "-f", container, capture=True)

@@ -634,7 +634,7 @@ async fn coordinate(
     );
     if !matches!(
         signals
-            .wait_for("traffic", Duration::from_secs(250))
+            .wait_for("traffic", cli.traffic_wait())
             .await?,
         Signal::Ready
     ) {

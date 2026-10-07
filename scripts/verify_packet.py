@@ -14,7 +14,7 @@ from node_lab import ROOT, check_elf, docker_target, run, sha256
 from verify_tun import pinned_image
 from verify_runtime import wait_for_idle
 from verification_sources import fingerprint as source_fingerprint
-from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact, run_id
+from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact, run_id, bind_access_options, export_evidence
 
 
 def fingerprint():
@@ -74,7 +74,8 @@ def main():
         command = ["docker", "create", "--name", f"meshway-packet-{identity.lower()}-{role}",
                    "--label", label, "--platform", platform, "--read-only", "--cap-drop", "ALL",
                    "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m",
-                   "--pids-limit", "128", "--tmpfs", "/state:rw,nosuid,nodev,mode=700"]
+                    "--pids-limit", "128", "--tmpfs", "/state:rw,nosuid,nodev,mode=700"]
+        command.extend(bind_access_options())
         if connected:
             command.extend(["--network", network, "--network-alias", "meshway-packet-" + role])
         else:
@@ -139,6 +140,7 @@ def main():
             run("docker", "rm", "-f", identifier, capture=True)
         if network is not None:
             run("docker", "network", "rm", network, capture=True)
+        export_evidence(report, image, platform, "packet", identity)
 
     # The direct SecureNode fixture cannot detect a daemon-owned pool regression.
     # Require the same socket boundaries through the real daemon as well. Keep

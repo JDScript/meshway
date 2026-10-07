@@ -351,7 +351,7 @@ async fn exercise(
     } else {
         // Include the additional subscription's bounded initial warmup; the
         // process-wide deadline still reserves the existing cleanup budget.
-        let deadline = Instant::now() + crate::remaining(Duration::from_secs(250))?;
+        let deadline = Instant::now() + crate::remaining(cli.traffic_wait())?;
         let mut installations_published = false;
         loop {
             echo.as_mut().ok_or("missing echo owner")?.check()?;

@@ -11,7 +11,8 @@ import subprocess
 import sys
 import time
 
-from node_lab import ROOT, docker_target, image_builder, verify_image, sha256
+from node_lab import ROOT, base_image, docker_target, image_builder, verify_image, sha256
+from perf.dataplane import image_for
 from validation_support import build_lock, run_id
 from verify_runtime import write_json
 
@@ -99,7 +100,12 @@ def prepare_images(args, directory, platform):
                     images[kind] = manifest
                     continue
             if builder:
-                verify_image(builder.build(output, platform), platform)
+                # Reuse the existing perf lookup of complete, locked native images,
+                # including untagged images; apply the runtime's stricter verifier.
+                data = {**image_for(platform, output), "status": "built", "platform": platform, "base": base_image()}
+                verify_image(data, platform)
+                output.mkdir(parents=True, exist_ok=True)
+                write_json(manifest, data)
             else:
                 command = [sys.executable, str(ROOT / "dev/dns-fixture/build.py"), "--platform", platform,
                            "--lock-file", str(lock), "--output", str(output)]
@@ -177,7 +183,10 @@ def execute_row(name, directory, artifacts, images, args):
         result["passed"] = False
     result["elapsedSeconds"] = round(time.monotonic() - started, 3)
     if not result["passed"]:
-        result["failureExcerpt"] = failure_excerpt(report, logfile)
+        try:
+            result["failureExcerpt"] = failure_excerpt(report, logfile)
+        except OSError as error:
+            result["failureExcerpt"] = "Private evidence unavailable: " + str(error)
     write_json(row_dir / "row.json", result)
     return result
 

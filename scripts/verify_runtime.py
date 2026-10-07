@@ -18,7 +18,7 @@ import uuid
 
 from node_lab import ROOT, check_elf, docker_target, lab_dir, run, selected_image, sha256, verify_image
 from verification_sources import fingerprint as source_fingerprint
-from validation_support import build_lock, report_directory
+from validation_support import build_lock, report_directory, bind_access_options, export_evidence
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
@@ -292,7 +292,8 @@ def main():
                    "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m",
                    "--pids-limit", "128", "--tmpfs", "/state:rw,nosuid,nodev,mode=700",
                    "--env", "TMPDIR=/state",
-                   "--network", actor_networks.get(role, network) if address else "none"]
+                    "--network", actor_networks.get(role, network) if address else "none"]
+        command.extend(bind_access_options())
         if address:
             command.extend(["--ip", str(address)])
         if address6:
@@ -377,7 +378,8 @@ def main():
                    "--tmpfs", "/run:rw,nosuid,nodev,mode=700", "--env", "MESHWAY_TRAVERSAL_OWNED=1",
                    "--network", network, "--ip", router["wan"], "--ip6", router["wan6"],
                    "--sysctl", "net.ipv4.ip_forward=1", "--sysctl", "net.ipv6.conf.all.forwarding=0",
-                   "--sysctl", "net.ipv6.conf.all.disable_ipv6=0", "--sysctl", "net.ipv6.conf.default.disable_ipv6=0"]
+                    "--sysctl", "net.ipv6.conf.all.disable_ipv6=0", "--sysctl", "net.ipv6.conf.default.disable_ipv6=0"]
+        command.extend(bind_access_options())
         for source_name, destination, readonly in ((role, "/evidence", False), ("signals", "/signals", False),
                                                    ("traversal-support", "/traversal-fixture", True)):
             command.extend(["--mount", f"type=bind,source={report / source_name},target={destination}" + (",readonly" if readonly else "")])
@@ -402,6 +404,7 @@ def main():
             if time.monotonic() >= deadline or not owned_container(identifier)["State"]["Running"]:
                 raise RuntimeError("NAT router did not become ready: " + role)
             time.sleep(0.1)
+        export_evidence(report, image, platform, "runtime", identity, [ready])
         if json.loads(ready.read_text()) != {"kind": "ready"}:
             raise RuntimeError("invalid NAT router readiness")
         manifest["resources"].setdefault("routerInspections", {})[role] = owned_container(identifier)
@@ -547,6 +550,7 @@ def main():
                     if time.monotonic() >= deadline:
                         raise TimeoutError("remote underlay peer readiness timed out")
                     time.sleep(0.1)
+                export_evidence(report, image, platform, "runtime", identity, [ready])
                 if json.loads(ready.read_text()) != {"kind": "ready"}:
                     raise RuntimeError("invalid remote underlay peer readiness")
                 for role, test in KERNEL_TESTS.items():
@@ -603,6 +607,9 @@ def main():
                 raise RuntimeError("HTTPS bootstrap did not survive explicit network down")
         if fingerprint() != source:
             raise RuntimeError("sources changed while validating candidate binaries")
+        if routers:
+            stop_routers()
+        export_evidence(report, image, platform, "runtime", identity)
         if any(item["attachExit"] or item["exitCode"] or item["oomKilled"] or item["running"] for item in manifest["processes"].values()):
             raise RuntimeError("real daemon/CLI conformance failed; inspect private actor evidence")
         for role in ("a", "r", "b"):
@@ -667,6 +674,10 @@ def main():
             except Exception as error:
                 cleanup_errors.append(error)
                 manifest["cleanup"]["network" if name == "wan" else "network-" + name] = False
+        try:
+            export_evidence(report, image, platform, "runtime", identity)
+        except Exception as error:
+            cleanup_errors.append(error)
         if cleanup_errors:
             manifest["passed"] = False
         manifest["runtimeElapsedSeconds"] = time.monotonic() - runtime_started

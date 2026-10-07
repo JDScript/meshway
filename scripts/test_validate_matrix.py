@@ -1,18 +1,54 @@
 """Matrix orchestration regressions; no real builds, Docker, SSH or measurements."""
 import json
+import contextlib
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import validate_matrix as matrix
 import validate_remote as remote
+import validation_support as support
 from validation_support import import_artifact
 
 
 class MatrixTests(unittest.TestCase):
+    def test_rootful_evidence_export_is_labelled_private_and_exact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary)
+            marker = report / "signals/ready.json"
+            calls = []
+            def run(*command, **kwargs):
+                calls.append(command)
+                return "owned-helper"
+            with patch.object(support, "rootful_bind_access", return_value=True), patch.object(support, "run", side_effect=run):
+                support.export_evidence(report, "pinned-image", "linux/amd64", "runtime", "run", [marker])
+            creation = calls[0]
+            self.assertIn("io.meshway.runtime-fixture=run", creation)
+            self.assertIn("type=bind,source=" + str(report) + ",target=/evidence", creation)
+            self.assertEqual(creation[-1], "/evidence/signals/ready.json")
+            self.assertIn("-hR", creation)
+            self.assertNotIn("--privileged", creation)
+            self.assertEqual(calls[-1], ("docker", "rm", "-f", "owned-helper"))
+
+    def test_native_image_reuses_perf_lookup_then_runtime_provenance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = matrix.parse_args(["--rows", "udp/off"])
+            for platform in ("linux/amd64", "linux/arm64"):
+                with patch.object(matrix, "ROOT", root), patch.object(matrix, "build_lock", return_value=contextlib.nullcontext()), \
+                        patch.object(matrix, "image_builder", return_value=SimpleNamespace(source_digest=lambda: "locked")), \
+                        patch.object(matrix, "image_for", return_value={"imageId": "sha256:existing", "sourceDigest": "locked"}) as lookup, \
+                        patch.object(matrix, "base_image", return_value="pinned"), patch.object(matrix, "verify_image") as verify:
+                    images = matrix.prepare_images(args, root, platform)
+                self.assertEqual(lookup.call_args.args[0], platform)
+                self.assertEqual(verify.call_args.args[0]["imageId"], "sha256:existing")
+                self.assertEqual(json.loads(images["runtime"].read_text())["platform"], platform)
+
     def test_rows_are_nine_and_filter_keeps_order_without_duplicates(self):
         self.assertEqual(len(matrix.ROWS), 9)
         self.assertEqual(matrix.parse_args(["--rows", "nat/off", "nat+fallback/off", "nat/off"]).rows,
@@ -84,6 +120,50 @@ class MatrixTests(unittest.TestCase):
 
 
 class RemoteTests(unittest.TestCase):
+    def test_worker_requires_clean_source_and_independent_zero_leftovers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binaries = root / ".local/bin"
+            binaries.mkdir(parents=True)
+            programs = {
+                "git": "import pathlib,sys\nprint('dirty' if sys.argv[1] == 'status' and pathlib.Path('dirty').exists() else '')\n",
+                "uptime": "print('fixture uptime')\n",
+                "docker": "import pathlib\nprint('owned-leftover' if pathlib.Path('leftover').exists() else '')\n",
+                "mise": '''import json,pathlib,sys
+run = sys.argv[sys.argv.index('--run') + 1]
+directory = pathlib.Path('.meshway/validation/matrix') / run
+directory.mkdir(parents=True)
+data = dict(status='complete', passed=True, rows=[dict(row='udp/off', report='rows/udp-off/actor/report.json', reportId='actor')])
+(directory / 'matrix.json').write_text(json.dumps(data))
+(directory / 'summary.md').write_text('matrix summary')
+''',
+            }
+            for name, source in programs.items():
+                path = binaries / name
+                path.write_text('#!' + sys.executable + '\n' + source)
+                path.chmod(0o700)
+            for name, dirty, leftover in (("clean", False, False), ("leftover", False, True), ("dirty", True, False)):
+                for marker, present in (("dirty", dirty), ("leftover", leftover)):
+                    path = root / marker
+                    if present:
+                        path.touch()
+                    else:
+                        path.unlink(missing_ok=True)
+                job = root / ".meshway/validation/jobs" / name
+                job.mkdir(parents=True)
+                payload = dict(path=str(root), run=name, revision="pushed", arguments=["--parallel", "4"])
+                subprocess.run([sys.executable, "-c", remote.WORKER, json.dumps(payload)], check=True,
+                               env=dict(os.environ, HOME=str(root), PATH=str(binaries) + os.pathsep + os.environ["PATH"]),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+                result = json.loads((job / "result.json").read_text())
+                self.assertEqual(result["status"], "complete")
+                self.assertEqual(result["exitCode"], 0 if name == "clean" else 1)
+                self.assertTrue((root / ".meshway/validation/matrix" / name / "remote.json").exists())
+                if dirty:
+                    self.assertIn("clean", result["error"])
+                elif leftover:
+                    self.assertIn("owned-leftover", result["remainingResources"]["containers"])
+
     def test_forwarding_and_attach_contract(self):
         args, forwarded = remote.parse_args(["--ref", "branch", "--parallel", "4", "--short", "--rows", "nat/off"])
         self.assertEqual(args.ref, "branch")

@@ -149,6 +149,8 @@ mise run validate:matrix --parallel 2 --short --rows nat/off nat+fallback/off
 
 各行、packet 内嵌 daemon、容器、bridge、挂载目录、私有 D-Bus／DNS 都有独立 run ID／namespace；固定监听端口只存在于各自 namespace，不发布宿主端口。IPv4 地址由 Docker IPAM 分配，IPv6 为每个 bridge 的随机 documentation prefix；共享 `/dev/net/tun` 不共享接口。实际并发受 CPU／内存、Docker 地址池剩余 bridge 数及 IO 影响；单个 NAT 行最多三个 bridge。失败不取消其他行，退出码表示全部选中行及清理是否通过。
 
+Linux rootful Docker 的容器 root 与非 root 宿主 UID 不同：fixture 只为私有 bind 访问增加 `DAC_OVERRIDE`，保持目录／秘密文件私有权限；写入者退出后，用本 run 同标签、无网络、仅挂载该报告的 `CHOWN`／`DAC_OVERRIDE` helper 将证据归还宿主 UID。运行中的 ready marker 只导出精确单个文件；递归导出不跟随符号链接。helper 同样必须清理，不修改其他运行、宿主网络或系统文件。
+
 矩阵根据 Docker Linux 架构选择 `amd64`／`arm64` 的锁定 OS 输入；默认在工作树 `.meshway/validation/os/` 按输入摘要构建并缓存所需镜像。也可显式传 `--runtime-image-manifest`、`--dns-image-manifest`、`--traversal-image-manifest`；runtime 镜像使用 node-lab 的正式 provenance 校验，不改变常驻 lab 的选中镜像。TUN／packet 直接入口也支持 `--build-only`、`--artifacts`；所有入口可用 `--report-dir` 指定新的私有目录。
 
 `--short` 将 runtime 持续／纯接收包流窗口由 125 秒改为 30 秒，退路触发由 30 秒改为 5 秒。报告及矩阵 `scope=diagnostic-short`，其余业务场景、真实 instance 到期等待、DNS、撤销恢复和清理仍执行。短模式不要求已经越过原需求期限；未观测到需求延长时 `laterExpiryMs=null`，不填造测量。它**不构成验收**，且整行耗时仍可能为数分钟。单独入口同样可运行 `mise run test:runtime:linux --short …`。
