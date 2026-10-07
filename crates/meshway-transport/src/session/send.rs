@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use super::io::{PollBudget, Shared, StreamProgress};
-use crate::{CancelReason, Frame, Limits, SendContext};
+use crate::{CancelReason, Frame, Limits, ScopedFrame, SendContext};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdmissionStop {
@@ -28,6 +28,7 @@ pub enum AdmissionStop {
     ByteBudget,
     OperationBudget,
     BatchLimit,
+    ChannelScopeMismatch,
 }
 
 /// Exactly `accepted` frames were removed from the caller's front. `stop`
@@ -85,6 +86,38 @@ pub struct BatchCompletion {
     pub frames: VecDeque<CompletedFrame>,
 }
 
+#[derive(Clone, Debug)]
+pub enum BatchOutcome {
+    LocalComplete,
+    NotStarted(SendFailure),
+    Uncertain(SendFailure),
+}
+
+impl BatchCompletion {
+    /// Batch-level result; any partly completed or attempted failed batch is
+    /// uncertain, even if individual datagrams have a narrower known outcome.
+    pub fn outcome(&self) -> BatchOutcome {
+        let failure = self.frames.iter().find_map(|f| match &f.outcome {
+            SendOutcome::LocalComplete => None,
+            SendOutcome::NotStarted(error) | SendOutcome::Indeterminate(error) => {
+                Some(error.clone())
+            }
+        });
+        let Some(failure) = failure else {
+            return BatchOutcome::LocalComplete;
+        };
+        if self
+            .frames
+            .iter()
+            .all(|f| matches!(f.outcome, SendOutcome::NotStarted(_)))
+        {
+            BatchOutcome::NotStarted(failure)
+        } else {
+            BatchOutcome::Uncertain(failure)
+        }
+    }
+}
+
 /// One bounded notification per accepted batch. Dropping it only drops the
 /// observer: the send owner retains the operation and reclaims its buffers.
 /// Explicit shutdown reports through outstanding completions. If the sender
@@ -118,6 +151,7 @@ struct Reservation {
 }
 
 struct Operation {
+    batch_io: bool,
     frames: VecDeque<Frame>,
     completed: VecDeque<CompletedFrame>,
     progress: Progress,
@@ -131,6 +165,7 @@ enum Progress {
     Stream(StreamProgress),
     Datagram {
         started: bool,
+        count: usize,
     },
     Report {
         remaining: usize,
@@ -143,7 +178,10 @@ impl Progress {
         if io.is_stream() {
             Self::Stream(StreamProgress::default())
         } else {
-            Self::Datagram { started: false }
+            Self::Datagram {
+                started: false,
+                count: 1,
+            }
         }
     }
 }
@@ -202,12 +240,33 @@ impl Operation {
                 Progress::Stream(progress) => {
                     io.poll_stream_group(cx, &mut self.frames, &self.context, progress, &mut budget)
                 }
-                Progress::Datagram { started } => {
-                    if !budget.take_frame(self.frames[0].payload.len()) {
-                        cx.waker().wake_by_ref();
-                        return Poll::Pending;
+                Progress::Datagram { started, count } => {
+                    if self.batch_io {
+                        let mut available = 0;
+                        for frame in self.frames.iter().take(32) {
+                            if !budget.take_frame(frame.payload.len()) {
+                                break;
+                            }
+                            available += 1;
+                        }
+                        if available == 0 {
+                            cx.waker().wake_by_ref();
+                            return Poll::Pending;
+                        }
+                        *count = available;
+                        io.poll_datagram_batch(cx, &self.frames, &self.context, started, available)
+                            .map(|result| {
+                                result.map(|sent| {
+                                    *count = sent;
+                                })
+                            })
+                    } else {
+                        if !budget.take_frame(self.frames[0].payload.len()) {
+                            cx.waker().wake_by_ref();
+                            return Poll::Pending;
+                        }
+                        io.poll_datagram(cx, &self.frames[0], &self.context, started)
                     }
-                    io.poll_datagram(cx, &self.frames[0], &self.context, started)
                 }
                 Progress::Report { .. } => unreachable!("reports handled above"),
             };
@@ -217,7 +276,7 @@ impl Operation {
                 Poll::Ready(Ok(())) => {
                     let count = match &self.progress {
                         Progress::Stream(progress) => progress.staged,
-                        Progress::Datagram { .. } => 1,
+                        Progress::Datagram { count, .. } => *count,
                         Progress::Report { .. } => unreachable!("I/O has active progress"),
                     };
                     self.progress = Progress::Report {
@@ -233,7 +292,10 @@ impl Operation {
         let panic = matches!(error, SendFailure::ProviderPanicked);
         let attempted = match &self.progress {
             Progress::Stream(progress) if progress.flush_started => progress.staged,
-            Progress::Datagram { started: true } => 1,
+            Progress::Datagram {
+                started: true,
+                count,
+            } => *count,
             _ => 0,
         };
         if panic || (io.is_stream() && attempted != 0) {
@@ -252,7 +314,7 @@ impl Operation {
         } else {
             self.terminal = if panic || io.is_stream() {
                 Some(SendFailure::Cancelled(CancelReason::SessionClosed))
-            } else if matches!(error, SendFailure::Cancelled(_)) {
+            } else if self.batch_io || matches!(error, SendFailure::Cancelled(_)) {
                 Some(error.clone())
             } else {
                 None // A datagram I/O error does not poison the next frame.
@@ -388,6 +450,94 @@ impl Sender {
     /// group flush attempt. Remaining work is owned by the worker, including
     /// any partial inline write. Ready completions need no worker scheduling.
     pub fn try_send(&mut self, frames: &mut VecDeque<Frame>, context: SendContext) -> Admission {
+        self.admit(frames, context, false)
+    }
+
+    /// Admit an immediately ready business prefix (at most 32 frames/64 KiB).
+    /// Scope identity and destination must match. Each original context and
+    /// the supplied context restrict the entire operation; one completion owns
+    /// every accepted buffer. No timer or wait is used to fill the batch.
+    pub fn submit_batch(
+        &mut self,
+        frames: &mut VecDeque<ScopedFrame>,
+        context: SendContext,
+    ) -> Admission {
+        if self.is_closed() {
+            return Admission {
+                accepted: 0,
+                stop: Some(AdmissionStop::Closed),
+                completion: None,
+            };
+        }
+        if let Some(reason) = context.invalid_reason() {
+            return Admission {
+                accepted: 0,
+                stop: Some(AdmissionStop::ScopeInvalid(reason)),
+                completion: None,
+            };
+        }
+        let mut count = 0;
+        let mut bytes = 0;
+        let mut stop = None;
+        let available = self.available_budget();
+        if let Some(first) = frames.front() {
+            for scoped in frames.iter() {
+                stop = if !scoped.scope.same(&first.scope) {
+                    Some(AdmissionStop::ChannelScopeMismatch)
+                } else if scoped.frame.peer != first.frame.peer {
+                    Some(AdmissionStop::PeerMismatch)
+                } else if count == 32 {
+                    Some(AdmissionStop::BatchLimit)
+                } else if bytes + scoped.frame.payload.capacity() > 65536 {
+                    Some(AdmissionStop::ByteBudget)
+                } else {
+                    self.frame_stop(&scoped.frame, count, bytes, available)
+                };
+                if stop.is_some() {
+                    break;
+                }
+                count += 1;
+                bytes += scoped.frame.payload.capacity();
+            }
+        }
+        if count == 0 {
+            return Admission {
+                accepted: 0,
+                stop,
+                completion: None,
+            };
+        }
+        let mut contexts = vec![context];
+        let mut metadata = VecDeque::new();
+        let mut plain = VecDeque::new();
+        for scoped in frames.drain(..count) {
+            contexts.push(scoped.context.clone());
+            metadata.push_back((scoped.scope, scoped.context));
+            plain.push_back(scoped.frame);
+        }
+        let mut admission = self.admit(&mut plain, SendContext::intersection(contexts), true);
+        // A close or concurrent host invalidation may reject the prepared
+        // prefix. Restore exactly its unaccepted allocations and metadata.
+        for frame in plain.into_iter().rev() {
+            let (scope, context) = metadata.pop_back().expect("unaccepted frame metadata");
+            frames.push_front(ScopedFrame {
+                frame,
+                scope,
+                context,
+            });
+        }
+        if admission.stop.is_none() {
+            admission.stop = stop;
+        }
+        admission
+    }
+
+    fn admit(
+        &mut self,
+        frames: &mut VecDeque<Frame>,
+        context: SendContext,
+        batch_io: bool,
+    ) -> Admission {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("transport.submit");
         let _profile = PROFILE.enter();
@@ -466,6 +616,7 @@ impl Sender {
             .expect("exclusive admission owns available byte permits");
         let (completion, result) = oneshot::channel();
         let mut operation = Operation {
+            batch_io,
             frames: frames.drain(..accepted).collect(),
             completed: VecDeque::with_capacity(accepted),
             progress: Progress::new(&self.io),

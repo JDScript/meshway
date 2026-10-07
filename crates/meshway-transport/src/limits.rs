@@ -10,7 +10,9 @@ use thiserror::Error;
 /// validated maximum-size frame. Including BytesMut's growth/reclamation slack,
 /// its backing allocation is bounded by four times the larger of that initial
 /// capacity and `max_frame_bytes + 4`. A datagram endpoint instead owns one
-/// `max_frame_bytes` receive buffer. Raw-provider/OS buffering is separate.
+/// `max_frame_bytes` receive buffer, plus lazily allocated batch scratch of at
+/// most 32 frames / 64 KiB (or one larger permitted frame). Raw-provider/OS
+/// buffering is separate.
 ///
 /// Metadata is O(max_frames + max_operations). Returned completions and
 /// received payload Vecs belong to the caller; retaining them requires a

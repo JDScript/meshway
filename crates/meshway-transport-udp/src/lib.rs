@@ -5,4 +5,4 @@
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod endpoint;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub use endpoint::UdpTransport;
+pub use endpoint::{Capabilities, UdpTransport};

@@ -14,14 +14,32 @@ use rustix::net::{RecvAncillaryBuffer, RecvFlags, ReturnFlags, recvmsg};
 use socket2::SockRef;
 use tokio::{io::Interest, net::UdpSocket};
 
+#[cfg(target_os = "linux")]
+mod batch;
 #[cfg(test)]
 mod tests;
+
+/// Successfully enabled features. mmsg is established on its first real call;
+/// `None` means unprobed, not unsupported. No probe emits a network packet.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Capabilities {
+    pub udp_segment: bool,
+    pub udp_gro: bool,
+    pub sendmmsg: Option<bool>,
+    pub recvmmsg: Option<bool>,
+    pub gso_sends: u64,
+    pub gro_receives: u64,
+    pub mmsg_sends: u64,
+    pub mmsg_receives: u64,
+}
 
 /// A raw, unconnected UDP endpoint. It can serve many explicit peers; no
 /// authenticated accepts, automatic retransmission, or global ordering.
 #[derive(Debug)]
 pub struct UdpTransport {
     socket: UdpSocket,
+    #[cfg(target_os = "linux")]
+    batch: Option<batch::State>,
 }
 
 // The host's protection wrapper borrows the actual adopted descriptor before
@@ -46,7 +64,47 @@ impl UdpTransport {
         socket.local_addr()?;
         let reference = SockRef::from(&socket);
         raw::apply_socket_options(&reference, options)?;
-        Ok(Self { socket })
+        Ok(Self {
+            socket,
+            #[cfg(target_os = "linux")]
+            batch: None,
+        })
+    }
+
+    /// Opt into Linux GSO/GRO and mmsg, preserving the single-message API.
+    pub fn adopt_batch(socket: UdpSocket, options: &SocketOptions) -> io::Result<Self> {
+        let endpoint = Self::adopt(socket, options)?;
+        #[cfg(target_os = "linux")]
+        {
+            let mut endpoint = endpoint;
+            endpoint.batch = Some(batch::State::new(&endpoint.socket)?);
+            Ok(endpoint)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Ok(endpoint)
+        }
+    }
+
+    pub fn capabilities(&self) -> Capabilities {
+        #[cfg(target_os = "linux")]
+        if let Some(state) = &self.batch {
+            return state.capabilities();
+        }
+        Capabilities::default()
+    }
+
+    /// Read-only observation handle; it cannot retain or use the descriptor.
+    pub fn capability_report(&self) -> impl Fn() -> Capabilities + Send + Sync + 'static {
+        #[cfg(target_os = "linux")]
+        let shared = self.batch.as_ref().map(|state| state.caps.clone());
+        #[cfg(not(target_os = "linux"))]
+        let shared: Option<std::sync::Arc<std::sync::Mutex<Capabilities>>> = None;
+        move || {
+            shared.as_ref().map_or_else(Capabilities::default, |caps| {
+                *caps.lock().expect("UDP capability lock")
+            })
+        }
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -101,6 +159,48 @@ impl UdpTransport {
 }
 
 impl Datagram for UdpTransport {
+    fn poll_send_batch(
+        &self,
+        cx: &mut Context<'_>,
+        packets: &[raw::DatagramSend<'_>],
+    ) -> Poll<io::Result<usize>> {
+        #[cfg(target_os = "linux")]
+        if let Some(state) = &self.batch {
+            return state.poll_send(&self.socket, cx, packets);
+        }
+        let Some(packet) = packets.first() else {
+            return Poll::Ready(Ok(0));
+        };
+        self.poll_send_to(cx, packet.payload, packet.peer)
+            .map(|result| {
+                result.and_then(|n| {
+                    if n == packet.payload.len() {
+                        Ok(1)
+                    } else {
+                        Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "partial UDP write",
+                        ))
+                    }
+                })
+            })
+    }
+
+    fn poll_recv_batch(
+        &self,
+        cx: &mut Context<'_>,
+        buffers: &mut [Vec<u8>],
+    ) -> Poll<io::Result<Vec<DatagramRead>>> {
+        #[cfg(target_os = "linux")]
+        if let Some(state) = &self.batch {
+            return state.poll_recv(&self.socket, cx, buffers);
+        }
+        let Some(buffer) = buffers.first_mut() else {
+            return Poll::Ready(Ok(Vec::new()));
+        };
+        self.poll_recv_from(cx, buffer)
+            .map(|result| result.map(|read| vec![read]))
+    }
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.local_addr()
     }
@@ -122,6 +222,10 @@ impl Datagram for UdpTransport {
         cx: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<DatagramRead>> {
+        #[cfg(target_os = "linux")]
+        if let Some(state) = &self.batch {
+            return state.poll_recv_one(&self.socket, cx, buffer);
+        }
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("udp.recv.poll");
         let _profile = PROFILE.enter();

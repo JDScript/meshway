@@ -25,6 +25,95 @@ async fn endpoint() -> UdpTransport {
     .unwrap()
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn kernel_gso_gro_mmsg_and_single_fallback_preserve_datagrams() {
+    use meshway_transport::raw::DatagramSend;
+    use std::future::poll_fn;
+    use std::time::Duration;
+    for local in ["127.0.0.1:0", "[::1]:0"] {
+        let left = UdpTransport::adopt_batch(
+            UdpSocket::bind(local).await.unwrap(),
+            &SocketOptions::default(),
+        )
+        .unwrap();
+        let right = UdpTransport::adopt_batch(
+            UdpSocket::bind(local).await.unwrap(),
+            &SocketOptions::default(),
+        )
+        .unwrap();
+        for mode in 0..3 {
+            if mode >= 1 {
+                left.batch
+                    .as_ref()
+                    .unwrap()
+                    .caps
+                    .lock()
+                    .unwrap()
+                    .udp_segment = false;
+                nix::sys::socket::setsockopt(
+                    &right.socket,
+                    nix::sys::socket::sockopt::UdpGroSegment,
+                    &false,
+                )
+                .unwrap();
+                right.batch.as_ref().unwrap().caps.lock().unwrap().udp_gro = false;
+            }
+            if mode == 2 {
+                left.batch.as_ref().unwrap().caps.lock().unwrap().sendmmsg = Some(false);
+                right.batch.as_ref().unwrap().caps.lock().unwrap().recvmmsg = Some(false);
+            }
+            let payloads = [vec![1; 1200], vec![2; 1200], vec![3; 900]];
+            let sends: Vec<_> = payloads
+                .iter()
+                .map(|payload| DatagramSend {
+                    payload,
+                    peer: right.local_addr().unwrap(),
+                })
+                .collect();
+            let mut sent = 0;
+            while sent < sends.len() {
+                sent += poll_fn(|cx| left.poll_send_batch(cx, &sends[sent..]))
+                    .await
+                    .unwrap();
+            }
+            let mut received = 0;
+            let mut buffers = vec![vec![0; 1300]; 2];
+            while received < 2 {
+                let reads = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    poll_fn(|cx| right.poll_recv_batch(cx, &mut buffers[..(2 - received)])),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                for (read, buffer) in reads.iter().zip(&buffers) {
+                    assert_eq!(read.source, left.local_addr().unwrap());
+                    assert!(!read.truncated);
+                    assert_eq!(&buffer[..read.copied_len], payloads[received]);
+                    received += 1;
+                }
+            }
+            let mut small = [0; 100];
+            let read = right.recv_from(&mut small).await.unwrap();
+            assert!(read.truncated);
+            assert_eq!(read.original_len, Some(900));
+            assert_eq!(small, [3; 100]);
+            let left_caps = left.capabilities();
+            let right_caps = right.capabilities();
+            println!("{local} mode {mode}: send {left_caps:?}; receive {right_caps:?}");
+            if mode == 0 && left_caps.udp_segment && right_caps.udp_gro {
+                assert!(left_caps.gso_sends > 0);
+                assert!(right_caps.gro_receives > 0);
+            }
+            if mode == 1 {
+                assert_eq!(left_caps.sendmmsg, Some(true));
+                assert_eq!(right_caps.recvmmsg, Some(true));
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn raw_endpoint_reports_real_truncation_exact_boundary_and_source() {
     let sender = endpoint().await;

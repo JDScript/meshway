@@ -13,5 +13,8 @@ rustix = { workspace = true, features = ["net"] }
 socket2.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.31.3", default-features = false, features = ["net", "socket", "uio"] }
+
 [lints]
 workspace = true

@@ -5,7 +5,7 @@ use super::{
     sockets::Owned,
 };
 use crate::{Error, Result};
-use meshway_transport::raw::{Datagram, DatagramRead};
+use meshway_transport::raw::{Datagram, DatagramRead, DatagramSend};
 use meshway_transport_spec::SocketOptions;
 use meshway_transport_udp::UdpTransport;
 use socket2::{Domain, Protocol, SockRef, Socket, Type};
@@ -60,7 +60,7 @@ impl ProtectedDatagram {
         scope.prepare_checked(&SockRef::from(&socket))?;
         socket.bind(&local.into())?;
         scope.prepare_checked(&SockRef::from(&socket))?;
-        let endpoint = UdpTransport::adopt(UdpSocket::from_std(socket.into())?, options)?;
+        let endpoint = UdpTransport::adopt_batch(UdpSocket::from_std(socket.into())?, options)?;
         scope.prepare_checked(&SockRef::from(&endpoint))?;
         let local = endpoint.local_addr()?;
         Ok(Self {
@@ -92,6 +92,38 @@ impl ProtectedDatagram {
 }
 
 impl Datagram for ProtectedDatagram {
+    fn poll_send_batch(
+        &self,
+        cx: &mut Context<'_>,
+        packets: &[DatagramSend<'_>],
+    ) -> Poll<io::Result<usize>> {
+        for packet in packets {
+            if self
+                .targets
+                .as_ref()
+                .is_some_and(|targets| !targets.contains(&packet.peer))
+                && !self
+                    .traversal
+                    .as_ref()
+                    .is_some_and(|registry| registry.allows(packet.peer))
+            {
+                return Poll::Ready(Err(io_error(Error::Target)));
+            }
+        }
+        self.owned.wakers.write.register(cx.waker());
+        // UdpTransport performs at most one data syscall per batch poll,
+        // returning Pending before retrying an unsupported facility.
+        self.with(|endpoint| endpoint.poll_send_batch(cx, packets))
+    }
+
+    fn poll_recv_batch(
+        &self,
+        cx: &mut Context<'_>,
+        buffers: &mut [Vec<u8>],
+    ) -> Poll<io::Result<Vec<DatagramRead>>> {
+        self.owned.wakers.read.register(cx.waker());
+        self.with(|endpoint| endpoint.poll_recv_batch(cx, buffers))
+    }
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.local_addr()
     }
@@ -216,6 +248,47 @@ mod tests {
             assert_eq!(read.original_len, Some(128));
             assert_eq!(read.source, remote);
             assert_eq!(mark(), 0x140);
+            {
+                let socket = endpoint.owned.socket.lock().unwrap();
+                SockRef::from(socket.as_ref().unwrap())
+                    .set_mark(0x80)
+                    .unwrap();
+            }
+            let packets = [
+                DatagramSend {
+                    payload: b"one",
+                    peer: remote,
+                },
+                DatagramSend {
+                    payload: b"two",
+                    peer: remote,
+                },
+            ];
+            let mut sent = 0;
+            while sent < packets.len() {
+                sent += std::future::poll_fn(|cx| endpoint.poll_send_batch(cx, &packets[sent..]))
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(mark(), 0x180);
+            for expected in [b"one", b"two"] {
+                let (n, source) = peer.recv_from(&mut buffer).await.unwrap();
+                assert_eq!(source, address);
+                assert_eq!(&buffer[..n], expected);
+                peer.send_to(expected, address).await.unwrap();
+            }
+            let mut buffers = vec![vec![0; 32]; 2];
+            let mut received = 0;
+            while received < 2 {
+                let reads = std::future::poll_fn(|cx| endpoint.poll_recv_batch(cx, &mut buffers))
+                    .await
+                    .unwrap();
+                for (read, buffer) in reads.iter().zip(&buffers) {
+                    assert_eq!(read.source, remote);
+                    assert_eq!(&buffer[..read.copied_len], [b"one", b"two"][received]);
+                    received += 1;
+                }
+            }
             let mut waiting = Box::pin(meshway_transport::raw::recv_from(&endpoint, &mut buffer));
             assert!(futures_util::poll!(waiting.as_mut()).is_pending());
             shared.conflict.cancel();
@@ -223,6 +296,11 @@ mod tests {
             // on without another poll. No FD alias escapes ProtectedDatagram.
             shared.tasks.shutdown().await.unwrap();
             assert!(endpoint.owned.socket.lock().unwrap().is_none());
+            assert!(
+                std::future::poll_fn(|cx| endpoint.poll_send_batch(cx, &packets))
+                    .await
+                    .is_err()
+            );
             assert_eq!(shared.sockets.available_permits(), 8);
             assert!(
                 meshway_transport::raw::send_to(&endpoint, b"late", remote)

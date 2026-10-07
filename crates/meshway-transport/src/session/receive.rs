@@ -33,6 +33,25 @@ pub struct Receiver {
 }
 
 impl Receiver {
+    /// Pull a bounded immediately available batch. A provider may return one
+    /// frame; stream framing retains its existing cancellation-safe cursor.
+    pub async fn recv_batch(&mut self) -> Result<Vec<Frame>, ReceiveError> {
+        if self.closed {
+            return Err(ReceiveError::Closed);
+        }
+        let result = tokio::select! { biased;
+            _ = &mut self.stopped => Err(ReceiveError::Closed),
+            result = poll_fn(|cx| self.io.poll_recv_batch(cx)) => result,
+        };
+        if matches!(result, Err(ReceiveError::Closed)) {
+            self.closed = true;
+        }
+        if result.is_err() && self.io.is_stream() {
+            self.closed = true;
+            self.io.close();
+        }
+        result
+    }
     pub(super) fn new(io: Arc<Shared>) -> Self {
         Self {
             stopped: Box::pin(io.stop.clone().cancelled_owned()),

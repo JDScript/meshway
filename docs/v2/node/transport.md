@@ -22,6 +22,7 @@ VLESS／Trojan 的协议实现参考 mihomo／sing-box 的握手、编解码、T
 | `meshway-transport-spec` | 纯声明、材料结构和已选定拨号参数；`PreparedListener` 只保证结构完整，证书验证由 Server 对精确值执行 |
 | `meshway-transport-tcp::TcpTransport::adopt` | 接收已连接的 Tokio TCP socket，应用 socket／TCP 参数；复用 `AsyncRead`／`AsyncWrite` |
 | `meshway-transport-udp::UdpTransport::adopt` | 接收已绑定、未 connect 的 Tokio UDP socket，保留源／目的地址与真实截断信息；当前支持 Linux／macOS |
+| `meshway-transport-udp::UdpTransport::adopt_batch` | Linux 探测 UDP GSO／GRO，使用安全 nix 封装；不支持时按 mmsg、逐报文回退，macOS 保留逐报文路径 |
 | `meshway-transport-vless::{Connector,Acceptor}` | 既有流上的 VLESS v0、空 flow、TCP CONNECT，支持 TLS 与 WS/TLS |
 | `meshway-transport-trojan::{Connector,Acceptor}` | 既有流上的 Trojan TCP CONNECT／TLS |
 | `meshway-tls::{Client,Server}` | 复用 Server 同一材料验证，执行精确叶证书 pin 与完整 WebPKI 验证的 TLS 握手 |
@@ -86,7 +87,11 @@ VLESS 客户端先交付 CONNECT 请求，再延迟读取首个响应头，允�
 
 当前 WS 运行边界为 16 KiB 输出分块、32 KiB 写缓冲、1 MiB frame/message、16 KiB Upgrade 输入、每方向 64 个／8 KiB 额外 header 和 2,048-byte path。路径中的 UTF-8 与既有 percent escape 原样匹配；额外 header 值受当前握手库限制，非 ASCII 值在构造时拒绝。未经请求的扩展／子协议会在发送 VLESS 凭据前拒绝。当前日志入口不桥接依赖的 `log` facade；嵌入宿主须避免开启 tungstenite 会输出完整握手／frame 的 payload trace。
 
-当前 stream framing 为大端 u32 长度前缀，使用 Tokio `LengthDelimitedCodec`；拒绝空帧和超过配置上限的长度。UDP 每个报文承载一个完整 payload，保留原有报文边界。Linux 截断结果可提供原长度，macOS 无法可靠获取时返回未知。UDP 当前仍逐报文执行系统调用，发送 batch 不等于已实现 `sendmmsg`／`recvmmsg`。
+当前 stream framing 为大端 u32 长度前缀，使用 Tokio `LengthDelimitedCodec`；拒绝空帧和超过配置上限的长度。UDP 每个报文承载一个完整 payload，保留原有报文边界。Linux 截断结果可提供原长度，macOS 无法可靠获取时返回未知。
+
+`Datagram::poll_send_batch` 返回完整发送的前缀数量；`poll_recv_batch` 填充接收缓冲前缀并逐报文返回来源、长度和截断信息。默认实现每次处理一个报文，provider 可实现内核批量。Linux UDP 同目的、等长帧（最后一段可短）通过 `UDP_SEGMENT` 一次 `sendmsg` 发送；`UDP_GRO` cmsg 拆回独立报文。不适合 GSO 时使用 `sendmmsg`；接收使用 `recvmmsg` 并解析每个消息的 cmsg；不支持 mmsg 时回退 `sendmsg`／`recvmsg`。一次批量 poll 至多一个数据 syscall，能力回退在下一次 poll 执行，因此受保护 socket 每次 syscall 前仍经过 scope／mark 检查。
+
+`capabilities()` 区分成功启用的 GSO／GRO、已由真实调用验证的 mmsg（未探测为 `None`），并记录成功的 GSO／GRO／mmsg 调用次数。批量 UDP provider 的 scratch 上限为 32 × 64 KiB，已接收剩余报文最多占 2 MiB payload／2,048 个分段，另有有界元数据；逐包 API 同样保留 GRO 中未取走的报文。Session 的批量接收 scratch 按帧长取最多 32 个／64 KiB（允许单个更大的合法帧），使用时分配。截断或不一致的批量接收元数据返回错误，不交付伪造的完整帧。
 
 Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP 各自具有其协议语义；握手及控制消息的重试单独定义。当前重放窗口见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)，性能与更大乱序范围仍须验证。
 
@@ -107,6 +112,18 @@ Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP
 一次直接推进最多处理 128 帧、256 KiB 工作量（或一个更大的合法帧），并尝试一次编码组 flush；该次 flush 最多调用 64 次底层 write／flush poll，每次调用前重检取消／截止。Stream 在同一操作／`SendContext` 内组成有界编码组，每组执行完整 flush 后才报告完成。完成结果逐帧区分 `LocalComplete`、`NotStarted`、`Indeterminate`，并交回原始 Vec 分配。
 
 批量提交采用明确的接纳前缀：返回接纳数量，前缀内的帧转移所有权，其余帧仍归调用者。容量不足、尺寸超限、上下文失效或会话关闭时返回对应原因；未接纳部分不能被异步保留。
+
+显式业务批量入口为：
+
+```rust
+Sender::submit_batch(&mut VecDeque<ScopedFrame>, SendContext) -> Admission
+Receiver::recv_batch() -> Result<Vec<Frame>, ReceiveError>
+BatchCompletion::outcome() -> BatchOutcome
+```
+
+`ScopedFrame` 保留 `Frame`、原 `SendContext` 与宿主提供的 `ChannelScope`。同一批接纳前缀必须拥有同一 scope 标识及目的端点，scope 不一致处返回 `ChannelScopeMismatch`；scope 标识本身不授予权限。Session 将每帧上下文及调用上下文取交集：保留全部取消／lifetime，截止取最早值。任何成员失效均阻止后续 I/O，完成等待者停止轮询也不能导致迟发。
+
+每批最多 32 帧／64 KiB，并服从更小的会话预算；容量按原 Vec capacity、帧数和一个操作继续计费。只提交当前就绪数据，不等待凑批；握手、health、STUN 等控制消息由宿主使用独立逐帧操作，不能加入业务批次。一次批次只有一个 completion；`BatchOutcome::LocalComplete` 要求全部已接纳帧本机完成，全部未开始为 `NotStarted`，部分完成或尝试后的失败为整批 `Uncertain`。原逐帧结果仍供兼容入口使用；批次完成仍不代表对端交付。Stream 保持原长度 framing／flush／半帧失败关闭规则，批量接收在其默认路径可返回单个完整帧。
 
 发送资源同时按帧数、字节数和在途操作数计入有界预算。provider 的协议内部缓冲也须有上限，不能通过另建队列绕过预算。队列满时由上层按业务类别执行有界等待或显式丢弃，不持续分配内存等待 Server 或网络恢复。
 

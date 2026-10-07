@@ -13,8 +13,8 @@ mod session;
 
 pub use frame::Frame;
 pub use limits::{LimitError, Limits};
-pub use scope::{CancelReason, SendContext, SendLifetime};
+pub use scope::{CancelReason, ChannelScope, ScopedFrame, SendContext, SendLifetime};
 pub use session::{
-    Admission, AdmissionStop, BatchCompletion, BudgetAvailable, CompletedFrame, Completion,
-    CompletionLost, ReceiveError, Receiver, SendFailure, SendOutcome, Sender, Session,
+    Admission, AdmissionStop, BatchCompletion, BatchOutcome, BudgetAvailable, CompletedFrame,
+    Completion, CompletionLost, ReceiveError, Receiver, SendFailure, SendOutcome, Sender, Session,
 };

@@ -2301,6 +2301,7 @@ dependencies = [
  "meshway-logging",
  "meshway-transport",
  "meshway-transport-spec",
+ "nix 0.31.3",
  "rustix",
  "socket2",
  "tokio",

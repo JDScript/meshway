@@ -24,6 +24,8 @@ enum Reader {
     Datagram {
         endpoint: Arc<dyn raw::Datagram>,
         buffer: Vec<u8>,
+        batch_buffers: Vec<Vec<u8>>,
+        batch_count: usize,
     },
 }
 
@@ -197,6 +199,11 @@ impl Shared {
             reader: Mutex::new(Some(Reader::Datagram {
                 endpoint: endpoint.clone(),
                 buffer: vec![0; limits.max_frame_bytes()],
+                batch_buffers: Vec::new(),
+                batch_count: limits
+                    .max_batch_frames()
+                    .min(32)
+                    .min((65536 / limits.max_frame_bytes()).max(1)),
             })),
             writer: Mutex::new(Some(Writer::Datagram(endpoint))),
         }
@@ -352,6 +359,87 @@ impl Shared {
         }
     }
 
+    pub fn poll_datagram_batch(
+        &self,
+        cx: &mut Context<'_>,
+        frames: &VecDeque<Frame>,
+        context: &SendContext,
+        started: &mut bool,
+        count: usize,
+    ) -> Poll<Result<usize, SendFailure>> {
+        let mut writer = lock(&self.writer);
+        self.check_scope(context)?;
+        let Some(Writer::Datagram(endpoint)) = writer.as_mut() else {
+            return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe).into()));
+        };
+        let packets: Vec<_> = frames
+            .iter()
+            .take(count)
+            .map(|frame| raw::DatagramSend {
+                payload: &frame.payload,
+                peer: frame.peer.expect("admitted datagram peer"),
+            })
+            .collect();
+        *started = true;
+        let sent = ready!(endpoint.poll_send_batch(cx, &packets))?;
+        if sent == 0 || sent > count {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid batch send count",
+            )
+            .into()));
+        }
+        Poll::Ready(Ok(sent))
+    }
+
+    pub fn poll_recv_batch(
+        &self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Vec<Frame>, super::ReceiveError>> {
+        use super::ReceiveError;
+        if self.is_stream() {
+            return self
+                .poll_recv(cx)
+                .map(|result| result.map(|frame| vec![frame]));
+        }
+        let mut reader = lock(&self.reader);
+        let Some(Reader::Datagram {
+            endpoint,
+            buffer,
+            batch_buffers,
+            batch_count,
+        }) = reader.as_mut()
+        else {
+            return Poll::Ready(Err(ReceiveError::Closed));
+        };
+        if batch_buffers.is_empty() {
+            batch_buffers.extend((0..*batch_count).map(|_| vec![0; buffer.len()]));
+        }
+        let reads = ready!(endpoint.poll_recv_batch(cx, batch_buffers))?;
+        if reads.is_empty() || reads.len() > batch_buffers.len() {
+            return Poll::Ready(Err(ReceiveError::InvalidMetadata));
+        }
+        let mut frames = Vec::with_capacity(reads.len());
+        for (received, buffer) in reads.into_iter().zip(batch_buffers) {
+            if received.truncated {
+                return Poll::Ready(Err(ReceiveError::Truncated(received)));
+            }
+            if received.copied_len > buffer.len()
+                || received.original_len != Some(received.copied_len)
+            {
+                return Poll::Ready(Err(ReceiveError::InvalidMetadata));
+            }
+            if received.copied_len == 0 {
+                return Poll::Ready(Err(ReceiveError::Empty));
+            }
+            frames.push(Frame::new(
+                buffer[..received.copied_len].to_vec(),
+                Some(received.source),
+            ));
+        }
+        Poll::Ready(Ok(frames))
+    }
+
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<Frame, super::ReceiveError>> {
         use super::ReceiveError;
         let mut reader = lock(&self.reader);
@@ -369,7 +457,9 @@ impl Shared {
                 Some(Err(error)) => Poll::Ready(Err(ReceiveError::Io(error))),
                 None => Poll::Ready(Err(ReceiveError::Closed)),
             },
-            Some(Reader::Datagram { endpoint, buffer }) => {
+            Some(Reader::Datagram {
+                endpoint, buffer, ..
+            }) => {
                 let received = ready!(endpoint.poll_recv_from(cx, buffer))?;
                 if received.truncated {
                     return Poll::Ready(Err(ReceiveError::Truncated(received)));

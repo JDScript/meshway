@@ -103,6 +103,10 @@ async fn fill(tun: &Tun, state: &mut ReadState) -> Result<(), Error> {
 
 pub(super) async fn recv(tun: &Tun, buffer: &mut [u8]) -> Result<usize, Error> {
     if !tun.capabilities.vnet_header {
+        if let Some(packet) = tun.read.lock().await.pending.pop_front() {
+            buffer[..packet.len()].copy_from_slice(&packet);
+            return Ok(packet.len());
+        }
         return Ok(tun.device.recv(buffer).await?);
     }
     let mut state = tun.read.lock().await;
@@ -120,7 +124,24 @@ pub(super) async fn recv_batch(tun: &Tun, batch: &mut PacketBatch) -> Result<(),
     fill(tun, &mut state).await?;
     batch.packets.clear();
     let mut bytes = 0;
-    while let Some(packet) = state.pending.front() {
+    loop {
+        if state.pending.is_empty() && batch.packets.len() < 32 && bytes < 65536 {
+            match tun.device.try_recv(&mut state.scratch) {
+                Ok(size) => {
+                    let packets = if tun.capabilities.vnet_header {
+                        offload::split(&state.scratch[..size], tun.mtu)?
+                    } else {
+                        vec![state.scratch[..size].to_vec()]
+                    };
+                    state.pending.extend(packets);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let Some(packet) = state.pending.front() else {
+            break;
+        };
         if batch.packets.len() == 32 || bytes + packet.len() > 65536 {
             break;
         }

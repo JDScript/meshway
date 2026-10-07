@@ -25,6 +25,164 @@ fn peer() -> SocketAddr {
     "127.0.0.1:12345".parse().unwrap()
 }
 
+#[tokio::test]
+async fn scoped_batch_preserves_scope_boundary_and_original_suffix() {
+    use crate::{BatchOutcome, ChannelScope, ScopedFrame};
+    let (stream, mut remote) = tokio::io::duplex(128);
+    let mut session = Session::stream(stream, peer(), limits());
+    let scope = ChannelScope::new();
+    let mut frames: VecDeque<_> = batch(&[b"first", b"second", b"suffix"])
+        .into_iter()
+        .enumerate()
+        .map(|(index, frame)| ScopedFrame {
+            frame,
+            scope: if index == 2 {
+                ChannelScope::new()
+            } else {
+                scope.clone()
+            },
+            context: SendContext::default(),
+        })
+        .collect();
+    let pointer = frames[2].frame.payload.as_ptr();
+    let admission = session
+        .sender()
+        .submit_batch(&mut frames, SendContext::default());
+    assert_eq!(admission.accepted, 2);
+    assert_eq!(admission.stop, Some(AdmissionStop::ChannelScopeMismatch));
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].frame.payload.as_ptr(), pointer);
+    assert!(matches!(
+        admission
+            .completion
+            .unwrap()
+            .wait()
+            .await
+            .unwrap()
+            .outcome(),
+        BatchOutcome::LocalComplete
+    ));
+    let expected = wire(&[b"first", b"second"]);
+    let mut bytes = vec![0; expected.len()];
+    remote.read_exact(&mut bytes).await.unwrap();
+    assert_eq!(bytes, expected);
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn scoped_batch_earliest_deadline_closes_partial_stream_and_returns_buffers() {
+    use crate::{BatchOutcome, ChannelScope, ScopedFrame};
+    let (stream, _remote) = tokio::io::duplex(1);
+    let mut session = Session::stream(stream, peer(), limits());
+    let scope = ChannelScope::new();
+    let mut frames: VecDeque<_> = batch(&[b"first", b"second"])
+        .into_iter()
+        .enumerate()
+        .map(|(index, frame)| ScopedFrame {
+            frame,
+            scope: scope.clone(),
+            context: SendContext {
+                deadline: Some(
+                    Instant::now() + Duration::from_millis(if index == 0 { 10000 } else { 20 }),
+                ),
+                ..SendContext::default()
+            },
+        })
+        .collect();
+    let pointers: Vec<_> = frames
+        .iter()
+        .map(|frame| frame.frame.payload.as_ptr())
+        .collect();
+    let admission = session
+        .sender()
+        .submit_batch(&mut frames, SendContext::default());
+    let result = timeout(Duration::from_secs(1), admission.completion.unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result.outcome(), BatchOutcome::Uncertain(_)));
+    assert_eq!(
+        result
+            .frames
+            .iter()
+            .map(|frame| frame.frame.payload.as_ptr())
+            .collect::<Vec<_>>(),
+        pointers
+    );
+    assert!(session.sender().is_closed());
+    assert_eq!(
+        session.sender().available_budget().frames,
+        limits().max_frames()
+    );
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn scoped_datagram_batch_retains_every_cancellation_after_partial_completion() {
+    use crate::{BatchOutcome, ChannelScope, ScopedFrame};
+    struct Endpoint(Arc<AtomicUsize>);
+    impl crate::raw::Datagram for Endpoint {
+        fn local_addr(&self) -> io::Result<SocketAddr> {
+            Ok(peer())
+        }
+        fn poll_send_to(
+            &self,
+            _: &mut Context<'_>,
+            _: &[u8],
+            _: SocketAddr,
+        ) -> Poll<io::Result<usize>> {
+            panic!("batch must use batch poll")
+        }
+        fn poll_recv_from(
+            &self,
+            _: &mut Context<'_>,
+            _: &mut [u8],
+        ) -> Poll<io::Result<crate::raw::DatagramRead>> {
+            Poll::Pending
+        }
+        fn poll_send_batch(
+            &self,
+            _: &mut Context<'_>,
+            frames: &[crate::raw::DatagramSend<'_>],
+        ) -> Poll<io::Result<usize>> {
+            if self.0.load(Ordering::SeqCst) == 0 {
+                assert_eq!(frames.len(), 2);
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Poll::Ready(Ok(1))
+            } else {
+                Poll::Pending
+            }
+        }
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut session = Session::datagram(Endpoint(calls.clone()), limits());
+    let scope = ChannelScope::new();
+    let last = SendContext::default();
+    let mut frames: VecDeque<_> = [SendContext::default(), last.clone()]
+        .into_iter()
+        .map(|context| ScopedFrame {
+            frame: Frame::new(b"payload".to_vec(), Some(peer())),
+            scope: scope.clone(),
+            context,
+        })
+        .collect();
+    let admission = session
+        .sender()
+        .submit_batch(&mut frames, SendContext::default());
+    last.cancellation.cancel();
+    let result = timeout(Duration::from_secs(1), admission.completion.unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result.outcome(), BatchOutcome::Uncertain(_)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        session.sender().available_budget().frames,
+        limits().max_frames()
+    );
+    session.shutdown().await.unwrap();
+}
+
 fn limits() -> Limits {
     Limits::new(64, 4, 256, 3, 3).unwrap()
 }

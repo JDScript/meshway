@@ -51,6 +51,12 @@ pub struct DatagramRead {
     pub truncated: bool,
 }
 
+#[derive(Clone, Copy)]
+pub struct DatagramSend<'a> {
+    pub payload: &'a [u8],
+    pub peer: SocketAddr,
+}
+
 /// An endpoint, not an authenticated connection or a pseudo-accept listener.
 ///
 /// Implementors preserve datagram boundaries and report truncation. Polls must
@@ -59,6 +65,44 @@ pub struct DatagramRead {
 /// (a session supplies exactly these). Socket-level size errors remain I/O
 /// errors, even when a framing limit is larger than the underlay permits.
 pub trait Datagram: Send + Sync + 'static {
+    /// At most one data syscall per poll, including fallback paths. Success is
+    /// a complete prefix count; Pending retains no buffers and sends no prefix.
+    fn poll_send_batch(
+        &self,
+        cx: &mut Context<'_>,
+        packets: &[DatagramSend<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let Some(packet) = packets.first() else {
+            return Poll::Ready(Ok(0));
+        };
+        self.poll_send_to(cx, packet.payload, packet.peer)
+            .map(|result| {
+                result.and_then(|size| {
+                    if size == packet.payload.len() {
+                        Ok(1)
+                    } else {
+                        Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "partial datagram send",
+                        ))
+                    }
+                })
+            })
+    }
+
+    /// Fill a prefix of initialized buffers; metadata preserves message
+    /// boundaries and truncation. At most one data syscall per poll.
+    fn poll_recv_batch(
+        &self,
+        cx: &mut Context<'_>,
+        buffers: &mut [Vec<u8>],
+    ) -> Poll<io::Result<Vec<DatagramRead>>> {
+        let Some(buffer) = buffers.first_mut() else {
+            return Poll::Ready(Ok(Vec::new()));
+        };
+        self.poll_recv_from(cx, buffer)
+            .map(|result| result.map(|read| vec![read]))
+    }
     fn local_addr(&self) -> io::Result<SocketAddr>;
     fn poll_send_to(
         &self,
@@ -74,6 +118,20 @@ pub trait Datagram: Send + Sync + 'static {
 }
 
 impl<D: Datagram + ?Sized> Datagram for Box<D> {
+    fn poll_send_batch(
+        &self,
+        cx: &mut Context<'_>,
+        packets: &[DatagramSend<'_>],
+    ) -> Poll<io::Result<usize>> {
+        (**self).poll_send_batch(cx, packets)
+    }
+    fn poll_recv_batch(
+        &self,
+        cx: &mut Context<'_>,
+        buffers: &mut [Vec<u8>],
+    ) -> Poll<io::Result<Vec<DatagramRead>>> {
+        (**self).poll_recv_batch(cx, buffers)
+    }
     fn local_addr(&self) -> io::Result<SocketAddr> {
         (**self).local_addr()
     }

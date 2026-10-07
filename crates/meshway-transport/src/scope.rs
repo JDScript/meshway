@@ -34,6 +34,16 @@ pub enum CancelReason {
 }
 
 impl SendContext {
+    /// Intersection retains every cancellation/lifetime and the earliest
+    /// deadline. It never creates or extends host authorization.
+    pub fn intersection(contexts: Vec<Self>) -> Self {
+        let deadline = contexts.iter().filter_map(|c| c.deadline).min();
+        Self {
+            deadline,
+            lifetime: Some(Arc::new(Intersection(contexts))),
+            ..Self::default()
+        }
+    }
     pub fn invalid_reason(&self) -> Option<CancelReason> {
         if self.cancellation.is_cancelled()
             || self
@@ -70,4 +80,55 @@ impl SendContext {
             } => CancelReason::DeadlineExceeded,
         }
     }
+}
+
+#[derive(Debug)]
+struct Intersection(Vec<SendContext>);
+
+impl SendLifetime for Intersection {
+    fn is_current(&self) -> bool {
+        self.0.iter().all(|context| {
+            !context.cancellation.is_cancelled()
+                && context
+                    .lifetime
+                    .as_ref()
+                    .is_none_or(|lifetime| lifetime.is_current())
+        })
+    }
+    fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async move {
+            if self.0.is_empty() {
+                pending::<()>().await;
+            }
+            let waits: Vec<_> = self
+                .0
+                .iter()
+                .map(|context| Box::pin(context.invalidated()))
+                .collect();
+            futures_util::future::select_all(waits).await;
+        })
+    }
+}
+
+/// Identity of one host-owned channel scope. Clones identify that exact scope;
+/// a newly created value cannot batch with it. This is not an authorization.
+#[derive(Clone, Debug, Default)]
+pub struct ChannelScope(Arc<()>);
+
+impl ChannelScope {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// A frame and its original restrictions. A control frame should use the
+/// single-frame API, never be placed in a business batch by the host.
+#[derive(Debug)]
+pub struct ScopedFrame {
+    pub frame: crate::Frame,
+    pub scope: ChannelScope,
+    pub context: SendContext,
 }
