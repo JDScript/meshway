@@ -130,6 +130,8 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 
 每个配置分别运行 TCP 单流和 UDP 定速率 iperf3，至少两次重复；重复之间反转配置顺序。默认每次先省略 2 秒 warmup，再测量 8 秒。release 交叉构建缓存独立于其他任务，位于 `target/dataplane-perf`；测量使用报告目录中不可变的二进制副本。Docker userspace 使用锁定 node-lab OS 源码对应的 immutable image，若尚无该 image，则在本工作区私有输出目录构建；不部署或修改常驻 lab。
 
+`--modes` 可选择本页列出的模式，默认仍为全部。相同 Meshway 模式／拓扑复用容器；同一 batch／profile／repeat 的 TCP 和 UDP 连续使用同一节点进程与 circuit，只重启 iperf3。跨重复或 profile 配置重启节点并使用新材料。`--workers` 默认按 CPU quota 取 `max(ceil(cpus)-1, 1)`，可显式指定，0 为 inline。
+
 `raw` 的 veth MTU 与内层 TUN MTU 相同，保留内核默认 offload；`plain` 的外层 veth 保留 1500 MTU，TUN offload 按 `--io` 选择。两者经过同一内部 Docker bridge。TCP 应用写入块与实际 TCP 分段不是同一概念，TCP 不通过 Mbps／假定包长反推 pps。UDP 应用 payload 由 `--payload` 固定，IPv4／UDP 头额外占 28 字节。
 
 ## 报告契约
@@ -159,7 +161,9 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 
 Profiling 单独记录启用和关闭的样本。`plain.tun.read`、`plain.udp.send`、`plain.udp.recv`、`plain.tun.write` 包装 future 的同步 poll 工作，不计 await 挂起时间；正式 UDP／Session 的更深层指标也保留在同一输出中。自耗时只扣除实际采到的嵌套 scope，应结合 samples、calls 与采样分母解释，不将采样累计纳秒直接当作整次 CPU 时间。最终吞吐取 profiling 关闭样本。
 
-iperf3 结果取接收端 `server_output_json.end.sum_received`，并核对 UDP 实收字节数等于交付报文数乘以固定 payload。不能用 iperf3 3.16 的 UDP `end.sum` 替代该字段；该字段可能在真实收到数据时仍报告零字节。Profiling 报告为累计快照，汇总只取每个节点最后一份，不累加同一进程的多份历史快照。
+iperf3 结果取接收端 `server_output_json.end.sum_received`，并核对 UDP 实收字节数等于交付报文数乘以固定 payload。不能用 iperf3 3.16 的 UDP `end.sum` 替代该字段；该字段可能在真实收到数据时仍报告零字节。Profiling 原始输出为累计快照：复用进程时，TCP 结束请求显式 checkpoint，UDP 结束停止并 join 节点后取得 final snapshot；报告中的 UDP 累积 calls／时间取两者之差，不重复累计 TCP。`max_wall_ns` 仍是进程累计最大值，不解释为 UDP 区间最大值。原始连续日志保存在 `*-nodes/`，各样本另保存其结束边界的副本；收到最终快照即退出，无固定五秒静默等待。
+
+`nodeThreads` 使用每节点 Linux task CPU 计数的前后差值，按自己的快照墙钟区间计算 `cpuActivePercent`；worker 的值可相加。其余墙钟比例同时含阻塞、可运行但未获 CPU、quota 限流，不能称为精确的线程休眠占比。该口径与包含 iperf／内核记账的 cgroup CPU 分开。每样本另记录宿主首尾 load average；配额不提供宿主独占。
 
 ## L2 内核批量实测
 
@@ -311,7 +315,7 @@ CPU 为两容器合计，100% 表示一核；区间含 warmup。TCP pps 未测�
 
 iperf3 的 TCP 控制流和 UDP 负载分别使用精确 `5201` 端口 demand。A 在应用启动前分别发起 Noise circuit；逐验证者 MAC、flow 准入、重放处理和原完整路径回复归唯一 `SecureNode`。固定 Native UDP carrier 经 `set_carriers` 校验。输出复用正式 `carrier::send`／`carrier::deliver`：UDP 的原 output guard 保留到 Session 发送 poll 和完成，TUN 交付每次恢复 poll 都检查原 guard。
 
-每个节点保留一个 current-thread owner runtime，crypto 使用正式 `pipeline::Pool`。工具的 `--workers 0` 使用 inline；非零值配置有界线程数。harness 默认 1 worker，对应默认两核配额中的 owner＋worker；单节点二进制默认可用核数减一、最少一。TUN／UDP 使用批量接口和实际 offload 能力；就绪输入经过 owner 准备、worker 计算、保序 owner 提交，再按 channel 批次发送／交付。SecureNode 使用默认 limits；L3 Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
+每个节点保留一个 current-thread owner runtime，crypto 使用正式 `pipeline::Pool`。工具的 `--workers 0` 使用 inline；非零值配置有界线程数。harness 默认按 CPU quota 取核数减一、最少一；单节点二进制默认按可用核数减一、最少一。TUN／UDP 使用批量接口和实际 offload 能力；就绪输入经过 owner 准备、worker 计算、保序 owner 提交，再按 channel 批次发送／交付。SecureNode 使用默认 limits；L3 Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
 
 ### L4 Manager 边界
 
@@ -356,6 +360,78 @@ mise run perf:dataplane -- --batch 32 --profile 0 128 --repeats 2 \
 最后一轮 binary SHA-256 为 `aa2177174ab317cb0c74e14ea812b8ff885f9d9b48823fb5ad105acd3d26786f`，source digest 为 `49f49790e7ffb126fbdcc0403293da77c80279dab391c40708127607b90c9529`。报告与固定二进制位于工作树 `.meshway/perf/dataplane/<run>/`。两轮均使用共享 measurement lock 串行执行；生产 runtime conformance 状态独立见[验收矩阵](/v2/node/validation)。
 
 Profiling 关闭用于正式吞吐；开启时采用 `MESHWAY_PROFILE=128`、`MESHWAY_PROFILE_DETAIL=1`，导出 `secure.send/receive`、`crypto.*`、`control.guard`、`codec.*` 和 TUN／UDP 边界。secure 驱动在停止并 join I/O 后输出最终累计快照。guard／包定义为所有节点精确 `control.guard` 的 `calls_started` 之和除以端点 `l3.packet.origin` 的同字段之和，包含准备、warmup、空闲与最终输出检查；不是每个成功交付包的固定算法次数。
+
+### 流式完成与核数对照
+
+两核报告 `20261007t022912z-b3d48a09` 为 40/40 成功，四核报告 `20261007t023624z-224b2f3f` 为 20/20 成功。两次使用同一 Linux binary SHA-256 `93d5e0073e22ebfe16d776ccc7c7f99760d966548daac3aeacf4e145947acc72`，源码 digest `5e0d36c1823654c9f2c8bae191100a4b1b13e477b61fd9463c6b9df3db331271`；运行前后源码未变。代码基于 `2fcc2b10`，包含流式完成队列、32 个全生命周期 credit 和控制消息预留，不包含随后独立的 TUN codec／UDP provider 改动。
+
+```sh
+mise run perf:dataplane -- --modes secure-direct secure-relay manager-direct manager-relay plain-batch \
+  --batch 32 --profile 0 128 --repeats 2 --seconds 6 --omit 1 \
+  --mtu 1280 --payload 1200 --udp-rate 2G --cpus 2 --memory 512m
+# 同一二进制，另一次完整运行将 --cpus 改为 4、--profile 改为 0。
+```
+
+每容器两核时为一个 owner＋一个 worker，四核时为一个 owner＋三个 worker。其余环境与上一节相同；正式值为 profile 关闭、两次重复中位数。前值统一取 `20261007t013659z-d3a3ee2c`。CPU 为所有角色 cgroup 相加，100%＝一核，包含 iperf 和 warmup。
+
+| 模式 | TCP Mbps 前 → 两核 → 四核 | UDP pps 前 → 两核 → 四核 | 两核 TCP／UDP CPU % | 四核 TCP／UDP CPU % |
+| --- | ---: | ---: | ---: | ---: |
+| L3 direct | 480.50 → 558.21 → 582.98 | 52,427 → 48,662 → 74,388 | 184.62／319.31 | 197.88／413.95 |
+| L3 relay | 467.80 → 402.41 → 518.72 | 54,220 → 43,373 → 62,611 | 218.46／402.07 | 273.27／511.87 |
+| L4 direct | 439.23 → 452.61 → 506.30 | 49,183 → 65,292 → 86,523 | 169.24／334.37 | 190.61／463.15 |
+| L4 relay | 353.00 → 323.00 → 337.07 | 41,257* → 38,246 → 58,013 | 205.98／397.59 | 233.75／524.10 |
+| L2 plain batch | — → 3,592.15 → 3,672.20 | — → 110,879 → 103,458 | 156.49／192.41 | 159.16／195.16 |
+
+*前值只有一个成功 UDP 样本。* 两核／四核 L3 direct UDP 丢包为 75.80%／63.12%，L4 relay 为 81.36%／71.65%；2G 输入不是无损容量测量。**L3 direct 的 1 Gbps TCP／100k pps UDP 底线在两核和四核均未达到。** 四核 L3 direct TCP 仅比两核高 4.4%，增加 worker 并没有解除主要串行／等待限制。两核、四核记录的宿主一分钟 load average 分别为 4.08–8.66、4.88–14.62；同宿主还有其他工作流，CPU quota 并非独占 CPU，不能将跨轮变化全部归于实现。
+
+#### L4 失链定位
+
+使用旧报告的固定 binary 重放，证据为 `.meshway/perf/dataplane/i-health-baseline-1791338937/`。失败样本 `manager-relay-b32-p128-udp-r0` 中，A 于 `02:09:26.730Z` 发生正常的双向拨号选链替换，旧 channel 仍有约 5.71 秒健康期；`02:09:27.128Z` A 因 `Unavailable` 停止。R 的旧邻接到 `02:09:32.737Z` 才健康到期，且该样本仅处理了少量 circuit 控制帧。另一失败 TCP 样本具有相同顺序。
+
+根因是 L4 工具仅在启动时调用 `set_carriers`，后续忽略 Manager 的选链变化，拿旧 carrier 输出；后来的健康到期是节点退出的后果，不能据此归因为高负载 Ping/Pong 饥饿。驱动现在持续取得 Manager 的实际调度视图，新准入使用新选择；旧输出在 carrier 不匹配时计数丢弃，不重新绑定。生产 daemon 原本就更新该视图。
+
+控制接收优先和发送容量预留独立增强了满载边界，见[控制消息预算](/v2/node/connectivity#udp-控制消息预算)。新两核的四个 relay UDP 样本及四核的两个样本均保持进程运行，没有 `Unavailable`；健康期限与有效 Pong 条件未放宽。这些六秒负载样本不替代长期失效／恢复验收。
+
+#### 分阶段成本与忙闲边界
+
+以下取两核、profile=128、UDP 两次的采样，使用精确 calls 加权；µs 为含 observer effect 的 CPU 估计。owner 准备／提交、worker 整体为 inclusive 每次调用；carrier 为 self CPU／实际发送或交付帧，不能与 inclusive 行相加当作总预算。
+
+| 路径／角色 | owner send | owner prepare RX | owner commit RX | worker crypto 整体 | carrier send self／帧 | TUN deliver self／帧 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| L3 direct A | 4.68 | — | — | 7.96 | 1.53 | — |
+| L3 direct B | — | 1.78 | 4.73 | 7.70 | — | 3.33 |
+| L3 relay R | — | 2.02 | 2.25 | 9.05 | 1.76 | — |
+| L4 direct A | 4.58 | — | — | 8.30 | 2.28 | — |
+| L4 direct B | — | 1.78 | 4.80 | 7.94 | — | 2.92 |
+| L4 relay R | — | 1.99 | 2.40 | 11.90 | 2.32 | — |
+
+L3 direct A 的 worker 内，AEAD 约 2.85 µs、相邻 MAC 约 3.80 µs；B 的解密约 2.86 µs、MAC 验证约 3.92 µs。全负载汇总 TUN deliver self 为 L3 direct 3.12 µs／帧、relay 3.07，未达到约 1 µs／帧目标。当前 carrier 已复用同一批切片列表和同 epoch 的 guard reading，但本次没有改 TUN 内部 codec，亦未取得精确的合并率／syscall 分阶段计数。
+
+profile 关闭的 L3 direct 线程 CPU 活跃比例如下；四核 worker 列为三个 worker **总和**，括号为平均每 worker。余下墙钟时间包含阻塞和调度／quota 等待，不能据此区分具体睡眠原因。
+
+| 核数／负载 | A owner % | A worker % | B owner % | B worker % |
+| --- | ---: | ---: | ---: | ---: |
+| 2／TCP | 44.1 | 37.9 | 49.8 | 39.4 |
+| 2／UDP | 57.1 | 55.2 | 44.5 | 39.5 |
+| 4／TCP | 42.3 | 43.0（14.3） | 52.3 | 43.7（14.6） |
+| 4／UDP | 69.4 | 78.5（26.2） | 62.1 | 58.8（19.6） |
+
+这组数据表明 crypto 算力未用满。剩余串行点包括端点 owner 准入／提交、较小就绪前缀的 carrier／TUN 成本，以及宿主等待已释放前缀 I/O 的路径。独立有界 TX pending、worker 排队及 ready→release→syscall 的墙钟分解仍未完成；不能声称完整无阻塞流水线已验收，也不能把内核丢包和调度等待按这些 CPU 采样作精确归因。
+
+#### L0 同步路径重测
+
+`20261007T024211Z-21ee1281` 完成默认 36 格矩阵；profile 关闭、每格三次中位数，对照上文 `20261007T011142Z-68ec103e`。L0 不使用线程池或 carrier／TUN，不能证明流式调度收益。
+
+| 节点 | IP 字节 | pps 前 → 后 |
+| ---: | ---: | ---: |
+| 2 | 1280 | 57,190 → 46,722 |
+| 3 | 1280 | 37,987 → 32,378 |
+| 5 | 1280 | 23,402 → 20,965 |
+| 2 | 52 | 143,431 → 125,873 |
+| 3 | 52 | 92,414 → 85,786 |
+| 5 | 52 | 55,639 → 49,491 |
+
+这次 L0 数值下降，未隔离宿主负载／CPU 频率的贡献，不将其解释为确定的算法回退或忽略。binary SHA-256 为 `c0ee2b44c2b8f371b6f90482900415c92d6cd9ae3435ab555d1fea346f908647`。此前试跑 `20261007t021741z-0b97f862` 的失败报告保留：包括 profile 差分遇到同名计时项 null 的解析问题，以及两个 UDP 实收字节与包数相差一包的样本；没有补零或替换旧样本。本节采用后续完整成功矩阵。
 
 ### L3 实测参考
 
