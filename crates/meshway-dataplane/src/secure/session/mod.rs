@@ -7,7 +7,7 @@ use super::{
     codec::{self, Context, Exchange, Frame},
 };
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use meshway_configuration::execution::{LogicalPath, NodeConfiguration};
 use meshway_model::NodeId;
 use meshway_policy::admission::{Carrier, admit_circuit_carrier, circuit_permit, path_carrier};
@@ -20,6 +20,10 @@ use zeroize::Zeroizing;
 const AGREEMENT: &[u8] = b"meshway/circuit/session-agreement/v5\0";
 const KEY: &[u8] = b"meshway/circuit/directional-hop-key/v5\0";
 const MAC: &[u8] = b"meshway/circuit/hop-mac/v5";
+// HKDF and handshake hashing retain sha2 0.10, shared with Snow. Only the
+// per-packet MAC uses 0.11's runtime hardware SHA2 detection. Its zeroize
+// feature clears the retained inner/outer hash states when dropped.
+type HopMac = Hmac<sha2_fast::Sha256>;
 
 struct Pending {
     secret: StaticSecret,
@@ -37,8 +41,8 @@ pub(super) struct Session {
 pub(super) struct Keys {
     position: usize,
     // Slot 0 is the preceding neighbour, slot 1 the following neighbour.
-    outgoing: Zeroizing<[[u8; 32]; 2]>,
-    incoming: Zeroizing<[[u8; 32]; 2]>,
+    outgoing: [Option<HopMac>; 2],
+    incoming: [Option<HopMac>; 2],
 }
 
 impl Session {
@@ -109,8 +113,8 @@ impl Session {
         let salt = Sha256::digest(transcript);
         let mut keys = Keys {
             position,
-            outgoing: Zeroizing::new([[0; 32]; 2]),
-            incoming: Zeroizing::new([[0; 32]; 2]),
+            outgoing: [None, None],
+            incoming: [None, None],
         };
         for (peer, public) in exchange.public.iter().enumerate() {
             if peer.abs_diff(position) != 1 {
@@ -128,7 +132,11 @@ impl Session {
             ] {
                 let mut info = KEY.to_vec();
                 info.extend_from_slice(&[signer as u8, verifier as u8]);
-                hkdf.expand(&info, output).map_err(|_| Error::Crypto)?;
+                let mut raw = Zeroizing::new([0; 32]);
+                hkdf.expand(&info, &mut raw[..])
+                    .map_err(|_| Error::Crypto)?;
+                *output =
+                    Some(HopMac::new_from_slice(&raw[..]).expect("HMAC accepts a 32-byte key"));
             }
         }
         Ok(keys)
@@ -261,7 +269,7 @@ impl MacKey {
         } else {
             &self.keys.outgoing
         };
-        authenticate(&keys[self.slot], frame)
+        authenticate(keys[self.slot].as_ref().ok_or(Error::State)?, frame)
     }
 
     pub fn verify(&self, frame: &Frame) -> Result<(), Error> {
@@ -298,9 +306,9 @@ fn adjacent(context: &Context, signer: usize, next: usize, carrier: &Carrier) ->
     (carrier.dialer == a && carrier.listener == b) || (carrier.dialer == b && carrier.listener == a)
 }
 
-fn authenticate(key: &[u8; 32], frame: &Frame) -> Result<[u8; 16], Error> {
+fn authenticate(key: &HopMac, frame: &Frame) -> Result<[u8; 16], Error> {
     frame.validate()?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts a 32-byte key");
+    let mut mac = key.clone();
     mac.update(MAC);
     mac.update(&frame.context.circuit);
     mac.update(&[u8::from(frame.reply)]);

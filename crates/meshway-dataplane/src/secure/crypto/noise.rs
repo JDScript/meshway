@@ -4,12 +4,14 @@
 //! transport AD is empty, exactly as in Snow's stateless transport API.
 use super::{Error, MAX_PLAINTEXT};
 use crate::PacketBuffer;
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::AeadInPlace};
+use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 use zeroize::Zeroizing;
 
 pub(in crate::secure) struct Transport {
-    sending: Zeroizing<[u8; 32]>,
-    receiving: Zeroizing<[u8; 32]>,
+    // Construct once at the split; the enclosing immutable Arc<Transport> is
+    // shared with workers. Sequence allocation remains with the circuit owner.
+    sending: LessSafeKey,
+    receiving: LessSafeKey,
 }
 
 impl Transport {
@@ -28,8 +30,8 @@ impl Transport {
             (&keys.1, &keys.0)
         };
         Ok(Self {
-            sending: Zeroizing::new(*sending),
-            receiving: Zeroizing::new(*receiving),
+            sending: key(sending)?,
+            receiving: key(receiving)?,
         })
     }
 
@@ -43,10 +45,15 @@ impl Transport {
         let len = buffer.len();
         buffer.extend(16).map_err(|_| Error::Capacity)?;
         let (plaintext, output_tag) = buffer.payload_mut().split_at_mut(len);
-        let tag = ChaCha20Poly1305::new((&*self.sending).into())
-            .encrypt_in_place_detached(&nonce(sequence).into(), &[], plaintext)
+        let tag = self
+            .sending
+            .seal_in_place_separate_tag(
+                Nonce::assume_unique_for_key(nonce(sequence)),
+                Aad::empty(),
+                plaintext,
+            )
             .map_err(|_| Error::Crypto)?;
-        output_tag.copy_from_slice(&tag);
+        output_tag.copy_from_slice(tag.as_ref());
         Ok(())
     }
 
@@ -59,18 +66,22 @@ impl Transport {
             .checked_sub(16)
             .filter(|len| *len <= MAX_PLAINTEXT)
             .ok_or(Error::Wire)?;
-        let (ciphertext, tag) = buffer.payload_mut().split_at_mut(len);
-        ChaCha20Poly1305::new((&*self.receiving).into())
-            .decrypt_in_place_detached(
-                &nonce(sequence).into(),
-                &[],
-                ciphertext,
-                chacha20poly1305::Tag::from_slice(tag),
+        self.receiving
+            .open_in_place(
+                Nonce::assume_unique_for_key(nonce(sequence)),
+                Aad::empty(),
+                buffer.payload_mut(),
             )
             .map_err(|_| Error::Crypto)?;
         buffer.truncate(len);
         Ok(())
     }
+}
+
+fn key(bytes: &[u8; 32]) -> Result<LessSafeKey, Error> {
+    UnboundKey::new(&CHACHA20_POLY1305, bytes)
+        .map(LessSafeKey::new)
+        .map_err(|_| Error::Crypto)
 }
 
 fn nonce(sequence: u64) -> [u8; 12] {

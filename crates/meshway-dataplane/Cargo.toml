@@ -19,10 +19,11 @@ tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 snow = { version = "=0.10.0", default-features = false, features = ["use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom", "risky-raw-split"] }
-chacha20poly1305 = { version = "=0.10.1", default-features = false }
+ring = "0.17"
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 sha2.workspace = true
-hmac = "0.12"
+sha2-fast = { package = "sha2", version = "0.11", features = ["zeroize"] }
+hmac = "0.13"
 hkdf = "0.12"
 x25519-dalek = { version = "2.0", default-features = false, features = ["static_secrets", "zeroize"] }
 subtle = "2.6"

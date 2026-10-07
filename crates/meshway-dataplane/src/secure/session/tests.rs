@@ -114,6 +114,56 @@ fn carrier(edge: usize) -> Carrier {
 }
 
 #[test]
+fn prekeyed_hmac_matches_fixed_data_and_probe_transcripts() {
+    // Independent Python stdlib HMAC-SHA256 vectors for the v5 transcript:
+    // key=42*32, CID=01*32, sequence=2^32, body=a5*(1296 or 48),
+    // probe measurement UUID=26 and deadline=10000. Truncate only after HMAC.
+    let expected = [
+        [
+            121, 132, 108, 153, 184, 214, 155, 63, 216, 22, 230, 198, 173, 143, 106, 124,
+        ],
+        [
+            166, 172, 9, 239, 186, 45, 254, 191, 188, 242, 144, 233, 67, 10, 82, 118,
+        ],
+        [
+            164, 125, 221, 197, 183, 12, 80, 165, 190, 241, 53, 56, 179, 235, 241, 3,
+        ],
+        [
+            33, 164, 114, 129, 12, 157, 188, 155, 184, 252, 190, 95, 246, 187, 89, 192,
+        ],
+    ];
+    let key = HopMac::new_from_slice(&[0x42; 32]).unwrap();
+    let fixture = Fixture::pending(3);
+    for probe in [false, true] {
+        for reply in [false, true] {
+            let mut frame = fixture.frame(reply);
+            frame.sequence = 1 << 32;
+            frame.body = vec![0xa5; if probe { 48 } else { 1296 }].into();
+            if probe {
+                frame.context.authorization = CircuitAuthorization::Diagnostic(
+                    meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
+                );
+                frame.kind = if reply {
+                    Kind::ProbeReply
+                } else {
+                    Kind::ProbeRequest
+                };
+                frame.probe = Some(ProbeMetadata {
+                    measurement_id: EventId::new(node(25).into_uuid()).unwrap(),
+                    expires_at_ms: 10_000,
+                });
+            }
+            for _ in 0..2 {
+                assert_eq!(
+                    authenticate(&key, &frame).unwrap(),
+                    expected[usize::from(probe) * 2 + usize::from(reply)]
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn every_supported_path_and_direction_verifies_adjacent_mac_with_fixed_wire_size() {
     for n in 2..=8 {
         let mut f = Fixture::pending(n);
