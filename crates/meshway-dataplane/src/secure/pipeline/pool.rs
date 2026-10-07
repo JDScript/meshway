@@ -82,28 +82,47 @@ impl Pool {
     /// No wait to fill a batch. Queue pressure retains already-admitted jobs
     /// until the selected worker accepts them; it never drops an admitted suffix.
     pub async fn run(&mut self, jobs: &mut VecDeque<Job>) -> Vec<Result<Output, Error>> {
-        let count = jobs.len().min(32);
+        self.run_prepared(jobs, Ok).await
+    }
+
+    /// Prepare small ready groups on the owner while earlier groups compute.
+    /// The closure never leaves this calling task; only its opaque Job crosses
+    /// the worker boundary. This overlaps owner admission even with one worker.
+    pub async fn run_prepared<T>(
+        &mut self,
+        inputs: &mut VecDeque<T>,
+        mut prepare: impl FnMut(T) -> Result<Job, Error>,
+    ) -> Vec<Result<Output, Error>> {
+        let count = inputs.len().min(32);
         if self.senders.is_empty() {
-            return jobs.drain(..count).map(Job::run).collect();
-        }
-        let mut groups: Vec<Vec<_>> = (0..self.senders.len()).map(|_| Vec::new()).collect();
-        for (index, job) in jobs.drain(..count).enumerate() {
-            let shard = self.next;
-            self.next = (self.next + 1) % self.senders.len();
-            groups[shard].push((index, job));
+            return inputs
+                .drain(..count)
+                .map(|input| prepare(input).and_then(Job::run))
+                .collect();
         }
         let mut receivers = Vec::new();
-        for (sender, jobs) in self.senders.iter().zip(groups) {
+        let mut outputs: Vec<_> = (0..count).map(|_| Err(Error::State)).collect();
+        let quantum = count.div_ceil(self.senders.len()).clamp(1, 8);
+        for start in (0..count).step_by(quantum) {
+            let end = (start + quantum).min(count);
+            let mut jobs = Vec::with_capacity(end - start);
+            for (index, output) in outputs.iter_mut().enumerate().take(end).skip(start) {
+                match prepare(inputs.pop_front().expect("bounded input prefix")) {
+                    Ok(job) => jobs.push((index, job)),
+                    Err(error) => *output = Err(error),
+                }
+            }
             if jobs.is_empty() {
                 continue;
             }
+            let sender = &self.senders[self.next];
+            self.next = (self.next + 1) % self.senders.len();
             let (complete, receive) = oneshot::channel();
             // One notification per ready worker group, never per packet. A
             // cancelled prior run can occupy at most one queued group/worker.
             let _ = sender.send(Work { jobs, complete }).await;
             receivers.push(receive);
         }
-        let mut outputs: Vec<_> = (0..count).map(|_| Err(Error::State)).collect();
         for receive in receivers {
             if let Ok(results) = receive.await {
                 for (index, result) in results {

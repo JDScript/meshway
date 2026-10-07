@@ -81,9 +81,6 @@ impl Packets {
             return;
         };
         let now = Instant::now();
-        if self.scan_remaining != 0 {
-            return Some(now);
-        }
         let id = frame.circuit();
         if self
             .traced_circuits
@@ -119,6 +116,9 @@ impl Packets {
         let cfg = snapshot.configuration().ok()?;
         let now_ms = snapshot.now_ms().ok()?;
         let now = Instant::now();
+        if self.scan_remaining != 0 {
+            return Some(now);
+        }
         let absolute = |ms: u64| now + Duration::from_millis(ms.saturating_sub(now_ms));
         let mut next = self
             .local
@@ -656,13 +656,8 @@ impl Packets {
                     self.local.push_back(item);
                     continue;
                 }
-                match secure.prepare_send_packet(circuit.id, item.packet) {
-                    Ok(job) => {
-                        sealing.push_back(secure::pipeline::Job::Send(job));
-                        circuits.push(circuit);
-                    }
-                    Err(error) => self.drop_admission("packet_admission", error, Some(demand)),
-                }
+                sealing.push_back((circuit.id, item.packet));
+                circuits.push(circuit);
             } else {
                 if path.first() == Some(&cfg.node_id)
                     && path.get(1).is_some_and(|next| carriers.contains_key(next))
@@ -691,12 +686,27 @@ impl Packets {
                 self.local.push_back(item);
             }
         }
-        for (result, circuit) in pool.run(&mut sealing).await.into_iter().zip(circuits) {
+        let sealed = pool
+            .run_prepared(&mut sealing, |(id, packet)| {
+                secure
+                    .prepare_send_packet(id, packet)
+                    .map(secure::pipeline::Job::Send)
+            })
+            .await;
+        for (result, circuit) in sealed.into_iter().zip(circuits) {
             match result {
                 Ok(secure::pipeline::Output::Send(frame)) => {
                     self.trace_packet(&frame, &circuit);
                     outgoing.push(frame);
                 }
+                Err(error) => self.drop_admission(
+                    "packet_admission",
+                    error,
+                    match circuit.authorization {
+                        CircuitAuthorization::Business(demand) => Some(demand),
+                        CircuitAuthorization::Diagnostic(_) => None,
+                    },
+                ),
                 _ => self.drop_packet("packet_crypto"),
             }
         }
