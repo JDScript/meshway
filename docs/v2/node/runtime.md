@@ -71,8 +71,46 @@ IPC v3 的公开运行状态：
 | `networkMode` | `tun`／`controlOnly`，本机选择 |
 | `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed` |
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
-| `phase` | 包含 `controlReady` 与 `running`；结合 dataPlane、当前资格和错误读取 |
+| `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
+
+`phase` 的全部 9 个值：
+
+| 值 | 含义 |
+| --- | --- |
+| `down` | 期望下线，已停止当前网络 |
+| `starting` | 正在建立控制上下文 |
+| `awaitingApproval` | 持钥接入等待浏览器批准 |
+| `synchronizing` | 正在同步当前运行目标 |
+| `controlReady` | 控制流程就绪；结合 `dataPlane` 判断安装 |
+| `running` | 当前目标的数据面已就绪 |
+| `retrying` | 故障后等待有界重试 |
+| `blocked` | 需要操作员处理，后台不继续准入 |
+| `stopping` | 正在停止与清理 |
+
+`lastError` 使用 `Problem` 的全部 17 个值；无故障为 null：
+
+| 值 | 含义 |
+| --- | --- |
+| `network` | 控制 HTTP 网络或响应交付故障 |
+| `serverBusy` | Server 限流、暂态拒绝或不可用 |
+| `credentials` | 会话／实例凭据拒绝、身份失权 |
+| `enrollmentExpired` | 接入请求到期 |
+| `enrollmentWithdrawn` | 接入批准被撤回 |
+| `enrollmentCancelled` | 接入请求已取消 |
+| `storage` | 私有记录、持久化或恢复失败 |
+| `contract` | 类型契约、绑定或控制生命周期不匹配 |
+| `configuration` | 本机 Server origin 等启动配置无效 |
+| `clock` | 会话／实例期限失效，须重新取得资格 |
+| `worker` | 所需运行任务异常退出 |
+| `unsupportedMode` | 当前模式或执行能力不受支持 |
+| `underlay` | 底层保护或资源准备失败 |
+| `tun` | TUN 安装／运行失败 |
+| `dns` | DNS 安装／运行失败 |
+| `transport` | 承载安装／运行失败 |
+| `apply` | 当前目标安装、回执或报告执行范围需重新同步 |
+
+IPC v3 的封闭对象解码会拒绝未知字段；当前不增加事件流状态字段，旧 CLI 仍可读取同一 `Status`。
 
 ready／applied 只表示该目标的本机安装结果，不表示 peer 已建立认证通道或应用已收回业务包。Node State 中的 listener／link 来自组件观测；路径、RTT、丢包缺测保持空。安装与报告顺序见 [Control ApplicationTicket](/v2/node/control#安装回执与运行报告)。
 
@@ -105,6 +143,8 @@ CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取�
 ## 控制调度与恢复
 
 Server HTTP 等待与本机命令处理独立。配置查询通常每 5 秒，实例续租与控制报告通常每 20 秒；真实安装完成、socket／邻接或业务依赖变化还会触发合并后的报告，最多每秒一次。仅观测时间变化不触发新事件，旧报告重试保留原序号／内容／时间，也不确认后来出现的新状态。故障采用有界退避，期限由控制组件独立校验。down 先持久保存本机下线意图，再停止当前资格并尽力释放远端实例；离线时也不能把旧 lease 展示为有效。当前 IPC 不承载业务包。
+
+daemon 同时持有一条受保护的 Node SSE 消费任务。配置、实体、同步 reset／ready 和观察任务变化唤醒上述既有控制周期，定时刷新作为断线与通知遗漏的兜底。事件消费者不直接安装配置、续期或授权；关闭原因、重连预算与旧事件范围检查见[事件通知与刷新](/v2/node/control#事件通知与刷新)。已有待确认换钥／接入密钥记录在认证前由同一 Control owner 恢复，发起入口限制见[换钥与恢复](/v2/node/control#换钥与恢复)。
 
 期望上线时，网络失败、HTTP 408／429／5xx 按 1–30 秒有界退避自动重试。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。新鲜身份证明遭拒、Server（`controllerId`）／key／目标绑定错误、本机记录损坏仍进入 `blocked`；后台残留请求不能绕过该停止状态。
 

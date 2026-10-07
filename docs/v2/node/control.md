@@ -1,6 +1,6 @@
 # Server 接入组件
 
-`meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准的持钥接入、认证、实例／lease、需求与续租、目标保存、安装回执、运行状态上报、UDP 穿透协调与 Node 观察订阅。
+`meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准与接入密钥的持钥接入、认证与换钥、实例／lease、需求与续租、目标保存、安装回执、运行状态上报、SSE 变化通知、UDP 穿透协调与 Node 观察订阅。
 
 daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动与接入)。自动调度和 Linux 网络安装由 daemon 协调；组件校验并传递宿主实际能力与安装结果，不自行证明 applied。
 
@@ -13,12 +13,15 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `poll_enrollment` | 用持钥证明查询；批准后的兑换码在兑换前私有持久化 |
 | `redeem_enrollment` | 验证返回网络与公钥绑定，保存身份；丢失响应后可恢复同一兑换结果 |
 | `cancel_enrollment` | 持钥取消待完成请求，或清理已确认的取消／撤回／过期请求；已兑换身份不会被当作临时请求删除 |
+| `enroll_with_key`／`resume_key_enrollment` | 在同一私有记录中先保存接入密钥、独立 Node 密钥和 intent，再调用 `POST /agent-api/v1/enrollments`；重启复用原请求，成功后清除接入秘密 |
 | `authenticate` | 先签名申请有界 challenge，再校验固定 Server／Node／key／generation 并消费证明，取得短期 Node 会话 |
 | `refresh_authentication` | 在原会话截止前持钥取得新会话，保留同一有效实例；不会延长旧快照或 execution lease |
+| `rotate_keys`／`rotation_pending` | 显式发起或恢复待确认换钥；新旧私钥、请求和 challenge 的持久化与结果恢复见下文 |
 | `acquire_instance` | 使用宿主真实能力取得实例；同一次不确定请求保持原 instance ID |
 | `renew_instance` | 更新当前实例的期限，验证返回实例与代际 |
 | `sync_configuration` | 读取完整目标或用共享库应用 delta，检查 digest／身份／实例绑定，原子保存目标 |
 | `refresh_configuration` | 显式续租并从同一 Server 事务取得精确匹配的 lease 与 full／delta；复用相同校验和持久化入口 |
+| `watch_node`／`receive_event` | 创建单条、无自动重连的类型化 Node 事件流；把同认证上下文的通知映射为既有刷新或失效动作 |
 | `execution_snapshot` | 从当前有效实例、lease 和匹配的已保存目标取得不可变执行快照；不证明 installed／applied |
 | `dataplane_identity` | 验证同执行快照与已登记密钥后，取得受期限约束的 Noise 初始化及包平面签名句柄 |
 | `create_demand` | 使用当前 Node 会话提交匹配当前 instance 的类型化需求；调用方保持重试 request ID，随后同步执行目标 |
@@ -57,6 +60,35 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 宿主可使用 `snapshot()` 在 HTTP 请求进行期间读取状态。快照复用控制组件的期限与失效标记；停止、身份上下文失效或销毁 driver 后，旧快照不再宣称具有有效实例。读取快照不产生报告或延长 lease。
 
+## 事件通知与刷新
+
+`watch_node()` 仅在已有有效会话和实例时创建 `NodeEvents`。它复用同一生成客户端和宿主保护的 HTTP socket pool，逐帧使用 `NodeEvent` 解码；没有独立解析器、后台重连或凭据 URL。daemon 持有唯一消费任务、容量为 1 的通知队列和 1–30 秒有界重连退避，停止时取消并 join。认证更新、实例失效或 down 后，已排队的旧上下文通知不再生效。
+
+| 事件 | 本机动作 |
+| --- | --- |
+| `sync.reset`、`sync.ready`、`entities.delta`、`configuration.changed`、`resources.changed` | 唤醒既有控制周期，重新查询／原子刷新、校验和保存目标 |
+| `observation.status`、`observation.removed` | 唤醒同一周期，复用观察任务 owner 的领取／更新路径 |
+| 三种初始 snapshot、`state.delta`、配置进度与观察 sample | 不安装其投影视图，不把报告或测量当作执行许可 |
+| `stream.closed: session_expired` | 清除旧会话与实例上下文，按现有到期恢复路径重新持钥认证 |
+| `stream.closed: membership_revoked` | 停止旧上下文并阻断；不后台重试身份 |
+| `stream.closed: node_lease_expired` | 按既有 lease 失效路径重新取得资格 |
+| `stream.closed: server_shutdown`、EOF、网络／解码失败 | 只重连事件流；不撤销或延长独立取得的本机 lease |
+
+此消费者仅使用通知唤醒普通 HTTP 同步，不维护 SSE 配置缓存，也不保存或发送 `Last-Event-ID`；每次重连取得完整批次，`sync.ready` 后再走正常同步。现有 5 秒定时刷新继续兜底，实例续租与报告期限独立。流当前沿用同一 HTTP 客户端的 20 秒总请求预算，到达预算后由宿主重连；普通请求的超时与保护不变。事件接收、保活和重连都不产生授权。
+
+## 换钥与恢复
+
+`rotate_keys()` 使用[换钥契约](/v2/api/authentication#换钥、重新登录与撤销)，同时更换控制和数据面公钥：
+
+1. 生成独立新私钥，将旧身份、新私钥、固定 rotate intent 和 challenge 申请原子私有保存。
+2. 使用旧钥申请并校验 challenge 的 Server、网络、Node、key、generation、摘要和期限；在发送 rotate 前持久保存完整 challenge。旧与新控制钥签同一 transcript。
+3. 发送前停止旧本机执行上下文；Server 接受后校验新公钥与下一代际，把新私钥、公钥绑定、清空的旧目标缓存与移除 pending 一次原子写入。
+4. 响应丢失或进程重启时重投同一请求，以新私钥恢复 Server 的同一换钥结果；不再次生成新钥。daemon 在重新认证前恢复已有 pending。
+
+不确定失败必须保留两套私钥；不能假定 Server 未提交而删除新钥。原 challenge 已过期且 rotate 明确被拒时，只有新鲜旧钥认证仍成功才能清除 pending、回到旧身份；若旧钥证明失败，继续保留恢复材料。持久写入失败或等待者取消时，driver 进入 `ReloadRequired`，重开后读取原子写入前的 pending 或写入后的新身份，不使用内存中未经确认的绑定。旧执行不会因恢复或回滚而复活。
+
+当前契约不发布持久 Node key 的到期时间或要求轮换的通知；短期 session 到期不是换钥触发条件。组件提供显式调用和 pending 恢复，daemon／CLI 尚无发起换钥或接入密钥的操作入口。
+
 ## 执行快照
 
 `ExecutionSnapshot` 的类型定义于 `meshway-authority`；生产快照只由 `Control::execution_snapshot()` 签发，约束见[架构](/v2/architecture#node-内部共享的基础接口)。它绑定网络／节点、instance／generation、精确目标引用和本机失效代际，并保留原始 session、instance 与 execution 三个截止。缓存恢复、读取或 Clone 都不能延长期限。下列方法属于 authority 类型：
@@ -93,6 +125,6 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 ## 限制
 
-SSE 消费、接入密钥方式和换钥尚未接线。
+IPC v3 的既有 `Status` 是拒绝未知字段的封闭对象，无法仅靠新增可省略字段让旧 CLI 接收事件流状态。因此当前 IPC／`meshway status` 未增加 `eventStream` 或最近事件时间。接入密钥和换钥的发起入口限制见上文。
 
 组件测试使用 `mise exec -- cargo test -p meshway-control -p meshway-private-storage --all-targets --locked`，以真实 Server 与独立私有数据库运行；它不替代 TUN 或业务包流验收，见[验收范围](/v2/node/validation)。
