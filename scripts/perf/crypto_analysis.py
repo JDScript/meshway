@@ -61,7 +61,7 @@ def category(stack):
         return "frame-codec"
     if owned("meshway_dataplane::secure::session::authenticate") or owned("meshway_dataplane::secure::session::MacKey") or owned("hmac::"):
         return "hmac"
-    if any(owned(prefix) for prefix in ("meshway_dataplane::secure::crypto::noise::Transport", "chacha20poly1305::", "chacha20::", "poly1305::")):
+    if any(owned(prefix) for prefix in ("meshway_dataplane::secure::crypto::noise::Transport", "ring::aead::", "chacha20poly1305::", "chacha20::", "poly1305::")):
         return "aead"
     if owned("sha2::"):
         return "sha256-other"
@@ -167,7 +167,7 @@ def summary(report):
              "Primitive windows exclude Frame validation, policy/replay and tag comparison. HMAC fields and contiguous BLAKE3 transcript",
              "are prepared outside timing; candidate AEAD wire AAD updates its sequence inside timing. Production layout changes are unmeasured.", "",
              "Scope ownership: crypto.encrypt/decrypt → pipeline::seal/open → noise::Transport;",
-             "crypto.append_mac/verify_hop_mac → session::MacKey → authenticate (includes Frame::validate + fresh HMAC key schedule);",
+             "crypto.append_mac/verify_hop_mac → session::MacKey → authenticate (includes Frame::validate and the selected HMAC backend/key handling);",
              "codec.encode/decode → Frame::encode_owned/decode_owned; flow.admit → Engine::admit_inner;",
              "secure.send → prepare_send_packet; secure.prepare_receive/commit_receive → owner prepare/commit;",
              "packet.parse → Packet::parse; control.guard → ExecutionSnapshot::reading/ensure_current.", ""]

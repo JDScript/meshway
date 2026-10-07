@@ -79,7 +79,7 @@ mise run perf:crypto
 mise run perf:crypto -- --environment host --iterations 100000 --repeats 5
 ```
 
-`tools/meshway-crypto-bench` 的显式 example 使用工具自身的 dev-dependencies；生产 crates 的密码依赖不变。`scripts/perf/crypto.py` 在 host 与 aarch64 Linux 的无网络、只读、去除 capabilities 的独立容器中运行同一固定迭代实现，复用 dataplane 的 zigbuild／锁定镜像及跨 worktree measurement lock。基准不进入 `mise run check`；严格 Clippy 仍检查该 example。
+`tools/meshway-crypto-bench` 的显式 example 使用工具自身的 dev-dependencies；运行基准不会切换生产后端，实际选择见[就地加密](/v2/node/dataplane#单缓冲所有权与就地加密)。`scripts/perf/crypto.py` 在 host 与 aarch64 Linux 的无网络、只读、去除 capabilities 的独立容器中运行同一固定迭代实现，复用 dataplane 的 zigbuild／锁定镜像及跨 worktree measurement lock。基准不进入 `mise run check`；严格 Clippy 仍检查该 example。
 
 两个 crypto 测量任务均接受 `--cpu-set 0`，可选固定 Linux guest CPU；CPU quota 仍由 `--cpus`（L0 固定 2）控制。这不固定物理宿主核心，也不提供宿主独占；报告保留 affinity、首尾宿主 load average 与全部批次分位数。跨环境和大幅波动的样本不以单一倍率归因于实现。
 
@@ -162,6 +162,40 @@ Apple M3 Pro、macOS、Rust 1.98.0，profile 关闭，每格为三次独立进�
 | 5 | 52 | 55,210 → 55,639 | 22.97 → 23.15 | 18.077 → 17.939 | 37 → 33 |
 
 guard 为开启采样时的真实调用计数，表中四舍五入，包含极少的维护检查。L0 没有 carrier／TUN 适配器，`carrier.*` 不适用。新 binary SHA-256 为 `50e8d452102f7a0db23239bda7f108ff996da0640f4accdce45ce333507c392d`；完整报告位于工作树 `.meshway/perf/circuit/20261007T011142Z-68ec103e/`。
+
+### L0 密码后端替换
+
+`20261007T050103Z-be5131d5` 为 ring 0.17 AEAD＋预 key HMAC 0.13／SHA2 0.11 的默认 36 格矩阵，全部成功、源码 digest 首尾一致；实现提交 `b4d6410b`。平台仍为 Apple M3 Pro／macOS 27.0、Rust 1.98.0，单线程 inline、每格三次重复中位数、profile 关闭。H 基线为 `20261007T011142Z-68ec103e`，main 基线为 `20261007T024211Z-21ee1281`，不跨轮选取最好样本。
+
+| 节点 | IP 字节 | pps H → main → 新后端 | CPU µs／包 H → main → 新后端 |
+| ---: | ---: | ---: | ---: |
+| 2 | 1280 | 57,190 → 46,722 → 113,796 | 17.479 → 19.862 → 8.786 |
+| 3 | 1280 | 37,987 → 32,378 → 80,179 | 26.308 → 29.814 → 12.468 |
+| 5 | 1280 | 23,402 → 20,965 → 52,439 | 42.698 → 47.399 → 19.064 |
+| 2 | 52 | 143,431 → 125,873 → 177,586 | 6.972 → 7.761 → 5.628 |
+| 3 | 52 | 92,414 → 85,786 → 123,957 | 10.784 → 11.602 → 8.059 |
+| 5 | 52 | 55,639 → 49,491 → 79,033 | 17.939 → 19.987 → 12.651 |
+
+2／3 节点 1280B 的 A send／receive 为 3.678／4.272、3.784／4.451 µs，B 为 3.503／4.175、3.596／4.373 µs；三节点 R 为 3.177 µs／包。profile 的精确 guard 调用仍为 15／21／33 次／单向交付包，包含所有路径角色及极少维护；公开操作的五次真实检查、nonce／replay／flow／输出 fence 未改。每跳 wire 字节仍为 1366／138。宿主首尾 load average（1／5／15 分钟）为 5.30／5.39／6.37 → 3.84／4.49／5.77，未固定物理核心或频率，不把跨轮全部差值视为纯代码收益。binary SHA-256 为 `c2b0b2e5f73f312f1afee3373cd907a3454dbcafa6c2370d7de2cc361a2b41a6`。
+
+#### 新后端剩余 CPU 预算
+
+独立归因报告 `20261007T050435Z-5d4b300c-l0-host` 使用 `perf:crypto:l0 -- --environment host`：每拓扑三次 profile off／128 对照与一次 500,000 轮原生栈采样，全部成功。下表为 1280B、每单向交付包、所有路径角色合计；按原生 self-time 权重乘同次未插桩总 CPU，方法与[CPU 归因](#l0-cpu-归因)相同。有效样本 8,972／11,984，未解析叶样本 6.9%／7.1% 保留父级归因；函数内联和短窗口仍有统计误差。
+
+| 类别 | 2 节点 µs／包 | 3 节点 µs／包 |
+| --- | ---: | ---: |
+| ring AEAD seal＋open | 1.719 | 1.619 |
+| 预 key 相邻 HMAC | 1.274 | 2.469 |
+| PacketBuffer／池／内存移动 | 1.502 | 2.134 |
+| flow／BTreeMap／replay／policy | 1.062 | 1.366 |
+| guard／authority | 1.181 | 1.614 |
+| Packet parse／checksum | 0.369 | 0.435 |
+| Frame validate／codec | 0.020 | 0.090 |
+| 其它，含 harness 计时／fixture／通用分配 | 1.785 | 2.337 |
+| **未插桩总 CPU** | **8.912** | **12.063** |
+| **非密码合计** | **5.918** | **7.976** |
+
+密码部分约占 33.6%／33.9%。`prepare_send_at`＋`commit_receive` 的 memmove 调用者合计 0.749／1.175 µs，属于上表内存移动，不再另加；它包含聚合值移动，不是全部可删除的 payload copy。没有采到独立稳态其它 SHA256，不补零。profile=128 总 CPU 为 9.458／12.479 µs；宿主一分钟 load 范围 3.28–5.38。原生采样实际出现 ring seal／open 叶函数与硬件 SHA2 的 NEON 内联路径；完整 top 15、角色与复制调用者存于 `.meshway/perf/m-validation/budget.json`。这是 macOS L0 的分区，不作为 Linux 调度／I/O CPU 的替代。
 
 ## L1 承载对照
 
@@ -534,6 +568,46 @@ profile 关闭的 L3 direct 线程 CPU 活跃比例如下；四核 worker 列为
 | 5 | 52 | 55,639 → 49,491 |
 
 这次 L0 数值下降，未隔离宿主负载／CPU 频率的贡献，不将其解释为确定的算法回退或忽略。binary SHA-256 为 `c0ee2b44c2b8f371b6f90482900415c92d6cd9ae3435ab555d1fea346f908647`。此前试跑 `20261007t021741z-0b97f862` 的失败报告保留：包括 profile 差分遇到同名计时项 null 的解析问题，以及两个 UDP 实收字节与包数相差一包的样本；没有补零或替换旧样本。本节采用后续完整成功矩阵。
+
+### L3 密码后端替换
+
+`20261007t045428z-fb7362ea` 使用同一新后端，12/12 成功、源码 digest 首尾一致；正式吞吐取 profile 关闭、两次重复中位数。对照 `20261007t022912z-b3d48a09`，仍为 OrbStack aarch64、锁定 Ubuntu 镜像 `46773dba…`、每容器 2 CPU／512 MiB、每节点一个 owner＋一个 worker、真实 TUN vnet_hdr 与 UDP 批量 I/O。命令：
+
+```sh
+mise run perf:dataplane -- --modes secure-direct secure-relay plain-batch \
+  --batch 32 --profile 0 --repeats 2 --seconds 6 --omit 1 \
+  --mtu 1280 --payload 1200 --udp-rate 2G --cpus 2 --memory 512m
+```
+
+| 模式 | TCP Mbps 前 → 后 | UDP pps 前 → 后 | 后 TCP／UDP cgroup CPU % | 后 UDP 丢包 % |
+| --- | ---: | ---: | ---: | ---: |
+| secure-direct | 558.21 → 771.01 | 48,662 → 115,975 | 138.49／341.46 | 44.32 |
+| secure-relay | 402.41 → 623.28 | 43,373 → 86,356 | 173.32／386.07 | 57.85 |
+| plain-batch | 3,592.15 → 6,289.31 | 110,879 → 116,502 | 115.54／160.50 | 44.07 |
+
+**直连 UDP 已达到 100k pps 底线，TCP 仍未达到 1 Gbps；中继两项均未达。** 2G 输入下存在显著丢包，这不是无损容量。TCP 的两个直连样本为 777.96／764.07 Mbps。plain 同时明显变化，且基线未包含后来独立的 TUN／UDP 改动，因此相对该基线的 L3 提升不能全部归因于密码后端。CPU 为所有角色 cgroup 之和、包含 iperf 与 warmup；TCP pps 未测。
+
+宿主样本首尾 1／5／15 分钟 load 范围为 5.31–6.19／5.27–5.54／6.40–6.48；共享 measurement lock 保证本仓库测量互斥，不提供宿主独占。源码基于 `d0e60ba9` 加 `b4d6410b` 的后端改动，binary SHA-256 为 `8454abfa0c20dc717b8488bc5af43931e564f803d87e796242cf3ef7c810ffd8`，完整固定二进制与逐次原始样本保存在当前工作树报告目录。后端的一致性由 Snow 双方向／长度／nonce 边界逐字节对照、独立 HMAC 固定 Data／Probe transcript 向量，以及原 session／Linux packet conformance 验证。
+
+#### 新后端逐节点阶段成本
+
+补充采样 `20261007t050813z-b1ce80b9` 仅运行 secure-direct／secure-relay、profile=128，其余参数不变；8/8 成功，与正式吞吐报告为同一 binary。宿主一分钟 load 为 3.04–4.28；profile-on 直连／中继 TCP 中位数为 803.04／639.52 Mbps，UDP 为 124,537／90,526 pps。这次负载条件变化使采样吞吐高于 profile-off，不能解释为 observer 没有开销，也不替换正式数字。
+
+下表为 UDP 两次重复按精确 calls 加权的 CPU 估计。owner／worker 列为每次对应操作的 inclusive µs；AEAD／MAC 列是 worker 的内部项；carrier 为 self CPU／实际发送或交付帧。少量 TCP 控制包的反向路径缺采样标为不适用，不填零。各列互相嵌套、含 observer effect，不能全部相加当作未插桩总成本。
+
+| 路径／角色 | owner send | owner prepare RX | owner commit RX | worker 整体 | worker 内 AEAD／MAC | carrier send self／帧 | TUN deliver self／帧 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| direct A | 4.765 | — | — | 3.226 | 1.177／0.821 | 0.936 | — |
+| direct B | — | 1.707 | 4.679 | 2.804 | 1.133／0.871 | — | 1.100 |
+| relay A | 4.674 | — | — | 3.160 | 1.169／0.809 | 0.923 | — |
+| relay R | — | 1.893 | 2.233 | 2.828 | —／1.667（验证＋生成） | 1.099 | — |
+| relay B | — | 1.733 | 4.700 | 2.803 | 1.128／0.873 | — | 1.090 |
+
+相对旧分阶段数据，direct A worker 从 7.96 降至 3.23 µs，B 从 7.70 降至 2.80，R 从 9.05 降至 2.83；端点 owner 准备／提交仍是主要串行工作。新采样每次 guard 为 0.218–0.223 µs；端点 flow.admit 自 CPU 为 0.929–0.952 µs／调用、policy 为 0.184–0.198、IP parse 为 0.216–0.262；Data encode／decode 为 0.163–0.188。worker 自身包装／移动约 0.80–1.06 µs／操作，不能把这项称为纯调度等待。所有逐角色原始 scopes、calls 与采样数见同一 `budget.json`。
+
+正式 profile-off 直连 TCP 的 A owner／worker 活跃比例为 43.9%／16.0%，B 为 49.7%／17.5%；UDP 对应为 75.7%／30.4%、69.1%／27.5%。TCP worker 已显著空闲，继续增加密码算力不足以证明能达到 1 Gbps。剩余工作包括 owner flow／replay／guard、聚合值移动／context clone、pool／就绪前缀与 TUN／carrier I/O；ready→release→syscall 的墙钟排队、内核丢包与宿主调度尚无独立精确归因，不能从线程未活跃比例推断具体等待原因。
+
+同一 Linux image 的独立无网络只读容器读取 `AT_HWCAP=0x2fb3ffff`，SHA2 与 ASIMD bits 均为 true；锁定 sha2 0.11／cpufeatures 0.3 的 aarch64 Linux `getauxval` 分派选择硬件 SHA2，未设置强制 backend／target-cpu。原始探测命令与结果保存于 `.meshway/perf/m-validation/hwcap.json`。本轮没有重跑原语工具，以正式 L0／L3 和实际 HWCAP 验证后端。
 
 ### L3 实测参考
 

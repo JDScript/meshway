@@ -69,7 +69,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 1. 每个节点为该 circuit 生成独立的临时 X25519 密钥，与 Noise 的静态／临时密钥分离。INIT 的每跳签名包含自己的公开 contribution、实际 carrier 和此前完整证明。节点保留已验证的上游 contribution 前缀及自己的 contribution。
 2. RESPONSE 包含 INIT Noise 消息的 SHA256、完整有序 contribution 列表和 Noise response。每个反向签名绑定整个 RESPONSE、此前证明及签名者自己的 contribution。每个节点必须核对原 INIT digest、缓存前缀和自己的公开值；不能仅信任终点重述的列表。
-3. 每个节点仅与路径位置 ±1 的相邻节点做 X25519 agreement；拒绝全零共享秘密。HKDF-SHA256 的 salt 绑定完整 context、两次 Noise 消息和完整 contribution 列表，info 使用 v5 purpose 与有序 signer／verifier 位置。不同方向、会话、授权、路径和 key generation 不共用 MAC key。握手完成后释放临时私钥；关闭时清零派生密钥。
+3. 每个节点仅与路径位置 ±1 的相邻节点做 X25519 agreement；拒绝全零共享秘密。HKDF-SHA256 的 salt 绑定完整 context、两次 Noise 消息和完整 contribution 列表，info 使用 v5 purpose 与有序 signer／verifier 位置。不同方向、会话、授权、路径和 key generation 不共用 MAC key。握手完成后释放临时私钥；相邻 MAC 在派生时预构造 HMAC 0.13／SHA2 0.11 的 inner／outer 状态，每包 clone 后 update，tag 字节不变。SHA2 使用运行时硬件检测与 software fallback；启用 zeroize 清零释放的 hash 状态，原始派生 key 只在 Zeroizing 临时值中存在。HKDF 与 Snow 的 SHA2 0.10 依赖保持共用。
 4. Data 固定布局为 `magic/version 8 | kind 1 | flags 1 | CID 32 | sequence 8 | body length 4 | ciphertext P+16 | hop MAC 16`。flags bit0 表示 reply，其余位必须为零；数值使用大端。每段新增 86 B，与路径长度、listener key 和内层地址族无关。未知 CID 不通过线上字段重建授权。握手保留完整 context／证明；Probe 保留自己的 metadata。
 5. Data tag 为 `HMAC-SHA256(k(dir), "meshway/circuit/hop-mac/v5" || CID || flags || sequence || body length || ciphertext)[..16]`。验证者常量时间比较相邻 tag；中继验证后替换为下一跳 tag，回复使用反向密钥。实际 carrier 仍由本地 policy 和认证邻接检查，不再放入每包 MAC。相邻认证证明本跳邻居参与；它不提供 v4 的逐验证者完整前缀证明，不能抵抗任意路径节点串通跳过更早节点。端点 Noise AEAD 继续保证业务原始来源真实性。
 
@@ -87,7 +87,7 @@ business 与 diagnostic 共用相邻认证实现，Probe 的 kind、measurement�
 
 TUN 直接读入池缓冲，端点包解析借用其中切片。Noise 业务加密、Data 头写入 headroom、相邻 MAC 写入 tailroom 均不复制 payload；中继使用借用 Data 解码视图，并在原缓冲上覆盖相邻 MAC。终点就地解密后保留同一缓冲，由 `carrier::deliver` 直接借用写入 TUN。`PendingFrame` 和 `PendingAction`（通过 owned Packet）保有缓冲所有权；`PendingFrame::release` 交出 `PacketBuffer`。
 
-Noise IK、prologue、peer static 验证及空握手 payload 仍由 Snow 完成。完成握手后，私有 crypto 模块使用 Snow 的 `risky-raw-split` 提取原 transport 方向密钥，交给同版本 RustCrypto ChaCha20Poly1305 的就地 AEAD。transport AD 保持为空，nonce 为 4 个零字节加 little-endian u64；显式 nonce 仍由唯一 SecureNode 消耗并禁止回绕，接收重放窗口不变。持久 split key 使用 Zeroizing，AEAD 对象 drop 清零；原始 key 不进入公共接口、日志或序列化。该选择增加了私有 crypto 模块直接接触 split key 的边界，避免 Snow 分离输入／输出 API 所需的包体复制；两个方向、最大包长与 nonce 边界与 Snow stateless 输出逐字节互验。
+Noise IK、prologue、peer static 验证及空握手 payload 仍由 Snow 完成。完成握手后，私有 crypto 模块使用 Snow 的 `risky-raw-split` 提取原 transport 方向密钥，各构造一次 ring 0.17 ChaCha20-Poly1305 `LessSafeKey`，由不可变 `Arc<Transport>` 交给 worker；每包使用 `seal_in_place_separate_tag`／`open_in_place`。transport AD 保持为空，nonce 为 4 个零字节加 little-endian u64；显式 nonce 仍由唯一 SecureNode 消耗并禁止回绕，接收重放窗口不变。原始 split key 临时值使用 Zeroizing，不进入公共接口、日志或序列化；ring 的不透明 key 随最后句柄释放，但 0.17 没有公开的可靠清零接口，不声明其内部 key drop 清零。该选择避免 Snow 分离输入／输出 API 所需的包体复制；两个方向、最大包长与 nonce 边界与 Snow stateless 输出逐字节互验，wire v5 字节不变。Meshway 业务代码继续 forbid unsafe。
 
 Session 的 `Payload` 可保有 `PacketBuffer` 的原始存储，发送预算包括完整 capacity、headroom 和 tailroom；carrier 不再转换为 Vec。接收的 Session Vec 直接转入 PacketBuffer，Data 解码收回线上头部和 tag 所占空间。自定义 owned payload 在取回时保留同一分配与原池归属。
 
@@ -106,7 +106,7 @@ Session 的 `Payload` 可保有 `PacketBuffer` 的原始存储，发送预算包
 | `pipeline::open(RecvJob)` | worker 验证 hop MAC、端点就地解密或中继替换下一跳 MAC；返回未提交的 `Opened` |
 | `SecureNode::commit_receive(Opened)` | 原 snapshot／key owner 绑定、replay 再检查、端点解析与业务准入、最终检查后提交 replay |
 
-worker 只持有包存储、方向／序号、不可变 Arc 密钥句柄、路由元数据与原输出 guard，不读取 authority，不访问 flow 或 replay。验证失败不会提交 replay；并发验证的重复序号也只有第一次成功 owner 提交有效。关闭后的在途 crypto 可以完成，但不能提交或释放输出；密钥在 owner 与最后一个在途句柄释放后清零。
+worker 只持有包存储、方向／序号、不可变 Arc 密钥句柄、路由元数据与原输出 guard，不读取 authority，不访问 flow 或 replay。验证失败不会提交 replay；并发验证的重复序号也只有第一次成功 owner 提交有效。关闭后的在途 crypto 可以完成，但不能提交或释放输出；密钥对象在 owner 与最后一个在途句柄释放后销毁，具体清零边界见[就地加密](#单缓冲所有权与就地加密)。
 
 `pipeline::Pool` 默认 worker 数为可用核数减一、最少一；daemon 可通过 `MESHWAY_DATAPLANE_WORKERS` 设置 0–256，0 为同步 inline。`submit`／`flush` 不等待 crypto 完成，每次通知最多八个已就绪 job；worker 逐包发布完成，`ready` 可独立唤醒 owner。owner 在此期间继续处理 TUN 与承载输入。`take_ready` 每轮最多释放 32 个已完成输出，不等待原输入批次的尾部，也不等待凑批；52-byte ACK 使用相同即时释放路径。
 

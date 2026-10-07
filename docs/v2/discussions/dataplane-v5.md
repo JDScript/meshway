@@ -43,6 +43,8 @@ tag = HMAC-SHA256(k(dir), "meshway/circuit/hop-mac/v5" ‖ CID ‖ flags ‖ seq
 
 验证者只需本跳密钥；验证通过后用下一跳密钥重算 tag 覆盖原位置。回复方向使用反向密钥。实际 carrier 的绑定由相邻通道的 MWADJ 认证与 Control 下发的邻接资格承担，不再进入每包 MAC。
 
+实现后端为 HMAC 0.13／SHA2 0.11，派生时预 key、每包 clone，运行时检测硬件 SHA2；端到端稳态 AEAD 为 ring 0.17 ChaCha20-Poly1305，方向 key 在 Snow 握手 split 时一次构造并由不可变 Arc 共享。Noise 握手继续使用 Snow，nonce／AAD／HMAC transcript 与 wire 字节不变；清零边界和一致性验证见[就地加密](/v2/node/dataplane#单缓冲所有权与就地加密)。
+
 ### 每跳步骤
 
 | 角色 | owner 段（串行） | worker 段（并行） |
