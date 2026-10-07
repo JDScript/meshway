@@ -29,7 +29,7 @@ meshway-tls = { path = "../../crates/meshway-tls", features = ["platform-verifie
 meshway-stun = { path = "../../crates/meshway-stun" }
 maxminddb = "0.26"
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
-reqwest = { workspace = true, features = ["json", "stream"] }
+reqwest.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
@@ -48,7 +48,7 @@ zeroize = "1.8"
 base64 = "0.23"
 
 [dev-dependencies]
-reqwest = { workspace = true, features = ["query"] }
+reqwest = { workspace = true, features = ["json", "query"] }
 rustls.workspace = true
 tempfile.workspace = true
 
