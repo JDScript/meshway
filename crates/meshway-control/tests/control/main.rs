@@ -5,6 +5,7 @@ mod cache;
 mod dns;
 mod events;
 mod faults;
+mod key_enrollment;
 mod recovery;
 mod refresh;
 mod rotation;

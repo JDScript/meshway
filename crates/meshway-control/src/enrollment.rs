@@ -22,6 +22,25 @@ impl Control {
         &mut self,
         hostname: &str,
     ) -> Result<EnrollmentRequestView, Error> {
+        self.prepare_enrollment(hostname, None).await?;
+        let pending = self.record.enrollment.as_ref().ok_or(Error::Lifecycle)?;
+        if pending.access_key.is_some() {
+            return Err(Error::Pending);
+        }
+        let request = CreateEnrollmentRequest {
+            intent: pending.intent.clone(),
+            signature: self.device_signature("create")?,
+        };
+        let view = self.client.create_enrollment_request(&request).await?;
+        self.check_enrollment(&view)?;
+        Ok(view)
+    }
+
+    async fn prepare_enrollment(
+        &mut self,
+        hostname: &str,
+        access_key: Option<WireSecret>,
+    ) -> Result<(), Error> {
         self.ready()?;
         if self.record.binding.is_some() {
             return Err(Error::Lifecycle);
@@ -31,7 +50,10 @@ impl Control {
             return Err(Error::Lifecycle);
         }
         if let Some(pending) = &self.record.enrollment {
-            if pending.intent.hostname != hostname {
+            if pending.intent.hostname != hostname
+                || pending.access_key.as_ref().map(WireSecret::expose)
+                    != access_key.as_ref().map(WireSecret::expose)
+            {
                 return Err(Error::Pending);
             }
         } else {
@@ -51,17 +73,65 @@ impl Control {
                 verifier,
                 code: None,
                 approved_network: None,
+                access_key,
             });
             self.persist().await?;
         }
+        Ok(())
+    }
+
+    /// Persist the access key and held-key intent before one-use redemption.
+    /// Retry/restart uses the same private request; the key never enters status.
+    pub async fn enroll_with_key(
+        &mut self,
+        hostname: &str,
+        key: WireSecret,
+    ) -> Result<EnrollmentResponse, Error> {
+        self.prepare_enrollment(hostname, Some(key)).await?;
+        self.resume_key_enrollment().await
+    }
+
+    pub fn key_enrollment_pending(&self) -> bool {
+        self.record
+            .enrollment
+            .as_ref()
+            .is_some_and(|pending| pending.access_key.is_some())
+    }
+
+    pub async fn resume_key_enrollment(&mut self) -> Result<EnrollmentResponse, Error> {
+        self.ready()?;
         let pending = self.record.enrollment.as_ref().ok_or(Error::Lifecycle)?;
-        let request = CreateEnrollmentRequest {
-            intent: pending.intent.clone(),
-            signature: self.device_signature("create")?,
-        };
-        let view = self.client.create_enrollment_request(&request).await?;
-        self.check_enrollment(&view)?;
-        Ok(view)
+        let response = self
+            .client
+            .enroll_node_with_key(&meshway_protocol::KeyEnrollmentRequest {
+                enrollment_key: WireSecret::new(
+                    pending
+                        .access_key
+                        .as_ref()
+                        .ok_or(Error::Lifecycle)?
+                        .expose()
+                        .to_owned(),
+                ),
+                request: CreateEnrollmentRequest {
+                    intent: pending.intent.clone(),
+                    signature: self.device_signature("create")?,
+                },
+                verifier: WireSecret::new(pending.verifier.expose().to_owned()),
+            })
+            .await?;
+        if !self
+            .record
+            .keys
+            .as_ref()
+            .ok_or(Error::Record)?
+            .matches(&response)?
+        {
+            return Err(Error::Contract);
+        }
+        self.record.binding = Some(response.clone());
+        self.record.enrollment = None;
+        self.persist().await?;
+        Ok(response)
     }
 
     pub async fn poll_enrollment(&mut self) -> Result<EnrollmentRequestView, Error> {

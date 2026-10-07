@@ -74,6 +74,8 @@ pub(super) struct Enrollment {
     pub code: Option<WireSecret>,
     #[serde(deserialize_with = "Option::deserialize")]
     pub approved_network: Option<meshway_model::NetworkId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_key: Option<WireSecret>,
 }
 
 impl Record {
@@ -172,6 +174,7 @@ impl Record {
                     || pending.intent.dataplane_key != keys.dataplane()?
                     || pending.intent.code_challenge != identity::challenge(&pending.verifier)
                     || pending.code.is_some() != pending.approved_network.is_some()
+                    || (pending.access_key.is_some() && pending.code.is_some())
                 {
                     return Err(Error::Record);
                 }

@@ -56,6 +56,12 @@ pub(super) async fn cycle(
     reset: &mut bool,
     mut network: Option<&mut network::Handle>,
 ) -> Result<Cycle, Failure> {
+    if control.key_enrollment_pending() {
+        control
+            .resume_key_enrollment()
+            .await
+            .map_err(|e| failure::at("enroll_with_key", e, true))?;
+    }
     if control.status().binding.is_none() {
         if !control.can_redeem_enrollment() {
             let hostname = control
