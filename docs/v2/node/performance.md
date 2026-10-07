@@ -17,6 +17,22 @@
 
 ## 运行方式与报告契约
 
+### 二进制体积
+
+体积测量与 L0–L5 运行时性能分开报告。保存原始产物的文件字节数、SHA-256、target triple、源码 revision／digest、完整 release profile、features、Rust／Zig 版本、构建命令和墙钟耗时；冷构建、缓存构建及分析工具触发的重构建分别标注。MiB 为 `bytes / 1024²`，文件体积不等于常驻内存或 `.text` 大小。
+
+证据位于 `.meshway/perf/binary-size/<run>/`，每种配置保存 host 与 `aarch64-unknown-linux-musl` 的 `meshwayd`／`meshway` 快照、构建 stdout／stderr、crate 前 25 项和函数前 30 项，以及完整 JSON 符号表。基本入口：
+
+```sh
+mise exec -- cargo install cargo-bloat --locked
+mise exec -- cargo build --release --locked -p meshway-daemon -p meshway-cli --bins
+mise exec -- cargo bloat --release --locked -p meshway-daemon --bin meshwayd --crates -n 25
+mise exec -- cargo bloat --release --locked -p meshway-daemon --bin meshwayd -n 30 --wide
+mise run build:node:linux
+```
+
+`cargo-bloat 0.12.1` 分析时强制 `strip=false`，其 File 列不能替代正式 release 文件体积；正式产物在分析前单独保存。Linux 分析沿用锁定 Zig linker：分析工具调用的 `cargo build` 需转交同参数的 `cargo zigbuild`，不能拿 host 符号表代表 Linux。crate／函数占比按可归属的 `.text` 符号计，不把内联、单态化、合并符号或未归属的 native 代码当作完整依赖成本。生成客户端类型还可能出现在 serde 单态化函数中，按符号名称统计只能给出可见部分，不能与 crate 行直接相加。
+
 ### L0 受保护 circuit
 
 ```sh
