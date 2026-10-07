@@ -22,7 +22,7 @@ pub(super) enum Io {
     #[cfg(target_os = "linux")]
     Manager {
         manager: Box<Manager>,
-        host: meshway_underlay::Host,
+        host: Option<meshway_underlay::Host>,
     },
 }
 
@@ -84,7 +84,7 @@ impl Io {
             &directory,
             "owner.lock",
         )?);
-        let host = meshway_underlay::Host::open(
+        let mut host = meshway_underlay::Host::open(
             directory,
             meshway_underlay::Options {
                 mtu: options.mtu,
@@ -92,6 +92,9 @@ impl Io {
             },
         )
         .await?;
+        // The production factory only mints data scopes after capture and its
+        // execution epoch have been installed. Never substitute a bootstrap scope.
+        host.install(identity.snapshot().clone()).await?;
         let manager = Manager::start(
             identity,
             std::sync::Arc::new(host.sockets()),
@@ -110,7 +113,7 @@ impl Io {
         .await??;
         Ok(Self::Manager {
             manager: Box::new(manager),
-            host,
+            host: Some(host),
         })
     }
 
@@ -134,6 +137,14 @@ impl Io {
             Self::Session { .. } => fixture.carriers_for(local),
             #[cfg(target_os = "linux")]
             Self::Manager { manager, .. } => Ok(manager.carriers()?),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn take_host(&mut self) -> Option<meshway_underlay::Host> {
+        match self {
+            Self::Manager { host, .. } => host.take(),
+            Self::Session { .. } => None,
         }
     }
 
@@ -239,7 +250,10 @@ impl Io {
         }
         let capabilities = self.capabilities();
         #[cfg(target_os = "linux")]
-        if let Self::Manager { host, .. } = self {
+        if let Self::Manager {
+            host: Some(host), ..
+        } = self
+        {
             host.shutdown(false).await?;
         }
         Ok(capabilities)

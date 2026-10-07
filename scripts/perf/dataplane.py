@@ -250,7 +250,7 @@ def namespace_options(mode, role):
     if mode.startswith("wg-"):
         return ["--cap-add", "NET_ADMIN"] + (["--sysctl", "net.ipv4.ip_forward=1"] if role == "r" else [])
     if role == "r":
-        return ["--cap-add", "NET_ADMIN"] if mode.startswith("manager-") else []
+        return ["--cap-add", "NET_ADMIN", "--device", "/dev/net/tun:/dev/net/tun"] if mode.startswith("manager-") else []
     return ["--cap-add", "NET_ADMIN"] + ([] if mode == "raw" else ["--device", "/dev/net/tun:/dev/net/tun"])
 
 
@@ -395,6 +395,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 if secure:
                     record.setdefault("workers", {})[role] = readiness["workers"]
                     record.setdefault("tunBatch", {})[role] = readiness["tunBatch"]
+                    record.setdefault("captureTun", {})[role] = readiness.get("captureTun")
                 if secure and readiness["publicationDigest"] != record["publicationDigest"]:
                     raise RuntimeError("node compiled publication digest differs")
                 if role == "r" and readiness["tun"] is not None:

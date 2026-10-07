@@ -33,6 +33,8 @@ struct Driver<'a> {
     pool: Pool,
     io_capabilities: serde_json::Value,
     tun: Option<Tun>,
+    #[cfg(target_os = "linux")]
+    host: Option<meshway_underlay::Host>,
     circuits: BTreeMap<RequestId, [u8; 32]>,
     established: BTreeMap<RequestId, [u8; 32]>,
     ready: bool,
@@ -86,15 +88,16 @@ pub async fn run(
         BTreeMap::new(),
     )?;
     node.set_carriers(fixture.carriers_for(local)?)?;
-    let tun = if matches!(options.role, NodeRole::R) {
-        None
-    } else {
-        Some(Tun::create(
-            Options::new(options.mtu)?
-                .with_batch_io(true)
-                .with_ipv4(options.role.mesh_address(), 30)?,
-        )?)
-    };
+    let tun =
+        if matches!(options.role, NodeRole::R) || matches!(options.stage, crate::Stage::Manager) {
+            None
+        } else {
+            Some(Tun::create(
+                Options::new(options.mtu)?
+                    .with_batch_io(true)
+                    .with_ipv4(options.role.mesh_address(), 30)?,
+            )?)
+        };
     let mut io = io::Io::start(
         options,
         &fixture,
@@ -111,6 +114,8 @@ pub async fn run(
         pool: Pool::new(options.workers)?,
         io_capabilities: io.capabilities(),
         tun,
+        #[cfg(target_os = "linux")]
+        host: io.take_host(),
         circuits: BTreeMap::new(),
         established: BTreeMap::new(),
         ready: false,
@@ -123,6 +128,10 @@ pub async fn run(
     };
     stop.cancel();
     let capabilities = io.shutdown().await?;
+    #[cfg(target_os = "linux")]
+    if let Some(host) = driver.host.take() {
+        host.shutdown(false).await?;
+    }
     eprintln!("{}", serde_json::json!({"ioCapabilities": capabilities}));
     eprintln!(
         "{}",
@@ -141,6 +150,21 @@ pub async fn run(
 }
 
 impl Driver<'_> {
+    fn capture_tun(&self) -> Option<&Tun> {
+        #[cfg(target_os = "linux")]
+        if let Some(host) = &self.host {
+            return host.tun();
+        }
+        self.tun.as_ref()
+    }
+
+    fn tun(&self) -> Option<&Tun> {
+        if matches!(self.options.role, NodeRole::R) {
+            None
+        } else {
+            self.capture_tun()
+        }
+    }
     async fn output(&self, io: &mut io::Io, frame: PendingFrame) -> Result<(), Error> {
         UDP_SEND.poll(io.send(vec![frame], self.fixture)).await?;
         Ok(())
@@ -148,16 +172,17 @@ impl Driver<'_> {
 
     fn readiness(&mut self) -> Result<(), Error> {
         if !self.ready
-            && (self.tun.is_none() || self.established.len() == self.fixture.demands.len())
+            && (self.tun().is_none() || self.established.len() == self.fixture.demands.len())
         {
             self.ready = true;
             println!(
                 "{}",
                 serde_json::json!({"ready":true, "stage":self.options.stage,
-                "role":self.options.role, "tun":self.tun.as_ref().map(Tun::name),
-                "meshAddress":self.tun.as_ref().map(|_| self.options.role.mesh_address()),
+                "role":self.options.role, "tun":self.tun().map(Tun::name),
+                "captureTun":self.capture_tun().map(Tun::name),
+                "meshAddress":self.tun().map(|_| self.options.role.mesh_address()),
                 "mtu":self.options.mtu, "batch":self.options.batch, "profile":profile::enabled(),
-                "workers":self.pool.workers(), "tunBatch":self.tun.as_ref().map(|tun| tun.capabilities().vnet_header),
+                "workers":self.pool.workers(), "tunBatch":self.capture_tun().map(|tun| tun.capabilities().vnet_header),
                 "capabilities":self.io_capabilities,
                 "publicationDigest":self.fixture.publication_digest, "circuits":self.established.len()})
             );
@@ -251,10 +276,7 @@ impl Driver<'_> {
         }
         if !deliveries.is_empty() {
             let count = deliveries.len();
-            let tun = self
-                .tun
-                .as_ref()
-                .ok_or("relay attempted plaintext delivery")?;
+            let tun = self.tun().ok_or("relay attempted plaintext delivery")?;
             TUN_WRITE
                 .poll(carrier::deliver_batch(tun, deliveries))
                 .await?;
@@ -306,7 +328,7 @@ impl Driver<'_> {
                     self.received(io, received?).await?;
                 }
                 read = async {
-                    match &self.tun {
+                    match self.tun() {
                         Some(tun) if self.ready => TUN_READ.poll(tun.recv_batch(&mut batch)).await,
                         _ => std::future::pending().await,
                     }
