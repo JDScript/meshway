@@ -896,6 +896,20 @@ x86_64 的 RustCrypto 后端经调试器断点核实为 AVX2（ChaCha／Poly1305
 
 WireGuard 校准（`--cpus 8 --mtu 1420 --udp-rate 4G`）：wg-direct TCP 5,117 Mbps、UDP 414k pps；raw 107.8 Gbps。对照 [wg-bench](https://github.com/cyyself/wg-bench) 的 7950X 5.64 Gbps 低 9%；仍有容器配额与 Docker bridge，不是无配额 netns 复现。内核 WireGuard 的 softirq CPU 可能记在 cgroup 之外。报告：L0 `planck-20261007T070124Z-c7b84c03`、2 CPU `planck-20261007t070435z-a3f07ece`、4 CPU `planck-20261007t070907z-4a6a085e`、校准 `planck-20261007t071046z-078a1483`。
 
+### L5 常驻 lab 实测
+
+[常驻三节点 lab](/v2/node/docker-lab)（OrbStack aarch64，每节点 `cpus: 0.5`／384 MiB，routing 固定 sha→lax→nyc）在 release 源码 `4c4e231f` 下用容器内 iperf3 3.16 测量，TCP 单流 `-t 6 -O 1`，UDP payload 1200 B；原始 JSON 与说明在 `.meshway/perf/l5/20261007T085207Z-main-4c4e231f/`。
+
+| 测试 | 结果 | 对照 |
+| --- | --- | --- |
+| TCP 单流，两次 | 277／330 Mbps，重传 554／896，平均 RTT 3.5／5.9 ms，最大 cwnd 213–222 KB | v4 同路径 49 Mbps（2026-10-06，0.5 CPU／节点） |
+| UDP 200M 输入 | 交付 70 Mbps／16.7k pps，丢包 56% | — |
+| UDP 500M 输入 | 交付 128 Mbps，丢包 74% | — |
+| `meshway ping meshway-nyc` 5 次 | 全部回复，RTT 0.33–0.52 ms via lax | 此前约 5 ms |
+| 内核 ping 首包 | 约 1.1 s（circuit 建立），稳态 0.5–5 ms | — |
+
+0.5 CPU／节点使三节点全部 CPU 受限；UDP 无 GSO 聚合，逐包成本直接限制 pps。同日修复的三项先决条件：VM 重启后 journal boot id 不同导致的 `underlay` 冲突（`f422f949`）、部署器对 blocked 旧 daemon 的处理（`c7f2624b`、`f501970b`）、daemon 包池硬编码 1280 B 导致内层 MTU 1366 下大于 1280 B 的包全部丢弃（`4c4e231f`）。该 lab 结果不含随后合入的有界输出队列与 inline 默认（`2f7aa676`）。
+
 ### 测量环境
 
 | 环境 | 值 |
