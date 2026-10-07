@@ -9,6 +9,10 @@
 | `sing-box/` | <https://github.com/SagerNet/sing-box> | `testing` | `927770c29f3e3698c711fc150e1066a4a78793a2` | 2026-09-30 |
 | `mihomo/` | <https://github.com/MetaCubeX/mihomo> | `Meta` | `88dcbf7f1614a67c3b36b848ee3592dfa92ada36` | 2026-09-30 |
 | `easytier/` | <https://github.com/EasyTier/Easytier> | `main` | `728ba94b5029240add6204eed591f22e4e039e6b` | 2026-10-06 |
+| `wireguard-go/` | <https://github.com/WireGuard/wireguard-go> | `master` | `2631ce99a06f27120d581611cf125d68bc6aa565` | 2026-10-07 |
+| `quinn/` | <https://github.com/quinn-rs/quinn> | `main` | `7616e6b2782722f3ce4a1b181ef08817d7f545e4` | 2026-10-07 |
+| `tun-rs/` | <https://github.com/tun-rs/tun-rs> | `main` | `d0f764c135a34ad92360462f89a40b59f373cc06` | 2026-10-07 |
+| `nebula/` | <https://github.com/slackhq/nebula> | `master` | `d5062dacf0f8085ded1b7be9f8c0a57349baf71f` | 2026-10-07 |
 
 Mihomo 的默认 `main` 在拉取时停留于 2025-02-21，因此额外 fetch 并 checkout 当前更新的 `Meta` 分支。Sing-box 使用上游默认的 `testing` 分支。以上是开发分支快照，不代表稳定发行版。
 
@@ -77,3 +81,16 @@ Meshway 的当前实现与使用入口见 [docs/v2](../docs/v2/index.md)，连�
 - [MASQUE CONNECT-IP — RFC 9484](https://www.rfc-editor.org/rfc/rfc9484.html)
 
 此文件记录参考版本与已核对的源码入口；产品模型和 Rust 实现方案仍属于本次设计讨论。
+
+### wireguard-go、quinn-udp、tun-rs、Nebula：批量 I/O 与并行流水线
+
+研究整理与固定提交永久链接见私有 `.meshway/research/pipeline-references-20261007/report.md`；设计结论进入[数据面 v5 讨论](../docs/v2/discussions/dataplane-v5.md)。许可：wireguard-go MIT、quinn MIT OR Apache-2.0、tun-rs Apache-2.0（Linux offload 算法源自 WireGuard）、Nebula MIT。本次只读研究，未构建或复制上游实现；`meshway-tun` 以 crate 依赖方式使用 tun-rs 的 codec。
+
+- [`device/send.go`](wireguard-go/device/send.go):337–402、434–475、477–542：出站包先在 peer 顺序队列与并行加密队列双注册，worker 完成后通知，顺序 sender 按 peer 释放连续前缀；无整批收集屏障。
+- [`device/receive.go`](wireguard-go/device/receive.go):429–536：入站按 peer 顺序 replay 检查与交付；210–220、271–339 为 handshake 独立队列。
+- [`device/queueconstants_default.go`](wireguard-go/device/queueconstants_default.go):12–19、[`device/pools.go`](wireguard-go/device/pools.go):12–120：队列深度、`IdealBatchSize` 与元素池。
+- [`conn/bind_std.go`](wireguard-go/conn/bind_std.go):341–497、[`conn/errors_linux.go`](wireguard-go/conn/errors_linux.go):15–26：UDP GSO 聚合、sendmmsg 与仅对 EIO 的 GSO 降级。
+- [`tun/offload_linux.go`](wireguard-go/tun/offload_linux.go):531–625：TCP GRO 候选条件（同流、连续序号、ACK／ACK|PSH、排除 IPv4 options）。
+- [`quinn-udp/src/unix.rs`](quinn/quinn-udp/src/unix.rs):505–587、943–969：`Transmit` GSO 发送与批量常量；内部 syscall 重试无逐次 guard hook，未直接采用。
+- [`src/platform/linux/offload.rs`](tun-rs/src/platform/linux/offload.rs):87–100、[`src/platform/linux/device.rs`](tun-rs/src/platform/linux/device.rs):417–603：virtio-net header、`gso_split`／`handle_gro` 与设备 I/O；高级 `send_multiple` 跨多次 write，Meshway 只使用 codec。
+- [`interface.go`](nebula/interface.go):434–486、[`overlay/batch/tx_batch.go`](nebula/overlay/batch/tx_batch.go):1–59：TUN 读循环与 ready 批量发送；relay 转发认证密文不解业务数据。
