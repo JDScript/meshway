@@ -206,6 +206,7 @@ impl Operation {
     }
 
     fn poll_inner(&mut self, io: &Shared, cx: &mut Context<'_>) -> Poll<()> {
+        meshway_logging::profile::event("transport.operation", "poll");
         if let Some(at) = self.observed_at
             && self.first_poll_at.is_none()
         {
@@ -694,12 +695,14 @@ impl Sender {
             },
         };
         if may_inline && let Ok(permit) = self.idle.clone().try_acquire_owned() {
+            meshway_logging::profile::event("transport.dispatch", "inline");
             let lease = WriterLease::new(self.io.clone(), permit);
             let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
             if operation.poll(&self.io, &mut cx).is_ready() {
                 operation.finish();
                 drop(queue_permit);
             } else {
+                meshway_logging::profile::event("transport.dispatch", "inline_pending");
                 // No borrowed future/buffer is lost. Publication wakes the
                 // worker, which repolls the exact cursor with a real waker.
                 // Even an unexpectedly aborted receiver cannot turn attempted
@@ -708,6 +711,7 @@ impl Sender {
             }
             lease.release();
         } else {
+            meshway_logging::profile::event("transport.dispatch", "queued");
             queue_permit.send(operation);
         }
         Admission {
@@ -801,6 +805,7 @@ async fn run(io: Arc<Shared>, mut queue: mpsc::Receiver<Operation>, idle: Arc<Se
         let Some(mut operation) = operation else {
             break;
         };
+        meshway_logging::profile::event("transport.worker", "dequeue");
         // Install cleanup before the await as well: abort can happen after a
         // semaphore grant but before its future resumes. Budgets must not be
         // released before the carrier closes in that window either.

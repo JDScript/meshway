@@ -105,8 +105,20 @@ impl meshway_transport::raw::Datagram for Datagram {
         cx: &mut std::task::Context<'_>,
         packets: &[meshway_transport::raw::DatagramSend<'_>],
     ) -> Poll<std::io::Result<usize>> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("manager.udp.raw_send.poll");
+        let _profile = PROFILE.enter();
         std::task::ready!(self.scope.poll(cx, false))?;
-        self.inner.poll_send_batch(cx, packets)
+        let result = self.inner.poll_send_batch(cx, packets);
+        meshway_logging::profile::event(
+            "manager.udp.raw_send",
+            if result.is_pending() {
+                "pending"
+            } else {
+                "ready"
+            },
+        );
+        result
     }
 
     fn poll_recv_batch(

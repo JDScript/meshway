@@ -174,6 +174,9 @@ impl Datagram for UdpTransport {
         cx: &mut Context<'_>,
         packets: &[raw::DatagramSend<'_>],
     ) -> Poll<io::Result<usize>> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("udp.batch.send.poll");
+        let _profile = PROFILE.enter();
         #[cfg(target_os = "linux")]
         if let Some(state) = &self.batch {
             return state.poll_send(&self.socket, cx, packets);

@@ -903,6 +903,34 @@ impl Manager {
                 return vec![Event::Closed];
             }
             if !events.is_empty() {
+                if meshway_logging::profile::enabled() {
+                    meshway_logging::profile::event(
+                        "manager.receive.batch",
+                        match events.len() {
+                            1 => "1",
+                            2..=4 => "2-4",
+                            5..=8 => "5-8",
+                            9..=16 => "9-16",
+                            _ => "17-32",
+                        },
+                    );
+                    meshway_logging::profile::event(
+                        "manager.event_queue.depth",
+                        match self.events.len() {
+                            0 => "0",
+                            1..=8 => "1-8",
+                            9..=32 => "9-32",
+                            _ => "33+",
+                        },
+                    );
+                    if let Some(Event::Frame { received_at, .. }) = events.first() {
+                        static WALL: meshway_logging::profile::Metric =
+                            meshway_logging::profile::Metric::new(
+                                "manager.receive_to_consume.wall",
+                            );
+                        WALL.elapsed(received_at.elapsed());
+                    }
+                }
                 return events;
             }
             tokio::task::yield_now().await;

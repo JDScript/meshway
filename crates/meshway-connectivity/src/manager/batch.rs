@@ -17,6 +17,10 @@ impl Manager {
         frames: Vec<PendingFrame>,
     ) -> impl std::future::Future<Output = Result<Vec<SendReceipt>, Error>> + Send + 'static + use<>
     {
+        static SELECT: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("manager.send_batch.select");
+        let _profile = SELECT.enter();
+        let selected_at = meshway_logging::profile::enabled().then(std::time::Instant::now);
         let selected = (|| {
             if frames.is_empty() || frames.len() > 32 {
                 return Err(Error::Capacity);
@@ -49,6 +53,11 @@ impl Manager {
             Ok(groups)
         })();
         async move {
+            if let Some(at) = selected_at {
+                static WALL: meshway_logging::profile::Metric =
+                    meshway_logging::profile::Metric::new("manager.selected_to_poll.wall");
+                WALL.elapsed(at.elapsed());
+            }
             let groups = selected?;
             let sends = groups.into_values().map(|group| async move {
                 let receipt = meshway_dataplane::carrier::send_batch_shared(
