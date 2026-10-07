@@ -1986,6 +1986,7 @@ dependencies = [
  "meshway-server",
  "meshway-tun",
  "meshway-underlay",
+ "mimalloc",
  "reqwest",
  "rustix",
  "serde",

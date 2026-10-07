@@ -37,6 +37,9 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 
+[target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
+mimalloc = { version = "=0.1.52", default-features = false }
+
 [dev-dependencies]
 axum.workspace = true
 meshway-server = { path = "../meshway-server" }

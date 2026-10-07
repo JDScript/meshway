@@ -1,4 +1,12 @@
 #![forbid(unsafe_code)]
+
+// musl's allocator retains hundreds of MiB under the bounded packet/future
+// allocation mix. Select the measured allocator at the executable boundary;
+// libraries continue to use their caller's allocator.
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(unix)]
 mod arguments;
 
