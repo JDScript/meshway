@@ -268,7 +268,11 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 
 `--modes` 可选择本页列出的模式，默认仍为全部。相同 Meshway 模式／拓扑复用容器；同一 batch／profile／repeat 的 TCP 和 UDP 连续使用同一节点进程与 circuit，只重启 iperf3。跨重复或 profile 配置重启节点并使用新材料。`--workers` 默认 **0（inline）**，与正式 Pool 一致；0–256 可显式指定。依据与跨平台限制见[有界输出队列实测](#有界输出队列实测)。
 
-`--quick` 显式允许一次重复／4 秒的诊断窗口，不替代完整两次重复验收。`--traffic tcp|udp` 可选择独立负载，默认仍为 TCP 后 UDP；单独 TCP 不保留等待复用的进程。`--udp-buffer N` 只为 L3 的两个 socket 方向设置显式字节请求，0 使用正式 provider 默认值，不改变 Manager／plain 的配置。原始 options 保存这些参数。长窗口的节点／fixture 总期限覆盖两种连续负载；默认业务流仍有 60 秒 idle，因此长 iperf 窗口的空闲 TCP 控制连接不能被工具当成自动续租。
+`--quick` 显式允许一次重复／4 秒的诊断窗口，不替代完整两次重复验收。`--traffic tcp|udp` 可选择独立负载，默认仍为 TCP 后 UDP；单独 TCP 不保留等待复用的进程。`--udp-buffer N` 只为 L3 的两个 socket 方向设置显式字节请求，0 使用正式 provider 默认值，不改变 Manager／plain 的配置。原始 options 保存这些参数。长窗口的节点／fixture 总期限覆盖两种连续负载；`--flow-idle-seconds` 默认 60，长窗口可显式提高 fixture 的 flow idle 配置以覆盖 iperf 的空闲 TCP 控制连接。该参数调用正式流表配置入口，不通过读取延长流或授权，也不改变 daemon 默认值。
+
+`--memory-detail` 显式开启内存归因诊断：每 250 ms 采集 cgroup `memory.stat`、namespace 内各进程的 `status` 与 `smaps_rollup`。原始分项通过独立 stderr 流直接写到宿主报告，不积累在被测容器 tmpfs；采样自身 CPU／RSS 仍在 cgroup 内。文件逐个读取而非内核原子快照，进程退出或权限导致的读取失败原样保留。该选项增加 observer 开销，吞吐对照需保持相同采样配置。
+
+`--allocator system|mimalloc` 默认为 system；mimalloc 显式启用测量工具的 `allocator-mimalloc` Cargo feature，只替换该测量可执行文件的 Rust 全局分配器，并每秒记录分配器自身统计。依赖中的 C 分配不因此自动换分配器。fixture 签发工具和生产库没有全局分配器选择；原始 options／binary hash 保留实验区别，不能把工具 feature 的改善当成 daemon 已部署的修复。
 
 `raw` 的 veth MTU 与内层 TUN MTU 相同，保留内核默认 offload；`plain` 的外层 veth 保留 1500 MTU，TUN offload 按 `--io` 选择。两者经过同一内部 Docker bridge。TCP 应用写入块与实际 TCP 分段不是同一概念，TCP 不通过 Mbps／假定包长反推 pps。UDP 应用 payload 由 `--payload` 固定，IPv4／UDP 头额外占 28 字节。
 
@@ -292,6 +296,7 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 | `cpuByRole` | 每个 A／R／B 角色的同区间 cgroup CPU 秒与百分比；历史报告缺失时表示未测，不从总量分摊 |
 | `allocations`、`copiedBytes`、`peakMemoryBytes` | 当前未测，明确为 null |
 | `memoryByRole`、`<role>.memory.csv`、`<role>.memory.events` | 每 namespace 一个有界采样进程，每 250 ms 保存 `/proc/uptime`、cgroup `memory.current`、被测节点进程 VmRSS；记录采样峰值与 cgroup OOM 事件。VmRSS 缺失为 null，cgroup 包含 iperf／内核和采样器；两个口径不可混称或直接相加，采样峰值不等于连续监控的绝对峰值 |
+| `<role>.memory.detail` | `--memory-detail` 的逐时间戳 cgroup 分项与逐 PID 原始 status／smaps_rollup；用于区分节点匿名页、共享文件页、iperf3、socket 与其他内核占用。关闭详细采样时只可能包含采样器诊断 |
 | `capabilitiesInitial`、`capabilitiesFinal` | plain／secure 的实际 UDP 能力与成功 GSO／GRO／mmsg 次数；Manager 尚未导出 socket 计数，明确为 null；`tunBatch` 另记录 secure／manager 的 TUN vnet_hdr 实际模式 |
 | `workers` | secure／manager 每节点实际配置的 crypto worker 数；0 为 inline，独立于 owner runtime |
 | `syscallsPerPacket` | 当前为 null；`/proc` 进程 I/O 计数不能作为包含 UDP sendmsg／recvmmsg 的完整 syscall 计数 |
@@ -526,7 +531,7 @@ Session 在这两个 L4 TCP 样本中分别 41,802／32,855 次提交全部内�
 
 后测 R 的 763,629 个 Mesh frame 调度尝试对应 29,582 次成功业务批发布；队列 observer 记录 4,969 次真实 waker 回调与 63,537 次 poll（含独立控制队列），三者不可互称。旧实现只记录逐帧尝试，未记录实际 waker 回调，不补零。消费后的已预约占用直方图中，旧 R 为 21,473 次空、581 次 1–8、458 次 9–32；新 R 为 7,768 次空、142 次 1–8、1,672 次 9–32、1,830 次 33–64、7,559 次 65–256、7,546 次 ≥257。批内部分消费继续计入其原预约，观测不授予权限。
 
-剩余边界包括完整负载中的中继 RSS 增长／OOM、UDP 接收账本不一致及约 16–21% 的 L3/L4 TCP 差距。OOM 诊断时的 credit、任务数与 retained circuit 有界，尚未定位额外内存归属；不能用这些有界快照推断整个进程内存合格。两组固定二进制、所有失败日志、profiling 与内存曲线保存在执行工作树 `.meshway/perf/dataplane/<run>/`。
+这两组历史窗口的未完成项包括中继 RSS 增长／OOM、UDP 接收账本不一致及约 16–21% 的 L3/L4 TCP 差距。当时 credit、任务数与 retained circuit 有界，但尚未定位额外内存归属；后续归因及修复范围见[匿名驻留与分配器对照](#匿名驻留与分配器对照)。两组固定二进制、所有失败日志、profiling 与内存曲线保存在执行工作树 `.meshway/perf/dataplane/<run>/`。
 
 #### 历史单 worker 流水线对照
 
@@ -894,9 +899,63 @@ TCP secure 样本所有角色 `Udp.RcvbufErrors=0`。UDP 的 B 命名空间 r0�
 
 额外 L4 诊断 `20261007t074912z-93fccd5f` 的 relay UDP，A 的 RSS 约两秒内达到 512 MiB 并被 OOM 杀死；另有一次 relay TCP readiness 失败。profile 诊断显示在途 credit／pending、flow／circuit 与 task 数仍有界。独立、仅用于诊断的静态 malloc linker 探针在 `20261007t083121z-e2b2daf5` 的 L3 UDP 再次捕获 OOM：被拦截调用的主要存活分配仍是固定 scratch／descriptor，而进程 RSS 达约 516 MiB。探针使用额外固定表和采样线程，改变调度；其吞吐不能混入正式矩阵，未覆盖 libc 内部全部分配，不能据此确证某个 allocator 缺陷。后续探针／smaps 对照亦显示存活分配与常驻内存不等价。
 
-因此已排除“仅由业务 TX pending 数量无界增长解释此次现象”的说法，但**实际常驻内存增长的完整归因、历史 x86 OOM 的共同根因及可靠修复仍未完成**；接收 scratch、PacketPool 与 tun-rs GROTable 的固定容量检查不能代替 RSS 验收。60 秒 iperf 尝试还出现结束控制连接超时（保留原始曲线），不作为业务成功样本；随后使用小于默认 flow idle 的 45 秒独立 UDP 窗口。
+上述历史验证排除了“仅由业务 TX pending 数量无界增长解释此次现象”的说法，但当时尚未定位匿名驻留与分配器的关系；后续对照见下节。接收 scratch、PacketPool 与 tun-rs GROTable 的固定容量检查不能代替 RSS 验收。历史 60 秒 iperf 尝试还出现结束控制连接超时（保留原始曲线），不作为业务成功样本；其后使用小于默认 flow idle 的 45 秒独立 UDP 窗口。
 
 实现通过 fmt、严格 workspace/all-targets/all-features Clippy、dataplane／connectivity／daemon／transport／transport-udp／tun 全 feature 测试（4 threads）、脚本测试，以及 `test:packet:linux`（`20261007T082003Z-a1ff1005`）。runtime conformance、P 的 x86／L5 与其它承载组合不由上述 L3 数据替代。完整私有分析与失败清单位于执行 worktree `.meshway/perf/p-validation/`。
+
+### 匿名驻留与分配器对照
+
+2026-10-07，OrbStack aarch64／Linux musl release，4 CPU、512 MiB、MTU 1280、batch 32、inline、profile 关闭，UDP 输入 2 Gbps／1200 B。开启 `--memory-detail`，单次诊断窗口保留全部失败。历史 Y 的中继 `VmRSS=544,731,136 B` 是节点进程 RSS，而非 cgroup 总额；历史轮没有匿名／文件分项，不能事后给出精确拆分。iperf 和内核 socket 不属于该节点 RSS。
+
+新复现 `20261007t114803z-ecc32829`／`20261007t115323z-c3a556d2` 分别为 Manager relay／Secure direct，均在数秒内 OOM。以下为各自节点 RSS 峰值附近的一次分项采样，单位 MiB；文件逐个读取，存在毫秒级时间差：
+
+| 分项 | Manager A | Secure A |
+| --- | ---: | ---: |
+| 节点 VmRSS | 494.95 | 501.17 |
+| 节点 RssAnon | 486.78 | 495.27 |
+| 节点 RssFile | 8.17 | 5.90 |
+| smaps Anonymous | 486.84 | 495.12 |
+| iperf RssAnon | 0.11 | 0.37 |
+| cgroup anon | 486.88 | 496.09 |
+| cgroup file，含共享页／page cache | 24.72 | 15.78 |
+
+另一个同规模中继复现 `20261007t115938z-1ad9d6ec` 的 R，详细采样 `VmRSS=544,555,008 B` 恰好由 `RssAnon=536,023,040 B` 与 `RssFile=8,531,968 B` 构成，R 没有 iperf 进程；同采样 smaps Anonymous 为 536,137,728 B。其另有 162,836,480 B 已换出页，**不在 RSS 内**。原实现两次 OOM 的节点 Swap 采样峰值分别达 511.39／500.76 MiB，不能把 RSS 平台误认成分配停止；压力已转入 swap。
+
+两轮 `memory.current` 峰值为 511.96／511.93 MiB，`oom=oom_kill=1`。增长主要是节点匿名页，不能由 iperf 或文件缓存解释。该 OrbStack 内核的 `kernel`／`sock`／`slab` 原始计数始终为 0；独立隔离容器读回 `/proc/cmdline` 的 `cgroup.memory=nokmem,nosocket`，确认这些记账已关闭，**零值不是实际无占用**。通用 Linux 的 socket 计入与不可重复相加规则见[进程与容器内存记账](/v2/node/dataplane#进程与容器内存记账)。原有 7 MiB socket 请求保持，未用缩小缓冲掩盖匿名驻留问题。
+
+仅复用 TUN 分段槽并直接复制到 PacketPool，消除了该入口每包临时 Vec 的分配／释放；但 `20261007t120135z-c468fa67` 的 Manager relay 仍 OOM，Secure direct 完成 65 秒。因此这项热路径复用是独立优化，不足以解释或修复全部 OOM。
+
+工具专属 mimalloc 对照 `20261007t115612z-a39f29af` 在同样生产依赖下，两种模式各完成 65 秒加 1 秒 warmup，fixture flow idle 显式 300 秒，全部节点正常退出、OOM 事件为 0：
+
+| 场景 | UDP Mbps／pps | 最高节点 RSS MiB | 最高 cgroup MiB |
+| --- | ---: | ---: | ---: |
+| Manager relay | 1,099.53／114,535 | 32.61 | 34.16 |
+| Secure direct | 1,598.48／166,508 | 24.25 | 25.57 |
+
+| 距采样开始 | 原 system Manager A RssAnon MiB | mimalloc Manager A RssAnon MiB |
+| --- | ---: | ---: |
+| 约 0 秒 | 10.20 | 18.48 |
+| 约 1 秒 | 110.38 | 18.06 |
+| 约 2 秒 | 357.83 | 18.06 |
+| 约 3 秒 | 485.68 | 18.06 |
+| 约 5 秒 | 485.78 | 18.06 |
+| 约 15／30／45／60／65 秒 | 已 OOM | 17.48／17.48／17.48／17.48／17.48 |
+
+这组对照支持 musl 分配器在当前大小／寿命交错的分配模式下产生高匿名驻留，而非数百 MiB 的必要存活包；没有声称找到 musl 内部某一条缺陷代码。固定 UDP scratch 与 GROTable 已复用，不能笼统归为持续新建 64 KiB scratch。mimalloc 页级统计中 7,168-byte class 在 68 秒累计建立 5,361 页而同时峰值仅 2 页，65,536-byte class 累计／峰值均 11 页；release 未启用逐对象 requested 统计，其零值不作为“无分配”的证据。约 1 GiB reserved 是虚拟地址预留，不是 RSS。
+
+所测 Rust 依赖为 mimalloc 0.1.52／libmimalloc-sys 0.1.49，底层报告版本 3.3.2；两层采用 MIT 许可。依赖提供 Linux musl 的 aarch64／x86_64 及 macOS／Windows 支持，Meshway 的生产选择只限定 Linux musl 的 daemon 入口，业务库继续 `forbid(unsafe_code)`。Rust 全局分配器不替换独立原生 C 分配。当前长窗口是 aarch64 L3／L4 工具证据；历史 Planck x86 OOM 的同二进制重验、实际 L5 部署及全配置数值硬上限仍需单独验证。
+
+最终 TUN 复用加 mimalloc 的独立 65+1 秒复验如下；4 CPU UDP 为 `20261007t120528z-4e6dbc7a`，2 CPU TCP 为 `20261007t120850z-b929c046`。全部成功、源码 digest 首尾一致、每角色 261–264 次采样、所有 `oom`／`oom_kill`／`memory.events.max` 为 0，节点正常退出；所有节点全部 smaps 样本的 Swap 为 0，平台化并非转入换出页：
+
+| CPU／场景 | 应用 Mbps | UDP pps | 最高节点 RSS MiB | 最高 cgroup MiB |
+| --- | ---: | ---: | ---: | ---: |
+| 4／Manager relay UDP | 1,140.13 | 118,763 | 32.74 | 45.41 |
+| 4／Secure direct UDP | 1,482.64 | 154,441 | 23.77 | 25.14 |
+| 2／Manager relay TCP | 1,320.18 | 不适用 | 34.70 | 35.55 |
+
+Manager UDP A 的 RssAnon 在约 5／15／30／45／60／65 秒为 15.27／15.00／15.00／15.00／15.02／15.02 MiB，R 在约 21–25 MiB、B 约 23–25 MiB 平台内；A 的 cgroup 文件页约 26 MiB 解释了其 RSS 与 cgroup 差异。TCP 中继同时间点为 16.67／17.09／17.03／17.09／16.90／17.15 MiB。系统分配器工具为 12,874,976 B、mimalloc 工具为 12,952,864 B（含工具统计接口），静态 release 增加 77,888 B，约 0.60%；这不是 daemon 二进制的独立体积测量。
+
+TCP 另一次 `20261007t120831z-c24ecf26` 在负载前 readiness 因 `Context` 失败，保留为失败样本，不属于 OOM，也未用成功重试覆盖。以上是内存回归与单次长窗口交付证明，不代替两次完整性能矩阵或低延迟验收。
 
 ### L3 实测参考
 

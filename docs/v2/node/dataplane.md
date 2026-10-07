@@ -91,7 +91,7 @@ Noise IK、prologue、peer static 验证及空握手 payload 仍由 Snow 完成�
 
 Session 的 `Payload` 可保有 `PacketBuffer` 的原始存储，发送预算包括完整 capacity、headroom 和 tailroom；carrier 不再转换为 Vec。接收的 Session Vec 直接转入 PacketBuffer，Data 解码收回线上头部和 tag 所占空间。自定义 owned payload 在取回时保留同一分配与原池归属。
 
-仍存在的复制：TUN offload 超包拆合、规范化 TUN 包转入 owner 池、UDP provider／Session 接收 scratch 转入独立报文、stream 长度 framing staging／接收 codec、握手／Probe 有界编解码与重试缓存。`Packet::into_bytes`、`PacketBuffer::into_vec` 和自定义非 PacketBuffer 存储的兼容转换也会复制；不能将当前实现称为内核到内核全链路零复制。
+仍存在的复制：TUN offload 超包拆合、规范化 TUN 包转入 owner 池、UDP provider／Session 接收 scratch 转入独立报文、stream 长度 framing staging／接收 codec、握手／Probe 有界编解码与重试缓存。daemon 与 L3／L4 使用 `Tun::recv_batch_map` 在同步回调中直接复制到 PacketPool，TUN 保留分段存储的高水位槽，避免每包移交再释放临时 Vec；读取、分段、32 包／64 KiB 预算与普通 `recv_batch` 共用实现。`Packet::into_bytes`、`PacketBuffer::into_vec` 和自定义非 PacketBuffer 存储的兼容转换也会复制；不能将当前实现称为内核到内核全链路零复制。
 
 ### 发送流水线与连续性
 
@@ -134,7 +134,26 @@ Circuit 保留一次稳定分配；稳态 send／commit 通过拆分字段借用
 
 两个 pending 分别检查包／字节／jumbo 数；其元素必须携带同一个 Pool 已保留的 credit，因而不能叠加成两个 32-credit 窗口。没有因 I/O 等待额外复制整包。元数据另外有界：至多 32 个 pending future／批次、32 个 credit，Pool 预留 32 个 lane × 32 个完成槽及 32 个八项 descriptor group；具体结构字节数随 Rust ABI，以各类型 `size_of` 计。输入预取、空闲 PacketPool、Session 自身预算、TUN／UDP scratch、共享执行配置、线程栈和内核 socket 缓冲分别占用其自己的上限，不能把 385,408 B 当成整个进程的 RSS 上限。取消后的 Session 工作继续受 Session 原有帧／字节预算与取消 guard 约束。
 
-目前尚未证明整个进程在所有高负载场景下稳定低于 512 MiB：已有输出占用、cgroup／RSS 曲线和 OOM 失败证据，见[内存边界](/v2/node/performance#有界输出队列实测)。有界 pending 的正确性不代表满载低 RTT 或 OOM 根因已经解决。
+Linux musl 的 `meshwayd` 在可执行入口选择 mimalloc；库不安装分配器，其他目标保留系统分配器。高负载对照将数百 MiB 增长定位到节点匿名驻留：仅复用 TUN 分段存储不足以消除 Manager 场景的增长，替换分配器后的 512 MiB／长窗口曲线见[匿名驻留实测](/v2/node/performance#匿名驻留与分配器对照)。这不是所有配置下的 RSS 硬上限，也不代表满载低延迟目标通过。
+
+#### 进程与容器内存记账
+
+进程匿名内存的预算必须包含分配器，而不只统计尚未释放的包：
+
+```text
+RssAnon ≤ H_live,max + F_allocator,max + S_resident,max + A_other,max
+H_live,max ≤ PacketPool + pipeline／输入预取 + Manager事件队列
+             + ΣSession预算／接收scratch + ΣUDP scratch + ΣTUN状态
+             + flow／circuit／配置／任务元数据
+```
+
+`H_live,max` 按每块存储的唯一 owner 计数：PacketPool 内正在由 pipeline 持有的同一块不能重复相加。每个 UDP 批量 endpoint 的固定 scratch 为 `32 × 65,536 B`；Session 另有自己的接收 scratch。Manager 业务未准入事件默认同时限制 1,024 帧和至多 8 MiB 实际 capacity；控制事件有独立 32 槽。TUN 读侧包括一个 65,535 B 超包及 vnet header、至多 1,024 个分段；写侧包括至多 32 个超包 staging 和可复用 GROTable。元数据按配置上限和实际类型大小计，线程栈按实际驻留页计。
+
+`F_allocator,max` 包括存活分配之外的碎片、分配器元数据和已释放但未归还 OS 的驻留页；`A_other,max` 包括其他匿名映射。**没有为这些项证明上限时，该公式不是整个进程的数值硬上限。** `VmSize` 中未触碰的虚拟预留不等于 RSS，`smaps_rollup` 的 Anonymous／Pss_Anon 用于核对实际匿名驻留。
+
+启用对应内存记账的 Linux cgroup v2，其 `memory.current` 还计入同组其他进程、文件页和内核内存。`memory.stat` 的 `anon`、`file`、`kernel`、`sock` 分别观察这些归属；`shmem` 已包含在 `file`、`slab` 已包含在 `kernel`，不能再次相加。共享文件页的 cgroup 归属与每个进程 RSS 不同，故各进程 RSS 之和也不等于 `memory.current`。内核启动选项可以关闭 kernel／socket 记账；该环境的零计数不能证明实际无占用。
+
+普通 `SO_RCVBUF`／`SO_SNDBUF` 的 7 MiB 请求在 Linux 读回通常为每方向 14 MiB，上限仍受内核配置约束；实际排队的 socket／skb 内存计入 cgroup，**不计入该进程的 RssAnon**。预算需按实际 socket 数、读回上限及两方向计，并为 TUN／skb、页表、slab、应用和采样器留出空间；上限不是启动即全额分配。不能把 7 MiB 请求直接当成每 socket 总额，也不能把 `sock` 当作全部网络相关内核内存。真实占用应同时核对 `ss -m` 与 cgroup 分项，不能因 pending 有界就推导 512 MiB 容器不会 OOM。
 
 Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代创建新 scope 标识。业务批次使用所有原 packet guard 与 channel guard 的交集，任何成员失效均阻止该批后续 I/O。每次 syscall／release 重新检查；同一 SecureNode 精确 snapshot 代际的 guards 可共用本次同步 Reading，但仍逐一检查 circuit 取消与各自期限，跨等待不缓存 Reading。握手、诊断、health 与 STUN 保留独立控制路径。
 
