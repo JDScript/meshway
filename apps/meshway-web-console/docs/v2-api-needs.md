@@ -137,6 +137,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 **后端已说明、console 未实测**：
 
+- Node 控制联系失败按真实错误分类恢复：网络、暂态响应和 session／instance 失效不再永久停在 `Contract`／`blocked`。
 - `revokeNodeKey` 重复吊销返回 409 `state_conflict`，已退休代际仍可吊销（204，不撤当前执行），generation 不匹配是 409 `version_conflict`。
 - 绑定大规则集（8483 条）后 validate 很慢的问题，在 `70f5e95f` 改为线性覆盖计算。
 - 托管证书改 `serverName` 时重新生成证书；provided 材料仍按省略继承。
@@ -145,7 +146,8 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 ### 需要修正
 
 - **旧版本保存的配置在新版本里打不开**（自 `2a4bd0cc`）：`RouteMatch.domain` 和 inline `RuleSet.domain` 总会序列化，而 `restore_canonical_json` 要求库里的规范 JSON 与重新序列化的结果逐字相同。于是旧版本保存的、含出口规则或 inline 规则集的版本报 `IncompleteVersion`，凡是打开当前版本的接口都返回 503：`GET /networks`、`/networks/{id}`、`members`、`configuration`、`configuration/source`、`rule-sets`、`state`，以及 Node 的 `POST /agent-api/v1/instances`。日志里没有原因。用 8420 的库副本可以复现，新建的网络正常。已有数据应当能读：读取旧格式时补上缺省值再比较，或者提供迁移。8420 已回到 `1f4efbbd`，并恢复到换版本前的备份，等修复后再升级。
-- Node：daemon 把 400 等未分类的服务端拒绝归为 `Contract` 且不再重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），节点停在 `blocked`，直到手动 `meshway up`。服务端现在接受 15 分钟内（最多 8 次发布）该节点的旧引用，超出后仍是 400；这时应重新同步而不是永久停住。后端已转给 Node。
+- **新增 Problem code 没有同步 console**（`548ffc9d`）：`binding_conflict` 和六个 `receipt_*` 进了 `ProblemCode`，但 `apps/meshway-web-console/src/api/failure.ts` 的穷尽映射没有更新，main 上 console 的 typecheck 失败。console 已补上（`receipt_*` 只出现在 Node 的回执里）；以后加 code 请一起跑 console 的 `pnpm run check`。
+- **`createEnrollmentKey` 用 `binding_conflict` 表示请求 ID 冲突**：同一 `requestId`、内容不同，返回的是 `binding_conflict`，其他创建类操作返回 `request_id_conflict`。problems.md 说 `binding_conflict` 是 generation／绑定不匹配、"不冒充请求 ID 冲突"。建议改回 `request_id_conflict`；console 目前按"同一请求 ID 内容不同、没有执行"显示它。
 
 ### 需要真实 Node 复核
 

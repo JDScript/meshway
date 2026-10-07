@@ -74,6 +74,7 @@
   "problem_not_found": "不存在，或你没有访问权限。",
   "problem_permission_denied": "没有权限。",
   "problem_request_id_conflict": "请求重复，结果未知，请刷新后再试。",
+  "problem_binding_conflict": "这个请求和之前用同一请求 ID 发出的内容不同，没有执行。",
   "problem_name_conflict": "名称已被其他人修改，未保存。",
   "problem_invalid_cursor": "列表已过期，请刷新。",
   "nav_label": "导航",
