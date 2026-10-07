@@ -578,10 +578,10 @@ impl Owner {
         for frame in control {
             self.receive(frame, received_at).await?;
         }
-        // Give an already notified consumer one scheduling turn before a
-        // received burst overflows its bounded business queue. Never wait for
-        // capacity: a paused consumer still causes explicit business drops.
-        if self.shared.events.capacity() < data.len() {
+        // Under backlog, give the notified consumer a turn before another
+        // burst, rather than waiting until all 1,024 slots are occupied. Small
+        // ready prefixes are published immediately; never await capacity.
+        if self.shared.events.consumer_turn(data.len()) {
             meshway_logging::profile::event("manager.udp.dispatch", "consumer_turn");
             tokio::task::yield_now().await;
         }

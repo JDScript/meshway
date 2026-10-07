@@ -85,3 +85,38 @@ async fn partial_batch_dequeue_keeps_suffix_bounded_and_close_drains_in_order() 
     assert_eq!(tx.capacity(), 3);
     assert_eq!(rx.recv_many(&mut events, 32).await, 0);
 }
+
+#[tokio::test]
+async fn batch_drain_preserves_fifo_and_partial_group_storage_across_publications() {
+    let (tx, mut rx) = channel(5, 40);
+    let mut original = Vec::new();
+    let mut publish = |count| {
+        (0..count)
+            .map(|_| {
+                let event = frame(8);
+                let Event::Frame { frame, .. } = &event else {
+                    unreachable!()
+                };
+                original.push(frame.payload.as_ptr());
+                event
+            })
+            .collect()
+    };
+    tx.try_send_batch(publish(2)).unwrap();
+    tx.try_send_batch(publish(3)).unwrap();
+    let mut events = Vec::new();
+    assert_eq!(rx.recv_many(&mut events, 3).await, 3);
+    assert_eq!(tx.capacity(), 2);
+    assert_eq!(tx.bytes.available_permits(), 16);
+    rx.close();
+    assert_eq!(rx.recv_many(&mut events, 32).await, 2);
+    for (event, pointer) in events.iter().zip(original) {
+        let Event::Frame { frame, .. } = event else {
+            unreachable!()
+        };
+        assert_eq!(frame.payload.as_ptr(), pointer);
+    }
+    assert_eq!(tx.capacity(), 5);
+    assert_eq!(tx.bytes.available_permits(), 40);
+    assert_eq!(rx.recv_many(&mut events, 32).await, 0);
+}

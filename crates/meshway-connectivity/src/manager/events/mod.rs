@@ -71,6 +71,14 @@ impl Sender {
         self.frames.available_permits()
     }
 
+    /// Give an already notified owner an extra turn once two receive quanta
+    /// remain queued. This is a scheduling hint, never an admission/credit
+    /// reservation: a paused consumer still hits the original hard bounds.
+    pub fn consumer_turn(&self, incoming: usize) -> bool {
+        let available = self.capacity();
+        incoming != 0 && (available < incoming || self.inner.max_capacity() - available >= 64)
+    }
+
     pub fn try_send(&self, event: Event) -> Result<(), mpsc::error::TrySendError<Event>> {
         self.try_send_batch(vec![event])
             .map_err(|error| match error {
@@ -177,12 +185,17 @@ impl Receiver {
         }
         let mut count = 0;
         while count < limit {
-            match self.try_recv() {
-                Ok(event) => {
-                    events.push(event);
-                    count += 1;
-                }
-                Err(_) => break,
+            if self.pending.is_none() {
+                self.pending = self.inner.try_recv().ok();
+            }
+            let Some(pending) = &mut self.pending else {
+                break;
+            };
+            let prefix = pending.events.len().min(limit - count);
+            events.extend(pending.events.drain(..prefix));
+            count += prefix;
+            if pending.events.is_empty() {
+                self.pending.take();
             }
         }
         count

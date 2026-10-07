@@ -435,6 +435,7 @@ impl Driver<'_> {
                 .front()
                 .is_some_and(|(input, _)| pool.can_submit_capacity(input.capacity()));
             let can_read = self.pending.is_empty() && pool.can_submit();
+            let mut input_ready = false;
             tokio::select! {
                 result = sends.ready(), if !sends.is_empty() => { result?; }
                 (result, count) = async {
@@ -450,6 +451,7 @@ impl Driver<'_> {
                 _ = tokio::task::yield_now(), if can_prepare => {}
                 received = UDP_RECV.poll(io.recv(can_read)) => {
                     self.received(io, received?).await?;
+                    input_ready = can_read && !self.pending.is_empty();
                 }
                 read = async {
                     match self.tun() {
@@ -468,6 +470,7 @@ impl Driver<'_> {
                         let packet = packet?;
                         if let Some((circuit, packet)) = self.outbound(packet)? { self.pending.push_back((Input::Send(circuit, packet), at.take())); }
                     }
+                    input_ready = !self.pending.is_empty();
                 }
                 _ = retry.tick(), if !self.ready && matches!(self.options.role, NodeRole::A) => {
                     let pending_ids: Vec<_> = self.circuits.iter().filter(|(demand, _)| !self.established.contains_key(demand)).map(|(_, id)| *id).collect();
@@ -492,7 +495,13 @@ impl Driver<'_> {
                     }
                 },
             }
-            tokio::task::yield_now().await;
+            // Match the daemon: a newly consumed input prefix enters the
+            // bounded owner quantum in this turn. Yield after processing or
+            // output progress, not between dequeue and prepare. In particular
+            // a Manager producer must not refill its queue twice per consume.
+            if !input_ready {
+                tokio::task::yield_now().await;
+            }
         }
     }
 
