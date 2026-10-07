@@ -133,7 +133,7 @@ Server HTTP 等待与本机命令处理独立。配置查询通常每 5 秒，�
 
 撤回、期限和 down 独立于挂起的 HTTP 生效。停止准入后取消并等待任务退出；显式 down 清理可证明所属的内核资源与 TUN，期望 up 时的过期／断连／退出保留负向 capture 边界。资源生命周期及 bootstrap 同 IP 隔离见 [Linux underlay](/v2/node/dataplane#linux-underlay)。
 
-崩溃恢复只处理有可验证归属的 journal，不恢复旧流。未知格式或不明归属不能作为删除宿主规则的依据。
+崩溃恢复只处理有可验证归属的 journal，不恢复旧流。未知格式或不明归属不能作为删除宿主规则的依据。journal 记录写入时的内核 boot id 与网络 namespace：boot id 不同（整机或容器虚拟机重启）时内核规则、路由、TUN 与 DNS 锚点不可能残留，journal 视为不存在并重新分配；同一 boot 下 namespace 不同（例如容器重建后挂载同一卷）仍是 `underlay` 冲突，因为旧 namespace 的资源可能仍然存在且无法从当前 namespace 证明已清理。
 
 ## 规划：userspace networking
 

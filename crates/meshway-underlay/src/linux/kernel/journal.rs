@@ -84,6 +84,14 @@ impl Journal {
         Ok((boot, namespace.dev(), namespace.ino()))
     }
 
+    /// Kernel rules, routes, TUN devices and DNS anchors never survive a
+    /// reboot, so a journal written under another boot id describes nothing
+    /// that can still exist or still need cleanup. A same-boot journal from a
+    /// different namespace stays a conflict: its resources may live on there.
+    pub fn from_previous_boot(&self, boot: &str) -> bool {
+        self.boot.trim() != boot.trim()
+    }
+
     fn validate(&self) -> Result<()> {
         if self.version != 1
             || self.pending.is_some()
@@ -216,6 +224,10 @@ impl Store {
                 return Err(Error::Journal);
             }
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
+            let (boot, _, _) = Journal::identity()?;
+            if journal.from_previous_boot(&boot) {
+                return Ok(None);
+            }
             journal.validate()?;
             Ok(Some(journal))
         })
@@ -257,5 +269,49 @@ impl Store {
             directory.replace(FILE, &bytes)
         }));
         self.settle().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn journal(boot: &str) -> Vec<u8> {
+        let (_, device, inode) = Journal::identity().unwrap();
+        serde_json::json!({
+            "version": 1,
+            "boot": boot,
+            "namespace_device": device,
+            "namespace_inode": inode,
+            "installation": "11e127022ad1c0b02359a8298b165be2",
+            "binding": null,
+            "mark": {"value": 131072, "mask": 131072},
+            "table": 36177953,
+            "start": 7266,
+            "pool_limit": 64,
+            "pools": ["100.64.0.0/10"],
+            "rules": [],
+            "routes": [],
+            "tun": null,
+            "anchor": null,
+            "pending": {"operation": "CreateTun"}
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn previous_boot_journal_is_not_a_conflict_or_a_recovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = Arc::new(Directory::open(&temp.path().join("node"), "node.lock").unwrap());
+        directory
+            .replace(FILE, &journal("4496fc3a-3cee-488d-a13e-2942c1d2e249\n"))
+            .unwrap();
+        let (_, previous) = Store::open(directory.clone()).await.unwrap();
+        assert!(previous.is_none());
+
+        let (boot, _, _) = Journal::identity().unwrap();
+        directory.replace(FILE, &journal(&boot)).unwrap();
+        assert!(matches!(Store::open(directory).await, Err(Error::Journal)));
     }
 }

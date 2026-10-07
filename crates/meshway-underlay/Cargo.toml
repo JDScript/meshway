@@ -36,6 +36,7 @@ rtnetlink = { version = "=0.23.0", default-features = false, features = ["tokio_
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true
