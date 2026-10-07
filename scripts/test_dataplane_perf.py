@@ -6,10 +6,31 @@ import tempfile
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from perf.dataplane import MODES, configurations, image_for, last_profile, namespace_options, network_counters, network_delta, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
+from perf.dataplane import MODES, configurations, image_for, last_profile, namespace_options, network_counters, network_delta, parse_args, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
 
 
 class DataplaneReportTests(unittest.TestCase):
+    def test_quick_is_a_single_configuration_preset_and_report_is_diagnostic(self):
+        for extra, mode in (([], "manager-relay"), (["--modes", "secure-relay"], "secure-relay")):
+            args = parse_args(["--quick", *extra])
+            self.assertEqual(configurations(args), [(mode, 32, 0)])
+            self.assertEqual((args.repeats, args.seconds), (1, 4))
+            self.assertEqual(len(configurations(args)) * args.repeats * len(args.traffic), 2)
+            report = summary(dict(environment={}, results=[], options=vars(args)))
+            self.assertIn("diagnostic quick run，不作最终矩阵", report.splitlines()[2])
+        args = parse_args(["--quick", "--profile", "128", "--batch", "1", "--traffic", "tcp"])
+        self.assertEqual(configurations(args), [("manager-relay", 1, 128)])
+        with self.assertRaises(SystemExit), patch("sys.stderr"):
+            parse_args(["--quick", "--modes", "secure-relay", "manager-relay"])
+
+    def test_normal_defaults_preserve_the_full_matrix(self):
+        args = parse_args([])
+        self.assertEqual(args.modes, list(MODES))
+        self.assertEqual((args.batch, args.profile, args.repeats, args.seconds), ([1, 32], [0, 128], 2, 8))
+        self.assertEqual(len(configurations(args)), 27)
+        with self.assertRaises(SystemExit), patch("sys.stderr"):
+            parse_args(["--repeats", "1"])
+
     def test_kernel_counters_keep_udp_and_tun_loss_distinct(self):
         snmp = "Udp: InDatagrams InErrors RcvbufErrors SndbufErrors\nUdp: 900 17 16 0"
         dev = "header\nheader\n tun0: 100 2 0 0 0 0 0 0 200 3 0 7 0 0 0 0"

@@ -193,7 +193,10 @@ def summary(metadata):
     if "image" in environment:
         environment["image"] = {k: v for k, v in environment["image"].items()
                                 if k in ("imageId", "sourceDigest", "base", "platform", "provenance")}
-    lines = ["# L2/L3/L4 TUN performance", "",
+    lines = ["# L2/L3/L4 TUN performance", ""]
+    if metadata.get("options", {}).get("quick"):
+        lines.extend(["**diagnostic quick run，不作最终矩阵**", ""])
+    lines.extend([
              "Plain = real TUN + Tokio + production UDP Session, without authentication, encryption, policy or Control.",
              "Medians of successful repeats; profiling=0 is the final throughput reference.",
               "Secure = real SecureNode + guarded carrier adapters + production UDP Session; relay has no TUN.",
@@ -206,7 +209,7 @@ def summary(metadata):
              "Kernel WireGuard crypto/softirq/kworker CPU may be charged outside these cgroups: total kernel CPU is unmeasured, not zero. Equal container quotas do not bound all kernel work; CPU deltas are cgroup accounting only.",
              "UDP pps is receiver delivered datagrams/s; TCP pps is unmeasured. Raw preserves kernel offloads.", "",
              "| Mode | Batch | Profile 1/N | Traffic | n | Mbps | UDP pps | Loss % | CPU % |",
-             "| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |"]
+             "| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |"])
     groups = {}
     for record in metadata["results"]:
         if record["status"] == "ok":
@@ -801,15 +804,14 @@ def measure(args, output_root):
     return int(not metadata.get("sourcesUnchanged") or any(r["status"] != "ok" for r in metadata["results"]))
 
 
-def main():
-    os.umask(0o077)
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
+    parser.add_argument("--modes", nargs="+", choices=MODES)
     parser.add_argument("--traffic", nargs="+", choices=["tcp", "udp"], default=["tcp", "udp"], help="explicit workload subset; default TCP then UDP")
-    parser.add_argument("--batch", type=int, nargs="+", default=[1, 32])
-    parser.add_argument("--profile", type=int, nargs="+", default=[0, 128])
-    parser.add_argument("--repeats", type=int, default=2)
-    parser.add_argument("--seconds", type=int, default=8)
+    parser.add_argument("--batch", type=int, nargs="+")
+    parser.add_argument("--profile", type=int, nargs="+")
+    parser.add_argument("--repeats", type=int)
+    parser.add_argument("--seconds", type=int)
     parser.add_argument("--omit", type=int, default=2)
     parser.add_argument("--mtu", type=int, default=1400)
     parser.add_argument("--payload", type=int, default=1200)
@@ -821,9 +823,18 @@ def main():
     parser.add_argument("--allocator", choices=["system", "mimalloc"], default="system", help="tool-only global allocator comparison")
     parser.add_argument("--flow-idle-seconds", type=int, default=60, help="explicit fixture flow idle bound; raise for long iperf control connections")
     parser.add_argument("--workers", type=int, help="crypto workers per node (default 0 = inline); explicit 1-256 for handoff comparisons")
-    parser.add_argument("--quick", action="store_true", help="diagnostic only: allow one repeat and 4s; not a final throughput matrix")
+    parser.add_argument("--quick", action="store_true", help="diagnostic preset: manager-relay, batch 32, profile 0, one repeat, 4s; explicit single-mode/config overrides allowed")
     parser.add_argument("--udp-buffer", type=int, default=0, help="L3 explicit socket buffer request in bytes (0 = provider default)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    defaults = dict(modes=["manager-relay"] if args.quick else list(MODES),
+                    batch=[32] if args.quick else [1, 32],
+                    profile=[0] if args.quick else [0, 128],
+                    repeats=1 if args.quick else 2, seconds=4 if args.quick else 8)
+    for key, value in defaults.items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
+    if args.quick and any(len(getattr(args, key)) != 1 for key in ("modes", "batch", "profile")):
+        parser.error("--quick requires one mode, one batch size and one profile setting")
     args.traffic = [traffic for traffic in ("tcp", "udp") if traffic in args.traffic]
     if args.workers is None:
         args.workers = 0
@@ -834,6 +845,12 @@ def main():
             or not 1 <= args.tcp_streams <= 128 or not 0 <= args.udp_buffer <= 16 * 1024 * 1024
             or not 1 <= args.flow_idle_seconds <= 86400):
         parser.error("measurement bounds invalid (at least 2 repeats, 6s measurement, 1s omitted warmup)")
+    return args
+
+
+def main():
+    os.umask(0o077)
+    args = parse_args()
     output_root = ROOT / ".meshway/perf/dataplane"
     output_root.mkdir(parents=True, exist_ok=True)
     common = Path(command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")).parent
