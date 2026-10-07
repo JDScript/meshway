@@ -16,6 +16,13 @@ struct Installed {
     live: bool,
 }
 
+/// Covers the existing 128 queued packets, 32 sends and one 32-packet read
+/// turn without allocating overflow buffers; every buffer holds one TUN MTU
+/// packet. The pool belongs to this owner.
+fn packet_pool(mtu: usize) -> Result<PacketPool, Problem> {
+    PacketPool::new(256, mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM).map_err(|_| Problem::Tun)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     mut host: Host,
@@ -33,6 +40,7 @@ pub(super) async fn run(
         std::collections::BTreeSet<meshway_model::ObservationId>,
     >,
     mut observation_plans: watch::Receiver<Option<super::ObservationPlan>>,
+    mtu: usize,
 ) -> Result<(), Problem> {
     let (mut dns, dns_plans) = dns;
     let mut installed: Option<Installed> = None;
@@ -45,10 +53,7 @@ pub(super) async fn run(
     let mut pool =
         meshway_dataplane::secure::pipeline::Pool::new(workers).map_err(|_| Problem::Worker)?;
     let mut diagnostics = super::diagnostics::Diagnostics::default();
-    // Covers the existing 128 queued packets, 32 sends and one 32-packet read
-    // turn without allocating overflow buffers. The pool belongs to this owner.
-    let buffers =
-        PacketPool::new(256, 1280, DEFAULT_HEADROOM, DEFAULT_TAILROOM).map_err(|_| Problem::Tun)?;
+    let buffers = packet_pool(mtu)?;
     let mut generation = meshway_model::Sequence::MIN;
     let mut pending_completion = None;
     let mut last_completion: Option<meshway_control::ApplicationTicket> = None;
@@ -838,7 +843,16 @@ async fn install(
 
 #[cfg(test)]
 mod tests {
-    use super::{Report, sample};
+    use super::{Report, packet_pool, sample};
+
+    #[test]
+    fn packet_pool_holds_one_full_mtu_packet() {
+        for mtu in [1280, meshway_dataplane::secure::DEFAULT_INNER_MTU, 1500] {
+            let pool = packet_pool(mtu).unwrap();
+            assert!(pool.acquire(mtu).is_ok(), "mtu {mtu}");
+            assert!(pool.acquire(mtu + 1).is_err(), "mtu {mtu}");
+        }
+    }
 
     #[test]
     fn explicit_sample_does_not_retimestamp_application_observation() {

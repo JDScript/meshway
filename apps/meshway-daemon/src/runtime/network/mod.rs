@@ -352,6 +352,7 @@ impl Handle {
         #[cfg(target_os = "linux")]
         {
             let mut options = options;
+            let mtu = options.mtu;
             // The owned file may still point at our stopped stub after a crash.
             // Recover its original resolver inputs before protected Host bootstrap.
             let reservation = if matches!(
@@ -409,6 +410,7 @@ impl Handle {
                 traversal,
                 paused,
                 plans_rx,
+                mtu,
             ));
             Ok(Self {
                 observation_plans,
