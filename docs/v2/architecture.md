@@ -77,7 +77,7 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 | `meshway-serde` | 各 Rust 契约库 | 共同对象／判别联合声明、map-only 和重复键检查 |
 | `meshway-private-storage` | Server、Node control／daemon／underlay | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
 | `meshway-logging` | Server、daemon、CLI 程序入口 | 统一 tracing subscriber、日志参数与 stderr 格式；见[运行日志](/v2/logging) |
-| `meshway-tls` | Server 材料验证、Node TLS providers | 同一证书／密钥验证、精确叶证书信任、既有流上的 TLS 握手 |
+| `meshway-tls` | Server 材料验证、Node TLS providers、HTTP client 装配 | 同一 ring provider、证书／密钥验证、精确叶证书信任、显式系统信任配置与既有流上的 TLS 握手 |
 | `meshway-stun` | Server STUN 服务、Node connectivity | 有界 RFC 8489 Binding 编解码、映射观测与 UDP Service；见[连接获取](/v2/node/connectivity#stun-与-server-协调) |
 
 Server 使用 `policy` 的完整规范化／语义校验入口及编译器；Node 数据面调用它对已发布执行许可的纯判定，无需取得全网配置和秘密后再编译全网。`configuration` 提供规范化阶段的语义 hook，由 `policy` 在同一次处理内注入，保持字段位置、保留依赖和错误优先级；没有 `configuration → policy` 反向依赖或第二套 Access 实现。SQL、账户密码哈希、全局可变容器和平台 I/O 不放进 model。
@@ -142,7 +142,7 @@ model ──► transport-spec
 configuration ──► model + transport-spec
 policy ──► configuration + model + transport-spec
 protocol ──► configuration + model
-control-client ──► protocol
+control-client ──► protocol + tls
 tls ──► transport-spec
 transport ──► transport-spec
 transport-tcp ──► transport + transport-spec
@@ -157,7 +157,7 @@ dataplane ──► authority + configuration + model + policy + transport + tra
 diagnostics ──► authority + configuration + dataplane + model + protocol
 dns ──► authority + configuration + model + policy + private-storage + protocol
 underlay ──► authority + configuration + control + dns + model + private-storage
-             + transport + transport-spec + transport-tcp + transport-udp + tun
+             + tls + transport + transport-spec + transport-tcp + transport-udp + tun
 connectivity ──► authority + configuration + control + dataplane + model + policy + protocol + stun
                  + transport + transport-spec + transport-vless + transport-trojan + underlay
 meshwayd ──► authority + configuration + connectivity + control + control-client + dataplane
@@ -178,6 +178,8 @@ tools/runtime-fixture ──► configuration + control-client + dns + ipc + mod
 生产依赖不反向依赖 App。黑盒与生命周期测试可通过 dev-dependency 启动真实 `meshway-server`（control、control-client、dataplane、dns、diagnostics、connectivity），CLI 测试另使用 `meshway-daemon`；`tools/` 的 packet／runtime fixture 以普通依赖链接 Server App。dataplane、DNS 和 diagnostics 的生产消费接口直接依赖 authority；underlay／connectivity 保留 Control 的穿透类型依赖，但打开内核 owner、受保护 socket 和静态邻接不要求创建 Control 或联系 Server。
 
 provider 通过合同交互，不读取另一 provider 的私有容器；Rust 类型依赖不表示允许跨动态库直接传递 Rust 内部对象。
+
+TLS 密码后端统一为 `meshway-tls` 显式选择的 ring。workspace reqwest 关闭默认 features，启用 `rustls-no-provider`；HTTP 装配传入预配置的 rustls `ClientConfig`，不安装或依赖进程全局 provider。`control-client::http_client_builder`、Server 下载和 Underlay 受保护 HTTP builder 使用同一可选 `platform-verifier` 配置，保留 OS 系统信任策略；managed TLS 及 fixture 的精确叶证书路径复用 `meshway-tls::Client::configuration`，每次新握手检查链、域名、有效期及精确叶证书。预配置模式下不能再用 reqwest 的附加根证书选项改变信任，应在 TLS 装配时明确选择配置。套接字保护、resolver、代理和整体请求截止仍归原调用者。
 
 ## 工程约定 {#旧实现退出与复用}
 

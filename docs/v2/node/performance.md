@@ -19,6 +19,8 @@
 
 ### 二进制体积
 
+自 `d073668a` 起，workspace release profile 为 `lto = "fat"`、`codegen-units = 1`、`panic = "abort"`、`strip = "debuginfo"`；优化级别沿用 Cargo release 的 3。lab 与性能工具的普通 release 构建共同使用该配置。保留符号表用于函数归因，移除 DWARF 调试信息；原生采样任务若显式覆盖 debug／strip，应在报告中保留覆盖值。panic 会终止进程，不执行 unwind 析构；普通错误、取消和正常退出仍走既有 owner 的清理／join 路径。跨此提交的历史性能数字必须标明 profile 变化，并用相同工具重新对照。
+
 体积测量与 L0–L5 运行时性能分开报告。保存原始产物的文件字节数、SHA-256、target triple、源码 revision／digest、完整 release profile、features、Rust／Zig 版本、构建命令和墙钟耗时；冷构建、缓存构建及分析工具触发的重构建分别标注。MiB 为 `bytes / 1024²`，文件体积不等于常驻内存或 `.text` 大小。
 
 证据位于 `.meshway/perf/binary-size/<run>/`，每种配置保存 host 与 `aarch64-unknown-linux-musl` 的 `meshwayd`／`meshway` 快照、构建 stdout／stderr、crate 前 25 项和函数前 30 项，以及完整 JSON 符号表。基本入口：
