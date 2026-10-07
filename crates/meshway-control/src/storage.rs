@@ -64,6 +64,8 @@ pub(super) struct Record<T = CompiledNode> {
     pub saved: Option<T>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<crate::rotation::Rotation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_rotation: Option<meshway_model::RequestId>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -109,6 +111,7 @@ impl Record {
                 binding: None,
                 saved: None,
                 rotation: None,
+                completed_rotation: None,
             });
         };
         file.sync_all()
@@ -144,6 +147,7 @@ impl Record {
                 binding: envelope.binding,
                 saved: None,
                 rotation: envelope.rotation,
+                completed_rotation: envelope.completed_rotation,
             }
         } else {
             decode(&bytes)?
@@ -163,6 +167,9 @@ impl Record {
 
     fn validate(&self) -> Result<(), Error> {
         let record = self;
+        if record.completed_rotation.is_some() && record.binding.is_none() {
+            return Err(Error::Record);
+        }
         if let Some(rotation) = &record.rotation {
             rotation.validate(record.binding.as_ref().ok_or(Error::Record)?)?;
         }

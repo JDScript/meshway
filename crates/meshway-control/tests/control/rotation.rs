@@ -6,6 +6,38 @@ use super::{
 use meshway_control::Control;
 
 #[tokio::test]
+async fn host_rotation_request_replay_after_restart_does_not_rotate_twice() {
+    let server = Server::start().await;
+    let owner = server.owner().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let mut control = refresh::control(&server, &owner, &proxy.origin, "host-rotation").await;
+    let id = super::support::request();
+    proxy.fault("/auth/rotate", Fault::Lost);
+    assert!(control.rotate_keys_with_request(id).await.is_err());
+    assert!(matches!(
+        control
+            .rotate_keys_with_request(super::support::request())
+            .await,
+        Err(meshway_control::Error::Pending)
+    ));
+    let keys = control.rotate_keys_with_request(id).await.unwrap();
+    control.shutdown().await.unwrap();
+    let mut control = Control::open(
+        &server.path("host-rotation"),
+        &proxy.origin,
+        reqwest::Client::builder().no_proxy(),
+    )
+    .unwrap();
+    assert_eq!(control.rotate_keys_with_request(id).await.unwrap(), keys);
+    assert_eq!(proxy.count("/auth/rotate"), 2);
+    assert!(!control.status().authenticated);
+    control.authenticate().await.unwrap();
+    control.shutdown().await.unwrap();
+    proxy.close().await;
+    server.close().await;
+}
+
+#[tokio::test]
 async fn failed_final_identity_publish_keeps_durable_pending_material_for_recovery() {
     let server = Server::start().await;
     let owner = server.owner().await;

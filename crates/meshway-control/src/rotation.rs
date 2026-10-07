@@ -87,12 +87,36 @@ impl Control {
     /// Explicit operator rotation, or recovery of a previously accepted intent.
     /// No automatic key-expiry policy is inferred from short session deadlines.
     pub async fn rotate_keys(&mut self) -> Result<NodeKeyMetadata, Error> {
+        let request_id = match &self.record.rotation {
+            Some(rotation) => rotation.intent.request_id,
+            None => RequestId::new(random_id()?).map_err(|_| Error::Cryptography)?,
+        };
+        self.rotate_keys_with_request(request_id).await
+    }
+
+    /// Host request identity is durable with the key transition. Retrying the
+    /// last completed operation returns its bound metadata, never another key.
+    pub async fn rotate_keys_with_request(
+        &mut self,
+        request_id: RequestId,
+    ) -> Result<NodeKeyMetadata, Error> {
         self.ready()?;
         let binding = self.record.binding.clone().ok_or(Error::Lifecycle)?;
+        if self
+            .record
+            .rotation
+            .as_ref()
+            .is_some_and(|rotation| rotation.intent.request_id != request_id)
+        {
+            return Err(Error::Pending);
+        }
+        if self.record.completed_rotation == Some(request_id) {
+            return Ok(binding.keys);
+        }
         if self.record.rotation.is_none() {
             let keys = Keys::generate()?;
             let intent = NodeRotationIntent {
-                request_id: RequestId::new(random_id()?).map_err(|_| Error::Cryptography)?,
+                request_id,
                 control_key: keys.control()?,
                 dataplane_key: keys.dataplane()?,
             };
@@ -188,6 +212,7 @@ impl Control {
             ..binding
         });
         self.record.saved = None;
+        self.record.completed_rotation = Some(request_id);
         // One atomic record replacement publishes keys and binding together.
         // Failed/cancelled writes require reopen; the disk has pending or new.
         self.persist().await?;
