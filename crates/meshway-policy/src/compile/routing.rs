@@ -19,18 +19,21 @@ impl From<CompileError> for PathError {
     }
 }
 
-pub(super) struct Routes<'a, 'b> {
-    input: &'a CompilationInput<'b>,
+pub(super) struct Routes<'a> {
+    input: Topology<'a>,
     resolved: BTreeMap<(NodeId, NodeId), Vec<NodeId>>,
+    /// The Mesh rule that decided each resolved segment; None for automatic routing.
+    pub mesh_rules: BTreeMap<(NodeId, NodeId), Option<usize>>,
     active: BTreeSet<(NodeId, NodeId)>,
     work: usize,
 }
 
-impl<'a, 'b> Routes<'a, 'b> {
-    pub fn new(input: &'a CompilationInput<'b>) -> Self {
+impl<'a> Routes<'a> {
+    pub fn new(input: Topology<'a>) -> Self {
         Self {
             input,
             resolved: BTreeMap::new(),
+            mesh_rules: BTreeMap::new(),
             active: BTreeSet::new(),
             work: 0,
         }
@@ -76,7 +79,8 @@ impl<'a, 'b> Routes<'a, 'b> {
             return Err(PathError::Limit);
         }
         let mut via = Vec::new();
-        for rule in &self.input.configuration.routing.mesh {
+        let mut matched = None;
+        for (index, rule) in self.input.configuration.routing.mesh.iter().enumerate() {
             self.spend()?;
             if matching::selectors(
                 self.input.configuration,
@@ -97,9 +101,11 @@ impl<'a, 'b> Routes<'a, 'b> {
                     .iter()
                     .map(|s| matching::node_selector(s))
                     .collect::<Result<_, _>>()?;
+                matched = Some(index);
                 break;
             }
         }
+        self.mesh_rules.insert((source, target), matched);
         let via = boundaries(source, target, &via)?;
         if via.is_empty() {
             return Ok(vec![target]);

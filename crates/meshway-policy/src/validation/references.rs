@@ -311,19 +311,34 @@ pub fn topology_allows(
     a: NodeId,
     b: NodeId,
 ) -> bool {
+    topology_decision(config, subjects, a, b).is_some()
+}
+
+/// Why an edge is allowed: `Some(Some(index))` names the first allowing rule,
+/// `Some(None)` is `defaults.topology: allow`, `None` is blocked (a block rule
+/// or the deny default). Block wins regardless of rule order.
+pub fn topology_decision(
+    config: &NetworkConfiguration,
+    subjects: &SubjectContext,
+    a: NodeId,
+    b: NodeId,
+) -> Option<Option<usize>> {
     let (Some(_), Some(_)) = (config.nodes.get(&a), config.nodes.get(&b)) else {
-        return false;
+        return None;
     };
-    let mut allow = config.defaults.topology == TopologyDefault::Allow;
-    for rule in &config.topology {
+    let mut allowing = None;
+    for (index, rule) in config.topology.iter().enumerate() {
         if (subjects.matches(config, &rule.a, a) && subjects.matches(config, &rule.b, b))
             || (subjects.matches(config, &rule.a, b) && subjects.matches(config, &rule.b, a))
         {
             if rule.action == TopologyAction::Block {
-                return false;
+                return None;
             }
-            allow = true;
+            allowing.get_or_insert(index);
         }
     }
-    allow
+    match allowing {
+        Some(index) => Some(Some(index)),
+        None => (config.defaults.topology == TopologyDefault::Allow).then_some(None),
+    }
 }

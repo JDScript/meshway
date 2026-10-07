@@ -16,13 +16,13 @@ pub(super) fn selectors(
 ) -> bool {
     ss.iter().any(|s| subjects.matches(cfg, s, id))
 }
-fn cidr(s: &str, address: IpAddr) -> bool {
+pub(super) fn cidr(s: &str, address: IpAddr) -> bool {
     s.parse::<IpNet>().is_ok_and(|n| n.contains(&address))
 }
 
 /// Use the same address-set definition as configuration validation. IPv4-mapped
 /// IPv6 uses the IPv4 classification instead of bypassing exclusions.
-fn internet(address: IpAddr) -> bool {
+pub(super) fn internet(address: IpAddr) -> bool {
     if let IpAddr::V6(v6) = address
         && let Some(v4) = v6.to_ipv4_mapped()
     {
@@ -100,25 +100,37 @@ pub(super) fn access_expiry(input: &CompilationInput<'_>, d: &Demand) -> Option<
         })
         .max()
 }
-fn profile_assignment(
+/// The profile assignments that apply to one node, as validation guaranteed
+/// them consistent: one default/locked pair, the union of allowed profiles.
+pub(super) struct Assignment {
+    pub allowed: Vec<String>,
+    pub default: String,
+    pub locked: bool,
+    /// The first applying assignment; None when only the built-in `mesh` applies.
+    pub index: Option<usize>,
+}
+pub(super) fn assignment(
     cfg: &NetworkConfiguration,
     subjects: &SubjectContext,
     node: NodeId,
-) -> Result<(Vec<String>, String, bool), CompileError> {
+) -> Result<Assignment, CompileError> {
     let mut allowed = Vec::new();
     let mut selected = None;
-    for a in cfg
+    let mut index = None;
+    for (i, a) in cfg
         .routing
         .egress
         .assignments
         .iter()
-        .filter(|a| selectors(cfg, subjects, &a.target, node))
+        .enumerate()
+        .filter(|(_, a)| selectors(cfg, subjects, &a.target, node))
     {
         let pair = (a.default.clone(), a.locked);
         if selected.as_ref().is_some_and(|p| p != &pair) {
             return Err(CompileError::InvalidInput);
         }
         selected = Some(pair);
+        index.get_or_insert(i);
         allowed.extend(a.allowed.clone());
     }
     let (default, locked) = selected.unwrap_or_else(|| {
@@ -128,6 +140,24 @@ fn profile_assignment(
     if !allowed.contains(&default) {
         return Err(CompileError::InvalidInput);
     }
+    Ok(Assignment {
+        allowed,
+        default,
+        locked,
+        index,
+    })
+}
+fn profile_assignment(
+    cfg: &NetworkConfiguration,
+    subjects: &SubjectContext,
+    node: NodeId,
+) -> Result<(Vec<String>, String, bool), CompileError> {
+    let Assignment {
+        allowed,
+        default,
+        locked,
+        ..
+    } = assignment(cfg, subjects, node)?;
     Ok((allowed, default, locked))
 }
 pub(super) fn default_profile(
@@ -188,14 +218,14 @@ fn matcher(
     }
     Ok(matched)
 }
-enum EgressProfile<'a> {
+pub(super) enum EgressProfile<'a> {
     Mesh,
     Global(NodeId),
     Auto(&'a AutoProfile),
     Custom(&'a RoutingProfile),
 }
 
-fn resolve_profile<'a>(
+pub(super) fn resolve_profile<'a>(
     config: &'a NetworkConfiguration,
     profile: &str,
 ) -> Result<EgressProfile<'a>, CompileError> {

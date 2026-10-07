@@ -12,6 +12,7 @@ pub use dns_name::{DnsNameError, MAX_DNS_NAME_INPUT_BYTES, node_dns_name, normal
 mod document;
 mod editing;
 mod editing_secrets;
+pub mod evaluation;
 pub mod execution;
 pub use editing_secrets::*;
 mod fields;

@@ -3,7 +3,7 @@ use meshway_model::state::{Capability, StreamKind, TransportRole};
 use meshway_transport_spec::*;
 
 pub(super) fn candidates(
-    input: &CompilationInput<'_>,
+    input: &Topology<'_>,
     a: NodeId,
     b: NodeId,
 ) -> Result<Vec<DialCandidate>, CompileError> {

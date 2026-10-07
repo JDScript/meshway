@@ -3,12 +3,14 @@
 mod diagnostics;
 mod matching;
 mod paths;
+mod plan;
 mod routing;
 mod transports;
 use crate::{SubjectContext, domain_name_matches, domain_suffix_matches, topology_allows};
 pub use matching::profile_allowed;
 use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
+pub use plan::{PlanDestination, PlanRequest, plan};
 use std::collections::BTreeMap;
 
 pub const COMPILER_VERSION: &str = "meshway-demand-4";
@@ -17,6 +19,15 @@ pub const MAX_PATHS: usize = 4;
 /// Ordered exit candidates have a separate budget from alternatives per exit.
 pub const MAX_EXIT_CANDIDATES: usize = 16;
 pub const MAX_HOPS: usize = 8;
+
+/// The declared graph with its trusted inventory: everything path search and
+/// transport selection consult. Demands, DNS and rule-set content stay out.
+#[derive(Clone, Copy)]
+pub struct Topology<'a> {
+    pub configuration: &'a NetworkConfiguration,
+    pub subjects: &'a SubjectContext,
+    pub inventory: &'a BTreeMap<NodeId, TrustedNode>,
+}
 
 /// No online flag: lack of contact cannot remove mandatory hops or grant direct access.
 pub struct CompilationInput<'a> {
@@ -50,6 +61,16 @@ pub enum CompileError {
 impl From<meshway_configuration::SerializationError> for CompileError {
     fn from(_: meshway_configuration::SerializationError) -> Self {
         Self::Serialization
+    }
+}
+
+impl CompilationInput<'_> {
+    pub(super) fn topology(&self) -> Topology<'_> {
+        Topology {
+            configuration: self.configuration,
+            subjects: self.subjects,
+            inventory: self.inventory,
+        }
     }
 }
 
@@ -157,7 +178,7 @@ pub fn compile_with_diagnostics(
             },
         );
     }
-    let graph = paths::Graph::new(&input)?;
+    let graph = paths::Graph::new(input.topology())?;
     for demand in input
         .demands
         .values()

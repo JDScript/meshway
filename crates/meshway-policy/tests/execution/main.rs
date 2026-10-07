@@ -9,6 +9,7 @@ mod capture;
 mod diagnostics;
 mod dns_egress;
 mod local_egress;
+mod plan;
 mod routing;
 fn node(i: u8) -> NodeId {
     format!("00000000-0000-4000-8000-{i:012}").parse().unwrap()

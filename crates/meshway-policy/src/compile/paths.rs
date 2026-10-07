@@ -5,12 +5,12 @@ use std::{
     collections::{BTreeSet, VecDeque},
 };
 
-pub(super) struct Graph<'a, 'b> {
-    input: &'a CompilationInput<'b>,
+pub(super) struct Graph<'a> {
+    input: Topology<'a>,
     pub candidates: RefCell<BTreeMap<NodeId, BTreeMap<String, DialCandidate>>>,
 }
-impl<'a, 'b> Graph<'a, 'b> {
-    pub fn new(input: &'a CompilationInput<'b>) -> Result<Self, CompileError> {
+impl<'a> Graph<'a> {
+    pub fn new(input: Topology<'a>) -> Result<Self, CompileError> {
         if input.inventory.len() > 10_000 {
             return Err(CompileError::Budget);
         }
@@ -66,8 +66,8 @@ impl<'a, 'b> Graph<'a, 'b> {
                     Err(PathError::Limit) => continue,
                     Err(error) => return Err(error),
                 }
-                let ab = transports::candidates(self.input, a, b)?;
-                let ba = transports::candidates(self.input, b, a)?;
+                let ab = transports::candidates(&self.input, a, b)?;
+                let ba = transports::candidates(&self.input, b, a)?;
                 if ab.is_empty() && ba.is_empty() {
                     continue;
                 }
@@ -124,7 +124,7 @@ impl<'a, 'b> Graph<'a, 'b> {
         let mut keys: BTreeMap<NodeId, Vec<String>> = BTreeMap::new();
         for pair in nodes.windows(2) {
             for (a, b) in [(pair[0], pair[1]), (pair[1], pair[0])] {
-                for c in transports::candidates(self.input, a, b)? {
+                for c in transports::candidates(&self.input, a, b)? {
                     let key = format!("{b}/{}", c.listener_key);
                     keys.entry(a).or_default().push(key.clone());
                     self.candidates
