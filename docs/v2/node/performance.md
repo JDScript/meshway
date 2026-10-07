@@ -747,6 +747,22 @@ TUN read 多为大批，与输入侧 TSO 超包拆分一致；不能将 17–32 
 
 因此 1 Gbps 单流已在有效两核样本和四核完整复测中出现，但**两核底线尚不能在这组高共享负载复测下稳定声明通过**；100k pps 也不能用早期低负载值代替本轮未达值。`20261007t062112z-6577db6f` 的同 binary profile-on 完整 12 格另行保留，不替换正式吞吐。较早四核 `20261007t055034z-5020f03e` 有一次 relay UDP 退出 137，节点没有最终 stderr；完整重跑 `20261007t055307z-ae3ede86` 通过，但首次异常的内部停止位置未独立定位，不能宣称根因已修复。所有原始失败、JSON、线程与 kernel counters 保存在对应报告和 `.meshway/perf/o-validation/`。
 
+#### 验证结束后的同参数复现
+
+本工作树的构建／行为验证全部退出后，按预定顺序再运行一次完整两核／四核矩阵，分别为 `20261007t064600z-c4127ba8`／`20261007t064755z-170866c9`，各 12/12 成功。binary 仍为 `4f6813779c1c5ea612aefd316d8ee47ec1ab5a02efb2c7e755c95c19f97f86f2`；源码 digest `28530772c54a8fadca3c581abfde0097642e933f63b6c82305f210620a3eae81` 的变化仅来自归因脚本。宿主一分钟 load 为约 8–10／9–14，仍不是独占环境。下表对照用户指定的 M 报告 `20261007t045428z-fb7362ea`，全部为 profile-off、两次中位数。
+
+| 模式 | TCP Mbps：M → 两核 → 四核 | UDP pps：M → 两核 → 四核 | 两核 TCP／UDP CPU % | 四核 TCP／UDP CPU % |
+| --- | ---: | ---: | ---: | ---: |
+| secure-direct | 771.01 → 1530.35 → 1083.72 | 115,975 → 101,958 → 87,769 | 296.86／358.03 | 250.72／349.04 |
+| secure-relay | 623.28 → 1245.58 → 1080.88 | 86,356 → 72,570 → 73,821 | 351.95／388.91 | 331.14／414.20 |
+| plain-batch | 6289.31 → 8862.87 → 7033.54 | 116,502 → 124,933 → 118,135 | 200.82／181.54 | 201.39／197.22 |
+
+**两核 direct 两次均达到 1 Gbps／100k pps 底线**：TCP 1541.28／1519.42 Mbps，UDP 103,316／100,601 pps；relay TCP 1175.39／1315.78 Mbps，UDP 未达 100k。direct TCP 的 RTT 为 17,045／16,618 µs，重传 0／0，cwnd 最大值 4,321,332／4,274,668 B；relay 为 20,939／19,317 µs、重传 0／0。TCP 所有角色的 UDP 溢出为 0。UDP 2G 仍丢包，direct 两核丢包中位数 50.70%，不声明无损 100k 容量或 UDP 相对 M 加速。
+
+四核后半程再次明显变慢：direct TCP 两次 1477.80／689.64 Mbps，RTT 17,973／47,105 µs，重传仍为 0／0；relay 1455.44／706.32 Mbps。其 TCP 中位数虽超过 1 Gbps，但不是每次均达标，UDP 也未达 100k。核数与吞吐变化混有共享调度／频率／负载，不能据此断言增加 worker 会降速，也不能隐去前述高负载未达样本。
+
+当前实现已通过 fmt／workspace all-targets all-features 严格 Clippy，dataplane／connectivity／daemon／transport／underlay 组合测试（4 test threads），独立 Linux UDP 批量／buffer 测试、`test:packet:linux` 和 `test:runtime:linux -- --transport native-udp --dns-backend off`。packet 证据为 `20261007T063254Z-cc0cccab`，真实 daemon/CLI runtime 为 `20261007T063546Z-96479efe`。这些检查证明原 owner／guard／路径与生命周期回归，不替代其它承载或 DNS 组合验收。剩余性能边界为满载内核排队、用户态预取队列的逐包驻留、独立 TX pending，以及共享负载下的吞吐稳定性。
+
 ### L3 实测参考
 
 同一次运行内 raw／plain／secure-direct／secure-relay 使用相同容器配额、MTU、负载与区间；每格为两次独立重复的中位数，profile 关闭。CPU 为所有样本容器 cgroup CPU 之和除以客户端区间（100%＝一核，含 warmup）；UDP 输入固定 500 Mbps，因此 UDP 的差别主要体现在 CPU 与丢包，而不是吞吐。
