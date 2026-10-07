@@ -3,6 +3,7 @@
 
 mod actor;
 mod application;
+mod control_requests;
 mod controller;
 mod diagnostics;
 mod dns;

@@ -70,6 +70,10 @@ Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分�
 
 Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发送，由唯一 receiver 分流响应。候选的真实 State 上报获确认后，才参与 offer。双方 Active 后从同一 socket 发包，签名握手额外绑定 offer 的 nonce／digest；接入前再次验证原尝试与接收槽，旧尝试不能借新 channel scope 延期。获取成功后，通道由当前执行许可和认证健康检查维持，不依赖过期的 STUN 观测续命。
 
+候选协调由 Manager 按需调度：有实际 UDP endpoint，且存在当前获准 UDP 邻接缺少健康的选定通道时才查询，包括原 offer 等待双边接受的阶段。健康的 Native UDP／TCP 选定通道抑制重复查询与 STUN 获取；其他地址族的等待 offer 和旧候选过期不会替换健康通道。失联后的下一次获取重新读取候选和期限。当前事件契约没有独立的穿透查询通知，普通 State／观察事件不触发候选 HTTP。
+
+每个 Manager 的 `queryUdpTraversal` 发起至少相隔 **2 秒（任意半开 60 秒窗口最多 30 次）**，失败、取消、publication／资源交接也不重置该预算；未连通时保留十秒 offer 内的双边查询机会。轮询准入与控制周期分开，不因 SSE 重连重复执行。STUN 仅在需要获取时按既有 8 秒间隔发现，查询、prepare 和候选观测均不延长原授权。
+
 ### UDP 控制消息预算
 
 UDP 接收 owner 在每个就绪批次内先分流 health、邻接握手、STUN 和穿透控制，再交付业务帧；控制消息不进入业务事件队列。签名验证继续受独立的已认证 peer／全局控制速率预算限制。每批至多 32 帧，并受更小的事件槽配置约束。200 µs dispatch 墙钟预算耗尽时让出调度，保留这个有界批次的未处理后缀；恢复后重新检查原 channel，调度延迟本身不成为丢包理由。

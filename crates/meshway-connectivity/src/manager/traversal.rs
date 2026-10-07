@@ -63,12 +63,84 @@ struct Pending {
     active: bool,
 }
 
+// Retained across execution/resource handoffs: churn cannot reset admission.
+// Two seconds leaves multiple bilateral polls within a ten-second offer.
+const QUERY_INTERVAL: Duration = Duration::from_secs(2);
+
+struct QuerySchedule {
+    next: Instant,
+}
+impl QuerySchedule {
+    fn admit(&mut self, now: Instant, needed: bool) -> bool {
+        if !needed || now < self.next {
+            return false;
+        }
+        self.next = now + QUERY_INTERVAL;
+        true
+    }
+}
+
+fn needs_acquisition(shared: &Shared) -> bool {
+    let Ok(cfg) = shared.identity.snapshot().configuration() else {
+        return false;
+    };
+    let Ok(now) = shared.identity.snapshot().now_ms() else {
+        return false;
+    };
+    let Ok(links) = shared.links.lock() else {
+        return false;
+    };
+    cfg.peers.keys().any(|peer| {
+        if links
+            .get(peer)
+            .is_some_and(|link| link.scope.check().is_ok())
+        {
+            return false;
+        }
+        cfg.dialers.values().any(|dial| {
+            dial.peer == *peer
+                && dial.parameters.transport() == TransportProtocol::NativeUdp
+                && admit_adjacency(
+                    cfg,
+                    *peer,
+                    &Carrier {
+                        dialer: cfg.node_id,
+                        listener: *peer,
+                        listener_key: dial.listener_key.clone(),
+                        protocol: TransportProtocol::NativeUdp,
+                    },
+                    now,
+                )
+                .is_ok()
+        }) || cfg.listeners.iter().any(|(key, listener)| {
+            let (protocol, enabled) = provider::declaration(listener);
+            enabled
+                && protocol == TransportProtocol::NativeUdp
+                && admit_adjacency(
+                    cfg,
+                    *peer,
+                    &Carrier {
+                        dialer: *peer,
+                        listener: cfg.node_id,
+                        listener_key: key.clone(),
+                        protocol,
+                    },
+                    now,
+                )
+                .is_ok()
+        })
+    })
+}
+
 pub(super) async fn run(mut shared: Arc<Shared>, gateway: Arc<dyn TraversalGateway>) {
     let mut updates = shared.epochs.subscribe();
     let mut resources = shared.resource_changes.subscribe();
     let mut discover_at = Instant::now();
     let mut after_peer = None;
     let mut previous_endpoints = Vec::new();
+    let mut queries = QuerySchedule {
+        next: Instant::now(),
+    };
     loop {
         let endpoints = match shared.traversal_endpoints.lock() {
             Ok(endpoints) => endpoints.clone(),
@@ -87,6 +159,7 @@ pub(super) async fn run(mut shared: Arc<Shared>, gateway: Arc<dyn TraversalGatew
             &mut resources,
             &mut discover_at,
             &mut after_peer,
+            &mut queries,
         )
         .await;
         match shared.latest(&mut updates).await {
@@ -96,6 +169,7 @@ pub(super) async fn run(mut shared: Arc<Shared>, gateway: Arc<dyn TraversalGatew
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_epoch(
     shared: Arc<Shared>,
     gateway: &Arc<dyn TraversalGateway>,
@@ -104,6 +178,7 @@ async fn run_epoch(
     resources: &mut tokio::sync::watch::Receiver<()>,
     discover_at: &mut Instant,
     after_peer: &mut Option<NodeId>,
+    queries: &mut QuerySchedule,
 ) {
     let scope = shared.scope(None, false);
     let mut pending: BTreeMap<UdpTraversalId, Pending> = BTreeMap::new();
@@ -120,6 +195,25 @@ async fn run_epoch(
                 .now_ms()
                 .map_err(|_| Error::Authority)?;
             retired.retain(|_, expires| *expires > now);
+            pending.retain(|id, value| {
+                if value.offer.ensure_current().is_ok() {
+                    return true;
+                }
+                value.offer.cancel();
+                if let Some(endpoint) = endpoints.get(&value.endpoint) {
+                    let _ = endpoint.commands.try_send(Command::Cancel(*id));
+                }
+                false
+            });
+            // A successful independently authenticated channel also supersedes
+            // waiting offers for that peer (for example another address family).
+            // Their original slots expire normally; they cannot keep polling a
+            // healthy selected link merely because their phase is still Waiting.
+            let needed = !endpoints.is_empty() && needs_acquisition(&shared);
+            if !queries.admit(Instant::now(), needed) {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
             let query = gateway
                 .request(Operation::Query(Box::new(
                     shared.identity.snapshot().clone(),
@@ -550,6 +644,22 @@ async fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn healthy_channels_suppress_queries_and_churn_cannot_reset_the_budget() {
+        let start = Instant::now();
+        let mut schedule = QuerySchedule { next: start };
+        let mut queries = 0;
+        for tick in 0..2400 {
+            let now = start + Duration::from_millis(tick * 250);
+            assert!(!schedule.admit(now, false), "healthy selected channels");
+            // Epoch/resource changes share this schedule, including a retry
+            // immediately after a previous request failed or was cancelled.
+            queries += usize::from(schedule.admit(now, true));
+            assert!(!schedule.admit(now, true));
+        }
+        assert_eq!(queries, 300, "at most 30 requests/minute for ten minutes");
+    }
 
     #[test]
     fn unavailable_peer_prefix_does_not_starve_later_batches_across_churn() {

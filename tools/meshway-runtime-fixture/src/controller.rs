@@ -48,6 +48,7 @@ async fn run_server(cli: &Cli) -> Result<()> {
     }
     let app = App::open(settings).await?;
     let availability = crate::recovery::Availability::new();
+    let requests = crate::control_requests::Audit::new();
     let mut router = meshway_server::http::router(&app);
     if cli.traversal == crate::TraversalMode::Nat {
         router = router.layer(axum::middleware::from_fn_with_state(
@@ -58,6 +59,10 @@ async fn run_server(cli: &Cli) -> Result<()> {
     router = router.layer(axum::middleware::from_fn_with_state(
         availability.clone(),
         crate::recovery::gate,
+    ));
+    router = router.layer(axum::middleware::from_fn_with_state(
+        requests.clone(),
+        crate::control_requests::observe,
     ));
     let (stop, mut stopped) = watch::channel(false);
     let server = tokio::spawn(async move {
@@ -110,6 +115,7 @@ async fn run_server(cli: &Cli) -> Result<()> {
     tracing::info!(phase = "controller-listening", "real Server HTTPS ready");
     let result = tokio::time::timeout(DEADLINE, coordinate(cli, &audit, &availability)).await;
     let audit_result = audit.save(cli).await;
+    let request_result = requests.save(cli).await;
     // Always shut down the actual listener, SSE streams, and database owner,
     // including when an enrollment/configuration/traffic assertion fails.
     let stop_result = stop
@@ -122,6 +128,7 @@ async fn run_server(cli: &Cli) -> Result<()> {
     server_result??;
     store_result?;
     audit_result?;
+    request_result?;
     result??;
     let signals = Signals::new(&cli.signals);
     signals.write("offline", &Signal::Ready).await?;

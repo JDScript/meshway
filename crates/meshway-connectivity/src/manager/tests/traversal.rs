@@ -385,6 +385,7 @@ impl SocketFactory for NatFactory {
 
 struct Gateway {
     control: AsyncMutex<Control>,
+    queries: AtomicUsize,
     acknowledged: Mutex<Vec<CandidateReference>>,
     timeline: Option<Arc<AcquisitionTimeline>>,
 }
@@ -587,6 +588,7 @@ impl TraversalGateway for Gateway {
             let result: Result<Reply, meshway_control::Error> = async {
                 Ok(match operation {
                     Operation::Query(snapshot) => {
+                        self.queries.fetch_add(1, Ordering::SeqCst);
                         Reply::Query(control.query_udp_traversal(&snapshot).await?)
                     }
                     Operation::Peers { context, peers } => {
@@ -961,6 +963,7 @@ async fn accept_scheduling(uncertain: bool, invalidate: bool) {
             .unwrap();
         gateways.push(Arc::new(AcceptSchedulingGateway {
             inner: Arc::new(Gateway {
+                queries: AtomicUsize::new(0),
                 control: AsyncMutex::new(control),
                 acknowledged: Mutex::new(Vec::new()),
                 timeline: None,
@@ -1094,6 +1097,15 @@ async fn invalidated_original_accept_slot_cannot_activate_after_uncertain_commit
 
 #[tokio::test]
 async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing_noise_owner() {
+    exercise_traversal(false).await;
+}
+
+#[tokio::test]
+async fn healthy_complete_adjacency_suppresses_queries_while_missing_peers_remain_bounded() {
+    exercise_traversal(true).await;
+}
+
+async fn exercise_traversal(healthy_only: bool) {
     let stun = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let stun_address = public(stun.local_addr().unwrap());
     let stop = CancellationToken::new();
@@ -1114,6 +1126,25 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
     });
     let mut fixture = support::Fixture::traversal(stun_address).await;
     let ids = fixture.ids();
+    if healthy_only {
+        // The normal fixture admits alternate paths through offline C, even
+        // for A's demand. Restrict this case to the exact A-B edge so "healthy"
+        // means every admitted adjacency, rather than just one selected link.
+        fixture
+            .configure(|cfg| {
+                cfg.defaults.topology = meshway_configuration::TopologyDefault::Deny;
+                cfg.topology = vec![meshway_configuration::TopologyRule {
+                    remark: String::new(),
+                    action: meshway_configuration::TopologyAction::Allow,
+                    a: format!("node:{}", ids[0]),
+                    b: format!("node:{}", ids[1]),
+                }];
+            })
+            .await;
+        for index in 0..2 {
+            fixture.refresh(index).await;
+        }
+    }
     let traffic = Arc::new(Traffic::default());
     let sockets = [
         fixture.udp.take().unwrap(),
@@ -1136,6 +1167,7 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
             .await
             .unwrap();
         gateways.push(Arc::new(Gateway {
+            queries: AtomicUsize::new(0),
             control: AsyncMutex::new(control),
             acknowledged: Mutex::new(Vec::new()),
             timeline: None,
@@ -1297,6 +1329,39 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
     .expect("actual candidate acknowledgements must keep running during acquisition");
     let a_link = a.snapshot().unwrap().links[0].clone();
     let b_link = b.snapshot().unwrap().links[0].clone();
+    let queries: Vec<_> = gateways
+        .iter()
+        .map(|gateway| gateway.queries.load(Ordering::SeqCst))
+        .collect();
+    tokio::time::sleep(Duration::from_millis(2250)).await;
+    for (gateway, before) in gateways.iter().zip(queries) {
+        let count = gateway.queries.load(Ordering::SeqCst) - before;
+        if healthy_only {
+            assert_eq!(count, 0, "all admitted adjacencies have healthy channels");
+        } else {
+            assert!(count <= 2, "offline alternate peer keeps bounded discovery");
+        }
+    }
+    if healthy_only {
+        stop.cancel();
+        service.await.unwrap();
+        a.shutdown().await.unwrap();
+        b.shutdown().await.unwrap();
+        drop(a);
+        drop(b);
+        for gateway in gateways {
+            Arc::try_unwrap(gateway)
+                .ok()
+                .expect("joined gateway")
+                .control
+                .into_inner()
+                .shutdown()
+                .await
+                .unwrap();
+        }
+        fixture.close().await;
+        return;
+    }
     assert_eq!(a_link.id, b_link.id);
     for link in [&a_link, &b_link] {
         let channels = traffic.channels.lock().unwrap();
@@ -1804,6 +1869,7 @@ async fn revocation_recovery(indirect_first: Option<bool>) {
             .await
             .unwrap();
         gateways.push(Arc::new(Gateway {
+            queries: AtomicUsize::new(0),
             control: AsyncMutex::new(control),
             acknowledged: Mutex::new(Vec::new()),
             timeline: Some(timeline.clone()),
