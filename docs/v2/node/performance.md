@@ -478,6 +478,58 @@ iperf3 的 TCP 控制流和 UDP 负载分别使用精确 `5201` 端口 demand。
 
 ### L3 流水线与 L4 实测
 
+#### Manager 就绪批次与入口队列对照
+
+2026-10-07 UTC，`3ab2f34c` 的正式对照为 `20261007t112743z-6f3b2103`（500M）和 `20261007t113249z-4f1fbe81`（2G）。两组均使用同一个 Linux binary `6f4cdf83fb42e5ece04b7f73ed5277622a9f9ab52b13142bb794721f823dc18a`，源码 digest `5cbdbcf2e7ab40c1f8b2724e707fef17d7a24055c0ffc8e17915cbc04a7a15d4` 首尾一致。OrbStack aarch64、锁定 Ubuntu 镜像、每容器 2 CPU／512 MiB、每节点 current-thread owner／0 worker、MTU 1280、payload 1200 B；每格两次独立重复，反转次序，profile 关闭。命令如下，第二组仅把速率改为 `2G`：
+
+```sh
+mise run perf:dataplane -- --modes secure-relay manager-relay manager-direct \
+  --repeats 2 --seconds 6 --omit 1 --profile 0 --cpus 2 \
+  --mtu 1280 --payload 1200 --udp-rate 500M
+```
+
+以下为 batch 32 的成功样本中位数；n 分别表示 TCP／UDP 的有效重复数。CPU 为所有角色的 cgroup 记账总和，包含 warmup；TCP pps 未测。
+
+| 输入组 | 模式 | n TCP／UDP | TCP Mbps | TCP CPU % | UDP pps | UDP 丢包 % | UDP CPU % |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 500M | secure-relay | 2／2 | 1,586.03 | 235.93 | 49,017 | 5.89 | 185.93 |
+| 500M | manager-relay | **1／2** | 1,291.42* | 223.56* | 49,326 | 5.28 | 197.74 |
+| 500M | manager-direct | 2／2 | 1,468.05 | 176.34 | 49,025 | 5.93 | 167.22 |
+| 2G | secure-relay | 2／2 | 1,577.02 | 233.03 | 108,442 | 47.95 | 306.65 |
+| 2G | manager-relay | **2／1** | 1,253.46 | 217.21 | 100,582* | 51.68* | 318.72* |
+| 2G | manager-direct | 2／2 | 1,529.85 | 183.17 | 151,126 | 25.40 | 313.99 |
+
+*只有一次成功样本，不构成两次重复验收。* 两组各 **23/24** 成功、整体 `passed=false`：500M 的 `manager-relay-b32-p0-tcp-r0` 中继退出 137，RSS 峰值 544,731,136 B／cgroup 峰值 536,764,416 B；2G 的 `manager-relay-b32-p0-udp-r0` 三节点正常退出，但 iperf 接收字节与交付报文数不一致，指标保留 null。后者中继 RSS 采样峰值 424,914,944 B。失效的原始样本保留，不用重测成功值替换。
+
+同组 batch 1 的两次 TCP 均成功：500M 的 L3／L4 为 1,576.92／1,330.95 Mbps（**0.844×**），2G 为 1,571.12／1,237.54（0.788×）；batch 32 的 2G 对照为 **0.795×**。**Manager relay ≥ 0.9 × secure relay 的目标尚未达到。** 原 `20261007t103344z-3281e8e2` 的 500M、batch 32 参考为 L3 1,496.70／L4 411.12 Mbps，窗口为 warmup 2 秒＋8 秒；它不是与本轮完全相同窗口的配对实验。新实现显著缩小差距，但不能称为性能／内存验收完成。
+
+##### 等待归因
+
+相同 4 秒测量／2 秒 warmup、MTU 1280、2 CPU、batch 32、profile=128 的前后诊断为 `20261007t105907z-45f2114a` 和 `20261007t113645z-ea3b934c`。前者 L3／L4 TCP 为 1,511.17／406.85 Mbps，后者为 1,577.29／1,181.30。诊断采用开启采样的完整调用计数和抽样墙钟，包含准备与 warmup，指标互相嵌套，不能加总为未插桩 CPU 或逐包 syscall 精确时间。
+
+| 中继 R 边界 | L3 前 → 后 µs | L4 前 → 后 µs |
+| --- | ---: | ---: |
+| crypto ready → owner 取出，逐包 | 37.07 → 34.78 | 16.39 → 35.21 |
+| owner 取出 → credit 释放，逐包 | 77.83 → 79.13 | **290.85 → 120.64** |
+| Manager 选链入口 → send future 首次 poll，含同步选链，批次 | 不适用 | **208.35 → 12.96** |
+| carrier release → Session 接纳入口，批次 | 3.60 → 3.11 | 2.55 → 3.93 |
+| Session 接纳 → 首 poll，批次 | 0.26 → 0.22 | **0.16 → 0.23** |
+| Session 首 poll → 首个成功 raw write，批次 | 16.33 → 20.76 | 42.51 → 35.55 |
+| Session 接纳入口 → completion 观察，批次 | 17.42 → 25.40 | 59.45 → 55.88 |
+| Manager 接收批首 → 事件消费，批首观察 | 不适用 | **169.38 → 1,646.66** |
+
+Session 在这两个 L4 TCP 样本中分别 41,802／32,855 次提交全部内联完成，后台 dequeue 为 0；并不存在逐批必经 Session 任务的主要等待。旧 R 的主要已观察输出延迟在同步选链与已冻结 future 的 owner FIFO，叠加小接收／发送批次；`selected_to_poll` 从选链入口计时，不能全部解释为休眠。默认 16 个发送帧槽（保留两帧控制）和按 scratch 尺寸截断的 8 帧接收增大交接次数；新的预算／批次行为见[Manager 批次边界](/v2/node/connectivity#manager-批次边界)。
+
+旧 R 有 186 个事件队列满丢弃和 13 个 dispatch 时间预算丢弃，TCP 重传 113 次；相应 socket 接收溢出计数为 0。增加未准入小包槽、保持容量预算、按批处理后，该诊断 R 队列满丢弃 36、时间预算只触发 2 次让出、TCP 测量区间重传为 0。后者事件排队变长是更大有界缓冲承接突发的代价，不是普遍降低端到端延迟的结论。事件与重传计数的统计窗口不同，不逐包配对。
+
+原 R 的 submit→ready、ready→release、release→credit 均值合计约 308.59 µs，32 credit／均值约 **104k 帧/s**；新值约 157.20 µs，对应约 **204k 帧/s**。这些包含双方向、采样和负载相关排队，只是 Little 定律的窗口数量级，不是固定的应用吞吐上限，也不能由 TCP Mbps 假定包长反推 pps。旧吞吐／低 CPU 不能单独归因为 32 credit：小事件队列的丢包已经让 TCP 降窗，扩大有界未准入缓冲后 CPU 与吞吐一起上升。credit 仍覆盖最终 I/O，未提前归还。
+
+后测 R 的 763,629 个 Mesh frame 调度尝试对应 29,582 次成功业务批发布；队列 observer 记录 4,969 次真实 waker 回调与 63,537 次 poll（含独立控制队列），三者不可互称。旧实现只记录逐帧尝试，未记录实际 waker 回调，不补零。消费后的已预约占用直方图中，旧 R 为 21,473 次空、581 次 1–8、458 次 9–32；新 R 为 7,768 次空、142 次 1–8、1,672 次 9–32、1,830 次 33–64、7,559 次 65–256、7,546 次 ≥257。批内部分消费继续计入其原预约，观测不授予权限。
+
+剩余边界包括完整负载中的中继 RSS 增长／OOM、UDP 接收账本不一致及约 16–21% 的 L3/L4 TCP 差距。OOM 诊断时的 credit、任务数与 retained circuit 有界，尚未定位额外内存归属；不能用这些有界快照推断整个进程内存合格。两组固定二进制、所有失败日志、profiling 与内存曲线保存在执行工作树 `.meshway/perf/dataplane/<run>/`。
+
+#### 历史单 worker 流水线对照
+
 报告 `20261007t013659z-d3a3ee2c`，源码 `2d0b7584`，测量期间源码未变；启动时 dirty 仅为文档。相同二进制、每容器 2 CPU／512 MiB、每节点 1 owner＋1 crypto worker、TUN vnet_hdr 开启。环境为 OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`／aarch64、锁定 Ubuntu 24.04／iperf3 3.16、Rust 1.98.0／Zig 0.17.0、Linux musl release。命令：
 
 ```sh
