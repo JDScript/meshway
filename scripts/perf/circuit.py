@@ -221,11 +221,17 @@ def measure(args, output_root):
                     record = {"nodes": nodes, "packetBytes": size, "repeat": repeat,
                               "profileRate": rate, "status": "failed", "stderr": label + ".stderr"}
                     try:
+                        record["hostLoadBefore"] = os.getloadavg()
+                        record["hostUptimeBefore"] = command("uptime")
+                        record["hostNprocBefore"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
                         process = subprocess.run(["mise", "exec", "--", str(binary), "--nodes", str(nodes),
                                                   "--packet-bytes", str(size), "--rounds", str(args.rounds),
                                                   "--warmup", str(args.warmup)], cwd=ROOT, text=True,
                                                  capture_output=True, timeout=180,
-                                                 env=dict(os.environ, MESHWAY_PROFILE=str(rate), MESHWAY_PROFILE_DETAIL="1"))
+                                                  env=dict(os.environ, MESHWAY_PROFILE=str(rate), MESHWAY_PROFILE_DETAIL="1"))
+                        record["hostLoadAfter"] = os.getloadavg()
+                        record["hostUptimeAfter"] = command("uptime")
+                        record["hostNprocAfter"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
                         (output / (label + ".stdout")).write_text(process.stdout)
                         (output / (label + ".stderr")).write_text(process.stderr)
                         if process.returncode:

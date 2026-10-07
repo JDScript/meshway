@@ -533,6 +533,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             time.sleep(0.05)
         threads_before = {role: node_threads(c) for role, c in containers.items()} if secure else {}
         record["hostLoadInitial"] = os.getloadavg()
+        record["hostUptimeInitial"] = command("uptime")
+        record["hostNprocInitial"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
         before = {role: cpu_usage(c) for role, c in containers.items()}
         start = time.monotonic()
         client_args = ["docker", "exec", containers["a"], "iperf3", "-c", destination, "-J",
@@ -544,6 +546,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         elapsed = time.monotonic() - start
         after = {role: cpu_usage(c) for role, c in containers.items()}
         record["hostLoadFinal"] = os.getloadavg()
+        record["hostUptimeFinal"] = command("uptime")
+        record["hostNprocFinal"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
         if secure:
             record["nodeThreads"] = {role: thread_delta(threads_before[role], node_threads(c))
                                      for role, c in containers.items()}

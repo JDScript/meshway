@@ -67,7 +67,7 @@ def summary(report):
              "Only public fixed benchmark keys/data; cross-provider ciphertext/tag and plaintext equality checked before timing.",
              "MAC input lengths below are primitive lengths, not v5 IP lengths: production MAC also authenticates a prefix and AEAD tag.",
              "No timer/copy baseline is subtracted. Quantiles cover repeated batches, not operation tail latency.",
-             "x86_64: unmeasured (no native host). aws-lc-rs: unmeasured.", ""]
+              f"Host architecture: {report['hostMachine']}; Linux target is recorded per environment. aws-lc-rs: unmeasured.", ""]
     for environment in report["environments"]:
         lines += [f"## {environment['name']}", "", f"Status: {environment['status']}",
                   f"Binary: `{environment.get('binarySha256')}`", "",
@@ -95,7 +95,7 @@ def measure(args, output_root):
                   options=vars(args), rustc=command("rustc", "-Vv"),
                   host=platform.platform(), hostMachine=platform.machine(),
                   rustflags=os.environ.get("RUSTFLAGS"), encodedRustflags=os.environ.get("CARGO_ENCODED_RUSTFLAGS"),
-                  environments=[], x86_64=None, awsLc=None)
+                  environments=[], awsLc=None)
     for name in args.environment:
         env = dict(name=name, status="failed")
         report["environments"].append(env)
@@ -124,6 +124,7 @@ def measure(args, output_root):
             if name == "linux":
                 check_elf(binary, machine)
                 prefix = ["docker", "run", "--rm", "--name", "meshway-crypto-" + identity.lower(),
+                          "--label", "io.meshway.crypto-perf=" + identity.lower(),
                           "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                           "--cpus", str(args.cpus), "--memory", "512m", "--platform", docker_platform,
                           "--mount", f"type=bind,src={output},dst=/bench,readonly", "--entrypoint", "/bench/" + binary.name,
@@ -131,15 +132,20 @@ def measure(args, output_root):
                 if args.cpu_set:
                     prefix[2:2] = ["--cpuset-cpus", args.cpu_set]
                 env["kernel"] = command("docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL",
+                                        "--label", "io.meshway.crypto-perf=" + identity.lower(),
                                         "--entrypoint", "uname", image["imageId"], "-a")
             else:
                 prefix = [str(binary)]
             invocation = [*prefix, "--iterations", str(args.iterations), "--repeats", str(args.repeats)]
             env["command"] = invocation
             env["hostLoadBefore"] = os.getloadavg()
+            env["hostUptimeBefore"] = command("uptime")
+            env["hostNprocBefore"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
             process = subprocess.run(invocation, cwd=ROOT, text=True, capture_output=True,
                                      timeout=1800, env=dict(os.environ, MESHWAY_PROFILE="0"))
             env["hostLoadAfter"] = os.getloadavg()
+            env["hostUptimeAfter"] = command("uptime")
+            env["hostNprocAfter"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
             (output / (name + ".stdout")).write_text(process.stdout)
             (output / (name + ".stderr")).write_text(process.stderr)
             if process.returncode:
