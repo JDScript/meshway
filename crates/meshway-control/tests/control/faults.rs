@@ -26,6 +26,7 @@ pub enum Fault {
     UntypedConflict,
     WrongStateScopeStatus,
     StateScopeChanged,
+    ReceiptConflict(&'static str, u16),
 }
 #[derive(Clone)]
 struct Forward {
@@ -115,6 +116,17 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
         }
     };
     let mut headers = parts.headers;
+    if let Some(Fault::ReceiptConflict(code, body_status)) = fault {
+        let body = serde_json::json!({
+            "requestId": super::support::request(), "status": body_status,
+            "problem": { "code": code, "params": {}, "message": "sensitive receipt body" }
+        });
+        return Response::builder()
+            .status(StatusCode::CONFLICT)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+    }
     if matches!(fault, Some(Fault::RejectBefore)) {
         return Response::builder()
             .status(StatusCode::UNAUTHORIZED)
@@ -194,6 +206,7 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                     }
                     Fault::Lost | Fault::Hold => unreachable!("delivery fault handled above"),
                     Fault::RejectBefore => unreachable!("rejected before forwarding"),
+                    Fault::ReceiptConflict(..) => unreachable!("rejected before forwarding"),
                     Fault::UntypedConflict
                     | Fault::WrongStateScopeStatus
                     | Fault::StateScopeChanged => unreachable!("conflict fault handled above"),

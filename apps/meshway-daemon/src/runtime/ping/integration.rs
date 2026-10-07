@@ -33,6 +33,7 @@ where
 
 #[derive(Default)]
 struct Fault {
+    receipt: std::sync::Mutex<Option<&'static str>>,
     creates: AtomicUsize,
     create_gate: Arc<CreateGate>,
     blocked: AtomicBool,
@@ -60,6 +61,18 @@ async fn fault(
     request: Request,
     next: Next,
 ) -> axum::response::Response {
+    if request.uri().path() == "/agent-api/v1/configuration/receipts"
+        && let Some(code) = fault.receipt.lock().unwrap().take()
+    {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({
+                "requestId": id::<RequestId>(), "status": 409,
+                "problem": {"code": code, "params": {}, "message": "receipt rejected"}
+            })),
+        )
+            .into_response();
+    }
     if request.method() == axum::http::Method::POST
         && request.uri().path() == "/agent-api/v1/observations"
     {
@@ -100,6 +113,9 @@ pub(in crate::runtime) struct Fixture {
     _directory: tempfile::TempDir,
 }
 impl Fixture {
+    pub(in crate::runtime) fn reject_receipt(&self, code: &'static str) {
+        *self.fault.receipt.lock().unwrap() = Some(code);
+    }
     pub(in crate::runtime) async fn open() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();

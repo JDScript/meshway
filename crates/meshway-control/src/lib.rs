@@ -42,6 +42,29 @@ use std::{
 };
 use storage::Record;
 
+/// Validated receipt rejection details. Debug deliberately omits the remote
+/// message; callers may inspect the typed response for code/request correlation.
+pub struct ReceiptRejection(ErrorResponse);
+
+impl ReceiptRejection {
+    pub fn response(&self) -> &ErrorResponse {
+        &self.0
+    }
+}
+impl From<ErrorResponse> for ReceiptRejection {
+    fn from(response: ErrorResponse) -> Self {
+        Self(response)
+    }
+}
+impl std::fmt::Debug for ReceiptRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReceiptRejection")
+            .field("request_id", &self.0.request_id)
+            .field("status", &self.0.status)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid Server origin or HTTP client configuration")]
@@ -58,6 +81,8 @@ pub enum Error {
     Pending,
     #[error("state report execution scope changed; refresh and observe again")]
     StateScopeChanged,
+    #[error("configuration receipt was rejected; refresh and apply a new attempt")]
+    ReceiptRejected(Box<ReceiptRejection>),
     #[error("secure random generation or signing failed")]
     Cryptography,
     #[error("Server response does not match the requested binding or contract")]
@@ -336,6 +361,31 @@ impl Control {
             self.challenge_intent = None;
         }
         response.map_err(Error::Server)
+    }
+
+    // Only a decoded receipt-domain rejection can retire a receipt without
+    // revoking the independently held session/instance or execution guards.
+    fn receipt_response<T>(
+        &mut self,
+        response: Result<T, ClientError<ErrorResponse>>,
+    ) -> Result<T, Error> {
+        match response {
+            Err(ClientError::Http {
+                status: 409,
+                problem: Some(body),
+            }) if body.status == 409
+                && matches!(
+                    body.problem,
+                    meshway_protocol::Problem::ReceiptPublicationSuperseded { .. }
+                        | meshway_protocol::Problem::ReceiptLeaseExpired { .. }
+                        | meshway_protocol::Problem::ReceiptPrecondition { .. }
+                        | meshway_protocol::Problem::ReceiptContentConflict { .. }
+                ) =>
+            {
+                Err(Error::ReceiptRejected(Box::new(body.into())))
+            }
+            other => self.registered(other),
+        }
     }
 
     /// Stop local control authority before sending the release. Failure or

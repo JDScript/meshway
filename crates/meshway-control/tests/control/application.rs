@@ -666,11 +666,85 @@ async fn invalid_local_time_does_not_freeze_completion_and_server_bounds_late_fa
             .await
             .is_err()
     );
-    assert!(control.status().instance.is_none());
+    assert!(control.status().authenticated);
+    assert_eq!(
+        control.status().instance.unwrap().instance_id,
+        late.instance().instance_id
+    );
     let after = progress(&server, &owner, node, late.target()).await;
     assert_eq!(after.phase, ApplicationPhase::Saved);
     assert_eq!(after.attempt, saved.attempt);
     assert_eq!(after.received_at, saved.received_at);
     control.shutdown().await.unwrap();
+    server.close().await;
+}
+
+#[tokio::test]
+async fn receipt_rejections_retire_exact_ticket_without_fencing_and_reapply_new_attempt() {
+    let server = Server::start().await;
+    let owner = server.owner().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let mut control = start_control(&server, &owner, &proxy.origin, "receipt-conflicts").await;
+    for (code, body_status, refresh) in [
+        ("receipt_publication_superseded", 409, true),
+        ("receipt_lease_expired", 409, true),
+        ("receipt_precondition", 409, true),
+        ("receipt_content_conflict", 409, true),
+        ("receipt_publication_superseded", 400, false),
+        ("receipt_instance_mismatch", 409, false),
+        ("receipt_target_mismatch", 409, false),
+        ("request_id_conflict", 409, false),
+    ] {
+        control.authenticate().await.unwrap();
+        control.acquire_instance(Default::default()).await.unwrap();
+        control.refresh_configuration().await.unwrap();
+        let ticket = control.begin_application().await.unwrap();
+        let snapshot = control.execution_snapshot().unwrap();
+        let status = control.snapshot();
+        proxy.fault(RECEIPTS, Fault::ReceiptConflict(code, body_status));
+        let error = control
+            .finish_application(&ticket, Ok(()), Utc::now())
+            .await
+            .unwrap_err();
+        assert!(!format!("{error:?}").contains("sensitive receipt body"));
+        assert!(!error.to_string().contains("sensitive receipt body"));
+        assert_eq!(
+            matches!(error, Error::ReceiptRejected(_)),
+            refresh,
+            "{code}/{body_status}"
+        );
+        assert_eq!(control.status().authenticated, refresh);
+        assert_eq!(status.status().instance.is_some(), refresh);
+        assert_eq!(snapshot.ensure_current().is_ok(), refresh);
+        if refresh {
+            assert_eq!(
+                control.status().instance.unwrap().instance_id,
+                ticket.instance().instance_id
+            );
+            let count = proxy.count(RECEIPTS);
+            assert!(matches!(
+                control
+                    .finish_application(&ticket, Ok(()), Utc::now())
+                    .await,
+                Err(Error::Pending)
+            ));
+            assert_eq!(
+                proxy.count(RECEIPTS),
+                count,
+                "rejected ticket cannot be resubmitted"
+            );
+            control.refresh_configuration().await.unwrap();
+            let next = control.begin_application().await.unwrap();
+            assert_eq!(next.attempt(), ticket.attempt().checked_next().unwrap());
+            control
+                .finish_application(&next, Ok(()), Utc::now())
+                .await
+                .unwrap();
+        } else {
+            assert!(control.status().instance.is_none());
+        }
+    }
+    control.shutdown().await.unwrap();
+    proxy.close().await;
     server.close().await;
 }

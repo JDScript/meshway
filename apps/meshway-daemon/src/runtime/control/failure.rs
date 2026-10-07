@@ -12,6 +12,11 @@ pub(super) struct Failure {
     pub reset: bool,
     pub retry_after: Option<Duration>,
 }
+impl Failure {
+    pub fn stops_network(&self) -> bool {
+        !self.retry || self.reset
+    }
+}
 
 pub(super) fn failure(error: Error, authenticating: bool) -> Failure {
     at("open_control", error, authenticating)
@@ -20,13 +25,15 @@ pub(super) fn failure(error: Error, authenticating: bool) -> Failure {
 pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) -> Failure {
     let (kind, status, code) = details(&error);
     let server_request_id = match &error {
+        Error::ReceiptRejected(rejection) => rejection.response().request_id,
         Error::Server(ClientError::Http {
             problem: Some(body),
             ..
         }) => body.request_id,
         _ => None,
     };
-    let retry_after = matches!(&error, Error::StateScopeChanged).then_some(Duration::from_secs(1));
+    let retry_after = matches!(&error, Error::StateScopeChanged | Error::ReceiptRejected(_))
+        .then_some(Duration::from_secs(1));
     // A received rejection remains a rejection even if its body is truncated.
     // Runtime bearer/instance rejection first reauthenticates the held identity;
     // rejection of that proof must stop, including unknown Controller/key/Node.
@@ -36,7 +43,18 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         if body.status == 409 && matches!(body.problem, meshway_protocol::Problem::RequestConflict { .. }));
     let (problem, retry, reset) = match &error {
         Error::MembershipRevoked => (Problem::Credentials, true, true),
-        Error::StateScopeChanged => (Problem::Apply, true, false),
+        Error::StateScopeChanged | Error::ReceiptRejected(_) => (Problem::Apply, true, false),
+        Error::Server(ClientError::Http {
+            status: 409,
+            problem: Some(body),
+        }) if body.status == 409
+            && matches!(
+                body.problem,
+                meshway_protocol::Problem::ReceiptTargetMismatch { .. }
+            ) =>
+        {
+            (Problem::Contract, false, true)
+        }
         Error::Server(_) if matches!(status, Some(401 | 403 | 404 | 409)) => {
             let retry = !authenticating || authentication_conflict;
             (Problem::Credentials, retry, retry)
@@ -82,6 +100,11 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
 
 fn details(error: &Error) -> (&'static str, Option<u16>, Option<&'static str>) {
     match error {
+        Error::ReceiptRejected(rejection) => (
+            "receipt_rejected",
+            Some(rejection.response().status),
+            Some(problem_code(&rejection.response().problem)),
+        ),
         Error::Server(error) => match error {
             ClientError::Network { status } => ("network", *status, None),
             ClientError::Decode { status } => ("decode", Some(*status), None),
@@ -89,16 +112,7 @@ fn details(error: &Error) -> (&'static str, Option<u16>, Option<&'static str>) {
             ClientError::Http { status, problem } => (
                 "http",
                 Some(*status),
-                problem.as_ref().map(|body| match &body.problem {
-                    meshway_protocol::Problem::InvalidCredentials { .. } => "invalid_credentials",
-                    meshway_protocol::Problem::PermissionDenied { .. } => "permission_denied",
-                    meshway_protocol::Problem::NotFound { .. } => "not_found",
-                    meshway_protocol::Problem::RequestConflict { .. } => "request_id_conflict",
-                    meshway_protocol::Problem::StateScopeChanged { .. } => "state_scope_changed",
-                    meshway_protocol::Problem::Busy { .. } => "busy",
-                    meshway_protocol::Problem::ServiceUnavailable { .. } => "service_unavailable",
-                    _ => "other",
-                }),
+                problem.as_ref().map(|body| problem_code(&body.problem)),
             ),
             ClientError::Configuration => ("client_configuration", None, None),
             ClientError::Request => ("client_request", None, None),
@@ -113,9 +127,73 @@ fn details(error: &Error) -> (&'static str, Option<u16>, Option<&'static str>) {
     }
 }
 
+fn problem_code(problem: &meshway_protocol::Problem) -> &'static str {
+    match problem {
+        meshway_protocol::Problem::InvalidCredentials { .. } => "invalid_credentials",
+        meshway_protocol::Problem::PermissionDenied { .. } => "permission_denied",
+        meshway_protocol::Problem::NotFound { .. } => "not_found",
+        meshway_protocol::Problem::RequestConflict { .. } => "request_id_conflict",
+        meshway_protocol::Problem::BindingConflict { .. } => "binding_conflict",
+        meshway_protocol::Problem::ReceiptInstanceMismatch { .. } => "receipt_instance_mismatch",
+        meshway_protocol::Problem::ReceiptTargetMismatch { .. } => "receipt_target_mismatch",
+        meshway_protocol::Problem::ReceiptPublicationSuperseded { .. } => {
+            "receipt_publication_superseded"
+        }
+        meshway_protocol::Problem::ReceiptLeaseExpired { .. } => "receipt_lease_expired",
+        meshway_protocol::Problem::ReceiptPrecondition { .. } => "receipt_precondition",
+        meshway_protocol::Problem::ReceiptContentConflict { .. } => "receipt_content_conflict",
+        meshway_protocol::Problem::StateScopeChanged { .. } => "state_scope_changed",
+        meshway_protocol::Problem::Busy { .. } => "busy",
+        meshway_protocol::Problem::ServiceUnavailable { .. } => "service_unavailable",
+        _ => "other",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receipt_conflicts_only_suspend_for_instance_or_target_binding_rejection() {
+        for (code, refresh) in [
+            ("receipt_publication_superseded", true),
+            ("receipt_lease_expired", true),
+            ("receipt_precondition", true),
+            ("receipt_content_conflict", true),
+            ("receipt_instance_mismatch", false),
+            ("receipt_target_mismatch", false),
+            ("binding_conflict", false),
+            ("request_id_conflict", false),
+        ] {
+            let body: meshway_protocol::ErrorResponse = serde_json::from_value(serde_json::json!({
+                "requestId": null, "status": 409,
+                "problem": {"code": code, "params": {}, "message": "ignored"}
+            }))
+            .unwrap();
+            // Control only exposes ReceiptRejected for validated receipt-domain
+            // responses; its HTTP integration tests exercise that boundary.
+            let error = if refresh {
+                Error::ReceiptRejected(Box::new(body.into()))
+            } else {
+                Error::Server(ClientError::Http {
+                    status: 409,
+                    problem: Some(body),
+                })
+            };
+            let failure = at("finish_application", error, false);
+            assert_eq!(failure.retry, code != "receipt_target_mismatch", "{code}");
+            assert_eq!(failure.reset, !refresh, "{code}");
+            assert_eq!(
+                failure.stops_network(),
+                !refresh,
+                "{code}: stop(false)/host.suspend gate"
+            );
+            assert_eq!(
+                failure.retry_after,
+                refresh.then_some(Duration::from_secs(1))
+            );
+        }
+    }
 
     #[test]
     fn stream_revocation_uses_runtime_credential_recovery_not_operator_blocking() {

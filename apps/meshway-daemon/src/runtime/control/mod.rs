@@ -381,7 +381,7 @@ pub(super) async fn run(
                     let delay = error
                         .retry
                         .then(|| error.retry_after.unwrap_or(Duration::from_secs(backoff)));
-                    if !error.retry || error.reset {
+                    if error.stops_network() {
                         stop(driver, false).await;
                         if let Some(network) = &mut network {
                             let _ = network.stop(false).await;

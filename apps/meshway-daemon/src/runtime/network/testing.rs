@@ -7,6 +7,7 @@ pub(in crate::runtime) struct Worker {
     pub handle: Handle,
     reports: watch::Sender<Report>,
     commands: mpsc::Receiver<Command>,
+    completions: mpsc::Sender<Completion>,
     stop: oneshot::Sender<()>,
 }
 impl Worker {
@@ -14,6 +15,7 @@ impl Worker {
         let (reports, report) = watch::channel(Report::stopped());
         let (_, reporting) = reporting::channel(reports.clone());
         let (commands, received) = mpsc::channel(4);
+        let (completions, completed) = mpsc::channel(8);
         let (stop, stopped) = oneshot::channel();
         let handle = Handle {
             observation_plans: watch::channel(None).0,
@@ -30,7 +32,7 @@ impl Worker {
             ticket: None,
             outcome: None,
             retry: Retry::default(),
-            completions: mpsc::channel(8).1,
+            completions: completed,
             pending_completion: None,
             reporting,
             #[cfg(target_os = "linux")]
@@ -44,6 +46,7 @@ impl Worker {
             handle,
             reports,
             commands: received,
+            completions,
             stop,
         }
     }
@@ -64,6 +67,42 @@ impl Worker {
             self.commands.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)
         ));
+    }
+    pub fn complete(&mut self, ticket: ApplicationTicket, guard: ExecutionSnapshot) {
+        self.install(ticket.clone(), guard, true);
+        self.handle.ticket = Some(ticket.clone());
+        self.completions
+            .try_send(Completion {
+                ticket,
+                result: Ok(()),
+                observed_at: Utc::now(),
+            })
+            .unwrap_or_else(|_| panic!("bounded completion queue"));
+    }
+    pub fn receipt_retired(&self) {
+        assert!(self.handle.pending_completion.is_none());
+        assert!(self.handle.ticket.is_none());
+        assert!(self.handle.outcome.is_none());
+        assert_eq!(self.handle.report.borrow().plane, DataPlane::Ready);
+    }
+    pub fn new_attempt(&self, old: &ApplicationTicket) {
+        let next = self.handle.ticket.as_ref().unwrap();
+        assert_eq!(next.instance(), old.instance());
+        assert_eq!(next.target(), old.target());
+        assert_eq!(next.attempt(), old.attempt().checked_next().unwrap());
+    }
+    pub async fn suspend(&mut self) {
+        let stopping = self.handle.stop(false);
+        tokio::pin!(stopping);
+        tokio::select! {
+            result = &mut stopping => panic!("stop returned before worker acknowledgement: {result:?}"),
+            command = self.commands.recv() => {
+                let Some(Command::Stop { down, reply }) = command else { panic!("expected suspend command"); };
+                assert!(!down);
+                reply.send(Ok(())).unwrap();
+            }
+        }
+        stopping.await.unwrap();
     }
     pub fn attached(&mut self, id: meshway_model::RequestId) {
         assert!(

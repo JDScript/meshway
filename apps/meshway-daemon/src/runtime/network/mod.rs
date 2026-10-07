@@ -632,13 +632,30 @@ impl Handle {
                     && instance.generation == completion.ticket.instance().generation
             });
             if same_instance {
-                control
+                let result = control
                     .finish_application(
                         &completion.ticket,
                         completion.result,
                         completion.observed_at,
                     )
-                    .await?;
+                    .await;
+                if let Err(error) = result {
+                    if matches!(error, meshway_control::Error::ReceiptRejected(_)) {
+                        // Definitive rejection retires only this completion.
+                        // Keep the installed target/resources for the checked
+                        // handoff; the next cycle refreshes before a new attempt.
+                        if self.ticket.as_ref().is_some_and(|ticket| {
+                            ticket.instance() == completion.ticket.instance()
+                                && ticket.target() == completion.ticket.target()
+                                && ticket.attempt() == completion.ticket.attempt()
+                        }) {
+                            self.ticket = None;
+                            self.outcome = None;
+                        }
+                        self.pending_completion = None;
+                    }
+                    return Err(error);
+                }
                 self.reporting.receipt_completed();
             }
             if self.ticket.as_ref().is_some_and(|ticket| {

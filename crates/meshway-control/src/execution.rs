@@ -227,7 +227,18 @@ impl Control {
             .client
             .submit_node_configuration_receipt(receipt, self.token()?)
             .await;
-        self.registered(response)?;
+        if let Err(error) = self.receipt_response(response) {
+            if matches!(error, Error::ReceiptRejected(_)) {
+                let saved = self.receipt.as_mut().ok_or(Error::Lifecycle)?;
+                saved.request.attempt = saved
+                    .request
+                    .attempt
+                    .checked_next()
+                    .map_err(|_| Error::Lifecycle)?;
+                saved.request.reported_at_ms = now()?;
+            }
+            return Err(error);
+        }
         self.receipt.as_mut().ok_or(Error::Lifecycle)?.acknowledged = true;
         Ok(())
     }

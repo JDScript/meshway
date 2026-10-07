@@ -18,6 +18,7 @@ struct Attempt {
     owner: Arc<()>,
     saved: ReceiptRequest,
     saved_acknowledged: AtomicBool,
+    rejected: AtomicBool,
     completion: Mutex<Option<ReceiptRequest>>,
 }
 
@@ -64,12 +65,13 @@ impl Control {
         });
         let next = match reusable {
             Some(ticket)
-                if ticket
-                    .0
-                    .completion
-                    .lock()
-                    .map_err(|_| Error::Lifecycle)?
-                    .is_none() =>
+                if !ticket.0.rejected.load(Ordering::Acquire)
+                    && ticket
+                        .0
+                        .completion
+                        .lock()
+                        .map_err(|_| Error::Lifecycle)?
+                        .is_none() =>
             {
                 Some(ticket.clone())
             }
@@ -84,7 +86,15 @@ impl Control {
                     .checked_next()
                     .map_err(|_| Error::Lifecycle)?,
                 None => Version::MIN,
-            };
+            }
+            .max(
+                self.receipt
+                    .as_ref()
+                    .filter(|receipt| {
+                        receipt.request.instance == instance && receipt.request.target == target
+                    })
+                    .map_or(Version::MIN, |receipt| receipt.request.attempt),
+            );
             let old_saved = self.receipt.as_ref().filter(|r| {
                 r.request.instance == instance
                     && r.request.target == target
@@ -110,6 +120,7 @@ impl Control {
                 owner: self.application_owner.clone(),
                 saved,
                 saved_acknowledged: AtomicBool::new(acknowledged),
+                rejected: AtomicBool::new(false),
                 completion: Mutex::new(None),
             }));
             self.application = Some(ticket.clone());
@@ -120,7 +131,12 @@ impl Control {
                 .client
                 .submit_node_configuration_receipt(&ticket.0.saved, self.token()?)
                 .await;
-            self.registered(response)?;
+            if let Err(error) = self.receipt_response(response) {
+                if matches!(error, Error::ReceiptRejected(_)) {
+                    ticket.0.rejected.store(true, Ordering::Release);
+                }
+                return Err(error);
+            }
             if self.current_instance()? != ticket.0.saved.instance {
                 return Err(Error::Lifecycle);
             }
@@ -139,6 +155,9 @@ impl Control {
         observed_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), Error> {
         let current = self.current_instance()?;
+        if ticket.0.rejected.load(Ordering::Acquire) {
+            return Err(Error::Pending);
+        }
         if !Arc::ptr_eq(&ticket.0.owner, &self.application_owner)
             || ticket.instance() != &current
             || !ticket.0.saved_acknowledged.load(Ordering::Acquire)
@@ -185,7 +204,12 @@ impl Control {
             .client
             .submit_node_configuration_receipt(&request, self.token()?)
             .await;
-        self.registered(response)?;
+        if let Err(error) = self.receipt_response(response) {
+            if matches!(error, Error::ReceiptRejected(_)) {
+                ticket.0.rejected.store(true, Ordering::Release);
+            }
+            return Err(error);
+        }
         self.current_instance()?;
         Ok(())
     }

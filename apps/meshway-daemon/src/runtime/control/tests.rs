@@ -4,6 +4,58 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+#[tokio::test]
+async fn receipt_http_conflicts_preserve_installation_until_binding_requires_suspend() {
+    use crate::runtime::{network::testing::Worker, ping::integration::Fixture};
+    for (code, refresh) in [
+        ("receipt_publication_superseded", true),
+        ("receipt_lease_expired", true),
+        ("receipt_precondition", true),
+        ("receipt_content_conflict", true),
+        ("receipt_instance_mismatch", false),
+        ("receipt_target_mismatch", false),
+    ] {
+        let mut fixture = Fixture::open().await;
+        let mut worker = Worker::new();
+        let ticket = fixture.controls[0].begin_application().await.unwrap();
+        let guard = fixture.controls[0].execution_snapshot().unwrap();
+        worker.complete(ticket.clone(), guard.clone());
+        fixture.reject_receipt(code);
+        let error = worker
+            .handle
+            .finish(&mut fixture.controls[0])
+            .await
+            .unwrap_err();
+        let failure = failure::at("finish_application", error, false);
+        assert_eq!(failure.reset, !refresh, "{code}");
+        assert_eq!(failure.stops_network(), !refresh, "{code}");
+        if failure.stops_network() {
+            worker.suspend().await;
+            assert!(fixture.controls[0].status().instance.is_none());
+            assert!(guard.ensure_current().is_err());
+        } else {
+            worker.no_commands();
+            worker.receipt_retired();
+            guard.ensure_current().unwrap();
+            worker
+                .handle
+                .finish(&mut fixture.controls[0])
+                .await
+                .unwrap();
+            fixture.controls[0].refresh_configuration().await.unwrap();
+            worker
+                .handle
+                .publish(&mut fixture.controls[0])
+                .await
+                .unwrap();
+            worker.new_attempt(&ticket);
+            worker.no_commands();
+        }
+        worker.close().await;
+        fixture.close().await;
+    }
+}
+
 #[test]
 fn cancelled_private_write_is_settled_and_network_join_runs_before_the_result() {
     // Queue the real Control write behind one blocking worker. No replacement
