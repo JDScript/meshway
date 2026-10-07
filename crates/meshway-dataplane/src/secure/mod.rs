@@ -24,7 +24,8 @@ mod replay;
 mod session;
 
 use crate::{
-    AuthenticatedPeer, Direction, Engine, Hop, Ingress, Packet, PendingAction, PendingRoute,
+    AuthenticatedPeer, Direction, Engine, Hop, Ingress, Packet, PacketBuffer, PendingAction,
+    PendingRoute,
 };
 use codec::{Context, Frame, Kind};
 use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot, Reading};
@@ -166,7 +167,7 @@ impl Guard {
 /// Retains the original execution, circuit and flow deadlines through queued
 /// I/O. The carrier is scheduling metadata, never an authorization claim.
 pub struct PendingFrame {
-    bytes: Vec<u8>,
+    bytes: PacketBuffer,
     next: NodeId,
     carrier: Carrier,
     circuit: [u8; 32],
@@ -200,7 +201,7 @@ impl PendingFrame {
         self.guard.invalidated().await;
     }
     /// Invoke the final synchronous sink, not an asynchronous queue.
-    pub fn release<T>(self, sink: impl FnOnce(Vec<u8>) -> T) -> Result<T, Error> {
+    pub fn release<T>(self, sink: impl FnOnce(PacketBuffer) -> T) -> Result<T, Error> {
         self.ensure_current()?;
         Ok(sink(self.bytes))
     }
@@ -267,7 +268,7 @@ enum State {
     Initiator(Box<snow::HandshakeState>),
     RelayAwaiting,
     RelayEstablished,
-    Endpoint(Box<snow::StatelessTransportState>),
+    Endpoint(Box<crypto::Transport>),
     Closed,
 }
 impl State {
@@ -446,7 +447,7 @@ impl Circuit {
     // completion retires the circuit; success keeps every issued guard live.
     fn complete_handshake(
         &mut self,
-        finish: impl FnOnce(Box<snow::HandshakeState>) -> Result<snow::StatelessTransportState, Error>,
+        finish: impl FnOnce(Box<snow::HandshakeState>) -> Result<crypto::Transport, Error>,
     ) -> Result<(), Error> {
         if self.cancellation.is_cancelled() {
             self.retire_for("handshake", "cancelled");
@@ -681,7 +682,7 @@ impl SecureNode {
             reply: false,
             sequence: 0,
             probe: None,
-            body,
+            body: body.into(),
             proofs: Vec::new(),
             exchange: None,
             auth: Default::default(),
@@ -744,19 +745,23 @@ impl SecureNode {
         result
     }
 
-    pub fn receive(&mut self, incoming: &Carrier, bytes: Vec<u8>) -> Result<Received, Error> {
+    pub fn receive(
+        &mut self,
+        incoming: &Carrier,
+        bytes: impl AsRef<[u8]> + Into<PacketBuffer>,
+    ) -> Result<Received, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("secure.receive");
         let _profile = PROFILE.enter();
         let snapshot = self.identity.snapshot().clone();
         let reading = snapshot.reading().map_err(|_| Error::Authority)?;
         self.maintain_circuits(&reading, false)?;
-        let id = codec::session_id(&bytes)?;
+        let id = codec::session_id(bytes.as_ref())?;
         let retained = id
             .as_ref()
             .and_then(|id| self.circuits.get(id))
             .map(|circuit| &circuit.context);
-        let frame = Frame::decode(&bytes, retained)?;
+        let frame = Frame::decode_owned(bytes.into(), retained)?;
         let cfg = reading.configuration;
         let previous = if frame.kind.handshake() {
             crypto::verify(cfg, &frame, incoming)
@@ -848,9 +853,7 @@ impl SecureNode {
                         let mut noise = crypto::build(&self.identity, cfg, &frame.context, false)?;
                         crypto::read_handshake(&mut noise, &frame.body, 96, expected.as_bytes())?;
                         let body = crypto::write_handshake(&mut noise, 48)?;
-                        let noise = noise
-                            .into_stateless_transport_mode()
-                            .map_err(|_| Error::Crypto)?;
+                        let noise = crypto::Transport::finish(noise)?;
                         Ok((noise, body))
                     })();
                     let (noise, body) = match completed {
@@ -871,7 +874,7 @@ impl SecureNode {
                         reply: true,
                         sequence: 0,
                         probe: None,
-                        body,
+                        body: body.into(),
                         proofs: Vec::new(),
                         exchange: Some(circuit.session.exchange()?),
                         auth: Default::default(),
@@ -973,9 +976,7 @@ impl SecureNode {
                                 expected.as_bytes(),
                             )?;
                             guard.finish()?;
-                            let noise = noise
-                                .into_stateless_transport_mode()
-                                .map_err(|_| Error::Crypto)?;
+                            let noise = crypto::Transport::finish(*noise)?;
                             guard.finish()?;
                             Ok(noise)
                         })?;
@@ -1116,23 +1117,20 @@ impl SecureNode {
         };
         self.check_outgoing_carrier(&circuit.context, frame.reply, reading)?;
         let guard = circuit.guard(self.identity.snapshot(), false);
-        let (mut route, packet) = match &circuit.state {
-            State::Endpoint(noise) => {
-                let packet = crypto::decrypt(noise, frame.sequence, &frame.body)?;
-                let route = self
-                    .engine
-                    .admit_circuit_facts(
-                        ingress,
-                        packet.facts(),
-                        reading,
-                        circuit.context.circuit,
-                        &guard,
-                    )
-                    .map_err(|error| circuit.engine_rejected("receive_endpoint", error))?;
-                (route, Some(packet))
-            }
-            _ => return Err(Error::State),
+        let State::Endpoint(noise) = &circuit.state else {
+            return Err(Error::State);
         };
+        let packet = crypto::decrypt(noise, frame.sequence, frame.body)?;
+        let mut route = self
+            .engine
+            .admit_circuit_facts(
+                ingress,
+                packet.facts(),
+                reading,
+                circuit.context.circuit,
+                &guard,
+            )
+            .map_err(|error| circuit.engine_rejected("receive_endpoint", error))?;
         // Plaintext output must retain the circuit's original caps too, even
         // when its Engine has received a newer same-execution lease snapshot.
         route
@@ -1147,15 +1145,10 @@ impl SecureNode {
             return Err(Error::Context);
         }
         let sequence = frame.sequence;
-        let result = match (route.hop(), packet) {
-            (hop @ Hop::Forward(_), None) => {
-                Received::Forward(self.output(circuit, frame, hop, Some(&route), reading)?)
-            }
-            (Hop::Deliver | Hop::Exit, Some(packet)) => {
-                Received::Packet(route.attach(packet).map_err(|_| Error::Packet)?)
-            }
-            _ => return Err(Error::State),
-        };
+        if !matches!(route.hop(), Hop::Deliver | Hop::Exit) {
+            return Err(Error::State);
+        }
+        let result = Received::Packet(route.attach(packet).map_err(|_| Error::Packet)?);
         circuit.ensure_current(self.identity.snapshot())?;
         circuit.receive[index].commit(sequence);
         Ok(result)
@@ -1333,7 +1326,7 @@ impl SecureNode {
         } else {
             circuit.session.append(&mut frame, carrier.clone())?;
         }
-        let bytes = frame.encode()?;
+        let bytes = frame.encode_owned()?;
         guard.finish()?;
         Ok(PendingFrame {
             bytes,

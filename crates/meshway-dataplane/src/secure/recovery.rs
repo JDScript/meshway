@@ -100,7 +100,7 @@ impl Stage {
 
 fn copy(frame: &PendingFrame) -> PendingFrame {
     PendingFrame {
-        bytes: frame.bytes.clone(),
+        bytes: frame.bytes.payload().into(),
         next: frame.next,
         carrier: frame.carrier.clone(),
         circuit: frame.circuit,

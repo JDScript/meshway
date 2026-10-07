@@ -124,8 +124,8 @@ def aggregate(results):
 
 def summary(metadata):
     rows = ["# L0 protected circuit CPU performance", "",
-            "One synchronous thread; real compiler permits, SecureNode handshake, Noise, ordered MACs,",
-            "flow admission, original output guards and exact byte/path delivery checks. Native UDP carrier",
+            "One synchronous thread; real compiler permits, SecureNode handshake, Noise, adjacent MACs,",
+            "endpoint flow admission, original output guards and exact byte/path delivery checks. Native UDP carrier",
             "metadata; no socket/TUN/transport adapter or control-plane I/O. One circuit and one established TCP flow.",
             "Each round sends a packet in both directions; 52B = pure ACK, larger packets = contiguous TCP payload.",
             "Role timings include ingress parse/copy, receive/forward and final delivery. Incoming frame release",

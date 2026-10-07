@@ -70,12 +70,15 @@ fn rfc1071_checksum_and_owned_redacted_packet() {
         17,
         udp_body(50000, 443, b"secret payload"),
     );
-    let pointer = bytes.as_ptr();
-    let packet = Packet::parse(bytes).unwrap();
+    let buffer = PacketBuffer::from(bytes);
+    let pointer = buffer.as_ptr();
+    let borrowed = Packet::parse(buffer.payload()).unwrap();
+    assert_eq!(borrowed.as_bytes().as_ptr(), pointer);
+    let packet = Packet::parse(buffer).unwrap();
     assert_eq!(packet.as_bytes().as_ptr(), pointer);
     assert_eq!(packet.traffic().destination_port.unwrap().get(), 443);
     assert!(!format!("{packet:?}").contains("secret payload"));
-    let returned = packet.into_bytes();
+    let returned = packet.into_buffer();
     assert_eq!(returned.as_ptr(), pointer);
 }
 

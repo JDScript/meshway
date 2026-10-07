@@ -10,7 +10,7 @@ use meshway_protocol::{CancelDemandRequest, DemandRequest};
 use std::{collections::BTreeMap, time::Duration};
 
 fn bytes(frame: PendingFrame) -> Vec<u8> {
-    frame.release(|wire| wire).unwrap()
+    frame.release(|wire| wire.into_vec()).unwrap()
 }
 
 fn forwarded(result: Result<Received, Error>) -> Vec<u8> {

@@ -56,7 +56,7 @@ async fn authenticated_responder_failure_retains_tombstone_across_replay_renewal
         .unwrap();
     let cid = init.circuit();
     let bytes = resign(
-        init.release(|bytes| bytes).unwrap(),
+        init.release(|bytes| bytes.into_vec()).unwrap(),
         fixture
             .mesh
             .a
@@ -72,7 +72,7 @@ async fn authenticated_responder_failure_retains_tombstone_across_replay_renewal
     let Received::Forward(forward) = fixture.r.receive(&fixture.ar.carrier, bytes).unwrap() else {
         panic!("valid origin proof must reach the opaque relay");
     };
-    let bytes = forward.release(|bytes| bytes).unwrap();
+    let bytes = forward.release(|bytes| bytes.into_vec()).unwrap();
     let mut bad_proof = bytes.clone();
     *bad_proof.last_mut().unwrap() ^= 1;
     assert!(matches!(
@@ -169,7 +169,7 @@ async fn signed_terminal_cannot_replace_the_relays_cached_ephemeral() {
     else {
         panic!("terminal response");
     };
-    let original = response.release(|bytes| bytes).unwrap();
+    let original = response.release(|bytes| bytes.into_vec()).unwrap();
     let replaced = resign(
         original.clone(),
         fixture
@@ -204,7 +204,7 @@ async fn signed_terminal_cannot_replace_the_relays_cached_ephemeral() {
             .a
             .receive(
                 &fixture.ar.carrier,
-                response.release(|bytes| bytes).unwrap()
+                response.release(|bytes| bytes.into_vec()).unwrap()
             )
             .unwrap(),
         Received::Established { response: None, .. }

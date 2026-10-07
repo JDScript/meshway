@@ -105,36 +105,27 @@ impl Probes {
 }
 
 fn encrypt(
-    noise: &snow::StatelessTransportState,
+    noise: &crypto::Transport,
     sequence: u64,
     challenge: Digest,
-) -> Result<Vec<u8>, Error> {
-    let mut bytes = vec![0; 48];
-    if noise
-        .write_message(sequence, challenge.as_bytes(), &mut bytes)
-        .map_err(|_| Error::Crypto)?
-        != 48
-    {
-        return Err(Error::Crypto);
-    }
+) -> Result<PacketBuffer, Error> {
+    let mut bytes = PacketBuffer::from(challenge.as_bytes().as_slice());
+    noise.encrypt(sequence, &mut bytes)?;
     Ok(bytes)
 }
 
 fn decrypt(
-    noise: &snow::StatelessTransportState,
+    noise: &crypto::Transport,
     sequence: u64,
-    bytes: &[u8],
+    mut bytes: PacketBuffer,
 ) -> Result<Digest, Error> {
-    let mut challenge = Zeroizing::new([0; 32]);
-    if bytes.len() != 48
-        || noise
-            .read_message(sequence, bytes, &mut challenge[..])
-            .map_err(|_| Error::Crypto)?
-            != 32
-    {
+    if bytes.len() != 48 {
         return Err(Error::Crypto);
     }
-    Ok(Digest::from_bytes(*challenge))
+    noise.decrypt(sequence, &mut bytes)?;
+    Ok(Digest::from_bytes(
+        bytes.payload().try_into().map_err(|_| Error::Crypto)?,
+    ))
 }
 
 impl SecureNode {
@@ -290,7 +281,7 @@ impl SecureNode {
                     Received::Forward(output)
                 }
                 (State::Endpoint(noise), Hop::Deliver) => {
-                    let challenge = decrypt(noise, sequence, &frame.body)?;
+                    let challenge = decrypt(noise, sequence, frame.body)?;
                     if request.challenge != Some(challenge) {
                         return Err(Error::Crypto);
                     }
@@ -325,7 +316,7 @@ impl SecureNode {
                     (Received::Forward(output), None, false)
                 }
                 (State::Endpoint(noise), Hop::Deliver) => {
-                    let challenge = decrypt(noise, sequence, &frame.body)?;
+                    let challenge = decrypt(noise, sequence, frame.body)?;
                     guard.finish()?;
                     let sequence = circuit.send[1].take()?;
                     let response = Frame {

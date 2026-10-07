@@ -1,7 +1,9 @@
 use super::{Command, Completion, Report, Request, Target, packets::Packets};
 use futures_util::FutureExt as _;
 use meshway_connectivity::{Event, Manager};
-use meshway_dataplane::{Packet, secure::SecureNode};
+use meshway_dataplane::{
+    DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketPool, secure::SecureNode,
+};
 use meshway_ipc::{DataPlane, Problem};
 use meshway_protocol::execution::ApplyFailure;
 use meshway_underlay::Host;
@@ -37,7 +39,10 @@ pub(super) async fn run(
     let mut installed: Option<Installed> = None;
     let mut packets = Packets::default();
     let mut diagnostics = super::diagnostics::Diagnostics::default();
-    let mut buffer = vec![0u8; Packet::MAX_LEN];
+    // Covers the existing 128 queued packets, 32 sends and one 32-packet read
+    // turn without allocating overflow buffers. The pool belongs to this owner.
+    let buffers = PacketPool::new(256, Packet::MAX_LEN, DEFAULT_HEADROOM, DEFAULT_TAILROOM)
+        .map_err(|_| Problem::Tun)?;
     let mut generation = meshway_model::Sequence::MIN;
     let mut pending_completion = None;
     let mut last_completion: Option<meshway_control::ApplicationTicket> = None;
@@ -122,7 +127,7 @@ pub(super) async fn run(
                 // renewal work. Lifecycle/authority remain the outer priority.
                 tokio::select! {
                     result = async {
-                         match host.tun() { Some(tun) => receive_packets(tun, &mut buffer).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
+                         match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
                     }, if live => Work::Packet(result),
                     event = async {
                         match installed.as_mut().and_then(|state| state.manager.as_mut()) {
@@ -526,17 +531,26 @@ pub(super) async fn run(
 /// priority. Packet admission still happens individually in the unique engine.
 async fn receive_packets(
     tun: &meshway_tun::Tun,
-    buffer: &mut [u8],
+    buffers: &PacketPool,
 ) -> Result<Vec<Result<Packet, meshway_dataplane::PacketError>>, meshway_tun::Error> {
-    let first = tun.recv(buffer).await?;
+    let acquire = || {
+        buffers
+            .acquire(tun.mtu())
+            .map_err(|_| meshway_tun::Error::Io(std::io::Error::other("packet pool exhausted")))
+    };
+    let mut buffer = acquire()?;
+    let first = tun.recv(buffer.payload_mut()).await?;
     let mut packets = Vec::with_capacity(32);
-    packets.push(Packet::parse(buffer[..first].to_vec()));
+    buffer.truncate(first);
+    packets.push(Packet::parse(buffer));
     for _ in 1..32 {
-        let Some(result) = tun.recv(buffer).now_or_never() else {
+        let mut buffer = acquire()?;
+        let Some(result) = tun.recv(buffer.payload_mut()).now_or_never() else {
             break;
         };
         let size = result?;
-        packets.push(Packet::parse(buffer[..size].to_vec()));
+        buffer.truncate(size);
+        packets.push(Packet::parse(buffer));
     }
     Ok(packets)
 }

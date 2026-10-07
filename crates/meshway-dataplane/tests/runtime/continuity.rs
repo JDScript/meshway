@@ -37,7 +37,7 @@ fn forward(fixture: &mut SecureMesh, circuit: [u8; 32]) -> Vec<u8> {
         .a
         .send(circuit, datagram(&fixture.mesh, false, false))
         .unwrap()
-        .release(|bytes| bytes)
+        .release(|bytes| bytes.into_vec())
         .unwrap();
     let Received::Forward(next) = fixture
         .r
@@ -62,7 +62,7 @@ fn reply(fixture: &mut SecureMesh, circuit: [u8; 32]) {
         .b
         .send(circuit, datagram(&fixture.mesh, false, true))
         .unwrap()
-        .release(|bytes| bytes)
+        .release(|bytes| bytes.into_vec())
         .unwrap();
     let Received::Forward(next) = fixture.r.receive(&fixture.rb.carrier, wire).unwrap() else {
         panic!("reply relay");

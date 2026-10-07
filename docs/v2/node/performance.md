@@ -6,7 +6,7 @@
 
 | 层级 | 处理步骤 | 状态与入口 |
 | --- | --- | --- |
-| L0 | 进程内受保护 circuit：真实编译器许可、SecureNode 握手、Noise、逐验证者 MAC、流准入与输出 guard；没有 socket、TUN 或控制面 I/O | 已实现；[L0 受保护 circuit](#l0-受保护-circuit)，`perf:circuit` |
+| L0 | 进程内受保护 circuit：真实编译器许可、SecureNode 握手、Noise、相邻 MAC、端点流准入与输出 guard；没有 socket、TUN 或控制面 I/O | 已实现；[L0 受保护 circuit](#l0-受保护-circuit)，`perf:circuit` |
 | L1 | 正式协议 provider 的原生 socket I/O，对照公共 datagram Session；代理协议保留自身 TLS／WS | 已实现；[L1 承载对照](#l1-承载对照)，`perf:transport` |
 | L2 | 两个 Linux namespace 中的真实 TUN、Tokio、正式 UDP provider 与 Session，原样转发明文 IP 包 | 已实现；`perf:dataplane` 的 `plain` |
 | L3 | L2 I/O 加正式 SecureNode、真实认证／加密、路径证明与重放处理 | 已实现；[L3 实现与实测](#l3-实现与实测)，`perf:dataplane` 的 `secure` |
@@ -27,11 +27,11 @@ L2 的 `raw` 是同一隔离网络中直接运行 iperf3 的内核参照，不�
 mise run perf:circuit
 ```
 
-`scripts/perf/circuit.py` 显式构建 `tools/meshway-circuit-perf` 的 release 程序（缓存 `target/circuit-perf`）。单同步线程通过真实 Policy 编译器与 `tools/meshway-static-authority` 的静态签发建立 2–8 节点链，使用正式 `SecureNode` 完成 Noise／MAC circuit 握手与 TCP 流建立，再运行双向稳态包流。每包保留解析、业务流准入、Noise、逐验证者 MAC、codec、当前执行资格检查与原输出 guard；测量范围包含内存接收／交付，不包含 socket、TUN 或控制面 I/O。52-byte 输入为纯 IPv4/TCP ACK，1280-byte 输入携带 1228-byte TCP payload；握手与 warmup 不进入稳态窗口。
+`scripts/perf/circuit.py` 显式构建 `tools/meshway-circuit-perf` 的 release 程序（缓存 `target/circuit-perf`）。单同步线程通过真实 Policy 编译器与 `tools/meshway-static-authority` 的静态签发建立 2–8 节点链，使用正式 `SecureNode` 完成 Noise／MAC circuit 握手与 TCP 流建立，再运行双向稳态包流。每包保留端点解析与业务流准入、Noise、相邻 MAC、codec、当前执行资格检查与原输出 guard；测量范围包含内存接收／交付，不包含 socket、TUN 或控制面 I/O。输入复制到池缓冲模拟 TUN 读入，计入源角色时间；后续角色传递同一分配。52-byte 输入为纯 IPv4/TCP ACK，1280-byte 输入携带 1228-byte TCP payload；握手与 warmup 不进入稳态窗口。
 
 默认矩阵为 2／3／5 节点 × 1280／52 字节 × profile 关闭与 1/128 采样，各重复三次。角色成本使用线程 CPU 时钟与单调时钟；接收角色包含上游 frame release 检查，终点包含 guarded 明文交付。报告写入执行脚本所在工作树的 `.meshway/perf/circuit/<run>/`：`results.json` 保存源码 digest、Git revision、二进制 SHA256、工具链、平台、参数、每角色 calls／CPU／wall、逐段帧字节与中位数／p10／p90；`summary.md` 另列 profile 采样的阶段分解。采样分解带 observer effect，不能加总当作 profile 关闭时的 CPU 预算。
 
-### L0 实测参考
+### L0 历史 v4 实测参考
 
 Apple M3 Pro、macOS、Rust 1.98.0，profile 关闭，每格为三次独立进程重复的中位数；guard 次数来自 profile 采样的精确调用计数。`36ca2117` 把每次执行资格检查改为单次时钟读取；`90bc1aec` 让每个同步操作共用入口一次 `Reading`，并按截止调度其他 circuit 的维护扫描。
 
@@ -120,6 +120,7 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 | `packetsPerSecond`、`lostPercent` | UDP 接收端交付报文数／秒和丢包；TCP 为 null |
 | `cpuSeconds`、`cpuPercent` | 所有样本容器 cgroup CPU 增量（直连两容器、中继三容器）；百分比为 CPU 秒／完整客户端墙钟时间 × 100，100% 等于一核；内核 CPU 归属限制见下节 |
 | `results[].wireguard` | 各接口的内核类型／MTU、AllowedIPs、端点、路由、握手时间和双向传输字节；不保存密钥 |
+| `cpuByRole` | 每个 A／R／B 角色的同区间 cgroup CPU 秒与百分比；历史报告缺失时表示未测，不从总量分摊 |
 | `allocations`、`copiedBytes`、`peakMemoryBytes` | 当前未测，明确为 null |
 
 吞吐采用 iperf3 排除 warmup 的接收区间。CPU 覆盖完整客户端区间，包括 warmup 和采集开销，包含节点、iperf3 与容器内辅助命令；不是仅 Node 的 CPU。固定 CPU quota 不等于绑核或独占宿主，结果只代表记录的环境。失败样本与原始日志保留，指标不填零，脚本返回失败。
@@ -237,7 +238,7 @@ CPU 为两容器合计，100% 表示一核；区间含 warmup。TCP pps 未测�
 
 ## L3 实现与实测
 
-`--stage secure` 工具入口已实现，组合正式 `SecureNode`、`meshway-transport-udp` provider 与公共 `Session`。`secure-direct` 为 A→B，`secure-relay` 为 A→R→B；只有 A、B 打开真实 TUN。R 的隔离容器没有 TUN device 和 `NET_ADMIN`，驱动只调用正式认证／flow 准入并转发 ciphertext。
+`--stage secure` 工具入口已实现，组合正式 `SecureNode`、`meshway-transport-udp` provider 与公共 `Session`。`secure-direct` 为 A→B，`secure-relay` 为 A→R→B；只有 A、B 打开真实 TUN。R 的隔离容器没有 TUN device 和 `NET_ADMIN`，驱动只调用正式会话认证与重放检查并转发 ciphertext；业务流仅在端点准入。
 
 ### 处理边界
 

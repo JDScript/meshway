@@ -165,6 +165,17 @@ def summary(metadata):
             right = [r[field] for r in baseline if r.get(field) is not None]
             deltas.append(f"{statistics.median(left)-statistics.median(right):+.2f}" if left and right else "—")
         lines.append(f"| {key[0]} | {reference} | {key[1]} | {key[2]} | {key[3]} | " + " | ".join(deltas) + " |")
+    lines.extend(["", "## Per-role cgroup CPU", "",
+                  "Same full client wall interval and cgroup scope as total CPU; includes iperf and warmup. Missing historical role counters are unmeasured.",
+                  "| Mode | Batch | Profile 1/N | Traffic | A CPU % | R CPU % | B CPU % |",
+                  "| --- | ---: | ---: | --- | ---: | ---: | ---: |"])
+    for key, records in sorted(groups.items()):
+        def role_cpu(role):
+            values = [r["cpuByRole"][role]["cpuPercent"] for r in records
+                      if role in r.get("cpuByRole", {})]
+            return f"{statistics.median(values):.2f}" if values else "—"
+        lines.append(f"| {key[0]} | {key[1]} | {key[2]} | {key[3]} | "
+                     f"{role_cpu('a')} | {role_cpu('r')} | {role_cpu('b')} |")
     profiles = {}
     for record in metadata["results"]:
         if record["status"] != "ok":
@@ -377,7 +388,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             if server.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError("iperf server failed readiness")
             time.sleep(0.05)
-        before = sum(cpu_usage(c) for c in containers.values())
+        before = {role: cpu_usage(c) for role, c in containers.items()}
         start = time.monotonic()
         client_args = ["docker", "exec", containers["a"], "iperf3", "-c", destination, "-J",
                        "-t", str(args.seconds), "-O", str(args.omit), "-P", "1", "--get-server-output"]
@@ -386,8 +397,14 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         with (directory / "iperf-client.json").open("w") as stdout, (directory / "iperf-client.stderr").open("w") as stderr:
             completed = subprocess.run(client_args, cwd=ROOT, stdout=stdout, stderr=stderr, timeout=args.seconds + args.omit + 25)
         elapsed = time.monotonic() - start
-        after = sum(cpu_usage(c) for c in containers.values())
-        record.update(cpuSeconds=after-before, clientWallSeconds=elapsed, command=client_args)
+        after = {role: cpu_usage(c) for role, c in containers.items()}
+        cpu = {role: after[role] - before[role] for role in containers}
+        if any(not math.isfinite(value) or value < 0 for value in cpu.values()):
+            raise RuntimeError("invalid per-role cgroup CPU delta")
+        total_cpu = sum(cpu.values())
+        record.update(cpuSeconds=total_cpu, clientWallSeconds=elapsed, command=client_args,
+                      cpuByRole={role: {"cpuSeconds": value, "cpuPercent": value/elapsed*100}
+                                 for role, value in cpu.items()})
         if completed.returncode or server.wait(timeout=10):
             raise RuntimeError("iperf process failed")
         data = json.loads((directory / "iperf-client.json").read_text())
@@ -395,7 +412,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             raise RuntimeError(data["error"])
         received = receiver_metrics(data, traffic, args.payload)
         record.update(status="ok", goodputMbps=received["bits_per_second"]/1e6,
-                      cpuPercent=(after-before)/elapsed*100,
+                       cpuPercent=total_cpu/elapsed*100,
                       packetsPerSecond=((received["packets"]-received["lost_packets"])/received["seconds"] if traffic == "udp" else None),
                       lostPercent=received.get("lost_percent"))
         for field in ("goodputMbps", "cpuPercent", "packetsPerSecond", "lostPercent"):

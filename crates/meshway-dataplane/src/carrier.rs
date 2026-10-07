@@ -185,7 +185,7 @@ async fn send_owned(
         lifetime: Some(lifetime.clone()),
     };
     let bytes = pending
-        .release(|bytes| bytes)
+        .release(|bytes| bytes.into_vec())
         .map_err(|_| Error::Cancelled)?;
     let capacity = bytes.capacity();
     let mut frames = VecDeque::from([Frame::new(bytes, peer)]);

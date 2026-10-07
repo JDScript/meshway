@@ -20,7 +20,7 @@ async fn circuit_close_and_owner_drop_fence_outputs_while_control_remains_live()
         .a
         .send(circuit, datagram(&fixture.mesh, true, false))
         .unwrap()
-        .release(|bytes| bytes)
+        .release(|bytes| bytes.into_vec())
         .unwrap();
     let Received::Forward(forward) = fixture.r.receive(&fixture.ar.carrier, wire).unwrap() else {
         panic!("opaque relay");
@@ -173,7 +173,7 @@ async fn authentic_frames_reject_tampering_replay_and_skipped_relay_without_deli
         .a
         .send(circuit, datagram(&fixture.mesh, false, false))
         .unwrap()
-        .release(|bytes| bytes)
+        .release(|bytes| bytes.into_vec())
         .unwrap();
     assert!(
         fixture
@@ -195,7 +195,7 @@ async fn authentic_frames_reject_tampering_replay_and_skipped_relay_without_deli
         panic!("relay must stay opaque")
     };
     assert!(fixture.r.receive(&fixture.ar.carrier, wire).is_err());
-    let wire = forward.release(|bytes| bytes).unwrap();
+    let wire = forward.release(|bytes| bytes.into_vec()).unwrap();
     let mut tampered = wire.clone();
     *tampered.last_mut().unwrap() ^= 1;
     assert!(fixture.b.receive(&fixture.rb.carrier, tampered).is_err());
@@ -213,12 +213,13 @@ async fn authentic_frames_reject_tampering_replay_and_skipped_relay_without_deli
         .a
         .send(circuit, datagram(&fixture.mesh, false, false))
         .unwrap()
-        .release(|bytes| bytes)
+        .release(|bytes| bytes.into_vec())
         .unwrap();
     let original = wire.clone();
     *wire.last_mut().unwrap() ^= 1;
     assert!(fixture.r.receive(&fixture.ar.carrier, wire).is_err());
-    let Received::Forward(forward) = fixture.r.receive(&fixture.ar.carrier, original).unwrap() else {
+    let Received::Forward(forward) = fixture.r.receive(&fixture.ar.carrier, original).unwrap()
+    else {
         panic!("R verifies the adjacent MAC");
     };
     assert!(
@@ -243,7 +244,7 @@ async fn control_cancellation_publication_and_stop_fence_crypto_and_plaintext_ou
         .a
         .send(circuit, datagram(&fixture.mesh, true, false))
         .unwrap()
-        .release(|bytes| bytes)
+        .release(|bytes| bytes.into_vec())
         .unwrap();
     let Received::Forward(forward) = fixture.r.receive(&fixture.ar.carrier, wire).unwrap() else {
         panic!("relay must stay opaque")

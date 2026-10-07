@@ -2,12 +2,14 @@ use super::{
     Error, MAX_PLAINTEXT,
     codec::{self, Context, Frame, Proof},
 };
-use crate::Packet;
+use crate::{Packet, PacketBuffer};
+mod noise;
 use ed25519_dalek::{Signature, VerifyingKey};
 use meshway_authority::{DataPlaneIdentity, packet_proof_message};
 use meshway_configuration::execution::{LogicalPath, NodeConfiguration};
 use meshway_model::{BoundNodeKey, Digest, KeyAlgorithm, NodeId};
 use meshway_policy::admission::{Carrier, admit_circuit_carrier, circuit_permit, path_carrier};
+pub(super) use noise::Transport;
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
@@ -143,49 +145,28 @@ pub(super) fn read_handshake(
 }
 
 pub(super) fn encrypt(
-    noise: &snow::StatelessTransportState,
+    noise: &Transport,
     nonce: u64,
     packet: Packet,
-) -> Result<Vec<u8>, Error> {
+) -> Result<PacketBuffer, Error> {
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("crypto.encrypt");
     let _profile = PROFILE.enter();
-    let plaintext = Zeroizing::new(packet.into_bytes());
-    if plaintext.len() > MAX_PLAINTEXT {
-        return Err(Error::Unsupported);
-    }
-    let mut out = vec![0; plaintext.len() + 16];
-    if noise
-        .write_message(nonce, &plaintext, &mut out)
-        .map_err(|_| Error::Crypto)?
-        != out.len()
-    {
-        return Err(Error::Crypto);
-    }
-    Ok(out)
+    let mut buffer = packet.into_buffer();
+    noise.encrypt(nonce, &mut buffer)?;
+    Ok(buffer)
 }
 
 pub(super) fn decrypt(
-    noise: &snow::StatelessTransportState,
+    noise: &Transport,
     nonce: u64,
-    bytes: &[u8],
+    mut bytes: PacketBuffer,
 ) -> Result<Packet, Error> {
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("crypto.decrypt_parse");
     let _profile = PROFILE.enter();
-    let expected = bytes
-        .len()
-        .checked_sub(16)
-        .filter(|length| *length <= MAX_PLAINTEXT)
-        .ok_or(Error::Wire)?;
-    let mut plaintext = Zeroizing::new(vec![0; expected]);
-    let length = noise
-        .read_message(nonce, bytes, &mut plaintext)
-        .map_err(|_| Error::Crypto)?;
-    if length != expected {
-        return Err(Error::Crypto);
-    }
-    Packet::parse(plaintext[..length].to_vec()).map_err(|_| Error::Packet)
+    noise.decrypt(nonce, &mut bytes)?;
+    Packet::parse(bytes).map_err(|_| Error::Packet)
 }
 
 fn transcript(frame: &Frame) -> Result<Sha256, Error> {

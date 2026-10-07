@@ -14,7 +14,7 @@ fn keypair() -> (Zeroizing<[u8; 32]>, [u8; 32]) {
     (private, pair.public.as_slice().try_into().unwrap())
 }
 
-fn handshake(prologue: &[u8]) -> (snow::StatelessTransportState, snow::StatelessTransportState) {
+fn handshake(prologue: &[u8]) -> (Transport, Transport) {
     let (a, ap) = keypair();
     let (b, bp) = keypair();
     let mut initiator = build_with_key(&a, &bp, prologue, true).unwrap();
@@ -24,8 +24,8 @@ fn handshake(prologue: &[u8]) -> (snow::StatelessTransportState, snow::Stateless
     let response = write_handshake(&mut responder, 48).unwrap();
     read_handshake(&mut initiator, &response, 48, &bp).unwrap();
     (
-        initiator.into_stateless_transport_mode().unwrap(),
-        responder.into_stateless_transport_mode().unwrap(),
+        Transport::finish(initiator).unwrap(),
+        Transport::finish(responder).unwrap(),
     )
 }
 
@@ -40,25 +40,29 @@ fn noise_protects_payload_both_directions_and_parses_authenticated_plaintext() {
             .windows(b"private test payload".len())
             .any(|bytes| bytes == b"private test payload")
     );
-    assert_eq!(decrypt(&b, 0, &encrypted).unwrap().as_bytes(), plain);
-    let mut tampered = encrypted.clone();
+    assert_eq!(
+        decrypt(&b, 0, encrypted.payload().into())
+            .unwrap()
+            .as_bytes(),
+        plain
+    );
+    let mut tampered = PacketBuffer::from(encrypted.payload());
     tampered[0] ^= 1;
-    assert!(decrypt(&b, 0, &tampered).is_err());
-    assert!(decrypt(&b, 1, &encrypted).is_err());
+    assert!(decrypt(&b, 0, tampered).is_err());
+    assert!(decrypt(&b, 1, encrypted).is_err());
     let mut invalid_plain = plain.clone();
     invalid_plain[0] = 0;
-    let mut authenticated_invalid = vec![0; invalid_plain.len() + 16];
-    a.write_message(2, &invalid_plain, &mut authenticated_invalid)
-        .unwrap();
+    let mut authenticated_invalid = PacketBuffer::from(invalid_plain);
+    a.encrypt(2, &mut authenticated_invalid).unwrap();
     assert!(matches!(
-        decrypt(&b, 2, &authenticated_invalid),
+        decrypt(&b, 2, authenticated_invalid),
         Err(Error::Packet)
     ));
     let reply = fixtures::udp(3, 1, 443, 50000);
     let encrypted = encrypt(&b, 0, reply).unwrap();
-    decrypt(&a, 0, &encrypted).unwrap();
+    decrypt(&a, 0, encrypted.payload().into()).unwrap();
     let (other, _) = handshake(b"different circuit");
-    assert!(decrypt(&other, 0, &encrypted).is_err());
+    assert!(decrypt(&other, 0, encrypted).is_err());
 }
 
 #[test]
@@ -120,10 +124,10 @@ fn exact_noise_plaintext_limit_is_enforced() {
     let maximum = packet(MAX_PLAINTEXT);
     let bytes = encrypt(&a, 0, maximum).unwrap();
     assert_eq!(bytes.len(), 65_535);
-    decrypt(&b, 0, &bytes).unwrap();
+    decrypt(&b, 0, bytes).unwrap();
     assert!(encrypt(&a, 1, packet(MAX_PLAINTEXT + 1)).is_err());
     for length in [0, 15, 16, 17, 65_536] {
-        assert!(decrypt(&b, 0, &vec![0; length]).is_err());
+        assert!(decrypt(&b, 0, vec![0; length].into()).is_err());
     }
 }
 
@@ -149,19 +153,17 @@ fn successful_handshake_move_keeps_queued_outputs_live_and_crypto_failure_cancel
             // State::Closed is only a move placeholder here, not cancellation.
             assert!(!output.is_cancelled());
             read_handshake(&mut noise, &response, 48, &bp)?;
-            noise
-                .into_stateless_transport_mode()
-                .map_err(|_| Error::Crypto)
+            Transport::finish(*noise)
         });
         assert_eq!(result.is_err(), corrupt);
         assert_eq!(output.is_cancelled(), corrupt);
         assert_eq!(matches!(circuit.state, State::Closed), corrupt);
         assert!(!root.is_cancelled());
         if let State::Endpoint(noise) = &circuit.state {
-            let responder = responder.into_stateless_transport_mode().unwrap();
+            let responder = Transport::finish(responder).unwrap();
             let packet = fixtures::udp(1, 3, 50000, 443);
             let bytes = encrypt(noise, 0, packet).unwrap();
-            decrypt(&responder, 0, &bytes).unwrap();
+            decrypt(&responder, 0, bytes).unwrap();
         }
     }
 }
@@ -221,7 +223,7 @@ impl ProofFixture {
             reply,
             sequence: 0,
             probe: None,
-            body: vec![5; if reply { 48 } else { 96 }],
+            body: vec![5; if reply { 48 } else { 96 }].into(),
             proofs: vec![],
             exchange: reply.then(|| crate::secure::codec::Exchange {
                 init: [4; 32],

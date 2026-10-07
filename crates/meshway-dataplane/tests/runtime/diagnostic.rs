@@ -12,7 +12,7 @@ fn measurement() -> EventId {
     EventId::new(request().into_uuid()).unwrap()
 }
 fn wire(frame: PendingFrame) -> Vec<u8> {
-    frame.release(|bytes| bytes).unwrap()
+    frame.release(|bytes| bytes.into_vec()).unwrap()
 }
 fn forward(result: Result<Received, Error>) -> PendingFrame {
     let Received::Forward(frame) = result.unwrap() else {

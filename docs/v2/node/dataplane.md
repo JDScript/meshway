@@ -10,7 +10,7 @@
 
 判定检查当前 permit、业务源／目的地址、协议／端口、完整路径、实际相邻 peer 和出口资格。回复必须对应数据面已有的正向流，并沿原完整路径反向运行。规则语义分别见 [Access](/v2/configuration-reference/access) 和 [Routing](/v2/configuration-reference/routing)；NodeID 或 pure predicate 的调用不证明身份认证。
 
-`meshway-dataplane::Engine` 持有一个[执行快照](/v2/node/control#执行快照)和唯一有界流表。`Packet::parse(Vec<u8>)` 验证包并保留原始 buffer；`process` 产生 `PendingAction`。宿主必须在最终同步发送／交付边界调用其 `release`，等待期间保留 wrapper 并监听 `invalidated()`。
+`meshway-dataplane::Engine` 持有一个[执行快照](/v2/node/control#执行快照)和唯一有界流表。`Packet::parse(PacketBuffer)` 验证包并保留原始 buffer；`Packet::parse(&[u8])` 返回借用视图；兼容的 Vec 输入在边界转入带预留空间的存储。`process` 产生 `PendingAction`。宿主必须在最终同步发送／交付边界调用其 `release`，等待期间保留 wrapper 并监听 `invalidated()`。
 
 同步操作在入口取得一次 `ExecutionSnapshot::reading()`，本次 policy 判定、流时间和执行／permit／circuit 截止计算共用其中的配置、UTC 高水位与单调时间。流提交、nonce／replay 消耗、circuit 状态提交及产出前仍执行完整动态最终检查；用于最终截止检查的新读数不重新准入或延长入口确定的期限。`Reading` 只由同步内部调用借用，排队输出保存原快照和截止，跨等待的 `release`／carrier I/O 边界继续独立检查原 guard。本地重试 pacing 与 probe 令牌预算仍以实际扣除预算时的单调时间计时，避免慢操作提前补充预算；它们不延长任何授权截止。
 
@@ -80,6 +80,16 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 | 终点 | 入口 Reading、CID 查上下文、重放预检、相邻 MAC 验证、Noise 解密、真实 IP 解析、业务流准入与方向核对、最终检查后提交重放与交付 |
 
 business 与 diagnostic 共用相邻认证实现，Probe 的 kind、measurement／deadline 使用独立 v5 域进入认证 transcript。业务流表仅由端点业务包更新。每包继续执行当前执行资格、permit、实际 carrier 与重放检查，最终 I/O 使用原 guard。86 B 不包含外层 provider／IP／UDP 开销，较小 underlay MTU 仍可能分片。
+
+### 单缓冲所有权与就地加密
+
+`PacketBuffer` 持有一块存储和当前有效区，提供 `payload`／`payload_mut`、`prepend`／`extend`、`trim_front`／`truncate`。默认 headroom 128 B、tailroom 64 B；owner 创建 `PacketPool` 时可调整。池限制同时在用与空闲的分配数量，耗尽返回错误，不分配溢出槽；每池最多 4096 块、存储容量总计不超过 64 MiB。包归还原池；曾暴露为有效区的全部范围在 drop 清零，包括已 trim／truncate 的明文。取消、解析失败和加密失败使用同一析构路径。
+
+TUN 直接读入池缓冲，端点包解析借用其中切片。Noise 业务加密、Data 头写入 headroom、相邻 MAC 写入 tailroom 均不复制 payload；中继使用借用 Data 解码视图，并在原缓冲上覆盖相邻 MAC。终点就地解密后保留同一缓冲，由 `carrier::deliver` 直接借用写入 TUN。`PendingFrame` 和 `PendingAction`（通过 owned Packet）保有缓冲所有权；`PendingFrame::release` 交出 `PacketBuffer`。
+
+Noise IK、prologue、peer static 验证及空握手 payload 仍由 Snow 完成。完成握手后，私有 crypto 模块使用 Snow 的 `risky-raw-split` 提取原 transport 方向密钥，交给同版本 RustCrypto ChaCha20Poly1305 的就地 AEAD。transport AD 保持为空，nonce 为 4 个零字节加 little-endian u64；显式 nonce 仍由唯一 SecureNode 消耗并禁止回绕，接收重放窗口不变。持久 split key 使用 Zeroizing，AEAD 对象 drop 清零；原始 key 不进入公共接口、日志或序列化。该选择增加了私有 crypto 模块直接接触 split key 的边界，避免 Snow 分离输入／输出 API 所需的包体复制；两个方向、最大包长与 nonce 边界与 Snow stateless 输出逐字节互验。
+
+当前 Session 的 payload 仍为 Vec：正式 carrier 在 release 边界显式转为 Vec，入站 Vec 在 SecureNode 边界转为 PacketBuffer。握手／Probe 的有界编解码及握手重试缓存也仍有复制。`Packet::into_bytes` 是兼容复制接口，`into_buffer` 保留分配；这些边界不能称为全链路零复制。批量 Session 与 worker 扩展见[v5 实现契约](/v2/discussions/dataplane-v5)。
 
 ### 发送流水线与连续性
 

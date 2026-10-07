@@ -45,7 +45,7 @@ impl Fixture {
             reply: false,
             sequence: 0,
             probe: None,
-            body: vec![7; 96],
+            body: vec![7; 96].into(),
             proofs: vec![],
             exchange: None,
             auth: HopAuth::default(),
@@ -68,7 +68,7 @@ impl Fixture {
             reply: true,
             sequence: 0,
             probe: None,
-            body: vec![8; 48],
+            body: vec![8; 48].into(),
             proofs: vec![],
             exchange: Some(sessions.last().unwrap().exchange().unwrap()),
             auth: HopAuth::default(),
@@ -96,7 +96,7 @@ impl Fixture {
             reply,
             sequence: 17,
             probe: None,
-            body: vec![9; facts.len + 16],
+            body: vec![9; facts.len + 16].into(),
             proofs: vec![],
             exchange: None,
             auth: HopAuth::default(),
@@ -176,7 +176,7 @@ fn packet_tampering_wrong_verifier_and_actual_carrier_are_rejected() {
             1 => frame.sequence += 1,
             2 => frame.reply = true,
             3 => {
-                frame.body.push(0);
+                frame.body.extend(1).unwrap()[0] = 0;
             }
             4 => frame.auth.tag = None,
             5 => frame.auth.tag.as_mut().unwrap()[0] ^= 1,
@@ -266,7 +266,7 @@ fn diagnostic_mac_binds_measurement_deadline_kind_and_ciphertext() {
             } else {
                 Kind::ProbeRequest
             };
-            frame.body = vec![7; 48];
+            frame.body = vec![7; 48].into();
             frame.probe = Some(ProbeMetadata {
                 measurement_id: EventId::new(node(25).into_uuid()).unwrap(),
                 expires_at_ms: 10_000,

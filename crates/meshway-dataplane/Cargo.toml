@@ -18,7 +18,8 @@ thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-snow = { version = "=0.10.0", default-features = false, features = ["use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
+snow = { version = "=0.10.0", default-features = false, features = ["use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom", "risky-raw-split"] }
+chacha20poly1305 = { version = "=0.10.1", default-features = false }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 sha2.workspace = true
 hmac = "0.12"

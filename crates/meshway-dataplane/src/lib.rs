@@ -2,10 +2,9 @@
 //!
 //! `meshway-policy` is the only grant/path/address admission implementation;
 //! `meshway-control::ExecutionSnapshot` is the only execution authority. This
-//! The core parses packets and associates replies with previously admitted
-//! forward facts. The secure adapter authenticates metadata before using that
-//! same core; relays need no plaintext. Neither core admission nor authenticated
-//! metadata substitutes for checking decrypted packet facts at an endpoint.
+//! The core parses endpoint packets and associates replies with previously
+//! admitted forward facts. The secure adapter authenticates and decrypts before
+//! using that same core; relays authenticate only their circuit and neighbour.
 //!
 //! Peer ingress is a trusted-adapter contract for the cryptographic layer,
 //! **not** a decoder for peer-supplied identity claims. In particular plaintext
@@ -13,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod admission;
+mod buffer;
 mod diagnostics;
 mod engine;
 #[cfg(test)]
@@ -20,12 +20,13 @@ mod fixtures;
 mod flow;
 mod packet;
 
+pub use buffer::{BufferError, DEFAULT_HEADROOM, DEFAULT_TAILROOM, PacketBuffer, PacketPool};
 use flow::{CommittedRoute, FlowTable};
 use meshway_authority::{ExecutionSnapshot, Reading};
 use meshway_model::{NodeId, RequestId};
 use meshway_policy::admission::AdmissionError;
 pub use meshway_policy::admission::Hop;
-pub use packet::{Packet, PacketError, PacketFacts, TcpSegment, Transport};
+pub use packet::{Packet, PacketError, PacketFacts, PacketInput, TcpSegment, Transport};
 use std::{
     fmt,
     time::{Duration, Instant},

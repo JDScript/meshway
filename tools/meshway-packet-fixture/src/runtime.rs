@@ -7,7 +7,7 @@ use crate::{
 };
 use meshway_configuration::execution::NodeConfiguration;
 use meshway_dataplane::{
-    Packet, PacketError,
+    DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketError, PacketPool,
     secure::{PendingFrame, Received, SecureNode},
 };
 use meshway_model::{NodeId, RequestId};
@@ -222,7 +222,8 @@ async fn pump(
     report: &mut Report,
     application: &mut Option<tokio::task::JoinHandle<Result<()>>>,
 ) -> Result<()> {
-    let mut buffer = [0; 1280];
+    let buffers = PacketPool::new(4, 1280, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
+    let mut buffer = buffers.acquire(1280)?;
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     loop {
         enum Event {
@@ -255,7 +256,9 @@ async fn pump(
             }
             Event::Tun(result) => {
                 let length = result?;
-                let packet = match Packet::parse(buffer[..length].to_vec()) {
+                buffer.truncate(length);
+                let owned = std::mem::replace(&mut buffer, buffers.acquire(1280)?);
+                let packet = match Packet::parse(owned) {
                     Ok(packet) => packet,
                     // The kernel may emit IPv6 neighbor/router solicitation;
                     // the production parser does not admit it as business IP.

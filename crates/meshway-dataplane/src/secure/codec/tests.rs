@@ -42,7 +42,8 @@ fn frame(kind: Kind) -> Frame {
             } else {
                 facts.map_or(48, |facts| facts.len + 16)
             }
-        ],
+        ]
+        .into(),
         exchange: (kind == Kind::Response).then(|| Exchange {
             init: [2; 32],
             public: vec![[3; 32], [4; 32]],
@@ -134,9 +135,9 @@ fn handshake_canonical_context_keys_and_lengths_are_bounded() {
     assert!(Frame::decode(&f.encode().unwrap(), None).is_err());
     for kind in [Kind::Init, Kind::Response] {
         let mut f = frame(kind);
-        f.body.push(0);
+        f.body.extend(1).unwrap()[0] = 0;
         assert!(f.encode().is_err());
-        f.body.pop();
+        f.body.truncate(f.body.len() - 1);
         f.reply = !f.reply;
         assert!(f.encode().is_err());
         f.reply = !f.reply;
@@ -177,7 +178,7 @@ fn fixed_data_layout_round_trips_and_rejects_reserved_flags_and_lengths() {
         for reply in [false, true] {
             let mut f = frame(Kind::Data);
             f.reply = reply;
-            f.body = vec![0; packet.facts().len + 16];
+            f.body = vec![0; packet.facts().len + 16].into();
             let bytes = f.encode().unwrap();
             let decoded = Frame::decode(&bytes, Some(&f.context)).unwrap();
             assert_eq!(decoded.auth.tag, f.auth.tag);
@@ -189,7 +190,7 @@ fn fixed_data_layout_round_trips_and_rejects_reserved_flags_and_lengths() {
             assert_eq!(&bytes[10..42], &f.context.circuit);
             assert_eq!(&bytes[42..50], &f.sequence.to_be_bytes());
             assert_eq!(&bytes[50..54], &(f.body.len() as u32).to_be_bytes());
-            assert_eq!(&bytes[54..bytes.len() - 16], &f.body);
+            assert_eq!(&bytes[54..bytes.len() - 16], f.body.payload());
             let mut bad = bytes.clone();
             bad[9] |= 2;
             assert!(Frame::decode(&bad, Some(&f.context)).is_err());

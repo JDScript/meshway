@@ -111,7 +111,7 @@ async fn renew(mesh: &mut Mesh) -> DataPlaneIdentity {
 }
 
 fn bytes(pending: PendingFrame) -> Vec<u8> {
-    pending.release(|bytes| bytes).unwrap()
+    pending.release(|bytes| bytes.into_vec()).unwrap()
 }
 fn delivery(node: &mut SecureNode, carrier: &Carrier, wire: Vec<u8>) -> PendingAction {
     let Received::Packet(packet) = node.receive(carrier, wire).unwrap() else {

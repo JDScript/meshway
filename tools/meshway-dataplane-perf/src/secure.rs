@@ -1,7 +1,7 @@
 use crate::{Error, NodeOptions, NodeRole, material};
 use futures_util::FutureExt;
 use meshway_dataplane::{
-    Packet, carrier,
+    DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketBuffer, PacketPool, carrier,
     secure::{CircuitAuthorization, Error as SecureError, PendingFrame, Received, SecureNode},
 };
 use meshway_logging::profile::{self, Metric};
@@ -218,7 +218,7 @@ impl Driver<'_> {
         Ok(())
     }
 
-    async fn outbound(&mut self, sender: &mut Sender, bytes: Vec<u8>) -> Result<(), Error> {
+    async fn outbound(&mut self, sender: &mut Sender, bytes: PacketBuffer) -> Result<(), Error> {
         let Ok(packet) = Packet::parse(bytes) else {
             self.unsupported += 1;
             return Ok(());
@@ -262,7 +262,8 @@ impl Driver<'_> {
         self.readiness()?;
         let mut report = tokio::time::interval(Duration::from_secs(5));
         let mut retry = tokio::time::interval(Duration::from_millis(100));
-        let mut buffer = vec![0; self.options.mtu];
+        let buffers = PacketPool::new(64, self.options.mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
+        let mut buffer = buffers.acquire(self.options.mtu)?;
         loop {
             tokio::select! {
                 received = UDP_RECV.poll(receiver.recv()) => {
@@ -278,11 +279,15 @@ impl Driver<'_> {
                         _ => std::future::pending().await,
                     }
                 } => {
-                    self.outbound(sender, buffer[..read?].to_vec()).await?;
+                    buffer.truncate(read?);
+                    let packet = std::mem::replace(&mut buffer, buffers.acquire(self.options.mtu)?);
+                    self.outbound(sender, packet).await?;
                     for _ in 1..self.options.batch {
                         let tun = self.tun.as_ref().ok_or("missing endpoint TUN")?;
                         let Some(read) = TUN_READ.poll(tun.recv(&mut buffer)).now_or_never() else { break; };
-                        self.outbound(sender, buffer[..read?].to_vec()).await?;
+                        buffer.truncate(read?);
+                        let packet = std::mem::replace(&mut buffer, buffers.acquire(self.options.mtu)?);
+                        self.outbound(sender, packet).await?;
                     }
                 }
                 _ = retry.tick(), if !self.ready && matches!(self.options.role, NodeRole::A) => {

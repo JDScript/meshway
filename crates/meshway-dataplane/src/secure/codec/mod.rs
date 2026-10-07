@@ -1,4 +1,6 @@
 use super::{Error, MAX_FRAME, MAX_PLAINTEXT};
+use crate::PacketBuffer;
+mod data;
 use meshway_configuration::execution::CircuitAuthorization;
 use meshway_model::{Digest, EventId, KeyId, NetworkId, NodeId, Version};
 use meshway_policy::admission::Carrier;
@@ -57,7 +59,7 @@ pub(super) struct Frame {
     pub reply: bool,
     pub sequence: u64,
     pub probe: Option<ProbeMetadata>,
-    pub body: Vec<u8>,
+    pub body: PacketBuffer,
     pub proofs: Vec<Proof>,
     pub exchange: Option<Exchange>,
     pub auth: HopAuth,
@@ -127,6 +129,71 @@ impl Context {
 }
 
 impl Frame {
+    /// Data takes its header from headroom and overwrites its sole hop tag in
+    /// tailroom. Setup/probe encoding remains bounded and outside this hot path.
+    pub fn encode_owned(mut self) -> Result<PacketBuffer, Error> {
+        if self.kind != Kind::Data {
+            return self.encode().map(Into::into);
+        }
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("codec.encode");
+        let _profile = PROFILE.enter();
+        self.validate()?;
+        if !self.proofs.is_empty() {
+            return Err(Error::Wire);
+        }
+        let length = self.body.len() as u32;
+        let tag = self.auth.tag.ok_or(Error::Wire)?;
+        let header = self
+            .body
+            .prepend(data::HEADER)
+            .map_err(|_| Error::Capacity)?;
+        header[..8].copy_from_slice(MAGIC);
+        header[8] = 3;
+        header[9] = u8::from(self.reply);
+        header[10..42].copy_from_slice(&self.context.circuit);
+        header[42..50].copy_from_slice(&self.sequence.to_be_bytes());
+        header[50..54].copy_from_slice(&length.to_be_bytes());
+        self.body
+            .extend(16)
+            .map_err(|_| Error::Capacity)?
+            .copy_from_slice(&tag);
+        Ok(self.body)
+    }
+
+    pub fn decode_owned(
+        mut bytes: PacketBuffer,
+        retained: Option<&Context>,
+    ) -> Result<Self, Error> {
+        if bytes.get(8) != Some(&3) {
+            return Self::decode(&bytes, retained);
+        }
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("codec.decode");
+        let _profile = PROFILE.enter();
+        let view = data::DataView::decode(&bytes)?;
+        let context = retained
+            .filter(|context| &context.circuit == view.circuit)
+            .ok_or(Error::State)?
+            .clone();
+        let (reply, sequence, length, tag) = (view.reply, view.sequence, view.body.len(), view.tag);
+        bytes.trim_front(data::HEADER);
+        bytes.truncate(length);
+        let frame = Self {
+            context,
+            kind: Kind::Data,
+            reply,
+            sequence,
+            probe: None,
+            body: bytes,
+            proofs: Vec::new(),
+            exchange: None,
+            auth: HopAuth { tag: Some(tag) },
+        };
+        frame.validate()?;
+        Ok(frame)
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         if (self.kind == Kind::Response) != self.exchange.is_some()
             || self
@@ -228,6 +295,9 @@ impl Frame {
     }
 
     pub fn decode(bytes: &[u8], retained: Option<&Context>) -> Result<Self, Error> {
+        if bytes.get(8) == Some(&3) {
+            return Self::decode_owned(bytes.into(), retained);
+        }
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("codec.decode");
         let _profile = PROFILE.enter();
@@ -309,7 +379,7 @@ impl Frame {
         if length > MAX_PLAINTEXT + 16 {
             return Err(Error::Wire);
         }
-        let body = r.take(length)?.to_vec();
+        let body = PacketBuffer::from(r.take(length)?);
         let exchange = if kind == Kind::Response {
             let init = r.array()?;
             let public = (0..context.path.len())

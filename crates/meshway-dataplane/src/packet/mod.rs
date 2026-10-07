@@ -1,4 +1,4 @@
-//! Strict, allocation-free inspection of an owned IP datagram.
+//! Strict, allocation-free inspection of a borrowed or buffer-owned IP datagram.
 //!
 //! Accepts IPv4 without options and non-jumbo IPv6 with at most one leading
 //! hop-by-hop and one destination-options header, containing padding only.
@@ -9,13 +9,16 @@
 //! TCP/UDP port zero is outside the business Port contract. TCP options are
 //! limited to bounded MSS, window scale, SACK-permitted/SACK and timestamps,
 //! plus padding. ICMP accepts echo request/reply with code zero only.
+use crate::PacketBuffer;
 use meshway_configuration::execution::BusinessProtocol;
 use meshway_policy::admission::Traffic;
 use meshway_transport_spec::Port;
+mod storage;
 use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
+pub use storage::PacketInput;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PacketError {
@@ -31,18 +34,18 @@ pub enum PacketError {
     Checksum,
 }
 
-/// A validated packet. Debug never includes the payload; ownership conversion
-/// preserves the original allocation and bytes. This is plaintext, not an
+/// A validated packet. Debug never includes the payload; PacketBuffer input
+/// and into_buffer preserve the allocation. This is plaintext, not an
 /// authenticated or encrypted wire envelope.
-pub struct Packet {
-    bytes: Vec<u8>,
+pub struct Packet<B = PacketBuffer> {
+    bytes: B,
     traffic: Traffic,
     transport: Transport,
 }
 
 /// Payload-free packet metadata. Shape validation does not authenticate these
-/// facts or prove that they describe an encrypted inner packet. Endpoints must
-/// compare them with the facts produced by the one plaintext packet parser.
+/// facts or prove that they describe an encrypted inner packet. Secure endpoints
+/// obtain them only from the one authenticated plaintext packet parser.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PacketFacts {
     pub traffic: Traffic,
@@ -145,10 +148,10 @@ impl TcpSegment {
     }
 }
 
-impl fmt::Debug for Packet {
+impl<B: AsRef<[u8]>> fmt::Debug for Packet<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Packet")
-            .field("length", &self.bytes.len())
+            .field("length", &self.bytes.as_ref().len())
             .field("traffic", &self.traffic)
             .field("transport", &self.transport)
             .finish_non_exhaustive()
@@ -159,13 +162,15 @@ impl Packet {
     /// IPv6's fixed header plus its largest non-jumbo payload.
     pub const MAX_LEN: usize = 40 + u16::MAX as usize;
 
-    pub fn parse(bytes: Vec<u8>) -> Result<Self, PacketError> {
+    pub fn parse<I: PacketInput>(input: I) -> Result<Packet<I::Storage>, PacketError> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("packet.parse");
         let _profile = PROFILE.enter();
+        let storage = input.into_storage();
+        let bytes = storage.as_ref();
         let (source, destination, protocol, offset) = match bytes.first().map(|b| b >> 4) {
-            Some(4) => ipv4(&bytes)?,
-            Some(6) => ipv6(&bytes)?,
+            Some(4) => ipv4(bytes)?,
+            Some(6) => ipv6(bytes)?,
             Some(_) => return Err(PacketError::Unsupported),
             None => return Err(PacketError::Length),
         };
@@ -249,8 +254,8 @@ impl Packet {
             }
             _ => return Err(PacketError::Unsupported),
         };
-        Ok(Self {
-            bytes,
+        Ok(Packet {
+            bytes: storage,
             traffic: Traffic {
                 source,
                 destination,
@@ -262,11 +267,19 @@ impl Packet {
         })
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
-    }
+    /// Compatibility copy for Vec-based consumers. Guarded I/O uses as_bytes()
+    /// or transfers the original allocation with into_buffer().
     pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes.into_vec()
+    }
+    pub fn into_buffer(self) -> PacketBuffer {
         self.bytes
+    }
+}
+
+impl<B: AsRef<[u8]>> Packet<B> {
+    pub fn as_bytes(&self) -> &[u8] {
+        self.bytes.as_ref()
     }
     pub fn traffic(&self) -> Traffic {
         self.traffic
@@ -278,7 +291,7 @@ impl Packet {
         PacketFacts {
             traffic: self.traffic,
             transport: self.transport,
-            len: self.bytes.len(),
+            len: self.bytes.as_ref().len(),
         }
     }
 }

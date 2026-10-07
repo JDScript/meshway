@@ -1,6 +1,6 @@
 use crate::Arguments;
 use meshway_dataplane::{
-    Action, Packet,
+    Action, DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketPool,
     secure::{Received, SecureNode},
 };
 use meshway_logging::profile::{self, Metric};
@@ -80,6 +80,7 @@ struct Circuit {
     nodes: Vec<SecureNode>,
     id: [u8; 32],
     sequence: [u32; 2],
+    buffers: PacketPool,
 }
 
 impl Circuit {
@@ -132,6 +133,12 @@ impl Circuit {
             nodes,
             id,
             sequence: [101, 201],
+            buffers: PacketPool::new(
+                4,
+                meshway_dataplane::secure::MAX_PLAINTEXT,
+                DEFAULT_HEADROOM,
+                DEFAULT_TAILROOM,
+            )?,
         };
         let mut setup = Stats::default();
         circuit.packet(false, 100, 0, 2, 52, &mut setup)?;
@@ -183,7 +190,9 @@ impl Circuit {
         let mut pending = stats.roles.entry(role.into()).or_default().measure(|| {
             static PROFILE: Metric = Metric::new("l0.send");
             let _profile = PROFILE.enter();
-            Ok(self.nodes[source].send(self.id, Packet::parse(bytes.clone())?)?)
+            let mut buffer = self.buffers.acquire(bytes.len())?;
+            buffer.copy_from_slice(&bytes);
+            Ok(self.nodes[source].send(self.id, Packet::parse(buffer)?)?)
         })?;
         let mut sizes = Vec::with_capacity(last);
         for cut in 1..=last {
