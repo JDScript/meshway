@@ -137,7 +137,7 @@ def summary(metadata):
     for key, records in sorted(groups.items()):
         if not key[0].startswith("secure-"):
             continue
-        plain = groups.get(("plain-per-packet", *key[1:]))
+        plain = groups.get(("plain-per-packet", *key[1:])) or groups.get(("plain", *key[1:]))
         if not plain:
             continue
         def median(rows, field):
