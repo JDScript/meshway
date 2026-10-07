@@ -40,7 +40,20 @@ T2 的短模式（`--short`，持续流约 30 秒）只用于诊断与包内门�
 
 ## 状态页与性能追踪
 
-合入后自动层把每次运行的摘要（commit、触发、各层耗时、矩阵每行结果与报告 ID、L0／L3／L4 关键指标、二进制体积）追加到孤立分支 `ci-results` 的索引，文档站 [/status](/v2/status) 渲染最近运行与指标时间序列；相对上一次 main 结果变化超过 10% 的指标高亮。原始报告留在测量机，索引不含秘密与原始样本。
+`Check`／`Validate`／`Perf`／`Build` 完成后触发 `Status` workflow，在串行 `status-index` 组运行 `scripts/ci/collect.py --publish --push`。脚本从 GitHub Actions API 读取 run、触发、commit、job runner／时间／结论和 artifact 元数据，仅下载性能／矩阵报告及 Node 产物提取摘要，按 run ID 增量写入孤立分支 `ci-results` 的 `index.json`。下载过期不抹去已采集证据，缺测不填零。
+
+本地查看：
+
+```sh
+mise run status:sync
+mise run dev:docs
+```
+
+打开[CI 与性能状态](/v2/status)。`status:sync` 获取远端 results 索引并原子写入被 Git 忽略的 `docs/public/status/index.json`；远端未创建时可使用本地 results 分支，`mise run status:sync -- --local` 强制离线。两者都不存在时页面显示明确空状态。浏览器仅请求站内静态索引，不需要 token。
+
+页面包含最近运行表、按 runner／测量参数分组的 main 性能曲线、最近 main 验收行×运行网格和按 target／编译机分组的二进制大小／SHA-256。相对上一有效 main 结果变化超过 10% 的指标高亮；quick、dirty、不完整样本不作为变化基线，短矩阵明确标记为诊断。未过权限或已过保留期的 artifact 链接可能不可下载；索引更新时间代表采集，不代表重新测量。
+
+手工本地采集使用 `mise exec -- python3 scripts/ci/collect.py --publish`，只提交本地 `ci-results`；显式 `--push` 才发布远端。命令参数、版本化 schema 和 matrix 输入适配接口见源码 `scripts/ci/README.md`。原始报告留在测量机与 GitHub artifact，索引只保存字段白名单摘要。
 
 ## 测量机与 runner
 
