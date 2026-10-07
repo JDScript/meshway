@@ -178,10 +178,9 @@ async fn fill(tun: &Tun, state: &mut ReadState, wait: bool) -> Result<(), Error>
         if tun.capabilities.vnet_header {
             state.normalize(size, tun.mtu)?;
         } else {
-            state.buffers.resize_with(1, Vec::new);
+            slots(&mut state.buffers, &mut state.sizes, 1);
             state.buffers[0].clear();
             state.buffers[0].extend_from_slice(&state.scratch[..size]);
-            state.sizes.resize(1, size);
             state.sizes[0] = size;
             state.pending = 0..1;
         }
@@ -194,6 +193,13 @@ fn invalid() -> std::io::Error {
         std::io::ErrorKind::InvalidData,
         "invalid TUN offload metadata",
     )
+}
+
+fn slots(buffers: &mut Vec<Vec<u8>>, sizes: &mut Vec<usize>, count: usize) {
+    if buffers.len() < count {
+        buffers.resize_with(count, Vec::new);
+        sizes.resize(count, 0);
+    }
 }
 
 impl ReadState {
@@ -221,10 +227,9 @@ impl ReadState {
                 input[checksum_at..checksum_at + 2]
                     .copy_from_slice(&if value == 0 { u16::MAX } else { value }.to_be_bytes());
             }
-            self.buffers.resize_with(1, Vec::new);
+            slots(&mut self.buffers, &mut self.sizes, 1);
             self.buffers[0].clear();
             self.buffers[0].extend_from_slice(input);
-            self.sizes.resize(1, input.len());
             self.sizes[0] = input.len();
             self.pending = 0..1;
             return Ok(());
@@ -252,12 +257,19 @@ impl ReadState {
             return Err(invalid().into());
         }
         header.hdr_len = head as u16;
-        self.buffers.resize_with(count, Vec::new);
-        self.sizes.resize(count, 0);
-        for buffer in &mut self.buffers {
+        // Keep high-water slots across short aggregates; only active slots grow.
+        slots(&mut self.buffers, &mut self.sizes, count);
+        for buffer in &mut self.buffers[..count] {
             buffer.resize(head + segment, 0);
         }
-        let count = gso_split(input, header, &mut self.buffers, &mut self.sizes, 0, v6)?;
+        let count = gso_split(
+            input,
+            header,
+            &mut self.buffers[..count],
+            &mut self.sizes[..count],
+            0,
+            v6,
+        )?;
         for (index, buffer) in self.buffers[..count].iter_mut().enumerate() {
             // Preserve the original boundary's UDP zero-checksum representation.
             if !tcp && buffer[checksum_at..checksum_at + 2] == [0, 0] {
@@ -341,26 +353,47 @@ pub(super) async fn recv_batch(tun: &Tun, batch: &mut PacketBatch) -> Result<(),
             *slot = packet;
         }
     }
-    fill(tun, &mut state, true).await?;
+    batch.packets = receive_batch(tun, &mut state, |buffer, size| {
+        let mut packet = std::mem::take(buffer);
+        packet.truncate(size);
+        packet
+    })
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn recv_batch_map<T>(
+    tun: &Tun,
+    mut map: impl FnMut(&[u8]) -> T,
+) -> Result<Vec<T>, Error> {
+    let mut state = tun.read.lock().await;
+    receive_batch(tun, &mut state, |buffer, size| map(&buffer[..size])).await
+}
+
+async fn receive_batch<T>(
+    tun: &Tun,
+    state: &mut ReadState,
+    mut consume: impl FnMut(&mut Vec<u8>, usize) -> T,
+) -> Result<Vec<T>, Error> {
+    fill(tun, state, true).await?;
+    let mut packets = Vec::with_capacity(BATCH_SIZE);
     let mut bytes = 0;
     loop {
-        if state.pending.is_empty() && batch.packets.len() < BATCH_SIZE && bytes < 65536 {
-            fill(tun, &mut state, false).await?;
+        if state.pending.is_empty() && packets.len() < BATCH_SIZE && bytes < 65536 {
+            fill(tun, state, false).await?;
         }
         let Some(index) = state.pending.clone().next() else {
             break;
         };
         let size = state.sizes[index];
-        if batch.packets.len() == BATCH_SIZE || bytes + size > 65536 {
+        if packets.len() == BATCH_SIZE || bytes + size > 65536 {
             break;
         }
         bytes += size;
         state.pending.next();
-        let mut packet = std::mem::take(&mut state.buffers[index]);
-        packet.truncate(size);
-        batch.packets.push(packet);
+        packets.push(consume(&mut state.buffers[index], size));
     }
-    Ok(())
+    Ok(packets)
 }
 
 pub(super) async fn send_batch(tun: &Tun, packets: &[&[u8]]) -> Result<usize, Error> {

@@ -548,17 +548,16 @@ async fn receive_packets(
     tun: &meshway_tun::Tun,
     buffers: &PacketPool,
 ) -> Result<Vec<Result<Packet, meshway_dataplane::PacketError>>, meshway_tun::Error> {
-    let mut batch = meshway_tun::PacketBatch::default();
-    tun.recv_batch(&mut batch).await?;
-    let mut packets = Vec::with_capacity(batch.packets().len());
-    for bytes in batch.take() {
+    tun.recv_batch_map(|bytes| {
         let mut buffer = buffers
             .acquire(bytes.len())
             .map_err(|_| meshway_tun::Error::Io(std::io::Error::other("packet pool exhausted")))?;
-        buffer.copy_from_slice(&bytes);
-        packets.push(Packet::parse(buffer));
-    }
-    Ok(packets)
+        buffer.copy_from_slice(bytes);
+        Ok(Packet::parse(buffer))
+    })
+    .await?
+    .into_iter()
+    .collect()
 }
 
 async fn close(installed: &mut Option<Installed>) {

@@ -369,7 +369,6 @@ impl Driver<'_> {
         let mut report = tokio::time::interval(Duration::from_secs(1));
         let mut retry = tokio::time::interval(Duration::from_millis(100));
         let buffers = PacketPool::new(128, self.options.mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
-        let mut batch = meshway_tun::PacketBatch::default();
         let mut sends = carrier::SendPending::default();
         let mut deliveries = carrier::TunPending::default();
         loop {
@@ -454,16 +453,19 @@ impl Driver<'_> {
                 }
                 read = async {
                     match self.tun() {
-                        Some(tun) if self.ready => TUN_READ.poll(tun.recv_batch(&mut batch)).await,
+                        Some(tun) if self.ready => TUN_READ.poll(tun.recv_batch_map(|bytes| {
+                            let mut packet = buffers.acquire(bytes.len())?;
+                            packet.copy_from_slice(bytes);
+                            Ok::<_, meshway_dataplane::BufferError>(packet)
+                        })).await,
                         _ => std::future::pending().await,
                     }
                 }, if can_read => {
-                    read?;
-                    observe_batch("l3.tun.read.batch", batch.packets().len());
+                    let packets = read?;
+                    observe_batch("l3.tun.read.batch", packets.len());
                     let mut at = profile::enabled().then(std::time::Instant::now);
-                    for bytes in batch.take() {
-                        let mut packet = buffers.acquire(bytes.len())?;
-                        packet.copy_from_slice(&bytes);
+                    for packet in packets {
+                        let packet = packet?;
                         if let Some((circuit, packet)) = self.outbound(packet)? { self.pending.push_back((Input::Send(circuit, packet), at.take())); }
                     }
                 }

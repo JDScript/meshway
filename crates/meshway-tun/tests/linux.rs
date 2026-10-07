@@ -92,6 +92,26 @@ async fn verify_offload() {
         })
         .await
         .unwrap();
+        socket
+            .send_to(b"mapped", SocketAddr::new(remote, 42424))
+            .await
+            .unwrap();
+        timeout(WAIT, async {
+            loop {
+                let mapped = tun
+                    .recv_batch_map(|packet| {
+                        fixture_udp_payload(packet, local, remote, port, 42424) == Some(b"mapped")
+                    })
+                    .await
+                    .unwrap();
+                assert!(!mapped.is_empty() && mapped.len() <= 32);
+                if mapped.into_iter().any(|found| found) {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
         let packets: Vec<_> = (0..3)
             .map(|_| udp_packet(remote, local, 42424, port, b"batch"))
             .collect();

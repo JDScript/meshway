@@ -165,6 +165,23 @@ impl Tun {
         }
     }
 
+    /// Copy normalized packets directly into caller-owned storage. The callback
+    /// runs synchronously, once per packet, under the same bounded receive owner
+    /// as `recv_batch`. Segmentation storage remains with the device for reuse.
+    /// No callback runs before a successful read; cancellation while waiting
+    /// retains the device's unread normalized suffix.
+    pub async fn recv_batch_map<T>(&self, map: impl FnMut(&[u8]) -> T) -> Result<Vec<T>, Error> {
+        #[cfg(target_os = "linux")]
+        {
+            linux::recv_batch_map(self, map).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = map;
+            Err(Error::Unsupported)
+        }
+    }
+
     /// Write a compatible adjacent prefix in one syscall. Returns the number
     /// written; callers continue the suffix with their original output guard.
     /// At most one syscall is attempted per call; cancellation cannot leave a

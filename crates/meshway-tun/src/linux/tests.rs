@@ -40,6 +40,43 @@ fn udp() -> (VirtioNetHdr, Vec<u8>) {
 }
 
 #[test]
+fn normalization_reuses_high_water_slots_across_small_and_large_aggregates() {
+    let (mut header, mut packet) = udp();
+    header.gso_size = 1;
+    packet.resize(28 + MAX_SEGMENTS, 0);
+    let mut read = state(header, &packet);
+    read.normalize(read.scratch.len(), 1280).unwrap();
+    let pointers: Vec<_> = read.buffers.iter().map(Vec::as_ptr).collect();
+    let capacity: usize = read.buffers.iter().map(Vec::capacity).sum();
+    assert_eq!(read.pending.len(), MAX_SEGMENTS);
+    assert!(capacity <= 2 * MAX_SUPER);
+    for _ in 0..8 {
+        let (small_header, small_packet) = udp();
+        small_header.encode(&mut read.scratch).unwrap();
+        read.scratch[VIRTIO_NET_HDR_LEN..VIRTIO_NET_HDR_LEN + small_packet.len()]
+            .copy_from_slice(&small_packet);
+        read.normalize(VIRTIO_NET_HDR_LEN + small_packet.len(), 1280)
+            .unwrap();
+        assert_eq!(read.pending.len(), 2);
+        assert_eq!(read.buffers.len(), MAX_SEGMENTS);
+        header.encode(&mut read.scratch).unwrap();
+        read.scratch[VIRTIO_NET_HDR_LEN..].copy_from_slice(&packet);
+        read.normalize(read.scratch.len(), 1280).unwrap();
+        assert_eq!(read.pending.len(), MAX_SEGMENTS);
+        // The first two slots grew by one byte for the small aggregate. All
+        // remaining allocations survived; they were not freed/recreated.
+        assert_eq!(
+            read.buffers[2..]
+                .iter()
+                .map(Vec::as_ptr)
+                .collect::<Vec<_>>(),
+            pointers[2..]
+        );
+        assert!(read.buffers.iter().map(Vec::capacity).sum::<usize>() <= capacity + 64);
+    }
+}
+
+#[test]
 fn normalization_preserves_zero_checksum_encoding_and_ignores_kernel_hdr_len() {
     let (header, packet) = udp();
     let mut state = state(header, &packet);
