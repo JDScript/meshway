@@ -7,6 +7,7 @@ mod events;
 mod faults;
 mod recovery;
 mod refresh;
+mod rotation;
 mod session;
 mod state_scope;
 mod support;

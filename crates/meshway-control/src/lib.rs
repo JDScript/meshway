@@ -18,6 +18,7 @@ pub use events::{EventNotice, NodeEvents};
 mod execution;
 mod identity;
 mod observations;
+mod rotation;
 pub use observations::ObservationLease;
 mod session;
 mod storage;

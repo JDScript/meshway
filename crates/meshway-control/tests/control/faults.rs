@@ -13,6 +13,7 @@ use tokio::{
 
 #[derive(Clone, Copy)]
 pub enum Fault {
+    RejectBefore,
     Lost,
     Hold,
     WrongController,
@@ -114,6 +115,12 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
         }
     };
     let mut headers = parts.headers;
+    if matches!(fault, Some(Fault::RejectBefore)) {
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::empty())
+            .unwrap();
+    }
     headers.remove(header::HOST);
     headers.remove(header::CONTENT_LENGTH);
     let body = to_bytes(body, 16 * 1024 * 1024).await.unwrap();
@@ -186,6 +193,7 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                             .into()
                     }
                     Fault::Lost | Fault::Hold => unreachable!("delivery fault handled above"),
+                    Fault::RejectBefore => unreachable!("rejected before forwarding"),
                     Fault::UntypedConflict
                     | Fault::WrongStateScopeStatus
                     | Fault::StateScopeChanged => unreachable!("conflict fault handled above"),

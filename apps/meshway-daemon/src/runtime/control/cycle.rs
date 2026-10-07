@@ -135,6 +135,12 @@ pub(super) async fn cycle(
             return Err(failure::at("redeem_enrollment", error, true));
         }
     }
+    if control.rotation_pending() {
+        control
+            .rotate_keys()
+            .await
+            .map_err(|e| failure::at("rotate_keys", e, true))?;
+    }
     stage("authenticate", control.authenticate())
         .await
         .map_err(|e| failure::at("authenticate", e, true))?;
