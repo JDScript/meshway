@@ -1,6 +1,7 @@
 //! One protected, typed watchNode connection. The host owns its task and retry.
 use crate::{Control, Error};
 use meshway_control_client::{Client, ClientError, EventStream, StreamOptions};
+use meshway_model::{ConfigurationRef, InstanceId, NetworkId, NodeId, Revision};
 use meshway_protocol::{ErrorResponse, NodeEvent, StreamEvent, WireSecret, events::ClosedReason};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -10,22 +11,32 @@ pub struct EventNotice {
     owner: Arc<()>,
     scope: CancellationToken,
     result: Result<NodeEvent, ClientError<ErrorResponse>>,
+    refresh: bool,
 }
 
 impl EventNotice {
+    /// Static event name for credential-free host diagnostics.
+    pub fn kind(&self) -> &'static str {
+        match &self.result {
+            Err(_) => "transport_error",
+            Ok(NodeEvent(StreamEvent::Reset { .. })) => "sync.reset",
+            Ok(NodeEvent(StreamEvent::ConfigSnapshot { .. })) => "config.snapshot",
+            Ok(NodeEvent(StreamEvent::Closed { reason })) => match reason {
+                ClosedReason::SessionExpired => "session_expired",
+                ClosedReason::MembershipRevoked => "membership_revoked",
+                ClosedReason::NodeLeaseExpired => "node_lease_expired",
+                ClosedReason::ServerShutdown => "server_shutdown",
+            },
+            Ok(NodeEvent(StreamEvent::EntitiesDelta { .. })) => "entities.delta",
+            Ok(NodeEvent(StreamEvent::StateDelta { .. })) => "state.delta",
+            Ok(NodeEvent(StreamEvent::ConfigurationChanged { .. })) => "configuration.changed",
+            _ => "projection",
+        }
+    }
     /// Coalescible invalidation hint, never an execution grant. The host may
     /// retain one pending hint while discarding additional hints until refresh.
     pub fn refresh_requested(&self) -> bool {
-        matches!(
-            &self.result,
-            Ok(NodeEvent(
-                StreamEvent::Reset { .. }
-                    | StreamEvent::Ready { .. }
-                    | StreamEvent::EntitiesDelta { .. }
-                    | StreamEvent::ConfigurationChanged { .. }
-                    | StreamEvent::ResourcesChanged { .. }
-            ))
-        )
+        self.refresh
     }
 
     /// Terminal deliveries must not be dropped when a refresh hint is queued.
@@ -46,6 +57,72 @@ pub struct NodeEvents {
     scope: CancellationToken,
     stream: Option<EventStream<NodeEvent, ErrorResponse>>,
     ended: bool,
+    interest: Interest,
+}
+
+// Replay disclosure includes peer publications and observations. Those changes
+// reset the public SSE projection without changing THIS Node's execution target.
+// Track hints only; none of these values enter Control's saved/lease authority.
+struct Interest {
+    network: NetworkId,
+    node: NodeId,
+    target: Option<ConfigurationRef>,
+    revision: Option<Revision>,
+    keys: meshway_protocol::NodeKeyMetadata,
+    instance: Option<InstanceId>,
+}
+
+impl Interest {
+    fn changed(&mut self, event: &NodeEvent) -> bool {
+        match &event.0 {
+            StreamEvent::ConfigSnapshot { configuration, .. } => {
+                let changed = configuration.network_id != self.network
+                    || configuration.node_id != self.node
+                    || configuration.target != self.target
+                    || self.revision.is_none_or(|old| configuration.revision > old);
+                self.target = configuration.target.clone();
+                self.revision = Some(configuration.revision);
+                changed
+            }
+            StreamEvent::EntitiesDelta {
+                updated, removed, ..
+            } => {
+                let changed = updated.nodes.get(&self.node).is_some_and(|node| {
+                    node.network_id != self.network
+                        || node.keys != self.keys
+                        || node.desired_execution != self.target
+                });
+                if let Some(node) = updated.nodes.get(&self.node) {
+                    self.keys = node.keys.clone();
+                    self.target = node.desired_execution.clone();
+                }
+                changed || removed.nodes.contains(&self.node)
+            }
+            StreamEvent::StateDelta {
+                updated, removed, ..
+            } => {
+                let changed = updated
+                    .get(&self.node)
+                    .is_some_and(|node| node.instance_id != self.instance);
+                if let Some(node) = updated.get(&self.node) {
+                    self.instance = node.instance_id;
+                }
+                changed || removed.contains(&self.node)
+            }
+            StreamEvent::ConfigurationChanged { revision, .. } => {
+                let changed = self.revision.is_none_or(|old| *revision > old);
+                self.revision = Some(*revision);
+                changed
+            }
+            StreamEvent::ResourcesChanged { .. } => true,
+            StreamEvent::Reset { reason } => {
+                !matches!(reason, meshway_protocol::events::ResetReason::ViewChanged)
+            }
+            // ViewChanged is followed by a complete projection; compare its own
+            // target above instead of refreshing for every peer/sample reset.
+            _ => false,
+        }
+    }
 }
 
 impl NodeEvents {
@@ -74,6 +151,9 @@ impl NodeEvents {
             self.stream = None;
         }
         result.map(|result| EventNotice {
+            refresh: result
+                .as_ref()
+                .is_ok_and(|event| self.interest.changed(event)),
             owner: self.owner.clone(),
             scope: self.scope.clone(),
             result,
@@ -90,8 +170,22 @@ impl Control {
     /// Uses precisely the same generated client and host-protected socket pool
     /// as every other control operation. The host may move this into one task.
     pub fn watch_node(&self) -> Result<NodeEvents, Error> {
-        self.current_instance()?;
+        let instance = self.current_instance()?;
+        let binding = self.record.binding.as_ref().ok_or(Error::Lifecycle)?;
         Ok(NodeEvents {
+            interest: Interest {
+                network: binding.network_id,
+                node: binding.node_id,
+                target: self
+                    .instance
+                    .as_ref()
+                    .and_then(|instance| instance.lease.target.clone()),
+                revision: self
+                    .cached_target()
+                    .map(|target| target.configuration.revision),
+                keys: binding.keys.clone(),
+                instance: Some(instance.instance_id),
+            },
             owner: self.application_owner.clone(),
             client: self.client.clone(),
             token: WireSecret::new(self.token()?.to_owned()),
@@ -140,6 +234,8 @@ impl Control {
                 ClosedReason::MembershipRevoked => {
                     self.fence();
                     self.session = None;
+                    self.authentication = None;
+                    self.challenge_intent = None;
                     Err(Error::MembershipRevoked)
                 }
                 ClosedReason::ServerShutdown => Ok(false),
@@ -175,6 +271,7 @@ mod tests {
                 !control
                     .receive_event(EventNotice {
                         owner: Arc::new(()),
+                        refresh: false,
                         scope: scope.clone(),
                         result: Ok(NodeEvent(StreamEvent::Closed {
                             reason: ClosedReason::MembershipRevoked
@@ -185,6 +282,7 @@ mod tests {
             assert!(!scope.is_cancelled());
             let result = control.receive_event(EventNotice {
                 owner: control.application_owner.clone(),
+                refresh: false,
                 scope: scope.clone(),
                 result: Ok(NodeEvent(StreamEvent::Closed { reason })),
             });
@@ -208,6 +306,7 @@ mod tests {
                     !control
                         .receive_event(EventNotice {
                             owner: control.application_owner.clone(),
+                            refresh: false,
                             scope: scope.clone(),
                             result: Err(error)
                         })

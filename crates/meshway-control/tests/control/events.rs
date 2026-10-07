@@ -20,7 +20,7 @@ async fn real_watch_ready_and_configuration_change_request_the_existing_refresh(
     for _ in 0..3 {
         assert!(!control.receive_event(next(&mut stream).await).unwrap());
     }
-    assert!(control.receive_event(next(&mut stream).await).unwrap());
+    assert!(!control.receive_event(next(&mut stream).await).unwrap());
     assert!(original.ensure_current().is_ok());
     refresh::listeners(&server, &owner).await;
     let changed = tokio::time::timeout(Duration::from_secs(3), async {
@@ -61,10 +61,8 @@ async fn queued_old_stream_notice_cannot_rebind_after_authentication_or_stop() {
     let owner = server.owner().await;
     let mut control = refresh::control(&server, &owner, &server.origin, "stale-events").await;
     let mut stream = control.watch_node().unwrap();
-    for _ in 0..3 {
-        next(&mut stream).await;
-    }
     let ready = next(&mut stream).await;
+    assert!(ready.refresh_requested());
     control.refresh_authentication().await.unwrap();
     assert!(!control.receive_event(ready).unwrap());
     assert!(stream.next().await.is_none());

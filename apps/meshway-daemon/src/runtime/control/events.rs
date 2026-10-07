@@ -47,6 +47,16 @@ impl Events {
             self.task = Some(tokio::spawn(async move {
                 let started = Instant::now();
                 while let Some(notice) = stream.next().await {
+                    if notice.refresh_requested()
+                        || notice.is_terminal()
+                        || matches!(notice.kind(), "sync.reset" | "config.snapshot")
+                    {
+                        tracing::debug!(
+                            event_kind = notice.kind(),
+                            refresh = notice.refresh_requested(),
+                            "Node event received"
+                        );
+                    }
                     if notice.is_terminal() {
                         let _ = sender.send(notice).await;
                         break;

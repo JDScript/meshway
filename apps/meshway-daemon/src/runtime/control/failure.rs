@@ -35,7 +35,7 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         Error::Server(ClientError::Http { status: 409, problem: Some(body) })
         if body.status == 409 && matches!(body.problem, meshway_protocol::Problem::RequestConflict { .. }));
     let (problem, retry, reset) = match &error {
-        Error::MembershipRevoked => (Problem::Credentials, false, true),
+        Error::MembershipRevoked => (Problem::Credentials, true, true),
         Error::StateScopeChanged => (Problem::Apply, true, false),
         Error::Server(_) if matches!(status, Some(401 | 403 | 404 | 409)) => {
             let retry = !authenticating || authentication_conflict;
@@ -116,6 +116,14 @@ fn details(error: &Error) -> (&'static str, Option<u16>, Option<&'static str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_revocation_uses_runtime_credential_recovery_not_operator_blocking() {
+        let rejected = at("watch_node", Error::MembershipRevoked, false);
+        assert_eq!(rejected.problem, Problem::Credentials);
+        assert!(rejected.retry && rejected.reset);
+        assert!(!at("authenticate", Error::Contract, true).retry);
+    }
 
     #[test]
     fn only_a_validated_authentication_intent_conflict_can_retry_proof() {
