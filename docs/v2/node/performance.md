@@ -272,7 +272,7 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 
 `--memory-detail` 显式开启内存归因诊断：每 250 ms 采集 cgroup `memory.stat`、namespace 内各进程的 `status` 与 `smaps_rollup`。原始分项通过独立 stderr 流直接写到宿主报告，不积累在被测容器 tmpfs；采样自身 CPU／RSS 仍在 cgroup 内。文件逐个读取而非内核原子快照，进程退出或权限导致的读取失败原样保留。该选项增加 observer 开销，吞吐对照需保持相同采样配置。
 
-`--allocator system|mimalloc` 默认为 system；mimalloc 显式启用测量工具的 `allocator-mimalloc` Cargo feature，只替换该测量可执行文件的 Rust 全局分配器，并每秒记录分配器自身统计。依赖中的 C 分配不因此自动换分配器。fixture 签发工具和生产库没有全局分配器选择；原始 options／binary hash 保留实验区别，不能把工具 feature 的改善当成 daemon 已部署的修复。
+`--allocator system|mimalloc` 默认为 system；mimalloc 显式启用测量工具的 `allocator-mimalloc` Cargo feature，只替换该测量可执行文件的 Rust 全局分配器。开启 profiling 时另每秒记录分配器自身统计；关闭时不读取统计，便于与生产入口同口径对照。依赖中的 C 分配不因此自动换分配器。fixture 签发工具和生产库没有全局分配器选择；原始 options／binary hash 保留实验区别，不能把工具 feature 的改善当成 daemon 已部署的修复。
 
 `raw` 的 veth MTU 与内层 TUN MTU 相同，保留内核默认 offload；`plain` 的外层 veth 保留 1500 MTU，TUN offload 按 `--io` 选择。两者经过同一内部 Docker bridge。TCP 应用写入块与实际 TCP 分段不是同一概念，TCP 不通过 Mbps／假定包长反推 pps。UDP 应用 payload 由 `--payload` 固定，IPv4／UDP 头额外占 28 字节。
 
@@ -956,6 +956,8 @@ TCP secure 样本所有角色 `Udp.RcvbufErrors=0`。UDP 的 B 命名空间 r0�
 Manager UDP A 的 RssAnon 在约 5／15／30／45／60／65 秒为 15.27／15.00／15.00／15.00／15.02／15.02 MiB，R 在约 21–25 MiB、B 约 23–25 MiB 平台内；A 的 cgroup 文件页约 26 MiB 解释了其 RSS 与 cgroup 差异。TCP 中继同时间点为 16.67／17.09／17.03／17.09／16.90／17.15 MiB。系统分配器工具为 12,874,976 B、mimalloc 工具为 12,952,864 B（含工具统计接口），静态 release 增加 77,888 B，约 0.60%；这不是 daemon 二进制的独立体积测量。
 
 TCP 另一次 `20261007t120831z-c24ecf26` 在负载前 readiness 因 `Context` 失败，保留为失败样本，不属于 OOM，也未用成功重试覆盖。以上是内存回归与单次长窗口交付证明，不代替两次完整性能矩阵或低延迟验收。
+
+上述 allocator 调查版还每秒读取 mimalloc 自身统计。为排除读取统计改变分配模式，当前将该读取放入显式 profiling；独立 `20261007t121817z-371ba8a5` 使用 profile 0，确认没有 allocatorStats 记录，再跑 4 CPU／512 MiB 的 Manager relay UDP 2G／65+1 秒：成功交付 1,175.13 Mbps／122,410 pps，节点 RSS 峰值 33.82 MiB、cgroup 峰值 45.83 MiB，OOM／max 事件为 0。A 的匿名页约 15–65 秒均为 15.47 MiB，中继约 24–26 MiB；稳定不依赖统计读取。
 
 ### L3 实测参考
 

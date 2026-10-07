@@ -477,7 +477,7 @@ impl Driver<'_> {
                 }
                 _ = report.tick() => {
                     #[cfg(feature = "allocator-mimalloc")]
-                    if let Ok(stats) = mimalloc::MiMalloc::stats_json() {
+                    if profile::enabled() && let Ok(stats) = mimalloc::MiMalloc::stats_json() {
                         eprintln!("{}", serde_json::json!({"allocatorStats": stats.to_string_lossy()}));
                     }
                     profile::report();
