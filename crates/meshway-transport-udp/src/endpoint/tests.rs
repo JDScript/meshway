@@ -218,7 +218,7 @@ async fn datagram_admission_requires_peer_and_enforces_frame_limit() {
     assert_eq!(admission.stop, Some(AdmissionStop::MissingPeer));
     assert_eq!(frames.len(), 1);
     frames[0].peer = Some("127.0.0.1:12345".parse().unwrap());
-    frames[0].payload = vec![0; 9];
+    frames[0].payload = vec![0; 9].into();
     assert_eq!(
         session
             .sender()

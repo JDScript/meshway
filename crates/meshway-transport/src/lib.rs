@@ -11,7 +11,7 @@ pub mod raw;
 mod scope;
 mod session;
 
-pub use frame::Frame;
+pub use frame::{Frame, Payload, PayloadStorage};
 pub use limits::{LimitError, Limits};
 pub use scope::{CancelReason, ChannelScope, ScopedFrame, SendContext, SendLifetime};
 pub use session::{

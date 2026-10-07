@@ -496,7 +496,7 @@ async fn udp_burst_yields_to_a_one_slot_event_consumer_without_growing_the_queue
         let mut frames = Vec::new();
         while frames.len() < 4 {
             if let Event::Frame { frame, .. } = b.recv().await {
-                frames.push(frame.payload);
+                frames.push(frame.payload.into_vec());
             }
         }
         frames
@@ -615,7 +615,7 @@ async fn receive_batch_is_bounded_ordered_and_fences_queued_frames_after_control
             let Event::Frame { frame, .. } = event else {
                 panic!("authenticated carrier data");
             };
-            frame.payload
+            frame.payload.into_vec()
         })
         .collect();
     assert_eq!(

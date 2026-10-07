@@ -20,7 +20,7 @@ pub enum BufferError {
 }
 
 struct PoolState {
-    free: Vec<Box<[u8]>>,
+    free: Vec<Vec<u8>>,
     allocated: usize,
 }
 
@@ -82,7 +82,7 @@ impl PacketPool {
                 return Err(BufferError::Exhausted);
             }
             state.allocated += 1;
-            vec![0; self.0.capacity].into_boxed_slice()
+            vec![0; self.0.capacity]
         };
         Ok(PacketBuffer {
             storage: Some(storage),
@@ -99,7 +99,7 @@ impl PacketPool {
 /// Every region ever exposed as mutable is zeroized on drop, even after trim or
 /// truncate. This covers cancellation, malformed plaintext and crypto failures.
 pub struct PacketBuffer {
-    storage: Option<Box<[u8]>>,
+    storage: Option<Vec<u8>>,
     head: usize,
     len: usize,
     dirty_start: usize,
@@ -158,8 +158,7 @@ impl From<Vec<u8>> for PacketBuffer {
 }
 impl From<&[u8]> for PacketBuffer {
     fn from(bytes: &[u8]) -> Self {
-        let mut storage =
-            vec![0; DEFAULT_HEADROOM + bytes.len() + DEFAULT_TAILROOM].into_boxed_slice();
+        let mut storage = vec![0; DEFAULT_HEADROOM + bytes.len() + DEFAULT_TAILROOM];
         storage[DEFAULT_HEADROOM..DEFAULT_HEADROOM + bytes.len()].copy_from_slice(bytes);
         Self {
             storage: Some(storage),
@@ -174,6 +173,56 @@ impl From<&[u8]> for PacketBuffer {
 impl AsRef<[u8]> for PacketBuffer {
     fn as_ref(&self) -> &[u8] {
         self.payload()
+    }
+}
+impl AsMut<[u8]> for PacketBuffer {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.payload_mut()
+    }
+}
+
+impl meshway_transport::PayloadStorage for PacketBuffer {
+    fn capacity(&self) -> usize {
+        self.capacity()
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send + Sync> {
+        self
+    }
+}
+
+impl From<meshway_transport::Payload> for PacketBuffer {
+    fn from(payload: meshway_transport::Payload) -> Self {
+        match payload {
+            meshway_transport::Payload::Bytes(mut bytes) => {
+                // Wire input already contains the header and authentication tags;
+                // decoding reclaims that room, so no ingress headroom copy is needed.
+                let len = bytes.len();
+                bytes.resize(bytes.capacity(), 0);
+                Self {
+                    storage: Some(bytes),
+                    head: 0,
+                    len,
+                    dirty_start: 0,
+                    dirty_end: len,
+                    pool: None,
+                }
+            }
+            meshway_transport::Payload::Owned(bytes) => {
+                // The only custom production payload is PacketBuffer. Other host
+                // storage remains a supported, explicit compatibility boundary.
+                if bytes.as_any().is::<Self>() {
+                    match bytes.into_any().downcast::<Self>() {
+                        Ok(buffer) => *buffer,
+                        Err(_) => unreachable!("checked storage type"),
+                    }
+                } else {
+                    Self::from(bytes.as_ref().as_ref())
+                }
+            }
+        }
     }
 }
 impl Deref for PacketBuffer {
@@ -210,6 +259,25 @@ impl Drop for PacketBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_payload_retains_pool_allocation_and_capacity_until_completion_owner_drops() {
+        let pool = PacketPool::new(1, 1280, DEFAULT_HEADROOM, DEFAULT_TAILROOM).unwrap();
+        let packet = pool.acquire(32).unwrap();
+        let pointer = packet.as_ptr();
+        let capacity = packet.capacity();
+        let frame = meshway_transport::Frame::owned(packet, None);
+        assert_eq!(frame.payload.as_ptr(), pointer);
+        assert_eq!(frame.payload.capacity(), capacity);
+        assert!(matches!(pool.acquire(32), Err(BufferError::Exhausted)));
+        let packet = PacketBuffer::from(frame.payload);
+        assert_eq!(packet.as_ptr(), pointer);
+        drop(packet);
+        assert!(pool.acquire(32).is_ok());
+        let wire = vec![7; 64];
+        let pointer = wire.as_ptr();
+        let packet = PacketBuffer::from(meshway_transport::Payload::from(wire));
+        assert_eq!(packet.as_ptr(), pointer);
+    }
     #[test]
     fn capacity_includes_outstanding_buffers_and_drop_zeroizes_trimmed_plaintext() {
         let pool = PacketPool::new(1, 1280, DEFAULT_HEADROOM, DEFAULT_TAILROOM).unwrap();

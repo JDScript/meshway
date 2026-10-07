@@ -2,6 +2,8 @@
 //! These share the circuit/packet's original guard and spawn no tasks. Local
 //! write completion is distinct from authenticated reception/application echo.
 use crate::{Hop, PendingAction, secure::PendingFrame};
+mod batch;
+pub use batch::{deliver_batch, send_batch, send_batch_shared};
 use meshway_transport::{AdmissionStop, Frame, SendContext, SendOutcome, Sender};
 use std::{
     collections::VecDeque,
@@ -172,7 +174,7 @@ async fn send_owned(
     use meshway_transport::SendLifetime;
     let guard = pending.io_guard();
     let lifetime = Arc::new(OutputLifetime {
-        packet: guard.clone(),
+        packets: vec![guard.clone()],
         channel,
     });
     let cancellation = guard.cancellation();
@@ -185,10 +187,10 @@ async fn send_owned(
         lifetime: Some(lifetime.clone()),
     };
     let bytes = pending
-        .release(|bytes| bytes.into_vec())
+        .release(|bytes| bytes)
         .map_err(|_| Error::Cancelled)?;
     let capacity = bytes.capacity();
-    let mut frames = VecDeque::from([Frame::new(bytes, peer)]);
+    let mut frames = VecDeque::from([Frame::owned(bytes, peer)]);
     let (completion, admitted_at) = loop {
         let (admitted, admitted_at) =
             guarded(&lifetime, sender.admit(&mut frames, context.clone())).await?;
@@ -261,13 +263,13 @@ async fn guarded<T>(
 
 #[derive(Debug)]
 struct OutputLifetime {
-    packet: crate::secure::Guard,
+    packets: Vec<crate::secure::Guard>,
     channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
 }
 
 impl meshway_transport::SendLifetime for OutputLifetime {
     fn is_current(&self) -> bool {
-        self.packet.ensure_current().is_ok()
+        crate::secure::Guard::check_batch(&self.packets).is_ok()
             && self
                 .channel
                 .as_ref()
@@ -277,7 +279,10 @@ impl meshway_transport::SendLifetime for OutputLifetime {
     fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             tokio::select! { biased;
-                _ = self.packet.invalidated() => {},
+                _ = async {
+                    let mut waits: Vec<_> = self.packets.iter().map(|packet| Box::pin(packet.invalidated())).collect();
+                    poll_fn(|cx| if waits.iter_mut().any(|wait| wait.as_mut().poll(cx).is_ready()) { Poll::Ready(()) } else { Poll::Pending }).await;
+                } => {},
                 _ = async {
                     match &self.channel {
                         Some(channel) => channel.clone().invalidated().await,

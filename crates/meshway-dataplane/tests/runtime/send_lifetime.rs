@@ -111,6 +111,65 @@ enum Invalidation {
     DropSend,
 }
 
+#[tokio::test]
+async fn business_batch_intersects_each_circuit_guard_even_with_unpolled_completion() {
+    let mut fixture = SecureMesh::start().await;
+    let first = fixture.handshake().await;
+    let second = fixture.handshake().await;
+    let frames = vec![
+        fixture
+            .a
+            .send(first, super::datagram(&fixture.mesh, false, false))
+            .unwrap(),
+        fixture
+            .a
+            .send(second, super::datagram(&fixture.mesh, true, false))
+            .unwrap(),
+    ];
+    let gate = Arc::new(Gate::default());
+    let (stream, mut raw_peer) = tokio::io::duplex(65536);
+    let (mut sender, _receiver) = Session::stream(
+        GatedStream {
+            stream,
+            gate: gate.clone(),
+        },
+        "127.0.0.1:12345".parse().unwrap(),
+        Limits::new(4096, 32, 65536, 1, 32).unwrap(),
+    )
+    .into_split();
+    let sending = carrier::send_batch(
+        &mut sender,
+        frames,
+        None,
+        meshway_transport::ChannelScope::new(),
+        None,
+    );
+    tokio::pin!(sending);
+    poll_fn(|cx| {
+        assert!(sending.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    timeout(WAIT, gate.worker_polled()).await.unwrap();
+    fixture.a.close(first);
+    assert_eq!(
+        fixture.a.circuit_info(second).unwrap().unwrap().state,
+        meshway_dataplane::secure::CircuitState::Established
+    );
+    gate.open();
+    let mut byte = [0];
+    assert_eq!(
+        timeout(WAIT, raw_peer.read(&mut byte))
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert_eq!(gate.state.lock().unwrap().written, 0);
+    assert!(timeout(WAIT, sending).await.unwrap().is_err());
+    fixture.close().await;
+}
+
 async fn accepted_send_is_fenced(invalidation: Invalidation) {
     let mut fixture = SecureMesh::start().await;
     // This HS1 frame uses the normally enrolled keys and the installed complete

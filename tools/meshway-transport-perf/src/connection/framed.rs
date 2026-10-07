@@ -103,7 +103,7 @@ impl Framed {
                 if frame.peer != Some(self.expected_source) {
                     return Err("echo source differs".into());
                 }
-                echoed.push((frame.payload, start.elapsed()));
+                echoed.push((frame.payload.into_vec(), start.elapsed()));
             }
             Ok::<_, Error>(echoed)
         };

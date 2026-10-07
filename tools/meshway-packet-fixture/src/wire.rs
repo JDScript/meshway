@@ -161,5 +161,5 @@ pub fn inspect(frame: meshway_transport::Frame, link: &Link) -> Result<Vec<u8>> 
             return Err("plaintext application sentinel exposed on carrier".into());
         }
     }
-    Ok(frame.payload)
+    Ok(frame.payload.into_vec())
 }

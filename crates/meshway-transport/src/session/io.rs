@@ -7,7 +7,6 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use bytes::Bytes;
 use futures_util::{Sink, Stream};
 use tokio::io::{AsyncWrite, ReadHalf, WriteHalf};
 use tokio_util::{
@@ -30,6 +29,7 @@ enum Reader {
         buffer: Vec<u8>,
         batch_buffers: Vec<Vec<u8>>,
         batch_count: usize,
+        pending: VecDeque<Frame>,
     },
 }
 
@@ -204,10 +204,10 @@ impl Shared {
                 endpoint: endpoint.clone(),
                 buffer: vec![0; limits.max_frame_bytes()],
                 batch_buffers: Vec::new(),
-                batch_count: limits
-                    .max_batch_frames()
-                    .min(32)
-                    .min((65536 / limits.max_frame_bytes()).max(1)),
+                batch_count: limits.max_batch_frames().min(32).min(
+                    (limits.max_bytes().min(2 * 1024 * 1024) / limits.max_frame_bytes()).max(1),
+                ),
+                pending: VecDeque::new(),
             })),
             writer: Mutex::new(Some(Writer::Datagram(endpoint))),
         }
@@ -261,30 +261,13 @@ impl Shared {
                     cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
-                // The existing encoded length is strictly below the boundary;
-                // poll_ready cannot auto-flush and thus cannot touch raw I/O.
-                match Pin::new(&mut *writer).poll_ready(cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(result) => result?,
-                }
-                // Move the Vec into Bytes without a temporary payload copy.
-                // This guard also restores the Vec if encoding unwinds.
-                struct RestorePayload<'a> {
-                    target: &'a mut Vec<u8>,
-                    bytes: Bytes,
-                }
-                impl Drop for RestorePayload<'_> {
-                    fn drop(&mut self) {
-                        *self.target = std::mem::take(&mut self.bytes).into();
-                    }
-                }
-                let bytes = Bytes::from(std::mem::take(&mut frame.payload));
-                let restore = RestorePayload {
-                    target: &mut frame.payload,
-                    bytes,
-                };
-                Pin::new(&mut *writer).start_send(restore.bytes.clone())?;
-                drop(restore);
+                // Admission validated the u32 length and codec ceiling. Borrow
+                // custom packet storage directly into the existing length-framed
+                // staging group, without a temporary Vec/Bytes payload copy.
+                writer
+                    .write_buffer_mut()
+                    .extend_from_slice(&(frame.payload.len() as u32).to_be_bytes());
+                writer.write_buffer_mut().extend_from_slice(&frame.payload);
                 progress.staged += 1;
                 progress.encoded_bytes += wire_len;
             }
@@ -443,10 +426,14 @@ impl Shared {
             buffer,
             batch_buffers,
             batch_count,
+            pending,
         }) = reader.as_mut()
         else {
             return Poll::Ready(Err(ReceiveError::Closed));
         };
+        if !pending.is_empty() {
+            return Poll::Ready(Ok(drain_datagrams(pending)));
+        }
         if batch_buffers.is_empty() {
             batch_buffers.extend((0..*batch_count).map(|_| vec![0; buffer.len()]));
         }
@@ -472,7 +459,8 @@ impl Shared {
                 Some(received.source),
             ));
         }
-        Poll::Ready(Ok(frames))
+        pending.extend(frames);
+        Poll::Ready(Ok(drain_datagrams(pending)))
     }
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<Frame, super::ReceiveError>> {
@@ -502,8 +490,14 @@ impl Shared {
                 }
             }
             Some(Reader::Datagram {
-                endpoint, buffer, ..
+                endpoint,
+                buffer,
+                pending,
+                ..
             }) => {
+                if let Some(frame) = pending.pop_front() {
+                    return Poll::Ready(Ok(frame));
+                }
                 let received = ready!(endpoint.poll_recv_from(cx, buffer))?;
                 if received.truncated {
                     return Poll::Ready(Err(ReceiveError::Truncated(received)));
@@ -524,4 +518,17 @@ impl Shared {
             None => Poll::Ready(Err(ReceiveError::Closed)),
         }
     }
+}
+
+fn drain_datagrams(pending: &mut VecDeque<Frame>) -> Vec<Frame> {
+    let mut bytes = 0;
+    let mut frames = Vec::new();
+    while let Some(frame) = pending.front() {
+        if frames.len() == 32 || (!frames.is_empty() && bytes + frame.payload.len() > 65536) {
+            break;
+        }
+        bytes += frame.payload.len();
+        frames.push(pending.pop_front().expect("front exists"));
+    }
+    frames
 }

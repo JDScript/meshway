@@ -222,7 +222,7 @@ async fn outbound(
                     if !matches!(frame.outcome, SendOutcome::LocalComplete) {
                         return Err("plain UDP send did not complete".into());
                     }
-                    buffers.push(frame.frame.payload);
+                    buffers.push(frame.frame.payload.into_vec());
                 }
                 Ok::<_, Error>(())
             })

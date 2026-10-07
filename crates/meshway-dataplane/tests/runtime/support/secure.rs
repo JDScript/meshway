@@ -54,7 +54,7 @@ impl End {
                 .windows(SENTINEL.len())
                 .any(|part| part == SENTINEL)
         );
-        frame.payload
+        frame.payload.into_vec()
     }
     async fn close(&mut self) {
         tokio::time::timeout(IO_WAIT, self.sender.shutdown())
