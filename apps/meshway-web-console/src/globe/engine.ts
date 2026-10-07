@@ -8,15 +8,22 @@ import {
   LineBasicMaterial,
   LineDashedMaterial,
   LineSegments,
+  Mesh,
+  MeshBasicMaterial,
   Points,
+  RingGeometry,
   ShaderMaterial,
+  SphereGeometry,
+  Vector3,
 } from "three"
 
 import { mostUrgentTone, statusTone } from "@/lib/nodes/status"
+import { sublunarPoint, subsolarPoint } from "@/lib/sky/astronomy"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 import type { BootPhase } from "@/state/boot"
 import { sameInsets, type GlobeState } from "@/state/globe"
+import { THEME_SHIFT_MS } from "@/state/theme-shift"
 
 import { css, type GlobeColors, type Rgb } from "./colors"
 import { landPoints } from "./land"
@@ -111,6 +118,16 @@ const REVEAL_SPIN_MS = 1800
 /** The interface comes in this far into the reveal, while the globe settles. */
 const REVEAL_UI_MS = 850
 const COMET_FADE_MS = 900
+/** How often the sun and the moon are placed again (they move 15° an hour across the globe). */
+const SKY_EVERY_MS = 20_000
+/** The moon's distance from the globe's centre and its radius, in globe radii: near enough to be seen. */
+const MOON = { distance: 2.3, radius: 0.045 }
+/** A page that cannot be: the globe, centred above its card, takes at most this share of the space left. */
+const ALERT_FIT = 0.36
+/** Its rings: how many, how long one takes to pulse out, how far (globe radii). */
+const ALERT_RINGS = 3
+const ALERT_PULSE_MS = 2400
+const ALERT_REACH = 0.55
 /** Above this many markers, names show only on the marker pointed at, focused or selected. */
 const DENSE_LABELS = 120
 /** Nodes whose dots are closer than this on screen (CSS px) are drawn as one marker. */
@@ -214,6 +231,7 @@ const surfaceShader = () =>
       uRim: { value: new Color() },
       uOpacity: { value: 0 },
       uRimStrength: { value: 0.85 },
+      ...sunlight(),
     },
     vertexShader: /* glsl */ `
       varying vec3 vNormal;
@@ -229,17 +247,47 @@ const surfaceShader = () =>
       uniform vec3 uRim;
       uniform float uOpacity;
       uniform float uRimStrength;
+      ${SUNLIGHT}
       varying vec3 vNormal;
       varying vec3 vWorld;
       void main() {
+        vec3 normal = normalize(vNormal);
         vec3 view = normalize(cameraPosition - vWorld);
-        float rim = pow(1.0 - max(dot(normalize(vNormal), view), 0.0), 3.4);
-        gl_FragColor = vec4(mix(uSurface, uRim, rim * uRimStrength), uOpacity);
+        float rim = pow(1.0 - max(dot(normal, view), 0.0), 3.4);
+        // Day and night where the sun is: the night side darker, a warm band
+        // along the line between (warmer while the theme turns).
+        float facing = dot(normal, uSun);
+        vec3 base = mix(uNight, uSurface, smoothstep(-0.2, 0.25, facing));
+        float band = exp(-pow(facing / 0.17, 2.0));
+        base = mix(base, uTwilight, band * (uBand + 0.35 * uShift));
+        gl_FragColor = vec4(mix(base, uRim, rim * uRimStrength), uOpacity);
         #include <colorspace_fragment>
       }`,
   })
 
-/** Round, soft points sized in world units; land dots also fade towards the limb. */
+/**
+ * The sun's light on the globe, shared by the surface, the land and the
+ * moon: where the sun is (a unit vector, world space), the night and band
+ * colours, the night land's opacity, and `uShift`, 1 when the theme has just
+ * turned, settling to 0.
+ */
+const sunlight = () => ({
+  uSun: { value: new Vector3(0, 0, 1) },
+  uNight: { value: new Color() },
+  uTwilight: { value: new Color() },
+  uBand: { value: 0.2 },
+  uNightAlpha: { value: 0.4 },
+  uShift: { value: 0 },
+})
+const SUNLIGHT = /* glsl */ `
+  uniform vec3 uSun;
+  uniform vec3 uNight;
+  uniform vec3 uTwilight;
+  uniform float uBand;
+  uniform float uNightAlpha;
+  uniform float uShift;`
+
+/** Round, soft points sized in world units; land dots also fade towards the limb, and dim and warm with the night. */
 const pointShader = (land: boolean) =>
   new ShaderMaterial({
     transparent: true,
@@ -251,6 +299,7 @@ const pointShader = (land: boolean) =>
       uPixelRatio: { value: 1 },
       uSize: { value: 1 },
       uMinSize: { value: land ? 1.15 : 0 },
+      ...sunlight(),
     },
     vertexShader: /* glsl */ `
       attribute float aAlpha;
@@ -259,16 +308,23 @@ const pointShader = (land: boolean) =>
       uniform float uPixelRatio;
       uniform float uSize;
       uniform float uMinSize;
+      ${SUNLIGHT}
       varying float vAlpha;
+      varying float vBand;
       void main() {
         vec4 world = modelMatrix * vec4(position, 1.0);
         vec4 mv = viewMatrix * world;
         ${
           land
-            ? `float facing = dot(normalize(world.xyz), normalize(cameraPosition - world.xyz));
-               vAlpha = mix(0.16, 1.0, smoothstep(0.0, 0.7, facing));
+            ? `vec3 up = normalize(world.xyz);
+               float facing = dot(up, normalize(cameraPosition - world.xyz));
+               float lit = dot(up, uSun);
+               vAlpha = mix(0.16, 1.0, smoothstep(0.0, 0.7, facing))
+                 * mix(uNightAlpha, 1.0, smoothstep(-0.15, 0.2, lit));
+               vBand = exp(-pow(lit / 0.15, 2.0)) * (0.45 + 0.3 * uShift);
                float size = uSize;`
             : `vAlpha = aAlpha;
+               vBand = 0.0;
                float size = aSize;`
         }
         // Never thinner than a pixel; below that, dim instead of shrinking,
@@ -282,13 +338,15 @@ const pointShader = (land: boolean) =>
     fragmentShader: /* glsl */ `
       uniform vec3 uColor;
       uniform float uOpacity;
+      uniform vec3 uTwilight;
       varying float vAlpha;
+      varying float vBand;
       void main() {
         float d = length(gl_PointCoord - 0.5);
         ${land ? "float a = smoothstep(0.5, 0.3, d);" : "float a = smoothstep(0.5, 0.0, d); a *= a;"}
         a *= vAlpha * uOpacity;
         if (a < 0.004) discard;
-        gl_FragColor = vec4(uColor, a);
+        gl_FragColor = vec4(mix(uColor, uTwilight, vBand), a);
         #include <colorspace_fragment>
       }`,
   })
@@ -323,6 +381,33 @@ const cometShader = () =>
         float a = smoothstep(0.5, 0.3, d) * vAlpha * uOpacity;
         if (a < 0.004) discard;
         gl_FragColor = vec4(uColor, a);
+        #include <colorspace_fragment>
+      }`,
+  })
+
+/** The moon: lit by the sun, so its phase is the one seen from Earth. */
+const moonShader = () =>
+  new ShaderMaterial({
+    transparent: true,
+    uniforms: {
+      uColor: { value: new Color() },
+      uOpacity: { value: 0 },
+      ...sunlight(),
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vNormal;
+      void main() {
+        vNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      ${SUNLIGHT}
+      varying vec3 vNormal;
+      void main() {
+        float light = smoothstep(-0.05, 0.25, dot(normalize(vNormal), uSun));
+        gl_FragColor = vec4(uColor * (0.06 + 0.94 * light), uOpacity);
         #include <colorspace_fragment>
       }`,
   })
@@ -486,6 +571,54 @@ export function createGlobeEngine(
   guides.visible = look.guides
   layer.add(guides)
 
+  // The moon where it really is (seen from the globe's centre).
+  const moonMaterial = moonShader()
+  const moon = new Mesh(
+    new SphereGeometry(MOON.radius * GLOBE_RADIUS, 32, 16),
+    moonMaterial
+  )
+  moon.renderOrder = 2
+  layer.add(moon)
+
+  // Signal lost: rings pulsing out from the globe, facing the camera.
+  const alertRings = new Group()
+  const alertMaterials: MeshBasicMaterial[] = []
+  for (let i = 0; i < ALERT_RINGS; i += 1) {
+    const material = new MeshBasicMaterial({
+      transparent: true,
+      depthWrite: false,
+      opacity: 0,
+    })
+    alertMaterials.push(material)
+    const ring = new Mesh(
+      new RingGeometry(GLOBE_RADIUS - 0.8, GLOBE_RADIUS + 0.8, 160),
+      material
+    )
+    ring.renderOrder = 4
+    alertRings.add(ring)
+  }
+  alertRings.visible = false
+  layer.add(alertRings)
+
+  // Where the sun and the moon are now; placed again every SKY_EVERY_MS.
+  const sunlit = [surface, landMaterial, moonMaterial]
+  let skyPlacedAt = -Infinity
+  const placeSky = (now: number) => {
+    const sun = subsolarPoint(Date.now())
+    const lunar = sublunarPoint(Date.now())
+    const direction = new Vector3(...cartesian(sun.lat, sun.lng)).normalize()
+    for (const material of sunlit) material.uniforms.uSun = { value: direction }
+    stage.setSun(direction)
+    moon.position.set(...cartesian(lunar.lat, lunar.lng, MOON.distance - 1))
+    skyPlacedAt = now
+  }
+  /** When the theme last turned; its light settles over the shift. */
+  let shiftedAt = -Infinity
+  /** Stars and the moon belong to a dark sky; they fade in and out with it. */
+  let nightSky = 0
+  /** How far the signal-lost look has come in (0 none, 1 full). */
+  let alertFade = 0
+
   // The loader's comet, continued in place while the globe grows, then gone.
   const cometGeometry = new BufferGeometry()
   cometGeometry.setAttribute(
@@ -573,14 +706,23 @@ export function createGlobeEngine(
     pausedUntil = performance.now() + RESUME_ROTATION_MS
   })
 
+  /** The nodes on the globe: none on the welcome globe, nor while a page cannot be shown. */
+  const shownNodes = (input: EngineInput) =>
+    input.framing === "welcome" || input.alert ? [] : input.scene.nodes
+
   const focusOf = (input: EngineInput): Anchor | null =>
-    input.framing === "network" && input.selectedNodeId
+    input.alert === null && input.framing === "network" && input.selectedNodeId
       ? (anchors.get(input.selectedNodeId) ?? null)
       : null
   const framingLat = (input: EngineInput) =>
     input.framing === "welcome" ? WELCOME.lat : HOME.lat
   /** The rest view: home size, or smaller when the free space between panels is narrow. */
   const restAltitude = (input: EngineInput) => {
+    if (input.alert) {
+      // Centred in what the card leaves above it.
+      const free = Math.max(Math.min(width, height - input.alert.bottom), 160)
+      return altitudeForRadius(free * ALERT_FIT, Math.max(height, 1))
+    }
     if (input.framing === "welcome") return WELCOME.altitude
     const { top, right, bottom, left } = input.insets
     const free = Math.max(
@@ -599,6 +741,7 @@ export function createGlobeEngine(
   }
   /** Centre of the free space, relative to the viewport's centre. */
   const offsetFor = (input: EngineInput): [number, number] => {
+    if (input.alert) return [0, -input.alert.bottom / 2]
     if (input.framing === "welcome")
       return width >= 900
         ? [Math.min(width * 0.14, 260), 0]
@@ -764,15 +907,57 @@ export function createGlobeEngine(
         ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * extras
     })
     graticuleMaterial.opacity = (dark ? 0.22 : 0.32) * extras
-    // Stars belong to a dark sky only.
-    stars.visible = look.stars && dark
+    // Stars and the moon belong to a dark sky: they come out as it falls.
+    const night = dark ? 1 : 0
+    nightSky = motion
+      ? nightSky + (night - nightSky) * (1 - Math.exp(-dt / 0.45))
+      : night
+    stars.visible = look.stars && nightSky > 0.002
     starMaterial.uniforms.uOpacity = {
-      value: extras * (0.85 + 0.15 * Math.sin(time / 1300)),
+      value: extras * nightSky * (0.85 + 0.15 * Math.sin(time / 1300)),
+    }
+    moonMaterial.uniforms.uOpacity = { value: extras * nightSky }
+    moon.visible = nightSky > 0.002 && !last?.alert
+
+    // The sun and the moon move on; a theme that just turned settles its light.
+    if (time - skyPlacedAt > SKY_EVERY_MS) placeSky(time)
+    const shift = motion
+      ? 1 - easeOut(clamp01((time - shiftedAt) / (THEME_SHIFT_MS * 1.25)))
+      : 0
+    for (const material of sunlit) material.uniforms.uShift = { value: shift }
+    stage.setWarmth(shift)
+
+    // Signal lost: the land dims and rings pulse out; with less motion, one still ring.
+    const alert = last?.alert ?? null
+    alertFade = motion
+      ? alertFade + ((alert ? 1 : 0) - alertFade) * (1 - Math.exp(-dt / 0.35))
+      : alert
+        ? 1
+        : 0
+    landMaterial.uniforms.uOpacity = { value: 1 - 0.55 * alertFade }
+    alertRings.visible = alertFade > 0.002
+    if (alertRings.visible) {
+      alertRings.quaternion.copy(camera.quaternion)
+      alertRings.children.forEach((ring, index) => {
+        const material = alertMaterials[index]
+        if (!material) return
+        const phase = motion
+          ? (time / ALERT_PULSE_MS + index / ALERT_RINGS) % 1
+          : index === 0
+            ? 0.12
+            : 1
+        ring.scale.setScalar(1.02 + ALERT_REACH * phase)
+        material.opacity = alertFade * 0.85 * (1 - phase) ** 2
+      })
     }
 
     // Rotation eases in and out instead of starting or stopping dead.
     const target =
-      interacting || time < pausedUntil || reveal || openGroup !== null
+      interacting ||
+      time < pausedUntil ||
+      reveal ||
+      openGroup !== null ||
+      alert !== null
         ? 0
         : rotationTarget
     rotationSpeed += (target - rotationSpeed) * (1 - Math.exp(-dt / 0.7))
@@ -965,7 +1150,7 @@ export function createGlobeEngine(
 
   /** Groups the placed nodes for the current zoom and brings the markers in line. */
   const placeMarkers = (input: EngineInput) => {
-    const nodes = input.framing === "welcome" ? [] : input.scene.nodes
+    const nodes = shownNodes(input)
     const byId = new Map(nodes.map((node) => [node.id, node]))
     const scale = screenScale()
     groupedScale = scale
@@ -1096,8 +1281,20 @@ export function createGlobeEngine(
     starMaterial.uniforms.uColor = { value: color(colors.star) }
     for (const material of guideMaterials) material.color = color(colors.guide)
     cometMaterial.uniforms.uColor = { value: color(colors.pulse) }
-    stage.setAtmosphereColor(css(colors.atmosphere))
+    stage.setAtmosphereColor(css(colors.atmosphere), css(colors.twilight))
+    // The night is darker, and its band stronger, under a dark sky.
+    for (const material of sunlit) {
+      material.uniforms.uNight = { value: color(colors.night) }
+      material.uniforms.uTwilight = { value: color(colors.twilight) }
+      material.uniforms.uBand = { value: colors.dark ? 0.2 : 0.16 }
+      material.uniforms.uNightAlpha = { value: colors.dark ? 0.45 : 0.55 }
+    }
+    moonMaterial.uniforms.uColor = { value: color(colors.moon) }
+    const ring = color(colors.attention)
+    const failed = color(colors.destructive)
+    alertTones = { missing: ring, failed }
   }
+  let alertTones: Record<"missing" | "failed", Color> | null = null
 
   const disposeLinks = () => {
     for (const link of links) {
@@ -1110,7 +1307,7 @@ export function createGlobeEngine(
 
   const buildLinks = (input: EngineInput) => {
     disposeLinks()
-    const sceneLinks = input.framing === "welcome" ? [] : input.scene.links
+    const sceneLinks = shownNodes(input).length === 0 ? [] : input.scene.links
     for (const sceneLink of sceneLinks) {
       const a = anchors.get(sceneLink.nodeIds[0])
       const b = anchors.get(sceneLink.nodeIds[1])
@@ -1190,12 +1387,18 @@ export function createGlobeEngine(
     last = input
 
     if (!previous || previous.colors !== input.colors) applyColors(input.colors)
+    // A turned theme (not the first colours, nor a theme's colours read again).
+    if (previous && previous.colors.dark !== input.colors.dark)
+      shiftedAt = performance.now()
+    if (alertTones && input.alert)
+      for (const material of alertMaterials)
+        material.color = alertTones[input.alert.tone]
 
-    anchors = anchorsOf(input.framing === "welcome" ? [] : input.scene.nodes)
+    anchors = anchorsOf(shownNodes(input))
     placeMarkers(input)
 
     const nextLinksKey = JSON.stringify([
-      input.framing === "welcome" ? [] : input.scene.links,
+      shownNodes(input).length === 0 ? [] : input.scene.links,
       [...anchors],
       input.motion,
       input.colors,
@@ -1217,8 +1420,18 @@ export function createGlobeEngine(
         revealedAt = performance.now()
         retarget({ ...input, motion: false }, LAYOUT_RATE, true)
       }
-    } else if (previous.framing !== input.framing) {
-      retarget(input, LAYOUT_RATE, true)
+    } else if (
+      previous.framing !== input.framing ||
+      (previous.alert === null) !== (input.alert === null)
+    ) {
+      // The globe drops to the middle when a page cannot be shown, and back after.
+      retarget(input, input.alert ? FOCUS_RATE : LAYOUT_RATE, true)
+    } else if (
+      previous.alert !== null &&
+      input.alert !== null &&
+      previous.alert.bottom !== input.alert.bottom
+    ) {
+      retarget(input, LAYOUT_RATE, false)
     } else if (
       focus !== previousFocus &&
       (focus === null ||
@@ -1265,11 +1478,16 @@ export function createGlobeEngine(
         starMaterial,
         cometGeometry,
         cometMaterial,
+        moon.geometry,
+        moonMaterial,
+        ...alertMaterials,
         ...guideMaterials,
       ])
         disposable.dispose()
       for (const ring of guides.children)
         if (ring instanceof Line) ring.geometry.dispose()
+      for (const ring of alertRings.children)
+        if (ring instanceof Mesh) ring.geometry.dispose()
       stage.dispose()
       markers.clear()
     },

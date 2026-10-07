@@ -5,7 +5,7 @@ import {
   useNavigate,
   type ErrorComponentProps,
 } from "@tanstack/react-router"
-import type { ReactNode } from "react"
+import { useLayoutEffect, useRef, type ReactNode } from "react"
 import { useStore } from "zustand"
 
 import { ApiFailure } from "@/api/client"
@@ -13,14 +13,46 @@ import { failureText } from "@/api/failure"
 import { sessionQuery } from "@/api/queries/auth"
 import { useSignOut } from "@/hooks/use-sign-out"
 import { m } from "@/paraglide/messages.js"
+import { setGlobeAlert, type GlobeAlert } from "@/state/globe"
 import { sessionStore } from "@/state/session"
 
 import { EntryCard, EntryFoot, EntryLink, EntryPage } from "./frame"
 
 // What is shown where a page cannot be: an address with no page, a page
-// that failed. One card: outside a network over the welcome globe with the
-// preferences in the corner (EntryPage), inside one over the network's
-// globe, its rail and bar staying.
+// that failed. One card below the globe, which drops to the middle above it
+// and loses its signal (state/globe.ts, GlobeAlert): outside a network with
+// the preferences in the corner (EntryPage), inside one with the network's
+// rail and bar staying.
+
+/** The space kept between the globe's place and the card's top. */
+const CARD_GAP = 24
+
+/** Tells the globe a page cannot be shown, and how much of the bottom the card covers. */
+function useGlobeAlert(tone: GlobeAlert["tone"]) {
+  const card = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const element = card.current
+    if (!element) return
+    const measure = () =>
+      setGlobeAlert({
+        tone,
+        bottom: Math.max(
+          0,
+          window.innerHeight - element.getBoundingClientRect().top + CARD_GAP
+        ),
+      })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    window.addEventListener("resize", measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", measure)
+      setGlobeAlert(null)
+    }
+  }, [tone])
+  return card
+}
 
 /** The network whose shell this renders in; undefined outside one. */
 const useShellNetwork = () =>
@@ -30,6 +62,7 @@ const useShellNetwork = () =>
 /** A card with what happened and the ways on, in or outside a network's shell. */
 export function FallbackCard({
   inShell,
+  tone,
   title,
   body,
   detail,
@@ -38,6 +71,8 @@ export function FallbackCard({
 }: {
   /** Inside a network's shell, which stays drawn around it. */
   inShell: boolean
+  /** Amber rings for what is not there, red for what failed. */
+  tone: GlobeAlert["tone"]
   title: string
   body?: string | null
   /** A technical detail, e.g. an error's message. */
@@ -46,6 +81,7 @@ export function FallbackCard({
   fact?: ReactNode
   actions: ReactNode
 }) {
+  const place = useGlobeAlert(tone)
   const card = (
     <EntryCard title={title}>
       {body ? (
@@ -62,12 +98,19 @@ export function FallbackCard({
       </EntryFoot>
     </EntryCard>
   )
+  const below = (
+    <div className="flex flex-1 items-end justify-center px-6 pb-[7vh]">
+      <div ref={place} className="pointer-events-auto w-full max-w-95">
+        {card}
+      </div>
+    </div>
+  )
   return inShell ? (
-    <main className="pointer-events-none relative flex min-h-svh items-center px-6 md:px-[8vw]">
-      <div className="pointer-events-auto w-full max-w-95">{card}</div>
+    <main className="pointer-events-none relative flex min-h-svh flex-col">
+      {below}
     </main>
   ) : (
-    <EntryPage>{card}</EntryPage>
+    <EntryPage below>{below}</EntryPage>
   )
 }
 
@@ -102,6 +145,7 @@ export function PageNotFound() {
   return (
     <FallbackCard
       inShell={network !== undefined}
+      tone="missing"
       title={m.page_not_found()}
       body={m.page_not_found_body({ path: pathname })}
       actions={
@@ -140,6 +184,7 @@ export function PageFailed({ error }: ErrorComponentProps) {
   return (
     <FallbackCard
       inShell={inShell}
+      tone="failed"
       title={m.page_failed()}
       body={
         stale

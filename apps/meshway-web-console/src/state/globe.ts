@@ -31,6 +31,17 @@ export const sameInsets = (a: Insets, b: Insets) =>
   a.bottom === b.bottom &&
   a.left === b.left
 
+/**
+ * A page that cannot be shown: the globe comes to the middle above its card
+ * and stands still, its land dim, rings pulsing out from it, amber for a
+ * page not found, red for one that failed. It hides the network's markers.
+ */
+export type GlobeAlert = {
+  tone: "missing" | "failed"
+  /** CSS pixels the card covers along the bottom. */
+  bottom: number
+}
+
 export type GlobeState = {
   framing: Framing
   scene: Scene
@@ -42,6 +53,7 @@ export type GlobeState = {
   insets: Insets
   /** A workspace covers the globe: it dims and stays where it is. */
   recede: boolean
+  alert: GlobeAlert | null
 }
 
 const globeStore = createStore<GlobeState>(() => ({
@@ -52,6 +64,7 @@ const globeStore = createStore<GlobeState>(() => ({
   hoveredNodeId: null,
   insets: NO_INSETS,
   recede: false,
+  alert: null,
 }))
 
 /** What the globe shows, for its stage. */
@@ -112,4 +125,18 @@ export function pointAtOnGlobe(nodeIds: readonly string[]) {
     current.some((id, index) => id !== nodeIds[index])
   )
     globeStore.setState({ pointedNodeIds: nodeIds })
+}
+
+/** A fallback card shows (or stops showing) its alert on the globe; equal ones are not a change. */
+export function setGlobeAlert(alert: GlobeAlert | null) {
+  const current = globeStore.getState().alert
+  if (
+    current === alert ||
+    (current !== null &&
+      alert !== null &&
+      current.tone === alert.tone &&
+      current.bottom === alert.bottom)
+  )
+    return
+  globeStore.setState({ alert })
 }

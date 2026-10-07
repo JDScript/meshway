@@ -89,6 +89,7 @@ export function NetworkNotFound() {
   return (
     <FallbackCard
       inShell={false}
+      tone="missing"
       title={m.network_not_found()}
       body={m.network_not_found_body()}
       fact={<AccountFact />}
@@ -114,6 +115,7 @@ export function NetworkFailed({
   return (
     <FallbackCard
       inShell={false}
+      tone="failed"
       title={title}
       body={failureText(error)}
       fact={<AccountFact />}

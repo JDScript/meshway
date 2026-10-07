@@ -45,7 +45,12 @@ type Stage = {
   setPointOfView(pov: PointOfView): void
   /** Moves the globe this many CSS px right and down of the viewport's centre. */
   setOffset(x: number, y: number): void
-  setAtmosphereColor(css: string): void
+  /** The atmosphere's colour, and the warm one along the line between day and night. */
+  setAtmosphereColor(css: string, twilight: string): void
+  /** Where the sun is (a unit vector, world space): the sunlit limb glows. */
+  setSun(direction: Vector3): void
+  /** 0 to 1: how much warmer the band is while a theme turns. */
+  setWarmth(warmth: number): void
   /** Replaces the marker set; elements already shown are moved, not re-created. */
   setMarkers(markers: readonly Marker[]): void
   setSize(width: number, height: number): void
@@ -90,6 +95,9 @@ const atmosphereVertex = /* glsl */ `
 
 const atmosphereFragment = /* glsl */ `
   uniform vec3 color;
+  uniform vec3 twilight;
+  uniform vec3 sun;
+  uniform float warmth;
   uniform float coefficient;
   uniform float power;
   uniform float hollowRadius;
@@ -103,7 +111,11 @@ const atmosphereFragment = /* glsl */ `
     vec3 worldCameraToVertex = vVertexWorldPosition - cameraPosition;
     vec3 viewCameraToVertex = normalize((viewMatrix * vec4(worldCameraToVertex, 0.0)).xyz);
     float intensity = pow(coefficient + dot(vVertexNormal, viewCameraToVertex), power);
-    gl_FragColor = vec4(color, intensity);
+    // Brighter over the day side, warm where the sun rises or sets.
+    float lit = dot(normalize(vVertexWorldPosition), sun);
+    intensity *= mix(0.45, 1.3, smoothstep(-0.35, 0.55, lit));
+    float band = exp(-pow(lit / 0.28, 2.0)) * (0.35 + 0.45 * warmth);
+    gl_FragColor = vec4(mix(color, twilight, band), intensity);
   }`
 
 /** The inverse of `cartesian`, longitude in [-180, 180]. */
@@ -156,6 +168,9 @@ export function createStage(
   scene.add(sphere)
 
   const atmosphereColor = new Color()
+  const twilightColor = new Color()
+  const sunDirection = new Vector3(0, 0, 1)
+  const warmth = { value: 0 }
   let atmosphere: Mesh<SphereGeometry, ShaderMaterial> | null = null
   if (options.atmosphere > 0) {
     // Drawn after the sphere (same order, created later), so its depth hides the far side.
@@ -174,6 +189,9 @@ export function createStage(
         uniforms: {
           coefficient: { value: 0.1 },
           color: { value: atmosphereColor },
+          twilight: { value: twilightColor },
+          sun: { value: sunDirection },
+          warmth,
           power: { value: 3.5 },
           hollowRadius: { value: GLOBE_RADIUS },
         },
@@ -345,8 +363,15 @@ export function createStage(
       offset = [x, y]
       applyProjection()
     },
-    setAtmosphereColor(css) {
+    setSun(direction) {
+      sunDirection.copy(direction)
+    },
+    setWarmth(value) {
+      warmth.value = value
+    },
+    setAtmosphereColor(css, twilight) {
       atmosphereColor.set(css)
+      twilightColor.set(twilight)
     },
     setMarkers,
     setSize(nextWidth, nextHeight) {

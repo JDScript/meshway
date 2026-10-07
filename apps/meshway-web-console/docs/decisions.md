@@ -486,7 +486,10 @@ open), `/` with no network (creating the first), a network not found,
 `/join`, `/reset-password` and `/authorize-device/<id>`.
 
 Where a page cannot be, the same card says so (`components/entry/fallback.tsx`,
-the router's defaults): an address with no page names it and offers the way
+the router's defaults), centred below the globe, which comes to the middle
+above it, stops turning, dims its land, hides the network's nodes and links
+and sends rings out from its edge, amber for what is not there and red for
+what failed (one still ring with less motion): an address with no page names it and offers the way
 on (the network's overview inside a network, the console when signed in,
 else the sign-in); a page that failed says why when the controller did (by
 its problem), that the page's files did not load (the console was updated
@@ -641,6 +644,11 @@ they need `motion`.
   globe radii). Colours come only from theme tokens.
 - The camera and the offset follow critically damped springs, re-aimed
   whenever surfaces change, so motion never stops dead or restarts.
+- The light is the real sun's (`lib/sky/astronomy.ts`): the globe's night
+  side is darker, with a warm band where the sun rises or sets, its land
+  dims at night, and its atmosphere glows over the day side. Under a dark
+  theme the stars come out and the moon is drawn where it is, its phase lit
+  by the same sun. A theme that turns warms the band a moment, then settles.
 - The engine chunk is lazy-loaded (~145 kB gzip, almost all three.js).
   Where it cannot run (no WebGL, or its chunk did not load) the first load
   goes on without a globe, and the overview's corner says the globe cannot
@@ -655,6 +663,26 @@ the WebGL globe in the same pose, comet included, and the globe grows into
 its frame and settles on a continent while the interface comes in. View
 transitions are not used: during the first load they would lift the interface
 above the held screen.
+
+## Theme and sky
+
+- Themes: following the sun (the default), the system, light, dark (the
+  account menu's 外观; the bar's button and D swap light and dark, which
+  leaves following). Following the sun is light from sunrise to sunset
+  where the reader roughly is, their time zone's city
+  (`lib/sky/time-zones.gen.ts`, from the IANA tz database by
+  `scripts/generate-time-zones.ts`; nothing is asked and nothing leaves the
+  browser), checked every minute and at the minute the sun crosses; a zone
+  placed nowhere (`UTC`) follows the system.
+- A change of theme is a sunrise (the light page rises from the bottom
+  behind a band of dawn light) or a sunset (night falls from the top with a
+  dusk band), 1.6 s, as one View Transition of the page; the button's sun
+  sets as its moon rises. With less motion, or a hidden tab, it changes at
+  once. The first paint is in the theme last shown (`boot.js`).
+- The sky behind the globe follows the reader's time of day within the
+  theme's colours: day or night and a dawn or dusk glow from the bottom
+  while the sun is within about 10° of the horizon (`--sky-*` on `<html>`,
+  `state/sky.ts`).
 
 ## Development aids
 

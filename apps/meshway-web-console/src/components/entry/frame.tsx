@@ -18,6 +18,7 @@ export const HANDOFF_MS = 320
  */
 export function EntryPage({
   holdsSecret = false,
+  below = false,
   children,
 }: {
   /**
@@ -25,6 +26,8 @@ export function EntryPage({
    * page, which would lose it, so the switch stays in its place, disabled.
    */
   holdsSecret?: boolean
+  /** The card below the globe, centred (a page that cannot be shown), not beside it. */
+  below?: boolean
   children: ReactNode
 }) {
   useEffect(() => {
@@ -36,9 +39,13 @@ export function EntryPage({
         <LanguageSwitch disabled={holdsSecret} />
         <ThemeSwitch />
       </div>
-      <div className="flex flex-1 items-center px-6 pb-16 md:px-[8vw]">
-        <div className="pointer-events-auto w-full max-w-95">{children}</div>
-      </div>
+      {below ? (
+        children
+      ) : (
+        <div className="flex flex-1 items-center px-6 pb-16 md:px-[8vw]">
+          <div className="pointer-events-auto w-full max-w-95">{children}</div>
+        </div>
+      )}
     </main>
   )
 }

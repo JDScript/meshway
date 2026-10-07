@@ -14,6 +14,13 @@ export type GlobeColors = {
   guide: Rgb
   graticule: Rgb
   star: Rgb
+  /** The night side, the sunrise and sunset band, the moon. */
+  night: Rgb
+  twilight: Rgb
+  moon: Rgb
+  /** A page not found (attention) or failed (destructive): the signal-lost rings. */
+  attention: Rgb
+  destructive: Rgb
   confirmed: Rgb
   oneSided: Rgb
   degraded: Rgb
@@ -29,6 +36,11 @@ const TOKENS: Record<Exclude<keyof GlobeColors, "dark">, string> = {
   guide: "--globe-guide",
   graticule: "--globe-graticule",
   star: "--globe-star",
+  night: "--globe-night",
+  twilight: "--globe-twilight",
+  moon: "--globe-moon",
+  attention: "--status-attention",
+  destructive: "--destructive",
   confirmed: "--link-confirmed",
   oneSided: "--link-one-sided",
   degraded: "--link-degraded",
@@ -63,6 +75,11 @@ export function readGlobeColors(): GlobeColors {
     guide: resolve(TOKENS.guide),
     graticule: resolve(TOKENS.graticule),
     star: resolve(TOKENS.star),
+    night: resolve(TOKENS.night),
+    twilight: resolve(TOKENS.twilight),
+    moon: resolve(TOKENS.moon),
+    attention: resolve(TOKENS.attention),
+    destructive: resolve(TOKENS.destructive),
     confirmed: resolve(TOKENS.confirmed),
     oneSided: resolve(TOKENS.oneSided),
     degraded: resolve(TOKENS.degraded),
