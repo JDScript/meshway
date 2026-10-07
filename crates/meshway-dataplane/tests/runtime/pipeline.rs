@@ -22,7 +22,18 @@ async fn parallel_crypto_preserves_order_and_commits_replay_only_after_verificat
             ));
         }
         let mut previous = None;
-        for result in pool.run(&mut jobs).await {
+        while let Some(job) = jobs.pop_front() {
+            assert!(pool.submit(job).is_none());
+        }
+        pool.flush();
+        let mut results = Vec::new();
+        while pool.has_pending() {
+            pool.ready().await;
+            results.extend(pool.take_ready());
+        }
+        assert_eq!(results.len(), 32);
+        for result in results {
+            let (result, _credit) = result.into_parts();
             let Output::Send(frame) = result.unwrap() else {
                 panic!("send output")
             };

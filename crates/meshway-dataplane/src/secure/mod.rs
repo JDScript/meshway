@@ -122,6 +122,21 @@ impl Guard {
     }
 
     pub(crate) fn check_batch(guards: &[Self]) -> Result<(), Error> {
+        if let Some(first) = guards.first()
+            && let Some(section) = &first.section
+            && guards.iter().all(|guard| {
+                guard
+                    .section
+                    .as_ref()
+                    .is_some_and(|other| Arc::ptr_eq(section, other))
+            })
+        {
+            let reading = first.snapshot.reading().map_err(|_| Error::Authority)?;
+            for guard in guards {
+                guard.check_at(&reading)?;
+            }
+            return Ok(());
+        }
         let mut readings: Vec<(usize, Reading<'_>)> = Vec::new();
         for (index, guard) in guards.iter().enumerate() {
             let shared = readings.iter().find(|(first, _)| {

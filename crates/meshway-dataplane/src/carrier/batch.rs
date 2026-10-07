@@ -162,16 +162,16 @@ pub async fn deliver_batch(
                     .collect(),
                 channel: None,
             });
+            let slices: Vec<_> = pending
+                .iter()
+                .map(|packet| packet.packet.as_bytes())
+                .collect();
             let mut offset = 0;
             while offset < pending.len() {
-                let slices: Vec<_> = pending[offset..]
-                    .iter()
-                    .map(|packet| packet.packet.as_bytes())
-                    .collect();
-                let written = guarded(&lifetime, tun.send_batch(&slices))
+                let written = guarded(&lifetime, tun.send_batch(&slices[offset..]))
                     .await?
                     .map_err(|_| Error::Tun)?;
-                if written == 0 || written > slices.len() {
+                if written == 0 || written > slices.len() - offset {
                     return Err(Error::Tun);
                 }
                 offset += written;
