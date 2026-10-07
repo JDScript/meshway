@@ -242,7 +242,7 @@ impl Io {
                         if frame.is_data() {
                             data.push(frame);
                         } else {
-                            let send = manager.send(frame);
+                            let send = manager.send_with_receipt(frame);
                             sends.push(Box::pin(async move {
                                 send.await?;
                                 Ok(())

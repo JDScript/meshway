@@ -126,7 +126,10 @@ pub struct Pool {
 
 impl Pool {
     pub fn default_workers() -> usize {
-        std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).max(1))
+        // Hardware AEAD/SHA2 and a 32-packet window make handoff cost dominate
+        // the measured 2/4 CPU owner. Explicit workers remain available for
+        // other CPUs/workloads; never infer useful parallelism from quota alone.
+        0
     }
 
     pub fn new(workers: usize) -> Result<Self, std::io::Error> {

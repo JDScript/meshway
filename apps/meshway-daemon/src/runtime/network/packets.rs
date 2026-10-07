@@ -201,7 +201,12 @@ impl Packets {
         next
     }
     pub fn clear_incoming(&mut self) {
-        self.dropped = self.dropped.saturating_add(self.incoming.len() as u64);
+        self.dropped = self.dropped.saturating_add(
+            (self.incoming.len()
+                + self.control.len()
+                + self.sends.occupancy().0
+                + self.deliveries.occupancy().0) as u64,
+        );
         self.incoming.clear();
         self.control.clear();
         self.sends = Default::default();

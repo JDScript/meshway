@@ -360,13 +360,14 @@ impl Driver<'_> {
             }
         }
         self.readiness()?;
-        let mut report = tokio::time::interval(Duration::from_secs(5));
+        let mut report = tokio::time::interval(Duration::from_secs(1));
         let mut retry = tokio::time::interval(Duration::from_millis(100));
         let buffers = PacketPool::new(128, self.options.mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
         let mut batch = meshway_tun::PacketBatch::default();
         let mut sends = carrier::SendPending::default();
         let mut deliveries = carrier::TunPending::default();
         loop {
+            assert!(self.pending.len() <= 32, "bounded unadmitted input");
             // Match the daemon's scheduling view. Simultaneous authenticated
             // initiators may converge after readiness; the startup carrier map
             // must not pin future operations to the retired dial direction.
@@ -429,7 +430,7 @@ impl Driver<'_> {
                 .front()
                 .is_some_and(|(input, _)| pool.can_submit_capacity(input.capacity()));
             let can_read = self.pending.is_empty() && pool.can_submit();
-            tokio::select! { biased;
+            tokio::select! {
                 result = sends.ready(), if !sends.is_empty() => { result?; }
                 (result, count) = async {
                     match self.tun() {
@@ -466,7 +467,18 @@ impl Driver<'_> {
                         if let Some(frame) = self.node.retry_handshake(id)? { self.output(io, frame).await?; }
                     }
                 }
-                _ = report.tick() => profile::report(),
+                _ = report.tick() => {
+                    profile::report();
+                    if profile::enabled() {
+                        eprintln!("{}", serde_json::json!({"pipelineOccupancy": {
+                            "input": self.pending.len(), "creditsAvailable": pool.available(),
+                            "tx": sends.occupancy(), "tun": deliveries.occupancy(),
+                            "flows": self.node.retained_flows(), "circuits": self.node.retained_circuits(),
+                            "tasks": tokio::runtime::Handle::current().metrics().num_alive_tasks(),
+                        }}));
+                        profile::report_checkpoint();
+                    }
+                },
             }
             tokio::task::yield_now().await;
         }

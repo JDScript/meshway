@@ -74,6 +74,9 @@ impl<R> Default for SendPending<R> {
 }
 
 impl<R> SendPending<R> {
+    pub fn occupancy(&self) -> (usize, usize, usize) {
+        (self.0.packets, self.0.bytes, self.0.jumbo)
+    }
     pub fn is_empty(&self) -> bool {
         self.0.entries.is_empty()
     }
@@ -103,6 +106,9 @@ impl<M> Default for TunPending<M> {
 }
 
 impl<M> TunPending<M> {
+    pub fn occupancy(&self) -> (usize, usize, usize) {
+        (self.0.packets, self.0.bytes, self.0.jumbo)
+    }
     pub fn is_empty(&self) -> bool {
         self.0.entries.is_empty()
     }
