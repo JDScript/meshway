@@ -70,7 +70,9 @@ IPC v4 的公开运行状态：
 | 字段 | 含义 |
 | --- | --- |
 | `networkMode` | `tun`／`controlOnly`，本机选择 |
-| `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed` |
+| `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed`；同一有效实例内来自组件实际安装状态，publication 刷新不自行投影为 suspended。ready 不代替当前执行许可 |
+| `authenticated`／`instance` | 当前有效会话与仍持有的有效实例；目标 guard 失效不清空它们。停止、fencing、身份失效、原 session／instance 截止仍使旧快照失效 |
+| `instance.executionExpiresAt` | 当前快照执行截止；目标刷新导致旧 guard 失效时为 null，直到新的状态快照发布；不因此隐藏 instance 或延长旧输出许可 |
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
@@ -166,6 +168,8 @@ daemon 同时持有一条受保护的 Node SSE 消费任务。配置、实体和
 期望上线时，网络失败、HTTP 408／429／5xx 按 1–30 秒有界退避自动重试。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。新鲜身份证明遭拒、Server（`controllerId`）／key／目标绑定错误、本机记录损坏仍进入 `blocked`；后台残留请求不能绕过该停止状态。
 
 控制失败日志包含实际 operation、错误类别、HTTP status、已解码的 problem code、Server request ID 和恢复决策；不记录响应原文或凭据。显式 `down` 的清理若失败，在外部冲突解决后重新执行 `down` 会触发新的清理尝试，同请求重放仍保持幂等。
+
+`state_scope_changed` 丢弃当前报告，1 秒后刷新并重新采样；publication、execution lease、saved 前置条件或回执内容冲突按[回执分类](/v2/api/problems#node-配置回执冲突)退役精确回执，1 秒后刷新并重新 apply 当前目标。两者均不 reset instance 或主动 suspend／删除 TUN。实际执行截止、撤回和连续性交接检查独立生效；旧回执、输出与报告不换绑新目标。
 
 ## 持久与重建
 

@@ -37,12 +37,28 @@ Problem 的每个分支均有 code、params、message。params 由 code 决定�
 | 身份 | invalid_credentials、invalid_session、permission_denied | 不回显凭据或隐藏对象详情 |
 | 注册 | registration_disabled、password_weak、email_taken | password_weak 携带 PasswordRules；email_taken 不返回账户详情 |
 | 并发 | request_id_conflict、revision_conflict、version_conflict | 幂等内容、配置 CAS、对象版本分别冲突 |
+| 绑定 | binding_conflict | 当前 generation／绑定不匹配；不冒充请求 ID 冲突 |
 | 生命周期 | state_conflict、last_owner、already_member | 当前操作不符合资源或成员约束 |
 | 一次性链接 | join_link_used、join_link_revoked、join_link_expired、join_link_issuer_unavailable | 仅验证真实 token 后区分，不返回原值 |
 | 配置 | configuration_invalid | ConfigurationValidationParams：issues 和 requirements |
 | 查询／预算 | invalid_cursor、state_limit、observation_limit、busy | 不泄露其他用户的活动或隐藏范围 |
 
 revision_conflict 不携带当前配置差异；客户端重新读取基准后保留并验证原草稿。公开注册提供 email_taken，因此能得知邮箱占用；登录仍使用统一错误。
+
+### Node 配置回执冲突
+
+`submitNodeConfigurationReceipt` 的以下 Problem 均为 HTTP 409、`params={}`。HTTP `requestId` 仅用于关联日志；回执幂等身份是 instance／publication／attempt／sequence，不是请求 ID。
+
+| code | 条件 | Node 恢复 |
+| --- | --- | --- |
+| `receipt_instance_mismatch` | instance、generation、Server boot 或 instance 截止不再匹配 | fencing 后重新取得有效资格 |
+| `receipt_target_mismatch` | 目标既非当前目标，也非该节点曾持有的合法历史引用 | 绑定错误，fencing 并进入 blocked |
+| `receipt_publication_superseded` | 当前 publication 的执行资格已撤回或改变 | 丢弃被明确拒绝的回执，刷新目标并创建新安装尝试 |
+| `receipt_lease_expired` | 当前启用目标的 applied 缺少未到期 execution lease | 同上；不延长旧许可 |
+| `receipt_precondition` | 观测时间越界，或 applied 没有对应更早的 saved | 同上；新尝试重新确认 saved |
+| `receipt_content_conflict` | 相同幂等身份的内容不同，或 phase／failure 不相容 | 同上；不覆盖或改写冲突回执 |
+
+上述后四类通过同一 instance 非 fencing 恢复，1 秒后重试控制刷新；不因回执拒绝调用网络 suspend。当前身份鉴权仍先于回执分类；401／403、永久吊销及绑定错误不进入此路径。历史完成回执仍可记录为历史，不能提升当前目标。`request_id_conflict` 仅表示真正的请求 ID 被不同输入复用。
 
 ## 配置与运行问题
 

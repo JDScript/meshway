@@ -58,7 +58,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 - 损坏、缺字段、未知格式、错误绑定和异常文件权限都返回错误，不自动清理目录或生成替代身份。
 - 锁文件中的初始化标记先于身份写入持久化；已经初始化后丢失 `control.json` 返回错误，不能作为新安装自动生成身份。
 
-宿主可使用 `snapshot()` 在 HTTP 请求进行期间读取状态。快照复用控制组件的期限与失效标记；停止、身份上下文失效或销毁 driver 后，旧快照不再宣称具有有效实例。读取快照不产生报告或延长 lease。
+宿主可使用 `snapshot()` 在 HTTP 请求进行期间读取状态。会话／实例上下文与执行输出使用独立失效标记：publication 交接仅使旧执行截止不可用，保留仍有效的 authenticated／instance 事实。停止、身份上下文失效或销毁 driver 后，旧快照不再宣称具有有效实例。读取快照不产生报告或延长 lease；实际字段投影见[运行状态](/v2/node/runtime#安装范围与状态)。
 
 ## 事件通知与刷新
 
@@ -114,6 +114,8 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 `begin_application()` 为当前已保存、instance 目标一致的配置确认 saved 后返回 `ApplicationTicket`。Ticket 绑定 Control owner、instance、target 与 attempt；Clone 不产生新尝试。同一未完成尝试重用原 saved 请求、sequence 和时间；已完成后的重装使用下一 attempt。
 
 `finish_application(ticket, result, observed_at)` 接收宿主真实 `Ok(())` 或 `ApplyFailure`，固定首次结果、sequence 和观测时间；不确定交付重试不能改结果。仍属同一 instance 的旧目标完成可进入 Server 历史，由 Server 排序避免覆盖当前目标；当前启用目标的 applied 还须具有有效执行快照。
+
+已完成的当前 ticket 在下一次目标刷新前先结清。Server 明确返回[回执域冲突](/v2/api/problems#node-配置回执冲突)时，`ReceiptRejected` 保留类型化 Problem 与 Server request ID；被拒 ticket 终止，不能改绑、重写内容或再次提交。daemon 清除对应待确认完成，刷新后以新 attempt 重新确认 saved 和安装；网络／交付不确定仍重发原 ticket。回执被拒不等于实际组件已经停止，也不授予旧执行新的期限。
 
 `report_runtime_state` 与 `report_control_state` 共用报告 sequence／重试 owner。待确认报告存在时，新事实等待，重发原观测不制造样本。保存、安装、认证通道和业务包流分别表达；报告不会授予或延长执行资格。
 
