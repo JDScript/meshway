@@ -7,7 +7,7 @@ use meshway_ipc::{Phase, Problem};
 use meshway_protocol::enrollment::EnrollmentPhase;
 use std::time::Duration;
 
-const POLL: Duration = Duration::from_secs(5);
+const POLL: Duration = Duration::from_secs(20);
 
 /// Timings describe real owner work, including a dropped lifecycle future. No
 /// request bodies, credentials, or synthetic observations enter these events.
