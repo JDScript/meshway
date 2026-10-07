@@ -8,10 +8,12 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import uuid
 
 from node_lab import ROOT, check_elf, docker_target, run, sha256
 from verify_tun import pinned_image
+from verify_runtime import wait_for_idle
 from verification_sources import fingerprint as source_fingerprint
 
 
@@ -40,6 +42,7 @@ def main():
     binary.chmod(0o500)
     check_elf(binary, machine)
     image = pinned_image(platform, report / "bin")
+    load = wait_for_idle()
     label = "io.meshway.packet-fixture=" + identity
     containers = {}
     network = None
@@ -47,7 +50,8 @@ def main():
                 "dirty": bool(run("git", "status", "--porcelain", capture=True).strip()),
                 "sourceDigest": before, "target": target, "platform": platform,
                 "image": image, "sha256": sha256(binary), "passed": False,
-                "scope": "real HTTPS control and IPv4/IPv6 UDP OS applications over TUN, Noise and a mandatory relay on native TCP"}
+                "loadBeforeRuntime": load,
+                "scope": "real HTTPS control, full-MTU IPv4/IPv6 UDP and MTU+1 rejection over TUN/Noise/relay; real daemon multi-MSS TCP and full-MTU regression"}
     metadata = report / "report.json"
     metadata.write_text(json.dumps(manifest, indent=2) + "\n")
 
@@ -107,19 +111,42 @@ def main():
         if fingerprint() != before:
             raise RuntimeError("Sources changed while validating candidate binaries.")
         manifest["processes"] = results
-        manifest["passed"] = all(not item["attachExit"] and not item["exitCode"] and not item["oomKilled"] for item in results.values())
+        manifest["packetActorsPassed"] = all(not item["attachExit"] and not item["exitCode"] and not item["oomKilled"] for item in results.values())
         metadata.write_text(json.dumps(manifest, indent=2) + "\n")
         for role in ("controller", "a", "r", "b"):
             print(f"{role}: {results[role]}")
             print((report / f"{role}.log").read_text())
         print(report)
-        if not manifest["passed"]:
+        if not manifest["packetActorsPassed"]:
             raise RuntimeError("protected kernel packet verification failed")
     finally:
         for identifier in containers.values():
             run("docker", "rm", "-f", identifier, capture=True)
         if network is not None:
             run("docker", "network", "rm", network, capture=True)
+
+    # The direct SecureNode fixture cannot detect a daemon-owned pool regression.
+    # Require the same socket boundaries through the real daemon as well. Keep
+    # its full independent evidence and shutdown assertions, rather than adding
+    # another reduced daemon driver with a different lifecycle implementation.
+    command = [sys.executable, str(ROOT / "scripts/verify_runtime.py"),
+               "--transport", "native-tcp", "--dns-backend", "off"]
+    with (report / "daemon.log").open("w") as log:
+        result = subprocess.run(command, cwd=ROOT, text=True, stdout=log, stderr=subprocess.STDOUT)
+    paths = [Path(line) for line in (report / "daemon.log").read_text().splitlines()
+             if line.startswith("/") and "/.meshway/validation/runtime/" in line]
+    if paths:
+        daemon_report = paths[-1] / "report.json"
+        daemon = json.loads(daemon_report.read_text())
+        manifest["daemonReport"] = str(daemon_report)
+        manifest["daemonPassed"] = daemon["passed"]
+        manifest["passed"] = (result.returncode == 0 and daemon["passed"]
+                              and daemon["sourceDigest"] == before and fingerprint() == before)
+    manifest["daemonExitCode"] = result.returncode
+    metadata.write_text(json.dumps(manifest, indent=2) + "\n")
+    print(report)
+    if not manifest["passed"]:
+        raise RuntimeError("packet daemon MTU conformance failed; inspect daemon.log and its report")
 
 
 if __name__ == "__main__":

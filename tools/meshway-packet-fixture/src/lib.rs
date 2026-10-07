@@ -1,6 +1,8 @@
 //! Shared HTTPS material for packet-library and real-daemon conformance.
 #![forbid(unsafe_code)]
 
+pub mod mtu;
+
 use meshway_transport_spec::{
     ClientTls, DialerTls, ListenerTls, SecretString, TlsMode, TlsVersion,
 };

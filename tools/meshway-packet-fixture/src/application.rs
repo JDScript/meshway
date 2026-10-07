@@ -96,6 +96,7 @@ impl Applications {
                         bytes = received,
                         "OS UDP application verified"
                     );
+                    meshway_packet_fixture::mtu::udp(socket, SENTINELS[index]).await?;
                 }
                 signals.write("done", Signal::Done).await?;
                 Ok(())
@@ -123,7 +124,7 @@ async fn echo(
     peer: &NodeAddresses,
     mut stopped: watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut buffer = [0; 512];
+    let mut buffer = [0; meshway_packet_fixture::mtu::INNER_MTU + 1];
     loop {
         tokio::select! {
             _ = stopped.changed() => return Ok(()),

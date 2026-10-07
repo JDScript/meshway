@@ -273,6 +273,7 @@ async fn exercise(
             signals.ready("traversal-verified").await?;
         }
         traffic.add_demands(&addresses[&Role::A]).await?;
+        traffic.mtu_conformance().await?;
         let sockets = traffic.sockets()?;
         save(cli, "persistent-sockets", &sockets).await?;
         let subscription = Subscription::start(&addresses[&Role::A], &addresses[&Role::B]).await?;

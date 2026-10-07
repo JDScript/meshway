@@ -44,6 +44,20 @@ def fingerprint():
     return source_fingerprint(ROOT)
 
 
+def wait_for_idle():
+    """Record host load and gate each isolated Linux group, including nested runs."""
+    started = time.monotonic()
+    while True:
+        load = os.getloadavg()
+        uptime = run("uptime", capture=True).strip()
+        print(uptime, flush=True)
+        waited = time.monotonic() - started
+        if load[0] <= 6 or (waited >= 600 and load[0] < 8):
+            return {"uptime": uptime, "loadAverage": list(load), "waitSeconds": waited,
+                    "relaxedAfterTenMinutes": load[0] > 6}
+        time.sleep(30)
+
+
 def write_json(path, value):
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n")
@@ -190,6 +204,8 @@ def main():
     if args.build_only:
         print(report / "bin")
         return
+    load = wait_for_idle()
+    runtime_started = time.monotonic()
     # Full runtime actors invoke iproute2 in addition to the Rust binaries.
     # Use the explicitly built, provenance-checked Ubuntu tools image, never
     # install packages or launch its persistent-lab supervisor as a side effect.
@@ -245,6 +261,7 @@ def main():
     actor_networks = {}
     routers = {}
     manifest = {**artifacts, "image": image, "imageId": description["Id"], "runtimeOsAssets": runtime_os, "run": identity,
+                 "loadBeforeRuntime": load,
                 "dirty": bool(run("git", "status", "--porcelain", capture=True).strip()),
                  "passed": False, "processes": {}, "resources": {"containers": containers},
                   "carrier": args.transport,
@@ -646,6 +663,10 @@ def main():
                 cleanup_errors.append(error)
                 manifest["cleanup"]["network" if name == "wan" else "network-" + name] = False
         if cleanup_errors:
+            manifest["passed"] = False
+        manifest["runtimeElapsedSeconds"] = time.monotonic() - runtime_started
+        manifest["sourceDigestAfter"] = fingerprint()
+        if manifest["sourceDigestAfter"] != source:
             manifest["passed"] = False
         write_json(metadata, manifest)
         print(report)

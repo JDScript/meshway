@@ -11,6 +11,7 @@ use meshway_dataplane::{
     secure::{PendingFrame, Received, SecureNode},
 };
 use meshway_model::{NodeId, RequestId};
+use meshway_packet_fixture::mtu::INNER_MTU;
 use meshway_tun::{Options, Tun};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -127,7 +128,7 @@ pub async fn run(
         let (ipv4, prefix4, ipv6, prefix6) =
             crate::application::prefixes(&configuration.addresses, &peer)?;
         let device = Tun::create(
-            Options::new(1280)?
+            Options::new(INNER_MTU)?
                 .with_ipv4(ipv4, prefix4)?
                 .with_ipv6(ipv6, prefix6)?,
         )?;
@@ -222,8 +223,8 @@ async fn pump(
     report: &mut Report,
     application: &mut Option<tokio::task::JoinHandle<Result<()>>>,
 ) -> Result<()> {
-    let buffers = PacketPool::new(4, 1280, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
-    let mut buffer = buffers.acquire(1280)?;
+    let buffers = PacketPool::new(4, INNER_MTU, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
+    let mut buffer = buffers.acquire(INNER_MTU)?;
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     loop {
         enum Event {
@@ -257,12 +258,19 @@ async fn pump(
             Event::Tun(result) => {
                 let length = result?;
                 buffer.truncate(length);
-                let owned = std::mem::replace(&mut buffer, buffers.acquire(1280)?);
+                let owned = std::mem::replace(&mut buffer, buffers.acquire(INNER_MTU)?);
                 let packet = match Packet::parse(owned) {
                     Ok(packet) => packet,
                     // The kernel may emit IPv6 neighbor/router solicitation;
                     // the production parser does not admit it as business IP.
                     Err(PacketError::Unsupported) => continue,
+                    Err(PacketError::Fragment) => {
+                        tracing::info!(
+                            phase = "mtu-fragment-rejected",
+                            "inner fragment refused by the production packet parser"
+                        );
+                        continue;
+                    }
                     Err(error) => return Err(error.into()),
                 };
                 let frame = secure.send(circuit, packet)?;

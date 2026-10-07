@@ -81,13 +81,14 @@ impl Echo {
             let stop = stop.clone();
             let counts = counts.clone();
             tasks.spawn(async move {
-                let mut buffer = [0; FRAME + 1];
+                let mut buffer = [0; meshway_packet_fixture::mtu::INNER_MTU + 1];
                 loop {
                     tokio::select! {
                         () = stop.cancelled() => return Ok(()),
                         packet = socket.recv_from(&mut buffer) => {
                             let (length, from) = packet?;
-                            if length != FRAME { return Err("unexpected UDP application payload".into()); }
+                            let full_mtu = meshway_packet_fixture::mtu::INNER_MTU - if from.is_ipv4() { 28 } else { 48 };
+                            if length != FRAME && length != full_mtu { return Err("unexpected UDP application payload".into()); }
                             socket.send_to(&buffer[..length], from).await?;
                             counts[index].fetch_add(1, Ordering::Relaxed);
                         }
@@ -450,19 +451,20 @@ async fn tcp_echo(
                     let stop = stop.clone();
                     let counts = counts.clone();
                     streams.spawn(async move {
-                        let mut bytes = [0; FRAME];
+                        let mut bytes = [0; meshway_packet_fixture::mtu::TCP_BYTES];
                         loop {
-                            tokio::select! {
+                            let length = tokio::select! {
                                 () = stop.cancelled() => return Ok::<(), Error>(()),
-                                result = stream.read_exact(&mut bytes) => match result {
-                                    Ok(_) => {},
+                                result = stream.read(&mut bytes) => match result {
+                                    Ok(0) => return Ok(()),
+                                    Ok(length) => length,
                                     Err(error) if matches!(error.kind(), std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset) => return Ok(()),
                                     Err(error) => return Err(error.into()),
                                 }
-                            }
+                            };
                             tokio::select! {
                                 () = stop.cancelled() => return Ok(()),
-                                result = stream.write_all(&bytes) => { result?; }
+                                result = stream.write_all(&bytes[..length]) => { result?; }
                             }
                             counts[index].fetch_add(1, Ordering::Relaxed);
                         }
@@ -591,6 +593,26 @@ impl Traffic {
         self.counts.tcp4 += 1;
         tcp_exchange(self.tcp6.as_mut().ok_or("TCP6 not established")?, &frame).await?;
         self.counts.tcp6 += 1;
+        Ok(())
+    }
+    pub async fn mtu_conformance(&mut self) -> Result<()> {
+        for socket in [&self.udp4, &self.udp6] {
+            meshway_packet_fixture::mtu::udp(socket, b"Meshway-daemon-MTU-").await?;
+        }
+        let payload = vec![0x73; meshway_packet_fixture::mtu::TCP_BYTES];
+        for stream in [&mut self.tcp4, &mut self.tcp6] {
+            let stream = stream.as_mut().ok_or("TCP not established for MTU probe")?;
+            tokio::time::timeout(IO, async {
+                stream.write_all(&payload).await?;
+                let mut response = vec![0; payload.len()];
+                stream.read_exact(&mut response).await?;
+                if response != payload {
+                    return Err("large TCP echo mismatch".into());
+                }
+                tracing::info!(phase = "mtu-tcp-conformance", peer = %stream.peer_addr()?, bytes = payload.len(), "multi-MSS TCP echo verified");
+                Ok::<(), Error>(())
+            }).await??;
+        }
         Ok(())
     }
     pub async fn restored(&mut self) -> Result<()> {
