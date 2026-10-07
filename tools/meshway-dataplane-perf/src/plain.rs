@@ -48,7 +48,13 @@ pub async fn run_with_io(
     };
     let report = endpoint.capability_report();
     // Fixed budget across event-batch variants; a single admitted operation.
-    let limits = Limits::new(options.mtu, 1024, options.mtu * 1024, 1, 1024)?;
+    let limits = Limits::new(
+        options.mtu,
+        1024,
+        options.mtu * 1024,
+        1,
+        if batch_io { options.batch } else { 1024 },
+    )?;
     let (mut sender, mut receiver) = endpoint.into_session(limits).into_split();
     println!(
         "{}",
@@ -135,6 +141,9 @@ async fn outbound_batch(
                 return Err("plain UDP batch did not complete".into());
             }
             frames.extend(suffix);
+            if !frames.is_empty() {
+                tokio::task::yield_now().await;
+            }
         }
         tokio::task::yield_now().await;
     }
