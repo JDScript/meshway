@@ -16,7 +16,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `enroll_with_key`／`resume_key_enrollment` | 在同一私有记录中先保存接入密钥、独立 Node 密钥和 intent，再调用 `POST /agent-api/v1/enrollments`；重启复用原请求，成功后清除接入秘密 |
 | `authenticate` | 先签名申请有界 challenge，再校验固定 Server／Node／key／generation 并消费证明，取得短期 Node 会话 |
 | `refresh_authentication` | 在原会话截止前持钥取得新会话，保留同一有效实例；不会延长旧快照或 execution lease |
-| `rotate_keys`／`rotation_pending` | 显式发起或恢复待确认换钥；新旧私钥、请求和 challenge 的持久化与结果恢复见下文 |
+| `rotate_keys`／`rotate_keys_with_request`／`rotation_pending` | 显式发起或恢复待确认换钥；宿主请求 ID 与最后一次成功结果一并私有保存，重放不再次轮换 |
 | `acquire_instance` | 使用宿主真实能力取得实例；同一次不确定请求保持原 instance ID |
 | `renew_instance` | 更新当前实例的期限，验证返回实例与代际 |
 | `sync_configuration` | 读取完整目标或用共享库应用 delta，检查 digest／身份／实例绑定，原子保存目标 |
@@ -66,14 +66,17 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 | 事件 | 本机动作 |
 | --- | --- |
-| `sync.reset`、`sync.ready`、`entities.delta`、`configuration.changed`、`resources.changed` | 唤醒既有控制周期，重新查询／原子刷新、校验和保存目标 |
-| 三种初始 snapshot、`state.delta`、配置进度与观察事件 | 不安装其投影视图，不把报告或测量当作执行许可；观察领取／更新仍由既有观察调度驱动 |
+| `config.snapshot`、`entities.snapshot`／`entities.delta` | 本节点目标、可见密钥绑定或成员集合改变时唤醒既有控制周期；peer 的 publication／观察投影变化不冒充本节点目标变化 |
+| `state.delta` | 本节点实例改变或删除时重新同步；普通报告与样本不触发完整刷新 |
+| `configuration.changed`、`resources.changed` | 新配置 revision 或资源变化通知触发既有刷新 |
+| `sync.reset` | 断档、背压、epoch 改变触发刷新；`view_changed` 按随后完整投影的本节点目标判断，避免 peer／观察范围变化造成刷新反馈 |
+| `sync.ready`、其他初始 snapshot、配置进度与观察事件 | 不安装其投影视图，不把报告或测量当作执行许可；观察领取／更新仍由既有观察调度驱动 |
 | `stream.closed: session_expired` | 清除旧会话与实例上下文，按现有到期恢复路径重新持钥认证 |
-| `stream.closed: membership_revoked` | 停止旧上下文并阻断；不后台重试身份 |
+| `stream.closed: membership_revoked` | 撤回旧上下文，复用 HTTP 运行凭据拒绝的退避再认证路径；事件本身不把 daemon 永久置为 blocked |
 | `stream.closed: node_lease_expired` | 按既有 lease 失效路径重新取得资格 |
 | `stream.closed: server_shutdown`、EOF、网络／解码失败 | 只重连事件流；不撤销或延长独立取得的本机 lease |
 
-此消费者仅使用通知唤醒普通 HTTP 同步，不维护 SSE 配置缓存，也不保存或发送 `Last-Event-ID`；每次重连取得完整批次，`sync.ready` 后再走正常同步。事件触发的完整刷新在上一控制周期完成后至少间隔 5 秒，重复提示不推迟这个截止；权限关闭事件独立处理。定时刷新放宽为 20 秒兜底，实例续租与报告期限独立。流当前沿用同一 HTTP 客户端的 20 秒总请求预算，到达预算后由宿主重连；普通请求的超时与保护不变。事件接收、保活和重连都不产生授权。
+此消费者仅使用通知唤醒普通 HTTP 同步，不维护 SSE 配置缓存，也不保存或发送 `Last-Event-ID`；每次重连取得完整批次，首次已同步的相同目标不重复刷新。事件触发的完整刷新在上一控制周期完成后至少间隔 5 秒，重复提示不推迟这个截止；权限关闭事件独立处理。定时刷新放宽为 20 秒兜底，实例续租与报告期限独立。流当前沿用同一 HTTP 客户端的 20 秒总请求预算，到达预算后由宿主重连；普通请求的超时与保护不变。事件接收、保活和重连都不产生授权。
 
 ## 换钥与恢复
 
@@ -86,7 +89,9 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 不确定失败必须保留两套私钥；不能假定 Server 未提交而删除新钥。原 challenge 已过期且 rotate 明确被拒时，只有新鲜旧钥认证仍成功才能清除 pending、回到旧身份；若旧钥证明失败，继续保留恢复材料。持久写入失败或等待者取消时，driver 进入 `ReloadRequired`，重开后读取原子写入前的 pending 或写入后的新身份，不使用内存中未经确认的绑定。旧执行不会因恢复或回滚而复活。
 
-当前契约不发布持久 Node key 的到期时间或要求轮换的通知；短期 session 到期不是换钥触发条件。组件提供显式调用和 pending 恢复，daemon／CLI 尚无发起换钥或接入密钥的操作入口。
+当前契约不发布持久 Node key 的到期时间或要求轮换的通知；短期 session 到期不是换钥触发条件。操作员使用 `meshway rotate-key` 发起换钥，接入密钥使用 `meshway up --enrollment-key @file` 或 stdin，见[CLI 与 IPC](/v2/node/runtime#cli-与-ipc)。
+
+daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执行；Server 结果与新绑定持久化、daemon 操作回执落盘后才同步回答 CLI。CLI 断开不撤回已接纳操作，进程重启保留原请求 ID 恢复。接入密钥只在待完成意图中私有保存，接入完成后清除原值；幂等回执保留摘要。
 
 ## 执行快照
 
@@ -126,6 +131,6 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 事件驱动候选尚未通过 Native UDP／DNS off 的完整 runtime 重验：共享观察的新样本交接及 Access 恢复后的 applied 收敛存在超时。已有定时控制基线的验收不自动覆盖本候选；组件／生命周期测试通过不代表这项整组验收完成。
 
-IPC v3 的既有 `Status` 是拒绝未知字段的封闭对象，无法仅靠新增可省略字段让旧 CLI 接收事件流状态。因此当前 IPC／`meshway status` 未增加 `eventStream` 或最近事件时间。接入密钥和换钥的发起入口限制见上文。
+IPC v4 与 CLI／daemon 同版本发布；旧版本请求返回 `ErrorCode::Version`。事件连接状态与最近有效事件接收时间只是观测，不代表执行许可，见[公开运行状态](/v2/node/runtime#安装范围与状态)。
 
 组件测试使用 `mise exec -- cargo test -p meshway-control -p meshway-private-storage --all-targets --locked`，以真实 Server 与独立私有数据库运行；它不替代 TUN 或业务包流验收，见[验收范围](/v2/node/validation)。

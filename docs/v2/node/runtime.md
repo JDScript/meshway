@@ -42,6 +42,7 @@ install -d -m 700 .meshway
 | daemon `--dns-resolv-conf` | 仅用于文件代理，当前 daemon 仅接受 `/etc/resolv.conf`；文件必须满足[系统 DNS 归属约束](/v2/node/dataplane#系统-dns-安装) |
 | CLI `--socket` | 默认 `/var/lib/meshway/control.sock`，可显式选择本机 daemon |
 | CLI `--json` | 输出类型化公开状态；不包含 Node 私钥、兑换码或会话 token |
+| CLI `up --enrollment-key` | 一次性接入密钥；支持字面值、`@file`、`-`／`@-`（stdin）。优先文件或 stdin，避免秘密进入 shell 历史与进程参数 |
 
 默认目录适用于 Linux 系统服务；本地开发或其他 Unix 环境可像示例一样显式指定私有目录。安装参数不构成本机业务配置覆盖源。
 
@@ -64,7 +65,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 仅验证 Mesh IP、无需系统 DNS 的场景，在 Server 的 [DNS 配置](/v2/configuration-reference/dns)中明确设置 `magicDNS=false`、`overrideLocal=false`，并保持 `servers`、`default`、`routes`、`searchDomains` 为空。此时不创建 DNS 服务／锚点，也不要求机器运行 resolved。存在 DNS 需求时须完成对应安装；本机后端选择不覆盖云端 DNS 业务配置。`control-only` 不安装系统 DNS。
 
-IPC v3 的公开运行状态：
+IPC v4 的公开运行状态：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -73,6 +74,8 @@ IPC v3 的公开运行状态：
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
+| `eventStream` | 必填，`connected`（HTTP 已接纳）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
+| `lastEventAt` | 必填可空，本进程最近一次有效事件的接收时间；未收到为 null，保活／读取 status 不改写它 |
 
 `phase` 的全部 9 个值：
 
@@ -110,7 +113,7 @@ IPC v3 的公开运行状态：
 | `transport` | 承载安装／运行失败 |
 | `apply` | 当前目标安装、回执或报告执行范围需重新同步 |
 
-IPC v3 的封闭对象解码会拒绝未知字段；当前不增加事件流状态字段，旧 CLI 仍可读取同一 `Status`。
+IPC 封闭对象解码拒绝未知字段；新增状态字段与身份操作使用 v4，旧版本请求返回 `ErrorCode::Version`。CLI 与 daemon 同版本发布，不将缺字段补成已连接或零时间。
 
 ready／applied 只表示该目标的本机安装结果，不表示 peer 已建立认证通道或应用已收回业务包。Node State 中的 listener／link 来自组件观测；路径、RTT、丢包缺测保持空。安装与报告顺序见 [Control ApplicationTicket](/v2/node/control#安装回执与运行报告)。
 
@@ -127,12 +130,26 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | 命令／操作 | 行为／状态 |
 | --- | --- |
 | `meshway up` | 首次浏览器接入，或用保存的身份重新认证并取得运行资格 |
+| `meshway up --enrollment-key @file` | 通过 Server 的一次性 Tag 接入密钥加入网络，不取得用户会话；既有身份不被接入密钥改绑 |
+| `meshway rotate-key` | 同步返回已完成换钥的公开身份／状态或类型化失败；随后重新取得实例和运行资格，换钥成功不等于数据面已 applied |
 | `meshway down` | 停止当前网络并终止相关资格；daemon 与私有身份保留 |
 | `meshway ping <target>` | 获准的端到端 Mesh 探测；参数、授权与输出见[路径诊断](/v2/node/diagnostics) |
 | `meshway status` | 区分进程、控制联系、saved／applied 和实际通道状态 |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，当前版本为 3，使用 JSON 与长度前缀，单条消息上限 64 KiB。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，当前版本为 4，使用 JSON 与长度前缀，单条消息上限 64 KiB。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey` 的 `expectedRevision` 由 CLI 读取后提交，换钥不会绕过本机 CAS。
+
+推荐的无交互接入与换钥用法：
+
+```sh
+meshway up --enrollment-key @/absolute/private/enrollment-key
+# 或由秘密提供者写入 stdin，输入结束后提交：
+cat /absolute/private/enrollment-key | meshway up --enrollment-key -
+meshway status --json
+meshway rotate-key
+```
+
+接入密钥输入统一走 IPC 持久命令；daemon 不另提供重复的 `--enrollment-key-file` 启动源，避免启动参数与已接纳意图的恢复顺序冲突。换钥处理预算为 65 秒、CLI 等待 70 秒；超时／Ctrl-C 不取消已接纳操作，先通过 status 的公钥 generation 检查结果再决定是否重试。原始接入密钥、私钥和 token 不进入状态、错误分类或普通日志。
 
 up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更的请求身份以恢复不确定结果。本机 revision 与 Server 配置 revision 分开。已接纳命令的持久化由协调器完成，CLI 断开不会撤回它；读取 status 不写入状态或生成测量。
 
