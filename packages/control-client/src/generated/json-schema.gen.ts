@@ -11589,6 +11589,18 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RefreshRuleSetRequest": {
+        "type": "object",
+        "required": [
+          "requestId"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
       "RegisterRequest": {
         "type": "object",
         "required": [

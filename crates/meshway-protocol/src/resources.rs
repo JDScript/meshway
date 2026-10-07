@@ -1,6 +1,6 @@
 use crate::object::wire_object;
 use chrono::{DateTime, Utc};
-use meshway_model::{ArtifactId, Digest, PublicationId, Revision};
+use meshway_model::{ArtifactId, Digest, PublicationId, RequestId, Revision};
 
 pub use meshway_model::resources::RuleSetData;
 wire_object! { #[derive(Clone, Debug)] pub struct PreparedRuleSet {
@@ -25,6 +25,7 @@ pub enum ResourceProblem {
     ValidationFailed,
 }
 }
+wire_object! { pub struct RefreshRuleSetRequest { pub request_id: RequestId } }
 wire_object! { #[derive(Clone, Debug)] pub struct RuleSetView {
     pub key: String, pub configuration_revision: Revision,
     pub definition: Option<meshway_configuration::RuleSet>,

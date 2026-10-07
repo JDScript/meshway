@@ -364,6 +364,7 @@ export type RecentLink = z.output<typeof schemas.zRecentLink>;
 export type RedeemEnrollmentRequest = z.output<typeof schemas.zRedeemEnrollmentRequest>;
 export type RedeemEnrollmentRequestPath = z.output<typeof schemas.zRedeemEnrollmentRequestPath>;
 export type RefreshRuleSetPath = z.output<typeof schemas.zRefreshRuleSetPath>;
+export type RefreshRuleSetRequest = z.output<typeof schemas.zRefreshRuleSetRequest>;
 export type RegisterRequest = z.output<typeof schemas.zRegisterRequest>;
 export type RemovalImpactResponse = z.output<typeof schemas.zRemovalImpactResponse>;
 export type RemoveMemberPath = z.output<typeof schemas.zRemoveMemberPath>;

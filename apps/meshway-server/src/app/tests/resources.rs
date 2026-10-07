@@ -378,7 +378,8 @@ impl Server {
         json(
             self.client
                 .post(self.network(network, "rule-sets/remote/refresh"))
-                .bearer_auth(token),
+                .bearer_auth(token)
+                .json(&RefreshRuleSetRequest { request_id: rid() }),
         )
         .await
     }
@@ -1024,6 +1025,46 @@ async fn exact_names_in_remote_lists_bind_under_an_internet_grant() {
     let failed = s.refresh(token, network).await;
     assert_eq!(failed.problem, Some(ResourceProblem::ConversionFailed));
     assert_eq!(failed.artifact.unwrap().id, artifact.id);
+    // A refresh is idempotent per request ID: the retry neither downloads
+    // nor records a new check; the same ID for another key is a conflict.
+    let replay = rid();
+    let refresh = |key: &str, request_id: RequestId| {
+        s.client
+            .post(s.network(network, &format!("rule-sets/{key}/refresh")))
+            .bearer_auth(token)
+            .json(&RefreshRuleSetRequest { request_id })
+            .send()
+    };
+    let downloads = remote.requests.load(Ordering::SeqCst);
+    let first: RuleSetView = refresh("remote", replay)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(remote.requests.load(Ordering::SeqCst), downloads + 1);
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let again: RuleSetView = refresh("remote", replay)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(remote.requests.load(Ordering::SeqCst), downloads + 1);
+    assert_eq!(again.checked_at, first.checked_at);
+    let conflict = refresh("other", replay).await.unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    let error: ErrorResponse = conflict.json().await.unwrap();
+    assert!(matches!(error.problem, Problem::RequestConflict { .. }));
+    let missing = s
+        .client
+        .post(s.network(network, "rule-sets/remote/refresh"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
     s.close().await;
 }
 
@@ -1522,6 +1563,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         s.client
             .post(s.network(network, "rule-sets/remote/refresh"))
             .bearer_auth(token)
+            .json(&RefreshRuleSetRequest { request_id: rid() })
             .send(),
     );
     remote.entered.notified().await;
@@ -1529,6 +1571,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         s.client
             .post(s.network(network, "rule-sets/remote/refresh"))
             .bearer_auth(token)
+            .json(&RefreshRuleSetRequest { request_id: rid() })
             .send(),
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1553,6 +1596,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         s.client
             .post(s.network(network, "rule-sets/remote/refresh"))
             .bearer_auth(token)
+            .json(&RefreshRuleSetRequest { request_id: rid() })
             .send(),
     );
     remote.entered.notified().await;
@@ -1579,6 +1623,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         s.client
             .post(s.network(network, "rule-sets/remote/refresh"))
             .bearer_auth(admin.token.expose())
+            .json(&RefreshRuleSetRequest { request_id: rid() })
             .send(),
     );
     remote.entered.notified().await;
@@ -1649,8 +1694,11 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         .with_connector(remote.clone());
     let identity = crate::state::service::ReadIdentity::user_session(token, network).unwrap();
     let sequence = s.app.state_runtime.lock().unwrap().hub.events.sequence();
-    let accepted =
-        tokio::spawn(async move { service.refresh_rule_set(identity, "remote".into()).await });
+    let accepted = tokio::spawn(async move {
+        service
+            .refresh_rule_set(identity, "remote".into(), rid())
+            .await
+    });
     started.await.unwrap();
     accepted.abort();
     assert!(accepted.await.unwrap_err().is_cancelled());

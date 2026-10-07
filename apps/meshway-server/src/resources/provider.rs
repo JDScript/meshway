@@ -43,7 +43,9 @@ impl ResourceProvider for Provider {
         // Resource administration is a full-network view. Member and Node views
         // receive compiled execution only, never source URLs or global catalogs.
         crate::store::authorization::authorize_manager(tx, *network, session.user.id)?;
-        self.system_rule_sets(tx, *network, now)
+        let mut scope = self.system_rule_sets(tx, *network, now)?;
+        scope.user = Some(session.user.id);
+        Ok(scope)
     }
     fn system_rule_sets(
         &self,
@@ -93,6 +95,7 @@ impl ResourceProvider for Provider {
         Ok(RuleSetScope {
             network: *network,
             revision: snapshot.revision,
+            user: None,
             can_refresh: true,
             definitions: snapshot.document.configuration.rule_sets.clone(),
             views,

@@ -29,11 +29,16 @@ test("generated resource SDK exposes exact artifacts, refresh events and explici
     assert.ok(!value.done && value.value.ok);
   }
   const resourcePath = { ...path, ruleSetKey: "routes" };
-  const refreshed = await refreshRuleSet(client, resourcePath, user);
+  const refresh = { requestId: randomUUID() };
+  const refreshed = await refreshRuleSet(client, resourcePath, refresh, user);
   assert.ok(refreshed.ok && refreshed.data.artifact && refreshed.data.publication);
   assert.equal(refreshed.data.problem, null);
   assert.equal(refreshed.data.artifact.entries, 1);
   assert.ok(refreshed.data.checkedAt && refreshed.data.lastSuccessAt);
+  // The same request ID replays the refresh instead of downloading again.
+  const replayed = await refreshRuleSet(client, resourcePath, refresh, user);
+  assert.ok(replayed.ok);
+  assert.equal(replayed.data.checkedAt, refreshed.data.checkedAt);
   let notified = false;
   for (let index = 0; index < 12; index++) {
     const value = await stream.next();
@@ -70,7 +75,7 @@ test("generated resource SDK exposes exact artifacts, refresh events and explici
   assert.ok((await redeemJoinLink(client, { token: link.data.secret }, { token: member.data.token })).ok);
   for (const result of [
     await listRuleSets(client, path, { token: member.data.token }),
-    await refreshRuleSet(client, resourcePath, { token: member.data.token }),
+    await refreshRuleSet(client, resourcePath, { requestId: randomUUID() }, { token: member.data.token }),
   ]) assert.ok(!result.ok && result.error.kind === "http" && result.error.status === 403);
   await stream.return(undefined);
 });

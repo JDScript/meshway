@@ -8193,6 +8193,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRuleSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -8240,6 +8250,24 @@
             }
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
             "content": {
               "application/json": {
                 "schema": {
@@ -19997,6 +20025,18 @@
           },
           "proof": {
             "$ref": "#/components/schemas/EnrollmentDeviceProof"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RefreshRuleSetRequest": {
+        "type": "object",
+        "required": [
+          "requestId"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
           }
         },
         "additionalProperties": false

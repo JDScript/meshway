@@ -30,7 +30,12 @@ export function useRefreshRuleSet(networkId: string) {
   return useMutation({
     mutationFn: (ruleSetKey: string) =>
       authed((token) =>
-        refreshRuleSet(client, { networkId, ruleSetKey }, { token })
+        refreshRuleSet(
+          client,
+          { networkId, ruleSetKey },
+          { requestId: crypto.randomUUID() },
+          { token }
+        )
       ),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ruleSetsKey(networkId) }),

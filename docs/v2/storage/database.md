@@ -164,6 +164,8 @@ listener 同名重建使用新创建 revision；socket 另有运行 generation�
 
 `rule_set_checks` 以 network_id、revision、rule_set_key 为键，保存 problem、checked_at、last_success_at、failures、check_version。failures 有界，check_version 是内部 CAS，避免依赖毫秒时间戳唯一性。
 
+`rule_set_refreshes` 以 network_id、user_id、request_id 为键，保存手动刷新命名的 rule_set_key 和 created_at；用于刷新的请求 ID 幂等，写入时清理超过 24 小时的行。
+
 检查记录拥有刷新结果与退避，不拥有当前内容；实际 artifact 绑定来自配置／执行发布。失败保留最后成功内容和成功时间，validate 不保存检查结果。
 
 ## EnrollmentRequest {#enrollmentrequest}

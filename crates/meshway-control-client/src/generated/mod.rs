@@ -3731,6 +3731,7 @@ impl crate::Client {
     pub async fn refresh_rule_set(
         &self,
         path: &RefreshRuleSetPath,
+        body: &meshway_protocol::RefreshRuleSetRequest,
         token: &str,
     ) -> Result<meshway_protocol::RuleSetView, crate::ClientError<meshway_protocol::ErrorResponse>>
     {
@@ -3772,11 +3773,11 @@ impl crate::Client {
             &query_values,
         )?;
         let response = self
-            .send_url(reqwest::Method::POST, url, Some(token), None::<&()>)
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
             .await?;
         match response.status {
             200 => response.json(),
-            400 | 401 | 403 | 404 | 409 | 429 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

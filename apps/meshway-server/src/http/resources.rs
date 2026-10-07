@@ -1,11 +1,16 @@
 use super::TypedPath as Path;
 use super::{error::HttpError, state::user};
 use crate::resources::service::{ResourceProvider, ResourceService};
-use axum::{Extension, Json, Router, extract::State, http::HeaderMap, middleware};
+use axum::{
+    Extension, Json, Router,
+    extract::{State, rejection::JsonRejection},
+    http::HeaderMap,
+    middleware,
+};
 use meshway_model::{NetworkId, RequestId};
 use meshway_protocol::{
     ErrorResponse,
-    resources::{RuleSetList, RuleSetView},
+    resources::{RefreshRuleSetRequest, RuleSetList, RuleSetView},
 };
 pub fn router<P: ResourceProvider>(service: ResourceService<P>) -> Router {
     use super::declared_route;
@@ -43,16 +48,18 @@ async fn detail<P: ResourceProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/refresh",operation_id="refreshRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetView),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=429,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/refresh",operation_id="refreshRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),request_body=RefreshRuleSetRequest,responses((status=200,body=RuleSetView),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=429,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 async fn refresh<P: ResourceProvider>(
     State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,
     Path((network, key)): Path<(NetworkId, String)>,
     headers: HeaderMap,
+    body: Result<Json<RefreshRuleSetRequest>, JsonRejection>,
 ) -> Result<Json<RuleSetView>, HttpError> {
+    let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
     Ok(Json(
         service
-            .refresh_rule_set(user(&headers, network, id)?, key)
+            .refresh_rule_set(user(&headers, network, id)?, key, body.request_id)
             .await
             .map_err(|e| HttpError::domain(id, e))?,
     ))

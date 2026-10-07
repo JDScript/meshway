@@ -45,6 +45,19 @@ CREATE TABLE rule_set_checks (
     FOREIGN KEY(network_id, revision) REFERENCES configuration_versions(network_id, revision)
 ) STRICT;
 
+-- Manual refreshes are idempotent per (network, user, request ID): a retry
+-- with the same key returns the current view without downloading again.
+-- Rows are kept for one day; a request ID seen after that refreshes anew.
+CREATE TABLE rule_set_refreshes (
+    network_id BLOB NOT NULL REFERENCES networks(id),
+    user_id BLOB NOT NULL REFERENCES users(id),
+    request_id BLOB NOT NULL CHECK (length(request_id) = 16 AND request_id != zeroblob(16)),
+    rule_set_key TEXT NOT NULL,
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    PRIMARY KEY(network_id, user_id, request_id)
+) STRICT;
+CREATE INDEX rule_set_refreshes_created_at ON rule_set_refreshes(created_at);
+
 CREATE TABLE observation_events (
     row_id INTEGER PRIMARY KEY AUTOINCREMENT,
     network_id BLOB NOT NULL REFERENCES networks(id),

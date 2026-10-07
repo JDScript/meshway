@@ -169,7 +169,7 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 后端排期中
 
-- **规则集**：`refreshRuleSet` 加请求体和 `requestId`，重试不再重新下载。这是 breaking，尚未做。
+- ~~**规则集**：`refreshRuleSet` 加请求体和 `requestId`~~：已做（breaking）。`POST rule-sets/{key}/refresh` 现在必须带 `RefreshRuleSetRequest { requestId }`；同一用户同一 `requestId` 重试同一 key 返回当前 `RuleSetView`、不再下载（`checkedAt` 不变），用于别的 key 返回 409 `request_id_conflict`，保留 24 小时。schema 新增表 `rule_set_refreshes`，开发库要重新初始化。console 的 `useRefreshRuleSet` 已做最小编译修补（每次新 `requestId`）；要让"结果未知时重试同一 ID"生效，接上 `attemptFor` 即可。
 - **主动观察与历史**：observations 模块冻结，待 Node 实现后按真实消费者重做。
   - 响应没有服务器时间（续租时机按浏览器时钟计算），没有观察权限的 `actions`（console 按"角色 + 身份"重述规则），也没有允许的目标和路径候选清单。
   - 429 `observation_limit` 同时表示续租过早、预算用满、已到终态和 4096 窗口满。

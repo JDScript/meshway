@@ -1,6 +1,6 @@
 use crate::error::Error;
 use chrono::{DateTime, Utc};
-use meshway_model::{NetworkId, Revision};
+use meshway_model::{NetworkId, RequestId, Revision, UserId};
 use meshway_protocol::resources::ResourceProblem;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
@@ -139,4 +139,57 @@ pub(crate) fn schedule(
         )?
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     Ok((created, failures))
+}
+
+/// How long a manual refresh request ID stays recognized.
+const REFRESH_REQUEST_RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// The key a user's earlier refresh request named, if the request ID is
+/// still remembered.
+pub(crate) fn refresh_request(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    user: UserId,
+    request: RequestId,
+    now: DateTime<Utc>,
+) -> Result<Option<String>, Error> {
+    tx.query_row(
+        "SELECT rule_set_key FROM rule_set_refreshes WHERE network_id=?1 AND user_id=?2 AND request_id=?3 AND created_at>?4",
+        params![
+            network.as_uuid().as_bytes().as_slice(),
+            user.as_uuid().as_bytes().as_slice(),
+            request.as_uuid().as_bytes().as_slice(),
+            now.timestamp_millis() - REFRESH_REQUEST_RETENTION_MS,
+        ],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// Remembers a performed refresh. Returns false when the same request ID was
+/// recorded meanwhile, so the caller treats its own work as the replay.
+pub(crate) fn record_refresh_request(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    user: UserId,
+    request: RequestId,
+    key: &str,
+    now: DateTime<Utc>,
+) -> Result<bool, Error> {
+    tx.execute(
+        "DELETE FROM rule_set_refreshes WHERE created_at<=?1",
+        [now.timestamp_millis() - REFRESH_REQUEST_RETENTION_MS],
+    )?;
+    let inserted = tx.execute(
+        "INSERT OR IGNORE INTO rule_set_refreshes(network_id,user_id,request_id,rule_set_key,created_at) VALUES(?1,?2,?3,?4,?5)",
+        params![
+            network.as_uuid().as_bytes().as_slice(),
+            user.as_uuid().as_bytes().as_slice(),
+            request.as_uuid().as_bytes().as_slice(),
+            key,
+            now.timestamp_millis(),
+        ],
+    )?;
+    Ok(inserted == 1)
 }

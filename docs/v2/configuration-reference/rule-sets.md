@@ -60,13 +60,15 @@ validate 走相同下载／转换与授权校验，但不保存 artifact、不�
 | --- | --- |
 | `GET /rule-sets` | `RuleSetList`，当前网络定义与检查结果 |
 | `GET /rule-sets/{ruleSetKey}` | `RuleSetList`，仅指定集合 |
-| `POST /rule-sets/{ruleSetKey}/refresh` | `RuleSetView`，下载、完整转换、权限重验与执行发布后的结果 |
+| `POST /rule-sets/{ruleSetKey}/refresh` | 请求体 `RefreshRuleSetRequest { requestId }`；`RuleSetView`，下载、完整转换、权限重验与执行发布后的结果 |
 
 这些完整资源管理视图限本网络 Owner／Admin。普通成员与 Node 不取得整网来源／artifact 清单；Node 只消费已授权的执行计划。URL 不得含 userinfo、fragment；下载保留 HTTPS 证书／主机名校验，拒绝重定向及非公网解析结果，并固定已验证地址。
 
 `RuleSetView` 包括 `configurationRevision`、`definition`、`artifact`（不可变 ID／摘要／创建时间／条目数）、`publication`（选中该 artifact 的确切发布）、`problem`、`checkedAt`、`lastSuccessAt`。检查时间与 artifact 创建时间不同；失败更新检查时间和错误，保留最后成功 artifact 与成功检查时间。没有对应检查记录的时间为 null，不伪造新鲜度。来源与绑定内容都不变时，检查记录（含失败的 problem、`checkedAt` 和退避次数）随普通配置版本延续；还没有任何成功内容的集合也一样，不会在新版本上回到 `not_ready`、`checkedAt: null`。
 
 转换支持 sing-box source v1–v3 的 `ip_cidr` 规则和 `domain`／`domain_suffix` 名称规则（同一条规则内名称类字段取并集，名称与 IP 混合则拒绝），以及 mihomo 的 IP CIDR payload 和 domain payload：`+.example.com` 转为后缀，裸 `example.com` 转为精确名称；`*.example.com`（单层通配、不含本身）、`.example.com` 及其他通配形式没有等价表达。规范化后名称小写、ASCII（IDNA）、去结尾点并去重；未知字段、逻辑组合或无法保留语义的条目会使整次转换失败，不会悄悄放宽或丢弃。错误为 `download_failed`、`invalid_source`、`too_large`、`conversion_failed` 或 `validation_failed`；首次没有内容为 `not_ready`。
+
+手动刷新按 `requestId` 幂等：同一用户在同一网络用同一 `requestId` 重试同一 key，直接返回该集合的当前视图，不再下载也不新建检查记录；同一 `requestId` 用于另一 key 返回 409 `request_id_conflict`。请求 ID 保留 24 小时，之后同一 ID 视为新的刷新。周期调度的检查没有请求 ID。
 
 刷新在同一配置 revision 下创建 `cause=refresh` 的执行发布，合并所有有效需求，保留未变化 Node 的目标／lease／回执；不覆盖 JSONC、历史源绑定或 artifact。变更通过 `resources.changed` 通知有权管理该网络的 SSE 客户端，客户端重新读取资源 GET。初始同步或 stream reset 后也重新读取 GET。
 

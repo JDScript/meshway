@@ -3161,6 +3161,10 @@ export const zRefreshRuleSetPath = z.strictObject({
   ["ruleSetKey"]: z.string()
 });
 
+export const zRefreshRuleSetRequest = z.strictObject({
+  ["requestId"]: zRequestId
+});
+
 export const zRegisterRequest = z.strictObject({
   ["email"]: z.string(),
   ["password"]: zWireSecret
