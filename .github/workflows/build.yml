@@ -1,0 +1,43 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-linux:
+    # Cross-compiles release Node binaries for both Linux targets on the build host;
+    # no containers or measurements run here.
+    runs-on: [self-hosted, linux, x64, build]
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run setup
+      - run: rustup target add ${{ matrix.target }}
+      - name: Cross-build meshwayd and meshway
+        run: mise exec zig@0.17.0 "github:rust-cross/cargo-zigbuild@0.23.4" -- cargo zigbuild --release --locked --target ${{ matrix.target }} -p meshway-daemon -p meshway-cli
+      - name: Record sizes and hashes
+        run: |
+          out=target/${{ matrix.target }}/release
+          { echo "## ${{ matrix.target }}"; for b in meshwayd meshway; do printf '%s %s bytes sha256=%s\n' "$b" "$(stat -c %s $out/$b)" "$(sha256sum $out/$b | cut -c1-16)"; done; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.target }}-${{ github.sha }}
+          path: |
+            target/${{ matrix.target }}/release/meshwayd
+            target/${{ matrix.target }}/release/meshway
+          retention-days: 14
