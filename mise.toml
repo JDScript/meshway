@@ -154,6 +154,7 @@ run = "pnpm --filter @meshway/docs build"
 description = "Test local service ownership and lifecycle helpers"
 run = [
   "python3 -B -m unittest discover -s scripts -p 'test_*.py'",
+  "python3 -B -m unittest discover -s scripts/perf -p 'test_*.py'",
   "python3 -B -m unittest discover -s dev/traversal-fixture -p 'test_*.py'",
   "pnpm exec tsc -p scripts/dev/tsconfig.json",
   "node --experimental-strip-types --test scripts/dev/seed.test.ts",

@@ -12,6 +12,9 @@ def routes(environment, nodes):
     rows = {(r["operation"], r["bytes"]): r["cpuNsPerOp"]["median"] / 1000
             for r in environment["aggregates"]}
     output = []
+    repeats = {}
+    for sample in environment["samples"]:
+        repeats.setdefault((sample["bytes"], sample["repeat"]), {})[sample["operation"]] = sample["cpuNs"] / sample["iterations"] / 1000
     for size in (52, 1280):
         get = lambda name: rows[name, size]
         old_seal = get("chacha0.10.seal.inplace.new")
@@ -30,11 +33,18 @@ def routes(environment, nodes):
                 ("iii-blake3", "blake3.keyed.v5.tag16"),
             ):
                 mac_saved = old_mac - get(mac)
+                paired = []
+                for (sample_size, _), sample in repeats.items():
+                    if sample_size == size:
+                        paired.append(sample["chacha0.10.seal.inplace.new"] - sample[aead + ".seal.inplace.new"]
+                                      + sample["chacha0.10.open.inplace.new.copy"] - sample[aead + ".open.inplace.new.copy"]
+                                      + 2 * (nodes - 1) * (sample["hmac0.12.sha0.10.v5.new"] - sample[mac]))
                 output.append(dict(bytes=size, nodes=nodes, route=route, aead=aead, mac=mac,
                                    originSavedUs=seal_saved + mac_saved,
                                    endpointSavedUs=open_saved + mac_saved,
                                    relaySavedUs=2 * mac_saved,
                                    pathSavedUs=seal_saved + open_saved + 2 * (nodes - 1) * mac_saved,
+                                   pairedPathSavedUs=circuit.quantiles(paired),
                                    oldPrimitivePathUs=old_seal + old_open + 2 * (nodes - 1) * old_mac))
     return output
 
@@ -102,6 +112,8 @@ def sampled(profile, symbols, budget_us):
                     names = [symbol_strings[info["symbol"]]]
             else:
                 names = [strings[functions["name"][func]]]
+                if names[0].startswith("0x") and lib is not None:
+                    names[0] += " [" + profile["libs"][lib]["name"] + "]"
             cache[frame] = names
             return names
         table = thread["stackTable"]
@@ -205,11 +217,13 @@ def summary(report):
         lines += ["", f"## {environment}: substitution arithmetic", "",
                   "seal + open + 2 × (nodes − 1) MAC; .v5 MAC rows use IP length plus authenticated framing/tag bytes.",
                   "Positive = saved CPU. Open copies exist in both old/new microbench rows; no copy subtraction.", "",
-                  "| IP bytes | Nodes | Route | AEAD | Origin saved µs | Endpoint saved µs | Each relay saved µs | Path saved µs |",
-                  "| ---: | ---: | --- | --- | ---: | ---: | ---: | ---: |"]
+                  "Same-repeat deltas describe serial batch variation, not confidence bounds or simultaneous paired execution.", "",
+                  "| IP bytes | Nodes | Route | AEAD | Origin saved µs | Endpoint saved µs | Each relay saved µs | Path saved µs | Same-repeat path p10–p90 µs |",
+                  "| ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | --- |"]
         for row in rows:
             lines.append(f"| {row['bytes']} | {row['nodes']} | {row['route']} | {row['aead']} | "
-                         f"{row['originSavedUs']:.3f} | {row['endpointSavedUs']:.3f} | {row['relaySavedUs']:.3f} | {row['pathSavedUs']:.3f} |")
+                         f"{row['originSavedUs']:.3f} | {row['endpointSavedUs']:.3f} | {row['relaySavedUs']:.3f} | {row['pathSavedUs']:.3f} | "
+                         f"{row['pairedPathSavedUs']['p10']:.3f}–{row['pairedPathSavedUs']['p90']:.3f} |")
     return "\n".join(lines) + "\n"
 
 
