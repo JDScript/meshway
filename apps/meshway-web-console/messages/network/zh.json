@@ -6,6 +6,7 @@
   "networks_failed": "无法读取网络列表",
   "network_failed": "无法读取网络",
   "network_not_found": "找不到这个网络",
+  "network_not_found_body": "这个网络不存在，或你不是它的成员。",
   "network_create": "新建网络",
   "network_create_first": "创建第一个网络",
   "network_create_submit": "创建网络",

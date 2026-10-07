@@ -477,7 +477,7 @@ function Decide({
             className="h-11 flex-1 rounded-tile"
             onClick={() => void navigate({ to: "/" })}
           >
-            {m.device_open_console()}
+            {m.open_console()}
           </Button>
         </div>
       </div>

@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate, useRouter } from "@tanstack/react-router"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 import { failureText } from "@/api/failure"
 import { sessionQuery } from "@/api/queries/auth"
-import { StatusCard } from "@/components/chrome/status-card"
 import {
   NetworkNameField,
   useCreateNetwork,
@@ -12,8 +11,13 @@ import {
 import { FieldGroup } from "@/components/ui/field"
 import { useSignOut } from "@/hooks/use-sign-out"
 import { m } from "@/paraglide/messages.js"
-import { showWelcomeGlobe } from "@/state/globe"
 
+import {
+  AccountFact,
+  FallbackCard,
+  OpenConsoleLink,
+  SignOutLink,
+} from "./fallback"
 import {
   EntryCard,
   EntryFoot,
@@ -24,10 +28,6 @@ import {
 
 // What `/` and `/networks/<id>` show when there is no network to open: one
 // card over the welcome globe.
-
-function useWelcomeGlobe() {
-  useEffect(showWelcomeGlobe, [])
-}
 
 /** The account is in no network yet: it creates its first. */
 export function FirstNetwork() {
@@ -86,8 +86,20 @@ export function FirstNetwork() {
 
 /** The URL names a network this account may not open, or none at all. */
 export function NetworkNotFound() {
-  useWelcomeGlobe()
-  return <StatusCard title={m.network_not_found()} />
+  return (
+    <FallbackCard
+      inShell={false}
+      title={m.network_not_found()}
+      body={m.network_not_found_body()}
+      fact={<AccountFact />}
+      actions={
+        <>
+          <OpenConsoleLink />
+          <SignOutLink />
+        </>
+      }
+    />
+  )
 }
 
 /** A network, or the list of them, could not be read: what failed and why. */
@@ -99,13 +111,20 @@ export function NetworkFailed({
   error: unknown
 }) {
   const router = useRouter()
-  useWelcomeGlobe()
   return (
-    <StatusCard
+    <FallbackCard
+      inShell={false}
       title={title}
-      body={failureText(error) ?? undefined}
-      tone="destructive"
-      onRetry={() => void router.invalidate()}
+      body={failureText(error)}
+      fact={<AccountFact />}
+      actions={
+        <>
+          <EntryLink onClick={() => void router.invalidate()}>
+            {m.retry()}
+          </EntryLink>
+          <SignOutLink />
+        </>
+      }
     />
   )
 }

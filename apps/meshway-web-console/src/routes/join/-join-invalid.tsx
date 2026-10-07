@@ -1,6 +1,5 @@
-import { useNavigate } from "@tanstack/react-router"
-
-import { EntryCard, EntryFoot, EntryLink } from "@/components/entry/frame"
+import { OpenConsoleLink } from "@/components/entry/fallback"
+import { EntryCard, EntryFoot } from "@/components/entry/frame"
 import type { JoinRefusal } from "@/lib/join-refusal"
 import { m } from "@/paraglide/messages.js"
 
@@ -21,7 +20,6 @@ export function JoinInvalid({
 }: {
   refusal?: JoinRefusal
 }) {
-  const navigate = useNavigate()
   return (
     <EntryCard
       title={refusal === "invalid" ? m.join_invalid() : m.join_unusable()}
@@ -29,9 +27,7 @@ export function JoinInvalid({
       <p className="mt-7 text-row text-muted-foreground">{reason[refusal]()}</p>
       <EntryFoot>
         <span />
-        <EntryLink onClick={() => void navigate({ to: "/" })}>
-          {m.join_open_console()}
-        </EntryLink>
+        <OpenConsoleLink />
       </EntryFoot>
     </EntryCard>
   )

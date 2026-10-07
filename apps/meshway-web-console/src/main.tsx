@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client"
 import "./index.css"
 
 import { ApiFailure } from "@/api/client"
+import { PageFailed, PageNotFound } from "@/components/entry/fallback"
 import { LAYOUT_VARIABLES } from "@/components/surface/layout"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -49,6 +50,9 @@ const router = createRouter({
   defaultPreload: "intent",
   defaultPreloadStaleTime: 0,
   scrollRestoration: true,
+  // An address with no page, and a page that failed, where no route says otherwise.
+  defaultNotFoundComponent: PageNotFound,
+  defaultErrorComponent: PageFailed,
 })
 
 declare module "@tanstack/react-router" {

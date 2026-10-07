@@ -6,6 +6,7 @@
   "networks_failed": "Could not read the networks",
   "network_failed": "Could not read the network",
   "network_not_found": "Network not found",
+  "network_not_found_body": "The network does not exist, or you are not a member of it.",
   "network_create": "New network",
   "network_create_first": "Create your first network",
   "network_create_submit": "Create network",
