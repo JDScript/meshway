@@ -29,7 +29,7 @@ meshway-private-storage = { path = "../../crates/meshway-private-storage" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
 meshway-control-client = { path = "../../crates/meshway-control-client" }
 meshway-serde = { path = "../../crates/meshway-serde" }
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest.workspace = true
 rustix = { workspace = true, features = ["system"] }
 serde.workspace = true
 serde_json.workspace = true

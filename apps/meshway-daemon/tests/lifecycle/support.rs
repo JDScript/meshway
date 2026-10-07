@@ -109,7 +109,8 @@ impl Server {
     fn client(origin: String, backend: Backend) -> Self {
         let client = Client::new(
             &origin,
-            reqwest::Client::builder()
+            meshway_control_client::http_client_builder()
+                .unwrap()
                 .no_proxy()
                 .timeout(Duration::from_secs(10)),
             16 * 1024 * 1024,

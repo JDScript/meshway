@@ -53,9 +53,11 @@ futures-util = { version = "0.3", features = ["sink"] }
 idna = "1.1"
 ipnet = { version = "2.11", features = ["serde"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
 rustix = { version = "1", features = ["fs", "process"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
+rustls-platform-verifier = { version = "0.7", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10"

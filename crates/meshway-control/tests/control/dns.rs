@@ -54,8 +54,14 @@ async fn discovery_uses_generated_client_without_acquiring_reporting_or_renewing
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
     let path = server.path("dns-control");
-    let mut control =
-        Control::open(&path, &proxy.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &proxy.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert!(matches!(
         control.query_dns("unknown.mesh.example").await,
         Err(Error::Lifecycle)
@@ -189,7 +195,9 @@ async fn discovery_fences_foreign_bindings_names_and_malformed_generated_respons
     let mut control = Control::open(
         &server.path("dns-binding"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     let (_, name) = enroll(&server, &owner, &mut control).await;
@@ -231,7 +239,9 @@ async fn discovery_rechecks_session_deadline_after_waiting_for_a_response() {
     let mut control = Control::open(
         &server.path("dns-deadline"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     let (_, name) = enroll(&server, &owner, &mut control).await;

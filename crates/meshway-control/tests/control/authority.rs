@@ -13,7 +13,9 @@ async fn packet_identity_uses_registered_keys_and_stops_with_the_execution_hando
     let mut control = Control::open(
         &server.path("packet-identity"),
         &server.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     server.enroll(&owner, &mut control, "packet-identity").await;
@@ -67,8 +69,14 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
     let server = Server::start().await;
     let owner = server.owner().await;
     let path = server.path("execution-handoff");
-    let mut control =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert!(control.execution_snapshot().is_err());
     server.enroll(&owner, &mut control, "handoff").await;
     control.authenticate().await.unwrap();
@@ -105,8 +113,14 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
     tokio::time::timeout(Duration::from_secs(1), fresh.invalidated())
         .await
         .unwrap();
-    let restored =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let restored = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert!(restored.cached_target().is_some());
     assert!(restored.execution_snapshot().is_err());
     restored.shutdown().await.unwrap();
@@ -121,7 +135,9 @@ async fn stopped_execution_wakes_waiters_before_a_held_release_http_response() {
     let mut control = Control::open(
         &server.path("execution-stop"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     server.enroll(&owner, &mut control, "execution-stop").await;
@@ -157,7 +173,9 @@ async fn idle_execution_snapshot_expires_without_polling_control_or_delaying_htt
     let mut control = Control::open(
         &server.path("execution-expiry"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     server

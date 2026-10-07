@@ -47,7 +47,19 @@ impl<P> fmt::Display for ClientError<P> {
 }
 impl<P> std::error::Error for ClientError<P> {}
 
+/// Start a caller-owned HTTP builder with Meshway's explicit ring provider and
+/// platform certificate verification. Socket protection, proxy policy and
+/// deadlines remain the caller's responsibility. For managed certificate trust,
+/// supply `meshway_tls::Client::configuration()` through
+/// `reqwest::ClientBuilder::tls_backend_preconfigured` instead.
+pub fn http_client_builder() -> Result<reqwest::ClientBuilder, ClientError<std::convert::Infallible>>
+{
+    let config = meshway_tls::platform_client_config().map_err(|_| ClientError::Configuration)?;
+    Ok(reqwest::Client::builder().tls_backend_preconfigured(config))
+}
+
 /// Caller supplies the HTTP builder with protected sockets/resolver and timeout.
+/// TLS must be explicitly configured, for example with `http_client_builder`.
 /// The SDK disables redirects before building that exact client. Middleware can
 /// be attached with `with_middleware` without replacing the protected client.
 /// Dropping an operation future cancels its pending send/read; no detached tasks.
@@ -501,7 +513,9 @@ mod tests {
     }
     async fn server(router: Router, limit: usize) -> (Client, Server) {
         let (base, server) = start_server(router).await;
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(2));
+        let http = crate::http_client_builder()
+            .unwrap()
+            .timeout(Duration::from_secs(2));
         (Client::new(&base, http, limit).unwrap(), server)
     }
     async fn fetch(client: &Client, path: &str) -> Result<Response, ClientError<Problem>> {
@@ -661,7 +675,12 @@ mod tests {
 
     #[test]
     fn parameter_binding_rejects_ambiguous_paths_and_preserves_origin() {
-        let client = Client::new("http://[::1]:1234", reqwest::Client::builder(), 1024).unwrap();
+        let client = Client::new(
+            "http://[::1]:1234",
+            crate::http_client_builder().unwrap(),
+            1024,
+        )
+        .unwrap();
         let url = client
             .parameter_url::<Problem>(
                 "/fixture/{value}",
@@ -773,7 +792,8 @@ mod tests {
         // explicitly permissive redirect policy must be replaced by the SDK.
         let client = Client::new(
             &format!("http://protected.invalid:{}", address.port()),
-            reqwest::Client::builder()
+            crate::http_client_builder()
+                .unwrap()
                 .no_proxy()
                 .resolve("protected.invalid", address)
                 .redirect(reqwest::redirect::Policy::limited(10))

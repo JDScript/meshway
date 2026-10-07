@@ -73,7 +73,9 @@ fn cancelled_private_write_is_settled_and_network_join_runs_before_the_result() 
             let mut control = Control::open(
                 &path,
                 "http://127.0.0.1:9",
-                reqwest::Client::builder().no_proxy(),
+                meshway_control_client::http_client_builder()
+                    .unwrap()
+                    .no_proxy(),
             )
             .unwrap();
             let (entered, entry) = tokio::sync::oneshot::channel();
@@ -126,7 +128,9 @@ fn cancelled_private_write_is_settled_and_network_join_runs_before_the_result() 
                 let restored = Control::open(
                     &path,
                     "http://127.0.0.1:9",
-                    reqwest::Client::builder().no_proxy(),
+                    meshway_control_client::http_client_builder()
+                        .unwrap()
+                        .no_proxy(),
                 )
                 .unwrap();
                 assert!(restored.status().enrollment_request_id.is_some());

@@ -88,7 +88,8 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
     });
     let api = Client::new(
         &origin,
-        reqwest::Client::builder()
+        meshway_control_client::http_client_builder()
+            .unwrap()
             .no_proxy()
             .timeout(Duration::from_secs(10)),
         16 * 1024 * 1024,

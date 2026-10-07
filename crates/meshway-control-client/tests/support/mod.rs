@@ -17,7 +17,8 @@ pub async fn serve(router: axum::Router, budget: usize) -> (Client, Server) {
     });
     let client = Client::new(
         &base,
-        reqwest::Client::builder()
+        meshway_control_client::http_client_builder()
+            .unwrap()
             .no_proxy()
             .timeout(Duration::from_secs(5)),
         budget,

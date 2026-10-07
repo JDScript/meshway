@@ -449,7 +449,14 @@ mod tests {
         });
         let mut stream = NodeEvents {
             owner: Arc::new(()),
-            client: Client::new(&origin, reqwest::Client::builder().no_proxy(), 1024).unwrap(),
+            client: Client::new(
+                &origin,
+                meshway_control_client::http_client_builder()
+                    .unwrap()
+                    .no_proxy(),
+                1024,
+            )
+            .unwrap(),
             token: WireSecret::new("test-token".into()),
             scope: CancellationToken::new(),
             stream: None,
@@ -569,7 +576,9 @@ mod tests {
             let mut control = Control::open(
                 &directory.path().canonicalize().unwrap().join("node"),
                 "http://127.0.0.1:9",
-                reqwest::Client::builder().no_proxy(),
+                meshway_control_client::http_client_builder()
+                    .unwrap()
+                    .no_proxy(),
             )
             .unwrap();
             let scope = control.events_cancel.clone();

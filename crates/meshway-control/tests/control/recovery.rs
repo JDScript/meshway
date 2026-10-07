@@ -6,18 +6,32 @@ use std::{fs, os::unix::fs::PermissionsExt};
 async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
     let server = Server::start().await;
     let path = server.path("node");
-    let mut control =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     control.begin_enrollment("persistent-node").await.unwrap();
     assert!(matches!(
-        Control::open(&path, &server.origin, reqwest::Client::builder()),
+        Control::open(
+            &path,
+            &server.origin,
+            meshway_control_client::http_client_builder().unwrap()
+        ),
         Err(Error::Storage(meshway_private_storage::Error::InUse))
     ));
     control.shutdown().await.unwrap();
     let saved = fs::read(path.join("control.json")).unwrap();
     fs::remove_file(path.join("control.json")).unwrap();
     assert!(matches!(
-        Control::open(&path, &server.origin, reqwest::Client::builder()),
+        Control::open(
+            &path,
+            &server.origin,
+            meshway_control_client::http_client_builder().unwrap()
+        ),
         Err(Error::Record)
     ));
     fs::write(path.join("control.json"), &saved).unwrap();
@@ -26,7 +40,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
         Control::open(
             &path,
             "https://different.example",
-            reqwest::Client::builder()
+            meshway_control_client::http_client_builder().unwrap()
         ),
         Err(Error::Record)
     ));
@@ -34,7 +48,11 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
     for invalid in [b"{".as_slice(), b"{}".as_slice(), b"[]".as_slice()] {
         fs::write(path.join("control.json"), invalid).unwrap();
         assert!(matches!(
-            Control::open(&path, &server.origin, reqwest::Client::builder()),
+            Control::open(
+                &path,
+                &server.origin,
+                meshway_control_client::http_client_builder().unwrap()
+            ),
             Err(Error::Record)
         ));
         assert!(fs::read(path.join("control.json")).unwrap() == invalid);
@@ -42,7 +60,11 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
     fs::write(path.join("control.json"), &saved).unwrap();
     fs::set_permissions(path.join("control.json"), fs::Permissions::from_mode(0o644)).unwrap();
     assert!(matches!(
-        Control::open(&path, &server.origin, reqwest::Client::builder()),
+        Control::open(
+            &path,
+            &server.origin,
+            meshway_control_client::http_client_builder().unwrap()
+        ),
         Err(Error::Storage(
             meshway_private_storage::Error::UnsafeStorage
         ))
@@ -62,7 +84,11 @@ fn remote_plaintext_and_ambient_url_credentials_are_rejected_before_storage() {
         "https://example.com?token=secret",
     ] {
         assert!(matches!(
-            Control::open(&path, origin, reqwest::Client::builder()),
+            Control::open(
+                &path,
+                origin,
+                meshway_control_client::http_client_builder().unwrap()
+            ),
             Err(Error::Endpoint)
         ));
         assert!(!path.exists());
@@ -77,8 +103,14 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
     let path = server.path("recovery");
-    let mut control =
-        Control::open(&path, &proxy.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &proxy.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     let pending = control.begin_enrollment("recoverable").await.unwrap();
     server
         .client
@@ -113,8 +145,14 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
         .await
         .unwrap();
     assert_eq!(nodes.items.len(), 1);
-    let mut control =
-        Control::open(&path, &proxy.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &proxy.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     let binding = control.redeem_enrollment().await.unwrap();
     assert_eq!(binding.node_id, nodes.items[0].id);
     assert_eq!(proxy.count("/redeem"), 2);
@@ -184,7 +222,9 @@ async fn foreign_installation_challenge_never_receives_a_session_signature() {
     let mut control = Control::open(
         &server.path("pin"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     let pending = control.begin_enrollment("pinned").await.unwrap();
@@ -220,8 +260,14 @@ async fn cancelled_http_waiter_keeps_its_durable_pending_intent() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;
     let path = server.path("cancelled");
-    let mut control =
-        Control::open(&path, &proxy.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &proxy.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     proxy.fault("/enrollment-requests", Fault::Hold);
     let mut begin = Box::pin(control.begin_enrollment("cancelled-waiter"));
     tokio::select! {
@@ -233,8 +279,14 @@ async fn cancelled_http_waiter_keeps_its_durable_pending_intent() {
     assert!(!control.status().reload_required);
     proxy.release();
     control.shutdown().await.unwrap();
-    let mut restored =
-        Control::open(&path, &proxy.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut restored = Control::open(
+        &path,
+        &proxy.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert_eq!(
         restored
             .begin_enrollment("cancelled-waiter")

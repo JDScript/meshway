@@ -23,7 +23,7 @@ meshway-control = { path = "../meshway-control" }
 axum.workspace = true
 meshway-control-client = { path = "../meshway-control-client" }
 meshway-server = { path = "../../apps/meshway-server" }
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 

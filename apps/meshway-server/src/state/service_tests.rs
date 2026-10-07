@@ -828,7 +828,11 @@ async fn http_snapshot_cursor_replay_commit_cancellation_and_logout() {
             .await
             .unwrap();
     });
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client = reqwest::Client::builder()
+        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let mut stream = open(&client, &url, &token, None).await;
     assert!(matches!(
         stream.next().await.unwrap(),

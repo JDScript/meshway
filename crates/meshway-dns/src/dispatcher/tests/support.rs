@@ -41,7 +41,8 @@ impl Server {
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let client = Client::new(
             &origin,
-            reqwest::Client::builder()
+            meshway_control_client::http_client_builder()
+                .unwrap()
                 .no_proxy()
                 .timeout(Duration::from_secs(10)),
             16 * 1024 * 1024,
@@ -71,7 +72,9 @@ impl Server {
         Control::open(
             &self.temporary.path().canonicalize().unwrap().join("node"),
             &self.origin,
-            reqwest::Client::builder().no_proxy(),
+            meshway_control_client::http_client_builder()
+                .unwrap()
+                .no_proxy(),
         )
         .unwrap()
     }

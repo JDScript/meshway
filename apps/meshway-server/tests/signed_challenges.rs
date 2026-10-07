@@ -142,7 +142,11 @@ impl Fixture {
             signer,
             origin,
             serving,
-            client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            client: reqwest::Client::builder()
+                .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+                .no_proxy()
+                .build()
+                .unwrap(),
             _directory: directory,
         }
     }

@@ -21,7 +21,9 @@ pub(super) async fn control(server: &Server, owner: &Owner, origin: &str, name: 
     let mut control = Control::open(
         &server.path(name),
         origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     server.enroll(owner, &mut control, name).await;

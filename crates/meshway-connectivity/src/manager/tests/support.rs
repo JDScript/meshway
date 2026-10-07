@@ -104,11 +104,17 @@ impl Fixture {
                 .unwrap();
         });
         let builder = || {
+            // Loopback HTTP does not use TLS or require the container's CA bundle.
+            let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth();
             reqwest::Client::builder()
+                .tls_backend_preconfigured(tls)
                 .no_proxy()
-                // This fixture uses its own loopback HTTP Server; constructing
-                // its client must not depend on the container's OS CA package.
-                .tls_certs_only(std::iter::empty())
                 .timeout(Duration::from_secs(10))
         };
         let client = Client::new(&origin, builder(), 16 * 1024 * 1024).unwrap();

@@ -25,7 +25,9 @@ async fn host_rotation_request_replay_after_restart_does_not_rotate_twice() {
     let mut control = Control::open(
         &server.path("host-rotation"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     assert_eq!(control.rotate_keys_with_request(id).await.unwrap(), keys);
@@ -66,8 +68,14 @@ async fn failed_final_identity_publish_keeps_durable_pending_material_for_recove
     control.shutdown().await.unwrap();
     std::fs::remove_dir(&record).unwrap();
     std::fs::rename(&backup, &record).unwrap();
-    let mut control =
-        Control::open(&path, &proxy.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &proxy.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert!(control.rotation_pending());
     let keys = control.rotate_keys().await.unwrap();
     assert_eq!(
@@ -132,7 +140,9 @@ async fn rotation_retires_execution_and_atomically_restores_new_identity_after_r
     let mut control = Control::open(
         &server.path("rotate"),
         &server.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     assert_eq!(control.status().binding.unwrap().keys, keys);
@@ -164,7 +174,9 @@ async fn lost_committed_rotation_keeps_both_keys_and_recovers_the_same_generatio
     let mut control = Control::open(
         &server.path("lost-rotation"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     assert!(control.rotation_pending());
@@ -202,7 +214,9 @@ async fn cancelled_committed_rotation_recovers_from_the_durable_challenge() {
     let mut control = Control::open(
         &server.path("cancel-rotation"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     let keys = control.rotate_keys().await.unwrap();

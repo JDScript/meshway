@@ -48,8 +48,18 @@ async fn fixed_origin_https_survives_explicit_network_down() {
         .unwrap()
         .timeout(std::time::Duration::from_secs(10));
     if let Ok(path) = std::env::var("MESHWAY_UNDERLAY_CA") {
-        let certificate = reqwest::Certificate::from_pem(&std::fs::read(path).unwrap()).unwrap();
-        builder = builder.tls_certs_merge([certificate]);
+        let tls = meshway_tls::Client::new(&meshway_transport_spec::ClientTls {
+            server_name: url.host_str().unwrap().into(),
+            certificate_chain: meshway_transport_spec::SecretString::new(
+                std::fs::read_to_string(path).unwrap(),
+            ),
+            options: meshway_transport_spec::DialerTls {
+                alpn: vec!["http/1.1".into()],
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        builder = builder.tls_backend_preconfigured(tls.configuration());
     }
     let client = builder.build().unwrap();
     let endpoint = url.join("api/v1/auth/options").unwrap();

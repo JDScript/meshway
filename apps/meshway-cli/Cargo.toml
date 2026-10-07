@@ -27,7 +27,7 @@ meshway-daemon = { path = "../meshway-daemon" }
 meshway-server = { path = "../meshway-server" }
 meshway-control-client = { path = "../../crates/meshway-control-client" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest.workspace = true
 tempfile.workspace = true
 
 [lints]

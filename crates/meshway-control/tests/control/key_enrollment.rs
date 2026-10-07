@@ -72,16 +72,28 @@ async fn access_key_enrollment_recovers_lost_commit_without_browser_credentials(
         .unwrap();
     let proxy = Proxy::start(&server.origin).await;
     let path = server.path("key-enrollment");
-    let mut control =
-        Control::open(&path, &proxy.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &proxy.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     proxy.fault("/enrollments", Fault::Lost);
     assert!(control.enroll_with_key("key-node", key).await.is_err());
     assert!(control.key_enrollment_pending());
     let intent = control.status().enrollment_request_id.unwrap();
     assert!(control.begin_enrollment("key-node").await.is_err());
     control.shutdown().await.unwrap();
-    let mut control =
-        Control::open(&path, &proxy.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &proxy.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert_eq!(control.status().enrollment_request_id, Some(intent));
     let binding = control.resume_key_enrollment().await.unwrap();
     assert_eq!(binding.network_id, owner.network);

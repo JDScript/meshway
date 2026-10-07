@@ -133,8 +133,8 @@ impl Host {
     pub fn client_builder(&self) -> Result<reqwest::ClientBuilder> {
         self.proxy
             .as_ref()
-            .map(Proxy::client_builder)
-            .ok_or(Error::ControlUnavailable)
+            .ok_or(Error::ControlUnavailable)?
+            .client_builder()
     }
     pub fn sockets(&self) -> SocketFactory {
         self.sockets.clone()

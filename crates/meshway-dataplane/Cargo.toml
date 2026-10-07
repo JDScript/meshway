@@ -39,7 +39,7 @@ meshway-protocol = { path = "../meshway-protocol" }
 meshway-server = { path = "../../apps/meshway-server" }
 meshway-dns = { path = "../meshway-dns" }
 meshway-transport-tcp = { path = "../meshway-transport-tcp" }
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }

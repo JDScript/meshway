@@ -249,6 +249,7 @@ async fn discovery_http_uses_identity_access_and_current_atomic_configuration_wi
             .unwrap();
     });
     let client = Client::builder()
+        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
         .no_proxy()
         .timeout(std::time::Duration::from_secs(30))
         .build()

@@ -1566,7 +1566,10 @@ async fn actual_http_signatures_and_pkce_polling() {
     let router = crate::http::router(&app);
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let base = format!("http://{address}");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .build()
+        .unwrap();
     let intent = NodeSessionIntent { request_id: rid() };
     let challenge: NodeChallenge = client
         .post(format!("{base}/agent-api/v1/auth/challenges"))
@@ -2422,7 +2425,10 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
             URL_SAFE_NO_PAD.encode(new.sign(&proof_transcript(&challenge)).to_bytes()),
         ),
     };
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .build()
+        .unwrap();
     let url = format!("http://{address}/agent-api/v1/auth/rotate");
     // Discard the successful body: the device has no newly issued key IDs.
     let lost = client.post(&url).json(&request).send().await.unwrap();

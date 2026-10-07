@@ -355,7 +355,9 @@ mod tests {
             let mut control = Control::open(
                 &directory.path().canonicalize().unwrap().join("identity"),
                 &origin,
-                reqwest::Client::builder().no_proxy(),
+                meshway_control_client::http_client_builder()
+                    .unwrap()
+                    .no_proxy(),
             )
             .unwrap();
             let keys = crate::identity::Keys::generate().unwrap();

@@ -45,7 +45,8 @@ impl Proxy {
         let state = Forward {
             origin: backend.clone(),
             faults: faults.clone(),
-            http: reqwest::Client::builder()
+            http: meshway_control_client::http_client_builder()
+                .unwrap()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(std::time::Duration::from_secs(10))

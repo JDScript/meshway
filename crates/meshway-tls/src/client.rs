@@ -66,6 +66,13 @@ impl Client {
         })
     }
 
+    /// Clone the same exact-leaf configuration for an HTTP or other TLS adapter.
+    /// The adapter owns handshake timeouts; resumption stays disabled so each
+    /// new connection checks the leaf, name and current certificate validity.
+    pub fn configuration(&self) -> ClientConfig {
+        self.connector.config().as_ref().clone()
+    }
+
     /// Negotiate TLS over an already-open stream. The caller's overall timeout or
     /// remaining lease must enclose this handshake's independent local cap.
     pub async fn connect<S>(&self, stream: S) -> Result<TlsStream<S>, Error>

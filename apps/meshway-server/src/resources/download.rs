@@ -28,19 +28,24 @@ impl Connector for Https {
         host: &str,
         addresses: &[SocketAddr],
     ) -> Result<reqwest::Client, ResourceProblem> {
-        client_builder(host, addresses)
+        client_builder(host, addresses)?
             .build()
             .map_err(|_| ResourceProblem::DownloadFailed)
     }
 }
-pub(crate) fn client_builder(host: &str, addresses: &[SocketAddr]) -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+pub(crate) fn client_builder(
+    host: &str,
+    addresses: &[SocketAddr],
+) -> Result<reqwest::ClientBuilder, ResourceProblem> {
+    let tls = meshway_tls::platform_client_config().map_err(|_| ResourceProblem::DownloadFailed)?;
+    Ok(reqwest::Client::builder()
+        .tls_backend_preconfigured(tls)
         .https_only(true)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(25))
-        .resolve_to_addrs(host, addresses)
+        .resolve_to_addrs(host, addresses))
 }
 
 pub(crate) async fn download(

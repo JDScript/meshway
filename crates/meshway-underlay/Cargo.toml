@@ -17,6 +17,7 @@ meshway-transport-spec = { path = "../meshway-transport-spec" }
 meshway-transport-tcp = { path = "../meshway-transport-tcp" }
 meshway-transport-udp = { path = "../meshway-transport-udp" }
 meshway-tun = { path = "../meshway-tun" }
+meshway-tls = { path = "../meshway-tls", features = ["platform-verifier"] }
 socket2.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
 tokio-util.workspace = true
@@ -26,7 +27,7 @@ serde_json.workspace = true
 ipnet.workspace = true
 thiserror.workspace = true
 getrandom.workspace = true
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest.workspace = true
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 hickory-resolver = { version = "0.26.3", default-features = false, features = ["system-config", "tokio"] }
 hickory-net = { version = "0.26.3", default-features = false, features = ["tokio"] }

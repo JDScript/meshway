@@ -52,7 +52,9 @@ impl Fixture {
         });
         let client = Client::new(
             &origin,
-            reqwest::Client::builder().no_proxy(),
+            meshway_control_client::http_client_builder()
+                .unwrap()
+                .no_proxy(),
             16 * 1024 * 1024,
         )
         .unwrap();
@@ -78,7 +80,9 @@ impl Fixture {
             let mut control = Control::open(
                 &root.join(name),
                 &origin,
-                reqwest::Client::builder().no_proxy(),
+                meshway_control_client::http_client_builder()
+                    .unwrap()
+                    .no_proxy(),
             )
             .unwrap();
             let pending = control.begin_enrollment(name).await.unwrap();

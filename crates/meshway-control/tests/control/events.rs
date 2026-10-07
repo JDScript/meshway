@@ -101,7 +101,9 @@ async fn watch_requires_valid_instance_and_dropping_it_preserves_granted_executi
     let mut control = Control::open(
         &server.path("drop-events"),
         &server.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     assert!(control.watch_node().is_err());

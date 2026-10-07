@@ -37,7 +37,8 @@ async fn serve(router: Router, limit: usize) -> (Client, reqwest::Url, Server) {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let client = Client::new(
         &url,
-        reqwest::Client::builder()
+        crate::http_client_builder()
+            .unwrap()
             .no_proxy()
             .timeout(Duration::from_secs(2)),
         limit,
@@ -115,7 +116,8 @@ async fn streaming_heartbeats_outlive_ordinary_budget_but_read_idle_still_expire
     let (_, url, _server) = serve(router, 1024).await;
     let client = Client::new(
         &format!("{}/", url.origin().ascii_serialization()),
-        reqwest::Client::builder()
+        crate::http_client_builder()
+            .unwrap()
             .no_proxy()
             .read_timeout(Duration::from_millis(150)),
         1024,

@@ -36,8 +36,14 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let path = server.path("node");
-    let mut control =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     let pending = control.begin_enrollment("control-fixture").await.unwrap();
     assert_eq!(
         control.poll_enrollment().await.unwrap().phase,
@@ -118,8 +124,14 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
         control.stop().await.unwrap();
     }
     control.shutdown().await.unwrap();
-    let mut restored =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut restored = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert!(!restored.status().authenticated && restored.status().instance.is_none());
     assert_eq!(restored.status().binding.unwrap(), binding);
     assert_eq!(restored.status().cached, Some(target));
@@ -178,13 +190,25 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
 async fn pending_enrollment_restarts_with_identical_keys_and_device_cancels_it() {
     let server = Server::start().await;
     let path = server.path("pending");
-    let mut control =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert!(control.begin_enrollment("bad.name").await.is_err());
     let first = control.begin_enrollment("pending-node").await.unwrap();
     control.shutdown().await.unwrap();
-    let mut control =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert_eq!(
         control.begin_enrollment("PENDING-NODE").await.unwrap(),
         first

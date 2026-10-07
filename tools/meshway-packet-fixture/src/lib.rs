@@ -1,7 +1,9 @@
 //! Shared HTTPS material for packet-library and real-daemon conformance.
 #![forbid(unsafe_code)]
 
-use meshway_transport_spec::{ListenerTls, SecretString, TlsMode, TlsVersion};
+use meshway_transport_spec::{
+    ClientTls, DialerTls, ListenerTls, SecretString, TlsMode, TlsVersion,
+};
 use std::{path::Path, time::Duration};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -33,11 +35,19 @@ pub async fn prepare_tls(public: &Path, private: &Path) -> Result<(), Error> {
 }
 
 pub async fn tls_client(public: &Path, timeout: Duration) -> Result<reqwest::ClientBuilder, Error> {
-    let pem = tokio::fs::read(public.join("server.pem")).await?;
+    let pem = tokio::fs::read_to_string(public.join("server.pem")).await?;
+    let tls = meshway_tls::Client::new(&ClientTls {
+        server_name: CONTROLLER_NAME.into(),
+        certificate_chain: SecretString::new(pem),
+        options: DialerTls {
+            alpn: vec!["http/1.1".into()],
+            ..DialerTls::default()
+        },
+    })?;
     Ok(reqwest::Client::builder()
+        .tls_backend_preconfigured(tls.configuration())
         .no_proxy()
-        .timeout(timeout)
-        .add_root_certificate(reqwest::Certificate::from_pem(&pem)?))
+        .timeout(timeout))
 }
 
 pub async fn tls_server(public: &Path, private: &Path) -> Result<meshway_tls::Server, Error> {

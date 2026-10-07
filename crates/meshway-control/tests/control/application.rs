@@ -35,7 +35,9 @@ async fn start_control(server: &Server, owner: &Owner, origin: &str, name: &str)
     let mut control = Control::open(
         &server.path(name),
         origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     server.enroll(owner, &mut control, name).await;
@@ -379,7 +381,9 @@ async fn tickets_are_bound_to_the_control_owner_and_instance_generation() {
     let mut reopened = Control::open(
         &server.path("application-owner"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     reopened.authenticate().await.unwrap();
@@ -456,7 +460,9 @@ async fn runtime_and_control_share_sequence_and_pending_retry_never_duplicates_p
     let mut source = Control::open(
         &server.path("runtime-source"),
         &proxy.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     let a = server
@@ -466,7 +472,9 @@ async fn runtime_and_control_share_sequence_and_pending_retry_never_duplicates_p
     let mut peer = Control::open(
         &server.path("runtime-peer"),
         &server.origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     let b = server

@@ -83,7 +83,7 @@ struct HttpsSource {
     body_entered: Arc<tokio::sync::Notify>,
     peer_closed: Arc<AtomicBool>,
     address: SocketAddr,
-    certificate: Vec<u8>,
+    certificate: String,
     body: Arc<Mutex<(u16, String)>>,
     stopped: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -99,7 +99,7 @@ impl HttpsSource {
             .unwrap()
             .self_signed(&key)
             .unwrap();
-        let certificate = cert.der().to_vec();
+        let certificate = cert.pem();
         let config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
@@ -264,8 +264,17 @@ impl Connector for HttpsSource {
                 self.address.port()
             )]
         );
-        client_builder(host, &[self.address])
-            .add_root_certificate(reqwest::Certificate::from_der(&self.certificate).unwrap())
+        let tls = meshway_tls::Client::new(&meshway_transport_spec::ClientTls {
+            server_name: host.into(),
+            certificate_chain: meshway_transport_spec::SecretString::new(self.certificate.clone()),
+            options: meshway_transport_spec::DialerTls {
+                alpn: vec!["http/1.1".into()],
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        client_builder(host, &[self.address])?
+            .tls_backend_preconfigured(tls.configuration())
             .build()
             .map_err(|_| ResourceProblem::DownloadFailed)
     }
@@ -302,6 +311,7 @@ impl Server {
             app,
             url,
             client: Client::builder()
+                .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
                 .no_proxy()
                 .timeout(Duration::from_secs(30))
                 .build()

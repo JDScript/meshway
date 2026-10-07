@@ -146,24 +146,27 @@ pub(super) async fn run(
                 }
             }
             let builder = match &network {
-                Some(network) => match network.client_builder().await {
-                    Ok(builder) => builder,
-                    Err(problem) => {
-                        publish(
-                            &reported,
-                            &plan,
-                            None,
-                            Phase::Blocked,
-                            None,
-                            Some(problem),
-                            None,
-                        );
-                        wait_change(&mut desired, &plan, None).await;
-                        plan = desired.borrow_and_update().clone();
-                        continue;
-                    }
-                },
-                None => reqwest::Client::builder().no_proxy(),
+                Some(network) => network.client_builder().await,
+                None => meshway_control_client::http_client_builder()
+                    .map(|builder| builder.no_proxy())
+                    .map_err(|_| Problem::Contract),
+            };
+            let builder = match builder {
+                Ok(builder) => builder,
+                Err(problem) => {
+                    publish(
+                        &reported,
+                        &plan,
+                        None,
+                        Phase::Blocked,
+                        None,
+                        Some(problem),
+                        None,
+                    );
+                    wait_change(&mut desired, &plan, None).await;
+                    plan = desired.borrow_and_update().clone();
+                    continue;
+                }
             };
             let settings = settings.clone();
             let opened = tokio::task::spawn_blocking(move || {

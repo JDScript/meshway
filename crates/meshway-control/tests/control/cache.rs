@@ -58,8 +58,14 @@ async fn known_old_cache_retires_without_reenrollment_and_archives_exact_private
     let server = Server::start().await;
     let owner = server.owner().await;
     let path = server.path("cache-upgrade");
-    let mut control =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     let binding = server.enroll(&owner, &mut control, "cache-upgrade").await;
     control.authenticate().await.unwrap();
     let first = control.acquire_instance(BTreeMap::new()).await.unwrap();
@@ -74,8 +80,14 @@ async fn known_old_cache_retires_without_reenrollment_and_archives_exact_private
     fs::write(&intent, b"retained host intent evidence").unwrap();
     let marker = fs::read(path.join("node-control.lock")).unwrap();
 
-    let mut restored =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut restored = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert_eq!(restored.status().binding, Some(binding.clone()));
     assert!(restored.cached_target().is_none());
     assert!(!restored.status().authenticated);
@@ -110,11 +122,15 @@ async fn known_old_cache_retires_without_reenrollment_and_archives_exact_private
     restored.shutdown().await.unwrap();
     // A completed upgrade does not produce another backup on ordinary open.
     let count = fs::read_dir(&path).unwrap().count();
-    Control::open(&path, &server.origin, reqwest::Client::builder())
-        .unwrap()
-        .shutdown()
-        .await
-        .unwrap();
+    Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder().unwrap(),
+    )
+    .unwrap()
+    .shutdown()
+    .await
+    .unwrap();
     assert_eq!(fs::read_dir(&path).unwrap().count(), count);
     server.close().await;
 }
@@ -124,8 +140,14 @@ async fn unknown_corrupt_and_misbound_cache_records_are_retained_byte_for_byte()
     let server = Server::start().await;
     let owner = server.owner().await;
     let path = server.path("bad-cache");
-    let mut control =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     server.enroll(&owner, &mut control, "bad-cache").await;
     control.authenticate().await.unwrap();
     control.acquire_instance(BTreeMap::new()).await.unwrap();
@@ -186,7 +208,11 @@ async fn unknown_corrupt_and_misbound_cache_records_are_retained_byte_for_byte()
         fs::write(path.join("control.json"), &invalid).unwrap();
         let count = fs::read_dir(&path).unwrap().count();
         assert!(matches!(
-            Control::open(&path, &server.origin, reqwest::Client::builder()),
+            Control::open(
+                &path,
+                &server.origin,
+                meshway_control_client::http_client_builder().unwrap()
+            ),
             Err(Error::Record)
         ));
         assert_eq!(fs::read(path.join("control.json")).unwrap(), invalid);
@@ -199,8 +225,14 @@ async fn unknown_corrupt_and_misbound_cache_records_are_retained_byte_for_byte()
 async fn pending_v1_enrollment_and_archive_failure_preserve_identity_and_marker() {
     let server = Server::start().await;
     let path = server.path("pending-upgrade");
-    let mut control =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut control = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     let pending = control.begin_enrollment("pending-upgrade").await.unwrap();
     control.shutdown().await.unwrap();
     let bytes = record(&fs::read(path.join("control.json")).unwrap(), 1, None);
@@ -209,7 +241,14 @@ async fn pending_v1_enrollment_and_archive_failure_preserve_identity_and_marker(
     let hash = meshway_model::Digest::from_bytes(Sha256::digest(&bytes).into());
     let archive = path.join(format!("control-v1-{hash}.json"));
     fs::create_dir(&archive).unwrap();
-    assert!(Control::open(&path, &server.origin, reqwest::Client::builder()).is_err());
+    assert!(
+        Control::open(
+            &path,
+            &server.origin,
+            meshway_control_client::http_client_builder().unwrap()
+        )
+        .is_err()
+    );
     assert_eq!(fs::read(path.join("control.json")).unwrap(), bytes);
     assert_eq!(fs::read(path.join("node-control.lock")).unwrap(), marker);
     fs::remove_dir(&archive).unwrap();
@@ -217,8 +256,14 @@ async fn pending_v1_enrollment_and_archive_failure_preserve_identity_and_marker(
     // the same checked backup rather than accumulating another secret copy.
     fs::write(&archive, &bytes).unwrap();
     fs::set_permissions(&archive, fs::Permissions::from_mode(0o600)).unwrap();
-    let mut restored =
-        Control::open(&path, &server.origin, reqwest::Client::builder().no_proxy()).unwrap();
+    let mut restored = Control::open(
+        &path,
+        &server.origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
     assert_eq!(restored.status().enrollment_request_id, Some(pending.id));
     assert_eq!(
         restored

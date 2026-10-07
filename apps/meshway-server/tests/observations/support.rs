@@ -59,7 +59,10 @@ impl Server {
         Self {
             app,
             base,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+                .build()
+                .unwrap(),
             task,
             _temp: temp,
         }

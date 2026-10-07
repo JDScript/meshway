@@ -566,7 +566,10 @@ async fn actual_http_operations_use_node_credentials_and_return_success_for_expe
             .await
             .unwrap();
     });
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .build()
+        .unwrap();
     let url = format!("http://{address}/agent-api/v1/connectivity/udp");
     let mut stale = a.query();
     stale.instance.generation = Version::new(2).unwrap();

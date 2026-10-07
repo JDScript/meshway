@@ -16,7 +16,9 @@ async fn connected(server: &Server, owner: &Owner, origin: &str, name: &str) -> 
     let mut control = Control::open(
         &server.path(name),
         origin,
-        reqwest::Client::builder().no_proxy(),
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
     )
     .unwrap();
     server.enroll(owner, &mut control, name).await;
@@ -366,7 +368,8 @@ mod wire {
         pub async fn start(origin: &str) -> Self {
             let state = Forward {
                 origin: origin.into(),
-                http: reqwest::Client::builder()
+                http: meshway_control_client::http_client_builder()
+                    .unwrap()
                     .no_proxy()
                     .redirect(reqwest::redirect::Policy::none())
                     .timeout(std::time::Duration::from_secs(10))
