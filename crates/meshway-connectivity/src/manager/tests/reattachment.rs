@@ -1094,9 +1094,11 @@ async fn staggered_three_node_managers_and_real_demand_publication_keep_original
         route_packet(&mut managers, &mut nodes, cid, true, packet(&fixture, true)).await;
     }
     all_links(&managers, &ids).await;
-    for (node, manager) in nodes.iter_mut().zip(&managers) {
+    for (index, (node, manager)) in nodes.iter_mut().zip(&managers).enumerate() {
         node.set_carriers(manager.carriers().unwrap()).unwrap();
-        assert_eq!(node.retained_flows(), 1);
+        // Endpoints own the business flow; a relay forwards at circuit level only.
+        let endpoint = path.first() == Some(&ids[index]) || path.last() == Some(&ids[index]);
+        assert_eq!(node.retained_flows(), usize::from(endpoint));
         assert!(
             node.ready_circuits()
                 .unwrap()
