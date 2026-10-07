@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -20,15 +21,23 @@ from node_lab import check_elf, docker_target
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def command(*args):
+    # Inherit the pinned tool PATH from `mise run perf:crypto:l0`.
+    return subprocess.check_output(args, cwd=ROOT, text=True).strip()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--environment", choices=["host", "linux"], required=True)
     parser.add_argument("--rounds", type=int, default=100000)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--cpu-set", help="optional Linux guest CPU affinity (not host-core pinning)")
     args = parser.parse_args()
     if not 1 <= args.rounds <= 1000000 or not 1 <= args.repeats <= 100:
         parser.error("rounds/repeats outside bounds")
-    common = Path(circuit.command("git", "rev-parse", "--git-common-dir")).resolve().parent
+    if args.cpu_set and not re.fullmatch(r"\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*", args.cpu_set):
+        parser.error("invalid Linux CPU set")
+    common = Path(command("git", "rev-parse", "--git-common-dir")).resolve().parent
     lockpath = common / ".meshway/perf/dataplane/measurement.lock"
     lockpath.parent.mkdir(parents=True, exist_ok=True)
     with lockpath.open("a") as lock:
@@ -49,22 +58,22 @@ def measure(args):
     environment = {"name": args.environment, "host": platform.platform(), "machine": platform.machine()}
     if args.environment == "linux":
         target, docker_platform, machine = docker_target()
-        circuit.command("rustup", "target", "add", target)
+        command("rustup", "target", "add", target)
         build[1] = "zigbuild"
         build += ["--target", target]
         binary_source = cache / target / "release/meshway-circuit-perf"
         image = image_for(docker_platform, output.parent / "image")
-        environment.update(target=target, image=image, cpus=2,
-                           kernel=circuit.command("docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL",
+        environment.update(target=target, image=image, cpus=2, cpuSet=args.cpu_set,
+                           kernel=command("docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL",
                                                   "--entrypoint", "uname", image["imageId"], "-a"))
-        probe = subprocess.run(["mise", "exec", "--", "docker", "run", "--rm", "--network", "none",
+        probe = subprocess.run(["docker", "run", "--rm", "--network", "none",
                                 "--cap-drop", "ALL", "--entrypoint", "sh", image["imageId"], "-c", "command -v perf"],
                                cwd=ROOT, capture_output=True, text=True)
         environment["perfAvailable"] = probe.returncode == 0
         environment["profiler"] = "meshway-logging 1/128; no additional production instrumentation"
     else:
-        environment["profiler"] = circuit.command("samply", "--version")
-    subprocess.run(["mise", "exec", "--", *build], cwd=ROOT, check=True,
+        environment["profiler"] = command("samply", "--version")
+    subprocess.run(build, cwd=ROOT, check=True,
                    env=dict(os.environ, CARGO_INCREMENTAL="0", CARGO_TARGET_DIR=str(cache), CARGO_PROFILE_RELEASE_DEBUG="1"))
     if circuit.source_digest() != before:
         raise RuntimeError("source changed during build")
@@ -73,10 +82,10 @@ def measure(args):
     binary.chmod(0o500)
     if args.environment == "linux":
         check_elf(binary, machine)
-    report = dict(schemaVersion=1, layer="L0", revision=circuit.command("git", "rev-parse", "HEAD"),
-                  dirty=bool(circuit.command("git", "status", "--porcelain")), sourceDigest=before,
+    report = dict(schemaVersion=1, layer="L0", revision=command("git", "rev-parse", "HEAD"),
+                  dirty=bool(command("git", "status", "--porcelain")), sourceDigest=before,
                   binarySha256=hashlib.sha256(binary.read_bytes()).hexdigest(), platform=environment,
-                  rustc=circuit.command("rustc", "-Vv"), options=vars(args),
+                  rustc=command("rustc", "-Vv"), options=vars(args),
                   build=dict(profile="release", debug=1, incremental=False, rustflags=os.environ.get("RUSTFLAGS")),
                   results=[], recordings=[])
     for nodes in [2, 3]:
@@ -90,10 +99,12 @@ def measure(args):
                               "--env", f"MESHWAY_PROFILE={rate}", "--env", "MESHWAY_PROFILE_DETAIL=1",
                               "--mount", f"type=bind,src={output},dst=/bench,readonly",
                               "--entrypoint", "/bench/meshway-circuit-perf", image["imageId"]]
+                    if args.cpu_set:
+                        prefix[2:2] = ["--cpuset-cpus", args.cpu_set]
                 invocation = [*prefix, "--nodes", str(nodes), "--packet-bytes", "1280",
                               "--rounds", str(args.rounds), "--warmup", "1000"]
                 load_before = os.getloadavg()
-                result = subprocess.run(["mise", "exec", "--", *invocation], cwd=ROOT, text=True, capture_output=True,
+                result = subprocess.run(invocation, cwd=ROOT, text=True, capture_output=True,
                                         timeout=180, env=dict(os.environ, MESHWAY_PROFILE=str(rate), MESHWAY_PROFILE_DETAIL="1"))
                 (output / (label + ".stdout")).write_text(result.stdout)
                 (output / (label + ".stderr")).write_text(result.stderr)
@@ -114,7 +125,7 @@ def measure(args):
         if args.environment == "host":
             invocation = ["samply", "record", "--save-only", "--unstable-presymbolicate", "--rate", "1000", "--output", str(output / f"n{nodes}.json"),
                           str(binary), "--nodes", str(nodes), "--packet-bytes", "1280", "--rounds", "500000", "--warmup", "1000"]
-            result = subprocess.run(["mise", "exec", "--", *invocation], cwd=ROOT, capture_output=True, text=True,
+            result = subprocess.run(invocation, cwd=ROOT, capture_output=True, text=True,
                                     timeout=180, env=dict(os.environ, MESHWAY_PROFILE="0"))
             (output / f"n{nodes}.samply.stdout").write_text(result.stdout)
             (output / f"n{nodes}.samply.stderr").write_text(result.stderr)

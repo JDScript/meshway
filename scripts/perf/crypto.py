@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def command(*args):
-    return circuit.command(*args)
+    # The mise task already activates its pinned Zig/cargo-zigbuild tools.
+    # A nested `mise exec` would replace that task-specific PATH.
+    return subprocess.check_output(args, cwd=ROOT, text=True).strip()
 
 
 def digest():
@@ -108,9 +111,9 @@ def measure(args, output_root):
                 build += ["--target", target]
                 executable = cache / target / "release/examples/measure"
                 image = image_for(docker_platform, output_root / "image")
-                env.update(target=target, image=image, cpus=args.cpus,
+                env.update(target=target, image=image, cpus=args.cpus, cpuSet=args.cpu_set,
                            zig=command("zig", "version"), cargoZigbuild=command("cargo-zigbuild", "--version"))
-            subprocess.run(["mise", "exec", "--", *build], cwd=ROOT, check=True,
+            subprocess.run(build, cwd=ROOT, check=True,
                            env=dict(os.environ, CARGO_INCREMENTAL="0", CARGO_TARGET_DIR=str(cache)))
             if digest() != before:
                 raise RuntimeError("source changed during build")
@@ -125,6 +128,8 @@ def measure(args, output_root):
                           "--cpus", str(args.cpus), "--memory", "512m", "--platform", docker_platform,
                           "--mount", f"type=bind,src={output},dst=/bench,readonly", "--entrypoint", "/bench/" + binary.name,
                           image["imageId"]]
+                if args.cpu_set:
+                    prefix[2:2] = ["--cpuset-cpus", args.cpu_set]
                 env["kernel"] = command("docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL",
                                         "--entrypoint", "uname", image["imageId"], "-a")
             else:
@@ -132,7 +137,7 @@ def measure(args, output_root):
             invocation = [*prefix, "--iterations", str(args.iterations), "--repeats", str(args.repeats)]
             env["command"] = invocation
             env["hostLoadBefore"] = os.getloadavg()
-            process = subprocess.run(["mise", "exec", "--", *invocation], cwd=ROOT, text=True, capture_output=True,
+            process = subprocess.run(invocation, cwd=ROOT, text=True, capture_output=True,
                                      timeout=1800, env=dict(os.environ, MESHWAY_PROFILE="0"))
             env["hostLoadAfter"] = os.getloadavg()
             (output / (name + ".stdout")).write_text(process.stdout)
@@ -142,7 +147,7 @@ def measure(args, output_root):
             env["samples"] = json.loads(process.stdout)
             env["aggregates"] = aggregate(env["samples"])
             env["status"] = "ok"
-        except (RuntimeError, ValueError, KeyError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+        except (RuntimeError, ValueError, KeyError, OSError, subprocess.SubprocessError, KeyboardInterrupt) as error:
             env["failure"] = str(error)
             if isinstance(error, KeyboardInterrupt):
                 env["failure"] = "measurement interrupted"
@@ -164,9 +169,12 @@ def main():
     parser.add_argument("--iterations", type=int, default=100000)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--cpus", type=float, default=2)
+    parser.add_argument("--cpu-set", help="optional Linux guest CPU affinity, e.g. 0 (not host-core pinning)")
     args = parser.parse_args()
     if not 100 <= args.iterations <= 10000000 or not 1 <= args.repeats <= 100 or not 0 < args.cpus <= 256:
         parser.error("iterations/repeats/cpus outside bounds")
+    if args.cpu_set and not re.fullmatch(r"\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*", args.cpu_set):
+        parser.error("invalid Linux CPU set")
     output_root = ROOT / ".meshway/perf/crypto"
     output_root.mkdir(parents=True, exist_ok=True)
     common = Path(command("git", "rev-parse", "--git-common-dir")).resolve().parent

@@ -41,24 +41,27 @@ def routes(environment, nodes):
 
 def category(stack):
     """Disjoint ancestry attribution; nested codec/buffer costs keep their own category."""
-    joined = "\n".join(stack)
+    functions = [name.replace(">", "").split("::<", 1)[0].lstrip("<") for name in stack]
+    owned = lambda prefix: any(name.startswith(prefix) for name in functions)
     leaf = stack[0]
     if (any(s in leaf for s in ("memcpy", "memmove", "memset", "bzero"))
-            or any(s in joined for s in ("::buffer::PacketBuffer::", "::buffer::PacketPool::", "::buffer::PacketBuffer as"))):
+            or owned("meshway_dataplane::buffer::")):
         return "buffer-copy"
-    if "::codec::" in joined:
+    if owned("meshway_dataplane::secure::codec::"):
         return "frame-codec"
-    if "::session::authenticate" in joined or "::session::MacKey::" in joined or "hmac::" in joined:
+    if owned("meshway_dataplane::secure::session::authenticate") or owned("meshway_dataplane::secure::session::MacKey") or owned("hmac::"):
         return "hmac"
-    if any(s in joined for s in ("::noise::Transport::encrypt", "::noise::Transport::decrypt", "chacha20poly1305::", "chacha20::", "poly1305::")):
+    if any(owned(prefix) for prefix in ("meshway_dataplane::secure::crypto::noise::Transport", "chacha20poly1305::", "chacha20::", "poly1305::")):
         return "aead"
-    if "sha2::" in joined:
+    if owned("sha2::"):
         return "sha256-other"
-    if "meshway_authority::" in joined or "::Guard::" in joined or "CancellationToken" in joined or "::Circuit::check_at" in joined:
+    if any(owned(prefix) for prefix in ("meshway_authority::", "meshway_dataplane::secure::Guard", "meshway_dataplane::secure::Circuit::check_at",
+                                       "tokio_util::sync::cancellation_token::")):
         return "guard"
-    if "::packet::" in joined:
+    if owned("meshway_dataplane::packet::"):
         return "packet-parse"
-    if any(s in joined for s in ("::collections::btree", "::flow::", "::engine::", "::admission::", "meshway_policy::", "::Replay::")):
+    if (any(owned(prefix) for prefix in ("meshway_dataplane::flow::", "meshway_dataplane::engine::", "meshway_policy::", "meshway_dataplane::secure::Replay"))
+            or (owned("alloc::collections::btree::") and owned("meshway_dataplane::"))):
         return "flow-map-replay-policy"
     return "other"
 
@@ -66,13 +69,16 @@ def category(stack):
 def sampled(profile, symbols, budget_us):
     """Read samply's processed Firefox profile plus its presymbolicated sidecar."""
     symbol_strings = symbols["string_table"]
-    normalize = lambda value: value.replace("-", "").upper()
+    def normalize(value):
+        value = value.replace("-", "").upper()
+        # DebugId Display omits an appendix of zero; Firefox breakpadId includes it.
+        return value + "0" if len(value) == 32 else value
     libraries = {(lib["debug_name"], normalize(lib["debug_id"])): lib for lib in symbols["data"]}
     lookups = []
     for lib in profile["libs"]:
         data = libraries.get((lib["debugName"], normalize(lib["breakpadId"])))
         lookups.append({address: data["symbol_table"][index] for address, index in data["known_addresses"]} if data else {})
-    own, groups, role_groups = Counter(), Counter(), {}
+    own, groups, role_groups, copies = Counter(), Counter(), {}, Counter()
     samples_seen = 0
     unresolved = 0
     for thread in profile["threads"]:
@@ -119,10 +125,14 @@ def sampled(profile, symbols, budget_us):
             samples_seen += 1
             unresolved += int(stack[0].startswith("0x"))
             own[stack[0]] += weight
+            if "memmove" in stack[0] or "memcpy" in stack[0]:
+                caller = next((name for name in stack[1:] if name.lstrip("<").startswith(
+                    ("meshway_dataplane::", "meshway_circuit_perf::", "meshway_static_authority::"))), "unresolved caller")
+                copies[caller] += weight
             group = category(stack)
             groups[group] += weight
-            role = ("send" if any("SecureNode::send" in s for s in stack) else
-                    "receive" if any("SecureNode::receive" in s for s in stack) else "harness")
+            role = ("send" if any("SecureNode::send" in s.replace(">", "") for s in stack) else
+                    "receive" if any("SecureNode::receive" in s.replace(">", "") for s in stack) else "harness")
             role_groups.setdefault(role, Counter())[group] += weight
     total = sum(own.values())
     if not total:
@@ -132,6 +142,7 @@ def sampled(profile, symbols, budget_us):
     return dict(samples=samples_seen, unresolvedLeafSamples=unresolved, budgetUs=budget_us,
                 weighting="threadCPUDelta where available, otherwise sample count; first 200ms/last 100ms trimmed",
                 groups=scale(groups), roles={role: scale(counts) for role, counts in role_groups.items()},
+                copyCallers=scale(dict(copies.most_common())),
                 functions=[dict(function=name, **values) for name, values in scale(dict(own.most_common())).items()],
                 top15=[dict(function=name, **values) for name, values in scale(dict(own.most_common(15))).items()])
 
@@ -141,11 +152,21 @@ def summary(report):
              "Native attribution = sampled CPU weight × uninstrumented harness CPU/packet; statistical estimate, not exact invocation timing.",
              "Logging scopes are observer-affected; inclusive rows overlap, self estimates are not a partition of uninstrumented CPU.",
              "Savings are primitive substitution arithmetic, not measured optimized L0 or I/O throughput.", "",
+             "Primitive windows exclude Frame validation, policy/replay and tag comparison. HMAC fields and contiguous BLAKE3 transcript",
+             "are prepared outside timing; candidate AEAD wire AAD updates its sequence inside timing. Production layout changes are unmeasured.", "",
              "Scope ownership: crypto.encrypt/decrypt → pipeline::seal/open → noise::Transport;",
              "crypto.append_mac/verify_hop_mac → session::MacKey → authenticate (includes Frame::validate + fresh HMAC key schedule);",
              "codec.encode/decode → Frame::encode_owned/decode_owned; flow.admit → Engine::admit_inner;",
              "secure.send → prepare_send_packet; secure.prepare_receive/commit_receive → owner prepare/commit;",
              "packet.parse → Packet::parse; control.guard → ExecutionSnapshot::reading/ensure_current.", ""]
+    primitives = {env: {(row["operation"], row["bytes"]): row["cpuNsPerOp"]["median"] / 1000
+                        for row in data["aggregates"]} for env, data in report["primitives"].items()}
+    operations = sorted({op for rows in primitives.values() for op, _ in rows})
+    lines += ["## Primitive CPU µs/op (medians)", "",
+              "| Operation | Host 52B | Host 1280B | Linux 52B | Linux 1280B |", "| --- | ---: | ---: | ---: | ---: |"]
+    for op in operations:
+        values = [primitives.get(env, {}).get((op, size)) for env in ("host", "linux") for size in (52, 1280)]
+        lines.append("| " + op + " | " + " | ".join("unmeasured" if v is None else f"{v:.4f}" for v in values) + " |")
     for environment, groups in report["l0"].items():
         for group in groups:
             lines += [f"## {environment}, {group['nodes']} nodes, 1280B", "",
@@ -156,12 +177,20 @@ def summary(report):
             if group["native"]:
                 native = group["native"]
                 lines += ["", f"Native samples: {native['samples']}; unresolved leaves: {native['unresolvedLeafSamples']}.",
+                          f"CPU during native recording: {group['samplerCpuUsPerPacket']:.3f} µs/packet (separate longer process).",
                           "", "| Category | CPU % | CPU µs/packet |", "| --- | ---: | ---: |"]
                 for name, values in sorted(native["groups"].items()):
                     lines.append(f"| {name} | {values['percent']:.2f} | {values['cpuUsPerPacket']:.3f} |")
                 lines += ["", "### Native top 15 self-time", "", "| Function | CPU % | CPU µs/packet |", "| --- | ---: | ---: |"]
                 for row in native["top15"]:
-                    lines.append(f"| `{row['function'].replace('|', '&#124;')}` | {row['percent']:.2f} | {row['cpuUsPerPacket']:.3f} |")
+                    function = row["function"]
+                    if "chacha20::ChaChaCore" in function and "process_with_backend" in function:
+                        function = "chacha20::ChaChaCore::process_with_backend<" + ("ApplyBlocksCtx" if "ApplyBlocksCtx" in function else "WriteBlockCtx") + ">"
+                    lines.append(f"| `{function.replace('|', '&#124;')}` | {row['percent']:.2f} | {row['cpuUsPerPacket']:.3f} |")
+                lines += ["", "### memcpy/memmove callers", "", "These include Rust value moves, not only IP payload copies; byte counts are unmeasured.", "",
+                          "| First application caller | CPU % | CPU µs/packet |", "| --- | ---: | ---: |"]
+                for name, row in list(native["copyCallers"].items())[:8]:
+                    lines.append(f"| `{name.replace('|', '&#124;')}` | {row['percent']:.2f} | {row['cpuUsPerPacket']:.3f} |")
             on = group["instrumented"]
             lines += ["", f"Profile=128 CPU: {on['harnessCpuNsPerPacket']['median']/1000:.3f} µs/packet.",
                       "", "### Logging top 15 self-time (existing scopes)", "",
@@ -186,18 +215,28 @@ def summary(report):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--crypto", type=Path, required=True)
+    parser.add_argument("--crypto", type=Path, nargs="+", required=True)
     parser.add_argument("--host-l0", type=Path, required=True)
     parser.add_argument("--linux-l0", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    crypto = json.loads(args.crypto.read_text())
-    report = {"schemaVersion": 1, "inputs": {k: str(v) for k, v in vars(args).items()}, "routes": {}, "l0": {}}
-    for env in crypto["environments"]:
-        if env["status"] == "ok":
-            report["routes"][env["name"]] = routes(env, 2) + routes(env, 3)
+    report = {"schemaVersion": 1,
+              "inputs": {k: [str(p) for p in v] if isinstance(v, list) else str(v) for k, v in vars(args).items()},
+              "routes": {}, "l0": {}, "primitives": {}}
+    for path in args.crypto:
+        crypto = json.loads(path.read_text())
+        if crypto.get("sourceUnchangedAfterRun") is not True:
+            raise ValueError("primitive sources changed or run has no final source check")
+        for env in crypto["environments"]:
+            if env["status"] == "ok":
+                if env["name"] in report["routes"]:
+                    raise ValueError("multiple successful primitive runs for same environment; choose explicitly")
+                report["routes"][env["name"]] = routes(env, 2) + routes(env, 3)
+                report["primitives"][env["name"]] = dict(source=str(path), binarySha256=env["binarySha256"], aggregates=env["aggregates"])
     for name, path in (("host", args.host_l0), ("linux", args.linux_l0)):
         l0 = json.loads(path.read_text())
+        if l0.get("passed") is not True:
+            raise ValueError("L0 run did not complete successfully")
         groups = []
         for group in l0["aggregates"]:
             if group["profileRate"]:
@@ -209,6 +248,8 @@ def main():
                 profile = json.loads((path.parent / f"n{nodes}.json").read_text())
                 symbols = json.loads((path.parent / f"n{nodes}.syms.json").read_text())
                 item["native"] = sampled(profile, symbols, budget)
+                recorded = json.loads((path.parent / f"n{nodes}.samply.stdout").read_text())
+                item["samplerCpuUsPerPacket"] = recorded["harnessCpuNs"] / recorded["measured"]["deliveredPackets"] / 1000
             item["instrumented"] = next(g for g in l0["aggregates"] if g["nodes"] == nodes and g["profileRate"])
             groups.append(item)
         report["l0"][name] = groups
