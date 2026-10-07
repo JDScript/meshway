@@ -798,6 +798,21 @@ secure 节点退出时报告 TUN 上无 demand 承载的内核维护包（IGMP�
 
 x86_64 的 RustCrypto 后端经调试器断点核实为 AVX2（ChaCha／Poly1305）与 SHA-NI（sha2 0.10／0.11），ring 为 AVX2 与硬件 SHA；因此 x86 上 sha2 升级无增益，ring AEAD 仍约 3× 于 RustCrypto。UDP 行在 x86 上接近 2G 输入速率上限（raw 207,799 pps），丢包 22–24%，不是无损容量。4 CPU 配额矩阵 8/12 成功：secure UDP 接收端在 512 MiB 下 3 次退出 137（其中 1 次有 Docker OOM 事件），plain-batch TCP 1 次发送未完成；根因未定，失败样本完整保留。报告：crypto `planck-20261007T051345Z-51ab43c8`、L0 `planck-20261007T050400Z-6ba8cc86`、L3 2 CPU `planck-20261007t051440z-9e6608ff`、4 CPU `planck-20261007t051807z-677968b0`（本地 `.meshway/perf/<kind>/`）。
 
+#### x86_64 复测：`5a30247d`
+
+同一主机、同参数复测 main `5a30247d`（ring AEAD／硬件 HMAC、流式释放、7 MiB UDP socket 缓冲、Circuit 稳定分配）。各窗口 1 分钟 load 1.5–4.8；72/72 样本成功。L0 2／3／5 节点 1280 B：140,454／98,093／61,793 pps（7.12／10.19／16.18 µs/包）。
+
+| 2 CPU／容器 | TCP Mbps | UDP pps | CPU% TCP／UDP | TCP 平均 RTT | 重传 | 最大 cwnd |
+| --- | ---: | ---: | --- | ---: | ---: | ---: |
+| secure-direct | 2,292 | 199,927 | 267／336 | 4.3 ms | 786 | 2.98 MB |
+| secure-relay | 2,127 | 195,072 | 392／451 | 2.9 ms | 322 | 1.17 MB |
+| plain-batch | 17,222 | 208,224 | 208／162 | 0.20 ms | 16,103 | 0.51 MB |
+| 内核 WireGuard direct | 4,780 | 208,108 | 64／165 | 1.0 ms | 0 | 2.21 MB |
+
+4 CPU／容器（3 worker）：secure-direct 2,339 Mbps／208,231 pps，secure-relay 2,197／208,222——TCP 只比 2 CPU 高 2–3%，UDP 到达 2G 输入上限 208,333 pps、丢包 0.05%。较 `d0e60ba9`：secure-direct TCP +16.5%、UDP +25.4%；secure-relay +15.9%／+23.0%。UDP 命名空间 `Udp.RcvbufErrors` 在 secure 样本为 0–858（含 warmup），plain／WireGuard 更高。
+
+WireGuard 校准（`--cpus 8 --mtu 1420 --udp-rate 4G`）：wg-direct TCP 5,117 Mbps、UDP 414k pps；raw 107.8 Gbps。对照 [wg-bench](https://github.com/cyyself/wg-bench) 的 7950X 5.64 Gbps 低 9%；仍有容器配额与 Docker bridge，不是无配额 netns 复现。内核 WireGuard 的 softirq CPU 可能记在 cgroup 之外。报告：L0 `planck-20261007T070124Z-c7b84c03`、2 CPU `planck-20261007t070435z-a3f07ece`、4 CPU `planck-20261007t070907z-4a6a085e`、校准 `planck-20261007t071046z-078a1483`。
+
 ### 测量环境
 
 | 环境 | 值 |
