@@ -186,6 +186,8 @@ pub(super) async fn forward(
             },
             _ = tick.tick() => {
                 if setup_started.is_some_and(|at| at.elapsed() >= meshway_diagnostics::SETUP_TIMEOUT) {
+                    tracing::info!(stage = "setup_timeout", elapsed_ms = setup_started.map(|at| at.elapsed().as_millis() as u64),
+                        subscription_confirmed = confirmed.is_some(), "Diagnostic preparation budget expired");
                     PingEvent::Failed { code: PingError::Timeout }
                 } else {
                     let Some(elapsed_ms) = u64::try_from(waiting_started.elapsed().as_millis()).ok().and_then(|ms| meshway_model::Sequence::new(ms).ok()) else { break; };

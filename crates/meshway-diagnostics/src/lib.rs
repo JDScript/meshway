@@ -80,6 +80,20 @@ struct Task {
     publication_invalidated: tokio_util::sync::CancellationToken,
     connecting: bool,
     setup_failed: bool,
+    preparation_stage: Option<&'static str>,
+}
+
+fn preparation_stage(task: &mut Task, stage: &'static str) {
+    if task.preparation_stage == Some(stage) {
+        return;
+    }
+    task.preparation_stage = Some(stage);
+    tracing::info!(observation = %task.task.id,
+        publication = %task.task.configuration.execution_publication,
+        source_instance = %task.task.instance_id, stage,
+        first_hop = ?task.path.get(1), hops = task.path.len().saturating_sub(1),
+        elapsed_ms = task.preparing.elapsed().as_millis() as u64,
+        "Diagnostic preparation stage changed");
 }
 
 impl Drop for Task {
@@ -182,6 +196,7 @@ impl Owner {
                     publication_invalidated: tokio_util::sync::CancellationToken::new(),
                     connecting: true,
                     setup_failed: false,
+                    preparation_stage: None,
                 },
             );
         }
@@ -330,6 +345,7 @@ impl Owner {
                 continue;
             }
             let Some(carrier) = task.path.get(1).and_then(|node| carriers.get(node)) else {
+                preparation_stage(task, "first_hop_channel");
                 task.connecting = true;
                 preparing_failure(task, now);
                 task.next = now + Duration::from_millis(100);
@@ -352,6 +368,7 @@ impl Owner {
                 .and_then(|id| secure.circuit_info(id).ok().flatten());
             match info {
                 Some(info) if info.state == CircuitState::Established => {
+                    preparation_stage(task, "path_established");
                     let measurement = match Measurement::new(task, now) {
                         Ok(measurement) => measurement,
                         Err(_) => {
@@ -396,9 +413,11 @@ impl Owner {
                     }
                 }
                 Some(info) if info.state == CircuitState::Handshaking => {
+                    preparation_stage(task, "path_handshake");
                     task.connecting = true;
                     match secure.retry_handshake(info.id) {
                         Ok(Some(frame)) => {
+                            tracing::debug!(observation = %id, stage = "path_handshake", "Diagnostic handshake retry dispatched");
                             task.sending = true;
                             actions.push(Action {
                                 observation_id: *id,
@@ -424,6 +443,7 @@ impl Owner {
                         .unwrap_or(now + Duration::from_millis(100));
                 }
                 _ => {
+                    preparation_stage(task, "path_handshake");
                     task.connecting = true;
                     task.circuit = None;
                     match secure.start_authorized(
@@ -635,6 +655,10 @@ fn preparing_failure(task: &mut Task, now: Instant) {
         return;
     }
     task.setup_failed = true;
+    tracing::info!(observation = %task.task.id,
+        publication = %task.task.configuration.execution_publication,
+        stage = task.preparation_stage, elapsed_ms = now.duration_since(task.preparing).as_millis() as u64,
+        "Diagnostic preparation budget expired");
     task.cancellation.cancel();
     task.sending = false;
     task.output = Some(output(

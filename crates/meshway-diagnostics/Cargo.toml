@@ -16,6 +16,7 @@ getrandom.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 meshway-control = { path = "../meshway-control" }

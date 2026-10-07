@@ -107,6 +107,8 @@ impl Subscriptions {
             metrics: vec![MetricKind::Rtt, MetricKind::ProbeLoss],
             interval_ms: 1000,
         };
+        tracing::info!(subscription = %subscription_id, source_instance = %instance.instance_id,
+            stage = "subscription_queued", "Diagnostic preparation stage changed");
         self.entries.insert(
             subscription_id,
             Subscription {
@@ -240,6 +242,7 @@ impl Subscriptions {
                 entry.retry.dispatched();
                 attempted = true;
                 entry.create_started = true;
+                tracing::debug!(subscription = %id, stage = "subscription_request", "Diagnostic subscription request dispatched");
                 let result = tokio::time::timeout(
                     Duration::from_secs(5),
                     control.create_node_observation(&entry.create),
@@ -247,6 +250,10 @@ impl Subscriptions {
                 .await;
                 match result {
                     Ok(Ok(response)) => {
+                        tracing::info!(subscription = %id, observation = %response.task.id,
+                            publication = %response.task.configuration.execution_publication,
+                            phase = ?response.task.phase,
+                            stage = "subscription_accepted", "Diagnostic preparation stage changed");
                         if !entry.intent.current() || entry.local.cancellation.is_cancelled() {
                             entry.response = Some(response);
                             continue;

@@ -62,6 +62,13 @@ pub(super) struct Diagnostics {
 
 impl Diagnostics {
     pub fn plan(&mut self, plan: Option<super::ObservationPlan>) {
+        if let Some(plan) = &plan {
+            for task in &plan.tasks {
+                tracing::debug!(observation = %task.id,
+                    publication = %plan.snapshot.reference().execution_publication,
+                    stage = "installation_pending", "Diagnostic plan awaits matching installation");
+            }
+        }
         if plan.is_none() {
             self.owner.suspend();
             for local in self.locals.values() {
@@ -88,6 +95,12 @@ impl Diagnostics {
         tracing::debug!(publication = %plan.snapshot.reference().execution_publication, tasks = plan.tasks.len(), "Synchronizing observation plan with installed execution");
         if self.owner.synchronize(plan.snapshot, &plan.tasks).is_err() {
             self.reject_tasks();
+        } else {
+            for task in &plan.tasks {
+                tracing::info!(observation = %task.id,
+                    publication = %task.configuration.execution_publication,
+                    stage = "installed", "Diagnostic preparation stage changed");
+            }
         }
         self.apply_pauses();
     }
