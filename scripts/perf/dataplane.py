@@ -431,6 +431,32 @@ def wireguard_transfers(containers, evidence):
             item.update(zip(("handshakeUnixSeconds", "receivedBytes", "sentBytes"), map(int, values)))
 
 
+def memory_sampler(container, path, seconds):
+    # One bounded sampler per isolated namespace; no docker exec per tick.
+    # cgroup includes iperf/kernel charges; VmRSS is the actual node process.
+    script = '''
+pid=$(pgrep -f '^/fixtures/meshway-dataplane-perf' | head -1)
+i=0
+while [ "$i" -lt "$1" ] && [ ! -e /tmp/perf-memory-stop ]; do
+  read uptime rest < /proc/uptime
+  read current < /sys/fs/cgroup/memory.current
+  rss=null
+  if [ -n "$pid" ] && [ -r /proc/$pid/status ]; then
+    rss=$(awk '/^VmRSS:/ {print $2 * 1024}' /proc/$pid/status)
+  fi
+  printf '%s,%s,%s\\n' "$uptime" "$current" "${rss:-null}"
+  i=$((i+1))
+  sleep 0.25
+done
+cat /sys/fs/cgroup/memory.events >&2
+'''
+    command("docker", "exec", container, "rm", "-f", "/tmp/perf-memory-stop")
+    with path.open("w") as stdout, path.with_suffix(".events").open("w") as stderr:
+        return subprocess.Popen(["docker", "exec", container, "sh", "-c", script,
+                                 "memory-sampler", str(4 * seconds)], cwd=ROOT,
+                                stdout=stdout, stderr=stderr)
+
+
 def sample(args, metadata, output, network, image, platform, identity, mode, batch, profile, traffic, repeat, cache, sessions=None):
     label = f"{mode}-b{batch}-p{profile}-{traffic}-r{repeat}"
     print(label, flush=True)
@@ -448,6 +474,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     origin = resumed["directory"] if resumed else (output / (label + "-nodes") if sessions is not None and reusable else directory)
     origin.mkdir(exist_ok=True)
     server = None
+    memory = {}
     handles = []
     roles = ("a", "r", "b") if mode.endswith("-relay") else ("a", "b")
     secure = mode.startswith(("secure-", "manager-"))
@@ -495,7 +522,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 save(directory / "public-nodes.json", public_nodes)
                 push(containers["a"], "/tmp/public-nodes.json", (directory / "public-nodes.json").read_text())
                 fixture = json.loads(command("docker", "exec", containers["a"], "/fixtures/meshway-dataplane-fixture",
-                    "compile", "--input", "/tmp/public-nodes.json", "--seconds", str(args.seconds + args.omit + 120)))
+                    "compile", "--input", "/tmp/public-nodes.json", "--seconds", str(2 * (args.seconds + args.omit) + 120)))
                 save(directory / "fixture.json", fixture)
                 if origin != directory:
                     shutil.copy2(directory / "fixture.json", origin / "fixture.json")
@@ -516,11 +543,12 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 stderr = (origin / f"{role}.stderr").open("w")
                 handles.extend([stdout, stderr])
                 nodes.append(subprocess.Popen(["docker", "exec", "--env", f"MESHWAY_PROFILE={profile}",
+                    "--env", f"MESHWAY_PERF_UDP_BUFFER={args.udp_buffer}",
                     "--env", "MESHWAY_PROFILE_DETAIL=1",
                     "--env", "RUST_LOG=info,meshway_connectivity=debug",
                     containers[role], "/fixtures/meshway-dataplane-perf", "--stage", stage, "--role", role,
                     "--bind", addresses[role] + ":41000", "--peer", addresses[other] + ":41000",
-                    "--mtu", str(args.mtu), "--batch", str(batch), "--seconds", str(args.seconds + args.omit + 60),
+                    "--mtu", str(args.mtu), "--batch", str(batch), "--seconds", str(2 * (args.seconds + args.omit) + 60),
                     "--log-format", "json"] + (["--workers", str(args.workers), "--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else ["--io", record["io"]]), cwd=ROOT, stdout=stdout, stderr=stderr))
             deadline = time.monotonic() + 15
             while not all((origin / f"{role}.stdout").read_text().strip() for role in roles):
@@ -567,6 +595,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         record["hostUptimeInitial"] = command("uptime")
         record["hostNprocInitial"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
         before = {role: cpu_usage(c) for role, c in containers.items()}
+        memory = {role: memory_sampler(c, directory / f"{role}.memory.csv", args.seconds + args.omit + 30)
+                  for role, c in containers.items()}
         start = time.monotonic()
         client_args = ["docker", "exec", containers["a"], "iperf3", "-c", destination, "-J",
                        "-t", str(args.seconds), "-O", str(args.omit),
@@ -618,7 +648,24 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as error:
         record.update(status="failed", failure=str(error))
     finally:
-        keep = sessions is not None and reusable and traffic == "tcp" and record["status"] == "ok"
+        for role, sampler in memory.items():
+            command("docker", "exec", containers[role], "touch", "/tmp/perf-memory-stop", check=False)
+            sampler.wait(timeout=10)
+        if memory:
+            record["memoryByRole"] = {}
+            for role in memory:
+                rows = [[None if v == "null" else float(v) for v in line.split(",")] for line in
+                        (directory / f"{role}.memory.csv").read_text().splitlines()]
+                record["memoryByRole"][role] = dict(samples=len(rows),
+                    peakCgroupBytes=max((r[1] for r in rows), default=None),
+                    peakNodeRssBytes=max((r[2] for r in rows if r[2] is not None), default=None))
+        if record["status"] != "ok":
+            # A timed-out docker exec client does not reliably stop iperf inside
+            # its namespace. Keep failed evidence and terminate only this run's
+            # application processes before reusing or removing its containers.
+            for container in containers.values():
+                command("docker", "exec", container, "pkill", "-INT", "-x", "iperf3", check=False)
+        keep = sessions is not None and reusable and traffic == "tcp" and "udp" in args.traffic and record["status"] == "ok"
         if keep and profile:
             try:
                 checkpoint(containers, origin)
@@ -643,7 +690,12 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 command("docker", "rm", "-f", container)
             containers.clear()
         if server is not None:
-            server.wait(timeout=10)
+            try:
+                server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                record.update(status="failed", failure=record.get("failure", "iperf server did not stop"))
+                server.terminate()
+                server.wait(timeout=5)
         for node in ([] if keep else nodes):
             node.wait(timeout=10)
             if node.returncode:
@@ -742,7 +794,7 @@ def measure(args, output_root):
         configs = configurations(args)
         for repeat in range(args.repeats):
             for mode, batch, profile in (configs if repeat % 2 == 0 else list(reversed(configs))):
-                for traffic in ("tcp", "udp"):
+                for traffic in args.traffic:
                     metadata["results"].append(sample(args, metadata, output, network, image["imageId"], platform,
                         identity, mode, batch, profile, traffic, repeat, cache, sessions))
                     save(output / "results.json", metadata)
@@ -764,6 +816,7 @@ def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
+    parser.add_argument("--traffic", nargs="+", choices=["tcp", "udp"], default=["tcp", "udp"], help="explicit workload subset; default TCP then UDP")
     parser.add_argument("--batch", type=int, nargs="+", default=[1, 32])
     parser.add_argument("--profile", type=int, nargs="+", default=[0, 128])
     parser.add_argument("--repeats", type=int, default=2)
@@ -775,15 +828,18 @@ def main():
     parser.add_argument("--tcp-streams", type=int, default=1, help="parallel iperf TCP streams (UDP remains one stream)")
     parser.add_argument("--cpus", type=float, default=2)
     parser.add_argument("--memory", default="512m")
-    parser.add_argument("--workers", type=int, help="crypto workers per node (0 = inline); default = CPU quota minus one, minimum one")
+    parser.add_argument("--workers", type=int, help="crypto workers per node (default 0 = inline); explicit 1-256 for handoff comparisons")
+    parser.add_argument("--quick", action="store_true", help="diagnostic only: allow one repeat and 4s; not a final throughput matrix")
+    parser.add_argument("--udp-buffer", type=int, default=0, help="L3 explicit socket buffer request in bytes (0 = provider default)")
     args = parser.parse_args()
+    args.traffic = [traffic for traffic in ("tcp", "udp") if traffic in args.traffic]
     if args.workers is None:
-        args.workers = max(1, math.ceil(args.cpus) - 1)
-    if (not 2 <= args.repeats <= 100 or not 6 <= args.seconds <= 300 or not 1 <= args.omit <= 60
+        args.workers = 0
+    if (not (1 if args.quick else 2) <= args.repeats <= 100 or not (4 if args.quick else 6) <= args.seconds <= 300 or not 1 <= args.omit <= 60
             or not 1280 <= args.mtu <= 1472 or not 16 <= args.payload <= args.mtu-28
             or any(not 1 <= b <= 1024 for b in args.batch) or any(not 0 <= p <= 65536 for p in args.profile)
             or not 0 < args.cpus <= 32 or not 0 <= args.workers <= 256
-            or not 1 <= args.tcp_streams <= 128):
+            or not 1 <= args.tcp_streams <= 128 or not 0 <= args.udp_buffer <= 16 * 1024 * 1024):
         parser.error("measurement bounds invalid (at least 2 repeats, 6s measurement, 1s omitted warmup)")
     output_root = ROOT / ".meshway/perf/dataplane"
     output_root.mkdir(parents=True, exist_ok=True)

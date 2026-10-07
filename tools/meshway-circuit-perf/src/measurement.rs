@@ -1,7 +1,10 @@
 use crate::Arguments;
 use meshway_dataplane::{
     Action, DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketPool,
-    secure::{Received, SecureNode},
+    secure::{
+        Received, SecureNode,
+        pipeline::{Credit, Job, Output, Pool},
+    },
 };
 use meshway_logging::profile::{self, Metric};
 use meshway_static_authority::{
@@ -55,6 +58,8 @@ pub struct Report {
     rounds: u32,
     warmup: u32,
     profiling: bool,
+    workers: Option<u16>,
+    cpu_clock: &'static str,
     setup_wall_ns: u64,
     harness_cpu_ns: u64,
     harness_wall_ns: u64,
@@ -68,11 +73,49 @@ fn nanos(duration: Duration) -> Result<u64, Error> {
 }
 
 fn cpu_time() -> Result<u64, Error> {
-    let time = nix::time::clock_gettime(nix::time::ClockId::CLOCK_THREAD_CPUTIME_ID)?;
+    clock_time(nix::time::ClockId::CLOCK_THREAD_CPUTIME_ID)
+}
+
+fn clock_time(clock: nix::time::ClockId) -> Result<u64, Error> {
+    let time = nix::time::clock_gettime(clock)?;
     u64::try_from(time.tv_sec())?
         .checked_mul(1_000_000_000)
         .and_then(|sec| sec.checked_add(u64::try_from(time.tv_nsec()).ok()?))
         .ok_or_else(|| "invalid thread CPU time".into())
+}
+
+fn handoff(pool: &mut Pool, job: Job) -> Result<(Output, Credit), Error> {
+    if pool.submit(job).is_some() {
+        return Err("unexpected single-in-flight pressure".into());
+    }
+    pool.flush();
+    loop {
+        if let Some(ready) = pool.take_ready().pop() {
+            let (output, credit) = ready.into_parts();
+            return Ok((output?, credit));
+        }
+        block_on(pool.ready());
+    }
+}
+
+/// L0 has no I/O runtime. This waits for the production Pool's notification;
+/// it does not implement another crypto queue or busy-poll worker completion.
+fn block_on(future: impl std::future::Future<Output = ()>) {
+    struct Wake(std::thread::Thread);
+    impl std::task::Wake for Wake {
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &std::sync::Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = std::task::Waker::from(std::sync::Arc::new(Wake(std::thread::current())));
+    let mut context = std::task::Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    while future.as_mut().poll(&mut context).is_pending() {
+        std::thread::park();
+    }
 }
 
 struct Circuit {
@@ -81,10 +124,11 @@ struct Circuit {
     id: [u8; 32],
     sequence: [u32; 2],
     buffers: PacketPool,
+    pools: Option<Vec<Pool>>,
 }
 
 impl Circuit {
-    fn open(count: usize) -> Result<Self, Error> {
+    fn open(count: usize, workers: Option<u16>) -> Result<Self, Error> {
         let chain = Chain::new(count, [Duration::from_secs(600); 3])?;
         let mut nodes = chain
             .path
@@ -133,6 +177,13 @@ impl Circuit {
             nodes,
             id,
             sequence: [101, 201],
+            pools: workers
+                .map(|workers| {
+                    (0..count)
+                        .map(|_| Pool::new(usize::from(workers)))
+                        .collect()
+                })
+                .transpose()?,
             buffers: PacketPool::new(
                 4,
                 meshway_dataplane::secure::MAX_PLAINTEXT,
@@ -187,12 +238,24 @@ impl Circuit {
             length,
         )?;
         let role = if reply { "B.send" } else { "A.send" };
+        let mut credits = Vec::new();
         let mut pending = stats.roles.entry(role.into()).or_default().measure(|| {
             static PROFILE: Metric = Metric::new("l0.send");
             let _profile = PROFILE.enter();
             let mut buffer = self.buffers.acquire(bytes.len())?;
             buffer.copy_from_slice(&bytes);
-            Ok(self.nodes[source].send(self.id, Packet::parse(buffer)?)?)
+            let packet = Packet::parse(buffer)?;
+            if let Some(pools) = &mut self.pools {
+                let job = self.nodes[source].prepare_send_packet(self.id, packet)?;
+                let (output, credit) = handoff(&mut pools[source], Job::Send(job))?;
+                credits.push(credit);
+                match output {
+                    Output::Send(frame) => Ok(frame),
+                    _ => Err("unexpected send output".into()),
+                }
+            } else {
+                Ok(self.nodes[source].send(self.id, packet)?)
+            }
         })?;
         let mut sizes = Vec::with_capacity(last);
         for cut in 1..=last {
@@ -217,7 +280,17 @@ impl Circuit {
                 // release checks are charged to the receiving role, never skipped.
                 let received = pending.release(|wire| {
                     sizes.push(wire.len());
-                    self.nodes[next].receive(&carrier, wire)
+                    if let Some(pools) = &mut self.pools {
+                        let job = self.nodes[next].prepare_receive(&carrier, wire)?;
+                        let (output, credit) = handoff(&mut pools[next], Job::Receive(job))?;
+                        credits.push(credit);
+                        match output {
+                            Output::Receive(opened) => Ok(self.nodes[next].commit_receive(opened)?),
+                            _ => Err(Error::from("unexpected receive output")),
+                        }
+                    } else {
+                        Ok(self.nodes[next].receive(&carrier, wire)?)
+                    }
                 })??;
                 match received {
                     Received::Packet(action) => {
@@ -274,7 +347,7 @@ pub fn run(args: &Arguments) -> Result<Report, Error> {
     // pre/post cumulative pair, excluding setup/warmup by subtraction in script.
     profile::report();
     let setup = Instant::now();
-    let mut circuit = Circuit::open(usize::from(args.nodes))?;
+    let mut circuit = Circuit::open(usize::from(args.nodes), args.workers)?;
     for _ in 0..args.warmup {
         circuit.round(args.packet_bytes as usize, &mut Stats::default())?;
     }
@@ -291,13 +364,18 @@ pub fn run(args: &Arguments) -> Result<Report, Error> {
         profile::report();
     }
     let mut measured = Stats::default();
-    let cpu = cpu_time()?;
+    let clock = if args.workers.is_some() {
+        nix::time::ClockId::CLOCK_PROCESS_CPUTIME_ID
+    } else {
+        nix::time::ClockId::CLOCK_THREAD_CPUTIME_ID
+    };
+    let cpu = clock_time(clock)?;
     let wall = Instant::now();
     for _ in 0..args.rounds {
         circuit.round(args.packet_bytes as usize, &mut measured)?;
     }
     let harness_wall_ns = nanos(wall.elapsed())?;
-    let harness_cpu_ns = cpu_time()?
+    let harness_cpu_ns = clock_time(clock)?
         .checked_sub(cpu)
         .ok_or("thread CPU clock moved backwards")?;
     if measured.delivered_packets != u64::from(args.rounds) * 2 {
@@ -313,6 +391,12 @@ pub fn run(args: &Arguments) -> Result<Report, Error> {
         rounds: args.rounds,
         warmup: args.warmup,
         profiling: profile::enabled(),
+        workers: args.workers,
+        cpu_clock: if args.workers.is_some() {
+            "process"
+        } else {
+            "owner-thread"
+        },
         setup_wall_ns,
         harness_cpu_ns,
         harness_wall_ns,

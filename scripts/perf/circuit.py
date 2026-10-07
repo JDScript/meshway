@@ -124,7 +124,7 @@ def aggregate(results):
 
 def summary(metadata):
     rows = ["# L0 protected circuit CPU performance", "",
-            "One synchronous thread; real compiler permits, SecureNode handshake, Noise, adjacent MACs,",
+            "One synchronous owner; real compiler permits, SecureNode handshake, Noise, adjacent MACs,",
             "endpoint flow admission, original output guards and exact byte/path delivery checks. Native UDP carrier",
             "metadata; no socket/TUN/transport adapter or control-plane I/O. One circuit and one established TCP flow.",
             "Each round sends a packet in both directions; 52B = pure ACK, larger packets = contiguous TCP payload.",
@@ -133,6 +133,7 @@ def summary(metadata):
             "timers but inside harness CPU/wall throughput. Timer cost is reported, not subtracted.",
             "Quantiles are linear-interpolated over independent process repetitions, not per-packet tail latency.",
             "Profile estimates use exact calls × sampled mean, with nested inclusive/self scopes; they are observer-affected.",
+            "Explicit --workers uses the production streaming Pool with ONE packet in flight across the entire chain: a handoff/inline cost comparison, not a saturated parallel throughput measurement. Harness CPU is process CPU (including workers); role CPU remains owner-thread CPU. Without --workers, all CPU fields use the owner thread.",
             "", f"Source digest: `{metadata['sourceDigest']}`",
             f"Binary SHA256: `{metadata['binarySha256']}`", f"Platform: {metadata['platform']}",
             f"Parameters: `{json.dumps(metadata['options'], sort_keys=True)}`", "",
@@ -168,6 +169,7 @@ def summary(metadata):
 
 def validate(metrics, args, nodes, size, rate):
     if (metrics["nodes"] != nodes or metrics["packetBytes"] != size or metrics["rounds"] != args.rounds
+            or metrics["workers"] != args.workers
             or metrics["warmup"] != args.warmup or metrics["profiling"] != bool(rate)
             or metrics["measured"]["deliveredPackets"] != 2 * args.rounds):
         raise ValueError("measurement identity/delivery mismatch")
@@ -205,7 +207,7 @@ def measure(args, output_root):
                 "dirty": bool(command("git", "status", "--porcelain")), "sourceDigest": before,
                 "binarySha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "binaryFile": binary.name,
                 "rustc": command("rustc", "-Vv"), "platform": platform.platform(), "architecture": platform.machine(),
-                "logicalCpus": os.cpu_count(), "measurementThreads": 1, "options": vars(args), "results": [],
+                "logicalCpus": os.cpu_count(), "measurementThreads": 1 if args.workers is None else None, "options": vars(args), "results": [],
                 "build": {"profile": "release", "cargoIncremental": False,
                           "targetDirectory": str(target.relative_to(ROOT)),
                           "rustflags": os.environ.get("RUSTFLAGS"),
@@ -226,7 +228,7 @@ def measure(args, output_root):
                         record["hostNprocBefore"] = command("nproc") if sys.platform == "linux" else command("getconf", "_NPROCESSORS_ONLN")
                         process = subprocess.run(["mise", "exec", "--", str(binary), "--nodes", str(nodes),
                                                   "--packet-bytes", str(size), "--rounds", str(args.rounds),
-                                                  "--warmup", str(args.warmup)], cwd=ROOT, text=True,
+                                                  "--warmup", str(args.warmup)] + ([] if args.workers is None else ["--workers", str(args.workers)]), cwd=ROOT, text=True,
                                                  capture_output=True, timeout=180,
                                                   env=dict(os.environ, MESHWAY_PROFILE=str(rate), MESHWAY_PROFILE_DETAIL="1"))
                         record["hostLoadAfter"] = os.getloadavg()
@@ -267,10 +269,12 @@ def main():
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--profile", choices=["off", "on", "both"], default="both")
     parser.add_argument("--profile-rate", type=int, default=128)
+    parser.add_argument("--workers", type=int, help="single-in-flight production Pool handoff comparison; 0 is streaming inline; omitted is synchronous L0")
     args = parser.parse_args()
     if (not 1 <= args.rounds <= 1_000_000 or not 0 <= args.warmup <= 100_000
             or not 1 <= args.repeats <= 100 or not 1 <= args.profile_rate <= 65536
-            or any(not 2 <= n <= 8 for n in args.nodes) or any(not 52 <= p <= 65519 for p in args.packet_bytes)):
+            or any(not 2 <= n <= 8 for n in args.nodes) or any(not 52 <= p <= 65519 for p in args.packet_bytes)
+            or (args.workers is not None and not 0 <= args.workers <= 256)):
         parser.error("nodes/packet-bytes/rounds/warmup/repeats/profile-rate outside bounds")
     # Worktree-local evidence/cache. Never write into the main worktree.
     output_root = ROOT / ".meshway/perf/circuit"

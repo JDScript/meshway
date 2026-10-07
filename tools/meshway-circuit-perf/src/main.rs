@@ -18,6 +18,9 @@ struct Arguments {
     rounds: u32,
     #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u32).range(0..=100000))]
     warmup: u32,
+    /// Explicit single-in-flight handoff comparison; omitted uses synchronous L0.
+    #[arg(long, value_parser = clap::value_parser!(u16).range(0..=256))]
+    workers: Option<u16>,
 }
 
 fn run() -> Result<(), Error> {
