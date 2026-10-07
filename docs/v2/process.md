@@ -42,6 +42,13 @@ T2 的短模式（`--short`，持续流约 30 秒）只用于诊断与包内门�
 
 合入后自动层把每次运行的摘要（commit、触发、各层耗时、矩阵每行结果与报告 ID、L0／L3／L4 关键指标、二进制体积）追加到孤立分支 `ci-results` 的索引，文档站 [/status](/v2/status) 渲染最近运行与指标时间序列；相对上一次 main 结果变化超过 10% 的指标高亮。原始报告留在测量机，索引不含秘密与原始样本。
 
-## 测量机
+## 测量机与 runner
 
-x86_64 测量机（planck，32 核，Docker，无 sudo）承担 T1 全量、T2 全矩阵与 T3 固定口径；本机只做包内门槛与诊断。远程运行通过 `validate:remote` 推送分支并回收摘要；GitHub Actions 的 self-hosted runner 以同一用户身份运行同一组 mise 任务，不另维护一套脚本。
+| runner | 标签 | 机器 | 用途 |
+| --- | --- | --- | --- |
+| `planck` | `self-hosted,linux,x64,docker,planck` | AMD Ryzen 9 9950X，32 线程，Docker，systemd 服务（`github-runner` 用户） | T1、T2 全矩阵、**T3 x86 固定口径**（唯一性能基准机） |
+| `mars-14900k` | `self-hosted,linux,x64,docker,mars` | Intel i9-14900K，32 线程，Docker，用户 systemd | T1、T2 |
+| `mars-epyc7543` | `self-hosted,linux,x64,docker,mars,cgroup1` | AMD EPYC 7543，128 线程，Docker 27（cgroup v1），用户 systemd | T1、T2；不做内存口径测量 |
+| `jp-tyo-arm64` | `self-hosted,linux,arm64,docker,jp-tyo` | Ampere Neoverse-N1，4 核，Docker，用户 systemd（已 linger） | T3 arm64 原生 L0／原语参照 |
+
+`check`／`validate` 使用通用标签，由空闲 runner 接单；`perf` 钉在 `planck`，`perf-arm64` 钉在 `jp-tyo`，保证时间序列同机可比。mars 两台为共享机且无 sudo：用户级 systemd 在该用户最后一个登录会话结束后会停止，需要管理员执行 `loginctl enable-linger siqi` 才能常驻；`validate:remote` 的 ad-hoc 路径仍指向 planck。所有 runner 以普通用户运行同一组 mise 任务，不另维护脚本；job 结束后按 run 标签清理容器与 network，不留宿主改动。

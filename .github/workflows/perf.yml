@@ -65,3 +65,42 @@ jobs:
             .meshway/perf/dataplane/*/results.json
             .meshway/perf/crypto/*/results.json
           if-no-files-found: ignore
+
+  perf-arm64:
+    runs-on: [self-hosted, linux, arm64, docker, jp-tyo]
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run setup
+      - name: Guard against a busy host
+        run: |
+          load=$(cut -d' ' -f1 /proc/loadavg)
+          echo "arm64 load1=$load" >> "$GITHUB_STEP_SUMMARY"
+          awk -v l="$load" 'BEGIN { exit (l > 2.0) ? 1 : 0 }' || { echo "host load $load too high for measurements"; exit 1; }
+      - name: L0 circuit (native arm64 Linux)
+        run: mise run perf:circuit
+      - name: Crypto primitives (native arm64 Linux)
+        if: contains(inputs.layers || '', 'crypto')
+        run: mise run perf:crypto
+      - name: Publish summaries
+        if: always()
+        run: |
+          for d in .meshway/perf/circuit .meshway/perf/crypto; do
+            latest=$(ls -td "$d"/*/ 2>/dev/null | head -1)
+            [ -n "$latest" ] && [ -f "$latest/summary.md" ] && { echo "## arm64 $d" >> "$GITHUB_STEP_SUMMARY"; cat "$latest/summary.md" >> "$GITHUB_STEP_SUMMARY"; }
+          done
+          true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-arm64-${{ github.run_id }}
+          path: |
+            .meshway/perf/circuit/*/results.json
+            .meshway/perf/crypto/*/results.json
+          if-no-files-found: ignore
