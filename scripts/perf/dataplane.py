@@ -654,6 +654,9 @@ def measure(args, output_root):
     identity = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ").lower() + "-" + uuid.uuid4().hex[:8]
     output = output_root / identity
     (output / "bin").mkdir(parents=True)
+    # Public executables must be accessible to capability-free container root,
+    # even when the host owns the private report directory under a different UID.
+    (output / "bin").chmod(0o755)
     target, platform, machine = docker_target()
     before = source_digest()
     cache = ROOT / "target/dataplane-perf"
@@ -664,11 +667,11 @@ def measure(args, output_root):
         raise RuntimeError("sources changed during build")
     binary = output / "bin/meshway-dataplane-perf"
     shutil.copy2(cache / target / "release/meshway-dataplane-perf", binary)
-    binary.chmod(0o500)
+    binary.chmod(0o555)
     check_elf(binary, machine)
     helper = output / "bin/meshway-dataplane-fixture"
     shutil.copy2(cache / target / "release/meshway-dataplane-fixture", helper)
-    helper.chmod(0o500)
+    helper.chmod(0o555)
     check_elf(helper, machine)
     image = image_for(platform, output_root / "image")
     metadata = dict(schemaVersion=1, revision=command("git", "rev-parse", "HEAD"),

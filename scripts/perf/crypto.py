@@ -119,7 +119,9 @@ def measure(args, output_root):
                 raise RuntimeError("source changed during build")
             binary = output / ("measure-" + name)
             shutil.copy2(executable, binary)
-            binary.chmod(0o500)
+            # Container root has no DAC override and differs from the host owner.
+            # Only the public executable is exposed; the report directory stays private.
+            binary.chmod(0o555 if name == "linux" else 0o500)
             env["binarySha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
             if name == "linux":
                 check_elf(binary, machine)
@@ -127,7 +129,7 @@ def measure(args, output_root):
                           "--label", "io.meshway.crypto-perf=" + identity.lower(),
                           "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                           "--cpus", str(args.cpus), "--memory", "512m", "--platform", docker_platform,
-                          "--mount", f"type=bind,src={output},dst=/bench,readonly", "--entrypoint", "/bench/" + binary.name,
+                          "--mount", f"type=bind,src={binary},dst=/bench,readonly", "--entrypoint", "/bench",
                           image["imageId"]]
                 if args.cpu_set:
                     prefix[2:2] = ["--cpuset-cpus", args.cpu_set]
