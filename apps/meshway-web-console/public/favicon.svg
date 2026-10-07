@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <style>
+    .ink { fill: #2a2b33; stroke: #2a2b33; }
+    @media (prefers-color-scheme: dark) { .ink { fill: #ecedf2; stroke: #ecedf2; } }
+  </style>
+  <circle class="ink" cx="12" cy="12" r="10.25" fill="none" stroke-opacity="0.35" stroke-width="1.5" style="fill: none" />
+  <path class="ink" d="M6.5 15.5 12 6.5l5.5 9H6.5Z" stroke-width="1.5" stroke-linejoin="round" style="fill: none" />
+  <circle class="ink" cx="12" cy="6.5" r="1.9" style="stroke: none" />
+  <circle class="ink" cx="6.5" cy="15.5" r="1.9" style="stroke: none" />
+  <circle class="ink" cx="17.5" cy="15.5" r="1.9" style="stroke: none" />
+</svg>

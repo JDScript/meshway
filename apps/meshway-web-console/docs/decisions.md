@@ -485,6 +485,17 @@ Outside the shell, one card over the globe like the sign-in: `/login`,
 open), `/` with no network (creating the first), a network not found,
 `/join`, `/reset-password` and `/authorize-device/<id>`.
 
+Where a page cannot be, the same card says so (`components/entry/fallback.tsx`,
+the router's defaults): an address with no page names it and offers the way
+on (the network's overview inside a network, the console when signed in,
+else the sign-in); a page that failed says why when the controller did (by
+its problem), that the page's files did not load (the console was updated
+since it opened), or that it ran into an unexpected error with its message,
+and offers reloading. Inside a network the card sits in the shell, whose bar
+and rail stay usable; a network not found (no such ID, or not a member) is
+its own card outside it, with the account, opening the console and signing
+out. A revision the network does not have is said in the history.
+
 - Configuration is one page because it is one document with one revision:
   one draft, one commit bar, one review.
 - Tag owners (`tagsOwners`) are configuration; a node's own tags are its
@@ -631,6 +642,9 @@ they need `motion`.
 - The camera and the offset follow critically damped springs, re-aimed
   whenever surfaces change, so motion never stops dead or restarts.
 - The engine chunk is lazy-loaded (~145 kB gzip, almost all three.js).
+  Where it cannot run (no WebGL, or its chunk did not load) the first load
+  goes on without a globe, and the overview's corner says the globe cannot
+  be drawn.
 
 ## First load
 
