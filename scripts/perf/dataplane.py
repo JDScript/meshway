@@ -538,7 +538,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         before = {role: cpu_usage(c) for role, c in containers.items()}
         start = time.monotonic()
         client_args = ["docker", "exec", containers["a"], "iperf3", "-c", destination, "-J",
-                       "-t", str(args.seconds), "-O", str(args.omit), "-P", "1", "--get-server-output"]
+                       "-t", str(args.seconds), "-O", str(args.omit),
+                       "-P", str(args.tcp_streams if traffic == "tcp" else 1), "--get-server-output"]
         if traffic == "udp":
             client_args.extend(["-u", "-b", args.udp_rate, "-l", str(args.payload)])
         with (directory / "iperf-client.json").open("w") as stdout, (directory / "iperf-client.stderr").open("w") as stderr:
@@ -734,6 +735,7 @@ def main():
     parser.add_argument("--mtu", type=int, default=1400)
     parser.add_argument("--payload", type=int, default=1200)
     parser.add_argument("--udp-rate", default="500M")
+    parser.add_argument("--tcp-streams", type=int, default=1, help="parallel iperf TCP streams (UDP remains one stream)")
     parser.add_argument("--cpus", type=float, default=2)
     parser.add_argument("--memory", default="512m")
     parser.add_argument("--workers", type=int, help="crypto workers per node (0 = inline); default = CPU quota minus one, minimum one")
@@ -743,7 +745,8 @@ def main():
     if (not 2 <= args.repeats <= 100 or not 6 <= args.seconds <= 300 or not 1 <= args.omit <= 60
             or not 1280 <= args.mtu <= 1472 or not 16 <= args.payload <= args.mtu-28
             or any(not 1 <= b <= 1024 for b in args.batch) or any(not 0 <= p <= 65536 for p in args.profile)
-            or not 0 < args.cpus <= 32 or not 0 <= args.workers <= 256):
+            or not 0 < args.cpus <= 32 or not 0 <= args.workers <= 256
+            or not 1 <= args.tcp_streams <= 128):
         parser.error("measurement bounds invalid (at least 2 repeats, 6s measurement, 1s omitted warmup)")
     output_root = ROOT / ".meshway/perf/dataplane"
     output_root.mkdir(parents=True, exist_ok=True)

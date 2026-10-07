@@ -264,7 +264,7 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
   --udp-rate 500M --cpus 2 --memory 512m
 ```
 
-每个配置分别运行 TCP 单流和 UDP 定速率 iperf3，至少两次重复；重复之间反转配置顺序。默认每次先省略 2 秒 warmup，再测量 8 秒。release 交叉构建缓存独立于其他任务，位于 `target/dataplane-perf`；测量使用报告目录中不可变的二进制副本。Docker userspace 使用锁定 node-lab OS 源码对应的 immutable image，若尚无该 image，则在本工作区私有输出目录构建；不部署或修改常驻 lab。
+每个配置分别运行 TCP（默认单流，`--tcp-streams N` 可指定 1–128 条并行流）和 UDP 定速率 iperf3，至少两次重复；重复之间反转配置顺序。UDP 始终为一条流，TCP 并行数保存于报告 options 与真实 iperf 命令。默认每次先省略 2 秒 warmup，再测量 8 秒。release 交叉构建缓存独立于其他任务，位于 `target/dataplane-perf`；测量使用报告目录中不可变的二进制副本。Docker userspace 使用锁定 node-lab OS 源码对应的 immutable image，若尚无该 image，则在本工作区私有输出目录构建；不部署或修改常驻 lab。
 
 `--modes` 可选择本页列出的模式，默认仍为全部。相同 Meshway 模式／拓扑复用容器；同一 batch／profile／repeat 的 TCP 和 UDP 连续使用同一节点进程与 circuit，只重启 iperf3。跨重复或 profile 配置重启节点并使用新材料。`--workers` 默认按 CPU quota 取 `max(ceil(cpus)-1, 1)`，可显式指定，0 为 inline。
 
