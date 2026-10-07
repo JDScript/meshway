@@ -145,7 +145,7 @@ iperf3 结果取接收端 `server_output_json.end.sum_received`，并核对 UDP 
 
 ## L2 内核批量实测
 
-报告 `.meshway/perf/dataplane/20261007t000720z-1a8f5ee7/`（UTC），源码 `68ee8e35a4e2dfd1bfc95f268137c13372f5fc27`，启动时工作树 clean、测量期间源码未变。相同二进制、两次独立重复，中位数，profile 关闭；共 20 个 raw／plain／secure 样本全部成功。命令：
+报告 `.meshway/perf/dataplane/20261007t002750z-1171958b/`（UTC），源码 `791e5e299a3af19c1ac98ec6b5f149586ef429ff`，启动时工作树 clean、测量期间源码未变。相同二进制、两次独立重复，中位数，profile 关闭；共 20 个 raw／plain／secure 样本全部成功。命令：
 
 ```sh
 mise run perf:dataplane -- --batch 32 --profile 0 --repeats 2 \
@@ -155,11 +155,11 @@ mise run perf:dataplane -- --batch 32 --profile 0 --repeats 2 \
 
 | 模式 | TCP Mbps | TCP CPU % | UDP Mbps | UDP pps | UDP 丢包 % | UDP CPU % | syscall／包 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| raw 内核参照 | 110,612.96 | 119.70 | 1,543.95 | 160,828.59 | 22.80 | 148.05 | 未测 |
-| plain per-packet | 2,279.77 | 120.32 | 1,041.04 | 108,441.69 | 47.93 | 183.22 | 未测 |
-| plain batch | 3,800.39 | 152.62 | 1,083.66 | 112,881.15 | 45.84 | 180.25 | 未测 |
+| raw 内核参照 | 110,317.61 | 129.63 | 1,451.64 | 151,212.39 | 27.39 | 151.97 | 未测 |
+| plain per-packet | 2,142.13 | 121.18 | 1,053.27 | 109,715.76 | 47.33 | 191.27 | 未测 |
+| plain batch | 3,667.94 | 152.99 | 1,123.59 | 117,040.54 | 43.81 | 192.28 | 未测 |
 
-Batch 的 TCP 吞吐增加 **66.7%**，CPU 增加 32.30 个百分点；UDP pps 增加 **4.1%**，CPU 减少 2.97 个百分点。CPU 为两容器合计，100% 表示一核，含 warmup；此结果不表示 batch 降低所有负载的绝对 CPU。UDP 输入为 2 Gbps，raw 自身也有 22.80% 丢包，不能把全部丢包归因于转发器。TCP pps 未测，`/proc` I/O 计数不覆盖完整 UDP syscall 口径，因此不推算 syscall／包。
+Batch 的 TCP 吞吐增加 **71.2%**，CPU 增加 31.81 个百分点；UDP pps 增加 **6.7%**，CPU 增加 1.01 个百分点。CPU 为两容器合计，100% 表示一核，含 warmup。UDP 输入为 2 Gbps，raw 自身也有 27.39% 丢包，不能把全部丢包归因于转发器。TCP pps 未测，`/proc` I/O 计数不覆盖完整 UDP syscall 口径，因此不推算 syscall／包。
 
 ### 实际能力与使用证据
 
@@ -168,13 +168,13 @@ Batch 的 TCP 吞吐增加 **66.7%**，CPU 增加 32.30 个百分点；UDP pps �
 | TUN `IFF_VNET_HDR`／`CSUM` | 已启用 | 每个 batch 节点首尾 capability 均为 true；双栈内核包校验和验证通过 |
 | TUN `TSO4`／`TSO6` | 已启用 | 双栈真实 TCP 拆分与三包合并交付测试通过 |
 | TUN `USO4`／`USO6` | 已启用 | 双栈 UDP 三包合并后恢复三个应用报文 |
-| UDP `UDP_SEGMENT`／`UDP_GRO` | 已启用且实际使用 | TCP 样本累计 276,462 次 GSO 发送、275,986 个 GRO 超包；UDP 样本分别为 72,176／55,186 |
-| UDP `sendmmsg`／`recvmmsg` | 实际成功 | TCP 样本累计 22,615／155,242 次；UDP 样本累计 190,979／101,832 次 |
+| UDP `UDP_SEGMENT`／`UDP_GRO` | 已启用且实际使用 | TCP 样本累计 263,553 次 GSO 发送、263,101 个 GRO 超包；UDP 样本分别为 76,798／59,771 |
+| UDP `sendmmsg`／`recvmmsg` | 实际成功 | TCP 样本累计 26,527／148,589 次；UDP 样本累计 136,663／71,755 次 |
 | mmsg／逐包回退 | 隔离测试通过 | 显式禁用上层能力后验证双栈消息边界、来源、短尾段与截断 |
 
 计数为每种负载的两次重复、两个节点退出时累计值之和，包含准备／warmup／回复；它们证明实际使用，不能当作测量区间内的精确 syscall／应用包比值。L2 应用负载使用 IPv4，IPv6 offload 由独立内核测试证明；能力启用不表示每类负载都使用全部 offload。
 
-环境为 OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`、aarch64、锁定 Ubuntu 24.04／iperf3 3.16；Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4，Linux musl release。每容器 2 CPU quota／512 MiB，每节点 current-thread runtime，MTU 1280，UDP payload 1200 字节，省略 1 秒 warmup 后测量 6 秒。Node binary SHA-256 为 `66ea7252510f38710181516e747ba0c622ee9cc2ca458181b1af9c43d97b1c94`；完整源码 digest、fixture hash、image 来源、首尾能力和逐次原始样本见 `results.json`。按唯一运行 label 核对无残留容器或 network。
+环境为 OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`、aarch64、锁定 Ubuntu 24.04／iperf3 3.16；Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4，Linux musl release。每容器 2 CPU quota／512 MiB，每节点 current-thread runtime，MTU 1280，UDP payload 1200 字节，省略 1 秒 warmup 后测量 6 秒。Node binary SHA-256 为 `0d73b792ae3dd615ae9ee735a6d5458198d931926ed64f520b4556b231b09972`；完整源码 digest、fixture hash、image 来源、首尾能力和逐次原始样本见 `results.json`。按唯一运行 label 核对无残留容器或 network。
 
 ## 内核 WireGuard 参照
 
