@@ -95,6 +95,6 @@ Server 补全并保存 B 的 UUID／TLS 材料，再向 A 编译对应的 DialCa
 
 ## Config 与 State
 
-管理员声明的 endpoint 和协议参数属于 Config。接口地址、STUN 映射、实际通道和 RTT 属于 State。动态 endpoint 只改变已获准 peer 的到达方式，不能替换身份、UUID、TLS 信任或业务许可。
+管理员声明的 endpoint 和协议参数属于 Config。接口地址、STUN 映射、实际通道和 RTT 属于 State。动态 endpoint（当前仅 Native UDP 协调穿透的候选）只改变已获准 peer 的到达方式，不能替换身份、UUID、TLS 信任或业务许可；流式承载仍只使用已公告的 endpoints。
 
 Mesh 地址修改属于 Config，不能用 endpoint State 改写。接收方须校验对应发布中的源／目的地址绑定；同一 IP 转交其他 Node 不继承旧会话资格，见[改址](/v2/configuration-reference/addressing#改址与安全切换)。

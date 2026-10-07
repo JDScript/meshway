@@ -46,7 +46,7 @@
 
 公告地址不等于实测可达。STUN 候选来自 State，且须关联实际 socket；UDP 映射不推导 TCP 可达性。
 
-这份显式地址在候选视图中标记为 configured，可与 interface／stun 候选一起使用；详见[Endpoint Candidates](/v2/state-reference/endpoints)。来源优先级不等于强制只使用此地址。
+这份显式地址在候选视图中标记为 configured；详见[Endpoint Candidates](/v2/state-reference/endpoints)。当前 Node 对 Native TCP／VLESS／Trojan 只拨已公告的 endpoints，不从 State 的 interface／stun 候选推导流式承载的地址；interface／stun 候选只用于 Native UDP 的协调穿透，见[承载与邻接模型](/v2/node/carriers)。
 
 ### TCP
 
