@@ -54,6 +54,11 @@ def category(stack):
     functions = [name.replace(">", "").split("::<", 1)[0].lstrip("<") for name in stack]
     owned = lambda prefix: any(name.startswith(prefix) for name in functions)
     leaf = stack[0]
+    # Optimized/tail-called ring assembly may retain an unrelated inlined
+    # buffer caller in DWARF. Its resolved leaf is unambiguously AEAD work;
+    # never charge that native primitive to an ancestral buffer scope.
+    if leaf.startswith("ring_core_") and "__chacha20_poly1305_" in leaf:
+        return "aead"
     if (any(s in leaf for s in ("memcpy", "memmove", "memset", "bzero"))
             or owned("meshway_dataplane::buffer::")):
         return "buffer-copy"
