@@ -137,7 +137,7 @@ def summary(metadata):
     for key, records in sorted(groups.items()):
         if not key[0].startswith("secure-"):
             continue
-        plain = groups.get(("plain", *key[1:]))
+        plain = groups.get(("plain-per-packet", *key[1:]))
         if not plain:
             continue
         def median(rows, field):
@@ -209,7 +209,8 @@ def summary(metadata):
             guards = calls.get("control.guard")
             value = f"{guards/packets:.2f}" if guards is not None else "—"
             lines.append(f"| {record['directory']} | {guards} | {packets} | {value} |")
-    lines.extend(["", "Meshway recvmmsg/sendmmsg and UDP_SEGMENT/UDP_GRO: not implemented; event batches use per-packet syscalls. Raw/WireGuard preserve kernel defaults.",
+    lines.extend(["", "Plain batch uses production TUN virtio offload, UDP GSO/GRO/mmsg and Session batch admission; plain per-packet and secure use per-packet syscalls. Raw/WireGuard preserve kernel defaults. Per-sample capability snapshots and actual successful offload/mmsg call counts are in results.json.",
+                   "Syscalls/packet: unmeasured (null). /proc process I/O counters are not a complete count of UDP sendmsg/recvmmsg syscalls; TCP packet counts are also unmeasured.",
                   f"Failed samples: {sum(r['status'] != 'ok' for r in metadata['results'])}; preserved in results.json, never replaced with zero.",
                   "", "## Provenance", "", "```json",
                   json.dumps({key: metadata.get(key) for key in ("revision", "dirty", "sourceDigest", "binarySha256", "fixtureBinarySha256", "options")}, indent=2), "```",
@@ -293,7 +294,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     directory.mkdir()
     record = dict(mode=mode, batch=batch, profile=profile, traffic=traffic, repeat=repeat,
                   status="failed", directory=label, goodputMbps=None, packetsPerSecond=None,
-                  lostPercent=None, cpuPercent=None, allocations=None, copiedBytes=None, peakMemoryBytes=None)
+                  lostPercent=None, cpuPercent=None, allocations=None, copiedBytes=None, peakMemoryBytes=None,
+                  syscallsPerPacket=None, io=("batch" if mode == "plain-batch" else "per-packet") if mode.startswith("plain-") else None)
     containers = {}
     nodes = []
     server = None
@@ -356,7 +358,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                     containers[role], "/fixtures/meshway-dataplane-perf", "--stage", "secure" if secure else "plain", "--role", role,
                     "--bind", addresses[role] + ":41000", "--peer", addresses[other] + ":41000",
                     "--mtu", str(args.mtu), "--batch", str(batch), "--seconds", str(args.seconds + args.omit + 60),
-                    "--log-format", "json"] + (["--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else []), cwd=ROOT, stdout=stdout, stderr=stderr))
+                    "--log-format", "json"] + (["--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else ["--io", record["io"]]), cwd=ROOT, stdout=stdout, stderr=stderr))
             deadline = time.monotonic() + 15
             while not all((directory / f"{role}.stdout").read_text().strip() for role in roles):
                 if any(node.poll() is not None for node in nodes) or time.monotonic() > deadline:
@@ -366,6 +368,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 readiness = json.loads((directory / f"{role}.stdout").read_text())
                 if not readiness["ready"]:
                     raise RuntimeError("invalid node readiness")
+                if not secure:
+                    record.setdefault("capabilitiesInitial", {})[role] = readiness["capabilities"]
                 if secure and readiness["publicationDigest"] != record["publicationDigest"]:
                     raise RuntimeError("node compiled publication digest differs")
                 if role == "r" and readiness["tun"] is not None:
@@ -446,6 +450,18 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         for handle in handles:
             handle.close()
     record["nodeExitCodes"] = [node.returncode for node in nodes]
+    if mode.startswith("plain-"):
+        record["capabilitiesFinal"] = {}
+        for role in roles:
+            path = directory / f"{role}.stderr"
+            if path.exists():
+                for line in path.read_text().splitlines():
+                    try:
+                        event = json.loads(line)
+                        if "ioCapabilities" in event:
+                            record["capabilitiesFinal"][role] = event["ioCapabilities"]
+                    except ValueError:
+                        pass
     if profile:
         try:
             record["profiles"] = {role: last_profile(directory / f"{role}.stderr") for role in roles
@@ -491,8 +507,8 @@ def measure(args, output_root):
                         cpuScope="all sample cgroups over full client wall interval including warmup (relay: 3, others: 2)",
                         kernelCpuLimitation="WireGuard crypto/softirq/kworker CPU may be charged outside sample cgroups; total kernel CPU is unmeasured, not zero; quotas do not bound all kernel work",
                         wireguardRelay="A-R and R-B tunnels; R decrypts, routes and re-encrypts, unlike Meshway ciphertext relay",
-                        offloadScope="kernel defaults for raw/WireGuard; following flags describe Meshway userspace only",
-                        kernelBatch=False, udpSegment=False, udpGro=False))
+                        offloadScope="kernel defaults for raw/WireGuard; Meshway userspace offload per sample in ioCapabilities",
+                        ioCapabilities="per-sample initial/final snapshots; counts are successful actual calls"))
     save(output / "results.json", metadata)
     network = "meshway-dp-" + identity
     command("docker", "network", "create", "--internal", "--label", "io.meshway.dataplane-perf=" + identity, network)
@@ -503,7 +519,7 @@ def measure(args, output_root):
             if subnet.version == 4 and subnet.overlaps(ipaddress.ip_network("100.127.0.0/30")):
                 raise RuntimeError("fixture underlay overlaps the TUN subnet")
         metadata["environment"]["network"] = description["IPAM"]["Config"]
-        configs = [(mode, 0, 0) for mode in ("raw", "wg-direct", "wg-relay")] + [(mode, b, p) for mode in ("plain", "secure-direct", "secure-relay")
+        configs = [(mode, 0, 0) for mode in ("raw", "wg-direct", "wg-relay")] + [(mode, b, p) for mode in ("plain-per-packet", "plain-batch", "secure-direct", "secure-relay")
                                    for b in args.batch for p in args.profile]
         for repeat in range(args.repeats):
             for mode, batch, profile in (configs if repeat % 2 == 0 else list(reversed(configs))):
@@ -543,8 +559,17 @@ def main():
         parser.error("measurement bounds invalid (at least 2 repeats, 6s measurement, 1s omitted warmup)")
     output_root = ROOT / ".meshway/perf/dataplane"
     output_root.mkdir(parents=True, exist_ok=True)
-    with (output_root / "measurement.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    common = Path(command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")).parent
+    shared_lock = common / ".meshway/perf/dataplane/measurement.lock"
+    shared_lock.parent.mkdir(parents=True, exist_ok=True)
+    with shared_lock.open("a") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                print("Waiting for shared dataplane measurement lock", flush=True)
+                time.sleep(2)
         return measure(args, output_root)
 
 

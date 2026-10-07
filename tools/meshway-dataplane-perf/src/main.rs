@@ -24,6 +24,8 @@ struct Arguments {
     mtu: usize,
     #[arg(long, default_value_t = 32)]
     batch: usize,
+    #[arg(long, value_enum, default_value_t = plain::IoMode::PerPacket)]
+    io: plain::IoMode,
     #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(1..=3600))]
     seconds: u64,
     #[command(flatten)]
@@ -46,7 +48,7 @@ async fn main() -> Result<(), Error> {
     let stop = CancellationToken::new();
     let node = async {
         match options.stage {
-            Stage::Plain => plain::run(&options, stop.clone()).await,
+            Stage::Plain => plain::run_with_io(&options, stop.clone(), args.io).await,
             Stage::Secure => {
                 secure::run(
                     &options,

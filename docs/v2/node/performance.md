@@ -76,6 +76,7 @@ L1 尚未覆盖的对照轴：每邻接单连接与有界小连接池、接近�
 | 参数／资源 | 行为 |
 | --- | --- |
 | `--stage plain` | 本页实现的 L2 明文阶段 |
+| `--io per-packet\|batch` | plain 的逐包 syscall 与内核批量 I/O 对照；默认逐包，harness 对两者分别测量 |
 | `--role a\|b` | 节点角色与 TUN 地址；公共 `NodeOptions` 是后续阶段的节点边界 |
 | `--bind`、`--peer` | 当前 namespace 中的真实 UDP 本地／对端 socket 地址 |
 | `--mtu` | 节点允许 1280–65000；harness 限制 1280–1472，避免默认 1500 字节外层 MTU 分片 |
@@ -85,11 +86,11 @@ L1 尚未覆盖的对照轴：每邻接单连接与有界小连接池、接近�
 | 生命周期 | 运行期限或 SIGINT 停止新工作，取消并 shutdown/join 正式 Session 的发送 owner |
 | `MESHWAY_PROFILE` | 0 关闭；非零为采样分母，复用 `meshway_logging::profile` |
 
-事件批量只合并一轮已就绪包的调度与 Session 提交；TUN 及 UDP 仍逐包 syscall。当前没有实现 `recvmmsg/sendmmsg`，也没有实现 `UDP_SEGMENT`／`UDP_GRO`。正式 UDP provider／Session 的逐包接口、完成与取消边界未被替代；本页不报告内核批量 I/O 的收益。
+`per-packet` 仅合并就绪包的事件调度，TUN／UDP 保持逐包 syscall；`batch` 使用正式 TUN `recv_batch`／`send_batch`、UDP `adopt_batch` 与 Session `submit_batch`／`recv_batch`。TUN 拆合、UDP GSO／GRO／mmsg 的实际能力和成功调用次数分别记录；只处理就绪前缀，不等待凑批。两种模式使用相同帧／字节／操作预算，完成与取消语义见[承载会话](/v2/node/transport#本机接纳与完成)。
 
 ### TUN 批量接口与能力验证
 
-`meshway-tun::Options::with_batch_io(true)` 显式请求 Linux `IFF_VNET_HDR`。创建时通过安全的 tun-rs 配置入口探测 `CSUM + TSO4 + TSO6`，再探测附加的 `USO4 + USO6`；基础 offload 不可用时关闭新建描述符并创建逐包设备。`Tun::capabilities()` 返回实际启用值。默认选项仍为逐包模式，L2 `plain` 尚未切换到该接口。
+`meshway-tun::Options::with_batch_io(true)` 显式请求 Linux `IFF_VNET_HDR`。创建时通过安全的 tun-rs 配置入口探测 `CSUM + TSO4 + TSO6`，再探测附加的 `USO4 + USO6`；基础 offload 不可用时关闭新建描述符并创建逐包设备。`Tun::capabilities()` 返回实际启用值。默认 TUN 选项仍为逐包模式，L2 `plain --io batch` 显式启用该接口。
 
 - `recv_batch(&mut PacketBatch)` 每次交付最多 32 个完整 IP 包／64 KiB，不等待凑批。一个内核超包的剩余分段留在有界接收状态中；逐包 `recv` 也可消费这些分段。当前超包上限为 65,535 字节／1,024 段，超限返回错误。
 - `send_batch(&[&[u8]])` 返回一次写入的前缀包数；调用者对剩余后缀继续使用原输出 guard。一次调用至多写一个超包，不兼容时写一个普通包。此结果只表示本机内核接纳。
@@ -112,11 +113,11 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 
 每个配置分别运行 TCP 单流和 UDP 定速率 iperf3，至少两次重复；重复之间反转配置顺序。默认每次先省略 2 秒 warmup，再测量 8 秒。release 交叉构建缓存独立于其他任务，位于 `target/dataplane-perf`；测量使用报告目录中不可变的二进制副本。Docker userspace 使用锁定 node-lab OS 源码对应的 immutable image，若尚无该 image，则在本工作区私有输出目录构建；不部署或修改常驻 lab。
 
-`raw` 的 veth MTU 与内层 TUN MTU 相同，保留内核默认 offload；`plain` 的外层 veth 保留 1500 MTU、TUN 不启用 offload。两者经过同一内部 Docker bridge。TCP 应用写入块与实际 TCP 分段不是同一概念，TCP 不通过 Mbps／假定包长反推 pps。UDP 应用 payload 由 `--payload` 固定，IPv4／UDP 头额外占 28 字节。
+`raw` 的 veth MTU 与内层 TUN MTU 相同，保留内核默认 offload；`plain` 的外层 veth 保留 1500 MTU，TUN offload 按 `--io` 选择。两者经过同一内部 Docker bridge。TCP 应用写入块与实际 TCP 分段不是同一概念，TCP 不通过 Mbps／假定包长反推 pps。UDP 应用 payload 由 `--payload` 固定，IPv4／UDP 头额外占 28 字节。
 
 ## 报告契约
 
-结果位于当前工作区 `.meshway/perf/dataplane/<run>/`。测量锁及构建缓存也归当前工作区所有。
+结果位于当前工作区 `.meshway/perf/dataplane/<run>/`，构建缓存归当前工作区所有。测量使用 Git 公共目录所在主工作区的 `.meshway/perf/dataplane/measurement.lock`；其他工作树占用时轮询等待，避免同时运行两次 harness。
 
 | 文件／字段 | 内容 |
 | --- | --- |
@@ -133,6 +134,8 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 | `results[].wireguard` | 各接口的内核类型／MTU、AllowedIPs、端点、路由、握手时间和双向传输字节；不保存密钥 |
 | `cpuByRole` | 每个 A／R／B 角色的同区间 cgroup CPU 秒与百分比；历史报告缺失时表示未测，不从总量分摊 |
 | `allocations`、`copiedBytes`、`peakMemoryBytes` | 当前未测，明确为 null |
+| `capabilitiesInitial`、`capabilitiesFinal` | plain 每节点实际 TUN／UDP 能力，以及成功 GSO／GRO／mmsg 调用次数 |
+| `syscallsPerPacket` | 当前为 null；`/proc` 进程 I/O 计数不能作为包含 UDP sendmsg／recvmmsg 的完整 syscall 计数 |
 
 吞吐采用 iperf3 排除 warmup 的接收区间。CPU 覆盖完整客户端区间，包括 warmup 和采集开销，包含节点、iperf3 与容器内辅助命令；不是仅 Node 的 CPU。固定 CPU quota 不等于绑核或独占宿主，结果只代表记录的环境。失败样本与原始日志保留，指标不填零，脚本返回失败。
 
@@ -257,7 +260,7 @@ CPU 为两容器合计，100% 表示一核；区间含 warmup。TCP pps 未测�
 
 iperf3 的 TCP 控制流和 UDP 负载分别使用精确 `5201` 端口 demand。A 在应用启动前分别发起 Noise circuit；逐验证者 MAC、flow 准入、重放处理和原完整路径回复归唯一 `SecureNode`。固定 Native UDP carrier 经 `set_carriers` 校验。输出复用正式 `carrier::send`／`carrier::deliver`：UDP 的原 output guard 保留到 Session 发送 poll 和完成，TUN 交付每次恢复 poll 都检查原 guard。
 
-每个节点一个 current-thread runtime，TUN／UDP 每轮最多处理 `--batch` 个立即就绪事件，随后 yield。L3 逐帧等待正式 carrier 完成，L2 plain 可一次提交一个明文 batch；L2→L3 差值因此包含 secure 操作、guard 与实际 I/O 调度成本。两者仍为逐包 syscall，没有内核批量 I/O、GSO 或 GRO。SecureNode 使用默认 limits；Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
+每个节点一个 current-thread runtime，TUN／UDP 每轮最多处理 `--batch` 个立即就绪事件，随后 yield。L3 逐帧等待正式 carrier 完成，L2 plain 可一次提交一个明文 batch；L2→L3 差值因此包含 secure 操作、guard 与实际 I/O 调度成本。L3 驱动仍为逐包 syscall；L2 对照另区分 `per-packet` 与 `batch`。SecureNode 使用默认 limits；Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
 
 Profiling 关闭用于正式吞吐；开启时采用 `MESHWAY_PROFILE=128`、`MESHWAY_PROFILE_DETAIL=1`，导出 `secure.send/receive`、`crypto.*`、`control.guard`、`codec.*` 和 TUN／UDP 边界。secure 驱动在停止并 join I/O 后输出最终累计快照。guard／包定义为所有节点精确 `control.guard` 的 `calls_started` 之和除以端点 `l3.packet.origin` 的同字段之和，包含准备、warmup、空闲与最终输出检查；不是每个成功交付包的固定算法次数。
 
