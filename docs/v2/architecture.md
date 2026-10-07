@@ -39,6 +39,7 @@ crates/
 tools/
   meshway-static-authority/ # 基准／fixture 的静态执行签发（非生产）
   meshway-circuit-perf/     # 进程内受保护 circuit CPU 测量（L0）
+  meshway-crypto-bench/     # 非生产对照密码原语基准
   meshway-transport-perf/   # 承载 raw／datagram 对照测量（L1）
   meshway-dataplane-perf/   # 隔离 Linux TUN／SecureNode／Manager 测量（L2–L4）
   meshway-packet-fixture/   # 隔离 Linux 受保护包流验收
