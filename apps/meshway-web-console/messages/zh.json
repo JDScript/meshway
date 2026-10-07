@@ -5,8 +5,6 @@
   "language_switch": "切换语言",
   "theme_switch": "切换明暗",
   "theme_appearance": "外观",
-  "theme_sun": "跟随日出日落",
-  "theme_sun_unplaced": "时区不明，跟随系统",
   "theme_system": "跟随系统",
   "theme_light": "亮色",
   "theme_dark": "暗色",

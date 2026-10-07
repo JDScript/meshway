@@ -27,7 +27,6 @@ import {
   useTheme,
   type Theme,
 } from "@/state/preferences"
-import { useSkyPlaced } from "@/state/sky"
 
 export function ThemeSwitch() {
   return (
@@ -89,16 +88,14 @@ function ThemeIcon() {
 }
 
 const THEME_LABEL: Record<Theme, () => string> = {
-  sun: () => m.theme_sun(),
   system: () => m.theme_system(),
   light: () => m.theme_light(),
   dark: () => m.theme_dark(),
 }
 
-/** The theme, chosen among following the sun, the system, light and dark (for a menu). */
+/** The theme, chosen among following the system, light and dark (for a menu). */
 export function ThemeChoice() {
   const theme = useTheme()
-  const placed = useSkyPlaced()
   return (
     <DropdownMenuRadioGroup
       value={theme}
@@ -109,11 +106,6 @@ export function ThemeChoice() {
       {THEMES.map((choice) => (
         <DropdownMenuRadioItem key={choice} value={choice}>
           {THEME_LABEL[choice]()}
-          {choice === "sun" && !placed ? (
-            <span className="ml-auto pl-3 text-meta text-muted-foreground">
-              {m.theme_sun_unplaced()}
-            </span>
-          ) : null}
         </DropdownMenuRadioItem>
       ))}
     </DropdownMenuRadioGroup>

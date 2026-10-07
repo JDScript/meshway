@@ -5,8 +5,6 @@
   "language_switch": "Change language",
   "theme_switch": "Toggle theme",
   "theme_appearance": "Appearance",
-  "theme_sun": "Follow sunrise and sunset",
-  "theme_sun_unplaced": "Time zone unknown: as the system",
   "theme_system": "Follow the system",
   "theme_light": "Light",
   "theme_dark": "Dark",

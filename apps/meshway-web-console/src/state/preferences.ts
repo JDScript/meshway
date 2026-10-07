@@ -7,7 +7,6 @@ import {
   type Locale,
 } from "@/paraglide/runtime.js"
 
-import { skyState, subscribeSky } from "./sky"
 import { shiftTheme } from "./theme-shift"
 
 // This browser's preferences: the theme (kept in localStorage, shared by
@@ -15,19 +14,12 @@ import { shiftTheme } from "./theme-shift"
 // when called, and the console root renders its pages afresh under a new
 // one, see main.tsx). `applyPreferences` puts them on the document.
 
-/**
- * - `sun`: light from sunrise to sunset where the reader roughly is (their
- *   time zone's city), dark otherwise; the system's scheme without a place.
- * - `system`: the system's scheme.
- * - `light`, `dark`: as chosen.
- */
-export type Theme = "sun" | "system" | "light" | "dark"
+/** The system's scheme, or light or dark as chosen. */
+export type Theme = "system" | "light" | "dark"
 
-export const THEMES: readonly Theme[] = ["sun", "system", "light", "dark"]
+export const THEMES: readonly Theme[] = ["system", "light", "dark"]
 
 const THEME_KEY = "theme"
-/** What was last shown, for `boot.js` to paint the first frame in while the sun is followed. */
-const SHOWN_KEY = "theme-shown"
 const DARK_SCHEME = "(prefers-color-scheme: dark)"
 
 export const isTheme = (value: unknown): value is Theme =>
@@ -36,9 +28,9 @@ export const isTheme = (value: unknown): value is Theme =>
 function storedTheme(): Theme {
   try {
     const value = window.localStorage.getItem(THEME_KEY)
-    return isTheme(value) ? value : "sun"
+    return isTheme(value) ? value : "system"
   } catch {
-    return "sun"
+    return "system"
   }
 }
 
@@ -46,22 +38,17 @@ type Preferences = {
   theme: Theme
   /** The system's colour scheme, followed while the theme is `system`. */
   systemDark: boolean
-  /** Whether the sun is up at the reader's place (state/sky.ts); null without one. */
-  sunDay: boolean | null
   locale: Locale
 }
 
 const preferencesStore = createStore<Preferences>(() => ({
   theme: storedTheme(),
   systemDark: window.matchMedia(DARK_SCHEME).matches,
-  sunDay: skyState().day,
   locale: getLocale(),
 }))
 
-const isDark = ({ theme, systemDark, sunDay }: Preferences) =>
-  theme === "dark" ||
-  (theme === "system" && systemDark) ||
-  (theme === "sun" && (sunDay === null ? systemDark : !sunDay))
+const isDark = ({ theme, systemDark }: Preferences) =>
+  theme === "dark" || (theme === "system" && systemDark)
 
 export function setTheme(theme: Theme) {
   try {
@@ -102,30 +89,24 @@ function typing(target: EventTarget | null): boolean {
 
 /**
  * Puts the preferences on the document and keeps them there: the theme's
- * class and the language on `<html>`, the system's scheme and the sun
- * followed, another tab's theme taken up, and D (outside a field) toggling
- * dark and light. A change after the first is a sunrise or a sunset
- * (state/theme-shift.ts). Called once, by `main.tsx`, after `watchSky`.
+ * class and the language on `<html>`, the system's scheme followed, another
+ * tab's theme taken up, and D (outside a field) toggling dark and light. A
+ * change after the first turns the globe's light (state/theme-shift.ts).
+ * Called once, by `main.tsx`.
  */
 export function applyPreferences() {
   const root = document.documentElement
   let first = true
   const show = (preferences: Preferences) => {
     const dark = isDark(preferences)
-    try {
-      window.localStorage.setItem(SHOWN_KEY, dark ? "dark" : "light")
-    } catch {
-      // Only the first frame of the next load.
-    }
     if (root.classList.contains(dark ? "dark" : "light")) return
-    shiftTheme(dark, !first, () => {
+    shiftTheme(!first, () => {
       root.classList.remove("light", "dark")
       root.classList.add(dark ? "dark" : "light")
     })
   }
   show(preferencesStore.getState())
   first = false
-  subscribeSky((sky) => preferencesStore.setState({ sunDay: sky.day }))
   root.lang = preferencesStore.getState().locale
   preferencesStore.subscribe((preferences) => {
     show(preferences)
@@ -141,7 +122,7 @@ export function applyPreferences() {
     if (event.storageArea !== window.localStorage || event.key !== THEME_KEY)
       return
     preferencesStore.setState({
-      theme: isTheme(event.newValue) ? event.newValue : "sun",
+      theme: isTheme(event.newValue) ? event.newValue : "system",
     })
   })
   window.addEventListener("keydown", (event) => {

@@ -21,7 +21,7 @@ test("every token used by a var() is defined", () => {
   )
   // Supplied at runtime or by libraries rather than in this file.
   const external =
-    /^--(tw-|drawer-|bleed|transform-origin|surface-|enter-|launcher-|node-color|globe-docked|edge|bar-height|panel-top|mobile-edge|commit-space|radix-|anchor-|available-|popup-|stack-|nested-|sidebar-width|tracking-|sky-daylight|sky-glow|sky-rising)/
+    /^--(tw-|drawer-|bleed|transform-origin|surface-|enter-|launcher-|node-color|globe-docked|edge|bar-height|panel-top|mobile-edge|commit-space|radix-|anchor-|available-|popup-|stack-|nested-|sidebar-width|tracking-)/
   for (const [, name] of css.matchAll(/var\((--[\w-]+)/g)) {
     if (!name || external.test(name)) continue
     assert.ok(defined.has(name), `${name} is used but never defined`)

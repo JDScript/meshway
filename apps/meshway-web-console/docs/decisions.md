@@ -644,11 +644,11 @@ they need `motion`.
   globe radii). Colours come only from theme tokens.
 - The camera and the offset follow critically damped springs, re-aimed
   whenever surfaces change, so motion never stops dead or restarts.
-- The light is the real sun's (`lib/sky/astronomy.ts`): the globe's night
-  side is darker, with a warm band where the sun rises or sets, its land
-  dims at night, and its atmosphere glows over the day side. Under a dark
-  theme the stars come out and the moon is drawn where it is, its phase lit
-  by the same sun. A theme that turns warms the band a moment, then settles.
+- The light is a sun placed for the theme, not the time: light faces the
+  day, the night just reaching the right limb; dark faces the night, its
+  cities lit (the tz database's principal cities, `globe/cities.gen.ts` by
+  `scripts/generate-cities.ts`), stars out, a crescent of day on the left
+  limb. A warm band lies along the line between.
 - The engine chunk is lazy-loaded (~145 kB gzip, almost all three.js).
   Where it cannot run (no WebGL, or its chunk did not load) the first load
   goes on without a globe, and the overview's corner says the globe cannot
@@ -664,25 +664,16 @@ its frame and settles on a continent while the interface comes in. View
 transitions are not used: during the first load they would lift the interface
 above the held screen.
 
-## Theme and sky
+## Theme
 
-- Themes: following the sun (the default), the system, light, dark (the
-  account menu's 外观; the bar's button and D swap light and dark, which
-  leaves following). Following the sun is light from sunrise to sunset
-  where the reader roughly is, their time zone's city
-  (`lib/sky/time-zones.gen.ts`, from the IANA tz database by
-  `scripts/generate-time-zones.ts`; nothing is asked and nothing leaves the
-  browser), checked every minute and at the minute the sun crosses; a zone
-  placed nowhere (`UTC`) follows the system.
-- A change of theme is a sunrise (the light page rises from the bottom
-  behind a band of dawn light) or a sunset (night falls from the top with a
-  dusk band), 1.6 s, as one View Transition of the page; the button's sun
-  sets as its moon rises. With less motion, or a hidden tab, it changes at
-  once. The first paint is in the theme last shown (`boot.js`).
-- The sky behind the globe follows the reader's time of day within the
-  theme's colours: day or night and a dawn or dusk glow from the bottom
-  while the sun is within about 10° of the horizon (`--sky-*` on `<html>`,
-  `state/sky.ts`).
+- Themes: the system's (the default), light, dark (the account menu's
+  外观; the bar's button and D swap light and dark).
+- A change of theme turns the globe's sun round to the other side over
+  2.4 s, so the line between day and night sweeps across it and the
+  cities light up or go out, its colours mixing on the way; the interface
+  cross-fades over 2 s (one View Transition, the globe left out); the
+  button's sun sets as its moon rises. With less motion, or a hidden tab, it
+  changes at once.
 
 ## Development aids
 

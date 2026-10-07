@@ -14,10 +14,10 @@ export type GlobeColors = {
   guide: Rgb
   graticule: Rgb
   star: Rgb
-  /** The night side, the sunrise and sunset band, the moon. */
+  /** The night side, the band between day and night, and city lights. */
   night: Rgb
   twilight: Rgb
-  moon: Rgb
+  city: Rgb
   /** A page not found (attention) or failed (destructive): the signal-lost rings. */
   attention: Rgb
   destructive: Rgb
@@ -28,7 +28,28 @@ export type GlobeColors = {
   pulse: Rgb
 }
 
-const TOKENS: Record<Exclude<keyof GlobeColors, "dark">, string> = {
+/** Every colour of `GlobeColors` (all but `dark`). */
+export const RGB_KEYS = [
+  "surface",
+  "rim",
+  "land",
+  "atmosphere",
+  "guide",
+  "graticule",
+  "star",
+  "night",
+  "twilight",
+  "city",
+  "attention",
+  "destructive",
+  "confirmed",
+  "oneSided",
+  "degraded",
+  "configured",
+  "pulse",
+] as const
+
+const TOKENS: Record<(typeof RGB_KEYS)[number], string> = {
   surface: "--globe-surface",
   rim: "--globe-rim",
   land: "--globe-land",
@@ -38,7 +59,7 @@ const TOKENS: Record<Exclude<keyof GlobeColors, "dark">, string> = {
   star: "--globe-star",
   night: "--globe-night",
   twilight: "--globe-twilight",
-  moon: "--globe-moon",
+  city: "--globe-city",
   attention: "--status-attention",
   destructive: "--destructive",
   confirmed: "--link-confirmed",
@@ -77,7 +98,7 @@ export function readGlobeColors(): GlobeColors {
     star: resolve(TOKENS.star),
     night: resolve(TOKENS.night),
     twilight: resolve(TOKENS.twilight),
-    moon: resolve(TOKENS.moon),
+    city: resolve(TOKENS.city),
     attention: resolve(TOKENS.attention),
     destructive: resolve(TOKENS.destructive),
     confirmed: resolve(TOKENS.confirmed),

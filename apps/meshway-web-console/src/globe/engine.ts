@@ -9,23 +9,21 @@ import {
   LineDashedMaterial,
   LineSegments,
   Mesh,
-  MeshBasicMaterial,
+  PlaneGeometry,
   Points,
-  RingGeometry,
   ShaderMaterial,
-  SphereGeometry,
   Vector3,
 } from "three"
 
 import { mostUrgentTone, statusTone } from "@/lib/nodes/status"
-import { sublunarPoint, subsolarPoint } from "@/lib/sky/astronomy"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 import type { BootPhase } from "@/state/boot"
 import { sameInsets, type GlobeState } from "@/state/globe"
 import { THEME_SHIFT_MS } from "@/state/theme-shift"
 
-import { css, type GlobeColors, type Rgb } from "./colors"
+import { CITIES } from "./cities.gen"
+import { css, RGB_KEYS, type GlobeColors, type Rgb } from "./colors"
 import { landPoints } from "./land"
 import {
   altitudeForRadius,
@@ -118,16 +116,19 @@ const REVEAL_SPIN_MS = 1800
 /** The interface comes in this far into the reveal, while the globe settles. */
 const REVEAL_UI_MS = 850
 const COMET_FADE_MS = 900
-/** How often the sun and the moon are placed again (they move 15° an hour across the globe). */
-const SKY_EVERY_MS = 20_000
-/** The moon's distance from the globe's centre and its radius, in globe radii: near enough to be seen. */
-const MOON = { distance: 2.3, radius: 0.045 }
+/**
+ * Where the sun is, as seen from the camera: around the globe from the
+ * camera's side (degrees, towards the left), and raised. Light faces the day,
+ * the night just reaching the right limb; dark faces the night, a crescent of
+ * day on the left limb. A change of theme turns it from one to the other.
+ */
+const SUN = { light: 40, dark: 140, raised: 18 }
+/** City lights: land samples within this many degrees of a city glow at night. */
+const CITY_REACH = 3.2
 /** A page that cannot be: the globe, centred above its card, takes at most this share of the space left. */
 const ALERT_FIT = 0.36
-/** Its rings: how many, how long one takes to pulse out, how far (globe radii). */
-const ALERT_RINGS = 3
-const ALERT_PULSE_MS = 2400
-const ALERT_REACH = 0.55
+/** Its search ring turns once in this long. */
+const ALERT_SWEEP_MS = 7000
 /** Above this many markers, names show only on the marker pointed at, focused or selected. */
 const DENSE_LABELS = 120
 /** Nodes whose dots are closer than this on screen (CSS px) are drawn as one marker. */
@@ -141,6 +142,20 @@ const NAME = { font: "500 11.5px", spacing: 0.115, padding: 14 }
 const REGROUP_SHARE = 0.1
 
 const easeOut = (t: number) => 1 - (1 - t) ** 4
+const easeInOut = (t: number) =>
+  t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
+
+/** Colours `t` of the way from `a` to `b` (dark taken from `b`). */
+function mixColors(a: GlobeColors, b: GlobeColors, t: number): GlobeColors {
+  const mix = (from: Rgb, to: Rgb): Rgb => ({
+    r: Math.round(from.r + (to.r - from.r) * t),
+    g: Math.round(from.g + (to.g - from.g) * t),
+    b: Math.round(from.b + (to.b - from.b) * t),
+  })
+  const out: GlobeColors = { ...b }
+  for (const key of RGB_KEYS) out[key] = mix(a[key], b[key])
+  return out
+}
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 /** The equivalent of `degrees` in (-180, 180]. */
 const wrapDegrees = (degrees: number) =>
@@ -257,9 +272,9 @@ const surfaceShader = () =>
         // Day and night where the sun is: the night side darker, a warm band
         // along the line between (warmer while the theme turns).
         float facing = dot(normal, uSun);
-        vec3 base = mix(uNight, uSurface, smoothstep(-0.2, 0.25, facing));
-        float band = exp(-pow(facing / 0.17, 2.0));
-        base = mix(base, uTwilight, band * (uBand + 0.35 * uShift));
+        vec3 base = mix(uNight, uSurface, smoothstep(-0.12, 0.22, facing));
+        float band = exp(-pow(facing / 0.09, 2.0));
+        base = mix(base, uTwilight, band * (uBand + 0.2 * uShift));
         gl_FragColor = vec4(mix(base, uRim, rim * uRimStrength), uOpacity);
         #include <colorspace_fragment>
       }`,
@@ -321,7 +336,7 @@ const pointShader = (land: boolean) =>
                float lit = dot(up, uSun);
                vAlpha = mix(0.16, 1.0, smoothstep(0.0, 0.7, facing))
                  * mix(uNightAlpha, 1.0, smoothstep(-0.15, 0.2, lit));
-               vBand = exp(-pow(lit / 0.15, 2.0)) * (0.45 + 0.3 * uShift);
+               vBand = exp(-pow(lit / 0.09, 2.0)) * (0.35 + 0.2 * uShift);
                float size = uSize;`
             : `vAlpha = aAlpha;
                vBand = 0.0;
@@ -385,29 +400,92 @@ const cometShader = () =>
       }`,
   })
 
-/** The moon: lit by the sun, so its phase is the one seen from Earth. */
-const moonShader = () =>
+/**
+ * Searching for a lost signal, around the globe and facing the camera: a
+ * thin ring close to it, a dashed one further out, and a sweep turning
+ * slowly between them, brightest at its head. With less motion it stands
+ * still and only the rings show.
+ */
+const searchShader = () =>
   new ShaderMaterial({
     transparent: true,
+    depthWrite: false,
+    depthTest: false,
     uniforms: {
       uColor: { value: new Color() },
       uOpacity: { value: 0 },
+      uHead: { value: 0 },
+      uMotion: { value: 1 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vP;
+      void main() {
+        vP = position.xy;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uOpacity, uHead, uMotion;
+      varying vec2 vP;
+      void main() {
+        float r = length(vP) / ${GLOBE_RADIUS.toFixed(1)};
+        float a = atan(vP.y, vP.x);
+        float aa = fwidth(r) * 1.2;
+        float inner = 1.0 - smoothstep(0.0, aa, abs(r - 1.08));
+        float dash = step(0.5, fract(a * 48.0 / 6.2831853));
+        float outer = (1.0 - smoothstep(0.0, aa, abs(r - 1.3))) * dash * 0.5;
+        float behind = mod(uHead - a, 6.2831853);
+        float sweep = exp(-behind * 1.8) * smoothstep(1.1, 1.14, r)
+          * (1.0 - smoothstep(1.24, 1.29, r)) * 0.14 * uMotion;
+        float head = (1.0 - smoothstep(0.0, 0.04, behind))
+          * (1.0 - smoothstep(0.0, aa * 3.0, abs(r - 1.08))) * uMotion;
+        float alpha = (inner * 0.75 + outer + sweep + head) * uOpacity;
+        if (alpha < 0.003) discard;
+        gl_FragColor = vec4(uColor, alpha);
+        #include <colorspace_fragment>
+      }`,
+  })
+
+/**
+ * City lights: warm points over land near cities, lit only on the night
+ * side and facing the camera; brighter under a dark theme.
+ */
+const cityShader = () =>
+  new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      uColor: { value: new Color() },
+      uOpacity: { value: 0 },
+      uScale: { value: 450 },
+      uPixelRatio: { value: 1 },
+      uStrength: { value: 0.5 },
       ...sunlight(),
     },
     vertexShader: /* glsl */ `
-      varying vec3 vNormal;
+      attribute float aGlow;
+      uniform float uScale, uPixelRatio, uStrength;
+      ${SUNLIGHT}
+      varying float vAlpha;
       void main() {
-        vNormal = normalize(mat3(modelMatrix) * normal);
-        gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vec4 mv = viewMatrix * world;
+        vec3 up = normalize(world.xyz);
+        float facing = dot(up, normalize(cameraPosition - world.xyz));
+        float night = 1.0 - smoothstep(-0.12, 0.06, dot(up, uSun));
+        vAlpha = aGlow * night * smoothstep(0.0, 0.5, facing) * uStrength;
+        gl_PointSize = max(1.6, 1.7 * aGlow * (uScale / -mv.z)) * uPixelRatio;
+        gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
       uniform vec3 uColor;
       uniform float uOpacity;
-      ${SUNLIGHT}
-      varying vec3 vNormal;
+      varying float vAlpha;
       void main() {
-        float light = smoothstep(-0.05, 0.25, dot(normalize(vNormal), uSun));
-        gl_FragColor = vec4(uColor * (0.06 + 0.94 * light), uOpacity);
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.0, d) * vAlpha * uOpacity;
+        if (a < 0.004) discard;
+        gl_FragColor = vec4(uColor, a);
         #include <colorspace_fragment>
       }`,
   })
@@ -571,51 +649,74 @@ export function createGlobeEngine(
   guides.visible = look.guides
   layer.add(guides)
 
-  // The moon where it really is (seen from the globe's centre).
-  const moonMaterial = moonShader()
-  const moon = new Mesh(
-    new SphereGeometry(MOON.radius * GLOBE_RADIUS, 32, 16),
-    moonMaterial
+  // City lights: the land samples near a city, each glowing by its nearness.
+  const cityPoints = CITIES.split(";").map((entry) => {
+    const [lat = 0, lng = 0] = entry.split(",").map(Number)
+    return cartesian(lat, lng, 0)
+  })
+  const reach = Math.cos((CITY_REACH * Math.PI) / 180) * GLOBE_RADIUS ** 2
+  const lit: number[] = []
+  const glows: number[] = []
+  for (const { lat, lng } of landPoints()) {
+    const at = cartesian(lat, lng, 0)
+    let best = -Infinity
+    for (const city of cityPoints) {
+      const d = at[0] * city[0] + at[1] * city[1] + at[2] * city[2]
+      if (d > best) best = d
+    }
+    if (best < reach) continue
+    // 0 at the reach, 1 on the city.
+    const nearness = (best - reach) / (GLOBE_RADIUS ** 2 - reach)
+    lit.push(...cartesian(lat, lng, 0.006))
+    glows.push(0.35 + 0.65 * nearness)
+  }
+  const cityGeometry = new BufferGeometry()
+  cityGeometry.setAttribute("position", new Float32BufferAttribute(lit, 3))
+  cityGeometry.setAttribute("aGlow", new Float32BufferAttribute(glows, 1))
+  const cityMaterial = cityShader()
+  const cityLights = new Points(cityGeometry, cityMaterial)
+  cityLights.renderOrder = 2
+  layer.add(cityLights)
+
+  // Signal lost: a search ring around the globe, facing the camera.
+  const alertMaterial = searchShader()
+  const alertRing = new Mesh(
+    new PlaneGeometry(GLOBE_RADIUS * 3, GLOBE_RADIUS * 3),
+    alertMaterial
   )
-  moon.renderOrder = 2
-  layer.add(moon)
+  alertRing.renderOrder = 4
+  alertRing.visible = false
+  layer.add(alertRing)
 
-  // Signal lost: rings pulsing out from the globe, facing the camera.
-  const alertRings = new Group()
-  const alertMaterials: MeshBasicMaterial[] = []
-  for (let i = 0; i < ALERT_RINGS; i += 1) {
-    const material = new MeshBasicMaterial({
-      transparent: true,
-      depthWrite: false,
-      opacity: 0,
-    })
-    alertMaterials.push(material)
-    const ring = new Mesh(
-      new RingGeometry(GLOBE_RADIUS - 0.8, GLOBE_RADIUS + 0.8, 160),
-      material
-    )
-    ring.renderOrder = 4
-    alertRings.add(ring)
+  const sunlit = [surface, landMaterial, cityMaterial]
+  /** 0 light to 1 dark: where the sun is around the globe, turning over a shift. */
+  let turn = 0
+  let turnFrom = 0
+  let turnTo = 0
+  let turnAt = -Infinity
+  /** The colours a shift goes from and to; the globe shows the mix. */
+  let colorsFrom: GlobeColors | null = null
+  let colorsTo: GlobeColors | null = null
+  const sunDirection = new Vector3()
+  const cameraRight = new Vector3()
+  const cameraUp = new Vector3()
+  /** Puts the sun where `turn` says, as seen from the camera now. */
+  const placeSun = () => {
+    const toCamera = sunDirection.copy(camera.position).normalize()
+    cameraRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize()
+    cameraUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize()
+    const around = ((SUN.light + (SUN.dark - SUN.light) * turn) * Math.PI) / 180
+    const raised = (SUN.raised * Math.PI) / 180
+    toCamera
+      .multiplyScalar(Math.cos(around))
+      .addScaledVector(cameraRight, -Math.sin(around))
+      .multiplyScalar(Math.cos(raised))
+      .addScaledVector(cameraUp, Math.sin(raised))
+      .normalize()
+    for (const material of sunlit)
+      material.uniforms.uSun = { value: sunDirection }
+    stage.setSun(sunDirection)
   }
-  alertRings.visible = false
-  layer.add(alertRings)
-
-  // Where the sun and the moon are now; placed again every SKY_EVERY_MS.
-  const sunlit = [surface, landMaterial, moonMaterial]
-  let skyPlacedAt = -Infinity
-  const placeSky = (now: number) => {
-    const sun = subsolarPoint(Date.now())
-    const lunar = sublunarPoint(Date.now())
-    const direction = new Vector3(...cartesian(sun.lat, sun.lng)).normalize()
-    for (const material of sunlit) material.uniforms.uSun = { value: direction }
-    stage.setSun(direction)
-    moon.position.set(...cartesian(lunar.lat, lunar.lng, MOON.distance - 1))
-    skyPlacedAt = now
-  }
-  /** When the theme last turned; its light settles over the shift. */
-  let shiftedAt = -Infinity
-  /** Stars and the moon belong to a dark sky; they fade in and out with it. */
-  let nightSky = 0
   /** How far the signal-lost look has come in (0 none, 1 full). */
   let alertFade = 0
 
@@ -900,34 +1001,40 @@ export function createGlobeEngine(
         : motion
           ? easeOut(clamp01((time - revealedAt) / 1000))
           : 1
-    const dark = last?.colors.dark ?? true
-    guides.quaternion.copy(camera.quaternion)
-    guideMaterials.forEach((material, index) => {
-      material.opacity =
-        ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * extras
-    })
-    graticuleMaterial.opacity = (dark ? 0.22 : 0.32) * extras
-    // Stars and the moon belong to a dark sky: they come out as it falls.
-    const night = dark ? 1 : 0
-    nightSky = motion
-      ? nightSky + (night - nightSky) * (1 - Math.exp(-dt / 0.45))
-      : night
-    stars.visible = look.stars && nightSky > 0.002
-    starMaterial.uniforms.uOpacity = {
-      value: extras * nightSky * (0.85 + 0.15 * Math.sin(time / 1300)),
+    // A shift turns the sun round the globe and mixes the colours on the way.
+    const progress = motion ? clamp01((time - turnAt) / THEME_SHIFT_MS) : 1
+    turn = turnFrom + (turnTo - turnFrom) * easeInOut(progress)
+    if (colorsFrom && colorsTo) {
+      applyColors(
+        progress >= 1
+          ? colorsTo
+          : mixColors(colorsFrom, colorsTo, easeInOut(progress))
+      )
+      if (progress >= 1) colorsFrom = null
     }
-    moonMaterial.uniforms.uOpacity = { value: extras * nightSky }
-    moon.visible = nightSky > 0.002 && !last?.alert
-
-    // The sun and the moon move on; a theme that just turned settles its light.
-    if (time - skyPlacedAt > SKY_EVERY_MS) placeSky(time)
-    const shift = motion
-      ? 1 - easeOut(clamp01((time - shiftedAt) / (THEME_SHIFT_MS * 1.25)))
-      : 0
+    placeSun()
+    const shift = progress < 1 ? Math.sin(Math.PI * progress) : 0
     for (const material of sunlit) material.uniforms.uShift = { value: shift }
     stage.setWarmth(shift)
 
-    // Signal lost: the land dims and rings pulse out; with less motion, one still ring.
+    guides.quaternion.copy(camera.quaternion)
+    guideMaterials.forEach((material, index) => {
+      const [light = 0, dark = 0] =
+        [
+          [0.2, 0.14],
+          [0.13, 0.09],
+          [0.08, 0.06],
+        ][index] ?? []
+      material.opacity = (light + (dark - light) * turn) * extras
+    })
+    graticuleMaterial.opacity = (0.32 - 0.1 * turn) * extras
+    // Stars belong to a dark sky: they come out as the night turns in.
+    stars.visible = look.stars && turn > 0.002
+    starMaterial.uniforms.uOpacity = {
+      value: extras * turn * (0.85 + 0.15 * Math.sin(time / 1300)),
+    }
+
+    // Signal lost: the land dims and a ring searches round it.
     const alert = last?.alert ?? null
     alertFade = motion
       ? alertFade + ((alert ? 1 : 0) - alertFade) * (1 - Math.exp(-dt / 0.35))
@@ -935,20 +1042,16 @@ export function createGlobeEngine(
         ? 1
         : 0
     landMaterial.uniforms.uOpacity = { value: 1 - 0.55 * alertFade }
-    alertRings.visible = alertFade > 0.002
-    if (alertRings.visible) {
-      alertRings.quaternion.copy(camera.quaternion)
-      alertRings.children.forEach((ring, index) => {
-        const material = alertMaterials[index]
-        if (!material) return
-        const phase = motion
-          ? (time / ALERT_PULSE_MS + index / ALERT_RINGS) % 1
-          : index === 0
-            ? 0.12
-            : 1
-        ring.scale.setScalar(1.02 + ALERT_REACH * phase)
-        material.opacity = alertFade * 0.85 * (1 - phase) ** 2
-      })
+    cityMaterial.uniforms.uOpacity = { value: extras * (1 - alertFade) }
+    cityMaterial.uniforms.uStrength = { value: 0.45 + 0.55 * turn }
+    alertRing.visible = alertFade > 0.002
+    if (alertRing.visible) {
+      alertRing.quaternion.copy(camera.quaternion)
+      alertMaterial.uniforms.uOpacity = { value: alertFade }
+      alertMaterial.uniforms.uMotion = { value: motion ? 1 : 0 }
+      alertMaterial.uniforms.uHead = {
+        value: motion ? ((time / ALERT_SWEEP_MS) % 1) * Math.PI * 2 : 0,
+      }
     }
 
     // Rotation eases in and out instead of starting or stopping dead.
@@ -1286,13 +1389,18 @@ export function createGlobeEngine(
     for (const material of sunlit) {
       material.uniforms.uNight = { value: color(colors.night) }
       material.uniforms.uTwilight = { value: color(colors.twilight) }
-      material.uniforms.uBand = { value: colors.dark ? 0.2 : 0.16 }
-      material.uniforms.uNightAlpha = { value: colors.dark ? 0.45 : 0.55 }
+      material.uniforms.uBand = { value: 0.16 + 0.04 * turn }
+      material.uniforms.uNightAlpha = { value: 0.55 - 0.15 * turn }
     }
-    moonMaterial.uniforms.uColor = { value: color(colors.moon) }
-    const ring = color(colors.attention)
-    const failed = color(colors.destructive)
-    alertTones = { missing: ring, failed }
+    cityMaterial.uniforms.uColor = { value: color(colors.city) }
+    alertTones = {
+      missing: color(colors.attention),
+      failed: color(colors.destructive),
+    }
+    if (last?.alert)
+      alertMaterial.uniforms.uColor = { value: alertTones[last.alert.tone] }
+    for (const link of links)
+      link.material.color = color(lookColor(colors, link.look))
   }
   let alertTones: Record<"missing" | "failed", Color> | null = null
 
@@ -1386,13 +1494,23 @@ export function createGlobeEngine(
     const previousFocus = previous ? focusOf(previous) : null
     last = input
 
-    if (!previous || previous.colors !== input.colors) applyColors(input.colors)
-    // A turned theme (not the first colours, nor a theme's colours read again).
-    if (previous && previous.colors.dark !== input.colors.dark)
-      shiftedAt = performance.now()
+    if (!previous) {
+      // The first colours: the sun where the theme has it, nothing to turn.
+      turn = turnFrom = turnTo = input.colors.dark ? 1 : 0
+      applyColors(input.colors)
+    } else if (previous.colors.dark !== input.colors.dark) {
+      // A turned theme: the sun goes round, the colours mix on the way.
+      turnFrom = turn
+      turnTo = input.colors.dark ? 1 : 0
+      turnAt = performance.now()
+      colorsFrom = previous.colors
+    } else if (previous.colors !== input.colors) {
+      colorsFrom = null
+      applyColors(input.colors)
+    }
+    colorsTo = input.colors
     if (alertTones && input.alert)
-      for (const material of alertMaterials)
-        material.color = alertTones[input.alert.tone]
+      alertMaterial.uniforms.uColor = { value: alertTones[input.alert.tone] }
 
     anchors = anchorsOf(shownNodes(input))
     placeMarkers(input)
@@ -1401,7 +1519,6 @@ export function createGlobeEngine(
       shownNodes(input).length === 0 ? [] : input.scene.links,
       [...anchors],
       input.motion,
-      input.colors,
     ])
     if (nextLinksKey !== linksKey) {
       linksKey = nextLinksKey
@@ -1456,7 +1573,7 @@ export function createGlobeEngine(
       height = nextHeight
       stage.setSize(nextWidth, nextHeight)
       const pixelRatio = renderer.getPixelRatio()
-      for (const material of [landMaterial, starMaterial]) {
+      for (const material of [landMaterial, starMaterial, cityMaterial]) {
         material.uniforms.uScale = { value: nextHeight * 0.5 }
         material.uniforms.uPixelRatio = { value: pixelRatio }
       }
@@ -1478,16 +1595,15 @@ export function createGlobeEngine(
         starMaterial,
         cometGeometry,
         cometMaterial,
-        moon.geometry,
-        moonMaterial,
-        ...alertMaterials,
+        cityGeometry,
+        cityMaterial,
+        alertRing.geometry,
+        alertMaterial,
         ...guideMaterials,
       ])
         disposable.dispose()
       for (const ring of guides.children)
         if (ring instanceof Line) ring.geometry.dispose()
-      for (const ring of alertRings.children)
-        if (ring instanceof Mesh) ring.geometry.dispose()
       stage.dispose()
       markers.clear()
     },

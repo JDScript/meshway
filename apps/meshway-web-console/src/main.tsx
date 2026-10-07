@@ -21,7 +21,6 @@ import {
   sessionStore,
   watchStoredSession,
 } from "@/state/session"
-import { watchSky } from "@/state/sky"
 
 import { routeTree } from "./routeTree.gen"
 
@@ -82,7 +81,6 @@ window.addEventListener("beforeunload", (event) => {
 })
 
 watchStoredSession()
-watchSky()
 applyPreferences()
 watchDebugMode()
 startDebugTrace(queryClient)
