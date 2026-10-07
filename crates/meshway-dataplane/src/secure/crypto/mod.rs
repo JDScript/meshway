@@ -2,6 +2,7 @@ use super::{
     Error, MAX_PLAINTEXT,
     codec::{self, Context, Frame, Proof},
 };
+#[cfg(test)]
 use crate::{Packet, PacketBuffer};
 mod noise;
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -144,6 +145,7 @@ pub(super) fn read_handshake(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn encrypt(
     noise: &Transport,
     nonce: u64,
@@ -157,6 +159,7 @@ pub(super) fn encrypt(
     Ok(buffer)
 }
 
+#[cfg(test)]
 pub(super) fn decrypt(
     noise: &Transport,
     nonce: u64,

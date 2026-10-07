@@ -446,3 +446,4 @@ async fn real_control_renewal_preserves_flows_but_not_queued_deadlines_and_stop_
     assert!(!sent);
     mesh.close().await;
 }
+mod pipeline;

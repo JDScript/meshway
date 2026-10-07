@@ -18,6 +18,7 @@ mod codec;
 mod crypto;
 mod diagnostics;
 mod maintenance;
+pub mod pipeline;
 mod probe;
 mod recovery;
 mod replay;
@@ -38,6 +39,7 @@ use sha2::{Digest as _, Sha256};
 use std::{
     collections::BTreeMap,
     fmt,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -104,8 +106,44 @@ pub(crate) struct Guard {
     expires_at: Instant,
     expires_at_ms: u64,
     cancellation: CancellationToken,
+    /// Minted only by this SecureNode for outputs sharing an exact snapshot.
+    /// It permits one fresh reading per batch, never across an await or syscall.
+    pub(crate) section: Option<Arc<()>>,
 }
 impl Guard {
+    pub(crate) fn from_route(route: &PendingRoute) -> Self {
+        Self {
+            snapshot: route.snapshot.clone(),
+            expires_at: route.expires_at,
+            expires_at_ms: route.permit_expires_at_ms,
+            cancellation: route.cancellation.clone().unwrap_or_default(),
+            section: route.section.clone(),
+        }
+    }
+
+    pub(crate) fn check_batch(guards: &[Self]) -> Result<(), Error> {
+        let mut readings: Vec<(usize, Reading<'_>)> = Vec::new();
+        for (index, guard) in guards.iter().enumerate() {
+            let shared = readings.iter().find(|(first, _)| {
+                guards[*first]
+                    .section
+                    .as_ref()
+                    .zip(guard.section.as_ref())
+                    .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+            });
+            if let Some((_, reading)) = shared {
+                guard.check_at(reading)?;
+            } else {
+                let reading = guard.snapshot.reading().map_err(|_| Error::Authority)?;
+                guard.check_at(&reading)?;
+                readings.push((index, reading));
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn snapshot(&self) -> &ExecutionSnapshot {
+        &self.snapshot
+    }
     // Only for a synchronous section using this owner's entry/final reading.
     // Original queued/recovery scopes must use their own dynamic guard instead.
     pub(crate) fn check_at(&self, reading: &Reading<'_>) -> Result<(), Error> {
@@ -129,21 +167,7 @@ impl Guard {
         if self.cancellation.is_cancelled() {
             return Err(Error::Expired);
         }
-        self.snapshot
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
-        if Instant::now() >= self.expires_at
-            || self.snapshot.now_ms().map_err(|_| Error::Authority)? >= self.expires_at_ms
-        {
-            return Err(Error::Expired);
-        }
-        self.snapshot
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
-        if self.cancellation.is_cancelled() {
-            return Err(Error::Expired);
-        }
-        Ok(())
+        self.finish()
     }
     pub(crate) async fn invalidated(&self) {
         if self.ensure_current().is_err() {
@@ -182,6 +206,17 @@ impl fmt::Debug for PendingFrame {
     }
 }
 impl PendingFrame {
+    pub(crate) fn capacity(&self) -> usize {
+        self.bytes.capacity()
+    }
+    pub(crate) fn release_batch(frames: Vec<Self>) -> Result<Vec<PacketBuffer>, Error> {
+        let guards: Vec<_> = frames.iter().map(Self::io_guard).collect();
+        Guard::check_batch(&guards)?;
+        Ok(frames.into_iter().map(|frame| frame.bytes).collect())
+    }
+    pub fn is_data(&self) -> bool {
+        self.bytes.get(8) == Some(&3)
+    }
     pub(crate) fn io_guard(&self) -> Guard {
         self.guard.clone()
     }
@@ -268,7 +303,7 @@ enum State {
     Initiator(Box<snow::HandshakeState>),
     RelayAwaiting,
     RelayEstablished,
-    Endpoint(Box<crypto::Transport>),
+    Endpoint(Arc<crypto::Transport>),
     Closed,
 }
 impl State {
@@ -340,6 +375,7 @@ impl Circuit {
     fn guard(&self, snapshot: &ExecutionSnapshot, handshake: bool) -> Guard {
         Guard {
             snapshot: snapshot.clone(),
+            section: None,
             cancellation: self.cancellation.clone(),
             expires_at: if handshake {
                 self.expires_at.min(self.handshake_at)
@@ -463,7 +499,7 @@ impl Circuit {
                     self.retire_for("handshake", "cancelled");
                     return Err(Error::Expired);
                 }
-                self.state = State::Endpoint(Box::new(noise));
+                self.state = State::Endpoint(Arc::new(noise));
                 Ok(())
             }
             Err(error) => {
@@ -487,6 +523,7 @@ pub struct SecureNode {
     probes: probe::Probes,
     maintenance: maintenance::Maintenance,
     cancellation: CancellationToken,
+    output_epoch: Arc<()>,
 }
 impl Drop for SecureNode {
     fn drop(&mut self) {
@@ -590,6 +627,7 @@ impl SecureNode {
             probes: Default::default(),
             maintenance: Default::default(),
             cancellation: CancellationToken::new(),
+            output_epoch: Arc::new(()),
         })
     }
 
@@ -750,6 +788,18 @@ impl SecureNode {
         incoming: &Carrier,
         bytes: impl AsRef<[u8]> + Into<PacketBuffer>,
     ) -> Result<Received, Error> {
+        if bytes.as_ref().get(8) == Some(&3) {
+            let job = self.prepare_receive(incoming, bytes.into())?;
+            return self.commit_receive(pipeline::open(job)?);
+        }
+        self.receive_control(incoming, bytes)
+    }
+
+    fn receive_control(
+        &mut self,
+        incoming: &Carrier,
+        bytes: impl AsRef<[u8]> + Into<PacketBuffer>,
+    ) -> Result<Received, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("secure.receive");
         let _profile = PROFILE.enter();
@@ -883,7 +933,7 @@ impl SecureNode {
                     circuit.ensure_current(snapshot)?;
                     circuit.session.establish(keys);
                     let hop = self.handshake_hop(&response, None, reading)?;
-                    circuit.state = State::Endpoint(Box::new(noise));
+                    circuit.state = State::Endpoint(Arc::new(noise));
                     let response = self.output(&circuit, response, hop, None, reading)?;
                     Received::Established {
                         circuit: id,
@@ -998,7 +1048,7 @@ impl SecureNode {
                     _ => Err(Error::Replay),
                 }
             }
-            Kind::Data => self.receive_data(circuit, frame, previous, reading),
+            Kind::Data => Err(Error::State),
             Kind::ProbeRequest | Kind::ProbeReply => {
                 self.receive_probe(circuit, frame, previous, reading)
             }
@@ -1061,108 +1111,36 @@ impl SecureNode {
         .map_err(|_| Error::Policy)
     }
 
-    fn receive_data(
-        &mut self,
-        circuit: &mut Circuit,
-        frame: Frame,
-        previous: NodeId,
-        reading: &Reading<'_>,
-    ) -> Result<Received, Error> {
-        let CircuitAuthorization::Business(demand) = circuit.context.authorization else {
-            return Err(Error::Policy);
-        };
-        if !circuit.state.established() {
-            return Err(Error::State);
-        }
-        let index = usize::from(frame.reply);
-        circuit.receive[index].check(frame.sequence)?;
-        let path = &circuit.context.path;
-        if matches!(circuit.state, State::RelayEstablished) {
-            let position = path
-                .iter()
-                .position(|node| *node == reading.configuration.node_id)
-                .ok_or(Error::Context)?;
-            let next = if frame.reply {
-                position.checked_sub(1)
-            } else {
-                position.checked_add(1)
-            }
-            .and_then(|index| path.get(index))
-            .copied()
-            .ok_or(Error::Context)?;
-            let sequence = frame.sequence;
-            let output = self.output(circuit, frame, Hop::Forward(next), None, reading)?;
-            circuit.ensure_current(self.identity.snapshot())?;
-            circuit.receive[index].commit(sequence);
-            return Ok(Received::Forward(output));
-        }
-        let sender = if frame.reply {
-            *path.last().ok_or(Error::Context)?
-        } else {
-            path[0]
-        };
-        // The verified direction fixes this authenticated producer to one of
-        // two distinct endpoints (the codec rejects repeated path nodes).
-        // FlowTable::prepare checks that producer against its state-derived
-        // direction before commit. A signed wrong-direction packet therefore
-        // cannot advance a flow and then fail the defensive direction check.
-        let ingress = Ingress::Peer {
-            demand,
-            path: path.clone(),
-            identity: AuthenticatedPeer {
-                origin: path[0],
-                sender,
-                previous,
-            },
-        };
-        self.check_outgoing_carrier(&circuit.context, frame.reply, reading)?;
-        let guard = circuit.guard(self.identity.snapshot(), false);
-        let State::Endpoint(noise) = &circuit.state else {
-            return Err(Error::State);
-        };
-        let packet = crypto::decrypt(noise, frame.sequence, frame.body)?;
-        let mut route = self
-            .engine
-            .admit_circuit_facts(
-                ingress,
-                packet.facts(),
-                reading,
-                circuit.context.circuit,
-                &guard,
-            )
-            .map_err(|error| circuit.engine_rejected("receive_endpoint", error))?;
-        // Plaintext output must retain the circuit's original caps too, even
-        // when its Engine has received a newer same-execution lease snapshot.
-        route
-            .constrain(
-                reading,
-                circuit.expires_at,
-                circuit.expires_at_ms,
-                circuit.cancellation.clone(),
-            )
-            .map_err(|_| Error::Authority)?;
-        if (route.route().direction == Direction::Reply) != frame.reply {
-            return Err(Error::Context);
-        }
-        let sequence = frame.sequence;
-        if !matches!(route.hop(), Hop::Deliver | Hop::Exit) {
-            return Err(Error::State);
-        }
-        let result = Received::Packet(route.attach(packet).map_err(|_| Error::Packet)?);
-        circuit.ensure_current(self.identity.snapshot())?;
-        circuit.receive[index].commit(sequence);
-        Ok(result)
+    pub fn send(&mut self, id: [u8; 32], packet: Packet) -> Result<PendingFrame, Error> {
+        let job = self.prepare_send_packet(id, packet)?;
+        let result = pipeline::seal(job);
+        let circuit = self.circuits.get_mut(&id).ok_or(Error::State)?;
+        circuit.finish_operation(self.identity.snapshot(), "send", result)
     }
 
-    pub fn send(&mut self, id: [u8; 32], packet: Packet) -> Result<PendingFrame, Error> {
+    /// Owner admission for already parsed local input; retains its allocation.
+    pub fn prepare_send_packet(
+        &mut self,
+        id: [u8; 32],
+        packet: Packet,
+    ) -> Result<pipeline::SendJob, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("secure.send");
         let _profile = PROFILE.enter();
         let snapshot = self.identity.snapshot().clone();
         let reading = snapshot.reading().map_err(|_| Error::Authority)?;
-        self.maintain_circuits(&reading, false)?;
+        self.prepare_send_at(id, packet, &reading)
+    }
+
+    fn prepare_send_at(
+        &mut self,
+        id: [u8; 32],
+        packet: Packet,
+        reading: &Reading<'_>,
+    ) -> Result<pipeline::SendJob, Error> {
+        self.maintain_circuits(reading, false)?;
         let mut circuit = self.circuits.remove(&id).ok_or(Error::State)?;
-        let result = self.send_inner(&mut circuit, packet, &reading);
+        let result = self.send_inner(&mut circuit, packet, reading);
         let result = circuit.finish_operation(self.identity.snapshot(), "send", result);
         if let Err(error) = &result
             && diagnostics::event()
@@ -1181,7 +1159,7 @@ impl SecureNode {
         circuit: &mut Circuit,
         packet: Packet,
         reading: &Reading<'_>,
-    ) -> Result<PendingFrame, Error> {
+    ) -> Result<pipeline::SendJob, Error> {
         let CircuitAuthorization::Business(demand) = circuit.context.authorization else {
             return Err(Error::Policy);
         };
@@ -1217,19 +1195,29 @@ impl SecureNode {
         // Neither a later output failure nor a scope handoff rolls either back.
         circuit.ensure_current(self.identity.snapshot())?;
         let sequence = circuit.send[usize::from(reply)].take()?;
-        let body = crypto::encrypt(noise, sequence, packet)?;
         let frame = Frame {
             context: circuit.context.clone(),
             kind: Kind::Data,
             reply,
             sequence,
             probe: None,
-            body,
+            body: packet.into_buffer(),
             proofs: Vec::new(),
             exchange: None,
             auth: Default::default(),
         };
-        self.output(circuit, frame, route.hop(), Some(&route), reading)
+        let (next, carrier, guard) =
+            self.output_scope(circuit, &frame, route.hop(), Some(&route), reading)?;
+        let mac = circuit.session.prepare_append(&frame, &carrier)?;
+        guard.finish()?;
+        Ok(pipeline::SendJob {
+            frame,
+            noise: noise.clone(),
+            mac,
+            next,
+            carrier,
+            guard,
+        })
     }
 
     fn handshake_hop(
@@ -1291,6 +1279,37 @@ impl SecureNode {
         route: Option<&PendingRoute>,
         reading: &Reading<'_>,
     ) -> Result<PendingFrame, Error> {
+        let (next, carrier, guard) = self.output_scope(circuit, &frame, hop, route, reading)?;
+        if frame.kind.handshake() {
+            crypto::append(
+                &self.identity,
+                reading.configuration,
+                &mut frame,
+                carrier.clone(),
+                circuit.session.public(),
+            )?;
+        } else {
+            circuit.session.append(&mut frame, carrier.clone())?;
+        }
+        let bytes = frame.encode_owned()?;
+        guard.finish()?;
+        Ok(PendingFrame {
+            bytes,
+            next,
+            carrier,
+            circuit: circuit.context.circuit,
+            guard,
+        })
+    }
+
+    fn output_scope(
+        &self,
+        circuit: &Circuit,
+        frame: &Frame,
+        hop: Hop,
+        route: Option<&PendingRoute>,
+        reading: &Reading<'_>,
+    ) -> Result<(NodeId, Carrier, Guard), Error> {
         let Hop::Forward(next) = hop else {
             return Err(Error::State);
         };
@@ -1315,26 +1334,8 @@ impl SecureNode {
             guard.expires_at_ms = guard.expires_at_ms.min(route.permit_expires_at_ms());
         }
         guard.check_at(reading)?;
-        if frame.kind.handshake() {
-            crypto::append(
-                &self.identity,
-                reading.configuration,
-                &mut frame,
-                carrier.clone(),
-                circuit.session.public(),
-            )?;
-        } else {
-            circuit.session.append(&mut frame, carrier.clone())?;
-        }
-        let bytes = frame.encode_owned()?;
-        guard.finish()?;
-        Ok(PendingFrame {
-            bytes,
-            next,
-            carrier,
-            circuit: circuit.context.circuit,
-            guard,
-        })
+        guard.section = Some(self.output_epoch.clone());
+        Ok((next, carrier, guard))
     }
 
     fn capacity(&self) -> Result<(), Error> {
@@ -1445,6 +1446,7 @@ impl SecureNode {
         self.engine.flows = flows;
         self.engine.snapshot = snapshot.clone();
         self.identity = identity;
+        self.output_epoch = Arc::new(());
         self.maintenance.changed();
         Ok(())
     }

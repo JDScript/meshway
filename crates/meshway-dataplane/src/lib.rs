@@ -208,6 +208,7 @@ pub(crate) struct PendingRoute {
     checked: CommittedRoute,
     facts: PacketFacts,
     cancellation: Option<tokio_util::sync::CancellationToken>,
+    section: Option<std::sync::Arc<()>>,
 }
 
 impl fmt::Debug for PendingRoute {
@@ -301,13 +302,7 @@ impl PendingRoute {
         {
             return Err(Error::Expired);
         }
-        self.snapshot.ensure_current()?;
-        if Instant::now() >= self.expires_at || self.snapshot.now_ms()? >= self.permit_expires_at_ms
-        {
-            return Err(Error::Expired);
-        }
-        self.snapshot.ensure_current()?;
-        Ok(())
+        self.check_at(&self.snapshot.reading()?)
     }
 
     pub(crate) fn attach(self, packet: Packet) -> Result<PendingAction, Error> {

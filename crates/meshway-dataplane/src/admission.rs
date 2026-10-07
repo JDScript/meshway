@@ -61,7 +61,8 @@ impl Engine {
         // reading() performs the same complete dynamic guard as ensure_current;
         // its fresh time additionally fences the shorter flow/circuit deadlines.
         // This is a commit fence, not another policy/admission time source.
-        let current = self.snapshot.reading()?;
+        let snapshot = circuit.map_or(&self.snapshot, |(_, guard)| guard.snapshot());
+        let current = snapshot.reading()?;
         if let Some((_, guard)) = circuit {
             guard.check_at(&current).map_err(|_| Error::Expired)?;
         }
@@ -73,12 +74,13 @@ impl Engine {
         let permit_expires_at_ms = prepared.permit_expires_at_ms;
         let checked = self.flows.commit(prepared);
         Ok(PendingRoute {
-            snapshot: self.snapshot.clone(),
+            snapshot: snapshot.clone(),
             expires_at,
             permit_expires_at_ms,
             checked,
             facts,
             cancellation: None,
+            section: circuit.and_then(|(_, guard)| guard.section.clone()),
         })
     }
 }

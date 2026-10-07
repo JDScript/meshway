@@ -12,6 +12,7 @@ use meshway_configuration::execution::{LogicalPath, NodeConfiguration};
 use meshway_model::NodeId;
 use meshway_policy::admission::{Carrier, admit_circuit_carrier, circuit_permit, path_carrier};
 use sha2::{Digest as _, Sha256};
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -30,7 +31,7 @@ struct Pending {
 pub(super) struct Session {
     public: [u8; 32],
     pending: Option<Pending>,
-    keys: Option<Keys>,
+    keys: Option<Arc<Keys>>,
 }
 
 pub(super) struct Keys {
@@ -134,7 +135,7 @@ impl Session {
     }
 
     pub fn establish(&mut self, keys: Keys) {
-        self.keys = Some(keys);
+        self.keys = Some(Arc::new(keys));
         self.pending = None; // StaticSecret zeroizes the retained ephemeral.
     }
 
@@ -144,16 +145,24 @@ impl Session {
         frame: &Frame,
         incoming: &Carrier,
     ) -> Result<NodeId, Error> {
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("crypto.verify_hop_mac");
-        let _profile = PROFILE.enter();
+        let (previous, key) = self.prepare_verify(cfg, frame, incoming)?;
+        key.verify(frame)?;
+        Ok(previous)
+    }
+
+    pub fn prepare_verify(
+        &self,
+        cfg: &NodeConfiguration,
+        frame: &Frame,
+        incoming: &Carrier,
+    ) -> Result<(NodeId, MacKey), Error> {
         let selected = circuit_permit(cfg, frame.context.authorization)
             .map_err(|_| Error::Context)?
             .paths
             .iter()
             .find(|path| path.nodes == frame.context.path)
             .ok_or(Error::Context)?;
-        let previous = self.verify_chain(frame, incoming, selected)?;
+        let (previous, key) = self.prepare_chain(frame, incoming, selected)?;
         admit_circuit_carrier(
             cfg,
             frame.context.authorization,
@@ -162,15 +171,15 @@ impl Session {
             incoming,
         )
         .map_err(|_| Error::Policy)?;
-        Ok(previous)
+        Ok((previous, key))
     }
 
-    fn verify_chain(
+    fn prepare_chain(
         &self,
         frame: &Frame,
         incoming: &Carrier,
         selected: &LogicalPath,
-    ) -> Result<NodeId, Error> {
+    ) -> Result<(NodeId, MacKey), Error> {
         let keys = self.keys.as_ref().ok_or(Error::State)?;
         if selected.nodes != frame.context.path {
             return Err(Error::Context);
@@ -185,19 +194,35 @@ impl Session {
         {
             return Err(Error::Proof);
         }
-        let tag = authenticate(&keys.incoming[usize::from(signer > keys.position)], frame)?;
-        if !bool::from(tag.ct_eq(&frame.auth.tag.ok_or(Error::Proof)?)) {
-            return Err(Error::Proof);
-        }
         let previous =
             frame.context.path[ordered(frame.context.path.len(), frame.reply, count - 1)];
+        Ok((
+            previous,
+            MacKey {
+                keys: keys.clone(),
+                slot: usize::from(signer > keys.position),
+                incoming: true,
+            },
+        ))
+    }
+
+    #[cfg(test)]
+    fn verify_chain(
+        &self,
+        frame: &Frame,
+        incoming: &Carrier,
+        selected: &LogicalPath,
+    ) -> Result<NodeId, Error> {
+        let (previous, key) = self.prepare_chain(frame, incoming, selected)?;
+        key.verify(frame)?;
         Ok(previous)
     }
 
     pub fn append(&self, frame: &mut Frame, carrier: Carrier) -> Result<(), Error> {
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("crypto.append_mac");
-        let _profile = PROFILE.enter();
+        self.prepare_append(frame, &carrier)?.append(frame)
+    }
+
+    pub fn prepare_append(&self, frame: &Frame, carrier: &Carrier) -> Result<MacKey, Error> {
         let keys = self.keys.as_ref().ok_or(Error::State)?;
         let count = ordered(frame.context.path.len(), frame.reply, keys.position);
         let remaining = frame.context.path.len() - count - 1;
@@ -205,13 +230,56 @@ impl Session {
             return Err(Error::State);
         }
         let verifier = ordered(frame.context.path.len(), frame.reply, count + 1);
-        if !adjacent(&frame.context, keys.position, verifier, &carrier) {
+        if !adjacent(&frame.context, keys.position, verifier, carrier) {
             return Err(Error::Proof);
         }
-        frame.auth.tag = Some(authenticate(
-            &keys.outgoing[usize::from(verifier > keys.position)],
-            frame,
-        )?);
+        Ok(MacKey {
+            keys: keys.clone(),
+            slot: usize::from(verifier > keys.position),
+            incoming: false,
+        })
+    }
+
+    pub fn owns(&self, key: &MacKey) -> bool {
+        self.keys
+            .as_ref()
+            .is_some_and(|keys| Arc::ptr_eq(keys, &key.keys))
+    }
+}
+
+/// Opaque immutable key selection. No state or authority is available to crypto workers.
+pub(super) struct MacKey {
+    keys: Arc<Keys>,
+    slot: usize,
+    incoming: bool,
+}
+
+impl MacKey {
+    fn tag(&self, frame: &Frame) -> Result<[u8; 16], Error> {
+        let keys = if self.incoming {
+            &self.keys.incoming
+        } else {
+            &self.keys.outgoing
+        };
+        authenticate(&keys[self.slot], frame)
+    }
+
+    pub fn verify(&self, frame: &Frame) -> Result<(), Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("crypto.verify_hop_mac");
+        let _profile = PROFILE.enter();
+        if bool::from(self.tag(frame)?.ct_eq(&frame.auth.tag.ok_or(Error::Proof)?)) {
+            Ok(())
+        } else {
+            Err(Error::Proof)
+        }
+    }
+
+    pub fn append(&self, frame: &mut Frame) -> Result<(), Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("crypto.append_mac");
+        let _profile = PROFILE.enter();
+        frame.auth.tag = Some(self.tag(frame)?);
         Ok(())
     }
 }
