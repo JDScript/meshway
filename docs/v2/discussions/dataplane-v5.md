@@ -1,12 +1,12 @@
 ---
 title: 数据面 v5 · 已决定的设计与实现契约
-description: 会话级中继、定长相邻认证、单缓冲包流水线与批量 I/O 的目标设计；实现完成前不是可用契约。
+description: 会话级中继、定长相邻认证与批量流水线的设计记录；现行行为与验收引用正式规范。
 ---
 
 # 数据面 v5：已决定的设计与实现契约
 
-::: warning 已决定，实现中
-本页记录 2026-10-06 基于[分层测量](/v2/node/performance)与[字节账本讨论](/v2/discussions/packet)做出的设计决定，作为并行实现的共享契约。现行可用行为仍以 [数据面组件](/v2/node/dataplane) 为准；实现与验收完成后，本页内容迁入规范，本页改为引用。
+::: info 已实现的设计记录
+本页保留 2026-10-06 基于[分层测量](/v2/node/performance)与[字节账本讨论](/v2/discussions/packet)做出的设计决定。wire v5、会话级中继、批量 I/O 与 owner／crypto 流水线已实现；现行字段、默认策略和行为以[数据面组件](/v2/node/dataplane)为准，平台／场景验收以[验收矩阵](/v2/node/validation)为准。设计中的全链路零复制目标仍有明确剩余边界。
 :::
 
 ## 决定
@@ -94,12 +94,12 @@ TUN/UDP 入站（批量） → owner 段（SecureNode，单线程，状态变更
 
 ## 实现分工与验证
 
-| 工作包 | 范围 | 验证 |
+| 实现 | 完成范围 | 验证入口 |
 | --- | --- | --- |
-| F | wire v5、相邻 MAC、D1 中继职责、`PacketBuffer` 与就地 crypto／借用 codec（dataplane、policy 中继准入、static-authority fixture） | dataplane 单元／runtime 测试、L0、L3 `secure` 对照 v4 |
-| G | TUN vnet_hdr GSO／GRO、UDP GSO／GRO／mmsg、Session 批量提交（tun、transport、transport-udp） | L2 `plain` 的逐包 vs 批量对照、既有 transport 测试 |
-| H | owner／worker 流水线、daemon 批次提交、carrier 适配器精简（dataplane 流水线模块、daemon network） | L3 `secure`→L4 `manager`、L5 lab 同路径吞吐 |
+| F，已完成 | wire v5、相邻 MAC、D1 会话级中继、`PacketBuffer` 与就地 crypto／借用 codec | dataplane 行为测试、Linux packet、L0／L3 对照 |
+| G，已完成 | TUN vnet_hdr GSO／GRO、UDP GSO／GRO／mmsg、Session 批量提交 | 双栈内核 I/O／transport 测试、L2 逐包／批量对照 |
+| H／I／P，已完成 | owner／crypto 流水线、流式保序完成、daemon／Manager 批次装配、有界 TX／TUN 与全生命周期 credit | L3／L4 共用驱动、packet 回归；L5 按实际部署版本记录 |
 
-F 与 G 并行；H 依赖两者。每个包交付都必须给出同口径的前后对照与关闭插桩的正式数字，并保持端到端保护、源授权、必经路径、原路径回复、lease／撤销与 release 边界检查的既有回归通过。验收矩阵中依赖 v4 的行在 v5 落地后标为“历史通过未重验”，直至按 v5 重跑。
+实现已进入正式库与 daemon 入口，默认 crypto inline、worker 池保留为可选路径，依据见[worker 策略](/v2/node/performance#有界输出队列实测)。端到端保护、源授权、必经路径、原路径回复、lease／撤销与 release 检查继续由同一实现维护。性能达标与平台行为验收分别记录；仍依赖 v4 证据的行保持“历史通过未重验”，不由实现完成自动升级。
 
 H 的实现入口：D5 owner／worker API 与有界工作池为 `3e9d5e86`，原存储贯通 Session 与批次 guard 交集为 `cc1e0200`，daemon／Manager／TUN 批次装配为 `fcd38a65`，owner 准备与 worker 小组重叠为 `7976b109`，共用 L3／L4 驱动为 `5ca93df6`，L4 正式 Host 执行安装为 `2d0b7584`。现行边界见[数据面](/v2/node/dataplane#发送流水线与连续性)与[承载会话](/v2/node/transport#本机接纳与完成)，实际验收以[矩阵](/v2/node/validation)为准。D3 的内核到内核全链路无复制尚未完成，剩余复制位置见[单缓冲所有权](/v2/node/dataplane#单缓冲所有权与就地加密)；L4 高负载失败样本与尚未达到的 TUN 交付目标见[实测](/v2/node/performance#l3-流水线与-l4-实测)。

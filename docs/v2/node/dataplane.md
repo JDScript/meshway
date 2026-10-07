@@ -108,7 +108,9 @@ Session 的 `Payload` 可保有 `PacketBuffer` 的原始存储，发送预算包
 
 worker 只持有包存储、方向／序号、不可变 Arc 密钥句柄、路由元数据与原输出 guard，不读取 authority，不访问 flow 或 replay。验证失败不会提交 replay；并发验证的重复序号也只有第一次成功 owner 提交有效。关闭后的在途 crypto 可以完成，但不能提交或释放输出；密钥对象在 owner 与最后一个在途句柄释放后销毁，具体清零边界见[就地加密](#单缓冲所有权与就地加密)。
 
-`pipeline::Pool` 默认 **0 worker（inline）**；daemon 可通过 `MESHWAY_DATAPLANE_WORKERS` 显式设置 0–256。当前硬件密码后端、32-credit 窗口下的两核／四核对照支持 inline；这不是所有 CPU 的最优保证，曲线与适用范围见[有界输出队列实测](/v2/node/performance#有界输出队列实测)。显式使用 worker 时，`submit`／`flush` 不等待 crypto 完成，每次通知最多八个已就绪 job；worker 逐包发布完成，完成队列从空变为非空时立即通知 owner。owner 在准备新输入前及本轮准备结束后收割 ready 前缀。`take_ready` 每轮最多释放 32 个已完成输出，不等待原输入批次的尾部，也不等待凑批。
+`pipeline::Pool` 默认 **0 worker（inline）**；daemon 可通过 `MESHWAY_DATAPLANE_WORKERS` 显式设置 0–256。当前硬件密码后端、32-credit 窗口下，P 的两核 worker 0／1／2／3 quick 曲线为 1859.8／1216.4／980.8／974.4 Mbps；单在途 L0 两节点 1280 B 的交接墙钟从 inline 约 9 µs 增至单 worker 24.5 µs。两核／四核实测因此支持 inline，不能按 quota 自动增加 worker。只有预期获得 **≥4 个独占核且 AEAD 占比重新升高** 时才考虑 >0，并重新验证同机吞吐、交接、RTT 和生命周期；不是所有 CPU 的最优保证，完整曲线见[有界输出队列实测](/v2/node/performance#有界输出队列实测)。
+
+H／I 的 worker 池保留为可选路径，供高密码成本平台复用同一 crypto 实现、owner 状态边界、保序完成与 credit；不需要另写并行数据面。显式使用 worker 时，`submit`／`flush` 不等待 crypto 完成，每次通知最多八个已就绪 job；worker 逐包发布完成，完成队列从空变为非空时立即通知 owner。owner 在准备新输入前及本轮准备结束后收割 ready 前缀。`take_ready` 每轮最多释放 32 个已完成输出，不等待原输入批次的尾部，也不等待凑批。
 
 流式入口对明文长度不超过 128 B 的包直接执行相同的无状态 crypto；接收按含 Noise tag 的 body 不超过 144 B 判断。该阈值覆盖 52-byte TCP ACK 及较小 IPv6／options 变体，也适用于同长度的其他业务包，不是未经认证的 ACK 特权。小包继续使用同一个 epoch／circuit／方向的序号、credit 和完成队列，不能越过尚未完成的大包。短包原语与交接墙钟依据见[性能诊断](/v2/node/performance#owner-路径与-tcp-拥塞诊断)。
 
