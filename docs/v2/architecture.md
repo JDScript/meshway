@@ -179,7 +179,7 @@ tools/runtime-fixture ──► configuration + control-client + dns + ipc + mod
 
 provider 通过合同交互，不读取另一 provider 的私有容器；Rust 类型依赖不表示允许跨动态库直接传递 Rust 内部对象。
 
-TLS 密码后端统一为 `meshway-tls` 显式选择的 ring。workspace reqwest 关闭默认 features，启用 `rustls-no-provider`；HTTP 装配传入预配置的 rustls `ClientConfig`，不安装或依赖进程全局 provider。`control-client::http_client_builder`、Server 下载和 Underlay 受保护 HTTP builder 使用同一可选 `platform-verifier` 配置，保留 OS 系统信任策略；managed TLS 及 fixture 的精确叶证书路径复用 `meshway-tls::Client::configuration`，每次新握手检查链、域名、有效期及精确叶证书。预配置模式下不能再用 reqwest 的附加根证书选项改变信任，应在 TLS 装配时明确选择配置。套接字保护、resolver、代理和整体请求截止仍归原调用者。
+TLS 密码后端统一为 `meshway-tls` 显式选择的 ring。workspace reqwest 关闭默认 features，启用 `rustls-no-provider`；HTTP 装配传入预配置的 rustls `ClientConfig`，不安装或依赖进程全局 provider。`meshway_control_client::http_client_builder`、Server 下载和 Underlay 受保护 HTTP builder 使用同一可选 `platform-verifier` 配置，保留 OS 系统信任策略；managed TLS 及 fixture 的精确叶证书路径复用 `meshway_tls::Client::configuration`，每次新握手检查链、域名、有效期及精确叶证书。预配置模式下不能再用 reqwest 的附加根证书选项改变信任，应在 TLS 装配时明确选择配置。套接字保护、resolver、代理和整体请求截止仍归原调用者。
 
 ## 工程约定 {#旧实现退出与复用}
 
