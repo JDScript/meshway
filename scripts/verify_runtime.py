@@ -18,7 +18,7 @@ import uuid
 
 from node_lab import ROOT, check_elf, docker_target, lab_dir, run, selected_image, sha256, verify_image
 from verification_sources import fingerprint as source_fingerprint
-from validation_support import build_lock, report_directory, bind_access_options, export_evidence
+from validation_support import build_lock, report_directory, bind_access_options, export_evidence, mount_namespace_options
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
@@ -307,6 +307,7 @@ def main():
         if args.traversal == "nat" and role in ("a", "r", "b"):
             command.extend(["--env", "MESHWAY_TRAVERSAL_OWNED=1"])
         if dns_actor:
+            command.extend(mount_namespace_options())
             command.extend(["--tmpfs", "/run:rw,nosuid,nodev,mode=755",
                             "--env", "MESHWAY_DNS_FIXTURE_OWNED=1",
                             "--env", "MESHWAY_DNS_BACKEND=" + args.dns_backend,

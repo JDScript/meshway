@@ -61,10 +61,15 @@ def import_artifact(directory, destination, source, target, platform, machine):
 
 
 @functools.lru_cache(maxsize=1)
+def docker_security():
+    return json.loads(run("docker", "info", "--format", "{{json .SecurityOptions}}", capture=True))
+
+
+@functools.lru_cache(maxsize=1)
 def rootful_bind_access():
     if sys.platform != "linux" or os.geteuid() == 0:
         return False
-    security = json.loads(run("docker", "info", "--format", "{{json .SecurityOptions}}", capture=True))
+    security = docker_security()
     return not any("rootless" in option or "userns" in option for option in security)
 
 
@@ -72,6 +77,14 @@ def bind_access_options():
     # Linux rootful container UID 0 differs from the owner of private host binds.
     # Keep actors root (DNS bus policy and NET_ADMIN), without widening the binds.
     return ["--cap-add", "DAC_OVERRIDE"] if rootful_bind_access() else []
+
+
+def mount_namespace_options():
+    # docker-default AppArmor denies mount even with the existing SYS_ADMIN cap.
+    # Only DNS actors mount, inside their explicitly private mount namespace.
+    if sys.platform == "linux" and any("apparmor" in option for option in docker_security()):
+        return ["--security-opt", "apparmor=unconfined"]
+    return []
 
 
 def export_evidence(report, image, platform, kind, identity, paths=None):
