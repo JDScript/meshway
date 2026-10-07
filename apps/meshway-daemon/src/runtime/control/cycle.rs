@@ -168,6 +168,34 @@ pub(super) async fn cycle(
             .map_err(|e| failure::at("renew_instance", e, false))?;
         renewed = true;
     }
+    // A ready installation may have completed AFTER the previous cycle's
+    // nonblocking finish() drain. Settle and report that exact current ticket
+    // before a notification/poll can replace its execution snapshot again.
+    // A real scope race still goes through the ordinary atomic refresh below.
+    let settled_report = if let Some(network) = network.as_deref_mut()
+        && network.diagnostics_ready(control)
+        && !network.can_report_inline(control)
+    {
+        stage("settle_current_application", network.finish(control))
+            .await
+            .map_err(|error| failure::at("finish_application", error, false))?;
+        if network.can_report_inline(control) {
+            match stage(
+                "report_current_application",
+                network.report_state(control, settings, false),
+            )
+            .await
+            {
+                Ok(reported) => reported,
+                Err(Error::StateScopeChanged) => false,
+                Err(error) => return Err(failure::at("report_runtime_state", error, false)),
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
     let before = control.status().cached;
     if network.is_some() {
         stage("refresh_configuration", control.refresh_configuration())
@@ -259,7 +287,7 @@ pub(super) async fn cycle(
             POLL
         },
         renewed,
-        reported,
+        reported: reported || settled_report,
     })
 }
 
