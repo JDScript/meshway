@@ -44,6 +44,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "数据面、TUN 与 DNS", link: "/v2/node/dataplane" },
       { text: "三节点 Docker 开发环境", link: "/v2/node/docker-lab" },
       { text: "验收范围", link: "/v2/node/validation" },
+      { text: "承载与邻接模型", link: "/v2/node/carriers" },
       { text: "承载会话与发送边界", link: "/v2/node/transport" },
       { text: "分层性能测量", link: "/v2/node/performance" },
       { text: "连接获取与 UDP 穿透", link: "/v2/node/connectivity" },

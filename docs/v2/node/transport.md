@@ -30,7 +30,7 @@ VLESS／Trojan 的协议实现参考 mihomo／sing-box 的握手、编解码、T
 
 socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity。适配器使用调用者交付的 socket；字段应用失败会报错。TCP keepalive 在当前平台按整秒校验，不能静默截断亚秒配置。
 
-显式 listener／dialer 与协调 UDP 穿透共用承载接口，provider 的连接需求和双方角色见[连接获取](/v2/node/connectivity)。
+显式 listener／dialer 与协调 UDP 穿透共用承载接口，provider 的连接需求和双方角色见[连接获取](/v2/node/connectivity)；拨号方向、数据方向与业务方向的关系见[承载与邻接模型](/v2/node/carriers)。
 
 ## 邻接管理
 

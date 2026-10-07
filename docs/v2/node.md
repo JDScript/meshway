@@ -43,5 +43,5 @@ meshway CLI ── 本机 IPC ──► meshwayd
 ## 相关页面
 
 - [Server 接入组件](/v2/node/control) · [网络模式与本机运行](/v2/node/runtime) · [路径诊断与 ping](/v2/node/diagnostics)
-- [数据面、TUN 与 DNS](/v2/node/dataplane) · [承载会话](/v2/node/transport) · [连接获取与 UDP 穿透](/v2/node/connectivity)
+- [数据面、TUN 与 DNS](/v2/node/dataplane) · [承载与邻接模型](/v2/node/carriers) · [承载会话](/v2/node/transport) · [连接获取与 UDP 穿透](/v2/node/connectivity)
 - [三节点 Docker 环境](/v2/node/docker-lab) · [验收范围](/v2/node/validation) · [分层性能测量](/v2/node/performance)

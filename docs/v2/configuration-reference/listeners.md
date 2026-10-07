@@ -36,6 +36,6 @@ Server 目录与 Node 能力共同约束可选承载，见[承载](/v2/configura
 
 - 空对象不创建固定 listener；不禁止获准的出站／协调 socket。
 - `enabled: false` 保留静态配置但不执行该 listener。
-- listen 是本机 bind；endpoints 是明确公告的外部地址，实际可达性来自 State。
+- listen 是本机 bind；endpoints 是明确公告的外部地址，实际可达性来自 State。listener 提供固定端点，与协调端点的区别见[承载与邻接模型](/v2/node/carriers#两类建连机制)。
 - 管理员可填写协议凭据／TLS 参数，省略的可生成字段由平台补全并保存；不创建独立代理账户清单。完整配置与分发见 [NodeConfiguration](/v2/configuration-reference/node-configuration)。
 - listener key 与授权 Tag 不同；改变 type 或替换资源须按新运行代际处理，不借用旧 socket。
