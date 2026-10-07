@@ -66,11 +66,11 @@ UDP listener 保留最多 1,024 个历史 INIT nonce。额度耗尽后不遗忘�
 
 ## 帧与资源
 
-`Frame` 持有原始 payload `Vec` 和可选 peer。Stream 的 peer 为固定会话端点；UDP 必须明确目的地，接收帧携带真实来源。payload 是不解释的字节，不代表已经通过 Mesh 身份、IP 或路径检查。帧及完成结果的 Debug 只显示长度／容量等元数据。
+`Frame` 持有 `Payload` 和可选 peer。`Frame::new` 接收 Vec，`Frame::owned` 接收实现 `PayloadStorage` 的 owned 存储；后者直接保有 dataplane PacketBuffer 的原分配与池归属。Stream 的 peer 为固定会话端点；UDP 必须明确目的地，接收帧携带真实来源。payload 是不解释的字节，不代表已经通过 Mesh 身份、IP 或路径检查。帧及完成结果的 Debug 只显示长度／容量等元数据。
 
 `Limits::new` 明确指定帧长、帧数、payload 容量、操作数和 batch 帧数。工程上限为 16 MiB／帧、1 GiB 已接纳容量、65,536 帧／操作；全部为正，至少能容纳一个最大帧，操作数及 batch 帧数不超过帧预算。这些是运行库边界，实际 MTU 和宿主预算另行选择。
 
-发送预算按原始 Vec 的 **capacity** 计费，覆盖排队及在途操作。发送完成后原始 buffer 交回结果持有者；接收帧和已完成结果的保留由调用者计入自己的预算。Stream 编码组上限为 `max(maxFrameBytes + 4, min(maxBytes + 4 × maxBatchFrames, 256 KiB))`，接收预读最多为该值与 64 KiB 的较小值，解码单个大帧可增长至配置帧长。
+发送预算按原始存储的 **capacity** 计费，包括 PacketBuffer 的 headroom／tailroom，覆盖排队及在途操作。发送完成后原始 buffer 交回结果持有者；接收帧和已完成结果的保留由调用者计入自己的预算。Stream 编码组上限为 `max(maxFrameBytes + 4, min(maxBytes + 4 × maxBatchFrames, 256 KiB))`，接收预读最多为该值与 64 KiB 的较小值，解码单个大帧可增长至配置帧长。
 
 ## 两类 I/O
 
@@ -91,7 +91,7 @@ VLESS 客户端先交付 CONNECT 请求，再延迟读取首个响应头，允�
 
 `Datagram::poll_send_batch` 返回完整发送的前缀数量；`poll_recv_batch` 填充接收缓冲前缀并逐报文返回来源、长度和截断信息。默认实现每次处理一个报文，provider 可实现内核批量。Linux UDP 同目的、等长帧（最后一段可短）通过 `UDP_SEGMENT` 一次 `sendmsg` 发送；`UDP_GRO` cmsg 拆回独立报文。不适合 GSO 时使用 `sendmmsg`；接收使用 `recvmmsg` 并解析每个消息的 cmsg；不支持 mmsg 时回退 `sendmsg`／`recvmsg`。一次批量 poll 至多一个数据 syscall，能力回退在下一次 poll 执行，因此受保护 socket 每次 syscall 前仍经过 scope／mark 检查。
 
-`capabilities()` 区分成功启用的 GSO／GRO、已由真实调用验证的 mmsg（未探测为 `None`），并记录成功的 GSO／GRO／mmsg 调用次数。批量 UDP provider 的 scratch 上限为 32 × 64 KiB，已接收剩余报文最多占 2 MiB payload／2,048 个分段，另有有界元数据；逐包 API 同样保留 GRO 中未取走的报文。Session 的批量接收 scratch 按帧长取最多 32 个／64 KiB（允许单个更大的合法帧），使用时分配。截断或不一致的批量接收元数据返回错误，不交付伪造的完整帧。
+`capabilities()` 区分成功启用的 GSO／GRO、已由真实调用验证的 mmsg（未探测为 `None`），并记录成功的 GSO／GRO／mmsg 调用次数。批量 UDP provider 的 scratch 上限为 32 × 64 KiB，已接收剩余报文最多占 2 MiB payload／2,048 个分段，另有有界元数据；逐包 API 同样保留 GRO 中未取走的报文。Session 的批量接收 scratch 按帧长取最多 32 个，容量不超过 `min(maxBytes, 2 MiB)`（允许单个更大的合法帧），使用时分配。交付批次仍不超过 32 帧／64 KiB；超过本批字节上限的已读帧保留到下一次接收，逐包入口也先消费这个前缀。截断或不一致的批量接收元数据返回错误，不交付伪造的完整帧。
 
 Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP 各自具有其协议语义；握手及控制消息的重试单独定义。当前重放窗口见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)，性能与更大乱序范围仍须验证。
 
@@ -123,7 +123,9 @@ BatchCompletion::outcome() -> BatchOutcome
 
 `ScopedFrame` 保留 `Frame`、原 `SendContext` 与宿主提供的 `ChannelScope`。同一批接纳前缀必须拥有同一 scope 标识及目的端点，scope 不一致处返回 `ChannelScopeMismatch`；scope 标识本身不授予权限。宿主按已认证通道的冻结 scope 创建标识，换代创建新标识，不能仅按 socket／peer 复用。Session 将每帧上下文及调用上下文取交集：保留全部取消／lifetime，截止取最早值。任何成员失效均阻止后续 I/O，完成等待者停止轮询也不能导致迟发。
 
-每批最多 32 帧／64 KiB，并服从更小的会话预算；容量按原 Vec capacity、帧数和一个操作继续计费。只提交当前就绪数据，不等待凑批；握手、health、STUN 等控制消息由宿主使用独立逐帧操作，不能加入业务批次。一次批次只有一个 completion；`BatchOutcome::LocalComplete` 要求全部已接纳帧本机完成，全部未开始为 `NotStarted`，部分完成或尝试后的失败为整批 `Uncertain`。原逐帧结果仍供兼容入口使用；批次完成仍不代表对端交付。Stream 保持原长度 framing／flush／半帧失败关闭规则；批量接收只读取就绪完整帧，半帧保留在 codec。已读到但超出本批字节预算的一帧（允许单个更大的合法帧），或有效前缀后的 EOF／错误，留至下一次接收，不能吞掉有效前缀或越过错误继续读取。
+每批最多 32 帧／64 KiB，并服从更小的会话预算；容量按原存储 capacity、帧数和一个操作继续计费。只提交当前就绪数据，不等待凑批；握手、health、STUN 等控制消息由宿主使用独立逐帧操作，不能加入业务批次。一次批次只有一个 completion；`BatchOutcome::LocalComplete` 要求全部已接纳帧本机完成，全部未开始为 `NotStarted`，部分完成或尝试后的失败为整批 `Uncertain`。原逐帧结果仍供兼容入口使用；批次完成仍不代表对端交付。Stream 保持原长度 framing／flush／半帧失败关闭规则；批量接收只读取就绪完整帧，半帧保留在 codec。已读到但超出本批字节预算的一帧（允许单个更大的合法帧），或有效前缀后的 EOF／错误，留至下一次接收，不能吞掉有效前缀或越过错误继续读取。
+
+daemon 的 `Manager::send_batch` 在调用时捕获已认证 link，按其冻结 `ChannelScope` 分组，调用正式 `carrier::send_batch_shared`。合法 publication 交接即使保留物理 channel ID，也创建新的批量 scope 标识；旧组仍由原 channel token 撤销。一个已接纳前缀共用包含全部原 guard 的 `OutputLifetime` 和 completion，未接纳后缀在原期限内等待容量。Manager 的 stream／UDP 接收 owner 使用 `recv_batch`，物理 scope 与受保护 socket 的 batch poll 都继续在 syscall 前检查。TUN 交付使用同一 guard 交集的 `deliver_batch`；流水线和保序边界见[数据面](/v2/node/dataplane#发送流水线与连续性)。
 
 发送资源同时按帧数、字节数和在途操作数计入有界预算。provider 的协议内部缓冲也须有上限，不能通过另建队列绕过预算。队列满时由上层按业务类别执行有界等待或显式丢弃，不持续分配内存等待 Server 或网络恢复。
 

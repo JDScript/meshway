@@ -40,7 +40,7 @@ tools/
   meshway-static-authority/ # 基准／fixture 的静态执行签发（非生产）
   meshway-circuit-perf/     # 进程内受保护 circuit CPU 测量（L0）
   meshway-transport-perf/   # 承载 raw／datagram 对照测量（L1）
-  meshway-dataplane-perf/   # 隔离 Linux TUN 数据面测量（L2）
+  meshway-dataplane-perf/   # 隔离 Linux TUN／SecureNode／Manager 测量（L2–L4）
   meshway-packet-fixture/   # 隔离 Linux 受保护包流验收
   meshway-runtime-fixture/  # 实际 daemon／CLI 与 OS socket 验收
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
@@ -52,6 +52,8 @@ references/                 # 独立上游参考 checkout
 ```
 
 daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影；`runtime/control/` 负责调度与单次 Server 控制流程；`runtime/network/` 装配 underlay、Manager、SecureNode、自动需求和安装结果，不另持流表或控制凭据；`ipc/` 负责本机服务和 socket 归属。CLI 的 `arguments`、`commands`、`output` 分别负责参数、等待／退出语义和结果展示，通信使用 `meshway-ipc::Client`。Node 能力范围见 [Node](/v2/node)。
+
+`runtime/network` 还持有 dataplane 的有界 crypto pool：批量 TUN／Manager 输入先经唯一 SecureNode 准备，再交给不访问 authority 的工作线程，结果保序交回 owner 提交 replay／端点流，最后按冻结 channel 批次发送或写入 TUN。pool、guard 与存储实现在 dataplane；daemon 只装配和驱动，L3／L4 性能工具复用同一入口。
 
 ## 命名规则
 
@@ -164,7 +166,8 @@ meshway CLI ──► ipc
 tools/static-authority ──► authority + configuration + model + policy
 tools/circuit-perf ──► dataplane + static-authority
 tools/transport-perf ──► transport + transport-spec + transport-{tcp,udp,vless,trojan}
-tools/dataplane-perf ──► transport + transport-spec + transport-udp + tun
+tools/dataplane-perf ──► authority + configuration + model + private-storage + static-authority
+                         + dataplane + connectivity + underlay + transport + transport-spec + transport-udp + tun
 tools/packet-fixture ──► authority + configuration + control + control-client + dataplane + model
                          + policy + protocol + Server + tls + transport + transport-spec + transport-tcp + tun
 tools/runtime-fixture ──► configuration + control-client + dns + ipc + model + packet-fixture

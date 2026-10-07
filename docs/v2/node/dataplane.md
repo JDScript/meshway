@@ -89,11 +89,28 @@ TUN 直接读入池缓冲，端点包解析借用其中切片。Noise 业务加�
 
 Noise IK、prologue、peer static 验证及空握手 payload 仍由 Snow 完成。完成握手后，私有 crypto 模块使用 Snow 的 `risky-raw-split` 提取原 transport 方向密钥，交给同版本 RustCrypto ChaCha20Poly1305 的就地 AEAD。transport AD 保持为空，nonce 为 4 个零字节加 little-endian u64；显式 nonce 仍由唯一 SecureNode 消耗并禁止回绕，接收重放窗口不变。持久 split key 使用 Zeroizing，AEAD 对象 drop 清零；原始 key 不进入公共接口、日志或序列化。该选择增加了私有 crypto 模块直接接触 split key 的边界，避免 Snow 分离输入／输出 API 所需的包体复制；两个方向、最大包长与 nonce 边界与 Snow stateless 输出逐字节互验。
 
-当前 Session 的 payload 仍为 Vec：正式 carrier 在 release 边界显式转为 Vec，入站 Vec 在 SecureNode 边界转为 PacketBuffer。握手／Probe 的有界编解码及握手重试缓存也仍有复制。`Packet::into_bytes` 是兼容复制接口，`into_buffer` 保留分配；这些边界不能称为全链路零复制。批量 Session 与 worker 扩展见[v5 实现契约](/v2/discussions/dataplane-v5)。
+Session 的 `Payload` 可保有 `PacketBuffer` 的原始存储，发送预算包括完整 capacity、headroom 和 tailroom；carrier 不再转换为 Vec。接收的 Session Vec 直接转入 PacketBuffer，Data 解码收回线上头部和 tag 所占空间。自定义 owned payload 在取回时保留同一分配与原池归属。
+
+仍存在的复制：TUN offload 超包拆合、规范化 TUN 包转入 owner 池、UDP provider／Session 接收 scratch 转入独立报文、stream 长度 framing staging／接收 codec、握手／Probe 有界编解码与重试缓存。`Packet::into_bytes`、`PacketBuffer::into_vec` 和自定义非 PacketBuffer 存储的兼容转换也会复制；不能将当前实现称为内核到内核全链路零复制。
 
 ### 发送流水线与连续性
 
-运行循环在一次唤醒中最多处理 32 个已就绪 TUN 包或承载事件，并在有界组内推进最多 32 个独立发送。每个发送在入队时捕获实际通道，保留自己的 packet／channel guard、期限、取消与本机完成回执；其中一个 circuit 取消不影响同组其他 circuit 的资格。就绪发送仍执行同步前后检查，只有实际等待时才注册取消等待器。同一轮承载视图仅用于调度，最终发送继续验证实际通道。底层仍逐包 I/O，不将这种调度批量化称为内核 `sendmmsg`／`recvmmsg` 或 GSO 支持。
+运行循环在一次唤醒中最多接收 32 个已就绪 TUN 包或承载事件，使用正式 TUN／Session 批量接口。业务包的 owner／worker 入口如下：
+
+| 入口 | 边界 |
+| --- | --- |
+| `SecureNode::prepare_send(circuit, PacketBuffer)` | 入口 Reading、解析、业务准入、路由、nonce 与状态提交；返回不透明 `SendJob` |
+| `prepare_send_packet(circuit, Packet)` | 已解析输入复用相同 owner 准入 |
+| `pipeline::seal(SendJob)` | worker 就地 AEAD、编码与 hop MAC；返回带原 guard 的 `PendingFrame` |
+| `SecureNode::prepare_receive(carrier, PacketBuffer)` | Data CID 查找、实际邻接准入、replay 预检、固定密钥句柄与原 guard |
+| `pipeline::open(RecvJob)` | worker 验证 hop MAC、端点就地解密或中继替换下一跳 MAC；返回未提交的 `Opened` |
+| `SecureNode::commit_receive(Opened)` | 原 snapshot／key owner 绑定、replay 再检查、端点解析与业务准入、最终检查后提交 replay |
+
+worker 只持有包存储、方向／序号、不可变 Arc 密钥句柄、路由元数据与原输出 guard，不读取 authority，不访问 flow 或 replay。验证失败不会提交 replay；并发验证的重复序号也只有第一次成功 owner 提交有效。关闭后的在途 crypto 可以完成，但不能提交或释放输出；密钥在 owner 与最后一个在途句柄释放后清零。
+
+`pipeline::Pool` 默认 worker 数为可用核数减一、最少一；daemon 可通过 `MESHWAY_DATAPLANE_WORKERS` 设置 0–256，0 为同步 inline。一次处理最多 32 个已就绪 job，按 worker 分组通知，结果按输入顺序交回，保证同 circuit 的 replay 提交和发送顺序。`run_prepared` 的准备回调只在 owner 执行，按最多 8 包的小组交给 worker，使后续 owner 准备与已提交小组的 crypto 重叠；`run` 接收已经准备好的 job。每个 worker 最多一个有界排队组；队列压力等待原组被接纳，保留已准入包。宿主提交完当前输出组后再驱动下一组。取消丢弃结果，pool 销毁关闭队列并 join 所有线程。
+
+Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代创建新 scope 标识。业务批次使用所有原 packet guard 与 channel guard 的交集，任何成员失效均阻止该批后续 I/O。每次 syscall／release 重新检查；同一 SecureNode 精确 snapshot 代际的 guards 可共用本次同步 Reading，但仍逐一检查 circuit 取消与各自期限，跨等待不缓存 Reading。握手、诊断、health 与 STUN 保留独立控制路径。
 
 诊断使用独立的加密 challenge request／reply，同一 owner 验证原路径和请求关联；不产生业务 FlowTable 准入。实际发送／接收通道、计时、重放与取消边界见[路径诊断](/v2/node/diagnostics)。
 
@@ -111,7 +128,7 @@ Noise IK、prologue、peer static 验证及空握手 payload 仍由 Snow 完成�
 
 `Options::new(mtu)` 接受 1280–65535 bytes，可为新设备设置 IPv4／IPv6 地址及前缀。地址带来的本地／直连路由由该 namespace 的内核产生。创建需要已启用 I/O 的 Tokio runtime、既有 `/dev/net/tun` 和相应设备权限。
 
-`recv` 一次读取一个 IP 包，缓冲小于 MTU 时在读取前拒绝；`send` 一次写入一个包，短写报错，不续写为第二个报文。当前关闭 offload、multiqueue 和 packet-information header。外部修改该设备 MTU／offload 不受支持；IPv6 DAD 就绪由宿主等待。
+`recv`／`send` 保留单包接口，短写不续写为第二个报文。daemon 请求 `with_batch_io(true)`，通过 `recv_batch`／`send_batch` 使用 Linux vnet_hdr；按真实能力回退。拆合与能力口径见[批量 TUN](/v2/node/performance#tun-批量接口与能力验证)。multiqueue 和 packet-information header 仍关闭。外部修改设备 MTU／offload 不受支持；IPv6 DAD 就绪由宿主等待。
 
 ### Linux underlay
 

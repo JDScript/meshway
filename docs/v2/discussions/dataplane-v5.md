@@ -99,3 +99,5 @@ TUN/UDP 入站（批量） → owner 段（SecureNode，单线程，状态变更
 | H | owner／worker 流水线、daemon 批次提交、carrier 适配器精简（dataplane 流水线模块、daemon network） | L3 `secure`→L4 `manager`、L5 lab 同路径吞吐 |
 
 F 与 G 并行；H 依赖两者。每个包交付都必须给出同口径的前后对照与关闭插桩的正式数字，并保持端到端保护、源授权、必经路径、原路径回复、lease／撤销与 release 边界检查的既有回归通过。验收矩阵中依赖 v4 的行在 v5 落地后标为“历史通过未重验”，直至按 v5 重跑。
+
+H 的实现入口：D5 owner／worker API 与有界工作池为 `3e9d5e86`，原存储贯通 Session 与批次 guard 交集为 `cc1e0200`，daemon／Manager／TUN 批次装配为 `fcd38a65`，owner 准备与 worker 小组重叠为 `7976b109`，共用 L3／L4 驱动为 `5ca93df6`，L4 正式 Host 执行安装为 `2d0b7584`。现行边界见[数据面](/v2/node/dataplane#发送流水线与连续性)与[承载会话](/v2/node/transport#本机接纳与完成)，实际验收以[矩阵](/v2/node/validation)为准。D3 的内核到内核全链路无复制尚未完成，剩余复制位置见[单缓冲所有权](/v2/node/dataplane#单缓冲所有权与就地加密)；L4 高负载失败样本与尚未达到的 TUN 交付目标见[实测](/v2/node/performance#l3-流水线与-l4-实测)。
