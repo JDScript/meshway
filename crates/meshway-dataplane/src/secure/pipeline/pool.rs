@@ -1,10 +1,8 @@
+use super::credit::{Budget, Credit, STREAM_CAPACITY};
 use super::{Error, Opened, PendingFrame, RecvJob, SendJob, open, seal};
 use std::{
     collections::{BTreeMap, VecDeque},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
     thread::JoinHandle,
 };
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -20,6 +18,12 @@ pub enum Output {
 }
 
 impl Job {
+    fn capacity(&self) -> usize {
+        match self {
+            Self::Send(job) => job.frame.body.capacity(),
+            Self::Receive(job) => job.frame.body.capacity(),
+        }
+    }
     fn inline(&self) -> bool {
         // 52-byte TCP ACKs (and small IPv6/options variants) cost less than a
         // cross-thread handoff. Compare plaintext size on both endpoints;
@@ -81,15 +85,6 @@ type Group = Vec<(Key, u64, Job, Credit)>;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Key([u8; 32], bool, usize);
 
-/// Retain through final TX/TUN completion, including failed/cancelled outputs.
-/// Dropping the credit frees capacity; a completion notification alone does not.
-pub struct Credit(Arc<AtomicUsize>, Option<Box<super::timing::Trace>>);
-impl Drop for Credit {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Release);
-    }
-}
-
 pub struct Ready {
     result: Result<Output, Error>,
     credit: Credit,
@@ -110,8 +105,6 @@ struct Lane {
     completed: VecDeque<Option<Ready>>,
 }
 
-const STREAM_CAPACITY: usize = 32;
-
 /// One bounded scheduling owner. Streaming admission retains at most 32 jobs,
 /// including completed outputs and TX pending credits. Ready circuit/direction/epoch
 /// prefixes are released round-robin in groups of at most 32, without waiting
@@ -124,7 +117,7 @@ pub struct Pool {
     completed: Arc<Mutex<VecDeque<Completion>>>,
     lanes: BTreeMap<Key, Lane>,
     queued: VecDeque<(Key, u64, Job, Credit)>,
-    outstanding: Arc<AtomicUsize>,
+    budget: Budget,
     ready_lanes: VecDeque<Key>,
     free_lanes: Vec<Lane>,
     groups: Arc<Mutex<Vec<Group>>>,
@@ -151,7 +144,7 @@ impl Pool {
             completed,
             lanes: BTreeMap::new(),
             queued: VecDeque::with_capacity(STREAM_CAPACITY),
-            outstanding: Arc::new(AtomicUsize::new(0)),
+            budget: Budget::default(),
             ready_lanes: VecDeque::with_capacity(STREAM_CAPACITY),
             free_lanes: (0..STREAM_CAPACITY)
                 .map(|_| Lane {
@@ -186,7 +179,7 @@ impl Pool {
                             }
                             Work::Stream(mut jobs) => {
                                 for (circuit, sequence, job, mut credit) in jobs.drain(..) {
-                                    if let Some(trace) = &mut credit.1 {
+                                    if let Some(trace) = &mut credit.trace {
                                         trace.started();
                                     }
                                     // Every completion owns one of the globally bounded
@@ -195,7 +188,7 @@ impl Pool {
                                         std::panic::AssertUnwindSafe(|| job.run()),
                                     )
                                     .unwrap_or(Err(Error::State));
-                                    if let Some(trace) = &mut credit.1 {
+                                    if let Some(trace) = &mut credit.trace {
                                         trace.ready();
                                     }
                                     let mut completed = complete.lock().expect("completion slots");
@@ -233,7 +226,11 @@ impl Pool {
     }
 
     pub fn available(&self) -> usize {
-        STREAM_CAPACITY - self.outstanding.load(Ordering::Acquire)
+        self.budget.available()
+    }
+
+    pub fn can_submit_capacity(&self, capacity: usize) -> bool {
+        self.budget.can_reserve(capacity)
     }
 
     pub fn has_pending(&self) -> bool {
@@ -244,9 +241,9 @@ impl Pool {
     /// retains the original admitted job, with its nonce and guard unchanged.
     pub fn submit(&mut self, job: Job) -> Option<Job> {
         let circuit = job.key();
-        if !self.can_submit() {
+        let Some(mut credit) = self.budget.reserve(job.capacity()) else {
             return Some(job);
-        }
+        };
         let lane = self
             .lanes
             .entry(circuit)
@@ -257,14 +254,12 @@ impl Pool {
         let sequence = lane.submitted;
         lane.submitted += 1;
         lane.completed.push_back(None);
-        self.outstanding.fetch_add(1, Ordering::AcqRel);
-        let mut credit = Credit(self.outstanding.clone(), super::timing::Trace::new());
         if self.senders.is_empty() || job.inline() {
-            if let Some(trace) = &mut credit.1 {
+            if let Some(trace) = &mut credit.trace {
                 trace.started();
             }
             let result = job.run();
-            if let Some(trace) = &mut credit.1 {
+            if let Some(trace) = &mut credit.trace {
                 trace.ready();
             }
             self.collect((circuit, sequence, Ready { result, credit }));
@@ -345,7 +340,7 @@ impl Pool {
                     .flatten()
                     .expect("completed prefix");
                 lane.released += 1;
-                if let Some(trace) = &mut output.credit.1 {
+                if let Some(trace) = &mut output.credit.trace {
                     trace.release();
                 }
                 outputs.push(output);
@@ -433,13 +428,13 @@ impl Drop for Pool {
 mod tests {
     use super::*;
 
-    fn complete(pool: &mut Pool, key: Key, ordinal: u64, error: Error) {
+    fn complete(pool: &mut Pool, key: Key, ordinal: u64, error: Error, credit: Credit) {
         pool.collect((
             key,
             ordinal,
             Ready {
                 result: Err(error),
-                credit: Credit(pool.outstanding.clone(), None),
+                credit,
             },
         ));
     }
@@ -458,9 +453,21 @@ mod tests {
                 },
             );
         }
-        pool.outstanding.store(4, Ordering::Release);
-        complete(&mut pool, Key([1; 32], false, 1), 1, Error::Proof);
-        complete(&mut pool, Key([2; 32], false, 1), 0, Error::Wire);
+        let mut credits: Vec<_> = (0..4).map(|_| pool.budget.reserve(1280).unwrap()).collect();
+        complete(
+            &mut pool,
+            Key([1; 32], false, 1),
+            1,
+            Error::Proof,
+            credits.pop().unwrap(),
+        );
+        complete(
+            &mut pool,
+            Key([2; 32], false, 1),
+            0,
+            Error::Wire,
+            credits.pop().unwrap(),
+        );
         pool.ready().await;
         assert!(matches!(
             pool.take_ready().as_slice(),
@@ -470,7 +477,13 @@ mod tests {
             }]
         ));
         assert_eq!(pool.available(), 29);
-        complete(&mut pool, Key([1; 32], false, 1), 0, Error::Crypto);
+        complete(
+            &mut pool,
+            Key([1; 32], false, 1),
+            0,
+            Error::Crypto,
+            credits.pop().unwrap(),
+        );
         assert!(matches!(
             pool.take_ready().as_slice(),
             [
@@ -484,7 +497,13 @@ mod tests {
                 }
             ]
         ));
-        complete(&mut pool, Key([2; 32], false, 1), 1, Error::Replay);
+        complete(
+            &mut pool,
+            Key([2; 32], false, 1),
+            1,
+            Error::Replay,
+            credits.pop().unwrap(),
+        );
         assert!(matches!(
             pool.take_ready().as_slice(),
             [Ready {
@@ -515,15 +534,15 @@ mod tests {
                 },
             );
         }
-        pool.outstanding.store(3, Ordering::Release);
-        complete(&mut pool, keys[1], 0, Error::Proof);
-        complete(&mut pool, keys[2], 0, Error::Wire);
+        let mut credits: Vec<_> = (0..3).map(|_| pool.budget.reserve(1280).unwrap()).collect();
+        complete(&mut pool, keys[1], 0, Error::Proof, credits.pop().unwrap());
+        complete(&mut pool, keys[2], 0, Error::Wire, credits.pop().unwrap());
         let tx = pool.take_ready();
         assert_eq!(tx.len(), 2);
         assert_eq!(pool.available(), 29, "release still owns TX credit");
         drop(tx);
         assert_eq!(pool.available(), 31);
-        complete(&mut pool, keys[0], 0, Error::Crypto);
+        complete(&mut pool, keys[0], 0, Error::Crypto, credits.pop().unwrap());
         drop(pool.take_ready());
         assert_eq!(pool.available(), 32);
     }

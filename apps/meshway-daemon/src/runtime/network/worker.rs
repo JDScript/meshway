@@ -100,6 +100,8 @@ pub(super) async fn run(
             SampleDue,
         }
         let live = installed.as_ref().is_some_and(|state| state.live);
+        let can_read = live && packets.can_read(&pool);
+        let has_outputs = packets.has_outputs();
         let guard = installed
             .as_ref()
             .and_then(|state| state.target.identity.as_ref())
@@ -137,13 +139,14 @@ pub(super) async fn run(
                 // Packet pressure must not starve incoming handshakes or lease
                 // renewal work. Lifecycle/authority remain the outer priority.
                 tokio::select! {
+                    _ = packets.sent(&host), if has_outputs => Work::Tick,
                     _ = pool.ready(), if live && pool.has_pending() => Work::Tick,
                     result = async {
                          match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
-                    }, if live => Work::Packet(result),
+                    }, if can_read => Work::Packet(result),
                     event = async {
                         match installed.as_mut().and_then(|state| state.manager.as_mut()) {
-                            Some(manager) => manager.recv_batch().await,
+                             Some(manager) => manager.recv_batch_with_data(can_read).await,
                             None => std::future::pending().await,
                         }
                     }, if live => if event.iter().any(|event| matches!(event, Event::Closed)) { Work::CarrierClosed } else { Work::Carrier(event) },

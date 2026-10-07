@@ -300,6 +300,7 @@ async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_poll() {
         assert_eq!(a_link.acquisition, LinkAcquisition::PublishedEndpoint);
         assert_eq!(b_link.acquisition, LinkAcquisition::AcceptedInbound);
         while b.events.try_recv().is_ok() {}
+        while b.control_events.try_recv().is_ok() {}
         let mut secure = meshway_dataplane::secure::SecureNode::new(
             fixture.identities[0].clone(),
             Default::default(),
@@ -323,7 +324,7 @@ async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_poll() {
         assert!(receipt.admitted_at >= unlocked_at);
         assert_eq!(receipt.link, a_link);
         tokio::time::timeout(Duration::from_secs(2), async {
-            while b.events.is_empty() {
+            while b.control_events.is_empty() {
                 tokio::task::yield_now().await;
             }
         })
@@ -471,6 +472,27 @@ async fn udp_burst_yields_to_a_one_slot_event_consumer_without_growing_the_queue
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 1, TransportProtocol::NativeUdp).await;
     while b.events.try_recv().is_ok() {}
+    while b.control_events.try_recv().is_ok() {}
+    let fact = b.snapshot().unwrap().links[0].clone();
+    b.shared
+        .events
+        .try_send(Event::Frame {
+            link: Box::new(fact),
+            frame: meshway_transport::Frame::new(vec![3; 9], None),
+            received_at: std::time::Instant::now(),
+        })
+        .unwrap();
+    b.shared.control_events.try_send(Event::Changed).unwrap();
+    assert!(matches!(
+        b.recv_batch_with_data(false).await.as_slice(),
+        [Event::Changed]
+    ));
+    assert_eq!(
+        b.events.len(),
+        1,
+        "backpressure must retain unconsumed data"
+    );
+    assert!(matches!(b.recv().await, Event::Frame { .. }));
     // Register the receiving task before the burst. This test concerns the
     // authenticated carrier's opaque payload queue, not IP packet admission.
     assert!(futures_util::poll!(Box::pin(b.recv())).is_pending());
@@ -480,7 +502,12 @@ async fn udp_burst_yields_to_a_one_slot_event_consumer_without_growing_the_queue
         (link.sender.clone(), link.scope.clone(), link.fact.remote)
     };
     let mut frames = (0..4u8)
-        .map(|n| meshway_transport::Frame::new(vec![0xff, n], Some(remote)))
+        .map(|n| {
+            let mut bytes = vec![0xff; 10];
+            bytes[8] = 3;
+            bytes[9] = n;
+            meshway_transport::Frame::new(bytes, Some(remote))
+        })
         .collect::<std::collections::VecDeque<_>>();
     let admitted = sender.lock().await.try_send(
         &mut frames,
@@ -505,7 +532,14 @@ async fn udp_burst_yields_to_a_one_slot_event_consumer_without_growing_the_queue
     .unwrap();
     assert_eq!(
         received,
-        (0..4u8).map(|n| vec![0xff, n]).collect::<Vec<_>>()
+        (0..4u8)
+            .map(|n| {
+                let mut bytes = vec![0xff; 10];
+                bytes[8] = 3;
+                bytes[9] = n;
+                bytes
+            })
+            .collect::<Vec<_>>()
     );
     assert_eq!(b.events.max_capacity(), 1);
     a.shutdown().await.unwrap();
@@ -582,6 +616,7 @@ async fn receive_batch_is_bounded_ordered_and_fences_queued_frames_after_control
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 1, TransportProtocol::NativeUdp).await;
     while b.events.try_recv().is_ok() {}
+    while b.control_events.try_recv().is_ok() {}
     let (sender, scope, remote) = {
         let links = a.shared.links.lock().unwrap();
         let link = &links[&ids[1]];

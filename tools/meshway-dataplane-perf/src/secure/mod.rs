@@ -47,6 +47,15 @@ enum Input {
     Receive(meshway_dataplane::secure::Carrier, meshway_transport::Frame),
 }
 
+impl Input {
+    fn capacity(&self) -> usize {
+        match self {
+            Self::Send(_, packet) => packet.as_bytes().len() + DEFAULT_HEADROOM + DEFAULT_TAILROOM,
+            Self::Receive(_, frame) => frame.payload.capacity(),
+        }
+    }
+}
+
 struct Driver<'a> {
     local: meshway_model::NodeId,
     options: &'a NodeOptions,
@@ -355,17 +364,24 @@ impl Driver<'_> {
         let mut retry = tokio::time::interval(Duration::from_millis(100));
         let buffers = PacketPool::new(128, self.options.mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
         let mut batch = meshway_tun::PacketBatch::default();
+        let mut sends = carrier::SendPending::default();
+        let mut deliveries = carrier::TunPending::default();
         loop {
             // Match the daemon's scheduling view. Simultaneous authenticated
             // initiators may converge after readiness; the startup carrier map
             // must not pin future operations to the retired dial direction.
             self.node
                 .set_carriers(io.carriers(self.fixture, self.local)?)?;
-            self.complete_crypto(io, &mut pool).await?;
+            self.complete_crypto(io, &mut pool, &mut sends, &mut deliveries)?;
             let quantum = std::time::Instant::now();
             let mut prepared = 0;
             for _ in 0..self.pending.len().min(32) {
-                if !pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200) {
+                if !self
+                    .pending
+                    .front()
+                    .is_some_and(|(input, _)| pool.can_submit_capacity(input.capacity()))
+                    || quantum.elapsed() >= Duration::from_micros(200)
+                {
                     profile::event(
                         "l3.backpressure",
                         if pool.can_submit() {
@@ -407,14 +423,26 @@ impl Driver<'_> {
             }
             observe_batch("l3.prepare.batch", prepared);
             pool.flush();
-            self.complete_crypto(io, &mut pool).await?;
-            if !self.pending.is_empty() && pool.can_submit() {
-                tokio::task::yield_now().await;
-                continue;
-            }
-            tokio::select! {
+            self.complete_crypto(io, &mut pool, &mut sends, &mut deliveries)?;
+            let can_prepare = self
+                .pending
+                .front()
+                .is_some_and(|(input, _)| pool.can_submit_capacity(input.capacity()));
+            let can_read = self.pending.is_empty() && pool.can_submit();
+            tokio::select! { biased;
+                result = sends.ready(), if !sends.is_empty() => { result?; }
+                (result, count) = async {
+                    match self.tun() {
+                        Some(tun) => deliveries.ready(tun).await,
+                        None => std::future::pending().await,
+                    }
+                }, if !deliveries.is_empty() => {
+                    result?;
+                    for _ in 0..count { let _packet = DELIVER.enter(); }
+                }
                 _ = pool.ready(), if pool.has_pending() => {}
-                received = UDP_RECV.poll(io.recv()), if self.pending.len() < 32 => {
+                _ = tokio::task::yield_now(), if can_prepare => {}
+                received = UDP_RECV.poll(io.recv(can_read)) => {
                     self.received(io, received?).await?;
                 }
                 read = async {
@@ -422,7 +450,7 @@ impl Driver<'_> {
                         Some(tun) if self.ready => TUN_READ.poll(tun.recv_batch(&mut batch)).await,
                         _ => std::future::pending().await,
                     }
-                }, if self.pending.len() < 32 => {
+                }, if can_read => {
                     read?;
                     observe_batch("l3.tun.read.batch", batch.packets().len());
                     let mut at = profile::enabled().then(std::time::Instant::now);
@@ -444,23 +472,49 @@ impl Driver<'_> {
         }
     }
 
-    async fn complete_crypto(&mut self, io: &mut io::Io, pool: &mut Pool) -> Result<(), Error> {
-        let mut credits = Vec::new();
-        let ready = pool
-            .take_ready()
-            .into_iter()
-            .map(|output| {
-                let (output, credit) = output.into_parts();
-                credits.push(credit);
-                match output {
-                    Ok(Output::Send(frame)) => Ok(Received::Forward(frame)),
-                    Ok(Output::Receive(opened)) => self.node.commit_receive(opened),
-                    Err(error) => Err(error),
+    fn complete_crypto(
+        &mut self,
+        io: &io::Io,
+        pool: &mut Pool,
+        sends: &mut carrier::SendPending<Result<(), Error>>,
+        deliveries: &mut carrier::TunPending<usize>,
+    ) -> Result<(), Error> {
+        let mut frames = Vec::new();
+        let mut packets = Vec::new();
+        let mut send_credits = Vec::new();
+        let mut delivery_credits = Vec::new();
+        for output in pool.take_ready() {
+            let (output, credit) = output.into_parts();
+            let result = match output {
+                Ok(Output::Send(frame)) => Ok(Received::Forward(frame)),
+                Ok(Output::Receive(opened)) => self.node.commit_receive(opened),
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(Received::Forward(frame)) => {
+                    frames.push(frame);
+                    send_credits.push(credit);
                 }
-            })
-            .collect();
-        self.release(io, ready).await?;
-        drop(credits);
+                Ok(Received::Packet(packet)) => {
+                    packets.push(packet);
+                    delivery_credits.push(credit);
+                }
+                Err(error) if packet_rejection(&error) => self.reject(error),
+                Err(error) => return Err(error.into()),
+                _ => return Err("unexpected crypto output".into()),
+            }
+        }
+        if !frames.is_empty() {
+            let send = io.send(frames, self.fixture);
+            sends.push(send_credits, UDP_SEND.poll(send));
+        }
+        if !packets.is_empty() {
+            if self.tun().is_none() {
+                return Err("relay attempted plaintext delivery".into());
+            }
+            let count = packets.len();
+            deliveries.push(delivery_credits, packets, count);
+        }
         Ok(())
     }
 }

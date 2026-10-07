@@ -227,7 +227,7 @@ impl Owner {
     }
 
     fn changed(&self) {
-        let _ = self.shared.events.try_send(Event::Changed);
+        let _ = self.shared.control_events.try_send(Event::Changed);
     }
 
     fn selected(&self, channel: &Channel) -> bool {
@@ -635,11 +635,12 @@ impl Owner {
             // Source is a demultiplex key only after signed challenge completion.
             // SecureNode remains the sole packet decoder and proof verifier.
             meshway_logging::profile::event("manager.udp", "mesh_frame");
-            let result = self.shared.events.try_send(Event::Frame {
+            let event = Event::Frame {
                 link: Box::new(channel.fact.clone()),
                 frame,
                 received_at,
-            });
+            };
+            let result = self.shared.event_sender(&event).try_send(event);
             match result {
                 Ok(()) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
@@ -1523,7 +1524,8 @@ mod tests {
             identity,
             stop: CancellationToken::new(),
             links: Arc::new(Mutex::new(LinkTable::default())),
-            events,
+            events: events.clone(),
+            control_events: events,
             capacity: Arc::new(Semaphore::new(64)),
             limits: Limits::default(),
             control_budget: Arc::new(Mutex::new(ControlBudget::new())),

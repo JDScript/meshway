@@ -17,14 +17,14 @@ pub async fn send_batch_shared(
     frames: Vec<PendingFrame>,
     peer: SocketAddr,
     scope: ChannelScope,
-    channel: Arc<dyn SendLifetime>,
+    channel: Option<Arc<dyn SendLifetime>>,
 ) -> Result<SendReceipt, Error> {
     send(
         SendOwner::Shared(sender),
         frames,
         Some(peer),
         scope,
-        Some(channel),
+        channel,
     )
     .await
 }
@@ -164,45 +164,70 @@ pub async fn deliver_batch(
     tun: &meshway_tun::Tun,
     pending: Vec<PendingAction>,
 ) -> Result<(), Error> {
-    static PROFILE: meshway_logging::profile::Metric =
-        meshway_logging::profile::Metric::new("carrier.deliver.poll");
-    PROFILE
-        .poll(async {
-            if pending.len() > 32 || pending.iter().any(|packet| packet.hop() != Hop::Deliver) {
-                return Err(Error::Destination);
-            }
-            if pending.is_empty() {
-                return Ok(());
-            }
-            let lifetime = Arc::new(OutputLifetime {
-                packets: pending
-                    .iter()
-                    .map(|packet| crate::secure::Guard::from_route(&packet.pending))
-                    .collect(),
-                channel: None,
-            });
-            let slices: Vec<_> = pending
+    Delivery::new(pending).write(tun).await
+}
+
+pub(super) struct Delivery {
+    pending: Vec<PendingAction>,
+    lifetime: Arc<OutputLifetime>,
+    offset: usize,
+}
+
+impl Delivery {
+    pub fn new(pending: Vec<PendingAction>) -> Self {
+        let lifetime = Arc::new(OutputLifetime {
+            packets: pending
                 .iter()
-                .map(|packet| packet.packet.as_bytes())
-                .collect();
-            let mut offset = 0;
-            while offset < pending.len() {
-                let at = timing::start();
-                let written = guarded(&lifetime, tun.send_batch(&slices[offset..]))
-                    .await?
-                    .map_err(|_| Error::Tun)?;
-                if written == 0 || written > slices.len() - offset {
-                    return Err(Error::Tun);
+                .map(|packet| crate::secure::Guard::from_route(&packet.pending))
+                .collect(),
+            channel: None,
+        });
+        Self {
+            pending,
+            lifetime,
+            offset: 0,
+        }
+    }
+
+    pub async fn write(&mut self, tun: &meshway_tun::Tun) -> Result<(), Error> {
+        static PROFILE: meshway_logging::profile::Metric =
+            meshway_logging::profile::Metric::new("carrier.deliver.poll");
+        PROFILE
+            .poll(async {
+                if self.pending.len() > 32
+                    || self
+                        .pending
+                        .iter()
+                        .any(|packet| packet.hop() != Hop::Deliver)
+                {
+                    return Err(Error::Destination);
                 }
-                timing::batch("carrier.tun.written.batch", written);
-                if let Some(at) = at {
-                    static WALL: meshway_logging::profile::Metric =
-                        meshway_logging::profile::Metric::new("carrier.tun.write.wall");
-                    WALL.elapsed(at.elapsed());
+                if self.pending.is_empty() {
+                    return Ok(());
                 }
-                offset += written;
-            }
-            Ok(())
-        })
-        .await
+                let slices: Vec<_> = self
+                    .pending
+                    .iter()
+                    .map(|packet| packet.packet.as_bytes())
+                    .collect();
+                while self.offset < self.pending.len() {
+                    let at = timing::start();
+                    let written = guarded(&self.lifetime, tun.send_batch(&slices[self.offset..]))
+                        .await?
+                        .map_err(|_| Error::Tun)?;
+                    if written == 0 || written > slices.len() - self.offset {
+                        return Err(Error::Tun);
+                    }
+                    timing::batch("carrier.tun.written.batch", written);
+                    if let Some(at) = at {
+                        static WALL: meshway_logging::profile::Metric =
+                            meshway_logging::profile::Metric::new("carrier.tun.write.wall");
+                        WALL.elapsed(at.elapsed());
+                    }
+                    self.offset += written;
+                }
+                Ok(())
+            })
+            .await
+    }
 }

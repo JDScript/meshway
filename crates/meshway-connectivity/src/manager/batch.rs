@@ -56,7 +56,7 @@ impl Manager {
                     group.frames,
                     group.fact.remote,
                     group.batch_scope,
-                    Arc::new(group.scope),
+                    Some(Arc::new(group.scope)),
                 )
                 .await?;
                 Ok(SendReceipt {

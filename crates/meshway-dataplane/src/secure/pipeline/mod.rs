@@ -10,9 +10,13 @@ use super::{
 };
 use meshway_model::NodeId;
 use std::sync::Arc;
+mod credit;
 mod pool;
 pub(crate) mod timing;
-pub use pool::{Credit, Job, Output, Pool, Ready};
+pub use credit::{
+    Credit, JUMBO_CAPACITY, JUMBO_STORAGE, MTU_STORAGE, STREAM_BYTES, STREAM_CAPACITY,
+};
+pub use pool::{Job, Output, Pool, Ready};
 
 /// A committed nonce and flow admission; abandoning this job never rolls them back.
 pub struct SendJob {

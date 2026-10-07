@@ -10,10 +10,12 @@ use meshway_model::NodeId;
 use meshway_static_authority::public_fixture::PublicFixture;
 use meshway_transport::{ChannelScope, Frame, Limits, Receiver, Sender};
 use std::{collections::BTreeMap, net::SocketAddr, path::Path};
+use std::{future::Future, pin::Pin, sync::Arc};
+type SendFuture = Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>;
 
 pub(super) enum Io {
     Session {
-        sender: Sender,
+        sender: Arc<tokio::sync::Mutex<Sender>>,
         receiver: Receiver,
         incoming: BTreeMap<SocketAddr, Carrier>,
         scopes: BTreeMap<SocketAddr, ChannelScope>,
@@ -38,8 +40,18 @@ impl Io {
             return Self::manager(options, fixture, local, identity, material).await;
         }
         let socket = tokio::net::UdpSocket::bind(options.bind).await?;
-        let endpoint =
-            meshway_transport_udp::UdpTransport::adopt_batch(socket, &Default::default())?;
+        let buffer = std::env::var("MESHWAY_PERF_UDP_BUFFER")
+            .ok()
+            .map(|value| value.parse::<u32>())
+            .transpose()?
+            .unwrap_or(0);
+        let endpoint = meshway_transport_udp::UdpTransport::adopt_batch(
+            socket,
+            &meshway_transport_spec::SocketOptions {
+                receive_buffer: buffer,
+                send_buffer: buffer,
+            },
+        )?;
         let report = Box::new(endpoint.capability_report());
         let frame_limit = (options.mtu + 2048).min(65_507);
         let (sender, receiver) = endpoint
@@ -60,7 +72,7 @@ impl Io {
             .map(|peer| (*peer, ChannelScope::new()))
             .collect();
         Ok(Self::Session {
-            sender,
+            sender: Arc::new(tokio::sync::Mutex::new(sender)),
             receiver,
             incoming,
             scopes,
@@ -148,26 +160,32 @@ impl Io {
         }
     }
 
-    pub async fn recv(&mut self) -> Result<Vec<(Carrier, Frame)>, Error> {
+    pub async fn recv(&mut self, data: bool) -> Result<Vec<(Carrier, Frame)>, Error> {
         match self {
             Self::Session {
                 receiver, incoming, ..
-            } => receiver
-                .recv_batch()
-                .await?
-                .into_iter()
-                .map(|frame| {
-                    let carrier = incoming
-                        .get(&frame.peer.ok_or("missing source")?)
-                        .ok_or("unexpected secure UDP source")?
-                        .clone();
-                    Ok((carrier, frame))
-                })
-                .collect(),
+            } => {
+                if !data {
+                    std::future::pending().await
+                } else {
+                    receiver
+                        .recv_batch()
+                        .await?
+                        .into_iter()
+                        .map(|frame| {
+                            let carrier = incoming
+                                .get(&frame.peer.ok_or("missing source")?)
+                                .ok_or("unexpected secure UDP source")?
+                                .clone();
+                            Ok((carrier, frame))
+                        })
+                        .collect()
+                }
+            }
             #[cfg(target_os = "linux")]
             Self::Manager { manager, .. } => {
                 let mut frames = Vec::new();
-                for event in manager.recv_batch().await {
+                for event in manager.recv_batch_with_data(data).await {
                     match event {
                         Event::Frame { link, frame, .. } => frames.push((link.carrier, frame)),
                         Event::Changed => {}
@@ -179,60 +197,75 @@ impl Io {
         }
     }
 
-    pub async fn send(
-        &mut self,
-        frames: Vec<PendingFrame>,
-        fixture: &PublicFixture,
-    ) -> Result<(), Error> {
-        match self {
-            Self::Session { sender, scopes, .. } => {
-                let mut groups = BTreeMap::<SocketAddr, Vec<PendingFrame>>::new();
-                for frame in frames {
-                    let peer = *fixture
-                        .sockets
-                        .get(&frame.next())
-                        .ok_or("unknown next hop")?;
-                    if frame.is_data() {
-                        groups.entry(peer).or_default().push(frame);
-                    } else {
-                        carrier::send(sender, frame, Some(peer)).await?;
+    pub fn send(&self, frames: Vec<PendingFrame>, fixture: &PublicFixture) -> SendFuture {
+        let selected = (|| -> Result<Vec<SendFuture>, Error> {
+            let mut sends: Vec<SendFuture> = Vec::new();
+            match self {
+                Self::Session { sender, scopes, .. } => {
+                    let mut groups = BTreeMap::<SocketAddr, Vec<PendingFrame>>::new();
+                    for frame in frames {
+                        let peer = *fixture
+                            .sockets
+                            .get(&frame.next())
+                            .ok_or("unknown next hop")?;
+                        if frame.is_data() {
+                            groups.entry(peer).or_default().push(frame);
+                        } else {
+                            let sender = sender.clone();
+                            sends.push(Box::pin(async move {
+                                carrier::send(&mut *sender.lock().await, frame, Some(peer)).await?;
+                                Ok(())
+                            }));
+                        }
+                    }
+                    for (peer, frames) in groups {
+                        let sender = sender.clone();
+                        let scope = scopes.get(&peer).ok_or("unknown scope")?.clone();
+                        sends.push(Box::pin(async move {
+                            carrier::send_batch_shared(&sender, frames, peer, scope, None).await?;
+                            Ok(())
+                        }));
                     }
                 }
-                for (peer, frames) in groups {
-                    carrier::send_batch(
-                        sender,
-                        frames,
-                        Some(peer),
-                        scopes.get(&peer).ok_or("unknown scope")?.clone(),
-                        None,
-                    )
-                    .await?;
+                #[cfg(target_os = "linux")]
+                Self::Manager { manager, .. } => {
+                    let mut data = Vec::new();
+                    let current = manager.carriers()?;
+                    for frame in frames {
+                        if current.get(&frame.next()) != Some(frame.carrier()) {
+                            // Already-prepared outputs retain their old carrier and
+                            // guard. Like the daemon, discard a superseded output;
+                            // only future owner admissions use the new selection.
+                            meshway_logging::profile::event("l4.output.drop", "selection_changed");
+                            continue;
+                        }
+                        if frame.is_data() {
+                            data.push(frame);
+                        } else {
+                            let send = manager.send(frame);
+                            sends.push(Box::pin(async move {
+                                send.await?;
+                                Ok(())
+                            }));
+                        }
+                    }
+                    if !data.is_empty() {
+                        let send = manager.send_batch(data);
+                        sends.push(Box::pin(async move {
+                            send.await?;
+                            Ok(())
+                        }));
+                    }
                 }
             }
-            #[cfg(target_os = "linux")]
-            Self::Manager { manager, .. } => {
-                let mut data = Vec::new();
-                let current = manager.carriers()?;
-                for frame in frames {
-                    if current.get(&frame.next()) != Some(frame.carrier()) {
-                        // Already-prepared outputs retain their old carrier and
-                        // guard. Like the daemon, discard a superseded output;
-                        // only future owner admissions use the new selection.
-                        meshway_logging::profile::event("l4.output.drop", "selection_changed");
-                        continue;
-                    }
-                    if frame.is_data() {
-                        data.push(frame);
-                    } else {
-                        manager.send(frame).await?;
-                    }
-                }
-                if !data.is_empty() {
-                    manager.send_batch(data).await?;
-                }
+            Ok(sends)
+        })();
+        Box::pin(async move {
+            for send in selected? {
+                send.await?;
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn capabilities(&self) -> serde_json::Value {
@@ -250,7 +283,7 @@ impl Io {
 
     pub async fn shutdown(mut self) -> Result<serde_json::Value, Error> {
         match &mut self {
-            Self::Session { sender, .. } => sender.shutdown().await?,
+            Self::Session { sender, .. } => sender.lock().await.shutdown().await?,
             #[cfg(target_os = "linux")]
             Self::Manager { manager, .. } => {
                 manager.shutdown().await?;

@@ -56,19 +56,68 @@ struct Attempt {
     wake_at: Instant,
 }
 
+struct Delivered {
+    count: usize,
+    replies: Vec<RequestId>,
+    snapshot: meshway_authority::ExecutionSnapshot,
+}
+
 #[derive(Default)]
 pub(super) struct Packets {
     local: VecDeque<Queued>,
     incoming: VecDeque<Incoming>,
+    control: VecDeque<Incoming>,
     intents: Vec<Intent>,
     attempts: Vec<Attempt>,
     traced_circuits: BTreeMap<[u8; 32], Instant>,
     pub dropped: u64,
     carrier_wait_logged: Option<Instant>,
     scan_remaining: usize,
+    sends:
+        meshway_dataplane::carrier::SendPending<(Result<(), meshway_connectivity::Error>, usize)>,
+    deliveries: meshway_dataplane::carrier::TunPending<Delivered>,
 }
 
 impl Packets {
+    pub fn can_read(&self, pool: &secure::pipeline::Pool) -> bool {
+        pool.can_submit()
+            && self.local.len() + self.incoming.len() <= MAX_PACKETS - 32
+            && self.bytes() <= MAX_BYTES - 32 * 4096
+    }
+
+    pub fn has_outputs(&self) -> bool {
+        !self.sends.is_empty() || !self.deliveries.is_empty()
+    }
+
+    /// Cancellation-safe: the queue retains its future / unwritten TUN suffix.
+    /// Both output directions advance independently of crypto and input readiness.
+    pub async fn sent(&mut self, host: &meshway_underlay::Host) {
+        tokio::select! {
+            (result, count) = self.sends.ready(), if !self.sends.is_empty() => {
+                if result.is_err() {
+                    for _ in 0..count { self.drop_packet("batch_send"); }
+                }
+            }
+            (result, delivered) = async {
+                match host.tun() {
+                    Some(tun) => self.deliveries.ready(tun).await,
+                    None => std::future::pending().await,
+                }
+            }, if !self.deliveries.is_empty() => {
+                if result.is_err() {
+                    for _ in 0..delivered.count { self.drop_packet("tun_delivery"); }
+                } else if let Ok(now_ms) = delivered.snapshot.now_ms() {
+                    for demand in delivered.replies {
+                        if let Some(intent) = self.intents.iter_mut().find(|intent| {
+                            intent.request.request_id == demand && intent.expires_at_ms > now_ms
+                                && intent.last_packet.elapsed() < Duration::from_secs(60)
+                        }) { intent.last_packet = Instant::now(); }
+                    }
+                }
+            }
+        }
+    }
+
     fn trace_packet(&mut self, frame: &secure::PendingFrame, circuit: &secure::CircuitInfo) {
         const TARGET: &str = "meshway_daemon::runtime::network::circuit_packet";
         if !tracing::enabled!(target: TARGET, tracing::Level::DEBUG) {
@@ -125,6 +174,7 @@ impl Packets {
             .iter()
             .map(|item| item.deadline)
             .chain(self.incoming.iter().map(|item| item.deadline))
+            .chain(self.control.iter().map(|item| item.deadline))
             .chain(self.attempts.iter().map(|attempt| attempt.wake_at))
             .min();
         for intent in &self.intents {
@@ -153,6 +203,9 @@ impl Packets {
     pub fn clear_incoming(&mut self) {
         self.dropped = self.dropped.saturating_add(self.incoming.len() as u64);
         self.incoming.clear();
+        self.control.clear();
+        self.sends = Default::default();
+        self.deliveries = Default::default();
     }
     fn bytes(&self) -> usize {
         self.local
@@ -262,11 +315,14 @@ impl Packets {
                 publication = %identity.snapshot().reference().execution_publication,
                 known, "Diagnostic carrier frame received for scheduling");
         }
-        if !known
-            || bytes.len() > secure::MAX_FRAME
-            || self.local.len() + self.incoming.len() >= MAX_PACKETS
-            || self.bytes() + bytes.len() > MAX_BYTES
-        {
+        let control = bytes.get(8) != Some(&3);
+        let full = if control {
+            self.control.len() >= 32
+        } else {
+            self.local.len() + self.incoming.len() >= MAX_PACKETS
+                || self.bytes() + bytes.len() > MAX_BYTES
+        };
+        if !known || bytes.len() > secure::MAX_FRAME || full {
             meshway_logging::profile::event(
                 "host.cipher.reject",
                 if !known {
@@ -278,7 +334,12 @@ impl Packets {
             self.drop_packet("cipher_context_or_capacity");
             return;
         }
-        self.incoming.push_back(Incoming {
+        let queue = if control {
+            &mut self.control
+        } else {
+            &mut self.incoming
+        };
+        queue.push_back(Incoming {
             carrier: link.carrier.clone(),
             link,
             received_at,
@@ -323,20 +384,19 @@ impl Packets {
         let Some(carriers) = carriers else {
             return;
         };
-        self.complete_crypto(secure, manager, host, snapshot, pool)
-            .await;
+        self.complete_crypto(secure, manager, snapshot, pool);
         // Continue a bounded scan on the next turn, including ready suffixes
         // left after a full batch. Waiting packets are scanned only once per
         // external event, rather than creating an unbounded busy loop.
         if self.scan_remaining == 0 {
-            self.scan_remaining = self.local.len() + self.incoming.len();
+            self.scan_remaining = self.local.len() + self.incoming.len() + self.control.len();
         }
         let per_direction = if self.local.is_empty() || self.incoming.is_empty() {
             32
         } else {
             16
         };
-        let incoming_count = self.incoming.len().min(per_direction);
+        let incoming_count = (self.incoming.len() + self.control.len()).min(per_direction);
         let local_count = self.local.len().min(per_direction);
         let mut incoming_done = 0;
         let mut local_done = 0;
@@ -344,15 +404,20 @@ impl Packets {
         let mut outgoing = Vec::new();
         let mut ready = Vec::new();
         for _ in 0..incoming_count {
-            let Some(item) = self.incoming.pop_front() else {
+            let Some(item) = self
+                .control
+                .pop_front()
+                .or_else(|| self.incoming.pop_front())
+            else {
                 break;
             };
             incoming_done += 1;
             if item.bytes.get(8) == Some(&3)
-                && (!pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200))
+                && (!pool.can_submit_capacity(item.bytes.capacity())
+                    || quantum.elapsed() >= Duration::from_micros(200))
             {
-                self.incoming.push_back(item);
-                continue;
+                self.incoming.push_front(item);
+                break;
             }
             if item.deadline <= Instant::now() || item.guard.ensure_current().is_err() {
                 self.drop_packet("cipher_deadline");
@@ -386,7 +451,11 @@ impl Packets {
                         publication = %snapshot.reference().execution_publication,
                         available = ?carriers.keys().collect::<Vec<_>>(), "Waiting for authenticated next-hop carrier before secure receive");
                 }
-                self.incoming.push_back(item);
+                if item.bytes.get(8) == Some(&3) {
+                    self.incoming.push_back(item);
+                } else {
+                    self.control.push_back(item);
+                }
                 continue;
             }
             if meshway_logging::profile::enabled() {
@@ -546,7 +615,14 @@ impl Packets {
             }
         }
         for _ in 0..local_count {
-            if !pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200) {
+            if self.local.front().is_some_and(|item| {
+                !pool.can_submit_capacity(
+                    item.packet.as_bytes().len()
+                        + meshway_dataplane::DEFAULT_HEADROOM
+                        + meshway_dataplane::DEFAULT_TAILROOM,
+                )
+            }) || quantum.elapsed() >= Duration::from_micros(200)
+            {
                 break;
             }
             let Some(item) = self.local.pop_front() else {
@@ -705,12 +781,14 @@ impl Packets {
         }
         self.flush_sends(manager, &mut outgoing).await;
         pool.flush();
-        self.complete_crypto(secure, manager, host, snapshot, pool)
-            .await;
+        self.complete_crypto(secure, manager, snapshot, pool);
         self.scan_remaining = self
             .scan_remaining
             .saturating_sub(incoming_done + local_done)
-            .min(self.local.len() + self.incoming.len());
+            .min(self.local.len() + self.incoming.len() + self.control.len());
+        if !pool.can_submit() {
+            self.scan_remaining = 0;
+        }
         for intent in &mut self.intents {
             if let Some(pending) = &mut intent.pending {
                 match pending.try_recv() {
@@ -793,21 +871,20 @@ impl Packets {
         }
     }
 
-    async fn complete_crypto(
+    fn complete_crypto(
         &mut self,
         secure: &mut SecureNode,
         manager: &Manager,
-        host: &meshway_underlay::Host,
         snapshot: &meshway_authority::ExecutionSnapshot,
         pool: &mut secure::pipeline::Pool,
     ) {
         let mut outgoing = Vec::new();
         let mut deliveries = Vec::new();
         let mut replies = Vec::new();
-        let mut credits = Vec::new();
+        let mut send_credits = Vec::new();
+        let mut delivery_credits = Vec::new();
         for output in pool.take_ready() {
             let (output, credit) = output.into_parts();
-            credits.push(credit);
             let result = match output {
                 Ok(secure::pipeline::Output::Send(frame)) => {
                     if let Ok(Some(circuit)) = secure.circuit_info(frame.circuit()) {
@@ -819,42 +896,39 @@ impl Packets {
                 Err(error) => Err(error),
             };
             match result {
-                Ok(Received::Forward(frame)) => outgoing.push(frame),
+                Ok(Received::Forward(frame)) => {
+                    outgoing.push(frame);
+                    send_credits.push(credit);
+                }
                 Ok(Received::Packet(packet)) if packet.hop() == meshway_dataplane::Hop::Deliver => {
                     if packet.route().direction == meshway_dataplane::Direction::Reply {
                         replies.push(packet.route().demand);
                     }
                     deliveries.push(packet);
+                    delivery_credits.push(credit);
                 }
                 Err(error) => self.drop_admission("crypto_admission", error, None),
                 _ => self.drop_packet("crypto_output"),
             }
         }
-        self.flush_sends(manager, &mut outgoing).await;
-        if !deliveries.is_empty()
-            && let Some(tun) = host.tun()
-        {
+        if !outgoing.is_empty() {
+            let count = outgoing.len();
+            // Freeze actual channel scopes before yielding to the output driver.
+            let send = manager.send_batch(outgoing);
+            self.sends
+                .push(send_credits, async move { (send.await.map(|_| ()), count) });
+        }
+        if !deliveries.is_empty() {
             let count = deliveries.len();
-            if meshway_dataplane::carrier::deliver_batch(tun, deliveries)
-                .await
-                .is_err()
-            {
-                for _ in 0..count {
-                    self.drop_packet("tun_delivery");
-                }
-            } else if snapshot.ensure_current().is_ok()
-                && let Ok(now_ms) = snapshot.now_ms()
-            {
-                for demand in replies {
-                    if let Some(intent) = self.intents.iter_mut().find(|intent| {
-                        intent.request.request_id == demand
-                            && intent.expires_at_ms > now_ms
-                            && intent.last_packet.elapsed() < Duration::from_secs(60)
-                    }) {
-                        intent.last_packet = Instant::now();
-                    }
-                }
-            }
+            self.deliveries.push(
+                delivery_credits,
+                deliveries,
+                Delivered {
+                    count,
+                    replies,
+                    snapshot: snapshot.clone(),
+                },
+            );
         }
     }
 }

@@ -262,6 +262,7 @@ struct Shared {
     stop: CancellationToken,
     links: Arc<Mutex<LinkTable>>,
     events: mpsc::Sender<Event>,
+    control_events: mpsc::Sender<Event>,
     capacity: Arc<Semaphore>,
     limits: Limits,
     control_budget: Arc<Mutex<datagram::ControlBudget>>,
@@ -291,9 +292,23 @@ impl Shared {
     }
 
     async fn event(&self, scope: &Scope, event: Event) -> Result<(), Error> {
+        let sender = self.event_sender(&event);
         scope
-            .run(async { self.events.send(event).await.map_err(|_| Error::Cancelled) })
+            .run(async { sender.send(event).await.map_err(|_| Error::Cancelled) })
             .await
+    }
+
+    fn event_sender(&self, event: &Event) -> &mpsc::Sender<Event> {
+        match event {
+            // Scheduling hint only. SecureNode still authenticates and admits it.
+            Event::Frame { frame, .. }
+                if !(frame.payload.starts_with(b"MWCIR\0\0\x05")
+                    && frame.payload.get(8).is_some_and(|kind| *kind != 3)) =>
+            {
+                &self.events
+            }
+            _ => &self.control_events,
+        }
     }
 }
 
@@ -306,6 +321,7 @@ pub struct Manager {
     shared: Arc<Shared>,
     listeners: Vec<ListenerFact>,
     events: mpsc::Receiver<Event>,
+    control_events: mpsc::Receiver<Event>,
     owners: BTreeMap<resources::Key, resources::Owner>,
     traversal: Option<(
         Arc<dyn crate::traversal::TraversalGateway>,
@@ -346,6 +362,7 @@ impl Manager {
     ) -> Result<Self, Error> {
         limits.validate()?;
         let (tx, events) = mpsc::channel(limits.events);
+        let (control_tx, control_events) = mpsc::channel(32);
         let (epochs, _) = tokio::sync::watch::channel(identity.clone());
         let generation = traversal
             .as_ref()
@@ -360,6 +377,7 @@ impl Manager {
             stop: CancellationToken::new(),
             links: Arc::new(Mutex::new(LinkTable::default())),
             events: tx,
+            control_events: control_tx,
             capacity: Arc::new(Semaphore::new(limits.connections)),
             limits,
             control_budget: Arc::new(Mutex::new(datagram::ControlBudget::new())),
@@ -376,6 +394,7 @@ impl Manager {
             shared,
             listeners: Vec::new(),
             events,
+            control_events,
             owners: BTreeMap::new(),
             traversal,
         };
@@ -838,23 +857,31 @@ impl Manager {
     }
 
     pub async fn recv(&mut self) -> Event {
-        self.receive_events(1).await.pop().expect("one event")
+        self.receive_events(1, true).await.pop().expect("one event")
     }
 
     /// Drain at most 32 already queued events per wakeup. Each frame receives
     /// the same current-channel and execution checks as single-event receive.
     /// The returned facts are observations, not transferable I/O authority.
     pub async fn recv_batch(&mut self) -> Vec<Event> {
-        self.receive_events(32).await
+        self.receive_events(32, true).await
     }
 
-    async fn receive_events(&mut self, limit: usize) -> Vec<Event> {
+    /// Pause business ingress under host TX pressure, while bounded handshake,
+    /// diagnostic and lifecycle events retain their independent scheduling lane.
+    pub async fn recv_batch_with_data(&mut self, data: bool) -> Vec<Event> {
+        self.receive_events(32, data).await
+    }
+
+    async fn receive_events(&mut self, limit: usize, data: bool) -> Vec<Event> {
         loop {
             let mut events = Vec::new();
+            let mut controls = Vec::new();
             let count = tokio::select! { biased;
                 _ = self.shared.stop.cancelled() => return vec![Event::Closed],
                 _ = self.shared.identity.snapshot().invalidated() => return vec![Event::Closed],
-                count = self.events.recv_many(&mut events, limit) => count,
+                count = self.control_events.recv_many(&mut controls, limit) => { events = controls; count },
+                count = self.events.recv_many(&mut events, limit), if data => count,
             };
             if count == 0
                 || self.shared.stop.is_cancelled()
@@ -943,7 +970,9 @@ impl Manager {
             .map_err(|_| Error::Worker)?
             .clear();
         self.events.close();
+        self.control_events.close();
         while self.events.try_recv().is_ok() {}
+        while self.control_events.try_recv().is_ok() {}
         if failed { Err(Error::Worker) } else { Ok(()) }
     }
 }

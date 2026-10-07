@@ -109,6 +109,7 @@ impl Shared {
             stop,
             links: self.links.clone(),
             events: self.events.clone(),
+            control_events: self.control_events.clone(),
             capacity: self.capacity.clone(),
             limits: self.limits,
             control_budget: self.control_budget.clone(),
@@ -299,6 +300,7 @@ impl Manager {
             *current = generation;
         }
         while self.events.try_recv().is_ok() {}
+        while self.control_events.try_recv().is_ok() {}
         self.shared.epochs.send_replace(identity);
         for gate in self
             .shared

@@ -3,8 +3,10 @@
 //! write completion is distinct from authenticated reception/application echo.
 use crate::{Hop, PendingAction, secure::PendingFrame};
 mod batch;
+mod pending;
 pub use batch::{deliver_batch, send_batch, send_batch_shared};
 use meshway_transport::{AdmissionStop, Frame, SendContext, SendOutcome, Sender};
+pub use pending::{SendPending, TunPending};
 use std::{
     collections::VecDeque,
     fmt,
