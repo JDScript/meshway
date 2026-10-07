@@ -113,8 +113,10 @@ object! { pub struct MeshRoute {
     #[serde(default)] pub remark: String,
     pub src: Vec<String>, pub dst: Vec<String>, pub via: Vec<String>,
 } }
+// Fields added after versions were first stored are omitted when empty so a
+// stored canonical document still reproduces itself byte for byte.
 object! { #[derive(Default)] pub struct RouteMatch {
-    #[serde(default)] pub domain: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub domain: Vec<String>,
     #[serde(default)] pub domain_suffix: Vec<String>,
     #[serde(default, rename = "ipCIDR")] pub ip_cidr: Vec<String>,
     #[serde(default)] pub rule_sets: Vec<String>,
@@ -185,7 +187,7 @@ fn day() -> PositiveDuration {
     "24h".parse().expect("constant duration")
 }
 tagged! { pub enum RuleSet {
-    Inline { #[serde(default, rename = "ipCIDR")] ip_cidr: Vec<String>, #[serde(default, rename = "domainSuffix")] domain_suffix: Vec<String>, #[serde(default)] domain: Vec<String> },
+    Inline { #[serde(default, rename = "ipCIDR")] ip_cidr: Vec<String>, #[serde(default, rename = "domainSuffix")] domain_suffix: Vec<String>, #[serde(default, skip_serializing_if = "Vec::is_empty")] domain: Vec<String> },
     Remote { url: String, format: RuleSetFormat, #[serde(default = "day", rename = "updateInterval")] update_interval: PositiveDuration },
 } }
 

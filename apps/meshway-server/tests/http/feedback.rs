@@ -596,6 +596,46 @@ async fn enrollment_keys_have_bounded_pages_safe_summaries_and_current_permissio
         "permission_denied",
     )
     .await;
+    // Creation is idempotent per request ID: same input replays the metadata
+    // without the secret; different input is a request ID conflict, not a
+    // binding problem.
+    let replay_id = request();
+    let replay_expiry = (chrono::Utc::now().timestamp_millis() + 600_000) as u64;
+    let creation = |hostname: &str| CreateEnrollmentKeyRequest {
+        request_id: replay_id,
+        tags: vec!["tag:service".into()],
+        initial_settings: InitialNodeSettings {
+            hostname: Some(hostname.into()),
+            listeners: Default::default(),
+        },
+        expires_at_ms: replay_expiry,
+    };
+    let created: EnrollmentKeyResponse = value(
+        c.post(net(&s, n, "enrollment-keys"))
+            .bearer_auth(owner.token.expose())
+            .json(&creation("replayed")),
+    )
+    .await;
+    assert!(created.secret.is_some());
+    let replayed: EnrollmentKeyResponse = value(
+        c.post(net(&s, n, "enrollment-keys"))
+            .bearer_auth(owner.token.expose())
+            .json(&creation("replayed")),
+    )
+    .await;
+    assert_eq!(replayed.key.id, created.key.id);
+    assert!(replayed.secret.is_none());
+    error(
+        c.post(net(&s, n, "enrollment-keys"))
+            .bearer_auth(owner.token.expose())
+            .json(&creation("different"))
+            .send()
+            .await
+            .unwrap(),
+        StatusCode::CONFLICT,
+        "request_id_conflict",
+    )
+    .await;
     s.close().await;
 }
 

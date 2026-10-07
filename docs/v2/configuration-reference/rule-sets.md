@@ -30,7 +30,7 @@ Server 管理和更新的 IP／域名规则集。节点接收编译结果，不�
 | `type` | 所有 | `inline` 或 `remote` |
 | `ipCIDR` | inline | 网段列表，默认 `[]` |
 | `domainSuffix` | inline | DNS 标签后缀（名称及其子名称），默认 `[]` |
-| `domain` | inline | 精确 DNS 名称，默认 `[]`；三项不能都为空 |
+| `domain` | inline | 精确 DNS 名称，默认 `[]`、为空时规范输出省略该字段；三项不能都为空 |
 | `url` | remote | HTTPS 数据来源，不含明文认证信息 |
 | `format` | remote | 支持 `sing-box-source`、`mihomo-domain`、`mihomo-ipcidr` 的可转换子集，范围见下文 |
 | `updateInterval` | remote | 默认 `24h`，保存正 duration 原值；实际调度下界、预算与失败退避见下文 |

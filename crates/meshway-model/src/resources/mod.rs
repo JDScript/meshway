@@ -10,12 +10,12 @@ meshway_serde::object! {
 /// Canonical immutable rule-set content, shared with configuration compilation.
 /// `domain` entries match one exact DNS name; `domain_suffix` entries match the
 /// name and every child label. Artifacts stored before `domain` existed have
-/// none.
+/// none; omitting an empty list keeps their content digests unchanged.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuleSetData {
     pub ip_cidr: Vec<String>,
     pub domain_suffix: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub domain: Vec<String>,
 }
 }

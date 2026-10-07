@@ -145,9 +145,9 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ### 需要修正
 
-- **旧版本保存的配置在新版本里打不开**（自 `2a4bd0cc`）：`RouteMatch.domain` 和 inline `RuleSet.domain` 总会序列化，而 `restore_canonical_json` 要求库里的规范 JSON 与重新序列化的结果逐字相同。于是旧版本保存的、含出口规则或 inline 规则集的版本报 `IncompleteVersion`，凡是打开当前版本的接口都返回 503：`GET /networks`、`/networks/{id}`、`members`、`configuration`、`configuration/source`、`rule-sets`、`state`，以及 Node 的 `POST /agent-api/v1/instances`。日志里没有原因。用 8420 的库副本可以复现，新建的网络正常。已有数据应当能读：读取旧格式时补上缺省值再比较，或者提供迁移。8420 已回到 `1f4efbbd`，并恢复到换版本前的备份，等修复后再升级。
-- **新增 Problem code 没有同步 console**（`548ffc9d`）：`binding_conflict` 和六个 `receipt_*` 进了 `ProblemCode`，但 `apps/meshway-web-console/src/api/failure.ts` 的穷尽映射没有更新，main 上 console 的 typecheck 失败。console 已补上（`receipt_*` 只出现在 Node 的回执里）；以后加 code 请一起跑 console 的 `pnpm run check`。
-- **`createEnrollmentKey` 用 `binding_conflict` 表示请求 ID 冲突**：同一 `requestId`、内容不同，返回的是 `binding_conflict`，其他创建类操作返回 `request_id_conflict`。problems.md 说 `binding_conflict` 是 generation／绑定不匹配、"不冒充请求 ID 冲突"。建议改回 `request_id_conflict`；console 目前按"同一请求 ID 内容不同、没有执行"显示它。
+- ~~旧版本保存的配置在新版本里打不开~~：已修。`RouteMatch.domain`、inline `RuleSet.domain` 和 `RuleSetData.domain` 为空时不再序列化，旧版本的规范 JSON 和 artifact 摘要逐字不变，不需要迁移；`2a4bd0cc` 之后新建、含 `domain` 的版本照常。另外所有映射成 503 的服务端错误现在都记一条 error 日志（安全的类别标签，例如 `stored value could not be decoded: configuration_versions.configuration`），不再无声。8420 可以升级了。
+- ~~新增 Problem code 没有同步 console~~：`mise run check` 本来就包含 console 的 typecheck，`548ffc9d` 是 Node 合并时没有跑完整检查。规则不变：改 `ProblemCode`／`IssueCode` 的人补 console 的消息并跑 `mise run check` 再合（我这边 `invalid_domain` 就是这样处理的）。
+- ~~`createEnrollmentKey` 用 `binding_conflict` 表示请求 ID 冲突~~：已改为 `request_id_conflict`；同一 `requestId` 同内容仍返回同一 key 的元数据（`secretDelivery: unavailable`）。`binding_conflict` 只剩设备接入请求／兑换的绑定不匹配。
 
 ### 需要真实 Node 复核
 

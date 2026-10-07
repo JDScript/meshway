@@ -103,7 +103,7 @@ A→C via B
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `domain` | `string[]` | 精确 DNS 名称，只匹配该名称本身 |
+| `domain` | `string[]` | 精确 DNS 名称，只匹配该名称本身；为空时规范输出省略 |
 | `domainSuffix` | `string[]` | DNS 标签边界后缀，匹配该名称及其所有子名称 |
 | `ipCIDR` | `string[]` | 目的网段 |
 | `ruleSets` | `string[]` | [规则集](/v2/configuration-reference/rule-sets) key |

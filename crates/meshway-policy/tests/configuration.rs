@@ -726,6 +726,42 @@ fn persisted_snapshots_cannot_silently_reapply_defaults() {
     assert_eq!(restore_canonical_json(json.expose()).unwrap(), c);
     let incomplete = json.expose().replace(",\"bidirectional\":false", "");
     assert!(restore_canonical_json(&incomplete).is_err());
+    // Versions stored before `domain` existed name neither route-match nor
+    // inline rule-set exact names; they must still read back unchanged.
+    let mut dated = with_nodes();
+    dated.nodes.get_mut(&id(2)).unwrap().exit_enabled = true;
+    dated.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec!["*".into()],
+        dst: vec!["10.20.0.0/16".into()],
+        ip: vec!["*".into()],
+        bidirectional: false,
+    }];
+    dated.rule_sets.insert(
+        "office".into(),
+        RuleSet::Inline {
+            ip_cidr: vec!["10.20.0.0/16".into()],
+            domain_suffix: vec![],
+            domain: vec![],
+        },
+    );
+    dated.routing = serde_json::from_value(serde_json::json!({ "egress": { "rules": [
+        {"match":{"ruleSets":["office"]},"action":{"type":"exit","nodes":[format!("node:{}",id(2))],"via":[]}}
+    ]}}))
+    .unwrap();
+    let (dated, _) = normalize(dated, &context()).unwrap();
+    let stored = canonical_json(&dated).unwrap();
+    assert!(
+        !stored.expose().contains("\"domain\":[]"),
+        "{}",
+        stored.expose()
+    );
+    assert_eq!(restore_canonical_json(stored.expose()).unwrap(), dated);
+    let mut named = dated.clone();
+    named.routing.egress.rules[0].matcher.domain = vec!["login.example".into()];
+    let stored = canonical_json(&named).unwrap();
+    assert!(stored.expose().contains("\"domain\":[\"login.example\"]"));
+    assert_eq!(restore_canonical_json(stored.expose()).unwrap(), named);
     let (configuration, _) = normalize(
         parse_jsonc(&incomplete).unwrap(),
         &ValidationContext::default(),

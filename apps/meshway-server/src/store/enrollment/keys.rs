@@ -98,7 +98,7 @@ pub(crate) fn create_key(
     let previous:Option<(Vec<u8>,Vec<u8>)>=tx.query_row("SELECT id,creation_request_digest FROM enrollment_keys WHERE network_id=?1 AND created_by=?2 AND creation_request_id=?3",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),request.request_id.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((key, old)) = previous {
         if old != digest {
-            return Err(Error::BindingConflict);
+            return Err(Error::RequestConflict);
         }
         return Ok(EnrollmentKeyResponse {
             key: key_view(tx, network, id(key)?, sealer, now)?,

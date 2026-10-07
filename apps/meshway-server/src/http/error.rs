@@ -358,7 +358,12 @@ impl HttpError {
             Error::DependencyUnavailable
             | Error::Unavailable(_)
             | Error::Storage(_)
-            | Error::Internal(_) => Self::unavailable(Some(id)),
+            | Error::Internal(_) => {
+                // The response says only "unavailable"; the cause is a safe
+                // category label and belongs in the operator's log.
+                tracing::error!(error = %error, "Request failed on the Server side");
+                Self::unavailable(Some(id))
+            }
         }
     }
 
