@@ -190,7 +190,7 @@ impl Owner {
             limits.max_batch_frames().min(frames),
         )
         .map_err(|_| Error::Limits)?;
-        let (sender, receiver) = Session::datagram(
+        let (mut sender, receiver) = Session::datagram(
             scope::Datagram {
                 inner: endpoint,
                 scope: shared.physical()?,
@@ -198,6 +198,13 @@ impl Owner {
             limits,
         )
         .into_split();
+        sender
+            .reserve_control(meshway_transport::BudgetAvailable {
+                frames: 2,
+                bytes: 2 * adjacency::MAX_MESSAGE,
+                operations: 2,
+            })
+            .map_err(|_| Error::Limits)?;
         Ok(Self {
             shared,
             id,
@@ -384,9 +391,7 @@ impl Owner {
                     Work::Command(None) => self.commands = None,
                     Work::Tick => self.tick().await?,
                     Work::Frame(Ok(frames), received_at) => {
-                        for frame in frames {
-                            self.receive(frame, received_at).await?;
-                        }
+                        self.receive_batch(frames, received_at).await?;
                     }
                     Work::Frame(
                         Err(
@@ -535,7 +540,11 @@ impl Owner {
                     .transcript
                     .health(&self.shared.identity, Kind::Ping, &nonce)?,
             )?;
-            let _ = send_control(&self.sender, &channel.scope, *remote, bytes).await;
+            if let Err(error) = send_control(&self.sender, &channel.scope, *remote, bytes).await {
+                tracing::debug!(?error, peer = %channel.fact.peer, channel = ?channel.fact.id,
+                    "UDP health probe send failed");
+                meshway_logging::profile::event("manager.udp.health", "send_failed");
+            }
         }
         Ok(())
     }
@@ -548,6 +557,36 @@ impl Owner {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("manager.udp.dispatch.poll");
         PROFILE.poll(self.receive_inner(frame, received_at)).await
+    }
+
+    async fn receive_batch(
+        &mut self,
+        frames: Vec<Frame>,
+        received_at: std::time::Instant,
+    ) -> Result<(), Error> {
+        // Demultiplex before the business event queue. Its saturation must not
+        // delay a health/handshake/STUN response already received by this socket.
+        // Signature work retains the independent per-peer/global control budget.
+        let (control, data): (Vec<_>, Vec<_>) = frames.into_iter().partition(|frame| {
+            frame.payload.starts_with(adjacency::MAGIC)
+                || frame.payload.starts_with(traversal::MAGIC)
+                || meshway_stun::classify(&frame.payload).is_some()
+        });
+        for frame in control {
+            self.receive(frame, received_at).await?;
+        }
+        let started = std::time::Instant::now();
+        for frame in data {
+            if started.elapsed() >= Duration::from_micros(200) {
+                meshway_logging::profile::event("manager.udp.drop", "dispatch_time_budget");
+                continue;
+            }
+            self.receive(frame, received_at).await?;
+        }
+        // One fair scheduling turn per bounded batch, rather than one per
+        // rejected business packet while control waits in the socket backlog.
+        tokio::task::yield_now().await;
+        Ok(())
     }
 
     async fn receive_inner(
@@ -603,29 +642,8 @@ impl Owner {
             });
             match result {
                 Ok(()) => {}
-                Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
-                    // UDP readiness can stay hot while try_send never yields.
-                    // Give the bounded consumer one scheduler turn before
-                    // discarding a burst. Never wait indefinitely here: this
-                    // same driver must continue health/STUN/control processing.
-                    meshway_logging::profile::event("manager.udp", "event_full_yield");
-                    tokio::task::yield_now().await;
-                    if !self.selected(channel) {
-                        meshway_logging::profile::event("manager.udp.drop", "stale_after_yield");
-                    } else {
-                        match self.shared.events.try_send(event) {
-                            Ok(()) => meshway_logging::profile::event(
-                                "manager.udp",
-                                "event_retry_accepted",
-                            ),
-                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                meshway_logging::profile::event("manager.udp.drop", "event_full")
-                            }
-                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                                meshway_logging::profile::event("manager.udp.drop", "event_closed")
-                            }
-                        }
-                    }
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    meshway_logging::profile::event("manager.udp.drop", "event_full");
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     meshway_logging::profile::event("manager.udp.drop", "event_closed")
@@ -1832,6 +1850,35 @@ mod tests {
         assert!(owner.channels[&source].probe.is_none());
         owner.health(source, Kind::Pong, &peer_pong).await.unwrap();
         assert_eq!(*owner.channels[&source].health.lock().unwrap(), renewed);
+        // Hold the consumer idle until its business event queue is saturated.
+        // An authenticated Pong at the tail of a hot batch must still renew the
+        // exact channel, rather than being dropped or waiting on that consumer.
+        for _ in 0..8 {
+            let nonce = adjacency::nonce().unwrap();
+            owner.channels.get_mut(&source).unwrap().probe = Some(nonce);
+            let body = transcript
+                .health(&fixture.identities[0], Kind::Pong, &nonce)
+                .unwrap();
+            let mut frames = (0..31)
+                .map(|_| Frame::new(vec![7; 1200], Some(source)))
+                .collect::<Vec<_>>();
+            frames.push(Frame::new(
+                adjacency::encode(Kind::Pong, &body).unwrap(),
+                Some(source),
+            ));
+            owner
+                .receive_batch(frames, std::time::Instant::now())
+                .await
+                .unwrap();
+            assert!(owner.channels[&source].probe.is_none());
+            assert_eq!(owner.channels[&source].fact.id, transcript.id());
+            owner.channels[&source].scope.check().unwrap();
+        }
+        assert_eq!(
+            shared.events.capacity(),
+            0,
+            "business queue really saturated"
+        );
         owner.shutdown().await.unwrap();
         fixture.close().await;
     }

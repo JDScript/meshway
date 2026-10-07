@@ -243,6 +243,50 @@ fn batch(payloads: &[&[u8]]) -> VecDeque<Frame> {
         .collect()
 }
 
+#[tokio::test]
+async fn saturated_business_batch_preserves_control_admission_budget() {
+    let (stream, _peer) = tokio::io::duplex(1);
+    let mut session = Session::stream(
+        stream,
+        "127.0.0.1:1234".parse().unwrap(),
+        Limits::new(1024, 4, 4096, 4, 4).unwrap(),
+    );
+    session
+        .sender()
+        .reserve_control(crate::BudgetAvailable {
+            frames: 1,
+            bytes: 1024,
+            operations: 1,
+        })
+        .unwrap();
+    let scope = crate::ChannelScope::new();
+    let mut data: VecDeque<_> = batch(&[b"first", b"second", b"third", b"suffix"])
+        .into_iter()
+        .map(|frame| crate::ScopedFrame {
+            frame,
+            scope: scope.clone(),
+            context: SendContext::default(),
+        })
+        .collect();
+    let admitted = session
+        .sender()
+        .submit_batch(&mut data, SendContext::default());
+    assert_eq!(admitted.accepted, 3);
+    assert_eq!(data.len(), 1);
+    assert_eq!(
+        session
+            .sender()
+            .submit_batch(&mut data, SendContext::default())
+            .accepted,
+        0
+    );
+    let control = session
+        .sender()
+        .try_send(&mut batch(&[b"health"]), SendContext::default());
+    assert_eq!(control.accepted, 1);
+    session.sender().shutdown().await.unwrap();
+}
+
 fn wire(payloads: &[&[u8]]) -> Vec<u8> {
     let mut wire = Vec::new();
     for payload in payloads {

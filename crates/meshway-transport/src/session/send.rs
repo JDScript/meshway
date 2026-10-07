@@ -391,6 +391,7 @@ pub struct Sender {
     idle: Arc<Semaphore>,
     queue: Option<mpsc::Sender<Operation>>,
     worker: Option<JoinHandle<()>>,
+    control_reserve: BudgetAvailable,
 }
 
 impl Sender {
@@ -407,6 +408,11 @@ impl Sender {
             idle,
             queue: Some(queue),
             worker: Some(worker),
+            control_reserve: BudgetAvailable {
+                frames: 0,
+                bytes: 0,
+                operations: 0,
+            },
         }
     }
 
@@ -420,6 +426,23 @@ impl Sender {
             bytes: self.byte_budget.available_permits(),
             operations: self.operation_budget.available_permits(),
         }
+    }
+
+    /// Keep a portion of the existing budget unavailable to business batches.
+    /// Independent single-frame control operations use the same I/O owner and
+    /// original lifetimes; reserving capacity does not enlarge any resource cap.
+    pub fn reserve_control(&mut self, reserve: BudgetAvailable) -> Result<(), AdmissionStop> {
+        if reserve.frames >= self.limits.max_frames() {
+            return Err(AdmissionStop::FrameBudget);
+        }
+        if reserve.bytes >= self.limits.max_bytes() {
+            return Err(AdmissionStop::ByteBudget);
+        }
+        if reserve.operations >= self.limits.max_operations() {
+            return Err(AdmissionStop::OperationBudget);
+        }
+        self.control_reserve = reserve;
+        Ok(())
     }
 
     /// Wait until one frame's allocation can be admitted. This does not retain
@@ -479,7 +502,16 @@ impl Sender {
         let mut count = 0;
         let mut bytes = 0;
         let mut stop = None;
-        let available = self.available_budget();
+        let mut available = self.available_budget();
+        available.frames = available.frames.saturating_sub(self.control_reserve.frames);
+        available.bytes = available.bytes.saturating_sub(self.control_reserve.bytes);
+        if available.operations <= self.control_reserve.operations {
+            return Admission {
+                accepted: 0,
+                stop: Some(AdmissionStop::OperationBudget),
+                completion: None,
+            };
+        }
         if let Some(first) = frames.front() {
             for scoped in frames.iter() {
                 stop = if !scoped.scope.same(&first.scope) {
