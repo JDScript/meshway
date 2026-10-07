@@ -256,6 +256,7 @@ mod tests {
         serde_json::from_str(
             r#"{
             "processId":42,"revision":1,"desiredUp":false,"phase":"down",
+            "eventStream":"disconnected","lastEventAt":null,
             "server":"http://127.0.0.1:8430/","observedAt":"2026-10-05T00:00:00Z",
             "enrollmentRequestId":null,"enrollmentUrl":null,"identity":null,
             "authenticated":false,"instance":null,"saved":null,"applied":null,

@@ -37,6 +37,7 @@ fn keys(n: u8) -> meshway_protocol::NodeKeyMetadata {
 fn status(n: u8) -> meshway_ipc::Status {
     serde_json::from_value(json!({
         "processId":42,"revision":1,"desiredUp":true,"phase":"running",
+        "eventStream":"disconnected","lastEventAt":null,
         "server":"http://127.0.0.1:8430/","observedAt":"1970-01-01T00:00:20Z",
         "enrollmentRequestId":null,"enrollmentUrl":null,
         "identity":{"controllerId":id::<meshway_model::KeyId>(99),"networkId":id::<meshway_model::NetworkId>(100),"nodeId":id::<NodeId>(n),"keys":keys(n)},
