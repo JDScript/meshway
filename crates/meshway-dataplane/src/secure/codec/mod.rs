@@ -5,7 +5,7 @@ use meshway_configuration::execution::CircuitAuthorization;
 use meshway_model::{Digest, EventId, KeyId, NetworkId, NodeId, Version};
 use meshway_policy::admission::Carrier;
 use meshway_transport_spec::TransportProtocol;
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x05";
 pub(super) const DATA_HEADER: usize = data::HEADER;
@@ -59,7 +59,7 @@ pub(super) struct Context {
 }
 
 pub(super) struct Frame {
-    pub context: Context,
+    pub context: Arc<Context>,
     pub kind: Kind,
     pub reply: bool,
     pub sequence: u64,
@@ -166,7 +166,7 @@ impl Frame {
 
     pub fn decode_owned(
         mut bytes: PacketBuffer,
-        retained: Option<&Context>,
+        retained: Option<&Arc<Context>>,
     ) -> Result<Self, Error> {
         if bytes.get(8) != Some(&3) {
             return Self::decode(&bytes, retained);
@@ -293,7 +293,7 @@ impl Frame {
         Ok(out)
     }
 
-    pub fn decode(bytes: &[u8], retained: Option<&Context>) -> Result<Self, Error> {
+    pub fn decode(bytes: &[u8], retained: Option<&Arc<Context>>) -> Result<Self, Error> {
         if bytes.get(8) == Some(&3) {
             return Self::decode_owned(bytes.into(), retained);
         }
@@ -344,14 +344,14 @@ impl Frame {
             let circuit = r.array()?;
             let permit = Digest::from_bytes(r.array()?);
             let keys = Digest::from_bytes(r.array()?);
-            Context {
+            Arc::new(Context {
                 network,
                 authorization,
                 path,
                 circuit,
                 permit,
                 keys,
-            }
+            })
         } else {
             let circuit: [u8; 32] = r.array()?;
             let context = retained

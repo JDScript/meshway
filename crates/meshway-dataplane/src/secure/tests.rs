@@ -8,7 +8,7 @@ use std::{
 // circuit lifecycle and cancellation links independently of opaque snapshots.
 pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
     Circuit {
-        context: Context {
+        context: Arc::new(Context {
             network: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
             authorization: CircuitAuthorization::Business(
                 "00000000-0000-4000-8000-000000000002".parse().unwrap(),
@@ -20,7 +20,7 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
             circuit: [5; 32],
             permit: [6; 32].into(),
             keys: [7; 32].into(),
-        },
+        }),
         state,
         expires_at: Instant::now() + Duration::from_secs(60),
         expires_at_ms: u64::MAX,

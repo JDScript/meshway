@@ -334,7 +334,7 @@ impl State {
 }
 
 struct Circuit {
-    context: Context,
+    context: Arc<Context>,
     state: State,
     expires_at: Instant,
     expires_at_ms: u64,
@@ -359,7 +359,7 @@ impl Drop for Circuit {
 }
 impl Circuit {
     fn new(
-        context: Context,
+        context: Arc<Context>,
         state: State,
         reading: &Reading<'_>,
         timeout: Duration,
@@ -719,14 +719,14 @@ impl SecureNode {
             return Err(Error::State);
         }
         let permit = authorization::digest(cfg, authorization)?;
-        let context = Context {
+        let context = Arc::new(Context {
             network: cfg.network_id,
             authorization,
             keys: crypto::key_digest(cfg, &path)?,
             path,
             circuit: circuit_id,
             permit,
-        };
+        });
         let mut noise = crypto::build(&self.identity, cfg, &context, true)?;
         let body = crypto::write_handshake(&mut noise, 96)?;
         snapshot.ensure_current().map_err(|_| Error::Authority)?;

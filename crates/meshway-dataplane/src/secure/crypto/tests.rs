@@ -209,7 +209,7 @@ impl ProofFixture {
             .into(),
         };
         let frame = Frame {
-            context: Context {
+            context: std::sync::Arc::new(Context {
                 network: NetworkId::new(node(10).into_uuid()).unwrap(),
                 authorization: meshway_configuration::execution::CircuitAuthorization::Business(
                     "00000000-0000-4000-8000-000000000011".parse().unwrap(),
@@ -218,7 +218,7 @@ impl ProofFixture {
                 circuit: [1; 32],
                 permit: Digest::from_bytes([2; 32]),
                 keys: Digest::from_bytes([3; 32]),
-            },
+            }),
             kind: if reply { Kind::Response } else { Kind::Init },
             reply,
             sequence: 0,
@@ -296,16 +296,17 @@ fn ordered_chain_rejects_missing_reordered_tampered_and_wrong_context_proofs() {
         f.frame.body[0] ^= 1;
         assert!(f.verify().is_err());
         f.sign();
-        f.frame.context.circuit[0] ^= 1;
+        std::sync::Arc::make_mut(&mut f.frame.context).circuit[0] ^= 1;
         assert!(f.verify().is_err());
         f.sign();
-        f.frame.context.permit = Digest::from_bytes([9; 32]);
+        std::sync::Arc::make_mut(&mut f.frame.context).permit = Digest::from_bytes([9; 32]);
         assert!(f.verify().is_err());
         f.sign();
-        f.frame.context.keys = Digest::from_bytes([19; 32]);
+        std::sync::Arc::make_mut(&mut f.frame.context).keys = Digest::from_bytes([19; 32]);
         assert!(f.verify().is_err());
         f.sign();
-        f.frame.context.network = NetworkId::new(node(12).into_uuid()).unwrap();
+        std::sync::Arc::make_mut(&mut f.frame.context).network =
+            NetworkId::new(node(12).into_uuid()).unwrap();
         assert!(f.verify().is_err());
         f.sign();
         f.frame.proofs[0].generation = Version::new(2).unwrap();
@@ -326,7 +327,9 @@ fn ordered_chain_rejects_missing_reordered_tampered_and_wrong_context_proofs() {
             f.frame.exchange.as_mut().unwrap().public[1][0] ^= 1;
             f.sign();
         }
-        f.frame.context.path.swap(0, 1);
+        std::sync::Arc::make_mut(&mut f.frame.context)
+            .path
+            .swap(0, 1);
         assert!(f.verify().is_err());
     }
 }

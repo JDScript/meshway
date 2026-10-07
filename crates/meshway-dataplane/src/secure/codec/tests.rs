@@ -27,7 +27,7 @@ fn frame(kind: Kind) -> Frame {
     };
     let facts = (kind == Kind::Data).then(|| fixtures::udp(1, 2, 50000, 443).facts());
     Frame {
-        context,
+        context: Arc::new(context),
         kind,
         reply: matches!(kind, Kind::Response | Kind::ProbeReply),
         sequence: 0,
@@ -108,7 +108,7 @@ fn every_kind_rejects_truncation_trailing_bytes_unknown_versions_and_missing_ses
             assert!(Frame::decode(&bytes, None).is_err());
             assert_eq!(session_id(&bytes).unwrap(), Some(f.context.circuit));
             let mut wrong = f.context.clone();
-            wrong.circuit[0] ^= 1;
+            Arc::make_mut(&mut wrong).circuit[0] ^= 1;
             assert!(Frame::decode(&bytes, Some(&wrong)).is_err());
         }
     }
@@ -128,7 +128,8 @@ fn handshake_canonical_context_keys_and_lengths_are_bounded() {
     let mut bad = bytes;
     bad[42..58].copy_from_slice(f.context.path[1].as_uuid().as_bytes());
     assert!(Frame::decode(&bad, None).is_err());
-    f.context.path[1] = f.context.path[0];
+    let context = Arc::make_mut(&mut f.context);
+    context.path[1] = context.path[0];
     assert!(f.encode().is_err());
     let mut f = frame(Kind::Init);
     f.proofs.clear();
@@ -150,7 +151,7 @@ fn handshake_canonical_context_keys_and_lengths_are_bounded() {
     // Maximum configured listener names and all eight path nodes still fit the
     // unchanged bounded handshake retry cache, including all contributions.
     let mut f = frame(Kind::Response);
-    f.context.path = (1..=8)
+    Arc::make_mut(&mut f.context).path = (1..=8)
         .map(|n| NodeId::new(uuid::Uuid::from_u128(n)).unwrap())
         .collect();
     f.exchange.as_mut().unwrap().public = vec![[7; 32]; 8];
@@ -215,7 +216,7 @@ fn fixed_data_layout_round_trips_and_rejects_reserved_flags_and_lengths() {
 #[test]
 fn diagnostic_metadata_cannot_alias_business_or_reply_direction() {
     let mut f = frame(Kind::ProbeRequest);
-    f.context.authorization = frame(Kind::Data).context.authorization;
+    Arc::make_mut(&mut f.context).authorization = frame(Kind::Data).context.authorization;
     assert!(f.encode().is_err());
     let mut f = frame(Kind::ProbeRequest);
     f.reply = true;
@@ -224,6 +225,6 @@ fn diagnostic_metadata_cannot_alias_business_or_reply_direction() {
     f.probe = None;
     assert!(f.encode().is_err());
     let mut f = frame(Kind::Data);
-    f.context.authorization = frame(Kind::ProbeRequest).context.authorization;
+    Arc::make_mut(&mut f.context).authorization = frame(Kind::ProbeRequest).context.authorization;
     assert!(f.encode().is_err());
 }

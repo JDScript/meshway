@@ -31,7 +31,7 @@ impl Fixture {
         };
         let mut sessions: Vec<_> = (0..n).map(|_| Session::new().unwrap()).collect();
         let mut init = Frame {
-            context: Context {
+            context: Arc::new(Context {
                 network: NetworkId::new(node(20).into_uuid()).unwrap(),
                 authorization: CircuitAuthorization::Business(
                     RequestId::new(node(21).into_uuid()).unwrap(),
@@ -40,7 +40,7 @@ impl Fixture {
                 circuit: [1; 32],
                 permit: [2; 32].into(),
                 keys: [3; 32].into(),
-            },
+            }),
             kind: Kind::Init,
             reply: false,
             sequence: 0,
@@ -140,7 +140,7 @@ fn prekeyed_hmac_matches_fixed_data_and_probe_transcripts() {
             frame.sequence = 1 << 32;
             frame.body = vec![0xa5; if probe { 48 } else { 1296 }].into();
             if probe {
-                frame.context.authorization = CircuitAuthorization::Diagnostic(
+                Arc::make_mut(&mut frame.context).authorization = CircuitAuthorization::Diagnostic(
                     meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
                 );
                 frame.kind = if reply {
@@ -230,7 +230,7 @@ fn packet_tampering_wrong_verifier_and_actual_carrier_are_rejected() {
             }
             4 => frame.auth.tag = None,
             5 => frame.auth.tag.as_mut().unwrap()[0] ^= 1,
-            _ => frame.context.circuit[0] ^= 1,
+            _ => Arc::make_mut(&mut frame.context).circuit[0] ^= 1,
         }
         assert!(
             f.sessions[1]
@@ -249,11 +249,14 @@ fn session_kdf_binds_full_context_and_both_handshake_messages() {
         let mut frame = f.frame(false);
         f.sessions[0].append(&mut frame, carrier(0)).unwrap();
         match tamper {
-            0 => f.response.context.permit = [13; 32].into(),
-            1 => f.response.context.keys = [14; 32].into(),
-            2 => f.response.context.network = NetworkId::new(node(22).into_uuid()).unwrap(),
+            0 => Arc::make_mut(&mut f.response.context).permit = [13; 32].into(),
+            1 => Arc::make_mut(&mut f.response.context).keys = [14; 32].into(),
+            2 => {
+                Arc::make_mut(&mut f.response.context).network =
+                    NetworkId::new(node(22).into_uuid()).unwrap()
+            }
             3 => {
-                f.response.context.authorization =
+                Arc::make_mut(&mut f.response.context).authorization =
                     CircuitAuthorization::Business(RequestId::new(node(23).into_uuid()).unwrap())
             }
             4 => f.response.body[0] ^= 1,
@@ -304,7 +307,7 @@ fn low_order_and_substituted_ephemeral_contributions_never_establish_keys() {
 #[test]
 fn diagnostic_mac_binds_measurement_deadline_kind_and_ciphertext() {
     let mut f = Fixture::pending(3);
-    f.response.context.authorization = CircuitAuthorization::Diagnostic(
+    Arc::make_mut(&mut f.response.context).authorization = CircuitAuthorization::Diagnostic(
         meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
     );
     f.establish();
