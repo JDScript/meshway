@@ -10,10 +10,10 @@
 | L1 | 正式协议 provider 的原生 socket I/O，对照公共 datagram Session；代理协议保留自身 TLS／WS | 已实现；[L1 承载对照](#l1-承载对照)，`perf:transport` |
 | L2 | 两个 Linux namespace 中的真实 TUN、Tokio、正式 UDP provider 与 Session，原样转发明文 IP 包 | 已实现；`perf:dataplane` 的 `plain` |
 | L3 | L2 I/O 加正式 SecureNode、真实认证／加密、路径证明与重放处理 | 已实现；[L3 实现与实测](#l3-实现与实测)，`perf:dataplane` 的 `secure` |
-| L4 | L3 加 connectivity Manager 的真实邻接获取、承载调度与生命周期 | 定义；`manager` 待实现／由其他工作包提供 |
+| L4 | L3 加 connectivity Manager 的真实邻接获取、承载调度与生命周期 | `perf:dataplane` 的 `manager`；与 L3 共用流水线驱动 |
 | L5 | 完整 meshwayd、Control／Policy、真实执行资格、Manager、SecureNode、TUN 与系统业务应用 | [常驻三节点 lab](/v2/node/docker-lab)；验收状态见[验收范围](/v2/node/validation) |
 
-L2 的 `raw` 是同一隔离网络中直接运行 iperf3 的内核参照，不经过 Meshway 代码；它不是 L0。L2 `plain` 不启用认证、加密、策略或控制面，也不代表 Meshway 业务数据面的吞吐。L4 的 `manager` 阶段仅为工具扩展接口，当前请求该阶段会在创建资源前失败。
+L2 的 `raw` 是同一隔离网络中直接运行 iperf3 的内核参照，不经过 Meshway 代码；它不是 L0。L2 `plain` 不启用认证、加密、策略或控制面，也不代表 Meshway 业务数据面的吞吐。
 
 同一 L2/L3 harness 另含 `wg-direct`／`wg-relay` [内核 WireGuard 参照](#内核-wireguard-参照)，用于同环境、配额与应用口径的实现差值；这不是额外的 Meshway 功能层。
 
@@ -45,6 +45,21 @@ Apple M3 Pro、macOS、Rust 1.98.0，profile 关闭，每格为三次独立进�
 | 5 | 52 | 8,415 | 17,302 | 23,778 | 25.1 → 12.0 → 8.5 | 252 → 40 |
 
 `36ca2117` 之前的 profile 采样中，`control.guard`（执行资格检查）是最大的 self CPU 项，每个单向包在 2／3／5 节点分别触发 87／142／252 次，与包长无关；`90bc1aec` 后每个公开 send／receive 保留入口、提交、产出与 postcheck 共 5 次真实检查；MAC verify／append 随路径节点数增长；`frame.base()` 重复编码的独立成本约 1 µs/包。线上帧字节与[字节账本](/v2/discussions/packet#用一条公式覆盖路径的每一段)公式逐段一致。
+
+### L0 v5 流水线内联对照
+
+`20261007T011142Z-68ec103e` 完成 `perf:circuit` 默认 36 格矩阵，全部成功、源码 digest 前后一致。对照 `20261007T000738Z-f0d352b7` 的 v5 单段实现；相同 macOS／Apple M3 Pro、每格三次独立进程重复、profile 关闭。L0 使用同一流水线的 inline 路径，不创建 worker。CPU 为完整 harness 的线程 CPU／实交付 IP 包；Mbps 按 IP 字节计算，区别于下文 iperf 应用 goodput。
+
+| 节点 | IP 字节 | pps 前 → 后 | IP Mbps 前 → 后 | CPU µs／包前 → 后 | guard／包前 → 后 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 1280 | 53,343 → 57,190 | 546.24 → 585.63 | 18.598 → 17.479 | 16 → 15 |
+| 3 | 1280 | 36,643 → 37,987 | 375.23 → 388.99 | 27.248 → 26.308 | 23 → 21 |
+| 5 | 1280 | 22,537 → 23,402 | 230.78 → 239.64 | 44.317 → 42.698 | 37 → 33 |
+| 2 | 52 | 140,193 → 143,431 | 58.32 → 59.67 | 7.129 → 6.972 | 16 → 15 |
+| 3 | 52 | 91,447 → 92,414 | 38.04 → 38.44 | 10.917 → 10.784 | 23 → 21 |
+| 5 | 52 | 55,210 → 55,639 | 22.97 → 23.15 | 18.077 → 17.939 | 37 → 33 |
+
+guard 为开启采样时的真实调用计数，表中四舍五入，包含极少的维护检查。L0 没有 carrier／TUN 适配器，`carrier.*` 不适用。新 binary SHA-256 为 `50e8d452102f7a0db23239bda7f108ff996da0640f4accdce45ce333507c392d`；完整报告位于工作树 `.meshway/perf/circuit/20261007T011142Z-68ec103e/`。
 
 ## L1 承载对照
 
@@ -134,7 +149,8 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 | `results[].wireguard` | 各接口的内核类型／MTU、AllowedIPs、端点、路由、握手时间和双向传输字节；不保存密钥 |
 | `cpuByRole` | 每个 A／R／B 角色的同区间 cgroup CPU 秒与百分比；历史报告缺失时表示未测，不从总量分摊 |
 | `allocations`、`copiedBytes`、`peakMemoryBytes` | 当前未测，明确为 null |
-| `capabilitiesInitial`、`capabilitiesFinal` | plain 每节点实际 TUN／UDP 能力，以及成功 GSO／GRO／mmsg 调用次数 |
+| `capabilitiesInitial`、`capabilitiesFinal` | plain／secure 的实际 UDP 能力与成功 GSO／GRO／mmsg 次数；Manager 尚未导出 socket 计数，明确为 null；`tunBatch` 另记录 secure／manager 的 TUN vnet_hdr 实际模式 |
+| `workers` | secure／manager 每节点实际配置的 crypto worker 数；0 为 inline，独立于 owner runtime |
 | `syscallsPerPacket` | 当前为 null；`/proc` 进程 I/O 计数不能作为包含 UDP sendmsg／recvmmsg 的完整 syscall 计数 |
 
 吞吐采用 iperf3 排除 warmup 的接收区间。CPU 覆盖完整客户端区间，包括 warmup 和采集开销，包含节点、iperf3 与容器内辅助命令；不是仅 Node 的 CPU。固定 CPU quota 不等于绑核或独占宿主，结果只代表记录的环境。失败样本与原始日志保留，指标不填零，脚本返回失败。
@@ -178,7 +194,7 @@ Batch 的 TCP 吞吐增加 **71.2%**，CPU 增加 31.81 个百分点；UDP pps �
 
 ## 内核 WireGuard 参照
 
-`perf:dataplane` 在同一次运行内测量 raw／plain／wg-direct／wg-relay／secure-direct／secure-relay，复用锁定 Ubuntu 工具镜像、内部 bridge、每容器 CPU／内存配额、`--mtu`、TCP 单流、UDP payload／输入速率和 iperf3 测量区间。WireGuard 只使用内核实现与锁定的 `wireguard-tools`，不存在 userspace 替代路径；内核不支持时样本失败。
+`perf:dataplane` 在同一次运行内测量 raw／plain／wg-direct／wg-relay／secure-direct／secure-relay／manager-direct／manager-relay，复用锁定 Ubuntu 工具镜像、内部 bridge、每容器 CPU／内存配额、`--mtu`、TCP 单流、UDP payload／输入速率和 iperf3 测量区间。WireGuard 只使用内核实现与锁定的 `wireguard-tools`，不存在 userspace 替代路径；内核不支持时样本失败。
 
 | 模式 | 拓扑与处理 |
 | --- | --- |
@@ -190,10 +206,10 @@ Batch 的 TCP 吞吐增加 **71.2%**，CPU 增加 31.81 个百分点；UDP pps �
 ### 差值的适用范围
 
 - `summary.md` 以同次运行的 secure-direct−wg-direct、secure-relay−wg-relay 中位数相减，分别给出 TCP／UDP Mbps、UDP pps、丢包百分点与 cgroup CPU 百分点；缺失或失败的参照不补零。开启 profiling 的 secure 差值仍单独标注，正式结论取关闭插桩样本。
-- WireGuard 是内核实现，可用多核 softirq／kworker 和内核 offload；Meshway 每节点为 current-thread userspace runtime，经 TUN 与逐包 socket syscall。相同容器配额不是相同内核执行预算或独占 CPU。
+- WireGuard 是内核实现，可用多核 softirq／kworker 和内核 offload；Meshway 使用 userspace owner／crypto worker，经 TUN 与正式批量 socket I/O。下方历史数据保留当时单线程、逐帧 I/O 的实现边界。相同容器配额不是相同内核执行预算或独占 CPU。
 - CPU 仍为样本容器 `cpu.stat usage_usec` 之和。WireGuard 加解密与网络处理可在 softirq／kworker 中运行，部分 CPU 可能记在其他 cgroup／宿主上下文，并不完整受容器 quota 约束；这里没有 VM 全局归因测量。**内核 CPU 是未完整测得，不是 0；CPU 差值仅是容器记账差值，不能直接称为密码算法成本差。**
 - WireGuard 本身无 Meshway 式中继语义。`wg-relay` 的 R 终止两条隧道，解密 IP 包、路由并重新加密；Meshway R 对端到端 ciphertext 验 MAC／准入并转发，不解密业务内容。中继吞吐之差同时含信任模型与处理步骤差异。
-- WireGuard 稳态 Data 的固定额外开销为 32B（16B 数据头＋16B AEAD tag），另有 padding、外层 UDP/IP。Meshway 的 **139B** 是 IPv4/TCP、两跳、7-byte listener key 的最后一段示例；同条件直连为 128B，协议、路径长度和 listener key 会改变数字，见[逐段字节账本](/v2/discussions/packet#用一条公式覆盖路径的每一段)。因此“32B vs 139B”不能解释为所有实际包的固定差值，也不能把吞吐差值全部归于头部大小。
+- WireGuard 稳态 Data 的固定额外开销为 32B（16B 数据头＋16B AEAD tag），另有 padding、外层 UDP/IP。Meshway 当前 v5 Data 每段固定新增 **86B**，见[会话数据帧](/v2/node/dataplane#会话密钥与紧凑数据帧)。下方历史 v4 实测采用当时的可变长前缀，其 139B 示例不能用于当前 v5，也不能把吞吐差值全部归于头部大小。
 
 ### WireGuard 同环境实测
 
@@ -293,7 +309,49 @@ CPU 为两容器合计，100% 表示一核；区间含 warmup。TCP pps 未测�
 
 iperf3 的 TCP 控制流和 UDP 负载分别使用精确 `5201` 端口 demand。A 在应用启动前分别发起 Noise circuit；逐验证者 MAC、flow 准入、重放处理和原完整路径回复归唯一 `SecureNode`。固定 Native UDP carrier 经 `set_carriers` 校验。输出复用正式 `carrier::send`／`carrier::deliver`：UDP 的原 output guard 保留到 Session 发送 poll 和完成，TUN 交付每次恢复 poll 都检查原 guard。
 
-每个节点一个 current-thread runtime，TUN／UDP 每轮最多处理 `--batch` 个立即就绪事件，随后 yield。L3 逐帧等待正式 carrier 完成，L2 plain 可一次提交一个明文 batch；L2→L3 差值因此包含 secure 操作、guard 与实际 I/O 调度成本。L3 驱动仍为逐包 syscall；L2 对照另区分 `per-packet` 与 `batch`。SecureNode 使用默认 limits；Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
+每个节点保留一个 current-thread owner runtime，crypto 使用正式 `pipeline::Pool`。工具的 `--workers 0` 使用 inline；非零值配置有界线程数。harness 默认 1 worker，对应默认两核配额中的 owner＋worker；单节点二进制默认可用核数减一、最少一。TUN／UDP 使用批量接口和实际 offload 能力；就绪输入经过 owner 准备、worker 计算、保序 owner 提交，再按 channel 批次发送／交付。SecureNode 使用默认 limits；L3 Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
+
+### L4 Manager 边界
+
+`--stage manager` 使用相同静态签发、SecureNode 和 worker pool，经 `Host::open`、`Host::install` 安装 capture 与执行 epoch，再取得正式受保护 SocketFactory 并调用无穿透的 `Manager::start`。工厂的 data scope 必须匹配已安装的执行，不能借 bootstrap scope 替代。不挂接 Server control relay，也不创建第二个 Control 签发者。公开 fixture 经真实 compiler 产生静态 Native UDP endpoint／完整路径，Manager 执行真实邻接认证、scope、选择和健康维护。业务输出使用 `Manager::send_batch`，控制输出使用独立逐帧入口，接收使用 Manager 的实际事件队列。
+
+`manager-direct` 为 A→B，`manager-relay` 为 A→R→B。各节点使用 Host 自己创建的 capture TUN，端点直接复用该设备；R 保有 capture，但不读取本机业务或向 TUN 交付明文。readiness 的 `captureTun` 记录实际设备，R 的业务 `tun` 字段为 null。L4 各 namespace 需要 `NET_ADMIN` 和 TUN device；L3 的 R 仍无 TUN。L4 增量包含正式 underlay 安装／保护和 Manager 生命周期，仍不包含生产 Control／Server 交互、daemon 自动需求、DNS 和安装协调状态机，这些属于 L5。
+
+### L3 流水线与 L4 实测
+
+报告 `20261007t013659z-d3a3ee2c`，源码 `2d0b7584`，测量期间源码未变；启动时 dirty 仅为文档。相同二进制、每容器 2 CPU／512 MiB、每节点 1 owner＋1 crypto worker、TUN vnet_hdr 开启。环境为 OrbStack `7.0.14-orbstack-00380-ga7e0a2dc9535`／aarch64、锁定 Ubuntu 24.04／iperf3 3.16、Rust 1.98.0／Zig 0.17.0、Linux musl release。命令：
+
+```sh
+mise run perf:dataplane -- --batch 32 --profile 0 128 --repeats 2 \
+  --seconds 6 --omit 1 --mtu 1280 --payload 1200 --udp-rate 2G \
+  --cpus 2 --memory 512m
+```
+
+下表为 profile 关闭的成功样本中位数，n 为实际成功次数。CPU 为全部角色 cgroup 之和，100%＝一核，含 warmup；TCP pps 未测。L3 前值来自指定 v5 基线 `20261007t001557z-44250076`，参数相同；L4 此前无实现实测，前值不填零。
+
+| 层／路径 | n TCP／UDP | TCP Mbps 前 → 后 | TCP CPU % 前 → 后 | UDP pps 前 → 后 | UDP Mbps 前 → 后 | UDP CPU % 前 → 后 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| L3 direct | 2／2 | 312.65 → 480.50 | 125.37 → 143.82 | 50,203 → 52,427 | 481.95 → 503.30 | 353.35 → 281.54 |
+| L3 relay | 2／2 | 237.56 → 467.80 | 138.66 → 204.00 | 52,031 → 54,220 | 499.50 → 520.52 | 449.66 → 367.40 |
+| L4 direct | 2／2 | 未测 → 439.23 | 未测 → 135.50 | 未测 → 49,183 | 未测 → 472.16 | 未测 → 279.01 |
+| L4 relay | 2／1 | 未测 → 353.00 | 未测 → 172.58 | 未测 → 41,257* | 未测 → 396.07* | 未测 → 350.50* |
+
+*L4 relay UDP 仅有一次 profile-off 成功样本，不构成两次重复的稳定吞吐结论。* L3 direct／relay TCP 分别较基线增加 53.7%／96.9%；UDP pps 增加 4.4%／4.2%，UDP CPU 降低 71.81／82.26 个百分点。此次 UDP 丢包分别为 L3 direct 74.38%、relay 73.99%、L4 direct 75.62%、L4 relay 单次 80.21%；2 Gbps 输入已超过接收能力，不能称为无损容量。
+
+| 路径 | guard／源包前 → 后 | `carrier.send.poll` 自 CPU µs／帧前 → 后 | `carrier.deliver.poll` 自 CPU µs／帧前 → 后 |
+| --- | ---: | ---: | ---: |
+| L3 direct | 43.42 → 11.64 | 5.095 → 0.899 | 5.781 → 2.746 |
+| L3 relay | 70.29 → 17.01 | 4.957 → 0.857 | 6.095 → 2.541 |
+| L4 direct | 未测 → 25.82 | 未测 → 1.230 | 未测 → 2.259 |
+| L4 relay | 未测 → 45.21 | 未测 → 1.438 | 未测 → 2.583 |
+
+这些值只取成功的 profile-on 样本。guard 使用全角色精确调用数／源包调用数；carrier 使用采样平均 poll 自 CPU × 精确 poll 次数，再除以发送 MAC 帧数或成功 TUN 交付数。同名静态 metric 一起汇总，包含准备与 warmup；这是有 observer effect 的估计，不是每次 syscall 的精确 CPU。L3 发送适配器达到约 1 µs／帧，TUN 交付仍约 2.5–2.7 µs／帧；后者的 1 µs 目标尚未达到。L4 还包含 Manager／underlay 的真实检查，不能把其 guard 总量归于 SecureNode 或当作 worker 读取 authority。
+
+本轮 **58/60** 样本成功，整体报告 `passed=false`。两个失败均为 manager-relay UDP：`b32-p128-udp-r0` 和 `b32-p0-udp-r1`，节点已 ready，iperf 启动后 A（后一例还包括 R）返回 `Unavailable`；吞吐／CPU 字段保持 null。当前证据不足以区分具体健康失效或选链变化原因，工具此时终止样本，尚未完成高负载失链恢复验收。原 stderr、iperf 输出和失败状态全部保留。
+
+此前完整运行 `20261007t011939z-3ae6552b` 为 **44/60** 成功：L4 的 16 次均因 Host 未安装执行 scope 而在启动时返回 `Underlay`；修正为正式 Host 安装后重新运行完整矩阵，没有替换旧报告。该轮 L3 direct／relay TCP 为 531.13／489.86 Mbps；本页统一采用后一次完整矩阵，避免跨轮挑选最好结果。
+
+最后一轮 binary SHA-256 为 `aa2177174ab317cb0c74e14ea812b8ff885f9d9b48823fb5ad105acd3d26786f`，source digest 为 `49f49790e7ffb126fbdcc0403293da77c80279dab391c40708127607b90c9529`。报告与固定二进制位于工作树 `.meshway/perf/dataplane/<run>/`。两轮均使用共享 measurement lock 串行执行；生产 runtime conformance 状态独立见[验收矩阵](/v2/node/validation)。
 
 Profiling 关闭用于正式吞吐；开启时采用 `MESHWAY_PROFILE=128`、`MESHWAY_PROFILE_DETAIL=1`，导出 `secure.send/receive`、`crypto.*`、`control.guard`、`codec.*` 和 TUN／UDP 边界。secure 驱动在停止并 join I/O 后输出最终累计快照。guard／包定义为所有节点精确 `control.guard` 的 `calls_started` 之和除以端点 `l3.packet.origin` 的同字段之和，包含准备、warmup、空闲与最终输出检查；不是每个成功交付包的固定算法次数。
 
@@ -331,4 +389,4 @@ secure 节点退出时报告 TUN 上无 demand 承载的内核维护包（IGMP�
 | Node binary SHA-256 | `3dcd7a9cf965677f…`（完整值见 `results.json`） |
 | Fixture binary SHA-256 | `a0bb6dfdfc2471e3…`（完整值见 `results.json`） |
 
-按本次唯一 label 查询，无残留测试容器或 network。L3 结果是单流、2 CPU 配额的隔离 VM 数据，不是硬件保证；L4（Manager）尚未实现。
+按本次唯一 label 查询，无残留测试容器或 network。以上历史 L3 结果是单流、2 CPU 配额的隔离 VM 数据，不是硬件保证；不包含随后增加的 worker／批量接线或 L4 Manager。
