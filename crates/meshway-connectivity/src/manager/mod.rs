@@ -19,6 +19,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod batch;
 mod continuity;
 mod datagram;
 mod resources;
@@ -222,6 +223,7 @@ struct Link {
     fact: LinkFact,
     sender: Arc<AsyncMutex<Sender>>,
     scope: Scope,
+    batch_scope: meshway_transport::ChannelScope,
 }
 
 /// The one selected-link owner also remembers its latest committed ID per peer.
@@ -1091,6 +1093,7 @@ fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
             fact: ready.fact,
             sender: ready.sender,
             scope: ready.scope,
+            batch_scope: meshway_transport::ChannelScope::new(),
         },
     );
     drop(links);
@@ -1193,18 +1196,23 @@ async fn connected(
             shared.event(&scope, Event::Changed).await?;
             loop {
                 scope.check()?;
-                let frame = receiver.recv().await.map_err(|_| Error::Unavailable)?;
+                let frames = receiver
+                    .recv_batch()
+                    .await
+                    .map_err(|_| Error::Unavailable)?;
                 let received_at = std::time::Instant::now();
-                shared
-                    .event(
-                        &scope,
-                        Event::Frame {
-                            link: Box::new(fact.clone()),
-                            frame,
-                            received_at,
-                        },
-                    )
-                    .await?;
+                for frame in frames {
+                    shared
+                        .event(
+                            &scope,
+                            Event::Frame {
+                                link: Box::new(fact.clone()),
+                                frame,
+                                received_at,
+                            },
+                        )
+                        .await?;
+                }
             }
         };
         let result = tokio::select! { biased;

@@ -1,5 +1,4 @@
 use super::{Command, Completion, Report, Request, Target, packets::Packets};
-use futures_util::FutureExt as _;
 use meshway_connectivity::{Event, Manager};
 use meshway_dataplane::{
     DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketPool, secure::SecureNode,
@@ -38,11 +37,18 @@ pub(super) async fn run(
     let (mut dns, dns_plans) = dns;
     let mut installed: Option<Installed> = None;
     let mut packets = Packets::default();
+    let workers = std::env::var("MESHWAY_DATAPLANE_WORKERS")
+        .ok()
+        .map(|value| value.parse::<usize>().map_err(|_| Problem::Worker))
+        .transpose()?
+        .unwrap_or_else(meshway_dataplane::secure::pipeline::Pool::default_workers);
+    let mut pool =
+        meshway_dataplane::secure::pipeline::Pool::new(workers).map_err(|_| Problem::Worker)?;
     let mut diagnostics = super::diagnostics::Diagnostics::default();
     // Covers the existing 128 queued packets, 32 sends and one 32-packet read
     // turn without allocating overflow buffers. The pool belongs to this owner.
-    let buffers = PacketPool::new(256, Packet::MAX_LEN, DEFAULT_HEADROOM, DEFAULT_TAILROOM)
-        .map_err(|_| Problem::Tun)?;
+    let buffers =
+        PacketPool::new(256, 1280, DEFAULT_HEADROOM, DEFAULT_TAILROOM).map_err(|_| Problem::Tun)?;
     let mut generation = meshway_model::Sequence::MIN;
     let mut pending_completion = None;
     let mut last_completion: Option<meshway_control::ApplicationTicket> = None;
@@ -471,7 +477,7 @@ pub(super) async fn run(
                     if let Some(state) = &installed {
                         packets.incoming(
                             *link,
-                            frame.payload,
+                            frame.payload.into(),
                             received_at,
                             &state.target,
                             &state.secure,
@@ -505,7 +511,7 @@ pub(super) async fn run(
                 _ = dns.failed(), if !dns_failed => {},
                 _ = async {
                     static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
-                    PROFILE.poll(packets.drive(&mut state.secure, manager, carriers.as_ref(), &host, &state.target, &gateway, &mut diagnostics)).await;
+                    PROFILE.poll(packets.drive(&mut state.secure, manager, carriers.as_ref(), &host, &state.target, &gateway, &mut diagnostics, &mut pool)).await;
                     diagnostics.drive(&mut state.secure, manager, carriers.as_ref(), &gateway);
                 } => {},
             }
@@ -533,23 +539,14 @@ async fn receive_packets(
     tun: &meshway_tun::Tun,
     buffers: &PacketPool,
 ) -> Result<Vec<Result<Packet, meshway_dataplane::PacketError>>, meshway_tun::Error> {
-    let acquire = || {
-        buffers
-            .acquire(tun.mtu())
-            .map_err(|_| meshway_tun::Error::Io(std::io::Error::other("packet pool exhausted")))
-    };
-    let mut buffer = acquire()?;
-    let first = tun.recv(buffer.payload_mut()).await?;
-    let mut packets = Vec::with_capacity(32);
-    buffer.truncate(first);
-    packets.push(Packet::parse(buffer));
-    for _ in 1..32 {
-        let mut buffer = acquire()?;
-        let Some(result) = tun.recv(buffer.payload_mut()).now_or_never() else {
-            break;
-        };
-        let size = result?;
-        buffer.truncate(size);
+    let mut batch = meshway_tun::PacketBatch::default();
+    tun.recv_batch(&mut batch).await?;
+    let mut packets = Vec::with_capacity(batch.packets().len());
+    for bytes in batch.take() {
+        let mut buffer = buffers
+            .acquire(bytes.len())
+            .map_err(|_| meshway_tun::Error::Io(std::io::Error::other("packet pool exhausted")))?;
+        buffer.copy_from_slice(&bytes);
         packets.push(Packet::parse(buffer));
     }
     Ok(packets)

@@ -27,28 +27,6 @@ const MAX_INTENTS: usize = 64;
 const RETENTION: Duration = Duration::from_secs(20);
 const MAX_SENDS: usize = 32;
 
-// Selection happens at queueing, not when a later poll gets around to the job.
-// Each owned future keeps the formal sender's independent original packet and
-// channel guards; dropping the group cancels each already-admitted operation.
-fn send_job(
-    manager: &Manager,
-    frame: secure::PendingFrame,
-    reason: &'static str,
-) -> impl std::future::Future<
-    Output = (
-        &'static str,
-        Result<meshway_connectivity::SendReceipt, meshway_connectivity::Error>,
-    ),
-> + Send
-+ 'static {
-    let send = manager.send_with_receipt(frame);
-    async move {
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("manager.send.poll");
-        (reason, PROFILE.poll(send).await)
-    }
-}
-
 struct Queued {
     packet: Packet,
     deadline: Instant,
@@ -57,7 +35,7 @@ struct Incoming {
     carrier: Carrier,
     link: meshway_connectivity::LinkFact,
     received_at: std::time::Instant,
-    bytes: Vec<u8>,
+    bytes: meshway_dataplane::PacketBuffer,
     deadline: Instant,
     guard: meshway_authority::ExecutionSnapshot,
 }
@@ -87,6 +65,7 @@ pub(super) struct Packets {
     traced_circuits: BTreeMap<[u8; 32], Instant>,
     pub dropped: u64,
     carrier_wait_logged: Option<Instant>,
+    scan_remaining: usize,
 }
 
 impl Packets {
@@ -102,6 +81,9 @@ impl Packets {
             return;
         };
         let now = Instant::now();
+        if self.scan_remaining != 0 {
+            return Some(now);
+        }
         let id = frame.circuit();
         if self
             .traced_circuits
@@ -239,7 +221,7 @@ impl Packets {
     pub fn incoming(
         &mut self,
         link: meshway_connectivity::LinkFact,
-        bytes: Vec<u8>,
+        bytes: meshway_dataplane::PacketBuffer,
         received_at: std::time::Instant,
         target: &Target,
         secure: &SecureNode,
@@ -316,6 +298,7 @@ impl Packets {
         target: &Target,
         gateway: &mpsc::Sender<Request>,
         diagnostics: &mut super::diagnostics::Diagnostics,
+        pool: &mut secure::pipeline::Pool,
     ) {
         let Some(identity) = &target.identity else {
             return;
@@ -340,8 +323,23 @@ impl Packets {
         let Some(carriers) = carriers else {
             return;
         };
+        // Continue a bounded scan on the next turn, including ready suffixes
+        // left after a full batch. Waiting packets are scanned only once per
+        // external event, rather than creating an unbounded busy loop.
+        if self.scan_remaining == 0 {
+            self.scan_remaining = self.local.len() + self.incoming.len();
+        }
+        let per_direction = if self.local.is_empty() || self.incoming.is_empty() {
+            32
+        } else {
+            16
+        };
+        let incoming_count = self.incoming.len().min(per_direction);
+        let local_count = self.local.len().min(per_direction);
         let mut outgoing = Vec::new();
-        for _ in 0..self.incoming.len() {
+        let mut ready = Vec::new();
+        let mut jobs = VecDeque::new();
+        for _ in 0..incoming_count {
             let Some(item) = self.incoming.pop_front() else {
                 break;
             };
@@ -385,7 +383,31 @@ impl Packets {
                     meshway_logging::profile::Metric::new("queue.manager_to_secure");
                 WAIT.elapsed(item.received_at.elapsed());
             }
-            match secure.receive(&item.carrier, item.bytes) {
+            let result = if item.bytes.get(8) == Some(&3) {
+                match secure.prepare_receive(&item.carrier, item.bytes) {
+                    Ok(job) => {
+                        jobs.push_back(secure::pipeline::Job::Receive(job));
+                        None
+                    }
+                    Err(error) => Some(Err(error)),
+                }
+            } else {
+                Some(secure.receive(&item.carrier, item.bytes))
+            };
+            ready.push((item.link, item.received_at, hint, result));
+        }
+        let mut opened = pool.run(&mut jobs).await.into_iter();
+        let mut deliveries = Vec::new();
+        let mut reply_demands = Vec::new();
+        for (link, received_at, hint, result) in ready {
+            let result = result.unwrap_or_else(|| {
+                match opened.next().expect("one result per receive job") {
+                    Ok(secure::pipeline::Output::Receive(opened)) => secure.commit_receive(opened),
+                    Ok(secure::pipeline::Output::Send(_)) => Err(secure::Error::State),
+                    Err(error) => Err(error),
+                }
+            });
+            match result {
                 Ok(Received::Forward(frame))
                 | Ok(Received::Established {
                     response: Some(frame),
@@ -396,14 +418,14 @@ impl Packets {
                     }) {
                         diagnostics.forward(manager, frame)
                     } else {
-                        outgoing.push(Box::pin(send_job(manager, frame, "cipher_send")));
+                        outgoing.push(frame);
                         Ok(())
                     };
                     if sent.is_err() {
                         self.drop_packet("cipher_send");
                     }
                     if outgoing.len() == MAX_SENDS {
-                        self.flush_sends(&mut outgoing).await;
+                        self.flush_sends(manager, &mut outgoing).await;
                     }
                 }
                 Ok(Received::Established { response: None, .. }) => {}
@@ -423,18 +445,17 @@ impl Packets {
                     challenge,
                 }) => {
                     tracing::debug!(?circuit, %measurement_id, publication = %snapshot.reference().execution_publication, "Authenticated diagnostic reply received");
-                    if let Ok(channel) = super::diagnostics::channel(&item.link) {
+                    if let Ok(channel) = super::diagnostics::channel(&link) {
                         diagnostics.owner.reply(
                             circuit,
                             measurement_id,
                             challenge,
                             channel,
-                            item.received_at,
+                            received_at,
                         );
                     }
                 }
                 Ok(Received::Packet(packet)) => {
-                    self.flush_sends(&mut outgoing).await;
                     if packet.hop() != meshway_dataplane::Hop::Deliver {
                         self.drop_packet("unsupported_exit");
                         continue;
@@ -443,28 +464,8 @@ impl Packets {
                         == meshway_dataplane::Direction::Reply
                         && packet.route().origin == cfg.node_id)
                         .then_some(packet.route().demand);
-                    if let Some(tun) = host.tun() {
-                        if meshway_dataplane::carrier::deliver(tun, packet)
-                            .await
-                            .is_err()
-                        {
-                            self.drop_packet("tun_delivery");
-                        } else if let Some(demand) = reply_demand
-                            && snapshot.ensure_current().is_ok()
-                            && let Ok(delivered_ms) = snapshot.now_ms()
-                            && let Some(intent) = self.intents.iter_mut().find(|intent| {
-                                intent.request.request_id == demand
-                                    && intent.expires_at_ms > delivered_ms
-                                    && intent.last_packet.elapsed() < Duration::from_secs(60)
-                            })
-                        {
-                            // Only authenticated, admitted replies actually written
-                            // to this origin's TUN sustain its existing renewal owner.
-                            // Hints, forwarding, failed output and expired/cancelled
-                            // owners cannot create or revive an intent.
-                            intent.last_packet = Instant::now();
-                        }
-                    }
+                    deliveries.push(packet);
+                    reply_demands.extend(reply_demand);
                 }
                 Err(error) => self.drop_admission(
                     "cipher_admission",
@@ -476,7 +477,32 @@ impl Packets {
                 ),
             }
         }
-        self.flush_sends(&mut outgoing).await;
+        self.flush_sends(manager, &mut outgoing).await;
+        if !deliveries.is_empty()
+            && let Some(tun) = host.tun()
+        {
+            let count = deliveries.len();
+            if meshway_dataplane::carrier::deliver_batch(tun, deliveries)
+                .await
+                .is_err()
+            {
+                for _ in 0..count {
+                    self.drop_packet("tun_delivery");
+                }
+            } else if snapshot.ensure_current().is_ok()
+                && let Ok(delivered_ms) = snapshot.now_ms()
+            {
+                for demand in reply_demands {
+                    if let Some(intent) = self.intents.iter_mut().find(|intent| {
+                        intent.request.request_id == demand
+                            && intent.expires_at_ms > delivered_ms
+                            && intent.last_packet.elapsed() < Duration::from_secs(60)
+                    }) {
+                        intent.last_packet = Instant::now();
+                    }
+                }
+            }
+        }
         self.attempts.retain_mut(|attempt| {
             secure
                 .circuit_info(attempt.circuit)
@@ -511,7 +537,9 @@ impl Packets {
                     .map_or(info.expires_at.into(), |at| at.min(info.expires_at).into());
             }
         }
-        for _ in 0..self.local.len() {
+        let mut sealing = VecDeque::new();
+        let mut circuits = Vec::new();
+        for _ in 0..local_count {
             let Some(item) = self.local.pop_front() else {
                 break;
             };
@@ -628,13 +656,10 @@ impl Packets {
                     self.local.push_back(item);
                     continue;
                 }
-                match secure.send(circuit.id, item.packet) {
-                    Ok(frame) => {
-                        self.trace_packet(&frame, &circuit);
-                        outgoing.push(Box::pin(send_job(manager, frame, "packet_send")));
-                        if outgoing.len() == MAX_SENDS {
-                            self.flush_sends(&mut outgoing).await;
-                        }
+                match secure.prepare_send_packet(circuit.id, item.packet) {
+                    Ok(job) => {
+                        sealing.push_back(secure::pipeline::Job::Send(job));
+                        circuits.push(circuit);
                     }
                     Err(error) => self.drop_admission("packet_admission", error, Some(demand)),
                 }
@@ -666,7 +691,20 @@ impl Packets {
                 self.local.push_back(item);
             }
         }
-        self.flush_sends(&mut outgoing).await;
+        for (result, circuit) in pool.run(&mut sealing).await.into_iter().zip(circuits) {
+            match result {
+                Ok(secure::pipeline::Output::Send(frame)) => {
+                    self.trace_packet(&frame, &circuit);
+                    outgoing.push(frame);
+                }
+                _ => self.drop_packet("packet_crypto"),
+            }
+        }
+        self.flush_sends(manager, &mut outgoing).await;
+        self.scan_remaining = self
+            .scan_remaining
+            .saturating_sub(incoming_count + local_count)
+            .min(self.local.len() + self.incoming.len());
         for intent in &mut self.intents {
             if let Some(pending) = &mut intent.pending {
                 match pending.try_recv() {
@@ -730,18 +768,21 @@ impl Packets {
         }
     }
 
-    async fn flush_sends<F>(&mut self, outgoing: &mut Vec<std::pin::Pin<Box<F>>>)
-    where
-        F: std::future::Future<
-                Output = (
-                    &'static str,
-                    Result<meshway_connectivity::SendReceipt, meshway_connectivity::Error>,
-                ),
-            >,
-    {
-        for (reason, result) in futures_util::future::join_all(outgoing.drain(..)).await {
-            if result.is_err() {
-                self.drop_packet(reason);
+    async fn flush_sends(&mut self, manager: &Manager, outgoing: &mut Vec<secure::PendingFrame>) {
+        let mut data = Vec::new();
+        for frame in outgoing.drain(..) {
+            if frame.is_data() {
+                data.push(frame);
+            } else if manager.send(frame).await.is_err() {
+                self.drop_packet("cipher_send");
+            }
+        }
+        if !data.is_empty() {
+            let count = data.len();
+            if manager.send_batch(data).await.is_err() {
+                for _ in 0..count {
+                    self.drop_packet("batch_send");
+                }
             }
         }
     }

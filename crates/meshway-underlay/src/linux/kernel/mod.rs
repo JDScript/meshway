@@ -552,7 +552,7 @@ impl Kernel {
         snapshot.ensure_current().map_err(|_| Error::Expired)?;
         self.journal.pending = Some(Pending::CreateTun);
         self.store.persist(&self.journal).await?;
-        let mut options = meshway_tun::Options::new(self.options.mtu)?;
+        let mut options = meshway_tun::Options::new(self.options.mtu)?.with_batch_io(true);
         if let Some(ip) = addresses.ipv4 {
             options = options.with_ipv4(ip, 32)?;
         }

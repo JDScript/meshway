@@ -355,7 +355,7 @@ impl Owner {
             enum Work {
                 Handoff,
                 Tick,
-                Frame(Result<Frame, ReceiveError>, std::time::Instant),
+                Frame(Result<Vec<Frame>, ReceiveError>, std::time::Instant),
                 Command(Option<super::traversal::Command>),
             }
             let work = lifetime.run(async {
@@ -366,7 +366,7 @@ impl Owner {
                     _ = updates.changed() => Ok(Work::Handoff),
                     _ = tick.tick() => Ok(Work::Tick),
                     command = async { match &mut self.commands { Some(commands) => commands.recv().await, None => std::future::pending().await } } => Ok(Work::Command(command)),
-                    frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv() => Ok(Work::Frame(frame, std::time::Instant::now())),
+                    frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv_batch() => Ok(Work::Frame(frame, std::time::Instant::now())),
                 }
             }).await;
             if matches!(
@@ -383,7 +383,11 @@ impl Owner {
                     Work::Command(Some(command)) => self.traversal_command(command)?,
                     Work::Command(None) => self.commands = None,
                     Work::Tick => self.tick().await?,
-                    Work::Frame(Ok(frame), received_at) => self.receive(frame, received_at).await?,
+                    Work::Frame(Ok(frames), received_at) => {
+                        for frame in frames {
+                            self.receive(frame, received_at).await?;
+                        }
+                    }
                     Work::Frame(
                         Err(
                             ReceiveError::Empty

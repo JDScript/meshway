@@ -235,6 +235,7 @@ impl Shared {
         }
         link.scope.cancellation.cancel();
         link.scope = scope.clone();
+        link.batch_scope = meshway_transport::ChannelScope::new();
         if let Some(socket) = self
             .sockets
             .lock()

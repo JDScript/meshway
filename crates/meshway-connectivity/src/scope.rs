@@ -100,6 +100,30 @@ pub(crate) struct Datagram {
     pub scope: std::sync::Arc<Physical>,
 }
 impl meshway_transport::raw::Datagram for Datagram {
+    fn poll_send_batch(
+        &self,
+        cx: &mut std::task::Context<'_>,
+        packets: &[meshway_transport::raw::DatagramSend<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        std::task::ready!(self.scope.poll(cx, false))?;
+        self.inner.poll_send_batch(cx, packets)
+    }
+
+    fn poll_recv_batch(
+        &self,
+        cx: &mut std::task::Context<'_>,
+        buffers: &mut [Vec<u8>],
+    ) -> Poll<std::io::Result<Vec<meshway_transport::raw::DatagramRead>>> {
+        std::task::ready!(self.scope.poll(cx, true))?;
+        let result = self.inner.poll_recv_batch(cx, buffers);
+        if matches!(result, Poll::Ready(Err(_))) && self.scope.check().is_err() {
+            return self.scope.poll(cx, true).map(|result| {
+                result.and_then(|_| Err(std::io::ErrorKind::PermissionDenied.into()))
+            });
+        }
+        result
+    }
+
     fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         self.scope
             .check()
