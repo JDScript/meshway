@@ -212,7 +212,15 @@ impl Io {
             #[cfg(target_os = "linux")]
             Self::Manager { manager, .. } => {
                 let mut data = Vec::new();
+                let current = manager.carriers()?;
                 for frame in frames {
+                    if current.get(&frame.next()) != Some(frame.carrier()) {
+                        // Already-prepared outputs retain their old carrier and
+                        // guard. Like the daemon, discard a superseded output;
+                        // only future owner admissions use the new selection.
+                        meshway_logging::profile::event("l4.output.drop", "selection_changed");
+                        continue;
+                    }
                     if frame.is_data() {
                         data.push(frame);
                     } else {

@@ -25,12 +25,19 @@ static UDP_RECV: Metric = Metric::new("l3.udp.recv");
 static TUN_WRITE: Metric = Metric::new("l3.tun.write");
 static PACKET: Metric = Metric::new("l3.packet.origin");
 static DELIVER: Metric = Metric::new("l3.packet.deliver");
+static OWNER: Metric = Metric::new("l3.owner.poll");
+
+enum Input {
+    Send([u8; 32], Packet),
+    Receive(meshway_dataplane::secure::Carrier, meshway_transport::Frame),
+}
 
 struct Driver<'a> {
+    local: meshway_model::NodeId,
     options: &'a NodeOptions,
     fixture: &'a PublicFixture,
     node: SecureNode,
-    pool: Pool,
+    pending: VecDeque<Input>,
     io_capabilities: serde_json::Value,
     tun: Option<Tun>,
     #[cfg(target_os = "linux")]
@@ -108,10 +115,11 @@ pub async fn run(
     .await?;
     node.set_carriers(io.carriers(&fixture, local)?)?;
     let mut driver = Driver {
+        local,
         options,
         fixture: &fixture,
         node,
-        pool: Pool::new(options.workers)?,
+        pending: VecDeque::new(),
         io_capabilities: io.capabilities(),
         tun,
         #[cfg(target_os = "linux")]
@@ -124,7 +132,7 @@ pub async fn run(
     };
     let result = tokio::select! { biased;
         _ = stop.cancelled() => Ok(()),
-        result = driver.run(&mut io) => result,
+        result = OWNER.poll(driver.run(&mut io)) => result,
     };
     stop.cancel();
     let capabilities = io.shutdown().await?;
@@ -140,12 +148,7 @@ pub async fn run(
     // Keep both the issuer and SecureNode alive through every final I/O fence.
     drop(driver);
     drop(authority);
-    // report() is rate-limited by the shared logging owner. A quiet final
-    // interval yields one complete cumulative snapshot after all I/O has joined.
-    if profile::enabled() {
-        tokio::time::sleep(Duration::from_millis(5010)).await;
-    }
-    profile::report();
+    profile::report_final();
     result
 }
 
@@ -182,7 +185,7 @@ impl Driver<'_> {
                 "captureTun":self.capture_tun().map(Tun::name),
                 "meshAddress":self.tun().map(|_| self.options.role.mesh_address()),
                 "mtu":self.options.mtu, "batch":self.options.batch, "profile":profile::enabled(),
-                "workers":self.pool.workers(), "tunBatch":self.capture_tun().map(|tun| tun.capabilities().vnet_header),
+                "workers":self.options.workers, "tunBatch":self.capture_tun().map(|tun| tun.capabilities().vnet_header),
                 "capabilities":self.io_capabilities,
                 "publicationDigest":self.fixture.publication_digest, "circuits":self.established.len()})
             );
@@ -210,31 +213,25 @@ impl Driver<'_> {
         io: &mut io::Io,
         frames: Vec<(meshway_dataplane::secure::Carrier, meshway_transport::Frame)>,
     ) -> Result<(), Error> {
-        let mut jobs = VecDeque::new();
         let mut ready = Vec::new();
         for (incoming, frame) in frames {
             if frame.payload.get(8) == Some(&3) {
-                match self.node.prepare_receive(&incoming, frame.payload.into()) {
-                    Ok(job) => {
-                        jobs.push_back(Job::Receive(job));
-                        ready.push(None);
-                    }
-                    Err(error) => ready.push(Some(Err(error))),
-                }
+                self.pending.push_back(Input::Receive(incoming, frame));
             } else {
-                ready.push(Some(self.node.receive(&incoming, frame.payload)));
+                ready.push(self.node.receive(&incoming, frame.payload));
             }
         }
-        let mut opened = self.pool.run(&mut jobs).await.into_iter();
+        self.release(io, ready).await
+    }
+
+    async fn release(
+        &mut self,
+        io: &mut io::Io,
+        ready: Vec<Result<Received, SecureError>>,
+    ) -> Result<(), Error> {
         let mut outgoing = Vec::new();
         let mut deliveries = Vec::new();
         for result in ready {
-            let result =
-                result.unwrap_or_else(|| match opened.next().expect("one completion per job") {
-                    Ok(Output::Receive(opened)) => self.node.commit_receive(opened),
-                    Ok(Output::Send(_)) => Err(SecureError::State),
-                    Err(error) => Err(error),
-                });
             let received = match result {
                 Ok(received) => received,
                 Err(error) if packet_rejection(&error) => {
@@ -310,6 +307,7 @@ impl Driver<'_> {
     }
 
     async fn run(&mut self, io: &mut io::Io) -> Result<(), Error> {
+        let mut pool = Pool::new(self.options.workers)?;
         if matches!(self.options.role, NodeRole::A) {
             for demand in self.fixture.demands.keys() {
                 let pending = self.node.start(*demand, self.fixture.path.clone())?;
@@ -320,11 +318,67 @@ impl Driver<'_> {
         self.readiness()?;
         let mut report = tokio::time::interval(Duration::from_secs(5));
         let mut retry = tokio::time::interval(Duration::from_millis(100));
-        let buffers = PacketPool::new(64, self.options.mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
+        let buffers = PacketPool::new(128, self.options.mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM)?;
         let mut batch = meshway_tun::PacketBatch::default();
         loop {
+            // Match the daemon's scheduling view. Simultaneous authenticated
+            // initiators may converge after readiness; the startup carrier map
+            // must not pin future operations to the retired dial direction.
+            self.node
+                .set_carriers(io.carriers(self.fixture, self.local)?)?;
+            let quantum = std::time::Instant::now();
+            for _ in 0..self.pending.len().min(32) {
+                if !pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200) {
+                    break;
+                }
+                let input = self.pending.pop_front().expect("pending prefix");
+                let job = match input {
+                    Input::Send(circuit, packet) => {
+                        let _packet = PACKET.enter();
+                        self.node
+                            .prepare_send_packet(circuit, packet)
+                            .map(Job::Send)
+                    }
+                    Input::Receive(incoming, frame) => self
+                        .node
+                        .prepare_receive(&incoming, frame.payload.into())
+                        .map(Job::Receive),
+                };
+                match job {
+                    Ok(job) => {
+                        assert!(pool.submit(job).is_none());
+                        if pool.available().is_multiple_of(8) {
+                            pool.flush();
+                        }
+                    }
+                    Err(error) if packet_rejection(&error) => self.rejected += 1,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            pool.flush();
+            let mut credits = Vec::new();
+            let ready = pool
+                .take_ready()
+                .into_iter()
+                .map(|output| {
+                    let (output, credit) = output.into_parts();
+                    credits.push(credit);
+                    match output {
+                        Ok(Output::Send(frame)) => Ok(Received::Forward(frame)),
+                        Ok(Output::Receive(opened)) => self.node.commit_receive(opened),
+                        Err(error) => Err(error),
+                    }
+                })
+                .collect();
+            self.release(io, ready).await?;
+            drop(credits);
+            if !self.pending.is_empty() && pool.can_submit() {
+                tokio::task::yield_now().await;
+                continue;
+            }
             tokio::select! {
-                received = UDP_RECV.poll(io.recv()) => {
+                _ = pool.ready(), if pool.has_pending() => {}
+                received = UDP_RECV.poll(io.recv()), if self.pending.len() < 32 => {
                     self.received(io, received?).await?;
                 }
                 read = async {
@@ -332,31 +386,12 @@ impl Driver<'_> {
                         Some(tun) if self.ready => TUN_READ.poll(tun.recv_batch(&mut batch)).await,
                         _ => std::future::pending().await,
                     }
-                } => {
+                }, if self.pending.len() < 32 => {
                     read?;
-                    let mut jobs = VecDeque::new();
                     for bytes in batch.take() {
                         let mut packet = buffers.acquire(bytes.len())?;
                         packet.copy_from_slice(&bytes);
-                        if let Some(input) = self.outbound(packet)? { jobs.push_back(input); }
-                    }
-                    while !jobs.is_empty() {
-                        let count = jobs.len().min(self.options.batch).min(32);
-                        let mut group = jobs.drain(..count).collect();
-                        let mut frames = Vec::new();
-                        let outputs = self.pool.run_prepared(&mut group, |(circuit, packet)| {
-                            let _packet = PACKET.enter();
-                            self.node.prepare_send_packet(circuit, packet).map(Job::Send)
-                        }).await;
-                        for output in outputs {
-                            match output {
-                                Ok(Output::Send(frame)) => frames.push(frame),
-                                Ok(Output::Receive(_)) => return Err("unexpected worker output".into()),
-                                Err(error) if packet_rejection(&error) => self.rejected += 1,
-                                Err(error) => return Err(error.into()),
-                            }
-                        }
-                        if !frames.is_empty() { UDP_SEND.poll(io.send(frames, self.fixture)).await?; }
+                        if let Some((circuit, packet)) = self.outbound(packet)? { self.pending.push_back(Input::Send(circuit, packet)); }
                     }
                 }
                 _ = retry.tick(), if !self.ready && matches!(self.options.role, NodeRole::A) => {
