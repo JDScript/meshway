@@ -705,6 +705,8 @@ impl Packets {
         }
         self.flush_sends(manager, &mut outgoing).await;
         pool.flush();
+        self.complete_crypto(secure, manager, host, snapshot, pool)
+            .await;
         self.scan_remaining = self
             .scan_remaining
             .saturating_sub(incoming_done + local_done)

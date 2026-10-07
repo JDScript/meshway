@@ -12,8 +12,18 @@ async fn parallel_crypto_preserves_order_and_commits_replay_only_after_verificat
     for workers in [0, 3] {
         let mut pool = Pool::new(workers).unwrap();
         let mut jobs = VecDeque::new();
-        for _ in 0..32 {
-            let packet = datagram(&fixture.mesh, false, false);
+        for index in 0usize..32 {
+            let mut packet = datagram(&fixture.mesh, false, false);
+            if index.is_multiple_of(2) {
+                let traffic = packet.facts().traffic;
+                packet = super::packet::udp(
+                    traffic.source,
+                    traffic.destination,
+                    50000,
+                    42424,
+                    &[7; 512],
+                );
+            }
             jobs.push_back(Job::Send(
                 fixture
                     .a
@@ -24,6 +34,11 @@ async fn parallel_crypto_preserves_order_and_commits_replay_only_after_verificat
         let mut previous = None;
         while let Some(job) = jobs.pop_front() {
             assert!(pool.submit(job).is_none());
+        }
+        if workers != 0 {
+            // Small jobs have completed inline, but cannot pass the first large
+            // job, which has not even been dispatched to a worker yet.
+            assert!(pool.take_ready().is_empty());
         }
         pool.flush();
         let mut results = Vec::new();

@@ -20,6 +20,16 @@ pub enum Output {
 }
 
 impl Job {
+    fn inline(&self) -> bool {
+        // 52-byte TCP ACKs (and small IPv6/options variants) cost less than a
+        // cross-thread handoff. Compare plaintext size on both endpoints;
+        // receive bodies still contain the 16-byte Noise tag. This is only a
+        // scheduling hint: authentication/admission and lane ordering are unchanged.
+        match self {
+            Self::Send(job) => job.frame.body.len() <= 128,
+            Self::Receive(job) => job.frame.body.len() <= 128 + 16,
+        }
+    }
     fn epoch(&self) -> Option<Arc<()>> {
         match self {
             Self::Send(job) => job.guard.section.clone(),
@@ -185,11 +195,17 @@ impl Pool {
                                     if let Some(trace) = &mut credit.1 {
                                         trace.ready();
                                     }
-                                    complete.lock().expect("completion slots").push_back((
+                                    let mut completed = complete.lock().expect("completion slots");
+                                    let wake = completed.is_empty();
+                                    completed.push_back((
                                         circuit,
                                         sequence,
                                         Ready { result, credit },
                                     ));
+                                    drop(completed);
+                                    if wake {
+                                        dispatch_ready.notify_one();
+                                    }
                                 }
                                 groups.lock().expect("descriptor pool").push(jobs);
                                 dispatch_ready.notify_one();
@@ -240,7 +256,7 @@ impl Pool {
         lane.completed.push_back(None);
         self.outstanding.fetch_add(1, Ordering::AcqRel);
         let mut credit = Credit(self.outstanding.clone(), super::timing::Trace::new());
-        if self.senders.is_empty() {
+        if self.senders.is_empty() || job.inline() {
             let result = job.run();
             if let Some(trace) = &mut credit.1 {
                 trace.ready();

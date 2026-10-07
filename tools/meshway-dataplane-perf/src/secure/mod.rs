@@ -328,6 +328,7 @@ impl Driver<'_> {
             // must not pin future operations to the retired dial direction.
             self.node
                 .set_carriers(io.carriers(self.fixture, self.local)?)?;
+            self.complete_crypto(io, &mut pool).await?;
             let quantum = std::time::Instant::now();
             for _ in 0..self.pending.len().min(32) {
                 if !pool.can_submit() || quantum.elapsed() >= Duration::from_micros(200) {
@@ -362,22 +363,7 @@ impl Driver<'_> {
                 }
             }
             pool.flush();
-            let mut credits = Vec::new();
-            let ready = pool
-                .take_ready()
-                .into_iter()
-                .map(|output| {
-                    let (output, credit) = output.into_parts();
-                    credits.push(credit);
-                    match output {
-                        Ok(Output::Send(frame)) => Ok(Received::Forward(frame)),
-                        Ok(Output::Receive(opened)) => self.node.commit_receive(opened),
-                        Err(error) => Err(error),
-                    }
-                })
-                .collect();
-            self.release(io, ready).await?;
-            drop(credits);
+            self.complete_crypto(io, &mut pool).await?;
             if !self.pending.is_empty() && pool.can_submit() {
                 tokio::task::yield_now().await;
                 continue;
@@ -411,5 +397,25 @@ impl Driver<'_> {
             }
             tokio::task::yield_now().await;
         }
+    }
+
+    async fn complete_crypto(&mut self, io: &mut io::Io, pool: &mut Pool) -> Result<(), Error> {
+        let mut credits = Vec::new();
+        let ready = pool
+            .take_ready()
+            .into_iter()
+            .map(|output| {
+                let (output, credit) = output.into_parts();
+                credits.push(credit);
+                match output {
+                    Ok(Output::Send(frame)) => Ok(Received::Forward(frame)),
+                    Ok(Output::Receive(opened)) => self.node.commit_receive(opened),
+                    Err(error) => Err(error),
+                }
+            })
+            .collect();
+        self.release(io, ready).await?;
+        drop(credits);
+        Ok(())
     }
 }
