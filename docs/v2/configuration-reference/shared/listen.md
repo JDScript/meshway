@@ -32,8 +32,8 @@
 | `listenPort` | `integer` | 必填 | 1–65535；端口冲突在执行时明确报告 |
 | `endpoints` | `Endpoint[]` | `[]` | 明确公告的外部 host／port，可与 bind 不同 |
 | `bindInterface` | `string` | `""` | 空值由平台选择，否则在当前受控网络环境中校验接口 |
-| `socket.receiveBuffer` | `integer` | `0` | 字节；0 使用系统值 |
-| `socket.sendBuffer` | `integer` | `0` | 字节；0 使用系统值，不保证内核接受请求大小 |
+| `socket.receiveBuffer` | `integer` | `0` | 字节；0 使用 provider 默认值，见[运行缓冲默认值](/v2/node/transport#udp-批量接口) |
+| `socket.sendBuffer` | `integer` | `0` | 字节；0 使用 provider 默认值，不保证内核接受请求大小 |
 
 非零 buffer 受平台内存预算及系统限制，不能通过配置无限放大。接口绑定不能绕过用途、namespace 和路由保护。
 

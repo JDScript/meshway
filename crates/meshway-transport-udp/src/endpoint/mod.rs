@@ -72,11 +72,21 @@ impl UdpTransport {
     }
 
     /// Opt into Linux GSO/GRO and mmsg, preserving the single-message API.
+    /// Unspecified Linux batch buffers request 7 MiB to absorb GSO bursts;
+    /// explicit sizes win, and the kernel may clamp the ordinary SO_*BUF request.
     pub fn adopt_batch(socket: UdpSocket, options: &SocketOptions) -> io::Result<Self> {
         let endpoint = Self::adopt(socket, options)?;
         #[cfg(target_os = "linux")]
         {
             let mut endpoint = endpoint;
+            const DEFAULT_BUFFER: usize = 7 * 1024 * 1024;
+            let reference = SockRef::from(&endpoint.socket);
+            if options.receive_buffer == 0 && reference.recv_buffer_size()? < DEFAULT_BUFFER {
+                reference.set_recv_buffer_size(DEFAULT_BUFFER)?;
+            }
+            if options.send_buffer == 0 && reference.send_buffer_size()? < DEFAULT_BUFFER {
+                reference.set_send_buffer_size(DEFAULT_BUFFER)?;
+            }
             endpoint.batch = Some(batch::State::new(&endpoint.socket)?);
             Ok(endpoint)
         }

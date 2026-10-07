@@ -13,6 +13,46 @@ use meshway_transport::{
 };
 use meshway_transport_spec::SocketOptions;
 use socket2::SockRef;
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn batch_buffers_use_kernel_clamped_defaults_and_preserve_explicit_sizes() {
+    for (receive_buffer, send_buffer) in [(0, 0), (16 * 1024, 32 * 1024)] {
+        let expected = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let expected = SockRef::from(&expected);
+        expected
+            .set_recv_buffer_size(if receive_buffer == 0 {
+                7 * 1024 * 1024
+            } else {
+                receive_buffer as usize
+            })
+            .unwrap();
+        expected
+            .set_send_buffer_size(if send_buffer == 0 {
+                7 * 1024 * 1024
+            } else {
+                send_buffer as usize
+            })
+            .unwrap();
+        let endpoint = UdpTransport::adopt_batch(
+            UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+            &SocketOptions {
+                receive_buffer,
+                send_buffer,
+            },
+        )
+        .unwrap();
+        let actual = SockRef::from(&endpoint.socket);
+        assert_eq!(
+            actual.recv_buffer_size().unwrap(),
+            expected.recv_buffer_size().unwrap()
+        );
+        assert_eq!(
+            actual.send_buffer_size().unwrap(),
+            expected.send_buffer_size().unwrap()
+        );
+    }
+}
 use tokio::net::UdpSocket;
 
 use super::UdpTransport;
