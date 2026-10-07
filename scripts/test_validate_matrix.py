@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -47,6 +48,7 @@ class MatrixTests(unittest.TestCase):
             with patch.object(matrix, "ROOT", root), patch.object(matrix, "load", return_value=dict(uptime="fixture uptime", loadAverage=[0, 0, 0])), \
                     patch.object(matrix, "docker_target", return_value=("target", "linux/amd64", 62)), \
                     patch.object(matrix, "prepare_images", return_value={}), patch.object(matrix, "invoke", side_effect=invoke), \
+                    patch.object(matrix.shutil, "disk_usage", return_value=SimpleNamespace(free=100 * 1024 ** 3)), \
                     patch.object(matrix, "execute_row", side_effect=execute), patch.object(matrix.subprocess, "check_output", return_value="revision"), patch("builtins.print"):
                 code = matrix.main(["--parallel", "4", "--short", "--run", "run"])
             report = json.loads((root / ".meshway/validation/matrix/run/matrix.json").read_text())

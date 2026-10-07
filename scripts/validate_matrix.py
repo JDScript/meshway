@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -170,6 +171,7 @@ def execute_row(name, directory, artifacts, images, args):
         result["remainingResources"] = remaining_resources(report, kind)
         if any(result["remainingResources"].values()):
             result["passed"] = False
+            result["error"] = "fixture resources remain: " + json.dumps(result["remainingResources"])
     except Exception as error:
         result["cleanupError"] = str(error)
         result["passed"] = False
@@ -213,6 +215,8 @@ def main(argv=None):
     write_json(directory / "matrix.json", report)
     print(f"Matrix run: {directory.name}\n{report['loadBeforeStart']['uptime']}", flush=True)
     try:
+        if shutil.disk_usage(ROOT).free < 50 * 1024 ** 3:
+            raise RuntimeError("Matrix builds need at least 50 GiB free")
         _, platform, _ = docker_target()
         report["platform"] = platform
         images = prepare_images(args, directory, platform)

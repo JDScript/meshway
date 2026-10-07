@@ -728,10 +728,7 @@ async fn inbound_stream_evidence(
         .into_iter()
         .filter(|(id, expiry)| *id == original && *expiry > initial_expiry)
         .collect();
-    let later_expiry = extended
-        .iter()
-        .map(|(_, expiry)| *expiry)
-        .max();
+    let later_expiry = extended.iter().map(|(_, expiry)| *expiry).max();
     if !cli.short && later_expiry.is_none() {
         return Err("original receive-only demand has no acknowledged extension".into());
     }

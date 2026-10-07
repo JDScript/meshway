@@ -5,8 +5,6 @@ Builds once on the host, then runs precompiled actors in isolated containers.
 """
 import argparse
 import concurrent.futures
-import datetime
-import fcntl
 import ipaddress
 import importlib.util
 import json
@@ -191,10 +189,6 @@ def main():
         parser.error("NAT runs require --traversal-image-manifest; static runs must omit it")
     os.umask(0o077)
     target, platform, machine = docker_target()  # read-only engine architecture query
-    common = Path(run("git", "rev-parse", "--git-common-dir", capture=True).strip())
-    repository = (ROOT / common).resolve().parent
-    root = repository / ".meshway/validation/runtime"
-    root.mkdir(parents=True, exist_ok=True)
     report = report_directory("runtime", args.report_dir)
     identity = report.name
     for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES,

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Detached remote matrix execution, reconnectable waiting and private evidence retrieval."""
 import argparse
-import base64
 import json
 import os
 from pathlib import Path
@@ -44,6 +43,9 @@ try:
         call(["git", "fetch", "origin"])
         call(["git", "checkout", "--detach", p["revision"]])
         env = dict(os.environ, CARGO_INCREMENTAL="0", MISE_TRUSTED_CONFIG_PATHS=str(root))
+        temporary = root / ".meshway/validation/tmp"
+        temporary.mkdir(exist_ok=True)
+        env["TMPDIR"] = str(temporary)
         env["PATH"] = str(pathlib.Path.home() / ".local/bin") + ":" + env["PATH"]
         result["exitCode"] = subprocess.call(["mise", "run", "validate:matrix", "--run", p["run"], *p["arguments"]], cwd=root, env=env)
         data = json.loads((matrix / "matrix.json").read_text())
@@ -68,11 +70,11 @@ except BaseException as error:
     traceback.print_exc()
 finally:
     result["status"] = "complete"
-    save()
     matrix.mkdir(parents=True, exist_ok=True)
     (matrix / "remote.json").write_text(json.dumps(result, indent=2) + "\n")
     if not (matrix / "summary.md").exists():
         (matrix / "summary.md").write_text("# Remote validation failed\n\n" + result.get("error", "matrix did not produce a summary") + "\n")
+    save()
 '''
 
 LAUNCH = r'''
@@ -81,11 +83,13 @@ p = json.loads(sys.argv[1])
 os.umask(0o077)
 job = pathlib.Path(p["path"]) / ".meshway/validation/jobs" / p["run"]
 job.mkdir(parents=True)
+(job / "tmp").mkdir()
 (job / "request.json").write_text(json.dumps(p, indent=2) + "\n")
 with (job / "worker.log").open("w") as log:
     process = subprocess.Popen([sys.executable, "-c", sys.argv[2], json.dumps(p)],
                                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                               start_new_session=True, close_fds=True)
+                               start_new_session=True, close_fds=True,
+                               env=dict(os.environ, TMPDIR=str(job / "tmp")))
 (job / "launcher-pid").write_text(str(process.pid) + "\n")
 print(p["run"])
 '''

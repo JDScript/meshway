@@ -2,7 +2,6 @@
 """Protected TUN conformance in four disposable, isolated Linux namespaces."""
 import concurrent.futures
 import argparse
-import datetime
 import ipaddress
 import json
 import os
@@ -10,7 +9,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import uuid
 
 from node_lab import ROOT, check_elf, docker_target, run, sha256
 from verify_tun import pinned_image
@@ -66,8 +64,9 @@ def main():
                 "dirty": bool(run("git", "status", "--porcelain", capture=True).strip()),
                 "sourceDigest": before, "target": target, "platform": platform,
                 "image": image, "sha256": sha256(binary), "passed": False,
+                "scope": "diagnostic-short" if args.short else "acceptance",
                 "loadBeforeRuntime": load,
-                "scope": "real HTTPS control, full-MTU IPv4/IPv6 UDP and MTU+1 rejection over TUN/Noise/relay; real daemon multi-MSS TCP and full-MTU regression"}
+                "coverage": "real HTTPS control, full-MTU IPv4/IPv6 UDP and MTU+1 rejection over TUN/Noise/relay; real daemon multi-MSS TCP and full-MTU regression"}
     metadata = report / "report.json"
     metadata.write_text(json.dumps(manifest, indent=2) + "\n")
 

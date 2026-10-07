@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Explicit Linux kernel TUN verification: host build, isolated runtime only."""
-import datetime
 import argparse
 import hashlib
 import json
@@ -8,7 +7,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import uuid
 
 from node_lab import ROOT, base_image, check_elf, docker_target, run, sha256
 from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact
@@ -39,8 +37,6 @@ def main():
     if shutil.disk_usage(ROOT).free < 50 * 1024 ** 3:
         raise SystemExit("Linux build needs at least 50 GiB of free disk space.")
     target, platform, machine = docker_target()
-    common = Path(run("git", "rev-parse", "--git-common-dir", capture=True).strip())
-    repository = (ROOT / common).resolve().parent
     report = report_directory("tun", args.report_dir)
     identity = report.name
     before = fingerprint()

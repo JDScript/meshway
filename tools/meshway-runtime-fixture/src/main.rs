@@ -24,8 +24,8 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
 const IO: Duration = Duration::from_secs(10);
 const STARTUP: Duration = Duration::from_secs(45);
-// Bounded diagnostic admission/lifecycle checks precede the unchanged 125s
-// packet run and actual instance-expiry/recovery sequence.
+// Bounded diagnostic admission/lifecycle checks precede the packet window
+// (125s acceptance / 30s diagnostic) and actual instance-expiry/recovery sequence.
 const DEADLINE: Duration = Duration::from_secs(900);
 static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
