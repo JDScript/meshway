@@ -62,11 +62,6 @@ pub fn restore_canonical_json(source: &str) -> Result<NetworkConfiguration, Conf
     }
     Ok(value)
 }
-pub fn configuration_digest(
-    configuration: &NetworkConfiguration,
-) -> Result<meshway_model::Digest, ConfigurationError> {
-    digest(configuration).map_err(|_| ConfigurationError::Serialization)
-}
 
 /// Initial complete network configuration, using only Controller-selected
 /// pools and DNS suffix. No listener, Node, exit, material, or ID is invented.

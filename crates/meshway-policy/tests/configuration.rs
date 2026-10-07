@@ -1,7 +1,7 @@
 use meshway_configuration::*;
 use meshway_model::NodeId;
 use meshway_policy::{
-    SubjectContext, domain_suffix_matches, normalize, normalize_with_dependencies, parse_document,
+    SubjectContext, domain_suffix_matches, normalize, normalize_with_dependencies,
     plan_configuration, topology_allows,
 };
 use meshway_transport_spec::{DialerSet, Listener, MaterialRequirement};
@@ -399,11 +399,10 @@ fn initial_network_is_complete_deterministic_and_mesh_only() {
     );
     assert!(config.defaults.dialers.trojan.is_none());
     let json = canonical_json(&config).unwrap();
-    let document = parse_document(
-        format!("// preserve me\n{}\n", json.expose()),
-        &ValidationContext::default(),
-    )
-    .unwrap();
+    let source = format!("// preserve me\n{}\n", json.expose());
+    let (configuration, _) =
+        normalize(parse_jsonc(&source).unwrap(), &ValidationContext::default()).unwrap();
+    let document = ConfigurationDocument::new(source, configuration);
     assert!(
         document
             .source_jsonc
@@ -412,8 +411,12 @@ fn initial_network_is_complete_deterministic_and_mesh_only() {
     );
     assert_eq!(json, canonical_json(&document.configuration).unwrap());
     assert_eq!(
-        configuration_digest(&config).unwrap(),
-        configuration_digest(&document.configuration).unwrap()
+        digest(&config)
+            .map_err(|_| ConfigurationError::Serialization)
+            .unwrap(),
+        digest(&document.configuration)
+            .map_err(|_| ConfigurationError::Serialization)
+            .unwrap()
     );
     assert_eq!(
         serde_json::from_str::<NetworkConfiguration>(json.expose()).unwrap(),
@@ -710,7 +713,9 @@ fn missing_material_is_a_requirement_and_debug_never_exposes_it() {
         );
     }
     let source = "// super-secret\n{\"addressPools\":{\"ipv4\":[],\"ipv6\":[]},\"dns\":{\"domain\":\"mesh.example\"}}".to_owned();
-    let document = parse_document(source, &ValidationContext::default()).unwrap();
+    let (configuration, _) =
+        normalize(parse_jsonc(&source).unwrap(), &ValidationContext::default()).unwrap();
+    let document = ConfigurationDocument::new(source, configuration);
     assert!(!format!("{document:?}").contains("super-secret"));
 }
 
@@ -721,7 +726,13 @@ fn persisted_snapshots_cannot_silently_reapply_defaults() {
     assert_eq!(restore_canonical_json(json.expose()).unwrap(), c);
     let incomplete = json.expose().replace(",\"bidirectional\":false", "");
     assert!(restore_canonical_json(&incomplete).is_err());
-    assert!(parse_document(incomplete, &ValidationContext::default()).is_ok());
+    let (configuration, _) = normalize(
+        parse_jsonc(&incomplete).unwrap(),
+        &ValidationContext::default(),
+    )
+    .unwrap();
+    let document = ConfigurationDocument::new(incomplete, configuration);
+    assert_eq!(document.configuration, c);
 }
 
 #[test]

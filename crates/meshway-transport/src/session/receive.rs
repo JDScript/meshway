@@ -4,7 +4,7 @@ use thiserror::Error;
 use tokio_util::sync::WaitForCancellationFutureOwned;
 
 use super::io::Shared;
-use crate::{CancelReason, Frame, SendContext, raw::DatagramRead};
+use crate::{Frame, raw::DatagramRead};
 
 #[derive(Debug, Error)]
 pub enum ReceiveError {
@@ -18,8 +18,6 @@ pub enum ReceiveError {
     Truncated(DatagramRead),
     #[error("provider returned inconsistent datagram lengths")]
     InvalidMetadata,
-    #[error("receive scope invalidated: {0:?}")]
-    Cancelled(CancelReason),
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -77,22 +75,6 @@ impl Receiver {
             self.io.close();
         }
         result
-    }
-
-    /// Receive cancellation does not discard a partial stream frame. It only
-    /// stops this read wait; use session/sender shutdown to close the carrier.
-    pub async fn recv_with_context(
-        &mut self,
-        context: &SendContext,
-    ) -> Result<Frame, ReceiveError> {
-        if let Some(reason) = context.invalid_reason() {
-            return Err(ReceiveError::Cancelled(reason));
-        }
-        tokio::select! {
-            biased;
-            reason = context.invalidated() => Err(ReceiveError::Cancelled(reason)),
-            result = self.recv() => result,
-        }
     }
 }
 

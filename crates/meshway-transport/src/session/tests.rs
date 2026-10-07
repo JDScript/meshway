@@ -453,14 +453,9 @@ async fn receive_is_cancellation_safe_across_partial_header_and_payload() {
     assert!(futures_util::poll!(&mut receive).is_pending());
     drop(receive);
     remote.write_all(&input[2..7]).await.unwrap();
-    let context = SendContext::default();
-    let mut receive = Box::pin(session.receiver().recv_with_context(&context));
+    let mut receive = Box::pin(session.receiver().recv());
     assert!(futures_util::poll!(&mut receive).is_pending());
-    context.cancellation.cancel();
-    assert!(matches!(
-        receive.await,
-        Err(ReceiveError::Cancelled(CancelReason::ScopeCancelled))
-    ));
+    drop(receive);
     remote.write_all(&input[7..]).await.unwrap();
     assert_eq!(session.receiver().recv().await.unwrap().payload, b"hello");
     assert_eq!(session.receiver().recv().await.unwrap().payload, b"world");

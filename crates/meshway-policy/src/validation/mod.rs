@@ -63,11 +63,3 @@ pub fn validate_configuration(
 ) -> Result<BTreeMap<String, UserBinding>, ConfigurationError> {
     normalize(NetworkConfigurationInput::from(configuration), context).map(|(_, bindings)| bindings)
 }
-
-pub fn parse_document(
-    source: String,
-    context: &ValidationContext<'_>,
-) -> Result<ConfigurationDocument, ConfigurationError> {
-    let (configuration, _) = normalize(parse_jsonc(&source)?, context)?;
-    Ok(ConfigurationDocument::new(source, configuration))
-}
