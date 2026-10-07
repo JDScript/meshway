@@ -91,8 +91,9 @@ impl Run {
         self.time(&format!("{name}.aad_tag.new"), |i| {
             C::new().seal(nonce(i), black_box(&plaintext), &mut [])
         });
-        let frame = mac::frame(self.bytes);
+        let mut frame = mac::wire_frame(self.bytes);
         self.time(&format!("{name}.aad_tag.v5.new"), |i| {
+            frame[42..50].copy_from_slice(&i.to_be_bytes());
             C::new().seal(nonce(i), black_box(&frame), &mut [])
         });
     }

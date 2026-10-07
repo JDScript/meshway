@@ -13,6 +13,17 @@ pub fn frame(ip_bytes: usize) -> Vec<u8> {
     frame
 }
 
+/// Candidate AEAD authenticates the exact serialized v5 frame before the hop tag.
+pub fn wire_frame(ip_bytes: usize) -> Vec<u8> {
+    let mut frame = b"MWCIR\0\0\x05".to_vec();
+    frame.extend_from_slice(&[3, 0]);
+    frame.extend_from_slice(&[0x33; 32]);
+    frame.extend_from_slice(&1_u64.to_be_bytes());
+    frame.extend_from_slice(&u32::try_from(ip_bytes + 16).expect("length").to_be_bytes());
+    frame.resize(frame.len() + ip_bytes + 16, 0xa5);
+    frame
+}
+
 pub fn v5(run: &mut Run) {
     use hmac_new::{KeyInit as _, Mac as _};
     use hmac_old::Mac as _;

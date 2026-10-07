@@ -92,11 +92,13 @@ def measure(args):
                               "--entrypoint", "/bench/meshway-circuit-perf", image["imageId"]]
                 invocation = [*prefix, "--nodes", str(nodes), "--packet-bytes", "1280",
                               "--rounds", str(args.rounds), "--warmup", "1000"]
+                load_before = os.getloadavg()
                 result = subprocess.run(["mise", "exec", "--", *invocation], cwd=ROOT, text=True, capture_output=True,
                                         timeout=180, env=dict(os.environ, MESHWAY_PROFILE=str(rate), MESHWAY_PROFILE_DETAIL="1"))
                 (output / (label + ".stdout")).write_text(result.stdout)
                 (output / (label + ".stderr")).write_text(result.stderr)
-                record = dict(nodes=nodes, packetBytes=1280, repeat=repeat, profileRate=rate, status="failed")
+                record = dict(nodes=nodes, packetBytes=1280, repeat=repeat, profileRate=rate, status="failed",
+                              hostLoadBefore=load_before, hostLoadAfter=os.getloadavg())
                 try:
                     if result.returncode:
                         raise ValueError(f"process exit {result.returncode}")

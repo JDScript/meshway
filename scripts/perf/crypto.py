@@ -58,6 +58,8 @@ def summary(report):
              "All AEAD rows include new key object per operation. inplace seal reuses a mutable allocation;",
              "open.inplace includes restoring ciphertext with copy_from_slice. alloc rows include clone/allocation/drop.",
              "AAD tag = empty plaintext, input as AAD, 96-bit nonce = zero32 || sequence LE64.",
+             "aad_tag.v5 uses the actual 54-byte header + IP length + 16-byte ciphertext tag; sequence update included.",
+             "HMAC/BLAKE3 .v5 use the existing 69-byte MAC domain/header transcript + IP length + 16-byte ciphertext tag.",
              "AEAD seal/tag uses increasing nonce within each timed stream. Repeated open verifies a fixed valid ciphertext.",
              "Only public fixed benchmark keys/data; cross-provider ciphertext/tag and plaintext equality checked before timing.",
              "MAC input lengths below are primitive lengths, not v5 IP lengths: production MAC also authenticates a prefix and AEAD tag.",
@@ -129,8 +131,10 @@ def measure(args, output_root):
                 prefix = [str(binary)]
             invocation = [*prefix, "--iterations", str(args.iterations), "--repeats", str(args.repeats)]
             env["command"] = invocation
+            env["hostLoadBefore"] = os.getloadavg()
             process = subprocess.run(["mise", "exec", "--", *invocation], cwd=ROOT, text=True, capture_output=True,
                                      timeout=1800, env=dict(os.environ, MESHWAY_PROFILE="0"))
+            env["hostLoadAfter"] = os.getloadavg()
             (output / (name + ".stdout")).write_text(process.stdout)
             (output / (name + ".stderr")).write_text(process.stderr)
             if process.returncode:
@@ -138,8 +142,13 @@ def measure(args, output_root):
             env["samples"] = json.loads(process.stdout)
             env["aggregates"] = aggregate(env["samples"])
             env["status"] = "ok"
-        except (RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        except (RuntimeError, ValueError, KeyError, subprocess.SubprocessError, KeyboardInterrupt) as error:
             env["failure"] = str(error)
+            if isinstance(error, KeyboardInterrupt):
+                env["failure"] = "measurement interrupted"
+                circuit.save(output / "results.json", report)
+                (output / "summary.md").write_text(summary(report))
+                raise
         circuit.save(output / "results.json", report)
         (output / "summary.md").write_text(summary(report))
     report["sourceUnchangedAfterRun"] = digest() == before
