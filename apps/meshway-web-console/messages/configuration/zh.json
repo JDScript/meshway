@@ -122,6 +122,7 @@
   "configuration_history_against": "对照",
   "configuration_history_against_none": "不对照",
   "configuration_history_compare_failed": "无法对照",
+  "configuration_history_missing": "没有 r{revision} 这个版本",
   "configuration_history_configuration_changed": "配置内容",
   "configuration_history_bindings_changed": "服务端绑定",
   "configuration_history_changed": "有变化",

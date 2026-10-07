@@ -13,6 +13,7 @@ import {
   revisionQuery,
   revisionsQuery,
 } from "@/api/queries/configuration"
+import { isNotFound } from "@/api/queries/network"
 import { CloseButton } from "@/components/chrome/close-button"
 import { RevisionLine } from "@/components/chrome/draft-mark"
 import { FieldOption, FieldSelect } from "@/components/chrome/field-select"
@@ -286,6 +287,12 @@ function RevisionDetail({
   const yesNo = (changed: boolean) =>
     changed ? m.configuration_history_changed() : m.configuration_history_same()
 
+  // A revision the network does not have (an address typed or kept from elsewhere).
+  if (isNotFound(view.error))
+    return (
+      <EmptyLine>{m.configuration_history_missing({ revision })}</EmptyLine>
+    )
+
   return (
     <div className="flex flex-col gap-8">
       <div className="grid gap-2 sm:grid-cols-2">
@@ -383,7 +390,11 @@ function RevisionDetail({
         {other === null ? (
           <EmptyLine>{m.configuration_history_no_changes()}</EmptyLine>
         ) : comparison.isError ? (
-          <EmptyLine>{m.configuration_history_compare_failed()}</EmptyLine>
+          <EmptyLine>
+            {isNotFound(otherView.error)
+              ? m.configuration_history_missing({ revision: other })
+              : m.configuration_history_compare_failed()}
+          </EmptyLine>
         ) : !comparison.data ? (
           <Skeleton className="h-12 w-full rounded-tile" />
         ) : (

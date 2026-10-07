@@ -158,6 +158,7 @@
   "configuration_history_against": "Compare with",
   "configuration_history_against_none": "No comparison",
   "configuration_history_compare_failed": "Could not compare",
+  "configuration_history_missing": "There is no revision r{revision}",
   "configuration_history_configuration_changed": "Configuration",
   "configuration_history_bindings_changed": "Server bindings",
   "configuration_history_changed": "Changed",
