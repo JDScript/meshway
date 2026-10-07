@@ -31,6 +31,7 @@ members = [
     "tools/meshway-transport-perf",
     "tools/meshway-static-authority",
     "tools/meshway-circuit-perf",
+    "tools/meshway-crypto-bench",
     "tools/meshway-dataplane-perf",
     "tools/meshway-packet-fixture",
     "tools/meshway-runtime-fixture",

@@ -1,0 +1,24 @@
+[package]
+name = "meshway-crypto-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Explicit cryptographic primitive CPU measurements"
+
+[dev-dependencies]
+blake3 = "=1.8.5"
+chacha-old = { package = "chacha20poly1305", version = "=0.10.1" }
+chacha-new = { package = "chacha20poly1305", version = "=0.11.0", features = ["zeroize"] }
+clap.workspace = true
+hmac-old = { package = "hmac", version = "=0.12.1" }
+hmac-new = { package = "hmac", version = "=0.13.0" }
+meshway-logging = { path = "../../crates/meshway-logging" }
+nix = { version = "0.30.1", default-features = false, features = ["time"] }
+ring = "=0.17.14"
+serde.workspace = true
+serde_json.workspace = true
+sha-old = { package = "sha2", version = "=0.10.9" }
+sha-new = { package = "sha2", version = "=0.11.0" }
+
+[lints]
+workspace = true
