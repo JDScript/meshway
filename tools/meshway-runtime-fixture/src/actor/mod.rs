@@ -289,14 +289,15 @@ async fn exercise(
         let subscription_observation = subscription.observation();
         tracing::info!(
             phase = "persistent-traffic",
-            "same sockets and receive-only UDP subscription across 125 seconds"
+            seconds = cli.traffic_duration().as_secs(),
+            "same sockets and receive-only UDP subscription"
         );
         let started = Instant::now();
         // Daemon asks for 120 seconds; Server further caps by its instance lease.
         // 125 seconds of active traffic exceeds both initial deadlines, without
         // relying on a rewritten status sample or assuming a renewal succeeded.
         let regular = async {
-            while started.elapsed() < Duration::from_secs(125) {
+            while started.elapsed() < cli.traffic_duration() {
                 traffic.exchange().await?;
                 verify_tun_index(&tun, tun_index).await?;
                 if traffic.sockets()? != sockets {
@@ -313,7 +314,7 @@ async fn exercise(
         // Both are ordinary futures, so failure cancels the other socket task
         // without detaching a producer. Snapshot failed reception before dropping
         // the original socket; restoration never subscribes again.
-        let result = tokio::try_join!(regular, subscription.receive_only());
+        let result = tokio::try_join!(regular, subscription.receive_only(cli.traffic_duration()));
         let failure = if result.is_err() {
             subscription_observation
                 .lock()
@@ -663,7 +664,7 @@ struct InboundStreamEvidence {
     reception: SubscriptionEvidence,
     original_demand_id: meshway_model::RequestId,
     initial_expiry_ms: u64,
-    later_expiry_ms: u64,
+    later_expiry_ms: Option<u64>,
     acknowledged_creates: u64,
     acknowledged_renewals: u64,
 }
@@ -730,12 +731,14 @@ async fn inbound_stream_evidence(
     let later_expiry = extended
         .iter()
         .map(|(_, expiry)| *expiry)
-        .max()
-        .ok_or("original receive-only demand has no acknowledged extension")?;
+        .max();
+    if !cli.short && later_expiry.is_none() {
+        return Err("original receive-only demand has no acknowledged extension".into());
+    }
     if reception.sent_initial_count == 0
         || reception.post_start_sent_count != reception.sent_initial_count
-        || reception.receive_only_elapsed_ms < 125_000
-        || reception.end_wall_ms <= initial_expiry
+        || reception.receive_only_elapsed_ms < cli.traffic_duration().as_millis()
+        || (!cli.short && reception.end_wall_ms <= initial_expiry)
         || reception.max_sequence == 0
         || reception.received_count == 0
     {

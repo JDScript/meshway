@@ -110,6 +110,15 @@ description = "Explicit real daemon/CLI and owned underlay conformance in dispos
 tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
 run = "python3 scripts/verify_runtime.py"
 
+[tasks."validate:matrix"]
+description = "Build once and run the isolated Linux acceptance matrix with bounded concurrency"
+tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
+run = "python3 scripts/validate_matrix.py"
+
+[tasks."validate:remote"]
+description = "Run a pushed matrix revision remotely and retrieve private evidence; supports --attach"
+run = "python3 scripts/validate_remote.py"
+
 [tasks."generate:protocol"]
 description = "Generate OpenAPI and Rust/TypeScript clients from actual routes"
 run = "pnpm --filter @meshway/control-client generate"

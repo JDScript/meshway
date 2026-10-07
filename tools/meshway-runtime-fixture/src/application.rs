@@ -353,13 +353,13 @@ impl Subscription {
         }
     }
 
-    pub async fn receive_only(mut self) -> Result<SubscriptionEvidence> {
+    pub async fn receive_only(mut self, duration: Duration) -> Result<SubscriptionEvidence> {
         loop {
             // Empty the socket first, then require a newer reply to arrive.
             // In particular the final check starts after 125 receive-only
             // seconds, so an old queued datagram cannot satisfy that boundary.
             self.drain()?;
-            let final_check = self.stopped_sending.elapsed() >= Duration::from_secs(125);
+            let final_check = self.stopped_sending.elapsed() >= duration;
             tokio::time::timeout(IO, self.receive_new())
                 .await
                 .map_err(|_| "receive-only UDP stream stopped")??;

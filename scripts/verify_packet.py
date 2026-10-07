@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Protected TUN conformance in four disposable, isolated Linux namespaces."""
 import concurrent.futures
+import argparse
 import datetime
 import ipaddress
 import json
@@ -15,6 +16,7 @@ from node_lab import ROOT, check_elf, docker_target, run, sha256
 from verify_tun import pinned_image
 from verify_runtime import wait_for_idle
 from verification_sources import fingerprint as source_fingerprint
+from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact, run_id
 
 
 def fingerprint():
@@ -22,25 +24,39 @@ def fingerprint():
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    fixture_options(parser)
+    parser.add_argument("--runtime-artifacts", type=Path)
+    parser.add_argument("--runtime-image-manifest", type=Path)
+    parser.add_argument("--short", action="store_true")
+    args = parser.parse_args()
     os.umask(0o077)
     if shutil.disk_usage(ROOT).free < 50 * 1024 ** 3:
         raise SystemExit("Linux build needs at least 50 GiB of free disk space.")
     target, platform, machine = docker_target()
-    identity = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    report = ROOT / ".meshway/validation/packet" / identity
+    report = report_directory("packet", args.report_dir)
+    identity = report.name
     for directory in ("bin", "public", "controller", "signals"):
         (report / directory).mkdir(parents=True)
     before = fingerprint()
     env = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / "target/node-kernel-tests"), CARGO_INCREMENTAL="0")
-    run("rustup", "target", "add", target)
-    run("cargo", "zigbuild", "--target", target, "--locked", "--all-features",
-        "-p", "meshway-packet-fixture", "--bin", "meshway-packet-fixture", env=env)
-    if fingerprint() != before:
-        raise SystemExit("Sources changed during the build; repeat before verification.")
     binary = report / "bin/meshway-packet-fixture"
-    shutil.copyfile(Path(env["CARGO_TARGET_DIR"]) / target / "debug/meshway-packet-fixture", binary)
-    binary.chmod(0o500)
+    if args.artifacts:
+        import_artifact(args.artifacts, binary, before, target, platform, machine)
+    else:
+        with build_lock():
+            run("rustup", "target", "add", target)
+            run("cargo", "zigbuild", "--target", target, "--locked", "--all-features",
+                "-p", "meshway-packet-fixture", "--bin", "meshway-packet-fixture", env=env)
+            if fingerprint() != before:
+                raise SystemExit("Sources changed during the build; repeat before verification.")
+            shutil.copyfile(Path(env["CARGO_TARGET_DIR"]) / target / "debug/meshway-packet-fixture", binary)
+            binary.chmod(0o500)
     check_elf(binary, machine)
+    save_artifact(report / "bin", binary, before, target, platform)
+    if args.build_only:
+        print(report / "bin")
+        return
     image = pinned_image(platform, report / "bin")
     load = wait_for_idle()
     label = "io.meshway.packet-fixture=" + identity
@@ -130,11 +146,19 @@ def main():
     # its full independent evidence and shutdown assertions, rather than adding
     # another reduced daemon driver with a different lifecycle implementation.
     command = [sys.executable, str(ROOT / "scripts/verify_runtime.py"),
-               "--transport", "native-tcp", "--dns-backend", "off"]
+                "--transport", "native-tcp", "--dns-backend", "off"]
+    if args.runtime_artifacts:
+        command.extend(["--artifacts", str(args.runtime_artifacts)])
+    if args.runtime_image_manifest:
+        command.extend(["--runtime-image-manifest", str(args.runtime_image_manifest)])
+    if args.short:
+        command.append("--short")
+    if args.report_dir:
+        command.extend(["--report-dir", str(report / "daemon" / run_id())])
     with (report / "daemon.log").open("w") as log:
         result = subprocess.run(command, cwd=ROOT, text=True, stdout=log, stderr=subprocess.STDOUT)
     paths = [Path(line) for line in (report / "daemon.log").read_text().splitlines()
-             if line.startswith("/") and "/.meshway/validation/runtime/" in line]
+             if line.startswith("/") and (Path(line) / "report.json").is_file()]
     if paths:
         daemon_report = paths[-1] / "report.json"
         daemon = json.loads(daemon_report.read_text())

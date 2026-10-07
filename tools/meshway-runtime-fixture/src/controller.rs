@@ -619,7 +619,7 @@ async fn coordinate(
         ) {
             return Err("invalid persistent traffic readiness".into());
         }
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::time::sleep(cli.fallback_delay()).await;
         // Both carriers were authorized before demand creation. Only the owned
         // underlay changes here; application exchanges continue concurrently.
         signals.write("enable-fallback", &Signal::Ready).await?;

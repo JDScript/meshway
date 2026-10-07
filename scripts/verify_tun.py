@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit Linux kernel TUN verification: host build, isolated runtime only."""
 import datetime
+import argparse
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import subprocess
 import uuid
 
 from node_lab import ROOT, base_image, check_elf, docker_target, run, sha256
+from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact
 
 
 def fingerprint():
@@ -30,31 +32,41 @@ def pinned_image(platform, directory):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    fixture_options(parser)
+    args = parser.parse_args()
     os.umask(0o077)
     if shutil.disk_usage(ROOT).free < 50 * 1024 ** 3:
         raise SystemExit("Linux build needs at least 50 GiB of free disk space.")
     target, platform, machine = docker_target()
     common = Path(run("git", "rev-parse", "--git-common-dir", capture=True).strip())
     repository = (ROOT / common).resolve().parent
-    identity = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    report = repository / ".meshway/validation/tun" / identity
-    report.mkdir(parents=True)
+    report = report_directory("tun", args.report_dir)
+    identity = report.name
     before = fingerprint()
     env = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / "target/node-kernel-tests"),
                CARGO_INCREMENTAL="0")
-    run("rustup", "target", "add", target)
-    result = run("cargo", "zigbuild", "--target", target, "--tests", "--all-features",
-                 "--locked", "-p", "meshway-tun", "--message-format=json", capture=True, env=env)
-    artifacts = [json.loads(line) for line in result.splitlines() if line.startswith("{")]
-    executables = [Path(item["executable"]) for item in artifacts
-                   if item.get("reason") == "compiler-artifact" and item.get("executable")
-                   and item["target"]["name"] == "linux" and item["profile"].get("test")]
-    if len(executables) != 1 or fingerprint() != before:
-        raise SystemExit("Expected one unchanged-source Linux TUN test artifact.")
     binary = report / "linux-tun-tests"
-    shutil.copyfile(executables[0], binary)
-    binary.chmod(0o500)
+    if args.artifacts:
+        import_artifact(args.artifacts, binary, before, target, platform, machine)
+    else:
+        with build_lock():
+            run("rustup", "target", "add", target)
+            result = run("cargo", "zigbuild", "--target", target, "--tests", "--all-features",
+                         "--locked", "-p", "meshway-tun", "--message-format=json", capture=True, env=env)
+            artifacts = [json.loads(line) for line in result.splitlines() if line.startswith("{")]
+            executables = [Path(item["executable"]) for item in artifacts
+                           if item.get("reason") == "compiler-artifact" and item.get("executable")
+                           and item["target"]["name"] == "linux" and item["profile"].get("test")]
+            if len(executables) != 1 or fingerprint() != before:
+                raise SystemExit("Expected one unchanged-source Linux TUN test artifact.")
+            shutil.copyfile(executables[0], binary)
+            binary.chmod(0o500)
     check_elf(binary, machine)
+    save_artifact(report, binary, before, target, platform)
+    if args.build_only:
+        print(report)
+        return
     image = pinned_image(platform, report)
     command = ["docker", "create", "--name", "meshway-tun-check-" + identity.lower(),
                "--label", "io.meshway.tun-fixture=" + identity,

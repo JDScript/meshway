@@ -62,8 +62,21 @@ struct Cli {
     traversal: TraversalMode,
     #[arg(long, global = true)]
     traversal_fallback: bool,
+    /// Diagnostic traffic window only; does not establish 125-second renewal acceptance.
+    #[arg(long, global = true)]
+    short: bool,
     #[command(subcommand)]
     command: Command,
+}
+
+impl Cli {
+    fn traffic_duration(&self) -> Duration {
+        Duration::from_secs(if self.short { 30 } else { 125 })
+    }
+
+    fn fallback_delay(&self) -> Duration {
+        Duration::from_secs(if self.short { 5 } else { 30 })
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]

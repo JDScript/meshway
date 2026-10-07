@@ -139,7 +139,10 @@ pub async fn verify(
         return Err("fallback transition timestamp exceeds bound".into());
     }
     let blocked: Blocked = serde_json::from_slice(&tokio::fs::read(path).await?)?;
-    if blocked.blocked_at_ms < before.observed_at_ms.saturating_add(30_000)
+    if blocked.blocked_at_ms
+        < before
+            .observed_at_ms
+            .saturating_add(cli.fallback_delay().as_millis().try_into()?)
         || blocked.blocked_at_ms >= after.observed_at_ms
     {
         return Err("fallback transition was outside live persistent traffic".into());

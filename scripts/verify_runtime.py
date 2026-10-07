@@ -18,8 +18,9 @@ import sys
 import time
 import uuid
 
-from node_lab import ROOT, check_elf, docker_target, lab_dir, run, selected_image, sha256
+from node_lab import ROOT, check_elf, docker_target, lab_dir, run, selected_image, sha256, verify_image
 from verification_sources import fingerprint as source_fingerprint
+from validation_support import build_lock, report_directory
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
@@ -52,6 +53,9 @@ def wait_for_idle():
         uptime = run("uptime", capture=True).strip()
         print(uptime, flush=True)
         waited = time.monotonic() - started
+        if os.environ.get("MESHWAY_MATRIX_RUN"):
+            return {"uptime": uptime, "loadAverage": list(load), "waitSeconds": waited,
+                    "policy": "matrix bounded parallelism", "matrixRun": os.environ["MESHWAY_MATRIX_RUN"]}
         if load[0] <= 6 or (waited >= 600 and load[0] < 8):
             return {"uptime": uptime, "loadAverage": list(load), "waitSeconds": waited,
                     "relaxedAfterTenMinutes": load[0] > 6}
@@ -160,6 +164,9 @@ def import_artifacts(source_dir, directory, target, platform, machine, source):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-only", action="store_true", help="host build and source manifest only")
+    parser.add_argument("--report-dir", type=Path, help="new private report directory")
+    parser.add_argument("--short", action="store_true", help="30-second diagnostic traffic; not acceptance")
+    parser.add_argument("--runtime-image-manifest", type=Path, help="explicit locked node-lab OS image")
     parser.add_argument("--artifacts", type=Path, help="reuse a --build-only bin directory with matching source manifest")
     parser.add_argument("--transport", choices=("native-tcp", "native-udp"), default="native-tcp",
                         help="Server-configured outer carrier; never a daemon-local policy override")
@@ -188,19 +195,19 @@ def main():
     repository = (ROOT / common).resolve().parent
     root = repository / ".meshway/validation/runtime"
     root.mkdir(parents=True, exist_ok=True)
-    identity = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    report = root / identity
+    report = report_directory("runtime", args.report_dir)
+    identity = report.name
     for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES,
                   "underlay-peer", "bootstrap", "daemon-cleanup", *KERNEL_TESTS, *PLATFORM_BINARIES):
         (report / name).mkdir(parents=True, exist_ok=True)
     source = fingerprint()
     # One source/cache owner per invocation; never leak the lock FD to Cargo,
     # Docker attach processes, or any later runtime child.
-    with (root / "build.lock").open("a") as lock:
-        os.set_inheritable(lock.fileno(), False)
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        artifacts = (import_artifacts(args.artifacts.resolve(), report / "bin", target, platform, machine, source)
-                     if args.artifacts else build(report / "bin", target, platform, machine, source))
+    if args.artifacts:
+        artifacts = import_artifacts(args.artifacts.resolve(), report / "bin", target, platform, machine, source)
+    else:
+        with build_lock():
+            artifacts = build(report / "bin", target, platform, machine, source)
     if args.build_only:
         print(report / "bin")
         return
@@ -209,7 +216,8 @@ def main():
     # Full runtime actors invoke iproute2 in addition to the Rust binaries.
     # Use the explicitly built, provenance-checked Ubuntu tools image, never
     # install packages or launch its persistent-lab supervisor as a side effect.
-    runtime_os = selected_image(lab_dir(), platform)
+    runtime_os = (verify_image(json.loads(args.runtime_image_manifest.read_text()), platform)
+                  if args.runtime_image_manifest else selected_image(lab_dir(), platform))
     image = runtime_os["imageId"]
     description = json.loads(run("docker", "image", "inspect", image, capture=True))[0]
     if description["Os"] != "linux" or description["Architecture"] != platform.split("/")[1] or description["Config"].get("Volumes"):
@@ -271,7 +279,8 @@ def main():
                    "traversalOsAssets": traversal_assets,
                    "traversalScope": "outer IPv4, two port-preserving Linux SNATs; optional same-edge TCP fallback; no mapping-rotation claim" if args.traversal == "nat" else None,
                    "traversalFallback": {"status": "notRun"} if args.traversal_fallback else None,
-                 "scope": "real meshwayd/CLI; Server browser approval; A-R-B; IPv4/IPv6 UDP/TCP TUN; demand renewal; Access revocation; lease loss; offline down",
+                  "scope": "diagnostic-short" if args.short else "acceptance",
+                  "trafficSeconds": 30 if args.short else 125,
                 "tests": {name: {"status": "notRun", "test": test} for name, test in KERNEL_TESTS.items()},
                   "bootstrapHttpsTest": {"status": "notRun"},
                    "platformTests": {},
@@ -338,6 +347,8 @@ def main():
             command.extend(["/bin/sh", "/dns-fixture/namespace.sh"])
         command.append("/fixtures/" + executable)
         if executable == "meshway-runtime-fixture":
+            if args.short:
+                command.append("--short")
             command.extend(["--log-format", "json", "--transport", args.transport, "--dns-backend", args.dns_backend,
                             "--traversal", args.traversal])
             if args.traversal_fallback:
@@ -625,7 +636,7 @@ def main():
                 raise RuntimeError("Traversal evidence reader unavailable")
             evidence = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(evidence)
-            manifest["traversalPackets"] = evidence.verify(report, addresses, routers, fallback=args.traversal_fallback)
+            manifest["traversalPackets"] = evidence.verify(report, addresses, routers, fallback=args.traversal_fallback, short=args.short)
             if args.traversal_fallback:
                 manifest["traversalFallback"] = {"status": "passed", **manifest["traversalPackets"]["fallback"]}
         manifest["passed"] = True

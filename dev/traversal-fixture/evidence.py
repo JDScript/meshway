@@ -184,7 +184,7 @@ def handshake(records, local, target, public_local, offers):
     raise RuntimeError("Missing complete same-offer bilateral traversal handshake before ciphertext")
 
 
-def verify(report, actors, routers, *, fallback=False):
+def verify(report, actors, routers, *, fallback=False, short=False):
     evidence = {"outerFamily": "ipv4", "natModel": "linux-conntrack-port-preserving-snat",
                 "path": ["a", "r", "b"], "routers": {}, "fallback": None}
     offers = bounded_json(report / "controller/traversal-verified-offers.json")
@@ -320,7 +320,7 @@ def verify(report, actors, routers, *, fallback=False):
     if fallback:
         before = bounded_json(report / "a/fallback-before.json")
         after = bounded_json(report / "a/fallback-after.json")
-        if (not 30_000 <= blocked_us // 1000 - before["observedAtMs"] < 100_000
+        if (not (5_000 if short else 30_000) <= blocked_us // 1000 - before["observedAtMs"] < 100_000
                 or after["observedAtMs"] <= blocked_us // 1000
                 or before["packet"]["sockets"] != after["packet"]["sockets"]
                 or any(after["packet"]["counts"][kind] <= before["packet"]["counts"][kind] for kind in ("udp4", "udp6", "tcp4", "tcp6"))

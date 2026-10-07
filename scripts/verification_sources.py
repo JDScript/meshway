@@ -18,6 +18,7 @@ FILES = (
     "packages/protocol/openapi.json",
     "scripts/verify_packet.py", "scripts/verify_runtime.py", "scripts/verify_tun.py",
     "scripts/verification_sources.py", "scripts/node_lab.py", "scripts/dev.py",
+    "scripts/validation_support.py",
     "dev/node-lab/compose.yaml",
 )
 IGNORED_DIRECTORIES = frozenset({"target", "node_modules", "__pycache__", ".git"})
