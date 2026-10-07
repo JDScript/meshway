@@ -56,6 +56,7 @@ pub struct Client {
     base: Url,
     http: ClientWithMiddleware,
     limit: usize,
+    request_timeout: Option<std::time::Duration>,
 }
 
 impl Client {
@@ -84,6 +85,7 @@ impl Client {
             base,
             http: ClientBuilder::new(http).build(),
             limit: max_body_bytes,
+            request_timeout: None,
         })
     }
 
@@ -91,6 +93,13 @@ impl Client {
         self.http = ClientBuilder::from_client(self.http)
             .with(middleware)
             .build();
+        self
+    }
+
+    /// Total budget for ordinary operations only. Streaming callers can instead
+    /// configure connect/read-idle timeouts on the same protected HTTP builder.
+    pub fn with_request_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.request_timeout = Some(timeout);
         self
     }
 
@@ -188,6 +197,9 @@ impl Client {
         body: Option<&B>,
     ) -> Result<Response, ClientError<P>> {
         let mut request = self.request_builder(method, url, token, "application/json")?;
+        if let Some(timeout) = self.request_timeout {
+            request = request.timeout(timeout);
+        }
         if let Some(body) = body {
             let mut buffer = BoundedBuffer {
                 bytes: Vec::new(),

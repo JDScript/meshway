@@ -561,6 +561,7 @@ async fn wait_work(
 ) -> Waiting {
     let mut window = scheduling::Window::new(delay);
     let mut local_at = Instant::now() + Duration::from_secs(1);
+    let mut event_maintenance_at = Instant::now() + Duration::from_secs(1);
     // A projection invalidation is not an urgent new grant. Keep the previous
     // five-second refresh admission bound under a continuous SSE publication
     // burst; an idle connection can still wake before the periodic fallback.
@@ -580,6 +581,11 @@ async fn wait_work(
         }
         let waiting = tokio::select! { biased;
             _ = tokio::time::sleep_until(event_refresh_at), if event_refresh_pending => return Waiting::Timer,
+            _ = tokio::time::sleep_until(event_maintenance_at), if control.is_some() => {
+                events.advance(control.as_deref().expect("event Control")).await;
+                event_maintenance_at = Instant::now() + Duration::from_secs(1);
+                continue;
+            },
             notice = events.next(), if control.is_some() => {
                 event_budget -= 1;
                 match control.as_deref_mut().expect("event Control").receive_event(notice) {

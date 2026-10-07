@@ -176,10 +176,12 @@ impl Control {
         let origin = server_origin(origin)?;
         let client = Client::new(
             &origin,
-            http.timeout(Duration::from_secs(20)),
+            http.connect_timeout(Duration::from_secs(20))
+                .read_timeout(Duration::from_secs(30)),
             storage::LIMIT,
         )
-        .map_err(|_| Error::Endpoint)?;
+        .map_err(|_| Error::Endpoint)?
+        .with_request_timeout(Duration::from_secs(20));
         let directory = Arc::new(meshway_private_storage::Directory::open(
             path,
             "node-control.lock",

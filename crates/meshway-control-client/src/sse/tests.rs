@@ -65,6 +65,96 @@ fn body(bytes: &'static [u8]) -> Body {
 }
 
 #[tokio::test]
+async fn streaming_heartbeats_outlive_ordinary_budget_but_read_idle_still_expires() {
+    let router = Router::new()
+        .route(
+            "/events",
+            get(|| async {
+                Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from_stream(stream::unfold(0, |tick| async move {
+                        if tick > 10 {
+                            return None;
+                        }
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        Some((
+                            Ok::<_, Infallible>(if tick == 10 {
+                                Bytes::from_static(b"data: {\"text\":\"alive\"}\n\n")
+                            } else {
+                                Bytes::from_static(b": keepalive\n\n")
+                            }),
+                            tick + 1,
+                        ))
+                    })))
+                    .unwrap()
+            }),
+        )
+        .route(
+            "/idle",
+            get(|| async {
+                Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from_stream(stream::pending::<
+                        Result<Bytes, Infallible>,
+                    >()))
+                    .unwrap()
+            }),
+        )
+        .route(
+            "/ordinary",
+            get(|| async {
+                Response::builder()
+                    .header("content-type", "application/json")
+                    .body(Body::from_stream(stream::unfold((), |()| async {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        Some((Ok::<_, Infallible>(Bytes::from_static(b" ")), ()))
+                    })))
+                    .unwrap()
+            }),
+        );
+    let (_, url, _server) = serve(router, 1024).await;
+    let client = Client::new(
+        &format!("{}/", url.origin().ascii_serialization()),
+        reqwest::Client::builder()
+            .no_proxy()
+            .read_timeout(Duration::from_millis(150)),
+        1024,
+    )
+    .unwrap()
+    .with_request_timeout(Duration::from_millis(60));
+    let mut events = client
+        .stream::<Value, Problem>(url.clone(), None, &StreamOptions::default(), contract())
+        .await
+        .unwrap();
+    assert_eq!(events.next().await.unwrap().unwrap().data.text, "alive");
+    let mut idle = client
+        .stream::<Value, Problem>(
+            url.join("/idle").unwrap(),
+            None,
+            &StreamOptions::default(),
+            contract(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        idle.next().await,
+        Some(Err(ClientError::Network { status: Some(200) }))
+    ));
+    assert!(idle.next().await.is_none());
+    let started = std::time::Instant::now();
+    let ordinary = client
+        .send_url::<(), Problem>(
+            reqwest::Method::GET,
+            url.join("/ordinary").unwrap(),
+            None,
+            None,
+        )
+        .await;
+    assert!(matches!(ordinary, Err(ClientError::Network { .. })));
+    assert!(started.elapsed() < Duration::from_millis(250));
+}
+
+#[tokio::test]
 async fn fragmented_frames_are_typed_and_only_explicit_applied_cursor_is_sent() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let received = seen.clone();

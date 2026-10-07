@@ -66,7 +66,11 @@ impl Events {
                 let started = Instant::now();
                 match stream.connect().await {
                     Ok(true) => {
-                        status.send_modify(|value| value.state = EventStreamState::Connected)
+                        status.send_modify(|value| value.state = EventStreamState::Connected);
+                        tracing::debug!(
+                            connect_ms = started.elapsed().as_millis() as u64,
+                            "Node event stream opened"
+                        );
                     }
                     Ok(false) => return false,
                     Err(notice) => {
@@ -101,6 +105,10 @@ impl Events {
                     }
                 }
                 status.send_modify(|value| value.state = EventStreamState::Reconnecting);
+                tracing::debug!(
+                    lifetime_ms = started.elapsed().as_millis() as u64,
+                    "Node event stream ended"
+                );
                 started.elapsed() >= Duration::from_secs(10)
             }));
         }

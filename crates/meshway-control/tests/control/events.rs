@@ -22,6 +22,21 @@ async fn real_watch_ignores_unchanged_projection_and_refreshes_configuration_cha
     }
     assert!(!control.receive_event(next(&mut stream).await).unwrap());
     assert!(original.ensure_current().is_ok());
+    drop(stream);
+    let mut stream = control.watch_node().unwrap();
+    for _ in 0..4 {
+        assert!(
+            !control.receive_event(next(&mut stream).await).unwrap(),
+            "reconnection is not reset"
+        );
+    }
+    // Real Server's ten-second comment heartbeat must keep the same connection
+    // usable beyond the ordinary twenty-second HTTP request budget.
+    assert!(
+        tokio::time::timeout(Duration::from_secs(22), stream.next())
+            .await
+            .is_err()
+    );
     refresh::listeners(&server, &owner).await;
     let changed = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
@@ -61,6 +76,9 @@ async fn queued_old_stream_notice_cannot_rebind_after_authentication_or_stop() {
     let owner = server.owner().await;
     let mut control = refresh::control(&server, &owner, &server.origin, "stale-events").await;
     let mut stream = control.watch_node().unwrap();
+    for _ in 0..3 {
+        assert!(!next(&mut stream).await.refresh_requested());
+    }
     let ready = next(&mut stream).await;
     assert!(ready.refresh_requested());
     control.refresh_authentication().await.unwrap();

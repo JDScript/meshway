@@ -24,6 +24,7 @@ impl EventNotice {
             Err(_) => "transport_error",
             Ok(NodeEvent(StreamEvent::Reset { .. })) => "sync.reset",
             Ok(NodeEvent(StreamEvent::ConfigSnapshot { .. })) => "config.snapshot",
+            Ok(NodeEvent(StreamEvent::Ready { .. })) => "sync.ready",
             Ok(NodeEvent(StreamEvent::Closed { reason })) => match reason {
                 ClosedReason::SessionExpired => "session_expired",
                 ClosedReason::MembershipRevoked => "membership_revoked",
@@ -61,6 +62,8 @@ pub struct NodeEvents {
     stream: Option<EventStream<NodeEvent, ErrorResponse>>,
     ended: bool,
     interest: Interest,
+    initial_deadline: Option<tokio::time::Instant>,
+    initial_refresh: bool,
 }
 
 // Replay disclosure includes peer publications and observations. Those changes
@@ -123,13 +126,16 @@ impl Interest {
             StreamEvent::StateDelta {
                 updated, removed, ..
             } => {
-                let changed = updated
-                    .get(&self.node)
-                    .is_some_and(|node| node.instance_id != self.instance);
-                if let Some(node) = updated.get(&self.node) {
-                    self.instance = node.instance_id;
-                }
+                let changed = self
+                    .instance_changed(updated.get(&self.node).and_then(|node| node.instance_id));
                 changed || removed.contains(&self.node)
+            }
+            StreamEvent::StateSnapshot { state, .. } => {
+                let instance = state
+                    .nodes
+                    .get(&self.node)
+                    .and_then(|node| node.instance_id);
+                self.instance_changed(instance)
             }
             StreamEvent::ConfigurationChanged {
                 network_id,
@@ -150,6 +156,17 @@ impl Interest {
             _ => false,
         }
     }
+
+    fn instance_changed(&mut self, instance: Option<InstanceId>) -> bool {
+        // A projection without a report has no observed instance. It is not
+        // evidence that Control's independently acquired instance disappeared.
+        let Some(instance) = instance else {
+            return false;
+        };
+        let changed = self.instance != Some(instance);
+        self.instance = Some(instance);
+        changed
+    }
 }
 
 impl NodeEvents {
@@ -165,11 +182,13 @@ impl NodeEvents {
         let options = StreamOptions::default();
         let result = tokio::select! { biased;
             _ = self.scope.cancelled() => return Ok(false),
-            result = self.client.watch_node(self.token.expose(), &options) => result,
+            result = tokio::time::timeout(std::time::Duration::from_secs(20), self.client.watch_node(self.token.expose(), &options)) => result.unwrap_or(Err(ClientError::Network { status: None })),
         };
         match result {
             Ok(stream) => {
                 self.stream = Some(stream);
+                self.initial_deadline =
+                    Some(tokio::time::Instant::now() + std::time::Duration::from_secs(20));
                 Ok(true)
             }
             Err(error) => {
@@ -197,7 +216,13 @@ impl NodeEvents {
         let result = tokio::select! { biased;
             _ = self.scope.cancelled() => None,
             result = async {
-                self.stream.as_mut().expect("opened stream").next().await.map(|result| result.map(|delivery| delivery.data))
+                let next = self.stream.as_mut().expect("opened stream").next();
+                let delivery = if let Some(deadline) = self.initial_deadline {
+                    tokio::time::timeout_at(deadline, next).await.unwrap_or(Some(Err(ClientError::Network { status: Some(200) })))
+                } else {
+                    next.await
+                };
+                delivery.map(|result| result.map(|delivery| delivery.data))
             } => result,
         };
         self.ended = result.as_ref().is_none_or(|result| match result {
@@ -207,10 +232,28 @@ impl NodeEvents {
         if self.ended {
             self.stream = None;
         }
-        result.map(|result| EventNotice {
-            refresh: result
+        // Binding failures must reach Control immediately even before Ready;
+        // batching only coalesces ordinary invalidation hints.
+        let wrong_binding = result.as_ref().is_some_and(|result| {
+            result
                 .as_ref()
-                .is_ok_and(|event| self.interest.changed(event)),
+                .is_ok_and(|event| wrong_binding(event, self.interest.network, self.interest.node))
+        });
+        let mut refresh = result.as_ref().is_some_and(|result| {
+            result
+                .as_ref()
+                .is_ok_and(|event| self.interest.changed(event))
+        });
+        if self.initial_deadline.is_some() {
+            self.initial_refresh |= refresh;
+            refresh = wrong_binding;
+            if matches!(&result, Some(Ok(NodeEvent(StreamEvent::Ready { .. })))) {
+                self.initial_deadline = None;
+                refresh = self.initial_refresh;
+            }
+        }
+        result.map(|result| EventNotice {
+            refresh: refresh || wrong_binding,
             owner: self.owner.clone(),
             scope: self.scope.clone(),
             result,
@@ -265,6 +308,8 @@ impl Control {
             scope: self.events_cancel.clone(),
             stream: None,
             ended: false,
+            initial_deadline: None,
+            initial_refresh: false,
         })
     }
 
@@ -297,21 +342,7 @@ impl Control {
         };
         self.ready()?;
         if let Some(binding) = &self.record.binding {
-            let wrong = match &event.0 {
-                StreamEvent::ConfigSnapshot { configuration, .. } => {
-                    configuration.network_id != binding.network_id
-                        || configuration.node_id != binding.node_id
-                }
-                StreamEvent::ConfigurationChanged { network_id, .. }
-                | StreamEvent::ResourcesChanged { network_id, .. } => {
-                    *network_id != binding.network_id
-                }
-                StreamEvent::EntitiesDelta { updated, .. } => updated
-                    .nodes
-                    .get(&binding.node_id)
-                    .is_some_and(|node| node.network_id != binding.network_id),
-                _ => false,
-            };
+            let wrong = wrong_binding(&event, binding.network_id, binding.node_id);
             if wrong {
                 self.fence();
                 return Err(Error::Contract);
@@ -335,16 +366,196 @@ impl Control {
                 }
                 ClosedReason::ServerShutdown => Ok(false),
             },
-            // Initial projections are deliberately discarded: Ready triggers a
-            // validated atomic GET/refresh, rather than installing an SSE cache.
+            // Only changed initial projections request a validated atomic
+            // refresh at Ready; accepting a connection is not a reset.
             _ => Ok(refresh),
         }
+    }
+}
+
+fn wrong_binding(event: &NodeEvent, network: NetworkId, node: NodeId) -> bool {
+    match &event.0 {
+        StreamEvent::ConfigSnapshot { configuration, .. } => {
+            configuration.network_id != network || configuration.node_id != node
+        }
+        StreamEvent::ConfigurationChanged { network_id, .. }
+        | StreamEvent::ResourcesChanged { network_id, .. } => *network_id != network,
+        StreamEvent::EntitiesSnapshot { entities, .. } => entities
+            .nodes
+            .get(&node)
+            .is_some_and(|entry| entry.network_id != network),
+        StreamEvent::EntitiesDelta { updated, .. } => updated
+            .nodes
+            .get(&node)
+            .is_some_and(|entry| entry.network_id != network),
+        StreamEvent::StateSnapshot { state, .. } => state.network_id != network,
+        _ => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn interest() -> Interest {
+        let network = crate::random_id().unwrap().try_into().unwrap();
+        let node = crate::random_id().unwrap().try_into().unwrap();
+        let peer = crate::random_id().unwrap().try_into().unwrap();
+        let material = crate::identity::Keys::generate().unwrap();
+        let keys = meshway_protocol::NodeKeyMetadata {
+            control: meshway_model::BoundNodeKey {
+                id: crate::random_id().unwrap().try_into().unwrap(),
+                generation: meshway_model::Version::MIN,
+                public_key: material.control().unwrap(),
+            },
+            dataplane: meshway_model::BoundNodeKey {
+                id: crate::random_id().unwrap().try_into().unwrap(),
+                generation: meshway_model::Version::MIN,
+                public_key: material.dataplane().unwrap(),
+            },
+        };
+        Interest {
+            network,
+            node,
+            target: None,
+            revision: Some(Revision::MIN),
+            keys: keys.clone(),
+            peer_keys: BTreeMap::from([(peer, keys.clone())]),
+            instance: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn heartbeats_cannot_extend_an_incomplete_initial_batch() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let mut length = 0;
+            while !request[..length].ends_with(b"\r\n\r\n") {
+                let read = socket.read(&mut request[length..]).await.unwrap();
+                assert!(read > 0 && length + read < request.len());
+                length += read;
+            }
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").await.unwrap();
+            loop {
+                if socket.write_all(b": keepalive\n\n").await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        });
+        let mut stream = NodeEvents {
+            owner: Arc::new(()),
+            client: Client::new(&origin, reqwest::Client::builder().no_proxy(), 1024).unwrap(),
+            token: WireSecret::new("test-token".into()),
+            scope: CancellationToken::new(),
+            stream: None,
+            ended: false,
+            interest: interest(),
+            initial_deadline: None,
+            initial_refresh: false,
+        };
+        assert!(stream.connect().await.unwrap_or(false));
+        stream.initial_deadline =
+            Some(tokio::time::Instant::now() + std::time::Duration::from_millis(100));
+        let notice = stream.next().await.unwrap();
+        assert!(notice.is_terminal());
+        assert!(!notice.refresh_requested());
+        assert!(stream.next().await.is_none());
+        task.abort();
+        let _ = task.await;
+    }
+
+    #[test]
+    fn peer_publications_and_observation_projections_do_not_request_apply() {
+        let mut interest = interest();
+        let node = interest.node;
+        let peer = *interest.peer_keys.keys().next().unwrap();
+        let network = interest.network;
+        let keys = interest.keys.clone();
+        let mut inventory = meshway_protocol::NodeInventoryView {
+            id: peer,
+            network_id: network,
+            registered_at_ms: 0,
+            hostname: "peer".into(),
+            enabled: true,
+            identity: meshway_configuration::NodeIdentity::Tag {
+                tags: vec!["peer".into()],
+            },
+            addresses: meshway_configuration::NodeAddresses {
+                ipv4: None,
+                ipv6: None,
+            },
+            keys,
+            control_key_revoked_at_ms: None,
+            dataplane_key_revoked_at_ms: None,
+            can_delete: false,
+            desired_execution: None,
+            can_revoke_control_key: false,
+            can_revoke_dataplane_key: false,
+            control_key_created_at_ms: 0,
+            dataplane_key_created_at_ms: 0,
+        };
+        let delta = |inventory: meshway_protocol::NodeInventoryView| {
+            NodeEvent(StreamEvent::EntitiesDelta {
+                base_cursor: "before".into(),
+                cursor: "after".into(),
+                updated: meshway_protocol::live::NodeEntitiesView {
+                    nodes: BTreeMap::from([(inventory.id, inventory)]),
+                },
+                removed: meshway_protocol::events::EntityRemovals {
+                    nodes: vec![],
+                    members: vec![],
+                },
+            })
+        };
+        assert!(!interest.changed(&delta(inventory.clone())));
+        inventory.desired_execution = Some(serde_json::from_value(serde_json::json!({
+            "revision": 2, "executionPublication": crate::random_id().unwrap().to_string(), "digest": "00".repeat(32)
+        })).unwrap());
+        assert!(!interest.changed(&delta(inventory.clone())));
+        inventory.keys.dataplane.generation =
+            inventory.keys.dataplane.generation.checked_next().unwrap();
+        assert!(interest.changed(&delta(inventory.clone())));
+        assert!(!interest.changed(&delta(inventory.clone())));
+        inventory.id = node;
+        assert!(interest.changed(&delta(inventory)));
+        assert!(
+            !interest.changed(&NodeEvent(StreamEvent::ObservationRemoved {
+                subscription_id: crate::random_id().unwrap().try_into().unwrap(),
+            }))
+        );
+        for (removed, expected) in [(vec![peer], false), (vec![node], true)] {
+            assert_eq!(
+                interest.changed(&NodeEvent(StreamEvent::StateDelta {
+                    state_epoch: crate::random_id().unwrap().try_into().unwrap(),
+                    as_of: None,
+                    sequence: None,
+                    configuration_revision: None,
+                    base_cursor: "before".into(),
+                    cursor: "after".into(),
+                    updated: BTreeMap::new(),
+                    removed,
+                    links: vec![],
+                    paths: vec![],
+                })),
+                expected
+            );
+        }
+        for (reason, expected) in [
+            (meshway_protocol::events::ResetReason::ViewChanged, false),
+            (meshway_protocol::events::ResetReason::EpochChanged, true),
+            (meshway_protocol::events::ResetReason::Backpressure, true),
+        ] {
+            assert_eq!(
+                interest.changed(&NodeEvent(StreamEvent::Reset { reason })),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn closure_reasons_and_transport_failure_have_distinct_authority_effects() {
