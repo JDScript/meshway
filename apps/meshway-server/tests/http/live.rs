@@ -641,6 +641,24 @@ async fn reacquired_instance_preserves_exact_target_but_requires_its_own_saved_a
             .error_for_status()
             .unwrap();
     }
+    let mut conflicting = receipt(&first, ReceiptPhase::Saved, 0);
+    conflicting.reported_at_ms += 2000;
+    let conflict = c
+        .post(format!("{}/agent-api/v1/configuration/receipts", s.url))
+        .bearer_auth(&token)
+        .json(&conflicting)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert!(matches!(
+        conflict
+            .json::<meshway_protocol::ErrorResponse>()
+            .await
+            .unwrap()
+            .problem,
+        meshway_protocol::Problem::ReceiptContentConflict { .. }
+    ));
     let replacement: InstanceLease = json(
         c.post(format!("{}/agent-api/v1/instances", s.url))
             .bearer_auth(&token)
@@ -672,26 +690,43 @@ async fn reacquired_instance_preserves_exact_target_but_requires_its_own_saved_a
         ReceiptFreshness::AwaitingInstance
     );
     let endpoint = format!("{}/agent-api/v1/configuration/receipts", s.url);
-    assert_eq!(
-        c.post(&endpoint)
+    for (request, code) in [
+        (
+            receipt(&replacement, ReceiptPhase::Applied, 1),
+            "receipt_precondition",
+        ),
+        (
+            receipt(&first, ReceiptPhase::Applied, 1),
+            "receipt_instance_mismatch",
+        ),
+        (
+            {
+                let mut r = receipt(&replacement, ReceiptPhase::Saved, 0);
+                r.target.digest = meshway_model::Digest::from_bytes([0; 32]);
+                r
+            },
+            "receipt_target_mismatch",
+        ),
+        (
+            {
+                let mut r = receipt(&replacement, ReceiptPhase::Saved, 0);
+                r.reported_at_ms = 0;
+                r
+            },
+            "receipt_precondition",
+        ),
+    ] {
+        let response = c
+            .post(&endpoint)
             .bearer_auth(&token)
-            .json(&receipt(&replacement, ReceiptPhase::Applied, 1))
+            .json(&request)
             .send()
             .await
-            .unwrap()
-            .status(),
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        c.post(&endpoint)
-            .bearer_auth(&token)
-            .json(&receipt(&first, ReceiptPhase::Applied, 1))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::CONFLICT
-    );
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body: meshway_protocol::ErrorResponse = response.json().await.unwrap();
+        assert_eq!(serde_json::to_value(body.problem).unwrap()["code"], code);
+    }
     for (phase, sequence, expected) in [
         (ReceiptPhase::Saved, 0, ApplicationPhase::Saved),
         (ReceiptPhase::Applied, 1, ApplicationPhase::Applied),

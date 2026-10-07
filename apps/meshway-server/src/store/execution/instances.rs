@@ -389,12 +389,17 @@ pub(crate) fn receipt(
 ) -> Result<((), Vec<Effect>), Error> {
     let now = now()?;
     let p = authorize_node(tx, sealer, boot, token, now)?;
-    current_instance(tx, boot, &p, &request.instance, now)?;
+    current_instance(tx, boot, &p, &request.instance, now).map_err(|error| match error {
+        Error::BindingConflict => Error::ReceiptInstanceMismatch,
+        other => other,
+    })?;
     if request.reported_at_ms > now as u64 + 5000
         || request.reported_at_ms.saturating_add(300_000) < now as u64
-        || (request.phase == ReceiptPhase::Failed) != request.failure.is_some()
     {
-        return Err(Error::BindingConflict);
+        return Err(Error::ReceiptPrecondition);
+    }
+    if (request.phase == ReceiptPhase::Failed) != request.failure.is_some() {
+        return Err(Error::ReceiptContentConflict);
     }
     let lease = lease(tx, sealer, &p)?;
     if lease.target.as_ref() == Some(&request.target) {
@@ -407,7 +412,7 @@ pub(crate) fn receipt(
                 .execution_expires_at_ms
                 .is_none_or(|e| e <= now as u64)
         {
-            return Err(Error::BindingConflict);
+            return Err(Error::ReceiptLeaseExpired);
         }
         check_publication(
             tx,
@@ -416,11 +421,15 @@ pub(crate) fn receipt(
             p.node,
             request.target.execution_publication,
             now,
-        )?;
+        )
+        .map_err(|error| match error {
+            Error::BindingConflict => Error::ReceiptPublicationSuperseded,
+            other => other,
+        })?;
     } else if !super::publications::historical_reference(tx, sealer, &p, &request.target)? {
         // Late evidence for a target this node once held is still history. A
         // target it never held is not.
-        return Err(Error::BindingConflict);
+        return Err(Error::ReceiptTargetMismatch);
     }
     let phase = match request.phase {
         ReceiptPhase::Saved => "saved",
@@ -436,7 +445,7 @@ pub(crate) fn receipt(
                 request.attempt.get() as i64, request.sequence.get() as i64], |r| r.get(0),
         )?;
         if !saved {
-            return Err(Error::BindingConflict);
+            return Err(Error::ReceiptPrecondition);
         }
     }
     let failure = request.failure.map(|f| match f {
@@ -465,7 +474,7 @@ pub(crate) fn receipt(
                 failure.map(str::to_owned),
             )
         {
-            return Err(Error::BindingConflict);
+            return Err(Error::ReceiptContentConflict);
         }
     } else {
         // History accepts late evidence; only a new greatest attempt/sequence

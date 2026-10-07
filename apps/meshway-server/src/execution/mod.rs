@@ -259,7 +259,15 @@ impl Execution {
         let boot = self.boot;
         self.handle
             .transact(TransactionBehavior::Immediate, move |tx| {
-                store::receipt(tx, &sealer, boot, token, request)
+                let result = store::receipt(tx, &sealer, boot, token, request.clone());
+                if let Err(error) = &result {
+                    tracing::info!(instance = %request.instance.instance_id,
+                        generation = request.instance.generation.get(),
+                        publication = %request.target.execution_publication,
+                        attempt = request.attempt.get(), sequence = request.sequence.get(),
+                        phase = ?request.phase, reason = %error, "Configuration receipt rejected");
+                }
+                result
             })
             .await
     }

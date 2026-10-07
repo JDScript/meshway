@@ -136,9 +136,54 @@ impl HttpError {
             ),
             Error::BindingConflict => simple(
                 S::CONFLICT,
-                Problem::RequestConflict {
+                Problem::BindingConflict {
                     params: empty,
                     message: "Request conflicts with the current generation or binding.".into(),
+                },
+            ),
+            Error::ReceiptInstanceMismatch => simple(
+                S::CONFLICT,
+                Problem::ReceiptInstanceMismatch {
+                    params: empty,
+                    message: "Receipt instance is no longer current.".into(),
+                },
+            ),
+            Error::ReceiptTargetMismatch => simple(
+                S::CONFLICT,
+                Problem::ReceiptTargetMismatch {
+                    params: empty,
+                    message: "Receipt target does not belong to this node.".into(),
+                },
+            ),
+            Error::ReceiptPublicationSuperseded => simple(
+                S::CONFLICT,
+                Problem::ReceiptPublicationSuperseded {
+                    params: empty,
+                    message: "Receipt publication is no longer eligible; refresh the target."
+                        .into(),
+                },
+            ),
+            Error::ReceiptLeaseExpired => simple(
+                S::CONFLICT,
+                Problem::ReceiptLeaseExpired {
+                    params: empty,
+                    message:
+                        "Receipt execution lease expired or was withdrawn; refresh the target."
+                            .into(),
+                },
+            ),
+            Error::ReceiptPrecondition => simple(
+                S::CONFLICT,
+                Problem::ReceiptPrecondition {
+                    params: empty,
+                    message: "Receipt timing or saved prerequisite is not satisfied.".into(),
+                },
+            ),
+            Error::ReceiptContentConflict => simple(
+                S::CONFLICT,
+                Problem::ReceiptContentConflict {
+                    params: empty,
+                    message: "Receipt sequence was already used with different content.".into(),
                 },
             ),
             Error::NameConflict => simple(

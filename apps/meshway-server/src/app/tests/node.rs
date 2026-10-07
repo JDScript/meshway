@@ -2220,7 +2220,7 @@ async fn multi_demand_saved_applied_fencing_and_revocation() {
     };
     assert_eq!(
         s.receipt(at.token.expose(), receipt.clone()).await,
-        Err(Error::BindingConflict)
+        Err(Error::ReceiptPrecondition)
     );
     receipt.phase = ReceiptPhase::Saved;
     s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
@@ -2635,7 +2635,7 @@ async fn review_late_failed_receipt_does_not_override_newer_applied() {
     late.failure = Some(ApplyFailure::Dns);
     assert_eq!(
         s.receipt(at.token.expose(), late).await,
-        Err(Error::BindingConflict)
+        Err(Error::ReceiptContentConflict)
     );
     assert_eq!(
         app.state_runtime.lock().unwrap().hub.events.sequence(),
@@ -2674,19 +2674,19 @@ async fn review_late_failed_receipt_does_not_override_newer_applied() {
     invalid.target.digest = [42; 32].into();
     assert_eq!(
         s.receipt(at.token.expose(), invalid).await,
-        Err(Error::BindingConflict)
+        Err(Error::ReceiptTargetMismatch)
     );
     let mut invalid = receipt.clone();
     invalid.instance.instance_id = iid();
     assert_eq!(
         s.receipt(at.token.expose(), invalid).await,
-        Err(Error::BindingConflict)
+        Err(Error::ReceiptInstanceMismatch)
     );
     let mut invalid = receipt.clone();
     invalid.instance.generation = Version::new(receipt.instance.generation.get() + 1).unwrap();
     assert_eq!(
         s.receipt(at.token.expose(), invalid).await,
-        Err(Error::BindingConflict)
+        Err(Error::ReceiptInstanceMismatch)
     );
     let evidence: i64 = app
         .executor
@@ -2763,7 +2763,7 @@ async fn review_late_failed_receipt_does_not_override_newer_applied() {
     never_held.target.digest = [43; 32].into();
     assert_eq!(
         s.receipt(at.token.expose(), never_held).await,
-        Err(Error::BindingConflict)
+        Err(Error::ReceiptTargetMismatch)
     );
     app.shutdown().await.unwrap();
 }

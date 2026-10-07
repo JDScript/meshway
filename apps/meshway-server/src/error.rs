@@ -44,6 +44,18 @@ pub enum Error {
     VersionConflict,
     #[error("request conflicts with the current generation or binding")]
     BindingConflict,
+    #[error("receipt instance is no longer current")]
+    ReceiptInstanceMismatch,
+    #[error("receipt target was never held by this node")]
+    ReceiptTargetMismatch,
+    #[error("receipt publication is no longer eligible")]
+    ReceiptPublicationSuperseded,
+    #[error("receipt execution lease has expired or was withdrawn")]
+    ReceiptLeaseExpired,
+    #[error("receipt timing or saved prerequisite is not satisfied")]
+    ReceiptPrecondition,
+    #[error("receipt content conflicts with its immutable sequence")]
+    ReceiptContentConflict,
     #[error("lifecycle state does not allow this operation")]
     StateConflict,
     #[error("state report execution scope changed")]

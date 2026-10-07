@@ -1962,6 +1962,34 @@ export const zProblem = z.union([z.strictObject({
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
+  ["code"]: z.enum(["binding_conflict"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["receipt_instance_mismatch"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["receipt_target_mismatch"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["receipt_publication_superseded"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["receipt_lease_expired"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["receipt_precondition"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["receipt_content_conflict"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
   ["code"]: z.enum(["name_conflict"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams
