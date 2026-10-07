@@ -33,4 +33,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: mise exec python -- python3 scripts/ci/collect.py --publish --push
       - name: Summary
-        run: echo 'Status index updated on ci-results; locally run `mise run status:sync`.' >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Status index updated on ci-results; locally run mise run status:sync." >> "$GITHUB_STEP_SUMMARY"
