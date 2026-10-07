@@ -6,10 +6,21 @@ import tempfile
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from perf.dataplane import MODES, configurations, last_profile, namespace_options, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
+from perf.dataplane import MODES, configurations, image_for, last_profile, namespace_options, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
 
 
 class DataplaneReportTests(unittest.TestCase):
+    def test_untagged_complete_image_is_reused_but_partial_layers_are_not(self):
+        complete = dict(Id="complete", Os="linux", Architecture="arm64",
+                        Config=dict(Entrypoint=["/usr/local/lib/meshway-lab/entrypoint.sh"]))
+        partial = dict(complete, Id="partial", Config={})
+        with tempfile.TemporaryDirectory() as directory, patch("perf.dataplane.image_builder") as builder, patch("perf.dataplane.command") as command:
+            builder.return_value.source_digest.return_value = "locked"
+            command.side_effect = ["partial\ncomplete", json.dumps([partial]), json.dumps([complete])]
+            self.assertEqual(image_for("linux/arm64", Path(directory))["imageId"], "complete")
+            self.assertIn("--all", command.call_args_list[0].args)
+            builder.return_value.build.assert_not_called()
+
     def test_reused_process_profile_deltas_do_not_replay_previous_sample(self):
         def metric(calls, ns):
             return dict(name="same", calls_started=calls, times=dict(self_cpu_ns=ns, self_cpu_samples=calls, max_wall_ns=30, cpu_ns=None))

@@ -144,13 +144,15 @@ def image_for(platform, output):
             if inspected:
                 image = json.loads(inspected)[0]
                 if (image["Os"] + "/" + image["Architecture"] == platform
+                        and image["Config"].get("Entrypoint") == ["/usr/local/lib/meshway-lab/entrypoint.sh"]
                         and image["Config"].get("Labels", {}).get("io.meshway.node-lab.source") == digest):
                     return cached
-    identifiers = command("docker", "image", "ls", "--no-trunc", "--quiet", "--filter",
+    identifiers = command("docker", "image", "ls", "--all", "--no-trunc", "--quiet", "--filter",
                           "label=io.meshway.node-lab.source=" + digest).splitlines()
     for identifier in identifiers:
         image = json.loads(command("docker", "image", "inspect", identifier))[0]
-        if image["Os"] + "/" + image["Architecture"] == platform:
+        if (image["Os"] + "/" + image["Architecture"] == platform
+                and image["Config"].get("Entrypoint") == ["/usr/local/lib/meshway-lab/entrypoint.sh"]):
             return {"imageId": image["Id"], "sourceDigest": digest,
                     "provenance": "existing immutable image of locked node-lab OS sources"}
     return builder.build(output, platform)
