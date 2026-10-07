@@ -1,7 +1,7 @@
 use std::process::Command;
 
 #[test]
-fn unavailable_stages_fail_before_tun_or_socket_creation() {
+fn manager_stage_requires_fixture_before_tun_or_socket_creation() {
     let output = Command::new(env!("CARGO_BIN_EXE_meshway-dataplane-perf"))
         .args([
             "--stage",
@@ -20,7 +20,7 @@ fn unavailable_stages_fail_before_tun_or_socket_creation() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .contains("stage is not implemented")
+            .contains("requires --fixture")
     );
 }
 
