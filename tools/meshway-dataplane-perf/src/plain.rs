@@ -88,6 +88,7 @@ pub async fn run_with_io(
         "{}",
         serde_json::json!({"ioCapabilities": capabilities(&tun, report())})
     );
+    profile::report_final();
     result
 }
 

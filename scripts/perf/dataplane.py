@@ -17,6 +17,8 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
+MODES = ("raw", "wg-direct", "wg-relay", "plain-per-packet", "plain-batch",
+         "secure-direct", "secure-relay", "manager-direct", "manager-relay")
 sys.path.insert(0, str(ROOT / "scripts"))
 from node_lab import check_elf, docker_target, image_builder, sha256
 
@@ -58,11 +60,63 @@ def last_profile(path):
     """Reports are cumulative: retain one final snapshot, never sum snapshots."""
     result = []
     for line in path.read_text().splitlines():
+        if not line.startswith("{"):
+            continue
         event = json.loads(line)
         fields = event.get("fields", {})
         if "metrics_json" in fields:
             result = json.loads(fields["metrics_json"])
     return result
+
+
+def profile_delta(current, previous):
+    """Counter deltas for a reused process; duplicate static metric names aggregate."""
+    def totals(metrics):
+        result = {}
+        for metric in metrics:
+            item = result.setdefault(metric["name"], dict(name=metric["name"], calls_started=0, times={}))
+            item["calls_started"] += metric["calls_started"]
+            for key, value in metric["times"].items():
+                if value is not None:
+                    if key == "max_wall_ns":
+                        item["times"][key] = max(item["times"].get(key, 0), value)
+                    else:
+                        item["times"][key] = (item["times"].get(key) or 0) + value
+                else:
+                    item["times"].setdefault(key, None)
+        return result
+    before = totals(previous)
+    after = totals(current)
+    for name, item in after.items():
+        old = before.get(name, {"calls_started": 0, "times": {}})
+        item["calls_started"] -= old["calls_started"]
+        for key, value in item["times"].items():
+            if value is not None and key != "max_wall_ns":
+                item["times"][key] -= old["times"].get(key) or 0
+                if item["times"][key] < 0:
+                    raise ValueError("profile counters moved backwards")
+        if item["calls_started"] < 0:
+            raise ValueError("profile calls moved backwards")
+    return list(after.values())
+
+
+def checkpoint(containers, directory):
+    def count(role):
+        total = 0
+        for line in (directory / f"{role}.stderr").read_text().splitlines():
+            try:
+                total += json.loads(line).get("fields", {}).get("checkpoint") is True
+            except ValueError:
+                pass  # A concurrently written final line may still be partial.
+        return total
+    before = {role: count(role) for role in containers}
+    for container in containers.values():
+        command("docker", "exec", container, "pkill", "-USR1", "-f", "^/fixtures/meshway-dataplane-perf")
+    deadline = time.monotonic() + 5
+    while any(count(role) <= before[role] for role in containers):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("node did not acknowledge cumulative profile checkpoint")
+        time.sleep(0.01)
 
 
 def receiver_metrics(data, traffic, payload):
@@ -246,12 +300,48 @@ def cpu_usage(container):
     return int(dict(line.split() for line in text.splitlines())["usage_usec"]) / 1_000_000
 
 
+def node_threads(container):
+    """Linux task CPU counters; idle includes blocked and descheduled wall time."""
+    script = '''import json, os, time
+from pathlib import Path
+threads = {}
+for process in Path('/proc').glob('[0-9]*'):
+    try:
+        if process.joinpath('cmdline').read_bytes().split(b'\\0')[0] != b'/fixtures/meshway-dataplane-perf':
+            continue
+        for task in process.joinpath('task').iterdir():
+            stat = task.joinpath('stat').read_text()
+            end = stat.rindex(')')
+            fields = stat[end+2:].split()
+            threads[task.name] = {'name': stat[stat.index('(')+1:end],
+                                 'cpuSeconds': (int(fields[11])+int(fields[12]))/os.sysconf('SC_CLK_TCK')}
+    except FileNotFoundError:
+        continue
+print(json.dumps({'at': time.monotonic(), 'threads': threads}))'''
+    return json.loads(command("docker", "exec", container, "python3", "-c", script))
+
+
+def thread_delta(before, after):
+    elapsed = after["at"] - before["at"]
+    return [{"tid": tid, "name": current["name"],
+             "cpuSeconds": current["cpuSeconds"] - before["threads"][tid]["cpuSeconds"],
+             "wallSeconds": elapsed,
+             "cpuActivePercent": (current["cpuSeconds"] - before["threads"][tid]["cpuSeconds"]) / elapsed * 100}
+            for tid, current in after["threads"].items() if tid in before["threads"]]
+
+
 def namespace_options(mode, role):
     if mode.startswith("wg-"):
         return ["--cap-add", "NET_ADMIN"] + (["--sysctl", "net.ipv4.ip_forward=1"] if role == "r" else [])
     if role == "r":
         return ["--cap-add", "NET_ADMIN", "--device", "/dev/net/tun:/dev/net/tun"] if mode.startswith("manager-") else []
     return ["--cap-add", "NET_ADMIN"] + ([] if mode == "raw" else ["--device", "/dev/net/tun:/dev/net/tun"])
+
+
+def configurations(args):
+    return [(mode, b, p) for mode in args.modes
+            for b in ([0] if mode in MODES[:3] else args.batch)
+            for p in ([0] if mode in MODES[:3] else args.profile)]
 
 
 def wireguard_setup(containers, addresses, mtu):
@@ -309,7 +399,7 @@ def wireguard_transfers(containers, evidence):
             item.update(zip(("handshakeUnixSeconds", "receivedBytes", "sentBytes"), map(int, values)))
 
 
-def sample(args, metadata, output, network, image, platform, identity, mode, batch, profile, traffic, repeat):
+def sample(args, metadata, output, network, image, platform, identity, mode, batch, profile, traffic, repeat, cache, sessions=None):
     label = f"{mode}-b{batch}-p{profile}-{traffic}-r{repeat}"
     print(label, flush=True)
     directory = output / label
@@ -318,8 +408,13 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                   status="failed", directory=label, goodputMbps=None, packetsPerSecond=None,
                   lostPercent=None, cpuPercent=None, allocations=None, copiedBytes=None, peakMemoryBytes=None,
                   syscallsPerPacket=None, io=("batch" if mode == "plain-batch" else "per-packet") if mode.startswith("plain-") else None)
-    containers = {}
-    nodes = []
+    reusable = mode.startswith(("plain-", "secure-", "manager-"))
+    containers = cache.setdefault(mode, {}) if reusable else {}
+    key = (mode, batch, profile, repeat)
+    resumed = sessions.pop(key, None) if sessions is not None else None
+    nodes = resumed["nodes"] if resumed else []
+    origin = resumed["directory"] if resumed else (output / (label + "-nodes") if sessions is not None and reusable else directory)
+    origin.mkdir(exist_ok=True)
     server = None
     handles = []
     roles = ("a", "r", "b") if mode.endswith("-relay") else ("a", "b")
@@ -328,7 +423,9 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     wireguard = mode.startswith("wg-")
     try:
         for role in roles:
-            name = f"meshway-dp-{identity}-{role}"
+            if role in containers:
+                continue
+            name = f"meshway-dp-{identity}-{mode}-{role}"
             container = command("docker", "create", "--name", name, "--label", "io.meshway.dataplane-perf=" + identity,
                                 "--platform", platform, "--network", network,
                                  "--cap-drop", "ALL",
@@ -357,7 +454,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             metadata["environment"]["wireguardTools"] = command("docker", "exec", containers["a"], "wg", "--version")
             record["wireguard"] = wireguard_setup(containers, addresses, args.mtu)
         else:
-            if secure:
+            if secure and not resumed:
                 public_nodes = []
                 for role in roles:
                     public_nodes.append(json.loads(command("docker", "exec", containers[role],
@@ -368,25 +465,39 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 fixture = json.loads(command("docker", "exec", containers["a"], "/fixtures/meshway-dataplane-fixture",
                     "compile", "--input", "/tmp/public-nodes.json", "--seconds", str(args.seconds + args.omit + 120)))
                 save(directory / "fixture.json", fixture)
+                if origin != directory:
+                    shutil.copy2(directory / "fixture.json", origin / "fixture.json")
                 record["publicationDigest"] = fixture["publicationDigest"]
                 for container in containers.values():
                     push(container, "/tmp/fixture.json", (directory / "fixture.json").read_text())
+            if resumed:
+                if secure:
+                    record["publicationDigest"] = resumed["publicationDigest"]
+                    shutil.copy2(origin / "fixture.json", directory / "fixture.json")
+                for role in roles:
+                    shutil.copy2(origin / f"{role}.stdout", directory / f"{role}.stdout")
             for role in reversed(roles):
+                if resumed:
+                    continue
                 other = "b" if role == "a" else "a"
-                stdout = (directory / f"{role}.stdout").open("w")
-                stderr = (directory / f"{role}.stderr").open("w")
+                stdout = (origin / f"{role}.stdout").open("w")
+                stderr = (origin / f"{role}.stderr").open("w")
                 handles.extend([stdout, stderr])
                 nodes.append(subprocess.Popen(["docker", "exec", "--env", f"MESHWAY_PROFILE={profile}",
                     "--env", "MESHWAY_PROFILE_DETAIL=1",
+                    "--env", "RUST_LOG=info,meshway_connectivity=debug",
                     containers[role], "/fixtures/meshway-dataplane-perf", "--stage", stage, "--role", role,
                     "--bind", addresses[role] + ":41000", "--peer", addresses[other] + ":41000",
                     "--mtu", str(args.mtu), "--batch", str(batch), "--seconds", str(args.seconds + args.omit + 60),
                     "--log-format", "json"] + (["--workers", str(args.workers), "--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else ["--io", record["io"]]), cwd=ROOT, stdout=stdout, stderr=stderr))
             deadline = time.monotonic() + 15
-            while not all((directory / f"{role}.stdout").read_text().strip() for role in roles):
+            while not all((origin / f"{role}.stdout").read_text().strip() for role in roles):
                 if any(node.poll() is not None for node in nodes) or time.monotonic() > deadline:
                     raise RuntimeError("node failed readiness; see process logs")
                 time.sleep(0.05)
+            if origin != directory:
+                for role in roles:
+                    shutil.copy2(origin / f"{role}.stdout", directory / f"{role}.stdout")
             for role in roles:
                 readiness = json.loads((directory / f"{role}.stdout").read_text())
                 if not readiness["ready"]:
@@ -418,6 +529,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             if server.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError("iperf server failed readiness")
             time.sleep(0.05)
+        threads_before = {role: node_threads(c) for role, c in containers.items()} if secure else {}
+        record["hostLoadInitial"] = os.getloadavg()
         before = {role: cpu_usage(c) for role, c in containers.items()}
         start = time.monotonic()
         client_args = ["docker", "exec", containers["a"], "iperf3", "-c", destination, "-J",
@@ -428,6 +541,10 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             completed = subprocess.run(client_args, cwd=ROOT, stdout=stdout, stderr=stderr, timeout=args.seconds + args.omit + 25)
         elapsed = time.monotonic() - start
         after = {role: cpu_usage(c) for role, c in containers.items()}
+        record["hostLoadFinal"] = os.getloadavg()
+        if secure:
+            record["nodeThreads"] = {role: thread_delta(threads_before[role], node_threads(c))
+                                     for role, c in containers.items()}
         cpu = {role: after[role] - before[role] for role in containers}
         if any(not math.isfinite(value) or value < 0 for value in cpu.values()):
             raise RuntimeError("invalid per-role cgroup CPU delta")
@@ -457,25 +574,45 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as error:
         record.update(status="failed", failure=str(error))
     finally:
-        for container in containers.values():
+        keep = sessions is not None and reusable and traffic == "tcp" and record["status"] == "ok"
+        if keep and profile:
+            try:
+                checkpoint(containers, origin)
+            except RuntimeError as error:
+                record.update(status="failed", failure=str(error))
+                keep = False
+        for container in ([] if keep else containers.values()):
             # Only fixture-owned process names in these newly created namespaces.
             command("docker", "exec", container, "pkill", "-INT", "-f", "^/fixtures/meshway-dataplane-perf", check=False)
-        for node in nodes:
+        for node in ([] if keep else nodes):
             try:
                 node.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 record.update(status="failed", failure="plain node did not shut down")
-        for container in containers.values():
-            command("docker", "rm", "-f", container)
+        if keep:
+            sessions[key] = dict(nodes=nodes, directory=origin, publicationDigest=record.get("publicationDigest"))
+        elif reusable and all(node.poll() == 0 for node in nodes):
+            for container in containers.values():
+                command("docker", "exec", container, "rm", "-rf", "/tmp/private", "/tmp/fixture.json", "/tmp/public-nodes.json")
+        else:
+            for container in containers.values():
+                command("docker", "rm", "-f", container)
+            containers.clear()
         if server is not None:
             server.wait(timeout=10)
-        for node in nodes:
+        for node in ([] if keep else nodes):
             node.wait(timeout=10)
             if node.returncode:
                 record.update(status="failed", failure=f"plain node exit {node.returncode}; see stderr")
         for handle in handles:
             handle.close()
+        if origin != directory:
+            for role in roles:
+                path = origin / f"{role}.stderr"
+                if path.exists():
+                    shutil.copy2(path, directory / f"{role}.stderr")
     record["nodeExitCodes"] = [node.returncode for node in nodes]
+    record["reusedNodeProcesses"] = bool(resumed)
     if mode.startswith(("plain-", "secure-", "manager-")):
         record["capabilitiesFinal"] = {}
         for role in roles:
@@ -492,8 +629,16 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         try:
             record["profiles"] = {role: last_profile(directory / f"{role}.stderr") for role in roles
                                   if (directory / f"{role}.stderr").exists()}
+            if keep:
+                sessions[key]["profiles"] = record["profiles"]
+            if resumed:
+                record["profiles"] = {role: profile_delta(metrics, resumed["profiles"].get(role, []))
+                                      for role, metrics in record["profiles"].items()}
         except (ValueError, TypeError) as error:
             record.update(status="failed", failure="invalid profile output: " + str(error))
+    if record["status"] != "ok":
+        for field in ("goodputMbps", "packetsPerSecond", "lostPercent", "cpuPercent"):
+            record[field] = None
     return record
 
 
@@ -538,6 +683,8 @@ def measure(args, output_root):
     save(output / "results.json", metadata)
     network = "meshway-dp-" + identity
     command("docker", "network", "create", "--internal", "--label", "io.meshway.dataplane-perf=" + identity, network)
+    cache = {}
+    sessions = {}
     try:
         description = json.loads(command("docker", "network", "inspect", network))[0]
         for config in description["IPAM"]["Config"]:
@@ -545,13 +692,12 @@ def measure(args, output_root):
             if subnet.version == 4 and subnet.overlaps(ipaddress.ip_network("100.127.0.0/30")):
                 raise RuntimeError("fixture underlay overlaps the TUN subnet")
         metadata["environment"]["network"] = description["IPAM"]["Config"]
-        configs = [(mode, 0, 0) for mode in ("raw", "wg-direct", "wg-relay")] + [(mode, b, p) for mode in ("plain-per-packet", "plain-batch", "secure-direct", "secure-relay", "manager-direct", "manager-relay")
-                                   for b in args.batch for p in args.profile]
+        configs = configurations(args)
         for repeat in range(args.repeats):
             for mode, batch, profile in (configs if repeat % 2 == 0 else list(reversed(configs))):
                 for traffic in ("tcp", "udp"):
                     metadata["results"].append(sample(args, metadata, output, network, image["imageId"], platform,
-                        identity, mode, batch, profile, traffic, repeat))
+                        identity, mode, batch, profile, traffic, repeat, cache, sessions))
                     save(output / "results.json", metadata)
                     (output / "summary.md").write_text(summary(metadata))
         metadata["sourcesUnchanged"] = source_digest() == before
@@ -559,6 +705,9 @@ def measure(args, output_root):
         save(output / "results.json", metadata)
         (output / "summary.md").write_text(summary(metadata))
     finally:
+        for containers in cache.values():
+            for container in containers.values():
+                command("docker", "rm", "-f", container)
         command("docker", "network", "rm", network)
     print(output)
     return int(not metadata.get("sourcesUnchanged") or any(r["status"] != "ok" for r in metadata["results"]))
@@ -567,6 +716,7 @@ def measure(args, output_root):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
     parser.add_argument("--batch", type=int, nargs="+", default=[1, 32])
     parser.add_argument("--profile", type=int, nargs="+", default=[0, 128])
     parser.add_argument("--repeats", type=int, default=2)
@@ -577,8 +727,10 @@ def main():
     parser.add_argument("--udp-rate", default="500M")
     parser.add_argument("--cpus", type=float, default=2)
     parser.add_argument("--memory", default="512m")
-    parser.add_argument("--workers", type=int, default=1, help="crypto workers per node (0 = inline); default matches two-CPU measurement quota")
+    parser.add_argument("--workers", type=int, help="crypto workers per node (0 = inline); default = CPU quota minus one, minimum one")
     args = parser.parse_args()
+    if args.workers is None:
+        args.workers = max(1, math.ceil(args.cpus) - 1)
     if (not 2 <= args.repeats <= 100 or not 6 <= args.seconds <= 300 or not 1 <= args.omit <= 60
             or not 1280 <= args.mtu <= 1472 or not 16 <= args.payload <= args.mtu-28
             or any(not 1 <= b <= 1024 for b in args.batch) or any(not 0 <= p <= 65536 for p in args.profile)

@@ -196,6 +196,21 @@ pub fn gauge(name: &'static str, value: Option<u64>) {
 /// Owner-driven and paced; emits cumulative diagnostic observations on stderr
 /// through the executable's normal tracing subscriber. No history/State sample.
 pub fn report() {
+    report_snapshot(false, false);
+}
+
+/// Emit a final cumulative snapshot after the caller has joined its producers.
+/// Unlike periodic reports this explicit shutdown boundary is not rate limited.
+pub fn report_final() {
+    report_snapshot(true, true);
+}
+
+/// Explicit cumulative checkpoint for an external measurement boundary.
+pub fn report_checkpoint() {
+    report_snapshot(false, true);
+}
+
+fn report_snapshot(final_snapshot: bool, force: bool) {
     if !enabled() {
         return;
     }
@@ -204,7 +219,7 @@ pub fn report() {
     let Ok(mut last) = LAST.get_or_init(|| Mutex::new((now, now))).try_lock() else {
         return;
     };
-    if now.duration_since(last.1) < Duration::from_secs(5) {
+    if !force && now.duration_since(last.1) < Duration::from_secs(5) {
         return;
     }
     last.1 = now;
@@ -253,7 +268,7 @@ pub fn report() {
     ) {
         tracing::info!(target: "meshway_profile", profile_version = 1, elapsed_ns = elapsed,
             sample_denominator = RATE.load(Ordering::Relaxed), lost = LOST.load(Ordering::Relaxed),
-            detail = DETAIL.load(Ordering::Relaxed),
+            detail = DETAIL.load(Ordering::Relaxed), final_snapshot, checkpoint = force && !final_snapshot,
             metrics_json = %metrics, counters_json = %events, gauges_json = %gauges, "Sampled packet profile");
     }
 }

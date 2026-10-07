@@ -4,11 +4,34 @@ import json
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
+from types import SimpleNamespace
 
-from perf.dataplane import last_profile, namespace_options, receiver_metrics, summary, wireguard_transfers
+from perf.dataplane import MODES, configurations, last_profile, namespace_options, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
 
 
 class DataplaneReportTests(unittest.TestCase):
+    def test_reused_process_profile_deltas_do_not_replay_previous_sample(self):
+        def metric(calls, ns):
+            return dict(name="same", calls_started=calls, times=dict(self_cpu_ns=ns, self_cpu_samples=calls, max_wall_ns=30, cpu_ns=None))
+        result = profile_delta([metric(8, 100), metric(3, 30)], [metric(4, 40), metric(2, 20)])
+        self.assertEqual(result, [dict(name="same", calls_started=5, times=dict(self_cpu_ns=70, self_cpu_samples=5, max_wall_ns=30, cpu_ns=None))])
+        with self.assertRaisesRegex(ValueError, "backwards"):
+            profile_delta([metric(1, 1)], [metric(2, 2)])
+
+    def test_thread_cpu_fraction_uses_its_own_snapshot_wall_interval(self):
+        before = dict(at=10, threads={"12": dict(name="owner", cpuSeconds=3)})
+        after = dict(at=20, threads={"12": dict(name="owner", cpuSeconds=8)})
+        self.assertEqual(thread_delta(before, after)[0]["cpuActivePercent"], 50)
+
+    def test_mode_filter_preserves_kernel_reference_and_profile_matrix(self):
+        args = SimpleNamespace(modes=["secure-relay", "raw", "plain-batch"], batch=[1, 32], profile=[0, 128])
+        configs = configurations(args)
+        self.assertEqual(len(configs), 9)
+        self.assertEqual([c for c in configs if c[0] == "raw"], [("raw", 0, 0)])
+        self.assertEqual({c[0] for c in configs}, set(args.modes))
+        args.modes = MODES
+        self.assertEqual(len(configurations(args)), 27)
+
     def test_tcp_receiver_uses_server_role_not_client_sender_flag(self):
         received = dict(start=0, end=7.998435, seconds=7.998435, bytes=2219048960,
                         bits_per_second=2219483146.390513, sender=False)

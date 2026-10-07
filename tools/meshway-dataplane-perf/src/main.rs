@@ -75,6 +75,25 @@ async fn main() -> Result<(), Error> {
         stop.cancel();
         Ok::<_, Error>(())
     };
-    tokio::try_join!(node, shutdown)?;
+    let execution = async {
+        tokio::try_join!(node, shutdown)?;
+        Ok::<_, Error>(())
+    };
+    tokio::select! {
+        result = execution => result?,
+        result = checkpoints() => result?,
+    }
     Ok(())
+}
+
+async fn checkpoints() -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        let mut signal =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::user_defined1())?;
+        while signal.recv().await.is_some() {
+            meshway_logging::profile::report_checkpoint();
+        }
+    }
+    std::future::pending().await
 }
