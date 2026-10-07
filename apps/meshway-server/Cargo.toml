@@ -14,8 +14,8 @@ clap = { workspace = true, features = ["env"] }
 getrandom.workspace = true
 hmac = "0.12"
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
-futures-util = "0.3"
-idna = "1.1"
+futures-util.workspace = true
+idna.workspace = true
 ipnet.workspace = true
 meshway-model = { path = "../../crates/meshway-model" }
 meshway-logging = { path = "../../crates/meshway-logging" }
