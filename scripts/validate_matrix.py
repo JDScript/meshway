@@ -135,9 +135,41 @@ def row_command(name, report, artifacts, images, short):
 
 def failure_excerpt(report, logfile):
     excerpts = []
-    # Actor error files contain the precise first failure, unlike a generic attach exit.
+    # Actor error.txt is deliberately private: Display errors may contain secrets.
+    # Summaries print only its location and the fixture's structured phase fields.
     for path in sorted(report.rglob("error.txt")) if report.exists() else []:
-        excerpts.append(str(path.relative_to(report)) + ": " + path.read_text(errors="replace")[-1600:])
+        excerpts.append("private failure: " + str(path.relative_to(report)))
+    for path in sorted(report.rglob("report.json")) if report.exists() else []:
+        try:
+            metadata = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            excerpts.append("incomplete metadata: " + str(path.relative_to(report)))
+            continue
+        failed = []
+        for group in ("tests", "platformTests"):
+            failed.extend(name for name, check in metadata.get(group, {}).items() if check.get("passed") is False)
+        failed.extend(name for name in ("bootstrapHttpsTest", "daemonCleanupTest")
+                      if metadata.get(name, {}).get("passed") is False)
+        if failed:
+            excerpts.append(str(path.relative_to(report)) + ": failed checks " + ", ".join(failed))
+    for path in sorted(report.rglob("*.log")) if report.exists() else []:
+        phases = []
+        with path.open("rb") as stream:
+            stream.seek(max(0, path.stat().st_size - 32768))
+            tail = stream.read().decode(errors="replace")
+        for line in tail.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict) or not isinstance(event.get("fields"), dict):
+                continue
+            fields = event["fields"]
+            stage = {key: fields[key] for key in ("phase", "failure_category") if isinstance(fields.get(key), str)}
+            if stage and (not phases or phases[-1] != stage):
+                phases.append(stage)
+        if phases:
+            excerpts.append(str(path.relative_to(report)) + ": " + json.dumps(phases[-3:]))
     if logfile.exists():
         excerpts.append("invocation: " + "\n".join(logfile.read_text(errors="replace").splitlines()[-12:]))
     return "\n".join(excerpts)[-7000:]

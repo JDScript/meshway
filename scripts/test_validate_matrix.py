@@ -17,6 +17,16 @@ from validation_support import import_artifact
 
 
 class MatrixTests(unittest.TestCase):
+    def test_failure_summary_keeps_private_error_details_out_of_stdout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary)
+            (report / "error.txt").write_text("credential=must-stay-private")
+            (report / "a.log").write_text(json.dumps({"fields": {"phase": "path_handshake", "detail": "must-stay-private"}}))
+            excerpt = matrix.failure_excerpt(report, report / "missing-invocation.log")
+            self.assertIn("error.txt", excerpt)
+            self.assertIn("path_handshake", excerpt)
+            self.assertNotIn("must-stay-private", excerpt)
+
     def test_imported_binaries_share_only_frozen_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
