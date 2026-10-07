@@ -108,7 +108,7 @@ Session 的 `Payload` 可保有 `PacketBuffer` 的原始存储，发送预算包
 
 worker 只持有包存储、方向／序号、不可变 Arc 密钥句柄、路由元数据与原输出 guard，不读取 authority，不访问 flow 或 replay。验证失败不会提交 replay；并发验证的重复序号也只有第一次成功 owner 提交有效。关闭后的在途 crypto 可以完成，但不能提交或释放输出；密钥对象在 owner 与最后一个在途句柄释放后销毁，具体清零边界见[就地加密](#单缓冲所有权与就地加密)。
 
-`pipeline::Pool` 默认 worker 数为可用核数减一、最少一；daemon 可通过 `MESHWAY_DATAPLANE_WORKERS` 设置 0–256，0 为同步 inline。`submit`／`flush` 不等待 crypto 完成，每次通知最多八个已就绪 job；worker 逐包发布完成，完成队列从空变为非空时立即通知 owner。owner 在准备新输入前及本轮准备结束后收割 ready 前缀。`take_ready` 每轮最多释放 32 个已完成输出，不等待原输入批次的尾部，也不等待凑批。
+`pipeline::Pool` 默认 **0 worker（inline）**；daemon 可通过 `MESHWAY_DATAPLANE_WORKERS` 显式设置 0–256。当前硬件密码后端、32-credit 窗口下的两核／四核对照支持 inline；这不是所有 CPU 的最优保证，曲线与适用范围见[有界输出队列实测](/v2/node/performance#有界输出队列实测)。显式使用 worker 时，`submit`／`flush` 不等待 crypto 完成，每次通知最多八个已就绪 job；worker 逐包发布完成，完成队列从空变为非空时立即通知 owner。owner 在准备新输入前及本轮准备结束后收割 ready 前缀。`take_ready` 每轮最多释放 32 个已完成输出，不等待原输入批次的尾部，也不等待凑批。
 
 流式入口对明文长度不超过 128 B 的包直接执行相同的无状态 crypto；接收按含 Noise tag 的 body 不超过 144 B 判断。该阈值覆盖 52-byte TCP ACK 及较小 IPv6／options 变体，也适用于同长度的其他业务包，不是未经认证的 ACK 特权。小包继续使用同一个 epoch／circuit／方向的序号、credit 和完成队列，不能越过尚未完成的大包。短包原语与交接墙钟依据见[性能诊断](/v2/node/performance#owner-路径与-tcp-拥塞诊断)。
 
@@ -116,9 +116,25 @@ Circuit 保留一次稳定分配；稳态 send／commit 通过拆分字段借用
 
 每个 epoch／circuit／方向使用独立的 owner 接纳序号和有序完成队列，只释放连续完成前缀；crypto 失败同样占据自己的序号并释放该位置，不提交 replay。队列持有原 epoch 标识直至全部结果释放，失败结果也不能与新 epoch 混合。就绪队列按轮转次序释放，慢 circuit 不阻塞其他 circuit。
 
-工作池总计 32 个全生命周期 credit，覆盖已准入、排队、计算、已完成未释放以及 TX／TUN 待完成输出；完成通知或前缀取出不归还 credit，宿主在最终 I/O 完成或明确失败后归还。owner 在业务准入前检查额度，未准入输入留在独立有界队列。完成队列能容纳整个窗口，worker 不因 owner 暂停轮询而阻塞；描述符微批与完成槽复用预分配存储。业务准备每轮另有 200 µs 时间预算。`run`／`run_prepared` 保留为同步批次调用方的便利入口；daemon 与 L3／L4 驱动使用流式入口。取消不重新绑定在途输出，pool 销毁关闭队列并 join 所有线程。
+流式工作池总计 32 个全生命周期 credit，覆盖已准入、排队、计算、已完成未释放以及 TX／TUN 待完成输出；完成通知或前缀取出不归还 credit，宿主在最终 I/O 完成或明确失败／取消后归还。准入前同时检查包数、实际存储 capacity（含 headroom／tailroom）及 jumbo 数量，不以有效 payload 长度替代占用。完成队列能容纳整个窗口，worker 不因 owner 暂停轮询而阻塞；描述符微批与完成槽复用预分配存储。业务准备每轮另有 200 µs 时间预算。`run`／`run_prepared` 保留为同步批次调用方的便利入口；daemon 与 L3／L4 驱动使用流式入口。取消不重新绑定在途输出，pool 销毁关闭队列并 join 所有线程。
 
-当前限制：crypto 完成已与下一批输入解耦，但宿主仍等待本次已释放前缀的 carrier／TUN I/O；该 I/O 真正挂起时，业务 owner 的下一轮输入仍会等待。Manager 的健康接收／计时任务独立推进，原 guard 继续约束 I/O。独立的有界 TX pending 驱动尚未实现；现有墙钟观察、实际吞吐与满载排队边界见[性能诊断](/v2/node/performance#owner-路径与-tcp-拥塞诊断)。
+输出使用 `carrier::SendPending` 与 `TunPending` 两个独立 FIFO 驱动，和输入、crypto completion 一起按就绪状态轮询；不为每包 spawn 任务，不等待凑批。每个方向至多一个正在执行的批次。发送 future 在入队前冻结实际 channel；一次 owner `select!` 等待被取消时，队列继续保有原 future、guard 与 credit。TUN 使用同一个 `Delivery` 实现记录每次成功 syscall 的前缀，取消等待后只继续未写后缀。停止／换代显式取消旧 pending，并计入丢弃计数；不把旧输出迁到新权限。
+
+额度耗尽时，owner 停止读取新 TUN／业务承载批次，已读取而未准入的有界前缀保留原顺序；不会把受背压的队头搬到队尾。L3 直接 UDP 入口停止 socket 读取，后续压力留在内核。生产 Manager 的业务事件消费暂停，而控制事件使用独立 32 槽；共享 UDP socket 的 health／握手／STUN 解复用 owner 继续运行，因此其业务事件队列满时仍按[控制消息预算](/v2/node/connectivity#udp-控制消息预算)丢弃未接纳事件。这一边界不同于停止整个共享 UDP socket。
+
+#### Pending 存储上限
+
+| 常量／计量 | 上限 |
+| --- | ---: |
+| 全生命周期包数 `STREAM_CAPACITY` | 32，两个输出方向共用 |
+| 普通包 storage class `MTU_STORAGE` | capacity ≤ 4,096 B |
+| jumbo（含 64 KiB 大包）`JUMBO_CAPACITY` | 至多 2 包，仍占上述 32 槽 |
+| 每个 jumbo 的 `JUMBO_STORAGE` | `MAX_FRAME + 128 + 64` = 131,264 B |
+| 全生命周期实际 capacity 总和 `STREAM_BYTES` | `30 × 4,096 + 2 × 131,264` = **385,408 B** |
+
+两个 pending 分别检查包／字节／jumbo 数；其元素必须携带同一个 Pool 已保留的 credit，因而不能叠加成两个 32-credit 窗口。没有因 I/O 等待额外复制整包。元数据另外有界：至多 32 个 pending future／批次、32 个 credit，Pool 预留 32 个 lane × 32 个完成槽及 32 个八项 descriptor group；具体结构字节数随 Rust ABI，以各类型 `size_of` 计。输入预取、空闲 PacketPool、Session 自身预算、TUN／UDP scratch、共享执行配置、线程栈和内核 socket 缓冲分别占用其自己的上限，不能把 385,408 B 当成整个进程的 RSS 上限。取消后的 Session 工作继续受 Session 原有帧／字节预算与取消 guard 约束。
+
+目前尚未证明整个进程在所有高负载场景下稳定低于 512 MiB：已有输出占用、cgroup／RSS 曲线和 OOM 失败证据，见[内存边界](/v2/node/performance#有界输出队列实测)。有界 pending 的正确性不代表满载低 RTT 或 OOM 根因已经解决。
 
 Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代创建新 scope 标识。业务批次使用所有原 packet guard 与 channel guard 的交集，任何成员失效均阻止该批后续 I/O。每次 syscall／release 重新检查；同一 SecureNode 精确 snapshot 代际的 guards 可共用本次同步 Reading，但仍逐一检查 circuit 取消与各自期限，跨等待不缓存 Reading。握手、诊断、health 与 STUN 保留独立控制路径。
 

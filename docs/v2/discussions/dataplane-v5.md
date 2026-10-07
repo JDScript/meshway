@@ -86,7 +86,7 @@ impl PacketBuffer {
 TUN/UDP 入站（批量） → owner 段（SecureNode，单线程，状态变更） → 工作池（AEAD/HMAC/编码，无状态） → 按 circuit 保序输出 → 批量发送 / TUN 写入
 ```
 
-- 工作池大小默认为可用核数减一，有界队列；队列满时对该 circuit 施加背压，不丢弃已准入的包。
+- 工作池默认策略按[实测](/v2/node/performance#有界输出队列实测)选择；crypto 与输出共用有界 credit，额度满时对输入施加背压，不丢弃已准入的包。现行实现的输出与存储上限见[发送流水线](/v2/node/dataplane#发送流水线与连续性)。
 - owner 段交付给 worker 的是：缓冲、方向、序号、`Arc` 的密钥句柄（AEAD key、hop MAC key）、输出 guard；worker 不访问 flow 表、replay 窗口或 authority。
 - 重放提交在 owner 段，位于 worker 验证成功之后；验证失败的包不提交。
 - 顺序：同一 circuit 的输出按 owner 段接收顺序交付；不同 circuit 之间无序。

@@ -266,7 +266,9 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 
 每个配置分别运行 TCP（默认单流，`--tcp-streams N` 可指定 1–128 条并行流）和 UDP 定速率 iperf3，至少两次重复；重复之间反转配置顺序。UDP 始终为一条流，TCP 并行数保存于报告 options 与真实 iperf 命令。默认每次先省略 2 秒 warmup，再测量 8 秒。release 交叉构建缓存独立于其他任务，位于 `target/dataplane-perf`；测量使用报告目录中不可变的二进制副本。Docker userspace 使用锁定 node-lab OS 源码对应的 immutable image，若尚无该 image，则在本工作区私有输出目录构建；不部署或修改常驻 lab。
 
-`--modes` 可选择本页列出的模式，默认仍为全部。相同 Meshway 模式／拓扑复用容器；同一 batch／profile／repeat 的 TCP 和 UDP 连续使用同一节点进程与 circuit，只重启 iperf3。跨重复或 profile 配置重启节点并使用新材料。`--workers` 默认按 CPU quota 取 `max(ceil(cpus)-1, 1)`，可显式指定，0 为 inline。
+`--modes` 可选择本页列出的模式，默认仍为全部。相同 Meshway 模式／拓扑复用容器；同一 batch／profile／repeat 的 TCP 和 UDP 连续使用同一节点进程与 circuit，只重启 iperf3。跨重复或 profile 配置重启节点并使用新材料。`--workers` 默认 **0（inline）**，与正式 Pool 一致；0–256 可显式指定。依据与跨平台限制见[有界输出队列实测](#有界输出队列实测)。
+
+`--quick` 显式允许一次重复／4 秒的诊断窗口，不替代完整两次重复验收。`--traffic tcp|udp` 可选择独立负载，默认仍为 TCP 后 UDP；单独 TCP 不保留等待复用的进程。`--udp-buffer N` 只为 L3 的两个 socket 方向设置显式字节请求，0 使用正式 provider 默认值，不改变 Manager／plain 的配置。原始 options 保存这些参数。长窗口的节点／fixture 总期限覆盖两种连续负载；默认业务流仍有 60 秒 idle，因此长 iperf 窗口的空闲 TCP 控制连接不能被工具当成自动续租。
 
 `raw` 的 veth MTU 与内层 TUN MTU 相同，保留内核默认 offload；`plain` 的外层 veth 保留 1500 MTU，TUN offload 按 `--io` 选择。两者经过同一内部 Docker bridge。TCP 应用写入块与实际 TCP 分段不是同一概念，TCP 不通过 Mbps／假定包长反推 pps。UDP 应用 payload 由 `--payload` 固定，IPv4／UDP 头额外占 28 字节。
 
@@ -289,6 +291,7 @@ mise run perf:dataplane --batch 1 32 128 --profile 0 128 \
 | `results[].wireguard` | 各接口的内核类型／MTU、AllowedIPs、端点、路由、握手时间和双向传输字节；不保存密钥 |
 | `cpuByRole` | 每个 A／R／B 角色的同区间 cgroup CPU 秒与百分比；历史报告缺失时表示未测，不从总量分摊 |
 | `allocations`、`copiedBytes`、`peakMemoryBytes` | 当前未测，明确为 null |
+| `memoryByRole`、`<role>.memory.csv`、`<role>.memory.events` | 每 namespace 一个有界采样进程，每 250 ms 保存 `/proc/uptime`、cgroup `memory.current`、被测节点进程 VmRSS；记录采样峰值与 cgroup OOM 事件。VmRSS 缺失为 null，cgroup 包含 iperf／内核和采样器；两个口径不可混称或直接相加，采样峰值不等于连续监控的绝对峰值 |
 | `capabilitiesInitial`、`capabilitiesFinal` | plain／secure 的实际 UDP 能力与成功 GSO／GRO／mmsg 次数；Manager 尚未导出 socket 计数，明确为 null；`tunBatch` 另记录 secure／manager 的 TUN vnet_hdr 实际模式 |
 | `workers` | secure／manager 每节点实际配置的 crypto worker 数；0 为 inline，独立于 owner runtime |
 | `syscallsPerPacket` | 当前为 null；`/proc` 进程 I/O 计数不能作为包含 UDP sendmsg／recvmmsg 的完整 syscall 计数 |
@@ -310,6 +313,8 @@ profile 开启时，`pipeline.submit_to_ready.wall`、`pipeline.ready_to_release
 `carrier.release_to_admission.wall` 与 `carrier.admission_to_completion.wall` 为抽样批次的 release→Session 准入、准入→本机完成；`transport.admission_to_first_poll.wall` 与 `transport.first_poll_to_write.wall` 为 Session 内部准入→首次 poll、首次 poll→首个成功 raw write 前缀，后者包含 readiness 等待、原 guard 与 syscall。`carrier.tun.write.wall` 包含一次成功 TUN 写入及其 readiness 等待。这些批次指标与 per-packet credit 指标互相嵌套，不直接相加，也不是内核 syscall-only 精确计时。
 
 `pipeline.dispatch.batch`、`pipeline.release.batch`、`carrier.send.batch` 与 `carrier.tun.written.batch` 为实际非空批次的累计次数，桶为 1／2–4／5–8／9–16／17–32；TUN 使用真实返回的已写前缀数。TCP checkpoint 与 UDP final 之间取差值，避免复用进程时重复累计。关闭 profile 不读取这些墙钟或分配采样记录。
+
+当前 L3/L4 工具在 profile 开启时另每秒输出 `pipelineOccupancy` 和累计 checkpoint：输入包数、可用 credit、TX／TUN 的包数／capacity 字节／jumbo 数、retained flow／circuit 与 runtime task 数。它是有界性诊断快照，不是权限或包交付回执；采样关闭时不输出该记录。
 
 `networkCounters` 保存每容器 `/proc/net/snmp`、`/proc/net/dev` 的客户端前后值及差值，并保留 `ss -u -a -n -m` 的实际 socket buffer／排队与 `/proc/net/udp{,6}` 的逐 socket drops。它们覆盖 warmup 与边界采集，不等同于 iperf 排除 warmup 的区间；GRO socket 丢弃计数也不能按一个 counter 等同一个内层 IP 包。`tcpStreams` 原样保存每条 iperf sender 的 RTT、重传与 cwnd 字段；cwnd 最大值不是平均在途窗口，不能直接除以平均 RTT 作为吞吐上限。
 
@@ -463,7 +468,7 @@ CPU 为两容器合计，100% 表示一核；区间含 warmup。TCP pps 未测�
 
 iperf3 的 TCP 控制流和 UDP 负载分别使用精确 `5201` 端口 demand。A 在应用启动前分别发起 Noise circuit；逐验证者 MAC、flow 准入、重放处理和原完整路径回复归唯一 `SecureNode`。固定 Native UDP carrier 经 `set_carriers` 校验。输出复用正式 `carrier::send`／`carrier::deliver`：UDP 的原 output guard 保留到 Session 发送 poll 和完成，TUN 交付每次恢复 poll 都检查原 guard。
 
-每个节点保留一个 current-thread owner runtime，crypto 使用正式 `pipeline::Pool`。工具的 `--workers 0` 使用 inline；非零值配置有界线程数。harness 默认按 CPU quota 取核数减一、最少一；单节点二进制默认按可用核数减一、最少一。TUN／UDP 使用批量接口和实际 offload 能力；就绪输入经过 owner 准备、worker 计算、保序 owner 提交，再按 channel 批次发送／交付。SecureNode 使用默认 limits；L3 Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
+每个节点保留一个 current-thread owner runtime，crypto 使用正式 `pipeline::Pool`。默认及 `--workers 0` 使用 inline；非零值配置有界线程数。TUN／UDP 使用批量接口和实际 offload 能力；就绪输入经过 owner 准备、crypto、保序 owner 提交，再由两个有界 pending 驱动按 channel 批次发送／交付。SecureNode 使用默认 limits；L3 Session 帧数／操作数预算与 plain 相同，字节容量额外容纳 secure envelope 和握手。
 
 ### L4 Manager 边界
 
@@ -564,7 +569,7 @@ profile 关闭的 L3 direct 线程 CPU 活跃比例如下；四核 worker 列为
 | 4／TCP | 42.3 | 43.0（14.3） | 52.3 | 43.7（14.6） |
 | 4／UDP | 69.4 | 78.5（26.2） | 62.1 | 58.8（19.6） |
 
-这组数据表明 crypto 算力未用满。剩余串行点包括端点 owner 准入／提交、较小就绪前缀的 carrier／TUN 成本，以及宿主等待已释放前缀 I/O 的路径。独立有界 TX pending、worker 排队及 ready→release→syscall 的墙钟分解仍未完成；不能声称完整无阻塞流水线已验收，也不能把内核丢包和调度等待按这些 CPU 采样作精确归因。
+这组历史数据表明当时 crypto 算力未用满；串行点包括端点 owner 准入／提交、较小就绪前缀的 carrier／TUN 成本，以及宿主等待已释放前缀 I/O 的路径。当时独立有界 TX pending 与墙钟分解尚未完成，现行状态见[有界输出队列实测](#有界输出队列实测)；不能把内核丢包和调度等待按这些 CPU 采样作精确归因。
 
 #### L0 同步路径重测
 
@@ -761,7 +766,85 @@ TUN read 多为大批，与输入侧 TSO 超包拆分一致；不能将 17–32 
 
 四核后半程再次明显变慢：direct TCP 两次 1477.80／689.64 Mbps，RTT 17,973／47,105 µs，重传仍为 0／0；relay 1455.44／706.32 Mbps。其 TCP 中位数虽超过 1 Gbps，但不是每次均达标，UDP 也未达 100k。核数与吞吐变化混有共享调度／频率／负载，不能据此断言增加 worker 会降速，也不能隐去前述高负载未达样本。
 
-当前实现已通过 fmt／workspace all-targets all-features 严格 Clippy，dataplane／connectivity／daemon／transport／underlay 组合测试（4 test threads），独立 Linux UDP 批量／buffer 测试、`test:packet:linux` 和 `test:runtime:linux -- --transport native-udp --dns-backend off`。packet 证据为 `20261007T063254Z-cc0cccab`，真实 daemon/CLI runtime 为 `20261007T063546Z-96479efe`。这些检查证明原 owner／guard／路径与生命周期回归，不替代其它承载或 DNS 组合验收。剩余性能边界为满载内核排队、用户态预取队列的逐包驻留、独立 TX pending，以及共享负载下的吞吐稳定性。
+该轮实现通过 fmt／workspace all-targets all-features 严格 Clippy，dataplane／connectivity／daemon／transport／underlay 组合测试（4 test threads），独立 Linux UDP 批量／buffer 测试、`test:packet:linux` 和 `test:runtime:linux -- --transport native-udp --dns-backend off`。packet 证据为 `20261007T063254Z-cc0cccab`，真实 daemon/CLI runtime 为 `20261007T063546Z-96479efe`。这些检查证明当时的 owner／guard／路径与生命周期回归，不替代其它承载或 DNS 组合验收；后续 pending、内核排队与内存验收见下一节。
+
+### 有界输出队列实测
+
+实现边界见[流水线与存储上限](/v2/node/dataplane#发送流水线与连续性)。2026-10-07 的本节测量使用 OrbStack aarch64、每容器 512 MiB、MTU 1280、batch 32、UDP payload 1200／2G。正式矩阵前 fmt、严格 workspace Clippy、指定六包测试和 Linux packet conformance 已退出；全部 L3 使用公共 measurement lock。同期另有协调者的 L5／部署工作，不受该锁约束。参数、宿主 load、固定 binary 和失败日志均保留；CPU quota 不表示独占 CPU。
+
+早期与后续原始 `/proc/uptime` 从约 36,000 秒变为约 120 秒，环境运行 epoch 有变化，原因未单独验证。跨轮数值不能解释成排除了虚拟机运行状态变化的纯代码 A/B。
+
+#### Worker 策略与交接
+
+当前默认 `MESHWAY_DATAPLANE_WORKERS=0`；显式 1–256 保留实验／平台调优入口。下表为同一 pending 实现的单流 quick 诊断（4 秒＋1 秒 warmup，每格一次），UDP 为实收 pps，TCP RTT 为 sender `mean_rtt`。每格 TCP 重传均为 0，buffer 使用 7 MiB 默认请求。报告从 `20261007t074329z-397fd216` 至 `20261007t074527z-e4778389`；宿主一分钟 load 约 3.38–5.27。
+
+| CPU quota | worker | TCP Mbps | UDP pps | TCP RTT ms |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 | 0 | 1,859.8 | 177,572 | 15.19 |
+| 2 | 1 | 1,216.4 | 110,307 | 22.73 |
+| 2 | 2 | 980.8 | 96,230 | 26.98 |
+| 2 | 3 | 974.4 | 97,052 | 26.29 |
+| 4 | 0 | 1,770.9 | 155,231 | 17.81 |
+| 4 | 1 | 1,198.7 | 122,935 | 23.53 |
+| 4 | 2 | 896.2 | 100,229 | 32.89 |
+| 4 | 3 | 927.4 | 101,678 | 28.10 |
+
+因此本实现不再由 quota 自动增加 worker；quick 曲线支持 inline，正式默认另以下方两次重复验证。未取得新 P binary 的 x86 实测，不能据此宣称 x86 的最优 worker 或 ≤2 ms RTT 已验证；此前 N2 的 x86 数字仍是旧实现参照。
+
+`perf:circuit -- --workers N` 增加独立 L0 交接口径：使用正式 streaming Pool，每个节点 N 个 worker，**整条链同时只有一个包**，观察通知／跨线程的成本，不代表饱和并行容量。省略参数仍是原同步 L0。指定 workers 时 harness CPU 使用进程 CPU（包含 worker），各角色 CPU 仍为 owner 线程；报告记录 `cpuClock`／workers，不能把两者混为总 CPU。`20261007T080857Z-e671b22c` 至 `20261007T080905Z-c3ca6a5d`，2／3 节点、52／1280B、两次重复，共 32/32 成功：
+
+| worker | 2 节点 1280B pps／总 CPU µs | 3 节点 1280B pps／总 CPU µs | 2／3 节点 52B pps |
+| ---: | ---: | ---: | ---: |
+| 0 | 111,506／8.95 | 80,180／12.42 | 176,777／127,600 |
+| 1 | 40,743／25.04 | 27,981／36.32 | 180,127／122,372 |
+| 2 | 40,690／25.01 | 28,359／36.04 | 179,096／124,354 |
+| 3 | 40,326／25.08 | 28,159／36.22 | 176,937／126,044 |
+
+单在途 1280B 的墙钟从 inline 8.97／12.47 µs 增至单 worker 24.54／35.75 µs，含线程通知与工具等待器。52B 继续命中原 **≤128 B inline 阈值**，未出现把 ACK 送往线程池的收益；阈值保留，不能用该单在途工具推导多 worker 的批量容量。原同步 L0 默认矩阵 `20261007T080533Z-7b11af1b` 36/36 成功：2／3／5 节点 1280B 为 116,395／81,295／54,603 pps，52B 为 203,539／138,736／90,776 pps。
+
+#### Socket buffer 取舍
+
+Linux 默认继续普通 **7 MiB SO_RCVBUF／SO_SNDBUF 请求**，显式配置优先；不使用 BUFFORCE。wireguard-go 的 7 MiB 是其 128-packet／GSO 容器预算下的参考，不能直接当作本实现所需容量。本次以实际 32-credit／32-packet I/O 验证回调：下表均为 2 CPU、inline、4 秒 quick 单次，报告 `20261007t074633z-295115be` 至 `20261007t074726z-d6536890`。
+
+| 请求／方向 | TCP Mbps | UDP pps | TCP RTT ms | TCP 重传 |
+| --- | ---: | ---: | ---: | ---: |
+| 默认 7 MiB | 1,796.6 | 150,943 | 13.85 | 0 |
+| 1 MiB | 1,194.6 | 127,803 | 8.56 | 0 |
+| 256 KiB | 881.7 | 121,790 | 2.78 | 125 |
+| 64 KiB | 764.4 | 121,641 | 1.04 | 1,905 |
+
+单 worker 的独立同序对照也未支持缩小：7 MiB／1 MiB 为 1,199／1,200 Mbps、RTT 22.73／25.02 ms；256／64 KiB 为 930／782 Mbps、重传 196／957。所有原始样本保留。较小 buffer 用吞吐和重传换取较低 RTT，未满足“不低于 O、重传 0”的组合目标；因此保留默认值，但不声称 7 MiB 已实现低延迟。
+
+#### 正式两核／四核矩阵
+
+源码 `1a44a5c5`，binary SHA-256 `5961ad80fd9ce7914a61a47761e9d5e2d7cf4209bb07224e7128e749f10b58cf`，运行期间源码不变。命令为 `perf:dataplane -- --modes secure-direct secure-relay plain-batch --repeats 2 --seconds 6 --omit 1 --profile 0 --batch 32 --mtu 1280 --payload 1200 --udp-rate 2G --cpus 2 --memory 512m`，另一次改为 `--cpus 4`。默认均 inline。
+
+两核 `20261007t082302z-a2aff6a7` **10/12** 成功；plain-batch 与 secure-relay 的 UDP r1 因严格接收字节／报文数核对失败，保留原始输出、指标不补零。四核 `20261007t082458z-6c901bcd` **12/12** 成功。宿主一分钟 load 分别约 4.82–5.89／5.47–7.76。表中吞吐／RTT／重传／cwnd 为成功样本中位数；RSS／cgroup 为所有对应样本角色的采样峰值，单位 MiB，包含失败样本。被测进程为 L3 node fixture，未将其称作 L5 daemon 内存。
+
+| CPU／模式 | n TCP／UDP | TCP Mbps | UDP pps | RTT ms | 重传 | max cwnd B | RSS／cgroup 峰值 MiB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 direct | 2／2 | 1,693.69 | 141,833 | 15.87 | 0 | 4,313,964 | 129.08／131.77 |
+| 2 relay | 2／1 | 1,482.99 | 96,874* | 18.41 | 0 | 4,340,366 | 94.51／91.39 |
+| 2 plain batch | 2／1 | 10,506.43 | 136,548* | 2.52 | 0.5 | 4,370,452 | 48.77／47.19 |
+| 4 direct | 2／2 | 1,675.20 | 139,511 | 15.65 | 0 | 4,334,840 | 81.68／85.40 |
+| 4 relay | 2／2 | 1,427.12 | 95,674 | 18.20 | 0 | 4,336,068 | 42.24／46.55 |
+| 4 plain batch | 2／2 | 8,249.11 | 121,057 | 3.33 | 0.5 | 4,321,946 | 23.45／24.18 |
+
+*只有一次成功 UDP 样本，不构成两次重复结论。* 对照 O 的 `20261007t064600z-c4127ba8`／`20261007t064755z-170866c9`：两核 direct TCP 1,530→1,694 Mbps、UDP 101,958→141,833 pps；四核 1,084→1,675 Mbps、87,769→139,511 pps。两核／四核 relay TCP 为 1,246→1,483、1,081→1,427 Mbps。核数、默认 worker 与共享环境的变化不能全部归为 pending 的单项收益。**Direct 达到 1 Gbps／100k pps，relay UDP 仍未达到；RTT 仍远高于同次 plain，低延迟目标未通过。**
+
+TCP secure 样本所有角色 `Udp.RcvbufErrors=0`。UDP 的 B 命名空间 r0／r1 分别为：两核 direct 176,051／143,173，relay 127,370／121,467，plain 281,363／222,570；四核 direct 183,627／113,618，relay 85,723／76,870，plain 333,917／356,334，A／R 均为 0。数字含 warmup、包含该 namespace 的 iperf UDP socket，不能全部解释成外层 UDP provider 丢包，更不能把它换算成 TCP 重传数。逐 socket drops、cwnd、RTT 和全部曲线在各次 `results.json`／原始文件中。
+
+按相同 inode 核对端口 41000 的实际外层 socket：direct B 两核 drops 增量为 908／3,075，四核为 1,672／59；relay 与 plain 的全部外层 socket 增量为 0。后两者的 namespace `RcvbufErrors` 不能归给这些外层 socket；应用接收队列同样可能饱和。GRO 下不同内核 counter 仍不保证一一对应内层包数。
+
+#### 内存边界与未完成验收
+
+四核 2G／45 秒独立 UDP `20261007t081406z-3c7a3514` 成功，119,328 pps，A／B 的 185／186 次采样中 RSS 峰值为 77.73／328.30 MiB、cgroup 为 83.32／331.07 MiB，`oom=oom_kill=0`。B 在前约五秒升至约 328 MiB 后至窗口末保持平稳；这是单次 512 MiB 内稳定证据，**不是 OOM 已修复的结论**。
+
+额外 L4 诊断 `20261007t074912z-93fccd5f` 的 relay UDP，A 的 RSS 约两秒内达到 512 MiB 并被 OOM 杀死；另有一次 relay TCP readiness 失败。profile 诊断显示在途 credit／pending、flow／circuit 与 task 数仍有界。独立、仅用于诊断的静态 malloc linker 探针在 `20261007t083121z-e2b2daf5` 的 L3 UDP 再次捕获 OOM：被拦截调用的主要存活分配仍是固定 scratch／descriptor，而进程 RSS 达约 516 MiB。探针使用额外固定表和采样线程，改变调度；其吞吐不能混入正式矩阵，未覆盖 libc 内部全部分配，不能据此确证某个 allocator 缺陷。后续探针／smaps 对照亦显示存活分配与常驻内存不等价。
+
+因此已排除“仅由业务 TX pending 数量无界增长解释此次现象”的说法，但**实际常驻内存增长的完整归因、历史 x86 OOM 的共同根因及可靠修复仍未完成**；接收 scratch、PacketPool 与 tun-rs GROTable 的固定容量检查不能代替 RSS 验收。60 秒 iperf 尝试还出现结束控制连接超时（保留原始曲线），不作为业务成功样本；随后使用小于默认 flow idle 的 45 秒独立 UDP 窗口。
+
+实现通过 fmt、严格 workspace/all-targets/all-features Clippy、dataplane／connectivity／daemon／transport／transport-udp／tun 全 feature 测试（4 threads）、脚本测试，以及 `test:packet:linux`（`20261007T082003Z-a1ff1005`）。runtime conformance、P 的 x86／L5 与其它承载组合不由上述 L3 数据替代。完整私有分析与失败清单位于执行 worktree `.meshway/perf/p-validation/`。
 
 ### L3 实测参考
 
