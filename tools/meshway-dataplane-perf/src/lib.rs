@@ -11,7 +11,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-/// Reserved stages fail explicitly until their real domain implementation exists.
+/// Explicit layers; each stage uses its production domain implementation.
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Stage {
@@ -43,7 +43,7 @@ impl NodeRole {
     }
 }
 
-/// Shared node boundary for future real SecureNode/Manager drivers. The harness
+/// Shared node boundary for plain, SecureNode and Manager drivers. The harness
 /// supplies a namespace and explicit peer; no fixture changes host networking.
 #[derive(Clone, Debug)]
 pub struct NodeOptions {
@@ -53,12 +53,14 @@ pub struct NodeOptions {
     pub peer: SocketAddr,
     pub mtu: usize,
     pub batch: usize,
+    /// Zero runs stateless crypto inline; nonzero uses the same production pool.
+    pub workers: usize,
 }
 
 impl NodeOptions {
     pub fn validate(&self) -> Result<(), Error> {
-        if matches!(self.stage, Stage::Manager) {
-            return Err("requested stage is not implemented; no substitute is run".into());
+        if self.workers > 256 {
+            return Err("worker count must be 0..=256".into());
         }
         if matches!(self.stage, Stage::Plain) && matches!(self.role, NodeRole::R) {
             return Err("plain stage has no relay".into());

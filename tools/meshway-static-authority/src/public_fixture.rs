@@ -77,7 +77,8 @@ impl PublicFixture {
                 },
             );
             let listener = serde_json::from_value(
-                serde_json::json!({"type":"native_udp", "listenPort":node.socket.port()}),
+                serde_json::json!({"type":"native_udp", "listen":node.socket.ip().to_string(), "listenPort":node.socket.port(),
+                    "endpoints":[{"host":node.socket.ip().to_string(), "port":node.socket.port()}]}),
             )?;
             configuration.nodes.insert(
                 node.id,

@@ -11,6 +11,10 @@ clap.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 meshway-dataplane = { path = "../../crates/meshway-dataplane" }
+meshway-connectivity = { path = "../../crates/meshway-connectivity" }
+meshway-underlay = { path = "../../crates/meshway-underlay" }
+meshway-private-storage = { path = "../../crates/meshway-private-storage" }
+meshway-authority = { path = "../../crates/meshway-authority" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-model = { path = "../../crates/meshway-model" }
 meshway-static-authority = { path = "../meshway-static-authority" }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit L2/L3 measurements in disposable Linux container namespaces."""
+"""Explicit L2/L3/L4 measurements in disposable Linux container namespaces."""
 import argparse
 from datetime import datetime, timezone
 import fcntl
@@ -107,13 +107,14 @@ def summary(metadata):
     if "image" in environment:
         environment["image"] = {k: v for k, v in environment["image"].items()
                                 if k in ("imageId", "sourceDigest", "base", "platform", "provenance")}
-    lines = ["# L2/L3 TUN performance", "",
+    lines = ["# L2/L3/L4 TUN performance", "",
              "Plain = real TUN + Tokio + production UDP Session, without authentication, encryption, policy or Control.",
              "Medians of successful repeats; profiling=0 is the final throughput reference.",
-             "Secure = real SecureNode + guarded carrier adapters + production UDP Session; relay has no TUN.",
+              "Secure = real SecureNode + guarded carrier adapters + production UDP Session; relay has no TUN.",
+              "Manager = the same pipeline + real connectivity Manager and protected underlay sockets, without Server/Control I/O. Worker count and actual TUN/UDP capabilities are recorded per sample.",
              "wg-direct = kernel WireGuard A-B; wg-relay = A-R/R-B tunnels with R decrypting, routing and re-encrypting (not Meshway ciphertext relay semantics).",
-             "WireGuard has no native mesh relay semantics. It uses kernel multicore workers/softirq and kernel offloads, versus Meshway current-thread userspace nodes.",
-             "WireGuard data overhead is 32 bytes plus padding (excluding outer UDP/IP); Meshway's 139-byte example is IPv4/TCP, two hops, final segment, 7-byte listener keys (direct: 128 bytes). Actual overhead depends on protocol/path/key lengths.",
+              "WireGuard has no native mesh relay semantics. It uses kernel multicore workers/softirq and kernel offloads; Meshway uses a current-thread owner with a bounded userspace crypto pool.",
+              "WireGuard data overhead is 32 bytes plus padding (excluding outer UDP/IP); Meshway v5 Data overhead is a constant 86 bytes per hop.",
              "Raw/WireGuard batch=0 and profile=0 mean not applicable; each kernel reference runs once per traffic/repeat, independently of Meshway batch/profile variants.",
              "CPU is all sample containers' cgroup CPU seconds / full client wall interval ×100 (100%=one core); includes warmup.",
              "Kernel WireGuard crypto/softirq/kworker CPU may be charged outside these cgroups: total kernel CPU is unmeasured, not zero. Equal container quotas do not bound all kernel work; CPU deltas are cgroup accounting only.",
@@ -194,6 +195,27 @@ def summary(metadata):
                       "| --- | --- | ---: | ---: | ---: |"])
         for (mode, name), (count, ns) in sorted(profiles.items()):
             lines.append(f"| {mode} | {name} | {count} | {ns/count:.2f} | {ns/1e6:.2f} |")
+    lines.extend(["", "## Carrier sampled self CPU per frame", "",
+                  "Estimated poll self CPU = sampled mean × exact poll calls, divided by crypto.append_mac calls (send) or successful l3.packet.deliver calls (TUN). Includes setup/warmup and observer effect; not wall time or a syscall counter.",
+                  "| Mode | Adapter | Frames | Estimated self CPU µs/frame |",
+                  "| --- | --- | ---: | ---: |"])
+    carrier_cost = {}
+    for record in metadata["results"]:
+        if record["status"] != "ok" or not record["profile"]:
+            continue
+        for metrics in record.get("profiles", {}).values():
+            for adapter, denominator in (("carrier.send.poll", "crypto.append_mac"),
+                                         ("carrier.deliver.poll", "l3.packet.deliver")):
+                frames = sum(metric["calls_started"] for metric in metrics if metric["name"] == denominator)
+                measured = [metric for metric in metrics if metric["name"] == adapter and metric["times"]["self_cpu_samples"]]
+                if not measured or not frames:
+                    continue
+                total = carrier_cost.setdefault((record["mode"], adapter), [0, 0])
+                total[0] += frames
+                total[1] += sum(metric["times"]["self_cpu_ns"] / metric["times"]["self_cpu_samples"] * metric["calls_started"] for metric in measured)
+    for (mode, adapter), (frames, ns) in sorted(carrier_cost.items()):
+        if frames:
+            lines.append(f"| {mode} | {adapter} | {frames} | {ns/frames/1000:.3f} |")
     lines.extend(["", "## Guard calls per originating IP packet", "",
                   "Sum of exact control.guard calls / l3.packet.origin calls in each node's final cumulative profile snapshot after I/O shutdown. Includes setup, warmup, handshake/idle guards and output poll fences; not a fixed algorithmic count.",
                   "| Sample | Guard calls | Origin packets | Calls/packet |", "| --- | ---: | ---: | ---: |"])
@@ -209,7 +231,7 @@ def summary(metadata):
             guards = calls.get("control.guard")
             value = f"{guards/packets:.2f}" if guards is not None else "—"
             lines.append(f"| {record['directory']} | {guards} | {packets} | {value} |")
-    lines.extend(["", "Plain batch uses production TUN virtio offload, UDP GSO/GRO/mmsg and Session batch admission; plain per-packet and secure use per-packet syscalls. Raw/WireGuard preserve kernel defaults. Per-sample capability snapshots and actual successful offload/mmsg call counts are in results.json.",
+    lines.extend(["", "Plain batch, secure and manager use production batch I/O; plain per-packet retains single-packet syscalls. Raw/WireGuard preserve kernel defaults. Per-sample capability snapshots and actual successful offload/mmsg call counts are in results.json; Manager socket capability counters are currently unmeasured.",
                    "Syscalls/packet: unmeasured (null). /proc process I/O counters are not a complete count of UDP sendmsg/recvmmsg syscalls; TCP packet counts are also unmeasured.",
                   f"Failed samples: {sum(r['status'] != 'ok' for r in metadata['results'])}; preserved in results.json, never replaced with zero.",
                   "", "## Provenance", "", "```json",
@@ -228,7 +250,7 @@ def namespace_options(mode, role):
     if mode.startswith("wg-"):
         return ["--cap-add", "NET_ADMIN"] + (["--sysctl", "net.ipv4.ip_forward=1"] if role == "r" else [])
     if role == "r":
-        return []
+        return ["--cap-add", "NET_ADMIN"] if mode.startswith("manager-") else []
     return ["--cap-add", "NET_ADMIN"] + ([] if mode == "raw" else ["--device", "/dev/net/tun:/dev/net/tun"])
 
 
@@ -301,7 +323,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
     server = None
     handles = []
     roles = ("a", "r", "b") if mode.endswith("-relay") else ("a", "b")
-    secure = mode.startswith("secure-")
+    secure = mode.startswith(("secure-", "manager-"))
+    stage = "manager" if mode.startswith("manager-") else "secure" if secure else "plain"
     wireguard = mode.startswith("wg-")
     try:
         for role in roles:
@@ -355,10 +378,10 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 handles.extend([stdout, stderr])
                 nodes.append(subprocess.Popen(["docker", "exec", "--env", f"MESHWAY_PROFILE={profile}",
                     "--env", "MESHWAY_PROFILE_DETAIL=1",
-                    containers[role], "/fixtures/meshway-dataplane-perf", "--stage", "secure" if secure else "plain", "--role", role,
+                    containers[role], "/fixtures/meshway-dataplane-perf", "--stage", stage, "--role", role,
                     "--bind", addresses[role] + ":41000", "--peer", addresses[other] + ":41000",
                     "--mtu", str(args.mtu), "--batch", str(batch), "--seconds", str(args.seconds + args.omit + 60),
-                    "--log-format", "json"] + (["--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else ["--io", record["io"]]), cwd=ROOT, stdout=stdout, stderr=stderr))
+                    "--log-format", "json"] + (["--workers", str(args.workers), "--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else ["--io", record["io"]]), cwd=ROOT, stdout=stdout, stderr=stderr))
             deadline = time.monotonic() + 15
             while not all((directory / f"{role}.stdout").read_text().strip() for role in roles):
                 if any(node.poll() is not None for node in nodes) or time.monotonic() > deadline:
@@ -368,8 +391,10 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 readiness = json.loads((directory / f"{role}.stdout").read_text())
                 if not readiness["ready"]:
                     raise RuntimeError("invalid node readiness")
-                if not secure:
-                    record.setdefault("capabilitiesInitial", {})[role] = readiness["capabilities"]
+                record.setdefault("capabilitiesInitial", {})[role] = readiness["capabilities"]
+                if secure:
+                    record.setdefault("workers", {})[role] = readiness["workers"]
+                    record.setdefault("tunBatch", {})[role] = readiness["tunBatch"]
                 if secure and readiness["publicationDigest"] != record["publicationDigest"]:
                     raise RuntimeError("node compiled publication digest differs")
                 if role == "r" and readiness["tun"] is not None:
@@ -450,7 +475,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
         for handle in handles:
             handle.close()
     record["nodeExitCodes"] = [node.returncode for node in nodes]
-    if mode.startswith("plain-"):
+    if mode.startswith(("plain-", "secure-", "manager-")):
         record["capabilitiesFinal"] = {}
         for role in roles:
             path = directory / f"{role}.stderr"
@@ -501,7 +526,7 @@ def measure(args, output_root):
                         rustc=command("rustc", "-Vv"), zig=command("zig", "version"),
                         cargoZigbuild=command("cargo-zigbuild", "--version"),
                         cpusPerContainer=args.cpus, memoryPerContainer=args.memory,
-                        runtime="Meshway: Tokio current_thread per node; WireGuard: kernel workers/softirq", mtu=args.mtu, udpPayloadBytes=args.payload,
+                         runtime="Meshway: Tokio current_thread owner plus bounded crypto pool; WireGuard: kernel workers/softirq", cryptoWorkers=args.workers, mtu=args.mtu, udpPayloadBytes=args.payload,
                         profileDetail=1,
                         udpRate=args.udp_rate, warmupOmittedSeconds=args.omit,
                         cpuScope="all sample cgroups over full client wall interval including warmup (relay: 3, others: 2)",
@@ -519,7 +544,7 @@ def measure(args, output_root):
             if subnet.version == 4 and subnet.overlaps(ipaddress.ip_network("100.127.0.0/30")):
                 raise RuntimeError("fixture underlay overlaps the TUN subnet")
         metadata["environment"]["network"] = description["IPAM"]["Config"]
-        configs = [(mode, 0, 0) for mode in ("raw", "wg-direct", "wg-relay")] + [(mode, b, p) for mode in ("plain-per-packet", "plain-batch", "secure-direct", "secure-relay")
+        configs = [(mode, 0, 0) for mode in ("raw", "wg-direct", "wg-relay")] + [(mode, b, p) for mode in ("plain-per-packet", "plain-batch", "secure-direct", "secure-relay", "manager-direct", "manager-relay")
                                    for b in args.batch for p in args.profile]
         for repeat in range(args.repeats):
             for mode, batch, profile in (configs if repeat % 2 == 0 else list(reversed(configs))):
@@ -551,11 +576,12 @@ def main():
     parser.add_argument("--udp-rate", default="500M")
     parser.add_argument("--cpus", type=float, default=2)
     parser.add_argument("--memory", default="512m")
+    parser.add_argument("--workers", type=int, default=1, help="crypto workers per node (0 = inline); default matches two-CPU measurement quota")
     args = parser.parse_args()
     if (not 2 <= args.repeats <= 100 or not 6 <= args.seconds <= 300 or not 1 <= args.omit <= 60
             or not 1280 <= args.mtu <= 1472 or not 16 <= args.payload <= args.mtu-28
             or any(not 1 <= b <= 1024 for b in args.batch) or any(not 0 <= p <= 65536 for p in args.profile)
-            or not 0 < args.cpus <= 32):
+            or not 0 < args.cpus <= 32 or not 0 <= args.workers <= 256):
         parser.error("measurement bounds invalid (at least 2 repeats, 6s measurement, 1s omitted warmup)")
     output_root = ROOT / ".meshway/perf/dataplane"
     output_root.mkdir(parents=True, exist_ok=True)

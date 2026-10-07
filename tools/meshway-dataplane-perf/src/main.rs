@@ -6,7 +6,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
-#[command(about = "Isolated L2/L3 TUN-over-UDP performance node")]
+#[command(about = "Isolated L2/L3/L4 TUN-over-UDP performance node")]
 struct Arguments {
     #[arg(long, value_enum)]
     stage: Stage,
@@ -24,6 +24,8 @@ struct Arguments {
     mtu: usize,
     #[arg(long, default_value_t = 32)]
     batch: usize,
+    #[arg(long, default_value_t = meshway_dataplane::secure::pipeline::Pool::default_workers())]
+    workers: usize,
     #[arg(long, value_enum, default_value_t = plain::IoMode::PerPacket)]
     io: plain::IoMode,
     #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(1..=3600))]
@@ -43,13 +45,14 @@ async fn main() -> Result<(), Error> {
         peer: args.peer,
         mtu: args.mtu,
         batch: args.batch,
+        workers: args.workers,
     };
     options.validate()?;
     let stop = CancellationToken::new();
     let node = async {
         match options.stage {
             Stage::Plain => plain::run_with_io(&options, stop.clone(), args.io).await,
-            Stage::Secure => {
+            Stage::Secure | Stage::Manager => {
                 secure::run(
                     &options,
                     args.fixture
@@ -62,7 +65,6 @@ async fn main() -> Result<(), Error> {
                 )
                 .await
             }
-            Stage::Manager => Err("requested stage is not implemented".into()),
         }
     };
     let shutdown = async {
