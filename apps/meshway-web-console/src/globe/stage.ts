@@ -114,7 +114,7 @@ const atmosphereFragment = /* glsl */ `
     // Brighter over the day side, warm where the sun rises or sets.
     float lit = dot(normalize(vVertexWorldPosition), sun);
     intensity *= mix(0.45, 1.3, smoothstep(-0.35, 0.55, lit));
-    float band = exp(-pow(lit / 0.28, 2.0)) * (0.35 + 0.45 * warmth);
+    float band = exp(-pow((lit + 0.04) / 0.14, 2.0)) * (0.2 + 0.15 * warmth);
     gl_FragColor = vec4(mix(color, twilight, band), intensity);
   }`
 

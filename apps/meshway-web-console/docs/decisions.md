@@ -648,7 +648,8 @@ they need `motion`.
   day, the night just reaching the right limb; dark faces the night, its
   cities lit (the tz database's principal cities, `globe/cities.gen.ts` by
   `scripts/generate-cities.ts`), stars out, a crescent of day on the left
-  limb. A warm band lies along the line between.
+  limb. The day falls off softly towards the line between and warms just
+  before it, as on a lit sphere; nothing is painted along it.
 - The engine chunk is lazy-loaded (~145 kB gzip, almost all three.js).
   Where it cannot run (no WebGL, or its chunk did not load) the first load
   goes on without a globe, and the overview's corner says the globe cannot
@@ -670,7 +671,8 @@ above the held screen.
   外观; the bar's button and D swap light and dark).
 - A change of theme turns the globe's sun round to the other side over
   2.4 s, so the line between day and night sweeps across it and the
-  cities light up or go out, its colours mixing on the way; the interface
+  cities light up or go out; the side that grows takes the new theme's
+  colours first, the side that shrinks keeps its own until it is a sliver; the interface
   cross-fades over 2 s (one View Transition, the globe left out); the
   button's sun sets as its moon rises. With less motion, or a hidden tab, it
   changes at once.

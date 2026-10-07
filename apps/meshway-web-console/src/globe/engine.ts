@@ -275,21 +275,26 @@ const surfaceShader = () =>
         vec3 normal = normalize(vNormal);
         vec3 view = normalize(cameraPosition - vWorld);
         float rim = pow(1.0 - max(dot(normal, view), 0.0), 3.4);
-        // Day and night where the sun is: the night side darker, a warm band
-        // along the line between (warmer while the theme turns).
+        // Day and night where the sun is. The day side falls off softly
+        // towards the line between, as a lit sphere's does; just before it the
+        // light warms (a tint of the day, never a painted stripe); past it is
+        // the night colour.
         float facing = dot(normal, uSun);
         vec3 surface = uPlanet > 0.0 ? mix(uSurface, planetDay(normal), uPlanet) : uSurface;
         // The planet's light comes in two soft steps, as if painted.
         float day = mix(
-          smoothstep(-0.12, 0.22, facing),
+          smoothstep(-0.08, 0.16, facing),
           smoothstep(-0.04, 0.06, facing) * 0.7 + smoothstep(0.4, 0.5, facing) * 0.3,
           uPlanet
         );
+        float form = mix(mix(0.84, 1.0, smoothstep(0.02, 0.7, facing)), 1.0, uPlanet);
         // The planet's night keeps its colours under a plum shade.
         vec3 night = mix(uNight, surface * 0.32 + uNight * 0.75, uPlanet);
-        vec3 base = mix(night, surface, day);
-        float band = exp(-pow(facing / 0.09, 2.0));
-        base = mix(base, uTwilight, band * (uBand + 0.2 * uShift));
+        vec3 lit = surface * form;
+        float dusk = exp(-pow((facing - 0.06) / 0.07, 2.0));
+        vec3 warm = uTwilight / max(max(uTwilight.r, uTwilight.g), max(uTwilight.b, 0.001));
+        lit *= mix(vec3(1.0), warm, dusk * uBand);
+        vec3 base = mix(night, lit, day);
         gl_FragColor = vec4(mix(base, uRim, rim * uRimStrength), uOpacity);
         #include <colorspace_fragment>
       }`,
@@ -364,9 +369,9 @@ const PLANET = /* glsl */ `
 
 /**
  * The sun's light on the globe, shared by the surface, the land and the
- * moon: where the sun is (a unit vector, world space), the night and band
- * colours, the night land's opacity, and `uShift`, 1 when the theme has just
- * turned, settling to 0.
+ * city lights: where the sun is (a unit vector, world space), the night
+ * colour, the warm colour just before the line between day and night and
+ * how strong it is, and the night land's opacity.
  */
 const sunlight = () => ({
   uSun: { value: new Vector3(0, 0, 1) },
@@ -374,15 +379,13 @@ const sunlight = () => ({
   uTwilight: { value: new Color() },
   uBand: { value: 0.2 },
   uNightAlpha: { value: 0.4 },
-  uShift: { value: 0 },
 })
 const SUNLIGHT = /* glsl */ `
   uniform vec3 uSun;
   uniform vec3 uNight;
   uniform vec3 uTwilight;
   uniform float uBand;
-  uniform float uNightAlpha;
-  uniform float uShift;`
+  uniform float uNightAlpha;`
 
 /** Round, soft points sized in world units; land dots also fade towards the limb, and dim and warm with the night. */
 const pointShader = (land: boolean) =>
@@ -396,6 +399,7 @@ const pointShader = (land: boolean) =>
       uPixelRatio: { value: 1 },
       uSize: { value: 1 },
       uMinSize: { value: land ? 1.15 : 0 },
+      uNightColor: { value: new Color() },
       ...sunlight(),
     },
     vertexShader: /* glsl */ `
@@ -408,6 +412,7 @@ const pointShader = (land: boolean) =>
       ${SUNLIGHT}
       varying float vAlpha;
       varying float vBand;
+      varying float vDay;
       void main() {
         vec4 world = modelMatrix * vec4(position, 1.0);
         vec4 mv = viewMatrix * world;
@@ -418,10 +423,12 @@ const pointShader = (land: boolean) =>
                float lit = dot(up, uSun);
                vAlpha = mix(0.16, 1.0, smoothstep(0.0, 0.7, facing))
                  * mix(uNightAlpha, 1.0, smoothstep(-0.15, 0.2, lit));
-               vBand = exp(-pow(lit / 0.09, 2.0)) * (0.35 + 0.2 * uShift);
+               vBand = exp(-pow((lit - 0.06) / 0.07, 2.0)) * 0.2;
+               vDay = smoothstep(-0.08, 0.16, lit);
                float size = uSize;`
             : `vAlpha = aAlpha;
                vBand = 0.0;
+               vDay = 1.0;
                float size = aSize;`
         }
         // Never thinner than a pixel; below that, dim instead of shrinking,
@@ -434,16 +441,18 @@ const pointShader = (land: boolean) =>
       }`,
     fragmentShader: /* glsl */ `
       uniform vec3 uColor;
+      uniform vec3 uNightColor;
       uniform float uOpacity;
       uniform vec3 uTwilight;
       varying float vAlpha;
       varying float vBand;
+      varying float vDay;
       void main() {
         float d = length(gl_PointCoord - 0.5);
         ${land ? "float a = smoothstep(0.5, 0.3, d);" : "float a = smoothstep(0.5, 0.0, d); a *= a;"}
         a *= vAlpha * uOpacity;
         if (a < 0.004) discard;
-        gl_FragColor = vec4(mix(uColor, uTwilight, vBand), a);
+        gl_FragColor = vec4(mix(mix(uNightColor, uColor, vDay), uTwilight, vBand), a);
         #include <colorspace_fragment>
       }`,
   })
@@ -1128,20 +1137,37 @@ export function createGlobeEngine(
         : motion
           ? easeOut(clamp01((time - revealedAt) / 1000))
           : 1
-    // A shift turns the sun round the globe and mixes the colours on the way.
+    // A shift turns the sun round the globe. The side that grows (the night
+    // into dark, the day into light) takes the new theme's colours early, so
+    // the line between sweeps from one theme into the other rather than
+    // through a grey of both; the side that shrinks keeps its own until it is
+    // a sliver.
     const progress = motion ? clamp01((time - turnAt) / THEME_SHIFT_MS) : 1
     turn = turnFrom + (turnTo - turnFrom) * easeInOut(progress)
     if (colorsFrom && colorsTo) {
-      applyColors(
-        progress >= 1
-          ? colorsTo
-          : mixColors(colorsFrom, colorsTo, easeInOut(progress))
-      )
-      if (progress >= 1) colorsFrom = null
+      if (progress >= 1) {
+        applyColors(colorsTo)
+        colorsFrom = null
+      } else {
+        const early = mixColors(
+          colorsFrom,
+          colorsTo,
+          easeInOut(clamp01(progress / 0.45))
+        )
+        const late = mixColors(
+          colorsFrom,
+          colorsTo,
+          easeInOut(clamp01((progress - 0.55) / 0.45))
+        )
+        applyColors(
+          mixColors(colorsFrom, colorsTo, easeInOut(progress)),
+          colorsTo.dark ? late : early,
+          colorsTo.dark ? early : late
+        )
+      }
     }
     placeSun()
     const shift = progress < 1 ? Math.sin(Math.PI * progress) : 0
-    for (const material of sunlit) material.uniforms.uShift = { value: shift }
     stage.setWarmth(shift)
 
     guides.quaternion.copy(camera.quaternion)
@@ -1511,10 +1537,16 @@ export function createGlobeEngine(
     }
   }
 
-  const applyColors = (colors: GlobeColors) => {
-    surface.uniforms.uSurface = { value: color(colors.surface) }
+  /** Puts colours on the globe: `day` for its day side, `night` for its night side, `colors` for the rest. */
+  const applyColors = (
+    colors: GlobeColors,
+    day: GlobeColors = colors,
+    night: GlobeColors = colors
+  ) => {
+    surface.uniforms.uSurface = { value: color(day.surface) }
     surface.uniforms.uRim = { value: color(colors.rim) }
-    landMaterial.uniforms.uColor = { value: color(colors.land) }
+    landMaterial.uniforms.uColor = { value: color(day.land) }
+    landMaterial.uniforms.uNightColor = { value: color(night.land) }
     graticuleMaterial.color = color(colors.graticule)
     starMaterial.uniforms.uColor = { value: color(colors.star) }
     for (const material of guideMaterials) material.color = color(colors.guide)
@@ -1522,17 +1554,17 @@ export function createGlobeEngine(
     stage.setAtmosphereColor(css(colors.atmosphere), css(colors.twilight))
     // The night is darker, and its band stronger, under a dark sky.
     for (const material of sunlit) {
-      material.uniforms.uNight = { value: color(colors.night) }
+      material.uniforms.uNight = { value: color(night.night) }
       material.uniforms.uTwilight = { value: color(colors.twilight) }
-      material.uniforms.uBand = { value: 0.16 + 0.04 * turn }
+      material.uniforms.uBand = { value: 0.22 + 0.13 * turn }
       material.uniforms.uNightAlpha = { value: 0.55 - 0.15 * turn }
     }
-    cityMaterial.uniforms.uColor = { value: color(colors.city) }
-    surface.uniforms.uSea = { value: color(colors.sea) }
-    surface.uniforms.uMeadow = { value: color(colors.meadow) }
-    surface.uniforms.uDry = { value: color(colors.dry) }
-    surface.uniforms.uSurf = { value: color(colors.surf) }
-    surface.uniforms.uCloud = { value: color(colors.cloud) }
+    cityMaterial.uniforms.uColor = { value: color(night.city) }
+    surface.uniforms.uSea = { value: color(day.sea) }
+    surface.uniforms.uMeadow = { value: color(day.meadow) }
+    surface.uniforms.uDry = { value: color(day.dry) }
+    surface.uniforms.uSurf = { value: color(day.surf) }
+    surface.uniforms.uCloud = { value: color(day.cloud) }
     alertTones = {
       missing: color(colors.attention),
       failed: color(colors.destructive),
