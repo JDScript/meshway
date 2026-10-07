@@ -91,10 +91,11 @@ fn needs_acquisition(shared: &Shared) -> bool {
         return false;
     };
     cfg.peers.keys().any(|peer| {
-        if links
-            .get(peer)
-            .is_some_and(|link| link.scope.check().is_ok())
-        {
+        // The selected owner retires unhealthy channels and performs authorized
+        // handoff. A temporarily fenced scope is not a vacant physical slot:
+        // prepare() must wait for that same owner too. Querying during this gap
+        // would turn every normal execution refresh into candidate acquisition.
+        if links.contains_key(peer) {
             return false;
         }
         cfg.dialers.values().any(|dial| {

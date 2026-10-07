@@ -1343,6 +1343,39 @@ async fn exercise_traversal(healthy_only: bool) {
         }
     }
     if healthy_only {
+        let before: Vec<_> = gateways
+            .iter()
+            .map(|gateway| gateway.queries.load(Ordering::SeqCst))
+            .collect();
+        for round in 0..3 {
+            fixture
+                .configure(|cfg| {
+                    cfg.nodes.get_mut(&ids[0]).unwrap().remark = format!("handoff-{round}");
+                })
+                .await;
+            for (gateway, manager) in gateways.iter().zip([&mut a, &mut b]) {
+                let previous = manager.shared.identity.snapshot().reference();
+                let identity = {
+                    let mut control = gateway.control.lock().await;
+                    control.refresh_configuration().await.unwrap();
+                    control
+                        .dataplane_identity(control.execution_snapshot().unwrap())
+                        .unwrap()
+                };
+                assert_ne!(identity.snapshot().reference(), previous);
+                manager.reconcile(identity).await.unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(2100)).await;
+            assert_eq!(a.snapshot().unwrap().links[0].id, a_link.id);
+            assert_eq!(b.snapshot().unwrap().links[0].id, b_link.id);
+        }
+        for (gateway, count) in gateways.iter().zip(before) {
+            assert_eq!(
+                gateway.queries.load(Ordering::SeqCst),
+                count,
+                "execution handoff is not candidate discovery"
+            );
+        }
         stop.cancel();
         service.await.unwrap();
         a.shutdown().await.unwrap();
