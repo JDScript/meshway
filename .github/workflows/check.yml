@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: [self-hosted, linux, x64, planck]
+    runs-on: [self-hosted, linux, x64, docker]
     timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
