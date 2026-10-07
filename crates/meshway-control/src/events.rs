@@ -12,6 +12,31 @@ pub struct EventNotice {
     result: Result<NodeEvent, ClientError<ErrorResponse>>,
 }
 
+impl EventNotice {
+    /// Coalescible invalidation hint, never an execution grant. The host may
+    /// retain one pending hint while discarding additional hints until refresh.
+    pub fn refresh_requested(&self) -> bool {
+        matches!(
+            &self.result,
+            Ok(NodeEvent(
+                StreamEvent::Reset { .. }
+                    | StreamEvent::Ready { .. }
+                    | StreamEvent::EntitiesDelta { .. }
+                    | StreamEvent::ConfigurationChanged { .. }
+                    | StreamEvent::ResourcesChanged { .. }
+            ))
+        )
+    }
+
+    /// Terminal deliveries must not be dropped when a refresh hint is queued.
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            &self.result,
+            Err(_) | Ok(NodeEvent(StreamEvent::Closed { .. }))
+        )
+    }
+}
+
 /// Single connection; `next` has no retry loop. Drop cancels its protected HTTP
 /// request. No cursor is retained because event projections are not our cache.
 pub struct NodeEvents {
@@ -82,6 +107,7 @@ impl Control {
         if !Arc::ptr_eq(&notice.owner, &self.application_owner) || notice.scope.is_cancelled() {
             return Ok(false);
         }
+        let refresh = notice.refresh_requested();
         let event = match notice.result {
             Ok(event) => event,
             Err(error) => {
@@ -118,16 +144,9 @@ impl Control {
                 }
                 ClosedReason::ServerShutdown => Ok(false),
             },
-            StreamEvent::Reset { .. }
-            | StreamEvent::Ready { .. }
-            | StreamEvent::EntitiesDelta { .. }
-            | StreamEvent::ConfigurationChanged { .. }
-            | StreamEvent::ResourcesChanged { .. }
-            | StreamEvent::ObservationStatus { .. }
-            | StreamEvent::ObservationRemoved { .. } => Ok(true),
             // Initial projections are deliberately discarded: Ready triggers a
             // validated atomic GET/refresh, rather than installing an SSE cache.
-            _ => Ok(false),
+            _ => Ok(refresh),
         }
     }
 }

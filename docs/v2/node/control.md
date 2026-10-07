@@ -62,13 +62,12 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 ## 事件通知与刷新
 
-`watch_node()` 仅在已有有效会话和实例时创建 `NodeEvents`。它复用同一生成客户端和宿主保护的 HTTP socket pool，逐帧使用 `NodeEvent` 解码；没有独立解析器、后台重连或凭据 URL。daemon 持有唯一消费任务、容量为 1 的通知队列和 1–30 秒有界重连退避，停止时取消并 join。认证更新、实例失效或 down 后，已排队的旧上下文通知不再生效。
+`watch_node()` 仅在已有有效会话和实例时创建 `NodeEvents`。它复用同一生成客户端和宿主保护的 HTTP socket pool，逐帧使用 `NodeEvent` 解码；没有独立解析器、后台重连或凭据 URL。daemon 持有唯一消费任务、容量为 1 的通知队列和 1–30 秒有界重连退避，停止时取消并 join。重复刷新提示合并为一个待处理提示，终止通知不丢弃；不把旧事件积压转换为逐条刷新。认证更新、实例失效或 down 后，已排队的旧上下文通知不再生效。
 
 | 事件 | 本机动作 |
 | --- | --- |
 | `sync.reset`、`sync.ready`、`entities.delta`、`configuration.changed`、`resources.changed` | 唤醒既有控制周期，重新查询／原子刷新、校验和保存目标 |
-| `observation.status`、`observation.removed` | 唤醒同一周期，复用观察任务 owner 的领取／更新路径 |
-| 三种初始 snapshot、`state.delta`、配置进度与观察 sample | 不安装其投影视图，不把报告或测量当作执行许可 |
+| 三种初始 snapshot、`state.delta`、配置进度与观察事件 | 不安装其投影视图，不把报告或测量当作执行许可；观察领取／更新仍由既有观察调度驱动 |
 | `stream.closed: session_expired` | 清除旧会话与实例上下文，按现有到期恢复路径重新持钥认证 |
 | `stream.closed: membership_revoked` | 停止旧上下文并阻断；不后台重试身份 |
 | `stream.closed: node_lease_expired` | 按既有 lease 失效路径重新取得资格 |

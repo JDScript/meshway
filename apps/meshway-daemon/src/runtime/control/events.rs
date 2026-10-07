@@ -47,8 +47,15 @@ impl Events {
             self.task = Some(tokio::spawn(async move {
                 let started = Instant::now();
                 while let Some(notice) = stream.next().await {
-                    if sender.send(notice).await.is_err() {
+                    if notice.is_terminal() {
+                        let _ = sender.send(notice).await;
                         break;
+                    }
+                    if notice.refresh_requested() {
+                        match sender.try_send(notice) {
+                            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
+                            Err(mpsc::error::TrySendError::Closed(_)) => break,
+                        }
                     }
                 }
                 started.elapsed() >= Duration::from_secs(10)
