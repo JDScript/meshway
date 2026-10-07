@@ -108,13 +108,17 @@ Session 的 `Payload` 可保有 `PacketBuffer` 的原始存储，发送预算包
 
 worker 只持有包存储、方向／序号、不可变 Arc 密钥句柄、路由元数据与原输出 guard，不读取 authority，不访问 flow 或 replay。验证失败不会提交 replay；并发验证的重复序号也只有第一次成功 owner 提交有效。关闭后的在途 crypto 可以完成，但不能提交或释放输出；密钥对象在 owner 与最后一个在途句柄释放后销毁，具体清零边界见[就地加密](#单缓冲所有权与就地加密)。
 
-`pipeline::Pool` 默认 worker 数为可用核数减一、最少一；daemon 可通过 `MESHWAY_DATAPLANE_WORKERS` 设置 0–256，0 为同步 inline。`submit`／`flush` 不等待 crypto 完成，每次通知最多八个已就绪 job；worker 逐包发布完成，`ready` 可独立唤醒 owner。owner 在此期间继续处理 TUN 与承载输入。`take_ready` 每轮最多释放 32 个已完成输出，不等待原输入批次的尾部，也不等待凑批；52-byte ACK 使用相同即时释放路径。
+`pipeline::Pool` 默认 worker 数为可用核数减一、最少一；daemon 可通过 `MESHWAY_DATAPLANE_WORKERS` 设置 0–256，0 为同步 inline。`submit`／`flush` 不等待 crypto 完成，每次通知最多八个已就绪 job；worker 逐包发布完成，完成队列从空变为非空时立即通知 owner。owner 在准备新输入前及本轮准备结束后收割 ready 前缀。`take_ready` 每轮最多释放 32 个已完成输出，不等待原输入批次的尾部，也不等待凑批。
+
+流式入口对明文长度不超过 128 B 的包直接执行相同的无状态 crypto；接收按含 Noise tag 的 body 不超过 144 B 判断。该阈值覆盖 52-byte TCP ACK 及较小 IPv6／options 变体，也适用于同长度的其他业务包，不是未经认证的 ACK 特权。小包继续使用同一个 epoch／circuit／方向的序号、credit 和完成队列，不能越过尚未完成的大包。短包原语与交接墙钟依据见[性能诊断](/v2/node/performance#owner-路径与-tcp-拥塞诊断)。
+
+Circuit 保留一次稳定分配；稳态 send／commit 通过拆分字段借用操作唯一 flow／circuit owner，不移出再插回会话表。worker 的完整只读 Context 由原 circuit 的 `Arc` 共享，减少路径 clone 与聚合值移动；入口、flow 提交、nonce／replay、输出及 postcheck 的真实检查保持独立。
 
 每个 epoch／circuit／方向使用独立的 owner 接纳序号和有序完成队列，只释放连续完成前缀；crypto 失败同样占据自己的序号并释放该位置，不提交 replay。队列持有原 epoch 标识直至全部结果释放，失败结果也不能与新 epoch 混合。就绪队列按轮转次序释放，慢 circuit 不阻塞其他 circuit。
 
 工作池总计 32 个全生命周期 credit，覆盖已准入、排队、计算、已完成未释放以及 TX／TUN 待完成输出；完成通知或前缀取出不归还 credit，宿主在最终 I/O 完成或明确失败后归还。owner 在业务准入前检查额度，未准入输入留在独立有界队列。完成队列能容纳整个窗口，worker 不因 owner 暂停轮询而阻塞；描述符微批与完成槽复用预分配存储。业务准备每轮另有 200 µs 时间预算。`run`／`run_prepared` 保留为同步批次调用方的便利入口；daemon 与 L3／L4 驱动使用流式入口。取消不重新绑定在途输出，pool 销毁关闭队列并 join 所有线程。
 
-当前限制：crypto 完成已与下一批输入解耦，但宿主仍等待本次已释放前缀的 carrier／TUN I/O；该 I/O 真正挂起时，业务 owner 的下一轮输入仍会等待。Manager 的健康接收／计时任务独立推进，原 guard 继续约束 I/O。独立的有界 TX pending 驱动、就绪到发送的排队时间分解及吞吐目标仍未完成，见[分层实测](/v2/node/performance#流式完成与核数对照)。
+当前限制：crypto 完成已与下一批输入解耦，但宿主仍等待本次已释放前缀的 carrier／TUN I/O；该 I/O 真正挂起时，业务 owner 的下一轮输入仍会等待。Manager 的健康接收／计时任务独立推进，原 guard 继续约束 I/O。独立的有界 TX pending 驱动尚未实现；现有墙钟观察、实际吞吐与满载排队边界见[性能诊断](/v2/node/performance#owner-路径与-tcp-拥塞诊断)。
 
 Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代创建新 scope 标识。业务批次使用所有原 packet guard 与 channel guard 的交集，任何成员失效均阻止该批后续 I/O。每次 syscall／release 重新检查；同一 SecureNode 精确 snapshot 代际的 guards 可共用本次同步 Reading，但仍逐一检查 circuit 取消与各自期限，跨等待不缓存 Reading。握手、诊断、health 与 STUN 保留独立控制路径。
 

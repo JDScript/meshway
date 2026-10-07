@@ -100,7 +100,7 @@ mise run perf:crypto -- --environment host --iterations 100000 --repeats 5
 
 路线比较只使用同环境实测差值：每个单向交付包有一次 seal、一次 open、`2 × (节点数 − 1)` 次相邻 MAC。端点各承担一次 AEAD 与一次 MAC，中继承担两次 MAC。仅替换 AEAD／HMAC 实现、预 key HMAC、改变相邻 MAC 算法分别计算；微基准差值是被替换原语预算的算术估计，不是改后 L0／真实 I/O 的已验收吞吐。guard、flow、replay、nonce 与输出边界不因原语加速而省略。
 
-非密码成本的解释边界：当前 Data 路径已就地编解码，不调用握手用 `frame.base()`，不能再把旧 v4 的 body 复制／重编码当作现行待消除项。代码路径中源和终点各调用两次 `Frame::validate`，每个中继四次；只读上下文／path 的 clone、owner 借用协调所需的 circuit remove／insert 和重复结构校验是可进一步测量的候选，不表示整项 CPU 均可删除。PacketPool 的加锁／归还、脏区清零、真实边界 guard 及 flow／replay 最终提交分别保留语义。L0 还包括每包 fixture 构造、角色计时和交付账本；减少这些 harness 成本不会自动加速生产 SecureNode。
+非密码成本的解释边界：当前 Data 路径已就地编解码，不调用握手用 `frame.base()`，不能再把旧 v4 的 body 复制／重编码当作现行待消除项。代码路径中源和终点各调用两次 `Frame::validate`，每个中继四次；重复结构校验仍是候选，不表示整项 CPU 均可删除。现行 owner 已共享只读 Context，并通过字段借用避免稳态 circuit remove／insert；业务 flow 路径仍有独立的所有权与 clone，见[owner 诊断](#owner-路径与-tcp-拥塞诊断)。PacketPool 的加锁／归还、脏区清零、真实边界 guard 及 flow／replay 最终提交分别保留语义。L0 还包括每包 fixture 构造、角色计时和交付账本；减少这些 harness 成本不会自动加速生产 SecureNode。
 
 #### 原语实测与路线预算
 
@@ -305,9 +305,13 @@ iperf3 结果取接收端 `server_output_json.end.sum_received`，并核对 UDP 
 
 profile 开启时，`pipeline.submit_to_ready.wall`、`pipeline.ready_to_release.wall` 与 `pipeline.release_to_credit_drop.wall` 分别观察提交后至 crypto 完成、完成后至 owner 取出保序前缀、取出后至最终 TX/TUN credit 释放。按调用线程每 128 次抽取一次，跨线程只传递单调时刻，不推断 CPU；最后一项含 owner commit、批内等待及 I/O，错误／取消也可能释放 credit，须核对同次拒绝计数。`l3.input_head_to_prepare.wall` 只观察各输入批首包，不能称为全部包的平均排队。
 
+`pipeline.submit_to_worker.wall` 与 `pipeline.worker.wall` 将提交→完成进一步分成调度／排队和 crypto 工作墙钟；两者嵌套于 `submit_to_ready`。`l3.tun.read.batch`、`l3.udp.read.batch`、`l3.prepare.batch` 记录各入口实际批次。`l3.backpressure` 记录未消费输入时的 credit／quantum 等待次数，不能当作丢包；`l3.reject` 记录真实准入拒绝类别。
+
 `carrier.release_to_admission.wall` 与 `carrier.admission_to_completion.wall` 为抽样批次的 release→Session 准入、准入→本机完成；`transport.admission_to_first_poll.wall` 与 `transport.first_poll_to_write.wall` 为 Session 内部准入→首次 poll、首次 poll→首个成功 raw write 前缀，后者包含 readiness 等待、原 guard 与 syscall。`carrier.tun.write.wall` 包含一次成功 TUN 写入及其 readiness 等待。这些批次指标与 per-packet credit 指标互相嵌套，不直接相加，也不是内核 syscall-only 精确计时。
 
 `pipeline.dispatch.batch`、`pipeline.release.batch`、`carrier.send.batch` 与 `carrier.tun.written.batch` 为实际非空批次的累计次数，桶为 1／2–4／5–8／9–16／17–32；TUN 使用真实返回的已写前缀数。TCP checkpoint 与 UDP final 之间取差值，避免复用进程时重复累计。关闭 profile 不读取这些墙钟或分配采样记录。
+
+`networkCounters` 保存每容器 `/proc/net/snmp`、`/proc/net/dev` 的客户端前后值及差值，并保留 `ss -u -a -n -m` 的实际 socket buffer／排队与 `/proc/net/udp{,6}` 的逐 socket drops。它们覆盖 warmup 与边界采集，不等同于 iperf 排除 warmup 的区间；GRO socket 丢弃计数也不能按一个 counter 等同一个内层 IP 包。`tcpStreams` 原样保存每条 iperf sender 的 RTT、重传与 cwnd 字段；cwnd 最大值不是平均在途窗口，不能直接除以平均 RTT 作为吞吐上限。
 
 ## L2 内核批量实测
 
@@ -616,6 +620,132 @@ mise run perf:dataplane -- --modes secure-direct secure-relay plain-batch \
 正式 profile-off 直连 TCP 的 A owner／worker 活跃比例为 43.9%／16.0%，B 为 49.7%／17.5%；UDP 对应为 75.7%／30.4%、69.1%／27.5%。TCP worker 已显著空闲，继续增加密码算力不足以证明能达到 1 Gbps。剩余工作包括 owner flow／replay／guard、聚合值移动／context clone、pool／就绪前缀与 TUN／carrier I/O；ready→release→syscall 的墙钟排队、内核丢包与宿主调度尚无独立精确归因，不能从线程未活跃比例推断具体等待原因。
 
 同一 Linux image 的独立无网络只读容器读取 `AT_HWCAP=0x2fb3ffff`，SHA2 与 ASIMD bits 均为 true；锁定 sha2 0.11／cpufeatures 0.3 的 aarch64 Linux `getauxval` 分派选择硬件 SHA2，未设置强制 backend／target-cpu。原始探测命令与结果保存于 `.meshway/perf/m-validation/hwcap.json`。本轮没有重跑原语工具，以正式 L0／L3 和实际 HWCAP 验证后端。
+
+### Owner 路径与 TCP 拥塞诊断
+
+诊断与优化使用 `perf/owner-path` 的同一 L3 harness，基线为 `7eac33a6`／密码后端 M，MTU 1280、batch 32、UDP payload 1200／2G、warmup 1 秒＋测量 6 秒，每格两次。测量互斥锁覆盖全部 Docker 运行；主仓库并行检查及宿主其它负载不受该锁约束，以下保留环境差异，不跨轮选取最好样本。
+
+#### 单流、多流、核数与 inline
+
+矩阵为 `20261007t051734z-4307336a` 至 `20261007t053026z-0200744d` 的八个独立报告，32/32 TCP／UDP 样本成功。下表 TCP 为 profile-off 中位数；RTT 为 iperf 各流 `mean_rtt` 的中位数，CPU 为节点线程自己的活跃比例。宿主一分钟 load 为 4.62–7.86。
+
+| CPU quota | worker | TCP 流数 | Mbps | RTT µs | A owner／worker % | B owner／worker % |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 1 | 1 | 777.71 | 1830 | 46.1／16.9 | 51.5／18.5 |
+| 2 | 1 | 4 | 771.04 | 1926 | 49.0／17.1 | 54.0／17.5 |
+| 2 | 0 | 1 | 779.78 | 1754 | 47.1／0 | 48.6／0 |
+| 2 | 0 | 4 | 675.66 | 2359 | 47.8／0 | 52.1／0 |
+| 4 | 1 | 1 | 711.62 | 1850 | 45.0／16.3 | 50.2／18.2 |
+| 4 | 1 | 4 | 726.15 | 2282 | 52.5／18.5 | 57.8／19.7 |
+| 4 | 0 | 1 | 717.39 | 1876 | 47.1／0 | 49.1／0 |
+| 4 | 0 | 4 | 741.39 | 2269 | 48.9／0 | 53.1／0 |
+
+多流共享同一 owner、circuit 和全局 32-credit 窗口，因此多流没有突破 1 Gbps **不能单独证明 owner CPU 饱和**。TCP owner 只使用约半核，inline 和增加 quota 均没有解除限制；后续 socket 对照确认主要限制是突发 UDP 接收溢出引起 TCP 拥塞窗口收缩，叠加流水线／I/O 往返延迟。CPU 串行成本仍限制消除丢包后的满载吞吐。
+
+#### 原生 owner self-time 与剩余预算
+
+`perf:crypto:l0 -- --environment host` 的前／后报告为 `20261007T052308Z-a6f2a00a-l0-host`／`20261007T055628Z-75769819-l0-host`。每拓扑三次 profile-off／128 对照与一次 500,000 轮 samply，均成功。后者 2／3 节点有效样本为 8,173／11,437，未解析叶为 569／847。归因器优先识别已解析的 ring AEAD 汇编叶，避免优化后的 DWARF buffer 父帧把 AEAD 误归入内存工作；两侧使用同一规则重算。
+
+下表为每个单向 1280B 交付包的全路径 CPU µs，原生 self-time 权重乘同轮未插桩总 CPU，仍含采样／内联归因误差。
+
+| 类别 | 2 节点前 → 后 | 3 节点前 → 后 |
+| --- | ---: | ---: |
+| AEAD | 1.736 → 1.665 | 1.557 → 1.561 |
+| 相邻 HMAC | 1.262 → 1.291 | 2.455 → 2.446 |
+| 缓冲／内存移动 | 1.604 → 1.057 | 2.128 → 1.189 |
+| flow／map／replay／policy | 0.917 → 1.314 | 1.802 → 1.478 |
+| guard／authority | 1.151 → 1.207 | 1.661 → 1.711 |
+| Packet parse／checksum | 0.371 → 0.069 | 0.052 → 0.412 |
+| Frame／codec | 0.057 → 0.012 | 0.117 → 0.027 |
+| 其它，含 harness／分配 | 1.787 → 1.620 | 2.322 → 2.340 |
+| **总 CPU** | **8.885 → 8.235** | **12.094 → 11.164** |
+| **非密码** | **5.886 → 5.279** | **8.081 → 7.157** |
+
+`prepare_send_at`＋`commit_receive` 的 memmove 调用者合计从 0.779／1.110 降至 0.164／0.186 µs，不另加到上表。Packet／flow 等类别的明显权重转移受内联归因影响，不能称为某个函数精确加速倍率。后测 **owner 路径 top 15 self-time** 如下；过滤条件为调用栈含 prepare-send／prepare-receive／commit-receive，单位仍是全路径每交付包，不是 inclusive CPU。
+
+| 叶函数（泛型名缩写） | 2 节点 µs／包 |
+| --- | ---: |
+| `mach_absolute_time` | 0.381 |
+| `_platform_memmove` | 0.344 |
+| `pthread_mutex_unlock` | 0.128 |
+| `FlowTable::prepare` | 0.109 |
+| `pthread_mutex_lock` | 0.086 |
+| `profile::Scope::drop` | 0.053 |
+| `flow::Tuple::cmp` | 0.050 |
+| circuit BTreeMap root `Option::as_mut` | 0.049 |
+| `admit_circuit_carrier` | 0.048 |
+| `slice::Iter<[u8; 2]>::next` | 0.047 |
+| `ExecutionSnapshot::clone` | 0.043 |
+| `CancellationToken::is_cancelled` | 0.042 |
+| flow deadline `OccupiedEntry::remove_kv` | 0.040 |
+| `ExecutionSnapshot` drop glue | 0.039 |
+| `ExecutionSnapshot::reading` | 0.036 |
+
+实现采用一次稳定 Circuit 分配、稳态字段借用与共享只读 Context；未替换 BTreeMap 的哈希算法、未省略 Frame 校验或真实 guard。Replay check 为常数时间位查询，推进最多移动固定 16 个 u64；本次没有把它改成另一套窗口。短包 inline 使用 128B 明文阈值：52B ring seal／open 原语各约 0.24 µs、预 key HMAC 约 0.13 µs，远小于下表数十微秒交接；它保留相同 lane 序号、credit、验证和 owner 提交。
+
+默认 L0 最终矩阵 `20261007T062320Z-48ad2bef` 为 36/36 成功、源码未变。2／3／5 节点 1280B 为 119,562／77,894／56,778 pps，CPU 为 8.353／12.446／17.572 µs；52B 为 171,170／140,058／91,297 pps，CPU 为 5.719／7.089／10.940 µs。guard 仍为 15／21／33 次，wire 仍为 86 B。该轮宿主负载高于原生归因轮，不用原生较低 CPU 替换默认矩阵；52B 两节点未表现为稳定加速。
+
+#### 墙钟与批次边界
+
+`20261007t053152z-bac25c11` 的改动前 direct TCP，A／B 的 submit→ready 为 28.3／55.2 µs，ready→取出为 50.7／36.8，取出→credit 释放为 75.1／57.5。批首输入等待为 19.7／7.7 µs，结合 owner 准备成本，A→B 在已观察的 userspace 段约 **0.34 ms**；这是两节点角色均值拼接的数量级估计，混有 ACK、未逐包关联，也不含尚在内核或 provider 预取队列中的等待。
+
+`20261007t060407z-be091915` 为 owner 改动后、扩 buffer 前的细分，profile=128、TCP 两次累计样本加权平均，单位 µs。worker 列是纯计算路径的墙钟（含 observer），ready→取出包含保序与调度，credit 列含 commit／批内等待／输出 I/O。子列不能重复相加。
+
+| 角色 | 输入批首→prepare | submit→worker | worker | ready→取出 | 取出→credit 释放 | Session 首 poll→首成功 write | TUN write |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| direct A | 33.4 | 41.2 | 1.7 | 41.5 | 65.2 | 36.3 | 1.8 |
+| direct B | 12.8 | 39.4 | 1.7 | 22.5 | 51.8 | 22.1 | 7.3 |
+| relay R | 19.4 | 53.4 | 1.4 | 37.2 | 61.9 | 22.2 | — |
+
+Session 准入→首次 poll 只有约 0.08–0.19 µs；没有观测到这里存在毫秒级队列。源／终点 owner 边界、worker 交接和较小输出前缀仍有可优化空间，但以上用户态区间不足以精确归因相对 plain 的全部约 1 ms RTT 增量。UDP provider 一次接收可预取多份 GRO、随后每次交付至多 32 帧，TUN GSO 剩余分段亦有自身有界存储；其剩余驻留、内核排队和 guest 调度未获得逐包关联的时钟，不把缺失区间填成零或全称作 worker 休眠。
+
+实际非空批次分布（同一采样、两次合计；桶依次为 **1／2–4／5–8／9–16／17–32**）：
+
+| 负载／角色／边界 | 各桶批次数 |
+| --- | --- |
+| TCP A TUN read | 161／547／1,061／2,455／38,824 |
+| TCP A owner prepare | 2,992／9,818／14,158／10,078／38,786 |
+| TCP A worker dispatch | 1,469／5,263／154,656／0／0 |
+| TCP A ready release | 6,175／16,955／27,375／57,923／16,993 |
+| TCP A carrier send | 3,976／10,002／22,605／51,791／15,808 |
+| TCP B UDP read | 699／2,214／8,491／23,617／30,030 |
+| TCP B owner prepare | 28,209／26,146／15,536／29,710／29,217 |
+| TCP B ready release | 39,663／42,724／76,394／41,614／7,403 |
+| TCP B TUN 已写前缀 | 21,991／43,651／83,177／35,273／4,042 |
+| UDP A TUN read | 40／80／218／255／65,997 |
+| UDP A owner prepare | 2,003／6,211／16,399／12,749／61,090 |
+| UDP A ready release | 7,820／26,161／49,512／97,181／21,901 |
+| UDP B UDP read | 735／1,654／5,498／13,655／51,288 |
+| UDP B owner prepare | 3,371／8,042／17,268／28,857／45,241 |
+| UDP B ready release | 18,348／41,869／96,169／65,785／6,494 |
+| UDP B TUN 已写前缀 | 18,345／41,861／96,168／65,784／6,494 |
+
+TUN read 多为大批，与输入侧 TSO 超包拆分一致；不能将 17–32 桶当成等待凑齐 32 包的证据。输出侧 worker 小组与 ready 前缀会形成更多小批次；实现只发送已就绪前缀，没有 GSO 聚合等待计时器。TCP ACK 的无 payload TUN 写入仍逐包，不能通过把它计为 GRO 大包掩盖 syscall。
+
+#### 丢包定位与 socket buffer 对照
+
+扩 buffer 前，实际 UDP socket `rb/tb` 均为 229,376 B。profile-off direct TCP 两次 B 的 `RcvbufErrors=InErrors` 为 **66／70**，A 为 0；relay 两次 R 为 **34／32**、B 为 **16／10**。各角色 TUN errors/dropped 均为 0，`SndbufErrors`／checksum errors 也为 0。`/proc/net/udp` 的 :41000 drops 对应这些溢出，不能把 GRO 丢弃计数直接等同于内层 TCP 重传数。采样 TCP 的端点 `l3.reject.packet` 还出现 4–154 次；credit／quantum 计数表示输入保留的背压，不是满队列主动丢包。
+
+依据该证据，Linux batch UDP 对默认 buffer 采用普通 **7 MiB SO_RCVBUF／SO_SNDBUF** 请求；参照 wireguard-go `conn/controlfns.go` 的 7 MiB 目标，但不使用它的 BUFFORCE 路径。实际 Linux `ss` 返回 rb/tb **14,680,064 B**；显式非零配置、原 descriptor、mark 和 guard 保持各自约束。行为定义见[UDP 批量接口](/v2/node/transport#udp-批量接口)。
+
+同机紧邻对照的 TCP 字段如下，n=2、profile-off。RTT／cwnd 为每次原始值；cwnd 单位 B。后测 `20261007t061008z-a0f6db21` 的 TCP 全部成功，但一次 direct UDP 违反严格接收字节／报文数核对，整体 23/24，失败原样保留，不以其 UDP 作为完整矩阵结论。
+
+| 路径 | buffer 前 → 后 Mbps | 前 → 后 RTT µs | 前 → 后 retransmits | 前 → 后 max snd cwnd B |
+| --- | ---: | --- | --- | --- |
+| direct | 939.84 → 1633.46 | 1343／1273 → 12994／22554 | 443／488 → 0／0 | 214900／191568 → 4305368／4280808 |
+| relay | 726.16 → 1464.09 | 1407／1925 → 18008／19793 | 303／340 → 0／0 | 201392／201392 → 4285720／4369224 |
+
+后测 TCP 的所有角色 UDP 溢出、TUN 丢包及 profile-on 端点拒绝均为 0；吞吐变化支持“接收突发丢包→cwnd 受限”的归因。**扩大 buffer 并没有降低满载 RTT**：cwnd 增长到约 4.3 MB 后，持续无 pacing 的 TCP 形成更深内核排队，RTT 达 13–23 ms。超过 1 Gbps 的吞吐样本不能同时宣传成低延迟改进。2G UDP 仍超过真实服务能力，源 TUN 与接收 socket 均可丢包，不是无损容量。
+
+后续完全相同二进制 `4f681377…` 的两核／四核完整复测为 `20261007t061708z-72652c1e`／`20261007t061912z-03ba3d5f`，均 12/12 成功；CPU 为所有角色 cgroup 合计。两轮宿主一分钟 load 分别约 11–13／12–17，明显高于前述扩 buffer 对照的 5–8。
+
+| 模式 | 两核 TCP Mbps／UDP pps | 四核 TCP Mbps／UDP pps | 两核 TCP／UDP CPU % | 四核 TCP／UDP CPU % |
+| --- | ---: | ---: | ---: | ---: |
+| secure-direct | 939.26／70,146 | 1240.19／81,558 | 252.24／333.63 | 271.22／350.88 |
+| secure-relay | 791.55／55,012 | 820.59／59,326 | 300.83／367.89 | 285.28／362.48 |
+| plain-batch | 6006.69／116,893 | 7820.20／129,498 | 197.53／200.32 | 199.79／184.65 |
+
+因此 1 Gbps 单流已在有效两核样本和四核完整复测中出现，但**两核底线尚不能在这组高共享负载复测下稳定声明通过**；100k pps 也不能用早期低负载值代替本轮未达值。`20261007t062112z-6577db6f` 的同 binary profile-on 完整 12 格另行保留，不替换正式吞吐。较早四核 `20261007t055034z-5020f03e` 有一次 relay UDP 退出 137，节点没有最终 stderr；完整重跑 `20261007t055307z-ae3ede86` 通过，但首次异常的内部停止位置未独立定位，不能宣称根因已修复。所有原始失败、JSON、线程与 kernel counters 保存在对应报告和 `.meshway/perf/o-validation/`。
 
 ### L3 实测参考
 
