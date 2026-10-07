@@ -23,7 +23,6 @@ meshway-control = { path = "../meshway-control" }
 axum.workspace = true
 meshway-control-client = { path = "../meshway-control-client" }
 meshway-server = { path = "../../apps/meshway-server" }
-reqwest.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 
