@@ -1,0 +1,2 @@
+self-hosted-runner:
+  labels: [docker, build, cgroup2, cgroup1, planck, mars, jp-tyo]

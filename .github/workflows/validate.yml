@@ -3,6 +3,18 @@ name: Validate
 on:
   push:
     branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "apps/meshway-daemon/**"
+      - "apps/meshway-cli/**"
+      - "apps/meshway-server/**"
+      - "tools/meshway-*-fixture/**"
+      - "scripts/verify_*.py"
+      - "scripts/validate_*.py"
+      - "dev/**"
+      - ".github/workflows/validate.yml"
   pull_request:
     paths:
       - "crates/meshway-connectivity/**"
@@ -18,6 +30,7 @@ on:
       - "scripts/verify_*.py"
       - "scripts/validate_*.py"
       - "dev/**"
+      - ".github/workflows/validate.yml"
   workflow_dispatch:
     inputs:
       rows:
@@ -57,7 +70,7 @@ jobs:
       - name: Publish summary
         if: always()
         run: |
-          latest=$(ls -td .meshway/validation/matrix/*/ | head -1)
+          latest=$(find .meshway/validation/matrix -mindepth 1 -maxdepth 1 -type d | sort -r | head -1)
           cat "$latest/summary.md" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()

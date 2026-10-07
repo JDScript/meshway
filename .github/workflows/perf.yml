@@ -11,6 +11,7 @@ on:
       - "tools/meshway-*-perf/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".github/workflows/perf.yml"
   workflow_dispatch:
     inputs:
       layers:
@@ -52,7 +53,7 @@ jobs:
         if: always()
         run: |
           for d in .meshway/perf/circuit .meshway/perf/dataplane .meshway/perf/crypto; do
-            latest=$(ls -td "$d"/*/ 2>/dev/null | head -1)
+            latest=$(find "$d" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -1)
             [ -n "$latest" ] && [ -f "$latest/summary.md" ] && { echo "## $d" >> "$GITHUB_STEP_SUMMARY"; cat "$latest/summary.md" >> "$GITHUB_STEP_SUMMARY"; }
           done
           true
@@ -92,7 +93,7 @@ jobs:
         if: always()
         run: |
           for d in .meshway/perf/circuit .meshway/perf/crypto; do
-            latest=$(ls -td "$d"/*/ 2>/dev/null | head -1)
+            latest=$(find "$d" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -1)
             [ -n "$latest" ] && [ -f "$latest/summary.md" ] && { echo "## arm64 $d" >> "$GITHUB_STEP_SUMMARY"; cat "$latest/summary.md" >> "$GITHUB_STEP_SUMMARY"; }
           done
           true

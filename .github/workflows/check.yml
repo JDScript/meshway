@@ -9,7 +9,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  changes:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      protocol: ${{ steps.filter.outputs.protocol }}
+      console: ${{ steps.filter.outputs.console }}
+      docs: ${{ steps.filter.outputs.docs }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "mise.toml"
+              - "mise.lock"
+              - "crates/**"
+              - "apps/meshway-server/**"
+              - "apps/meshway-daemon/**"
+              - "apps/meshway-cli/**"
+              - "tools/**"
+            protocol:
+              - "packages/**"
+              - "scripts/protocol/**"
+            console:
+              - "apps/meshway-web-console/**"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - "package.json"
+            docs:
+              - "docs/**"
+            scripts:
+              - "scripts/**"
+              - "dev/**"
+            workflows:
+              - ".github/**"
+
+  cargo:
+    # Rust checks, tests, codegen, contract drift and SDK consumers. Protocol
+    # changes land here too because the generated clients are produced from
+    # the real routes.
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.protocol == 'true' || needs.changes.outputs.workflows == 'true'
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 60
     env:
@@ -21,4 +68,40 @@ jobs:
           version: 2026.8.14
           install_args: --locked
       - run: mise run setup
-      - run: mise run check
+      - run: mise run check:cargo
+
+  console:
+    # Console-only changes never build Rust; SDK changes still re-check the
+    # Console because it consumes the generated client.
+    needs: changes
+    if: needs.changes.outputs.console == 'true' || needs.changes.outputs.protocol == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run setup
+      - run: mise run check:console
+      - run: mise run test:console
+      - run: mise run build:console
+
+  docs-and-scripts:
+    # Docs check also validates OpenAPI examples against the committed contract,
+    # so protocol changes run it as well.
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.scripts == 'true' || needs.changes.outputs.protocol == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run setup
+      - run: mise run test:scripts
+        if: needs.changes.outputs.scripts == 'true' || needs.changes.outputs.workflows == 'true'
+      - run: mise run check:docs

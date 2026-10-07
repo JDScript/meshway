@@ -3,6 +3,14 @@ name: Build
 on:
   push:
     branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "mise.toml"
+      - "crates/**"
+      - "apps/meshway-daemon/**"
+      - "apps/meshway-cli/**"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 concurrency:
