@@ -10,6 +10,8 @@
 | 内核 TUN 验收 | `mise run test:tun:linux` → `scripts/verify_tun.py` | 隔离 Linux 内的真实 TUN 设备和双栈包 I/O |
 | 受保护包流验收 | `mise run test:packet:linux` → `scripts/verify_packet.py` | 独立进程／namespace 中的认证、完整路径和正式数据面包流 |
 | daemon／CLI 综合验收 | `mise run test:runtime:linux` → `scripts/verify_runtime.py` | 正式 daemon／CLI、Underlay、TUN、系统 DNS、续租／撤销／清理；穿透模式增加独立 NAT 与 pcap 证据 |
+| 并行验收矩阵 | `mise run validate:matrix` → `scripts/validate_matrix.py` | 一次构建、按行隔离、失败继续；支持诊断短模式 |
+| 远程验收矩阵 | `mise run validate:remote` → `scripts/validate_remote.py` | 已推送 revision、远程 detached 执行、断线续等和本地证据副本 |
 | 常驻开发服务 | `mise run services …` → `scripts/dev.py` | 本工作树的 Server／docs 进程生命周期和健康检查 |
 | 常驻三节点实验环境 | `mise run node:lab …` → `scripts/node_lab.py` | lax／sha／nyc 的独立持久状态与不可变 Linux 程序部署，详见[三节点环境](/v2/node/docker-lab) |
 | Linux Node 程序 | `mise run build:node:linux` → `scripts/node_lab.py build` | 宿主交叉编译常驻 lab 使用的 daemon／CLI |
@@ -133,6 +135,39 @@ DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-man
 
 脚本为运行生成唯一 runId，限制 namespace、资源和挂载，以精确容器／网络身份清理。异常退出后先对照该 run 的报告和资源标签调查，再清理遗留资源；不全量 prune，也不改未知归属的宿主路由、DNS、防火墙或 Docker daemon。
 
+### 一次构建、并行矩阵 {#validation-matrix}
+
+```sh
+mise run validate:matrix --list
+mise run validate:matrix --parallel 4
+mise run validate:matrix --parallel 2 --short --rows nat/off nat+fallback/off
+```
+
+`scripts/validate_matrix.py` 的 `ROWS` 是可执行行的唯一声明，与[验收矩阵](/v2/node/validation#验收矩阵)的九个隔离入口对应。`--rows` 使用行 ID，省略时运行全部；重复 ID 只执行一次。runtime 构建一次，七个 runtime 行和 packet 的内嵌 daemon 检查都使用同一 `--artifacts`；packet／TUN 各构建一次。三个入口共享 `target/node-kernel-tests/build.lock`，只在构建及复制产物阶段持锁；导入已经冻结且逐文件校验的产物与执行阶段不持构建锁。
+
+`--parallel N` 默认是可用 CPU 数除以 8 向下取整、最少 1。依据是每个 runtime 行的 controller／A／R／B 各限制 2 CPU；NAT 行另外包含两个轻量路由器，需为宿主及路由器留出余量。并发不改变 fixture 的进程内期限，不保证高负载下仍通过。每行记录启动 `uptime`、1／5／15 分钟 load、耗时、报告 ID、失败阶段摘录和遗留资源；矩阵显式使用有界并发替代 standalone runtime／packet 的串行低负载门槛。与历史串行数据比较时应同时读取负载和源码指纹。
+
+各行、packet 内嵌 daemon、容器、bridge、挂载目录、私有 D-Bus／DNS 都有独立 run ID／namespace；固定监听端口只存在于各自 namespace，不发布宿主端口。IPv4 地址由 Docker IPAM 分配，IPv6 为每个 bridge 的随机 documentation prefix；共享 `/dev/net/tun` 不共享接口。实际并发受 CPU／内存、Docker 地址池剩余 bridge 数及 IO 影响；单个 NAT 行最多三个 bridge。失败不取消其他行，退出码表示全部选中行及清理是否通过。
+
+矩阵根据 Docker Linux 架构选择 `amd64`／`arm64` 的锁定 OS 输入；默认在工作树 `.meshway/validation/os/` 按输入摘要构建并缓存所需镜像。也可显式传 `--runtime-image-manifest`、`--dns-image-manifest`、`--traversal-image-manifest`；runtime 镜像使用 node-lab 的正式 provenance 校验，不改变常驻 lab 的选中镜像。TUN／packet 直接入口也支持 `--build-only`、`--artifacts`；所有入口可用 `--report-dir` 指定新的私有目录。
+
+`--short` 将 runtime 持续／纯接收包流窗口由 125 秒改为 30 秒，退路触发由 30 秒改为 5 秒。报告及矩阵 `scope=diagnostic-short`，其余业务场景、真实 instance 到期等待、DNS、撤销恢复和清理仍执行。短模式不要求已经越过原需求期限；未观测到需求延长时 `laterExpiryMs=null`，不填造测量。它**不构成验收**，且整行耗时仍可能为数分钟。单独入口同样可运行 `mise run test:runtime:linux --short …`。
+
+### 远程矩阵与断线续等
+
+```sh
+git push planck tooling/validate-matrix
+mise run validate:remote --ref tooling/validate-matrix --parallel 4
+mise run validate:remote --short --rows nat/off nat+fallback/off
+mise run validate:remote --attach 20261007T232151Z-35296f56
+```
+
+`--host` 默认 `zj2631@ai4ce-planck.dyn.poly.edu`，`--path` 默认 `/mnt/data/Meshway/src`；`--ref` 默认本地 HEAD。入口先用 `git ls-remote planck` 校验 commit 可从已推送 ref 到达，再让远程 clean clone fetch、detached checkout。远程需具备 SSH、Git、Python、mise 锁定工具链、普通 Docker builder 和至少 50 GiB 空闲磁盘；本地使用 rsync 拉回证据。其余参数透传给矩阵。
+
+远程 supervisor 使用独立 session，记录 `.meshway/validation/jobs/<run>/` 下的请求、PID、日志及最终状态；工作树操作锁从 fetch／checkout 持有到矩阵及其子进程全部结束，第二个远程任务不会切换正在执行的源码。SSH 断连不停止已启动任务。`--timeout` 是本地等待期限（默认 14400 秒），到期退出 2 后可用启动时打印的 `--attach <run>` 续等，不能用 attach 改变参数。任一行失败或本 run 带标签的容器／网络仍有遗留均返回非零；其他工作流的容器不纳入该 run 清理。
+
+远程结果拉回工作树 `.meshway/validation/remote/<host>-<run>/` 后打印 `summary.md`；包含矩阵、各行原始日志／JSON／pcap、远程状态与 supervisor 日志，不复制构建目录及大体积可执行文件，原二进制与 hash 清单保留在远程。目标已存在时拒绝覆盖；下载中断将部分目录另存为 `*-partial-<id>`，再次 attach 使用新的完整目标。
+
 ## 数据、报告与回收
 
 服务目录相对于**执行脚本的工作树**；Node lab、隔离验收和 transport 性能报告相对于 `git --git-common-dir` 对应的**仓库公共根目录**，circuit／dataplane 性能报告位于执行脚本的工作树。
@@ -141,8 +176,9 @@ DNS 模式显式传入 `--dns-backend resolved|resolv-conf` 和 `--dns-image-man
 | --- | --- | --- |
 | 本机 services | 工作树 `.meshway/server/`、`.meshway/dev-login.json`、独立 `.meshway/ip-datasets/` 部署资产；`.meshway/services/` 的 launch 记录、reset journal、私有日志和 `dev.lock`；`target/` 构建缓存 | stop 保留数据；reset 整库移入 `.meshway/backups/`，并保存本次资产快照；独立部署资产保留，备份人工保留或回收 |
 | 隔离 TUN／packet／runtime | 公共根 `.meshway/validation/{tun,packet,runtime}/<runId>/` 的报告、二进制、进程日志、场景数据和证据；工作树 `target/node-kernel-tests/` | 正常 finally 清理精确容器／网络，报告保留；失败查报告及 Docker 实际资源 |
+| matrix／remote | 执行工作树 `.meshway/validation/matrix/<run>/matrix.json`、`summary.md`、`rows/<row>/<reportId>/`、构建日志及产物；本地远程副本 `.meshway/validation/remote/<host>-<run>/` | 每行独立精确清理；保留失败证据；不覆盖历史目录 |
 | OS fixture | 显式 `--output` 目录中的包、Dockerfile、image manifest；Docker 的不可变 image ID | 先确认没有容器／构建引用，再回收该输出和对应镜像 |
 | 常驻 Node lab | 公共根 `.meshway/node-lab/releases/`、`selected`、`operation.lock`、`deploy.json`；工作树 `target/node-linux/`；`meshway-{lax,sha,nyc}-state` named volumes | stop 先清理 TUN 并保留原意图与卷；deploy 核验 namespace 停止证明、复用身份卷并更换不可变程序；完整重新接入时按标签和精确资源身份单独处理 |
 | perf | transport：公共根 `.meshway/perf/transport/<runId>/`；circuit／dataplane：工作树 `.meshway/perf/{circuit,dataplane}/<runId>/`；各含原始样本、清单、JSON／Markdown 报告；工作树 `target/{transport,circuit,dataplane}-perf/` | 保留可追溯报告；运行结束且无引用后回收相应缓存 |
 
-大型构建前检查磁盘，至少保留 50 GiB；`CARGO_INCREMENTAL=0`，同任务复用指定 target。三个 Linux 验收入口共享 `target/node-kernel-tests`，不同 feature 的可执行测试不并发使用这个 target。回收工作树前确认没有 WIP、进程或挂载引用，并保留已提交分支和必要证据。
+大型构建前检查磁盘，至少保留 50 GiB；`CARGO_INCREMENTAL=0`，同任务复用指定 target。三个 Linux 验收入口共享 `target/node-kernel-tests`，构建锁串行化不同 feature 的构建；冻结产物导入后可按上述矩阵并行执行。回收工作树前确认没有 WIP、进程或挂载引用，并保留已提交分支和必要证据。

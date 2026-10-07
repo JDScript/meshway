@@ -15,6 +15,8 @@
 
 ## 验收矩阵
 
+可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表九个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。
+
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | `test:tun:linux` | — | — | — | 真实 TUN 设备创建与双栈包 I/O | 当前 wire 已通过；`20261007T212324Z-904a137e` |
@@ -33,6 +35,8 @@
 常驻 lab 的 L5 原始证据目录为 `.meshway/perf/l5/20261007T162418Z-main-f39ba2b6-2cpu/`。该目录的两次 TCP 接收吞吐分别约 318／364 Mbps；协调者另报告空闲宿主复测 1,367 Mbps，独立报告路径待补，不能把该数值归入前述目录或用吞吐局部证据替代整组验收。
 
 ### 当前验证证据
+
+`validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
 
 矩阵报告使用 `3887256b` 的生产源码与 `36a20fa3` 的满 MTU fixture，包含 wire v5、流式流水线、SSE、回执分类、Manager 查询节流／批前缀消费与 ring-only TLS。全部运行严格串行，前一行结束并清理后才启动下一行；失败行保留首跑并独立复跑一次，两次失败才记为未通过。报告记录入口前 `uptime`、1／5／15 分钟 load、耗时、二进制 hash、源码指纹与清理结果；本轮所有入口的 1 分钟 load 均低于 6。更早的重叠 fixture／高负载运行不用于本表结论。
 
