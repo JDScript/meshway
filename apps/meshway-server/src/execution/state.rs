@@ -23,7 +23,17 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+#[cfg(test)]
+thread_local! {
+    static STATE_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
 impl Execution {
+    /// Test accounting lives on the same isolated SQLite executor thread.
+    #[cfg(test)]
+    pub(crate) fn take_state_work() -> (usize, usize) {
+        STATE_WORK.with(|counts| counts.replace((0, 0)))
+    }
     /// Reauthorize an accepted diagnostic subscription against its current
     /// exact service permit. Only prepare_observation may create a lifetime.
     pub fn observation_admission_in_transaction(
@@ -81,7 +91,15 @@ impl Execution {
     ) -> Result<VisibilityScope, Error> {
         let (network, full, mut expires_at, actor) = match identity {
             ReadIdentity::Node { authorization } => {
-                let report = self.report_admission_in_transaction(tx, authorization, now)?;
+                #[cfg(test)]
+                STATE_WORK.with(|counts| {
+                    let (checks, history) = counts.get();
+                    counts.set((checks + 1, history));
+                });
+                // A visibility scope uses only the current subject, instance
+                // and deadline. Retained report/history contexts grant no
+                // visibility here and must not be decrypted on every SSE frame.
+                let report = self.report_with_context(tx, authorization, now, false)?;
                 (
                     report.network_id,
                     BTreeSet::from([report.node_id]),
@@ -365,6 +383,11 @@ impl Execution {
         node: NodeId,
         now: DateTime<Utc>,
     ) -> Result<ReportAdmission, Error> {
+        #[cfg(test)]
+        STATE_WORK.with(|counts| {
+            let (checks, history) = counts.get();
+            counts.set((checks, history + 1));
+        });
         let mut report = self.current_node_admission(tx, network, node, now)?;
         let history = store::receipt_history_targets(
             tx,

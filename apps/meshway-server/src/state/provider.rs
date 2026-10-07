@@ -236,33 +236,32 @@ impl StateProvider for NodeProvider {
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<ProviderView<Self>, Error> {
-        let ReadIdentity::Node { authorization } = identity else {
+        let ReadIdentity::Node { .. } = identity else {
             return Err(Error::PermissionDenied);
         };
-        let report = self
-            .0
-            .execution
-            .report_admission_in_transaction(tx, authorization, now)?;
         let scope = self
             .0
             .execution
             .state_scope_in_transaction(tx, identity, now)?;
+        // Node scope construction just authenticated the real bearer, current
+        // key/membership and instance in THIS transaction. Its full scope is
+        // exactly the owning Node; do not repeat report/history admission.
+        let node = scope.full.first().copied().ok_or(Error::InvalidSession)?;
+        if scope.full.len() != 1 {
+            return Err(Error::InvalidSession);
+        }
         let snapshot = self.0.snapshot(tx, &scope)?;
         let cfg = &snapshot.document.configuration;
         let target = scope
             .current
-            .get(&report.node_id)
+            .get(&node)
             .and_then(|node| node.configurations.first())
             .cloned();
         let configuration = NodeConfigurationView {
             network_id: scope.network_id,
-            node_id: report.node_id,
+            node_id: node,
             revision: snapshot.revision,
-            settings: cfg
-                .nodes
-                .get(&report.node_id)
-                .ok_or(Error::InvalidSession)?
-                .into(),
+            settings: cfg.nodes.get(&node).ok_or(Error::InvalidSession)?.into(),
             target,
         };
         let nodes = crate::store::execution::inventory_in_transaction(

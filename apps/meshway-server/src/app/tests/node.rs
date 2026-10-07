@@ -200,6 +200,109 @@ pub(super) fn caps() -> BTreeMap<String, Capability> {
 }
 
 #[tokio::test]
+async fn node_sse_frames_reauthorize_without_report_history_for_multiple_subscribers() {
+    use crate::state::{
+        service::ReadIdentity,
+        stream::{StreamPoll, StreamSource},
+    };
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, _b, keys, _bk, signer, _bs) = fixture().await;
+    let execution = app.execution();
+    let session = session(&execution, network, a, &keys, &signer).await;
+    execution
+        .acquire(
+            session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let service = app.node_state_service().unwrap();
+    let mut subscriptions = Vec::new();
+    for _ in 0..4 {
+        subscriptions.push(
+            service
+                .open_stream(
+                    ReadIdentity::Node {
+                        authorization: session.token.expose().to_owned(),
+                    },
+                    None,
+                    rid(),
+                )
+                .await
+                .unwrap(),
+        );
+    }
+    let handle = app.executor.handle();
+    handle
+        .read(|_| Ok(crate::execution::Execution::take_state_work()))
+        .await
+        .unwrap();
+    for subscription in &subscriptions {
+        for _ in 0..2 {
+            assert!(matches!(
+                service.poll(subscription).await.unwrap(),
+                StreamPoll::Frame(_)
+            ));
+        }
+    }
+    let counts = handle
+        .read(|_| Ok(crate::execution::Execution::take_state_work()))
+        .await
+        .unwrap();
+    assert_eq!(
+        counts,
+        (8, 0),
+        "one real Node scope check per frame, no historical material reads"
+    );
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    execution
+        .revoke_key(
+            owner.token.expose(),
+            network,
+            a,
+            RevokeNodeKeyRequest {
+                key_id: keys.control.id,
+                expected_generation: keys.control.generation,
+            },
+        )
+        .await
+        .unwrap();
+    for subscription in &subscriptions {
+        let StreamPoll::Frame(frame) = service.poll(subscription).await.unwrap() else {
+            panic!("expected explicit closure");
+        };
+        let event: meshway_protocol::NodeEvent = serde_json::from_str(&frame.data).unwrap();
+        assert!(matches!(
+            event.0,
+            meshway_protocol::StreamEvent::Closed {
+                reason: meshway_protocol::events::ClosedReason::SessionExpired
+            }
+        ));
+    }
+    let counts = handle
+        .read(|_| Ok(crate::execution::Execution::take_state_work()))
+        .await
+        .unwrap();
+    assert_eq!(
+        counts,
+        (4, 0),
+        "queued snapshots cannot reuse pre-revocation authorization"
+    );
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn live_configuration_progress_keeps_fixed_targets_and_orders_real_receipts() {
     use crate::state::service::ReadIdentity;
     use meshway_protocol::live::ApplicationPhase;
