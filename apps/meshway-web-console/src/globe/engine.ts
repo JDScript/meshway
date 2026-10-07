@@ -30,6 +30,18 @@ import { cityLights } from "./city-lights"
 import { css, RGB_KEYS, type GlobeColors, type Rgb } from "./colors"
 import { landPoints } from "./land"
 import {
+  CITY_CORE,
+  CITY_MIN_PX,
+  cityStrength,
+  DIM_FLOOR,
+  duskStrength,
+  glsl,
+  LAND_DOT,
+  LIGHT,
+  nightLandAlpha,
+  sunInView,
+} from "./light"
+import {
   altitudeForRadius,
   cometPointAlpha,
   cometPointRadius,
@@ -120,13 +132,6 @@ const REVEAL_SPIN_MS = 1800
 /** The interface comes in this far into the reveal, while the globe settles. */
 const REVEAL_UI_MS = 850
 const COMET_FADE_MS = 900
-/**
- * Where the sun is, as seen from the camera: around the globe from the
- * camera's side (degrees, towards the left), and raised. Light faces the day,
- * the night just reaching the right limb; dark faces the night, a crescent of
- * day on the left limb. A change of theme turns it from one to the other.
- */
-const SUN = { light: 40, dark: 140, raised: 18 }
 /** A page that cannot be: the globe, centred above its card, takes at most this share of the space left. */
 const ALERT_FIT = 0.36
 /** Its search ring turns once in this long. */
@@ -272,7 +277,7 @@ const surfaceShader = () =>
       void main() {
         vec3 normal = normalize(vNormal);
         vec3 view = normalize(cameraPosition - vWorld);
-        float rim = pow(1.0 - max(dot(normal, view), 0.0), 3.4);
+        float rim = pow(1.0 - max(dot(normal, view), 0.0), ${glsl(LIGHT.rim)});
         // Day and night where the sun is. The day side falls off softly
         // towards the line between, as a lit sphere's does; just before it the
         // light warms (a tint of the day, never a painted stripe); past it is
@@ -281,15 +286,15 @@ const surfaceShader = () =>
         vec3 surface = uPlanet > 0.0 ? mix(uSurface, planetDay(normal), uPlanet) : uSurface;
         // The planet's light comes in two soft steps, as if painted.
         float day = mix(
-          smoothstep(-0.08, 0.16, facing),
+          smoothstep(${glsl(LIGHT.day[0])}, ${glsl(LIGHT.day[1])}, facing),
           smoothstep(-0.04, 0.06, facing) * 0.7 + smoothstep(0.4, 0.5, facing) * 0.3,
           uPlanet
         );
-        float form = mix(mix(0.84, 1.0, smoothstep(0.02, 0.7, facing)), 1.0, uPlanet);
+        float form = mix(mix(${glsl(LIGHT.formFloor)}, 1.0, smoothstep(${glsl(LIGHT.form[0])}, ${glsl(LIGHT.form[1])}, facing)), 1.0, uPlanet);
         // The planet's night keeps its colours under a plum shade.
         vec3 night = mix(uNight, surface * 0.32 + uNight * 0.75, uPlanet);
         vec3 lit = surface * form;
-        float dusk = exp(-pow((facing - 0.06) / 0.07, 2.0));
+        float dusk = exp(-pow((facing - ${glsl(LIGHT.dusk.at)}) / ${glsl(LIGHT.dusk.width)}, 2.0));
         vec3 warm = uTwilight / max(max(uTwilight.r, uTwilight.g), max(uTwilight.b, 0.001));
         lit *= mix(vec3(1.0), warm, dusk * uBand);
         vec3 base = mix(night, lit, day);
@@ -396,7 +401,7 @@ const pointShader = (land: boolean) =>
       uScale: { value: 450 },
       uPixelRatio: { value: 1 },
       uSize: { value: 1 },
-      uMinSize: { value: land ? 1.15 : 0 },
+      uMinSize: { value: land ? LAND_DOT.minPx : 0 },
       uNightColor: { value: new Color() },
       ...sunlight(),
     },
@@ -419,10 +424,10 @@ const pointShader = (land: boolean) =>
             ? `vec3 up = normalize(world.xyz);
                float facing = dot(up, normalize(cameraPosition - world.xyz));
                float lit = dot(up, uSun);
-               vAlpha = mix(0.16, 1.0, smoothstep(0.0, 0.7, facing))
-                 * mix(uNightAlpha, 1.0, smoothstep(-0.15, 0.2, lit));
-               vBand = exp(-pow((lit - 0.06) / 0.07, 2.0)) * 0.2;
-               vDay = smoothstep(-0.08, 0.16, lit);
+               vAlpha = mix(${glsl(LIGHT.limbFloor)}, 1.0, smoothstep(${glsl(LIGHT.limb[0])}, ${glsl(LIGHT.limb[1])}, facing))
+                 * mix(uNightAlpha, 1.0, smoothstep(${glsl(LIGHT.nightLand[0])}, ${glsl(LIGHT.nightLand[1])}, lit));
+               vBand = exp(-pow((lit - ${glsl(LIGHT.dusk.at)}) / ${glsl(LIGHT.dusk.width)}, 2.0)) * 0.2;
+               vDay = smoothstep(${glsl(LIGHT.day[0])}, ${glsl(LIGHT.day[1])}, lit);
                float size = uSize;`
             : `vAlpha = aAlpha;
                vBand = 0.0;
@@ -433,7 +438,7 @@ const pointShader = (land: boolean) =>
         // so a far globe keeps the same overall brightness.
         float raw = size * (uScale / -mv.z);
         float shown = max(raw, uMinSize);
-        vAlpha *= uMinSize > 0.0 ? clamp(raw / max(uMinSize, 0.0001), 0.3, 1.0) : 1.0;
+        vAlpha *= uMinSize > 0.0 ? clamp(raw / max(uMinSize, 0.0001), ${glsl(DIM_FLOOR)}, 1.0) : 1.0;
         gl_PointSize = shown * uPixelRatio;
         gl_Position = projectionMatrix * mv;
       }`,
@@ -564,10 +569,12 @@ const cityShader = () =>
         vec4 mv = viewMatrix * world;
         vec3 up = normalize(world.xyz);
         float facing = dot(up, normalize(cameraPosition - world.xyz));
-        float night = 1.0 - smoothstep(-0.12, 0.06, dot(up, uSun));
-        vAlpha = pow(aGlow, 0.75) * night * smoothstep(0.0, 0.5, facing) * uStrength;
+        float night = 1.0 - smoothstep(${glsl(LIGHT.city[0])}, ${glsl(LIGHT.city[1])}, dot(up, uSun));
+        float raw = aSize * (uScale / -mv.z);
+        vAlpha = pow(aGlow, 0.75) * night * smoothstep(0.0, 0.5, facing) * uStrength
+          * clamp(raw / ${glsl(CITY_MIN_PX)}, ${glsl(DIM_FLOOR)}, 1.0);
         vCore = aCore;
-        gl_PointSize = max(1.2, aSize * (uScale / -mv.z)) * uPixelRatio;
+        gl_PointSize = max(${glsl(CITY_MIN_PX)}, raw) * uPixelRatio;
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
@@ -582,7 +589,7 @@ const cityShader = () =>
         float a = mix(soft, soft * soft * 0.7 + smoothstep(0.18, 0.04, d), vCore)
           * vAlpha * uOpacity;
         if (a < 0.004) discard;
-        vec3 c = mix(uColor, vec3(1.0, 0.96, 0.86), vCore * smoothstep(0.25, 0.0, d) * 0.7);
+        vec3 c = mix(uColor, vec3(${CITY_CORE.map(glsl).join(", ")}), vCore * smoothstep(0.25, 0.0, d) * 0.7);
         gl_FragColor = vec4(c, min(a, 1.0));
         #include <colorspace_fragment>
       }`,
@@ -645,7 +652,7 @@ export function createGlobeEngine(
     )
   )
   const landMaterial = pointShader(true)
-  landMaterial.uniforms.uSize = { value: look.landSize }
+  landMaterial.uniforms.uSize = { value: LAND_DOT.size }
   landMaterial.uniforms.uOpacity = { value: 1 }
   const land = new Points(landGeometry, landMaterial)
   // Transparent objects sort by distance; explicit orders keep everything
@@ -854,16 +861,15 @@ export function createGlobeEngine(
   const cameraUp = new Vector3()
   /** Puts the sun where `turn` says, as seen from the camera now. */
   const placeSun = () => {
-    const toCamera = sunDirection.copy(camera.position).normalize()
+    const [x, y, z] = sunInView(turn)
     cameraRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize()
     cameraUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize()
-    const around = ((SUN.light + (SUN.dark - SUN.light) * turn) * Math.PI) / 180
-    const raised = (SUN.raised * Math.PI) / 180
-    toCamera
-      .multiplyScalar(Math.cos(around))
-      .addScaledVector(cameraRight, -Math.sin(around))
-      .multiplyScalar(Math.cos(raised))
-      .addScaledVector(cameraUp, Math.sin(raised))
+    sunDirection
+      .copy(camera.position)
+      .normalize()
+      .multiplyScalar(z)
+      .addScaledVector(cameraRight, x)
+      .addScaledVector(cameraUp, y)
       .normalize()
     for (const material of sunlit)
       material.uniforms.uSun = { value: sunDirection }
@@ -1219,8 +1225,9 @@ export function createGlobeEngine(
     landMaterial.uniforms.uOpacity = {
       value: (1 - 0.55 * alertFade) * (1 - 0.9 * planet),
     }
-    cityMaterial.uniforms.uOpacity = { value: extras * (1 - alertFade) }
-    cityMaterial.uniforms.uStrength = { value: 0.45 + 0.55 * turn }
+    // Part of the globe from its first frame, as the loading globe draws them.
+    cityMaterial.uniforms.uOpacity = { value: 1 - alertFade }
+    cityMaterial.uniforms.uStrength = { value: cityStrength(turn) }
     alertRing.visible = alertFade > 0.002
     if (alertRing.visible) {
       alertRing.quaternion.copy(camera.quaternion)
@@ -1572,8 +1579,8 @@ export function createGlobeEngine(
     for (const material of sunlit) {
       material.uniforms.uNight = { value: color(night.night) }
       material.uniforms.uTwilight = { value: color(colors.twilight) }
-      material.uniforms.uBand = { value: 0.22 + 0.13 * turn }
-      material.uniforms.uNightAlpha = { value: 0.55 - 0.3 * turn }
+      material.uniforms.uBand = { value: duskStrength(turn) }
+      material.uniforms.uNightAlpha = { value: nightLandAlpha(turn) }
     }
     cityMaterial.uniforms.uColor = { value: color(night.city) }
     surface.uniforms.uSea = { value: color(day.sea) }

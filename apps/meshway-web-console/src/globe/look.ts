@@ -5,8 +5,6 @@
 type GlobeLook = {
   /** Land as round dots, or not at all. */
   land: "dots" | "none"
-  /** Dot size in globe units. */
-  landSize: number
   /** Latitude / longitude lines every 15°. */
   graticule: boolean
   /** A far starfield; drawn in dark themes only. */
@@ -23,7 +21,6 @@ type GlobeLook = {
 
 export const DEFAULT_LOOK: GlobeLook = {
   land: "dots",
-  landSize: 1.5,
   graticule: false,
   stars: true,
   guides: true,

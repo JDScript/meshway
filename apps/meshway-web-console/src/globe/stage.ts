@@ -18,6 +18,7 @@ import {
   CSS2DRenderer,
 } from "three/addons/renderers/CSS2DRenderer.js"
 
+import { glsl, LIGHT } from "./light"
 import { CAMERA_FOV } from "./loader-view"
 import { cartesian, GLOBE_RADIUS } from "./scene"
 
@@ -71,7 +72,12 @@ type StageOptions = {
   onMarkerVisibility(element: HTMLElement, visible: boolean): void
 }
 
-const NEAR = 0.05
+/**
+ * Nothing comes nearer the camera than this (it stays 50 out from the
+ * surface): any nearer and, with the globe small and far, the depth is too
+ * coarse to keep dots just above the surface in front of it.
+ */
+const NEAR = 5
 const FAR = GLOBE_RADIUS * 500 * 2.5
 const SPHERE_SEGMENTS = 90
 
@@ -113,8 +119,9 @@ const atmosphereFragment = /* glsl */ `
     float intensity = pow(coefficient + dot(vVertexNormal, viewCameraToVertex), power);
     // Brighter over the day side, warm where the sun rises or sets.
     float lit = dot(normalize(vVertexWorldPosition), sun);
-    intensity *= mix(0.45, 1.3, smoothstep(-0.35, 0.55, lit));
-    float band = exp(-pow((lit + 0.04) / 0.14, 2.0)) * (0.2 + 0.15 * warmth);
+    intensity *= mix(${glsl(LIGHT.air.night)}, ${glsl(LIGHT.air.day)}, smoothstep(${glsl(LIGHT.air.lit[0])}, ${glsl(LIGHT.air.lit[1])}, lit));
+    float band = exp(-pow((lit - ${glsl(LIGHT.air.band.at)}) / ${glsl(LIGHT.air.band.width)}, 2.0))
+      * (${glsl(LIGHT.air.band.strength)} + 0.15 * warmth);
     gl_FragColor = vec4(mix(color, twilight, band), intensity);
   }`
 

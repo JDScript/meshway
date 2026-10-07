@@ -660,7 +660,13 @@ they need `motion`.
 ## First load
 
 A held screen with a 2D loader globe (no three.js) shows from the first paint
-until the renderer has drawn and the first route's data are in. Its backdrop
+until the renderer has drawn and the first route's data are in. It is drawn
+in the WebGL globe's light (`globe/light.ts` holds the sun, the day and
+night edges and the point sizes for both): the same day and night, land
+dots and city lights at the opacity the WebGL globe gives them at that size
+(points under their smallest size dim instead of shrinking), so nothing
+jumps at the handoff; under the little planet it is the usual globe in the
+planet's colours. Its backdrop
 then goes at once (the stage draws the same one); the loader cross-fades into
 the WebGL globe in the same pose, comet included, and the globe grows into
 its frame and settles on a continent while the interface comes in. View
