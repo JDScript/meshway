@@ -388,6 +388,7 @@ impl Gateway {
             selection: Default::default(),
             probes: Vec::new(),
             problems: Vec::new(),
+            exit_capability: None,
         };
         let mut candidates = Vec::new();
         for socket in snapshot.sockets {

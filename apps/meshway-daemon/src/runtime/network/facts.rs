@@ -41,6 +41,7 @@ impl Report {
             selection: Default::default(),
             probes: Vec::new(),
             problems: Vec::new(),
+            exit_capability: None,
         };
         if !current {
             return state;

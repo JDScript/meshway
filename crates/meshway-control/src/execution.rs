@@ -273,6 +273,7 @@ impl Control {
             selection: Default::default(),
             probes: Vec::new(),
             problems: Vec::new(),
+            exit_capability: None,
         };
         self.report_runtime_state(state, chrono::Utc::now()).await
     }

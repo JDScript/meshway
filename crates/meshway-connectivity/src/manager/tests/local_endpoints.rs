@@ -141,6 +141,7 @@ async fn report_listener(fixture: &mut support::Fixture, protocol: TransportProt
         selection: Default::default(),
         probes: vec![],
         problems: vec![],
+        exit_capability: None,
     };
     let ticket = control.begin_application().await.unwrap();
     control

@@ -69,6 +69,7 @@ fn facts(node: &Control) -> NodeState {
         },
         probes: vec![],
         problems: vec![],
+        exit_capability: None,
     }
 }
 

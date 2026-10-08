@@ -146,6 +146,7 @@ fn facts(control: &Control, applied: bool) -> NodeState {
         selection: Default::default(),
         probes: Vec::new(),
         problems: Vec::new(),
+        exit_capability: None,
     }
 }
 
