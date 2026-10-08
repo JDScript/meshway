@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T06:19:38.489388+00:00",
+  "updatedAt": "2026-10-08T06:24:43.275045+00:00",
   "runs": [
     {
       "id": 37736565267,
@@ -51,9 +51,9 @@
       "commit": "e9c7a376ad625f276934e98688c8584bd68519cc",
       "message": "ci: ignore personal mise global config on runners; document runner-side Docker context and fixture tempdir probing",
       "createdAt": "2026-10-08T06:14:57Z",
-      "updatedAt": "2026-10-08T06:19:01Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-08T06:23:10Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/37736565195",
       "jobs": [
         {
@@ -70,34 +70,34 @@
         {
           "id": 113178487743,
           "name": "docs-and-scripts",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-08T06:19:01Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T06:19:48Z",
+          "completedAt": "2026-10-08T06:20:43Z",
+          "seconds": 55.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37736565195/job/113178487743"
         },
         {
           "id": 113178487797,
           "name": "cargo",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-08T06:19:01Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-08T06:20:46Z",
+          "completedAt": "2026-10-08T06:21:31Z",
+          "seconds": 45.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37736565195/job/113178487797"
         },
         {
           "id": 113178487805,
           "name": "console",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-08T06:19:01Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T06:21:34Z",
+          "completedAt": "2026-10-08T06:23:09Z",
+          "seconds": 95.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37736565195/job/113178487805"
         }
       ],
@@ -112,9 +112,9 @@
       "commit": "e9c7a376ad625f276934e98688c8584bd68519cc",
       "message": "ci: ignore personal mise global config on runners; document runner-side Docker context and fixture tempdir probing",
       "createdAt": "2026-10-08T06:14:57Z",
-      "updatedAt": "2026-10-08T06:15:01Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-08T06:23:01Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/37736565072",
       "jobs": [
         {
@@ -132,15 +132,43 @@
           "id": 113177332423,
           "name": "node-linux (aarch64-unknown-linux-musl)",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-08T06:15:00Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-08T06:23:00Z",
+          "seconds": 480.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37736565072/job/113177332423"
         }
       ],
       "artifacts": [
+        {
+          "id": 11532088845,
+          "name": "node-aarch64-unknown-linux-musl-e9c7a376ad625f276934e98688c8584bd68519cc",
+          "bytes": 7506707,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37736565072/artifacts/11532088845",
+          "jobId": 113177332423,
+          "runner": "mars-epyc7543",
+          "seconds": 480.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 12878008,
+              "sha256": "c428f6405a7a813b0abdac7261a207490944f11306dddc56f1a06474bd788ac8"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1615992,
+              "sha256": "62d2df582b6e328d6e6139add5496622ddf13fe7b6bb5683582d05e426915674"
+            }
+          ]
+        },
         {
           "id": 11531574947,
           "name": "node-x86_64-unknown-linux-musl-e9c7a376ad625f276934e98688c8584bd68519cc",
