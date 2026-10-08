@@ -25177,6 +25177,68 @@
           "tcp"
         ]
       },
+      "EgressCapturePlan": {
+        "type": "object",
+        "description": "Packet ownership only. These disjoint CIDRs grant no business Access.",
+        "required": [
+          "generation",
+          "managedIpv4",
+          "defaultCapture",
+          "directIpv4",
+          "unmanagedIpv4",
+          "sinkIpv6"
+        ],
+        "properties": {
+          "defaultCapture": {
+            "type": "boolean",
+            "description": "True for default IPv4 capture, including a first-match exit covering all IPv4."
+          },
+          "directIpv4": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Explicit direct IPv4 exceptions after first-match subtraction."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Identity of the effective selection and its routing inputs."
+          },
+          "managedIpv4": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Disjoint IPv4 ranges handed to the unique data-plane owner."
+          },
+          "sinkIpv6": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "IPv6 exit ranges that must be sunk; Mesh routes take precedence."
+          },
+          "unavailable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UnavailableReason",
+                "description": "Unresolved routing requires a fail-closed boundary, not local fallback."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unmanagedIpv4": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Explicit unmanaged IPv4 exceptions after first-match subtraction."
+          }
+        },
+        "additionalProperties": false
+      },
       "EgressRouting": {
         "type": "object",
         "description": "Public egress rules, named profiles and authorization-constrained profile selection.",
@@ -26435,6 +26497,270 @@
           }
         },
         "additionalProperties": false
+      },
+      "ExitCapability": {
+        "type": "object",
+        "description": "Target-bound exit capability observation, accepted before applied as well as after it.",
+        "required": [
+          "instanceId",
+          "target",
+          "supportedFamilies",
+          "installedFamilies",
+          "status",
+          "observedAt"
+        ],
+        "properties": {
+          "installedFamilies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitFamily"
+            },
+            "description": "Families actually installed; ready alone does not imply installed."
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId",
+            "description": "Runtime incarnation which made the observation."
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Original observation time, preserved on retries."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExitStatus",
+            "description": "Actual prerequisite or installation result."
+          },
+          "supportedFamilies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitFamily"
+            },
+            "description": "Families supported by the running backend."
+          },
+          "target": {
+            "$ref": "#/components/schemas/ConfigurationRef",
+            "description": "Exact execution target whose role was probed."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExitDestinationScope": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Exact target must also belong to Policy's public Internet set.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "internet"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Explicit CIDR Access covers the exact target, including authorized LAN.",
+            "required": [
+              "prefix",
+              "type"
+            ],
+            "properties": {
+              "prefix": {
+                "type": "string",
+                "description": "Administrator-authorized CIDR, not an automatically inferred LAN."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "cidr"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Why an exact external destination is eligible; never widens PathPermit.target."
+      },
+      "ExitFamily": {
+        "type": "string",
+        "description": "Inner address family, independent of the outer carrier.",
+        "enum": [
+          "ipv4",
+          "ipv6"
+        ]
+      },
+      "ExitNat": {
+        "type": "string",
+        "description": "Translation mode allowed for an exit role.",
+        "enum": [
+          "masquerade"
+        ]
+      },
+      "ExitPermit": {
+        "type": "object",
+        "description": "Additional constraints on an external PathPermit; paths name its exit terminals.",
+        "required": [
+          "generation",
+          "family",
+          "destination",
+          "roles"
+        ],
+        "properties": {
+          "destination": {
+            "$ref": "#/components/schemas/ExitDestinationScope",
+            "description": "Destination classification checked again by packet admission."
+          },
+          "family": {
+            "$ref": "#/components/schemas/ExitFamily",
+            "description": "Source address family; initial implementation permits IPv4 only."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Changes on every effective profile selection, including switching back."
+          },
+          "roles": {
+            "type": "object",
+            "description": "Every eligible terminal bound to the role generation it must install.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ExitRolePlan"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExitRolePlan": {
+        "type": "object",
+        "description": "Resource preparation responsibility; never a grant to forward a packet.\nNetwork, node, publication and deadlines come from the enclosing target/lease.",
+        "required": [
+          "instanceId",
+          "generation",
+          "family",
+          "nat"
+        ],
+        "properties": {
+          "family": {
+            "$ref": "#/components/schemas/ExitFamily",
+            "description": "Inner family implemented by this role."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Role identity stable across lease renewal; changes with source revision."
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId",
+            "description": "Current instance which may install the role."
+          },
+          "nat": {
+            "$ref": "#/components/schemas/ExitNat",
+            "description": "Required translation mode."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExitStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "No exit role has been requested.",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "notRequested"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Prerequisites are being tested; not ready.",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "probing"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The reported families completed prerequisite checks.",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ready"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Installation or prerequisite checks failed.",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/ExitUnavailableReason",
+                "description": "Concrete failure; never replaced with a successful observation."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Observed exit lifecycle; unavailable carries a mandatory typed cause."
+      },
+      "ExitUnavailableReason": {
+        "type": "string",
+        "description": "Concrete prerequisite preventing exit installation or execution.",
+        "enum": [
+          "ipForwardDisabled",
+          "forwardingProbeFailed",
+          "netAdminMissing",
+          "nftUnavailable",
+          "conntrackUnavailable",
+          "reversePathFilterConflict",
+          "tunUnavailable",
+          "firewallConflict",
+          "routeConflict",
+          "dnsUnavailable",
+          "unsupportedFamily",
+          "ownershipConflict"
+        ]
       },
       "Freshness": {
         "type": "string",
@@ -30014,6 +30340,7 @@
           "addresses",
           "selfKeys",
           "meshAddressPools",
+          "egressCapture",
           "listeners",
           "dialers",
           "peers",
@@ -30077,6 +30404,10 @@
             "$ref": "#/components/schemas/DnsExecution",
             "description": "Compiled DNS settings, visible Mesh names and trusted associations."
           },
+          "egressCapture": {
+            "$ref": "#/components/schemas/EgressCapturePlan",
+            "description": "Disjoint external packet ownership and IPv6 negative capture boundary."
+          },
           "enabled": {
             "type": "boolean",
             "description": "Whether the source configuration enables this Node's business execution."
@@ -30084,6 +30415,17 @@
           "exitEnabled": {
             "type": "boolean",
             "description": "Configured exit eligibility gated by Node enablement, not proof of installed forwarding."
+          },
+          "exitRole": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitRolePlan",
+                "description": "Exit resource responsibility, issued before capability readiness."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "hostname": {
             "type": "string",
@@ -30192,6 +30534,7 @@
           "exitEnabled",
           "dns",
           "meshAddressPools",
+          "egressCapture",
           "listeners",
           "dialers",
           "peers",
@@ -30229,6 +30572,10 @@
             "$ref": "#/components/schemas/DnsExecution",
             "description": "Complete replacement DNS execution content."
           },
+          "egressCapture": {
+            "$ref": "#/components/schemas/EgressCapturePlan",
+            "description": "Complete external packet ownership replacement."
+          },
           "enabled": {
             "type": "boolean",
             "description": "Target's configured business execution enablement."
@@ -30236,6 +30583,17 @@
           "exitEnabled": {
             "type": "boolean",
             "description": "Target's configured exit eligibility, gated by Node enablement."
+          },
+          "exitRole": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitRolePlan",
+                "description": "Complete exit role replacement; absent withdraws the role."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "hostname": {
             "type": "string",
@@ -31742,6 +32100,17 @@
             "$ref": "#/components/schemas/ConfigurationState",
             "description": "Independently reported saved target, applied target and installation progress."
           },
+          "exitCapability": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitCapability",
+                "description": "Target-bound exit prerequisite facts; omitted means unknown, never ready."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "links": {
             "type": "object",
             "description": "Actual channels grouped by peer, including simultaneous channels to the same peer.",
@@ -32722,6 +33091,17 @@
           "demandId": {
             "$ref": "#/components/schemas/RequestId",
             "description": "Business demand for which this permit was compiled."
+          },
+          "exit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitPermit",
+                "description": "Required execution constraints for an external exit; absent for Mesh services."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expiresAt": {
             "$ref": "#/components/schemas/Timestamp",
@@ -36731,6 +37111,17 @@
           "paths"
         ],
         "properties": {
+          "exitUnavailableReason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitUnavailableReason",
+                "description": "Fresh typed exit failure when reported; absence is unknown, not success."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "nodeId": {
             "$ref": "#/components/schemas/NodeId"
           },
@@ -36760,6 +37151,8 @@
         "enum": [
           "disabled",
           "exitDisabled",
+          "exitUnavailable",
+          "unsupportedFamily",
           "notEnrolled",
           "noPath",
           "routingCycle",
@@ -37351,6 +37744,9 @@
         "type": "string",
         "description": "Condition preventing Server compilation from granting the requested business execution.",
         "enum": [
+          "exitUnavailable",
+          "unsupportedFamily",
+          "egressConflict",
           "unauthorized",
           "noPath",
           "routingCycle",

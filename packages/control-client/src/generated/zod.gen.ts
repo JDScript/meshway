@@ -591,6 +591,31 @@ export const zNodeAddresses = z.strictObject({
   ["ipv6"]: z.ipv6().nullable()
 });
 
+export const zExitDestinationScope = z.union([z.strictObject({
+  ["type"]: z.enum(["internet"])
+}), z.strictObject({
+  ["prefix"]: z.string(),
+  ["type"]: z.enum(["cidr"])
+})]);
+
+export const zExitFamily = z.enum(["ipv4","ipv6"]);
+
+export const zExitNat = z.enum(["masquerade"]);
+
+export const zExitRolePlan = z.strictObject({
+  ["family"]: zExitFamily,
+  ["generation"]: zDigest,
+  ["instanceId"]: zInstanceId,
+  ["nat"]: zExitNat
+});
+
+export const zExitPermit = z.strictObject({
+  ["destination"]: zExitDestinationScope,
+  ["family"]: zExitFamily,
+  ["generation"]: zDigest,
+  ["roles"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zExitRolePlan, {})
+});
+
 export const zLogicalPath = z.strictObject({
   ["dialCandidates"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), z.array(z.string()), {}),
   ["nodes"]: z.array(zNodeId)
@@ -602,6 +627,7 @@ export const zReplyPolicy = z.enum(["statefulExactReversePath"]);
 
 export const zPathPermit = z.strictObject({
   ["demandId"]: zRequestId,
+  ["exit"]: zExitPermit.nullable().exactOptional(),
   ["expiresAt"]: zTimestamp,
   ["paths"]: z.array(zLogicalPath),
   ["port"]: zPort.nullable().exactOptional(),
@@ -613,7 +639,7 @@ export const zPathPermit = z.strictObject({
   ["target"]: zBusinessTarget
 });
 
-export const zUnavailableReason = z.enum(["unauthorized","noPath","routingCycle","routingLimit","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
+export const zUnavailableReason = z.enum(["exitUnavailable","unsupportedFamily","egressConflict","unauthorized","noPath","routingCycle","routingLimit","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
 
 export const zDemandDecision = z.union([z.strictObject({
   ["permit"]: zPathPermit,
@@ -817,6 +843,16 @@ export const zDnsExecution = z.strictObject({
   ["settings"]: zDnsConfiguration
 });
 
+export const zEgressCapturePlan = z.strictObject({
+  ["defaultCapture"]: z.boolean(),
+  ["directIpv4"]: z.array(z.string()),
+  ["generation"]: zDigest,
+  ["managedIpv4"]: z.array(z.string()),
+  ["sinkIpv6"]: z.array(z.string()),
+  ["unavailable"]: zUnavailableReason.nullable().exactOptional(),
+  ["unmanagedIpv4"]: z.array(z.string())
+});
+
 export const zNodeIdentity = z.union([z.strictObject({
   ["type"]: z.enum(["user"]),
   ["user"]: z.string()
@@ -934,8 +970,10 @@ export const zNodeConfiguration = z.strictObject({
   ["diagnostics"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zDiagnosticPermit, {}),
   ["dialers"]: typedMap(z.string(), zDialCandidate, {}),
   ["dns"]: zDnsExecution,
+  ["egressCapture"]: zEgressCapturePlan,
   ["enabled"]: z.boolean(),
   ["exitEnabled"]: z.boolean(),
+  ["exitRole"]: zExitRolePlan.nullable().exactOptional(),
   ["hostname"]: z.string(),
   ["identity"]: zNodeIdentity,
   ["listeners"]: typedMap(z.string(), zPreparedListener, {}),
@@ -2210,9 +2248,12 @@ export const zRouteEvaluation = z.strictObject({
   ["via"]: z.array(zNodeId)
 });
 
-export const zTargetProblem = z.enum(["disabled","exitDisabled","notEnrolled","noPath","routingCycle","routingLimit"]);
+export const zExitUnavailableReason = z.enum(["ipForwardDisabled","forwardingProbeFailed","netAdminMissing","nftUnavailable","conntrackUnavailable","reversePathFilterConflict","tunUnavailable","firewallConflict","routeConflict","dnsUnavailable","unsupportedFamily","ownershipConflict"]);
+
+export const zTargetProblem = z.enum(["disabled","exitDisabled","exitUnavailable","unsupportedFamily","notEnrolled","noPath","routingCycle","routingLimit"]);
 
 export const zTargetEvaluation = z.strictObject({
+  ["exitUnavailableReason"]: zExitUnavailableReason.nullable().exactOptional(),
   ["nodeId"]: zNodeId,
   ["paths"]: z.int().gte(0).lte(2147483647),
   ["problem"]: zTargetProblem.nullable()
@@ -2253,6 +2294,26 @@ export const zExchangeDelegationRequest = z.strictObject({
   ["code"]: zWireSecret,
   ["codeVerifier"]: zWireSecret,
   ["redirectUri"]: z.string()
+});
+
+export const zExitStatus = z.union([z.strictObject({
+  ["status"]: z.enum(["notRequested"])
+}), z.strictObject({
+  ["status"]: z.enum(["probing"])
+}), z.strictObject({
+  ["status"]: z.enum(["ready"])
+}), z.strictObject({
+  ["reason"]: zExitUnavailableReason,
+  ["status"]: z.enum(["unavailable"])
+})]);
+
+export const zExitCapability = z.strictObject({
+  ["installedFamilies"]: z.array(zExitFamily),
+  ["instanceId"]: zInstanceId,
+  ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["status"]: zExitStatus,
+  ["supportedFamilies"]: z.array(zExitFamily),
+  ["target"]: zConfigurationRef
 });
 
 export const zFreshness = z.enum(["current","awaiting_report","expired","superseded","config_mismatch","revoked"]);
@@ -2860,8 +2921,10 @@ export const zNodeConfigurationDelta = z.strictObject({
   ["diagnostics"]: zDiagnosticDelta,
   ["dialers"]: zDialerDelta,
   ["dns"]: zDnsExecution,
+  ["egressCapture"]: zEgressCapturePlan,
   ["enabled"]: z.boolean(),
   ["exitEnabled"]: z.boolean(),
+  ["exitRole"]: zExitRolePlan.nullable().exactOptional(),
   ["hostname"]: z.string(),
   ["identity"]: zNodeIdentity,
   ["listeners"]: zListenerDelta,
@@ -2962,6 +3025,7 @@ export const zSystemState = z.strictObject({
 export const zNodeState = z.strictObject({
   ["capabilities"]: typedMap(z.string(), zCapability, {}),
   ["configuration"]: zConfigurationState,
+  ["exitCapability"]: zExitCapability.nullable().exactOptional(),
   ["links"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), z.array(zLinkState), {}),
   ["listeners"]: typedMap(z.string(), zListenerState, {}),
   ["paths"]: typedMap(z.string(), zPathState, {}),
