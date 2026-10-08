@@ -37,5 +37,6 @@
 
 | 工作包 | 候选提交 | 内容 | 证据 |
 | --- | --- | --- | --- |
+| W4 边级承载 | `f52aec1f`、`f0bd2780`、`3d889b10`、`64410ccc`（`feat/topology-edge-transports`） | `topology[].transports`、双向拨号交集、无可用承载的规则／边定位、执行候选过滤与生成 SDK。 | `.meshway/w4-edge-transports/`；全量 T1 待 W2／TD2 所属 3 处 `TopologyRule` 构造器补齐新增字段。 |
 | W2 流式承载 | `90bf38e2`、`9aae0c35`、`0593e19b`、`fbde424e`（`feat/runtime-streaming-carriers`） | runtime fixture 与矩阵增加 VLESS／Trojan TCP/TLS；只有 R listener、A/B 使用所选 dialer；相同材料执行交接保留认证通道，旧输出 scope 立即失效。 | 秒级进程内红／绿回归与 T1 已通过；Planck 全长矩阵 `20261008T060724Z-15ece3bb`、`20261008T061606Z-9875d228` 两行各两次通过；短模式四行门槛 `20261008T055845Z-1b1b90ca` 通过。行报告与范围见[验收范围](/v2/node/validation)，私有证据 `.meshway/w2-streaming/`。 |
 | TD 测试整理 | `4a8ba975`、`704b2bd3`、`376c9176`、`52a1ac78`（`cleanup/test-dedup`） | Server 两条重复测试及重复 HTTP 断言／样板收敛；Server／transport 测试文件 ≤800 行；可执行上限检查；修复 State provider 重复关闭钩子的强引用保留与 fast 包选择。Server 物理测试行数 −1.6%，未达到 −30%；Clock 完整传播范围超过 15 文件，按边界仅完成评估。 | `.meshway/td/`：覆盖对照、Clock 评估、provider 生命周期红／绿回归、T1 `check.log`；热构建 `test:rust` 990 → 988 条，墙钟 114.7 → 128.3 s（单次观测，无提速结论）。 |

@@ -49,4 +49,5 @@
 - 即使 `access.allowed` 为 false，`targets` 和 `paths` 仍然计算，便于区分“没有授权”与“没有路径”；`outcome` 仍为 `unauthorized`。
 - `auto` 方案在规划中没有地区输入，按其 `fallback` 评估，与无有效观测时的执行一致。
 - 草稿缺少 listener 材料时返回与 validate 相同的准备需求（422），不以占位材料规划。
+- 来源有效且 Access 允许、但没有完整路径且搜索发现显式边级承载无交集时，返回配置错误 `invalid_transport`（`params.reason: edge_transport_unavailable`），以 topology 指针和 `params.a`／`b` 定位边；语义见 [Topology](/v2/configuration-reference/topology#承载交集)。存在可行备选路径时不因其他失败边拒绝整个规划。
 - 规划不读取 lease、报告或观测；节点是否在线不影响结果，`notEnrolled` 只表示没有可信密钥。

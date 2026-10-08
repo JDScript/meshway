@@ -64,7 +64,7 @@ Native UDP 的 socket 在操作系统层都是已绑定、持续接收报文的 
 
 | 字段 | 位置 | 对承载的作用 |
 | --- | --- | --- |
-| `topology[]` | 网络配置 | 无方向的节点对是否允许直接邻接；不约束承载类型 |
+| `topology[].transports` | 网络配置 | 无方向边允许的承载集合；省略不限制，匹配与交集见 [Topology](/v2/configuration-reference/topology#承载交集) |
 | `nodes[id].listeners` | 节点配置 | 该节点作为监听方提供的固定端点及其协议 |
 | `nodes[id].dialers` | 节点配置 | 该节点作为拨号方允许使用的协议与优先级；省略时继承 `defaults.dialers`，`{}` 禁用主动建连 |
 | 执行配置 `dialers` | NodeConfiguration | Server 已解析的具体拨号候选，key 为 `<peer>/<listener-key>`，值为 [DialCandidate](/v2/configuration-reference/node-configuration) |
@@ -78,7 +78,7 @@ DialCandidate 包含 `peer`、`listenerKey`、`endpoints`、`priority` 与已解
 
 对路径上的每条边 A–B，Server 分别计算 A 拨 B 与 B 拨 A 的候选。一个候选需要同时满足：
 
-1. 拨号方 `dialers`（或继承的默认集合）启用该协议；
+1. [Topology](/v2/configuration-reference/topology#承载交集) 允许该无方向边及该协议，且拨号方 `dialers`（或继承的默认集合）启用该协议；
 2. 监听方存在已启用的同协议 listener，VLESS 的 stream 与 dialer 设置相容；
 3. 拨号方具有该协议的 Dial 能力，监听方具有 Listen 能力；
 4. TLS 版本范围有交集（VLESS／Trojan）。
@@ -112,7 +112,7 @@ Node 侧没有第二套“请对端来连”的信令，**发布就是协调**�
 
 ### CN→LAX 只允许 VLESS
 
-CN 只能出站 VLESS，LAX 提供 VLESS listener。Access 允许 CN 访问 LAX 的 `tcp:443`。
+CN–LAX 边只允许 VLESS，LAX 提供 VLESS listener；CN 可对其他边使用 Native UDP。Access 允许 CN 访问 LAX 的 `tcp:443`。
 
 | 方向 | 本例取值 |
 | --- | --- |
@@ -129,12 +129,13 @@ CN 只能出站 VLESS，LAX 提供 VLESS listener。Access 允许 CN 访问 LAX 
       "remark": "允许 CN 与 LAX 直接邻接",
       "action": "allow",
       "a": "node:<cn-id>",
-      "b": "node:<lax-id>"
+      "b": "node:<lax-id>",
+      "transports": ["vless"]
     }
   ],
   "nodes": {
     "<cn-id>": {
-      "dialers": { "vless": {} },
+      "dialers": { "native_udp": {}, "vless": {} },
       "listeners": {}
     },
     "<lax-id>": {
@@ -156,9 +157,9 @@ CN 只能出站 VLESS，LAX 提供 VLESS listener。Access 允许 CN 访问 LAX 
 
 某条边只允许某承载，需要三个要素同时成立：
 
-1. `topology` 允许这对节点直接邻接；
+1. `topology` 允许这对节点直接邻接，`transports: ["vless"]` 限定该边只用 VLESS；
 2. 一方（LAX）有该协议的 listener；
-3. 另一方（CN）的 `dialers` 只含该协议，且 CN 没有 LAX 能拨的其他 listener（本例 CN 的 `listeners` 为空）。
+3. 另一方（CN）的 `dialers` 启用该协议。本例 CN 没有 listener，因而只有 CN 拨 LAX 的方向；即使节点级 dialers 还启用其他协议，也不能超出本边的 `transports`。
 
 编译结果：CN 拨 LAX 只有 `<lax-id>/edge` 一个 VLESS 候选；LAX 拨 CN 没有候选，因为 CN 没有 listener。CN 应用配置后立即建立 VLESS 会话。
 
@@ -172,7 +173,7 @@ CN 的业务包经这条 TCP/TLS 会话到达 LAX。LAX 的回复沿同一条 VL
 
 ## 限制
 
-- **没有边级承载约束**：`nodes[id].dialers` 与 `listeners` 是节点级字段，topology 规则只表达无方向的允许／阻断，没有承载类型字段。因此不能只对单条边限定协议：上例中 CN 的 `dialers: { "vless": {} }` 同样限制 CN 与所有其他节点的拨号。这是已知缺口，当前不存在对应字段。
+- **边级许可不创造能力**：`topology[].transports` 只收窄双方声明的交集，不创建 listener、启用 dialer 或提供网络可达性；字段与匹配语义见 [Topology](/v2/configuration-reference/topology#承载交集)。
 - **穿透只限 UDP**：协调端点只用于 Native UDP。Native TCP／VLESS／Trojan 必须一方提供 listener、另一方拨号，不实现 TCP simultaneous-open；双方都没有可达 listener 时，这条边不能使用 TCP 系承载。
 - **固定端点需要公告**：TCP 系承载只拨号执行配置中公告的 `endpoints`，不从 State 候选推导目标地址。
 - **MASQUE 未实现**：MASQUE／HTTP/3 需要明确的 client/server 角色，属于规划项，见[规划：MASQUE](/v2/node/connectivity#规划-masque)。

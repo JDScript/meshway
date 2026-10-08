@@ -41,7 +41,7 @@
 
 ## topology
 
-判断顺序固定为：匹配任意 block → 拒绝；否则匹配任意 allow → 允许；否则使用 defaults.topology。规则顺序不参与判断。
+允许／阻断判断顺序固定为：匹配任意 block → 拒绝；否则匹配任意 allow → 允许；否则使用 defaults.topology。边级承载集合由 [Topology 首条匹配 allow](/v2/configuration-reference/topology#matching) 决定；默认允许没有边级承载限制。
 
 `topology: []` 配合 allow 适合自动组网；配合 deny 则必须显式列出允许边。它不授予业务访问，也不会预先建立全网连接。
 
