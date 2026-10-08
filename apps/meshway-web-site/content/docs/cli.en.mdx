@@ -1,0 +1,104 @@
+---
+title: Command line
+description: Use meshway to control the local Linux node and inspect actual paths.
+---
+
+`meshway` connects to the local `meshwayd` Unix socket. The daemon manages persistent identity and runtime state; the CLI sends commands and reads results. Run the CLI as root or as the user running the daemon.
+
+## Common flags
+
+```sh
+meshway --help
+meshway --version
+meshway --socket /var/lib/meshway/control.sock status
+meshway status --json
+```
+
+- `--socket`: chooses the daemon socket; defaults to `/var/lib/meshway/control.sock`.
+- `--json`: writes results as JSON. `status --watch` and `ping` emit one object per line.
+- `--log-filter`: log filter, default `info`; also configurable through `RUST_LOG`.
+- `--log-format text|json`: log format; also configurable through `MESHWAY_LOG_FORMAT`.
+
+Results go to stdout and logs to stderr. `--json` and JSON log formatting are independent. Manage network policy in the console.
+
+## up
+
+```sh
+meshway up
+meshway up --enrollment-key @/absolute/private/enrollment-key
+cat /absolute/private/enrollment-key | meshway up --enrollment-key -
+```
+
+Requests online operation. First-time user enrolment displays a browser approval link; the daemon continues after approval. With an existing identity, it authenticates again using the saved identity.
+
+`--enrollment-key` accepts a literal one-use key, `@file-path`, or `-` / `@-` for standard input. Prefer a private file or pipe to keep the key out of shell history and process arguments. Enrolment keys enrol tag identities and do not rebind existing identities.
+
+While the daemon is starting or synchronising, the command waits up to about 30 seconds before directing you to `status --watch`. Ending the wait does not cancel an online request the daemon has accepted.
+
+## status
+
+```sh
+meshway status
+meshway status --watch
+meshway status --json
+```
+
+Reads actual state. `--watch` reads once per second; Ctrl-C stops watching.
+
+Human-readable output includes the node phase, desired online state, authentication, event stream, identity, saved configuration, network mode, data plane, applied configuration, and latest problem where applicable. JSON uses values such as `running` and `controlReady`; text output uses `Running` and `ControlReady`.
+
+Distinguish these states:
+
+- `AwaitingApproval`: waiting for browser approval.
+- `ControlReady`: control is ready; also inspect the data plane. `control-only` installs no networking.
+- `Running`: the data plane for the current target is ready.
+- `Retrying`: waiting to retry; inspect the latest problem.
+- `Blocked`: an operator must address the problem.
+
+`Saved configuration` means local storage; `Applied configuration` means completed local installation. A connected event stream also does not establish service connectivity. Use an actual probe.
+
+## ping
+
+```sh
+meshway ping peer-name
+meshway ping peer-name -c 3
+meshway ping 100.64.0.2 --count 3 --json
+```
+
+Replace the example target with a hostname, fully qualified node name, or actual Mesh IP in your network. `-c` / `--count` accepts 1–1000 and defaults to 10. Each probe has a five-second deadline, with an interval of at least one second.
+
+Requires a running Linux TUN node and `icmp:*` permission from source to target. It follows topology and the complete route, including required nodes. TCP or UDP port permission cannot replace ICMP permission.
+
+In the output:
+
+- `preparing`: waiting for preparation, timed separately from RTT.
+- `reply RTT=…`: round-trip duration over the actual authorised path.
+- `direct`: a direct source-to-target path, with the actual remote endpoint, transport, and acquisition source.
+- `via`: intermediate node IDs in their actual order.
+- `timeout` / `local-failed`: timeout or local failure, without an invented zero RTT.
+- The final line summarises sent probes, replies, timeouts, and local failures.
+
+JSON emits one event per line in order, including the actual path and source-side channel information. Success proves an authenticated Mesh round trip, not that an application port is available.
+
+Normal completion with at least one reply exits with 0. All failures, timeouts, or an operation failure exit with 1. Ctrl-C stops waiting, cancels this subscription, and exits with 130 without changing persistent online intent.
+
+## rotate-key
+
+```sh
+meshway rotate-key
+meshway status --json
+```
+
+Atomically replaces both control and data-plane identity keys. The command returns the rotated public identity and state; the daemon then reacquires permission to run. Successful rotation does not mean networking has been reapplied.
+
+A timeout or Ctrl-C does not cancel an accepted rotation. Check key generations in status before deciding whether to retry.
+
+## down
+
+```sh
+meshway down
+```
+
+Saves offline intent, stops the current network, and cleans up its owned resources. The daemon and private identity remain; the server's node is not permanently deleted. After a daemon restart it stays offline until another `up`.
+
+As with `up`, ending the command's wait does not withdraw an accepted operation. If cleanup reports a failure, resolve the conflict and run `down` again.

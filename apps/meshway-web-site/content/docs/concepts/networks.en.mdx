@@ -1,0 +1,32 @@
+---
+title: Networks and members
+description: A network is the management boundary for members, nodes, and policy.
+---
+
+A network brings members, nodes, addresses, and configuration into one management scope. An account can belong to several networks and have a different role in each.
+
+## Three roles
+
+| Role   | Everyday use                                                                                                            |
+| ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Owner  | Manages network configuration, nodes, and members; the network's creator has this role                                  |
+| Admin  | Manages network configuration and nodes, and manages members and join links within the permitted scope                  |
+| Member | Uses their own user-identity devices and sees state related to their authorised communication and its path dependencies |
+
+The console shows controls for the actions you can currently perform. Admins have limits on which roles they can grant; use the choices offered in the interface. Managing one network gives no authority over another network or someone else's account.
+
+A Member's node list shows their own user-identity devices. Their State view may include peers or relays needed for authorised communication. Seeing a relay does not grant access to services running on it.
+
+## Accounts, memberships, and devices
+
+An account signs in to the console. A membership joins that account to a network. A node identity lets a device enrol and communicate. Adding a person to a network does not create their devices.
+
+A join link invites a **person**. An enrolment key enrols a **tag-identity device**. A device can also use `meshway up` to request browser approval and enrol with a user identity.
+
+## What happens when someone leaves
+
+Removing a member or leaving a network permanently deletes that member's current user-identity devices. Devices already using tag identities remain and must be managed separately by an administrator.
+
+The console shows the impact before asking for confirmation. Demoting a member may also revoke unused join links they issued if their new role cannot issue those links.
+
+Next: [Manage members and join links](/en/docs/console/members), or see [API: Create network](/en/docs/api/networks/create-network).

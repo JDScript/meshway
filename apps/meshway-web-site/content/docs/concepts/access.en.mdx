@@ -1,0 +1,38 @@
+---
+title: Access
+description: Decide which nodes may initiate which traffic towards a destination.
+---
+
+Access answers a service-level question: who may reach which service on a destination? A rule combines sources, destinations, and protocols and ports.
+
+For example, sources `group:dev`, destinations `tag:backend`, and protocols and ports `tcp:443` allow the developers' user-identity devices to reach TCP port 443 on backend-tagged nodes.
+
+## Default deny, combined grants
+
+New access through the Mesh is denied when no allow rule matches. Access rules only grant permission. All matching grants are combined, regardless of rule order.
+
+A new network includes a rule allowing its nodes to access each other. To restrict access, edit or remove that broad rule. Adding a TCP-443-only rule below it does not restrict other traffic. An empty access rule list permits no new Mesh traffic.
+
+## Writing protocols and ports
+
+| Value           | Allowed traffic                                           |
+| --------------- | --------------------------------------------------------- |
+| `tcp:443`       | TCP destination port 443                                  |
+| `tcp:8000-8100` | TCP destination ports 8000 through 8100                   |
+| `udp:*`         | Any UDP destination port                                  |
+| `icmp:*`        | ICMP, including the permission required by `meshway ping` |
+| `*`             | All service protocols and ports supported by the model    |
+
+The service protocol is independent of the transport between nodes. Allowing TCP port 443 does not require a Native TCP transport. [Topology](/en/docs/concepts/topology) and node transport settings control that separately.
+
+## One way and both ways
+
+By default, sources initiate traffic and replies to established sessions can return. **Both ways** also allows destinations to initiate new sessions of the same kind in reverse.
+
+If A only needs B's web service, a one-way A-to-B rule is enough. Enable both ways or add another access rule only when B must also initiate access to the corresponding service on A.
+
+## What else is needed?
+
+Communication also needs available nodes, listeners and dialers, and an actual path that satisfies topology and routing. Relaying does not replace the original source identity with the relay's identity or automatically grant access to services on the relay.
+
+Use the [path check](/en/docs/console/diagnostics) to inspect matching access rules, then use an actual probe to check connectivity. For the full configuration structure, see [API: Get configuration](/en/docs/api/configuration/get-configuration).

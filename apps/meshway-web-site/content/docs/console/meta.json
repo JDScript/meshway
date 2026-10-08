@@ -1,0 +1,11 @@
+{
+  "title": "Console 指南",
+  "pages": [
+    "overview",
+    "nodes",
+    "configuration",
+    "diagnostics",
+    "members",
+    "account"
+  ]
+}

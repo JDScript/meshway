@@ -1,0 +1,11 @@
+{
+  "title": "Console guide",
+  "pages": [
+    "overview",
+    "nodes",
+    "configuration",
+    "diagnostics",
+    "members",
+    "account"
+  ]
+}

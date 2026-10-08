@@ -1,6 +1,43 @@
 ---
-title: Meshway docs
-description: Build and run your network with Meshway.
+title: Introduction
+description: Connect Linux nodes, control access, and choose where traffic travels.
 ---
 
-The docs are being written.
+Meshway connects Linux devices into a network you manage. Nodes receive Mesh addresses and communicate over authenticated, end-to-end protected paths. You manage members, nodes, and network policy in the console.
+
+## Start with three questions
+
+| What do you want to decide?       | Where to set it | Example                                               |
+| --------------------------------- | --------------- | ----------------------------------------------------- |
+| Who can access what?              | Access          | Developers can reach TCP port 443 on backend nodes    |
+| Which nodes may connect directly? | Topology        | Two nodes may connect only over Native TCP            |
+| Where must traffic travel?        | Routing         | Traffic to a backend must pass through a chosen relay |
+
+All three contribute to a usable path. Permission to access a node does not mean it is connected; a connection does not grant access to every service on its peer.
+
+## The components you use
+
+- **The console**: select a network, edit configuration, approve devices, and inspect node status and diagnostics in your browser.
+- **The server**: manages accounts, network identities, configuration, and permissions, and coordinates node enrolment and connections.
+- **Linux nodes**: the `meshwayd` daemon runs the node; the local `meshway` CLI brings it online or offline, reads status, and runs probes.
+
+Each network has its own members, nodes, configuration, and DNS names. A node can represent a user or use a tag identity to manage devices by their purpose.
+
+## Configuration and actual state
+
+Configuration describes how you want the network to work. State describes what nodes actually report. Edits enter a draft and are applied only after a check and your confirmation of the review. Nodes then synchronise and install the configuration. You can follow their progress and use `meshway ping` to check an actual Mesh path.
+
+<Cards>
+  <Card title="Quickstart" href="/en/docs/quickstart">
+    Enrol Linux nodes, add your first access rule, and check connectivity.
+  </Card>
+  <Card title="Networks and members" href="/en/docs/concepts/networks">
+    Understand network boundaries and roles.
+  </Card>
+  <Card title="Console guide" href="/en/docs/console/overview">
+    Read state, edit configuration, and investigate connection problems.
+  </Card>
+  <Card title="Command line" href="/en/docs/cli">
+    Find the available commands, flags, and output meanings.
+  </Card>
+</Cards>

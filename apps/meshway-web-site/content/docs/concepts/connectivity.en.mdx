@@ -1,0 +1,39 @@
+---
+title: How nodes connect
+description: Understand listeners, dialers, UDP hole punching, relays, and end-to-end protection.
+---
+
+Nodes establish authenticated connections and use them to carry authorised Mesh communication. How a connection is acquired, which protocol it uses, and which services may be accessed are separate questions.
+
+## Listening and dialing
+
+A listener accepts connections. A dialer tries endpoints provided by a peer. Nodes can inherit the network's default dialers, choose their own set, or disable active dialing. Listeners must be configured separately.
+
+| Transport  | How it connects                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| Native UDP | UDP endpoints, using explicit endpoints or coordinated hole punching                             |
+| Native TCP | One end dials the other end's TCP listener                                                       |
+| VLESS      | Establishes TCP first, then uses the configured TLS, VLESS, and optional WebSocket encapsulation |
+| Trojan     | Establishes TCP first, then uses TLS and Trojan encapsulation                                    |
+
+For TCP-based transports, the service receiver may dial the service initiator first. Once established, the channel can carry traffic both ways, while access rules still decide who may initiate services. TCP traffic can travel over a UDP transport, and UDP traffic over a TCP transport.
+
+## UDP hole punching and STUN
+
+For connections that allow Native UDP, STUN helps a node discover the externally observed address of its UDP socket. The server coordinates authorised nodes to exchange candidates and send probes to each other, establishing an authenticated channel when successful.
+
+This requires usable STUN endpoints configured on the server. Discovering an address through STUN does not guarantee that a peer can reach it. Firewalls and address-mapping behaviour still affect the result. The established channel is the evidence of success.
+
+## TCP fallback and relays
+
+If UDP hole punching fails, nodes may use only other connections or relay paths already allowed by configuration. For TCP fallback, provide a reachable TCP listener, a compatible dialer, and topology rules allowing that transport. Connectivity does not override a protocol restriction.
+
+A relay path passes through other Mesh nodes between source and destination. Paths may be chosen automatically or constrained by [Routing](/en/docs/concepts/routes). If A → R → B is required, A cannot bypass R even when A and B could connect directly.
+
+## End-to-end protection
+
+Mesh communication preserves the original service endpoints and end-to-end protection. Relays forward protected communication; the destination checks access using the original source and complete path. Replies to established sessions follow the original complete path.
+
+Changing the transport for a segment does not permit bypassing required nodes. The console's **Transport** tab and `meshway ping` output help distinguish actual direct connections, relays, transports, and connection acquisition sources.
+
+Next: [The node workspace](/en/docs/console/nodes) or [Path checks and latency](/en/docs/console/diagnostics).

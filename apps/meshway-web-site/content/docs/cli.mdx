@@ -1,0 +1,104 @@
+---
+title: 命令行
+description: 使用 meshway 控制本机 Linux 节点并检查实际路径。
+---
+
+`meshway` 连接本机 `meshwayd` 的 Unix socket。daemon 管理持久身份和运行状态；CLI 用于发送命令和读取结果。运行 CLI 的用户须为 root 或 daemon 的同一用户。
+
+## 通用参数
+
+```sh
+meshway --help
+meshway --version
+meshway --socket /var/lib/meshway/control.sock status
+meshway status --json
+```
+
+- `--socket`：选择 daemon socket，默认 `/var/lib/meshway/control.sock`。
+- `--json`：将结果写为 JSON；`status --watch` 和 `ping` 每行输出一个对象。
+- `--log-filter`：日志过滤，默认 `info`，也可通过 `RUST_LOG` 设置。
+- `--log-format text|json`：日志格式，也可通过 `MESHWAY_LOG_FORMAT` 设置。
+
+结果写入 stdout，日志写入 stderr。`--json` 与日志 JSON 格式是独立设置。业务配置在 Console 管理。
+
+## up
+
+```sh
+meshway up
+meshway up --enrollment-key @/absolute/private/enrollment-key
+cat /absolute/private/enrollment-key | meshway up --enrollment-key -
+```
+
+请求上线。首次用户接入时显示浏览器批准链接；批准后 daemon 继续接入。已有身份时，用保存的身份重新认证。
+
+`--enrollment-key` 接受一次性接入密钥字面值、`@文件路径`、`-` 或 `@-`（标准输入）。优先使用私有文件或管道，避免密钥进入 shell 历史和进程参数。接入密钥用于标签身份接入，不会改绑已有身份。
+
+如果 daemon 正在启动或同步，命令最多等待约 30 秒，再提示查看 `status --watch`。命令停止等待不代表 daemon 撤销了已经接纳的上线请求。
+
+## status
+
+```sh
+meshway status
+meshway status --watch
+meshway status --json
+```
+
+读取实际状态。`--watch` 每秒读取一次；Ctrl-C 结束查看。
+
+人类可读输出包含节点阶段、期望上线状态、认证情况、事件流、身份信息、已保存配置、网络模式、数据面、已应用配置及最近问题（适用时）。JSON 使用 `running`、`controlReady` 等值，人类输出使用 `Running`、`ControlReady` 等形式。
+
+重点区分：
+
+- `AwaitingApproval`：等待浏览器批准。
+- `ControlReady`：控制流程就绪，还需看数据面；`control-only` 不安装网络。
+- `Running`：当前目标的数据面已就绪。
+- `Retrying`：等待重试；检查最近问题。
+- `Blocked`：需要操作员处理问题。
+
+`Saved configuration` 表示本机保存，`Applied configuration` 表示本机完成安装。事件流已连接也不等于业务连通；需要实际探测。
+
+## ping
+
+```sh
+meshway ping peer-name
+meshway ping peer-name -c 3
+meshway ping 100.64.0.2 --count 3 --json
+```
+
+将示例目标换成当前网络的主机名、完整节点域名或实际 Mesh IP。`-c`／`--count` 为 1–1000，默认 10 次。单次探测期限 5 秒，间隔至少 1 秒。
+
+需要已运行的 Linux TUN 节点，以及来源到目标的 `icmp:*` 权限。它遵守组网规则和完整流量路由，包括必经节点。TCP 或 UDP 端口授权不能代替 ICMP 授权。
+
+输出中：
+
+- `preparing`：等待准备，耗时与 RTT 分开。
+- `reply RTT=…`：实际获准路径的往返耗时。
+- `direct`：源与目标之间的直接路径，附实际远端、承载和获取来源。
+- `via`：按实际顺序列出中转节点 ID。
+- `timeout`／`local-failed`：超时或本机失败，没有虚构的零 RTT。
+- 末行汇总发送、回复、超时和本机失败次数。
+
+JSON 每行一个事件，保留事件顺序，并提供实际路径及源端通道信息。成功说明 Mesh 路径完成认证往返，不保证目标应用端口可用。
+
+正常完成且至少收到一次回复时退出码为 0；全部失败、超时或操作失败时为 1。Ctrl-C 停止本次等待、取消本订阅，退出码为 130，不改变持久上线状态。
+
+## rotate-key
+
+```sh
+meshway rotate-key
+meshway status --json
+```
+
+原子更换控制身份与数据面身份两类密钥。命令返回换钥后的公开身份与状态，随后 daemon 重新取得运行资格；换钥成功不等于网络已重新应用。
+
+超时或 Ctrl-C 不会取消已接纳的换钥。先通过状态中的密钥代次确认结果，再决定是否重试。
+
+## down
+
+```sh
+meshway down
+```
+
+保存下线意图，停止当前网络并清理所属资源。daemon 和私有身份保留，服务端节点不会因此永久删除。daemon 重启后仍保持下线，直到再次 `up`。
+
+与 `up` 一样，命令等待结束不撤回已接纳的操作。若清理报告失败，处理冲突后可再次执行 `down`。

@@ -1,0 +1,48 @@
+---
+title: The node workspace
+description: Inspect node health, edit settings, and check transport and identity.
+---
+
+Search the node list by hostname and select a node to open its workspace. Owners and Admins can see all nodes in the network; a Member's list shows their own user-identity devices.
+
+## Seven tabs
+
+| Tab         | Use it to                                                                                              |
+| ----------- | ------------------------------------------------------------------------------------------------------ |
+| Overview    | Start with health, configuration status, connection counts, reported problems, identity, and addresses |
+| Settings    | Read or change hostname, remark, enabled state, tags, Mesh addresses, and dialers                      |
+| Transport   | Configure listeners and inspect actual sockets, endpoints, connections, and paths                      |
+| Latency     | Read historical probes and start a live observation                                                    |
+| Path        | Check how the current configuration or draft plans a path to a destination                             |
+| Diagnostics | Compare the server's assigned target with the node's saved and applied configuration and report times  |
+| Manage      | Inspect keys and perform permitted revocation or permanent deletion                                    |
+
+Settings are read-only without the relevant permissions. Path checks require permission to read the whole network configuration.
+
+## Edit settings
+
+Settings enter the network's shared draft alongside your other configuration edits, then go through check, review, and Apply. Mesh addresses must be within the network address pools. Leaving an address family empty means the node has no address for that family.
+
+Dialers have three choices: inherit network defaults, use a set of the node's own, or do not dial. A custom set replaces the default set.
+
+Adding tags to a user-identity node changes it to a tag identity and changes the access rules it matches. Read [Nodes and identities](/en/docs/concepts/identities) before making that change.
+
+## Configure listeners and inspect transport
+
+In **Transport**, edit a listener's protocol-specific addresses, ports, and settings. Only valid edits enter the draft. Edit Trojan listeners through the complete JSONC document.
+
+Secrets are write-only: an existing UUID or provided certificate is kept unless you enter a new value. Deleting and recreating a listener creates new material. Preservation rules for settings such as WebSocket response headers also change; follow the editor's notices.
+
+Configured listeners appear alongside their runtime reports. Check whether a listener actually started, whether it reports a problem, and the source and expiry of endpoint candidates. An expired candidate is not a current reachable address.
+
+The connection list shows the peer, actual transport, dialing side, phase, and service use. Combine it with **Path** and **Latency** when investigating a service path.
+
+## Manage keys and deletion
+
+**Manage** shows keys and their creation times. With permission, you can confirm revocation of a key or permanently delete the node. Old configuration cannot reverse a permanent action.
+
+With an existing form draft, node deletion joins that draft and is confirmed in the review before applying. With a JSONC draft, the separate deletion action is blocked. With no draft, deletion is submitted directly after confirmation.
+
+To stop a node temporarily, use its enabled setting or run `meshway down` on the host.
+
+For exact operations, see [API: Get node settings](/en/docs/api/nodes/get-node-settings), [Revoke node key](/en/docs/api/nodes/revoke-node-key), and [Delete node](/en/docs/api/nodes/delete-node).

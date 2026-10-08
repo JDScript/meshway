@@ -1,0 +1,44 @@
+---
+title: Nodes and identities
+description: Use user identities for personal devices and tag identities for device roles.
+---
+
+A node is a device enrolled in a network. It has a stable node ID, locally stored identity keys, and a configured hostname, Mesh addresses, and effective identity. Changing its hostname or address does not create another node.
+
+## User and tag identities
+
+A **user identity** represents a network member. Access rules can select that user's devices by email or by a group containing the user.
+
+A **tag identity** represents a device's purpose, such as `tag:backend`. It matches rules using its assigned tags and is useful for service devices. Access permissions granted by multiple tags are combined.
+
+<Callout title="Adding tags changes the identity used for access">
+  A user-identity node that receives tags becomes a tag-identity node. It no
+  longer inherits the original user's or groups' access permissions. Tags are
+  not annotations added on top of user permissions.
+</Callout>
+
+Owners and Admins can manage tag assignments in their network. **Tag owners** in configuration defines who is eligible to assign a tag. That eligibility does not itself grant network administration or let tagged nodes inherit the tag owner's permissions.
+
+A tag identity must keep at least one tag; the form cannot simply remove the last tag. A tag node is not automatically deleted when the user who first enrolled it leaves the network.
+
+## Groups and selectors
+
+A group is a set of users in the network, such as `group:dev`. Groups cannot contain other groups. They match their members' user-identity nodes.
+
+When writing rules, choose the node scope you need:
+
+- A user's email or `group:dev`: user-identity devices.
+- `tag:backend`: devices carrying that tag.
+- `node:<node ID>`: one specific device.
+- `*`: every node in this network.
+
+A selector describes a matching scope. It takes effect through the access, topology, or routing rule that uses it.
+
+## Device lifecycle
+
+- **Bring offline**: `meshway down` stops the current network and keeps the identity for a later start.
+- **Disable**: an administrator disables traffic execution in node settings. The node can still synchronise authorised configuration and can be enabled by a later configuration.
+- **Rotate keys**: `meshway rotate-key` replaces both kinds of local identity key, then reacquires permission to run.
+- **Revoke a key or delete a node**: these are permanent operations. Restoring an old configuration cannot undo them. Deleted nodes have no recycle bin.
+
+See [The node workspace](/en/docs/console/nodes) and [Command line](/en/docs/cli) for the steps. For the exact node settings structure, see [API: Get node settings](/en/docs/api/nodes/get-node-settings).

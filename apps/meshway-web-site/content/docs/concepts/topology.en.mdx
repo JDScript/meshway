@@ -1,0 +1,32 @@
+---
+title: Topology
+description: Control direct connections between nodes and the transports they may use.
+---
+
+Topology rules decide which nodes may connect directly. The two ends have no service direction: A–B and B–A describe the same node pair.
+
+## How rules are evaluated
+
+1. **Any matching block rule** blocks the direct connection between the nodes.
+2. With no block, the **first matching allow rule** decides the available transports. Later allow rules are not merged.
+3. With no matching rule, **When no rule matches** supplies the default allow or deny decision.
+
+A later allow cannot override a block. Blocking a direct connection does not necessarily prevent a path through other permitted nodes. Access still determines service permissions.
+
+## Choosing transports
+
+An allow rule can leave transports unrestricted or select a set of Native UDP, Native TCP, VLESS, and Trojan. A selected set with no transports means the two nodes cannot connect directly. A block rule always blocks the whole direct connection; transport settings have no effect on it.
+
+An unrestricted rule has no edge-level protocol restriction and includes protocols added in the future. A selected set is an explicit protocol limit, not a dialing priority.
+
+Each connection also needs compatible settings at both ends: one end enables the relevant dialer, the other provides the relevant listener, and their protocol settings and runtime capabilities must agree. Only one dialing direction needs to work for the established channel to carry authorised traffic both ways.
+
+## Example: require Native TCP
+
+In **Configuration → Topology**, add an allow rule, choose the nodes or tags at each end, and select TCP as its permitted transport. Check that it is the first matching allow rule and that no block rule matches.
+
+Then check the nodes' dialers and listeners. Allowing TCP does not open a listener or make an unreachable address reachable.
+
+Default allow supports automatic selection of permitted connections, but does not preconnect every pair of nodes. To require traffic to pass through a device, use [Routing](/en/docs/concepts/routes).
+
+For the protocol catalog and configuration fields, see [API: Get transport catalog](/en/docs/api/configuration/get-transport-catalog) and [API: Get configuration](/en/docs/api/configuration/get-configuration).

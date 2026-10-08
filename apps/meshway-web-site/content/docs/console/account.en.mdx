@@ -1,0 +1,32 @@
+---
+title: Account and sessions
+description: Manage your email, password, sign-in sessions, and this browser's location lookups.
+---
+
+Open Account from the account menu. This page manages your global account. Network names, member roles, and network activity are managed within each network.
+
+## Sign in and register
+
+Sign in with your email and password. The console offers registration only when the server allows it. Being a network Owner or Admin does not grant permission to reset someone else's account password.
+
+If you have a password reset link, complete the flow on the console's reset page. The server's host operator issues these links; contact that operator when you need account recovery.
+
+## Change email and password
+
+Account shows your current email and account ID and provides email and password changes. Complete and submit the relevant form; the interface shows the server's validation result.
+
+Changing your password ends existing sign-in sessions, including the current tab, and you must sign in again. Signing out clears configuration drafts belonging to the current sign-in.
+
+## Inspect and end sessions
+
+From the session list, end a specific session, other sessions, or all sessions. Ending all sessions includes the current one. When the current session expires or the server revokes it, the console returns to sign-in.
+
+Only you can read your account activity. Network operations appear on the network activity page when you have management permission.
+
+## Location lookups
+
+Account lets you turn off node location lookups for this browser. When enabled, the browser asks geojs.io for location and network information about the relevant public IPs. Disabling lookups clears the results and affects this browser's tabs.
+
+Location lookups affect location display, not node identity or access rules. See [Overview and live state](/en/docs/console/overview).
+
+For exact requests, see [API: Get account](/en/docs/api/account/get-account), [Change password](/en/docs/api/account/change-account-password), and [List sessions](/en/docs/api/account/list-account-sessions).

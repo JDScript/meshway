@@ -1,0 +1,33 @@
+---
+title: Members and join links
+description: Invite members, change roles, and review device impact before removal.
+---
+
+With permission to manage members, open **Members** to see members and join links. Open a member to inspect their role, devices, and available management actions.
+
+## Invite a person
+
+1. Create a link on the join-links page.
+2. Choose an offered role and an expiry from 1 hour to 7 days.
+3. Copy the link, which is shown once, and send it to the invitee.
+4. The invitee opens the link, signs in, checks the network, role, expiry, and current account, then confirms joining.
+
+Registration is offered only when the server allows it. An account that is already a member can open the network directly. A used, revoked, or expired link cannot be redeemed, nor can a link whose issuer no longer has the required invitation permission.
+
+After closing the link dialog, you cannot read the secret value again. Revoke the old link and create another if needed.
+
+Join links are for members, not device enrolment keys. To add a device, see [Quickstart](/en/docs/quickstart).
+
+## Change a role
+
+Open the member and select an assignable role. Read the impact before confirming: a demotion may revoke unused links issued by that member if the new role cannot issue them.
+
+If member information has changed, the console reads it again. Confirm using the latest impact. The server decides which actions are allowed.
+
+## Remove a member or leave
+
+Removal permanently deletes the member's current user-identity devices. Tag-identity devices remain; the original creator alone does not determine which devices will disappear.
+
+The console shows the impact before confirmation. Leaving a network uses the same impact review, from network settings. If devices must remain, first check their current identities and how they will be managed afterwards.
+
+For exact operations, see [API: Create join link](/en/docs/api/members/create-join-link), [Role change impact](/en/docs/api/members/get-member-role-change-impact), and [Member removal impact](/en/docs/api/members/get-member-removal-impact).

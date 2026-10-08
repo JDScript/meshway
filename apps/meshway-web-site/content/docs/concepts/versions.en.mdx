@@ -1,0 +1,38 @@
+---
+title: Configuration versions
+description: Understand drafts, checks, applying changes, and what nodes have actually installed.
+---
+
+Each network keeps configuration versions. The console displays a revision as a label such as `r42`. A configuration submission is one complete target; nodes synchronise and install it individually.
+
+## From draft to Apply
+
+1. **Draft**: your unsubmitted edits, keeping the configuration version you started from.
+2. **Check**: the server checks the target and returns a preview without saving it.
+3. **Review**: read the effective changes, before-and-after values, affected nodes, warnings, and permanent deletions.
+4. **Apply**: after confirmation, the server rechecks your current permissions and the version, then saves the configuration.
+
+Your draft belongs to your current sign-in and network; it is not a shared editing area for all administrators. If another administrator applies a configuration, the console announces the new version and keeps your draft and its original base.
+
+You can then start again from the new version or check your existing edits against it and review them again. The console does not directly overwrite someone else's changes.
+
+## Saved and applied
+
+| What you see                          | What it establishes                                          |
+| ------------------------------------- | ------------------------------------------------------------ |
+| The server accepted the configuration | The new management target is saved                           |
+| A node has saved it (`saved`)         | That node stored the target locally                          |
+| A node has applied it (`applied`)     | That node completed the target's required local installation |
+| An actual probe succeeded             | The corresponding authorised path completed a round trip     |
+
+These can happen at different times. Offline nodes do not block others from applying; they synchronise the current target when they return. A node failure does not automatically roll the whole network back.
+
+A historical version that was applied successfully does not establish that a node is online now or still running that configuration.
+
+## History and restore
+
+Use configuration history to inspect versions, compare differences, and read deployment progress. Restoring a historical configuration also requires a check, review, and confirmation, and creates a new version.
+
+Restoring does not undo permanent deletion or key revocation, or restore old connections and runtime state. If an old configuration depends on invalid identities or material, those dependencies must be addressed; restoration cannot make them valid again.
+
+For steps, see [Edit configuration](/en/docs/console/configuration). For exact responses, see [API: Apply configuration](/en/docs/api/configuration/apply-configuration) and [API: Configuration progress](/en/docs/api/configuration/get-configuration-progress).

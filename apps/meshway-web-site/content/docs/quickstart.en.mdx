@@ -1,0 +1,96 @@
+---
+title: Quickstart
+description: Enrol your first Linux node, then check a Mesh path between two nodes.
+---
+
+## Before you start
+
+You need access to a Meshway console and a Linux host with the `meshwayd` daemon and `meshway` CLI ready to use. To check communication between devices, you need a second Linux host.
+
+Ask your host operator to prepare and start the daemon with an explicit server address, the default `tun` network mode, and permissions for TUN, routing, and the required system DNS resources. The CLI and daemon should be the same version. The console does not currently provide a binary installation script.
+
+The commands below use the default socket. For a custom data directory, add `--socket /your/directory/control.sock`. Run the CLI as root or as the user running the daemon.
+
+## 1. Create or choose a network
+
+Sign in to the console. Create your first network if you have none, or choose an existing one from the network menu. The creator becomes its Owner. An existing account can also join through a join link provided by an administrator.
+
+The configuration steps in this guide require Owner or Admin permissions.
+
+## 2. Enrol your first node
+
+On the Linux host, run:
+
+```sh
+meshway up
+```
+
+On first enrolment, the output gives you a browser approval link. Open it, sign in to the console, check the device details, choose a network, and approve. Back in the terminal, the daemon continues enrolment and synchronisation.
+
+```sh
+meshway status --watch
+```
+
+Find the device in the console's node list. `Running` in the terminal means the data plane for the current target is ready; `ControlReady` or a saved configuration alone does not establish that networking is installed. If there is no approval link, follow the output and ask the server operator to configure the console address.
+
+### Use an enrolment key
+
+For a tag identity, create an enrolment key on the console's **Add node** page. Choose at least one defined tag and an expiry, and optionally set the initial hostname and listener. If there are no tags, define one under **Tag owners** in Configuration and apply it first.
+
+The key is shown once. Save it in a private file on the host, then run:
+
+```sh
+meshway up --enrollment-key @/absolute/private/enrollment-key
+```
+
+This one-use enrolment creates a tag-identity node. It does not rebind an existing identity to another network. See [Nodes and identities](/en/docs/concepts/identities).
+
+## 3. Prepare a connection between two nodes
+
+Enrol the second node the same way. Below, the first node is A and the second is B; `peer-name` stands for B's hostname in the console.
+
+For a straightforward initial connection, configure a Native TCP listener in B's **Transport** tab: set its bind address, port, and an advertised endpoint that A can reach. Ask the host operator to ensure that TCP port is actually reachable. In A's **Settings**, check that its dialers allow Native TCP; when inheriting the network defaults, check that default set.
+
+Also check that **Topology** allows A and B to connect directly, with no blocking rule or incompatible transport restriction. Apply these edits through the [configuration check and review](/en/docs/console/configuration). Allowing connections by default does not automatically open a listener.
+
+For UDP hole punching or relays, see [How nodes connect](/en/docs/concepts/connectivity).
+
+## 4. Allow access
+
+Open **Configuration → Access** and inspect the existing rules. New networks include a rule allowing Mesh nodes to access each other; the underlying default is still deny. To restrict access, edit or remove broad rules. Adding a narrow rule does not reduce existing permissions.
+
+Add a rule from A to B:
+
+- **Sources**: A's node selector, `node:<A's node ID>`.
+- **Destinations**: B's node selector, `node:<B's node ID>`.
+- **Protocols and ports**: `icmp:*` for the next step; add `tcp:443` if you also need an HTTPS service.
+- **Both ways**: enable only if B must also initiate the same traffic towards A. Replies do not need this option.
+
+Check the draft, read the before-and-after review and affected scope, then confirm Apply. Wait for the nodes to synchronise.
+
+## 5. Check the actual path
+
+On A, replace `peer-name` with B's actual hostname and run:
+
+```sh
+meshway ping peer-name -c 3
+```
+
+Successful output includes round-trip time and the actual path. It proves an authenticated round trip over the authorised Mesh node path. To check an application such as HTTPS, also access that service itself.
+
+If it fails, check in order:
+
+1. Are both nodes online, with the current configuration applied?
+2. Does A have `icmp:*` access to B?
+3. Do topology rules, listeners, and dialers have a usable transport in common?
+4. Does Routing require another node that is unavailable?
+
+The console's [path check and latency observations](/en/docs/console/diagnostics) help distinguish configuration issues from actual connection problems.
+
+## Stop a node
+
+```sh
+meshway down
+```
+
+This stops the current network and keeps the daemon and node identity. Run `meshway up` when you want to bring it online again.

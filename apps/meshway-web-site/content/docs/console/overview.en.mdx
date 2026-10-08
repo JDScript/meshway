@@ -1,0 +1,41 @@
+---
+title: Overview and live state
+description: Read the globe, node status, and connections to understand your network now.
+---
+
+After choosing a network, Overview shows its nodes and connections. Open a node's workspace from the globe or the node list.
+
+## Locations and connections on the globe
+
+Only located nodes appear on the globe. Other nodes are listed as unlocated with a reason; being unlocated does not make them offline. Nearby nodes may share a marker with a count. Click it to choose a node.
+
+Locations come from public-address lookups. The browser sends the relevant public IP addresses to geojs.io. You can turn location lookups off for this browser on the account page. Nodes then appear as unlocated because lookups are disabled.
+
+Lines show reported connections and their state, including whether the two ends provide matching evidence. A connection with an unlocated end is still counted and listed, but not drawn. A line does not itself indicate traffic activity or prove end-to-end service success.
+
+## Read node status
+
+| Status                                 | What to inspect next                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------ |
+| Online                                 | Continue to configuration and connections in the node overview                       |
+| Waiting to come online, just restarted | Wait for the current instance to report; check the local daemon if needed            |
+| Configuration not in sync              | Compare the current configuration with the node's saved and applied versions         |
+| Offline                                | Check its last online time and local status                                          |
+| Disabled, revoked                      | Check management actions and configuration rather than just waiting for reconnection |
+| Unknown                                | The current State has no status for this node                                        |
+
+Online indicates a fresh report; it does not by itself prove that an application is reachable. The node's **Overview** gives more specific health information, and **Diagnostics** explains the reports behind its status.
+
+## Live updates
+
+The toolbar status dot tells you whether the view is live, reconnecting, or stopped. After a disconnection, the console attempts to recover and supplements state with reads. Check the State timestamp when investigating a problem so you do not mistake the last known state for a new event.
+
+Notifications about new configuration update committed configuration and progress while keeping your unsubmitted draft.
+
+## History layer
+
+Enable the history layer and select a time window to inspect connections that opened or closed in the past. Historical connections are shown separately from current ones. The selected window stays fixed until you refresh it.
+
+History may be incomplete because of retention or collection gaps; read the coverage information shown on the page. A historical connection is not a path you can necessarily use now.
+
+Next: [The node workspace](/en/docs/console/nodes). For the complete State response, see [API: Network state](/en/docs/api/state/get-network-state).

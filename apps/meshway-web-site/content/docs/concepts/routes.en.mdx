@@ -1,0 +1,36 @@
+---
+title: Routing
+description: Use Mesh routes to require traffic to pass through nodes in order.
+---
+
+Mesh routing adds path requirements to already authorised traffic and the allowed connection graph. It grants no new access and cannot bypass topology blocks.
+
+## Require nodes along a path
+
+In **Configuration → Routing → Mesh routes**, choose sources, destinations, and an ordered list of **Via** nodes. Each required node must identify a specific device, such as `node:<node ID>`.
+
+For example, to require developers' traffic to backend-tagged nodes to pass through `core`, select source `group:dev`, destination `tag:backend`, and add `core`'s node selector to the Via list.
+
+Each path segment uses the first matching rule from top to bottom. With no match, routing is automatic. Order matters: an earlier broad rule can prevent a later narrow rule from being used.
+
+## Segments also follow routing rules
+
+Required nodes divide the path into segments. Each segment is evaluated using its actual start and end:
+
+```text
+A → D must pass through C
+A → C must also pass through B
+Final path: A → B → C → D
+```
+
+A corresponding required boundary already at a segment's start or end is satisfied. Requirements that genuinely revisit nodes or recurse into each other make the path unavailable.
+
+These segments change forwarding only. The service source remains A and the destination remains D; they do not grant additional access to services on B or C.
+
+## When a required node is unavailable
+
+Every required node must remain on the path. A disabled or unreachable node, or a segment without a compatible transport, makes that path unavailable. The system will not skip the node or fall through to a later routing rule to bypass the requirement.
+
+Other complete paths may be used within the allowed scope, but each must satisfy the same requirements. Established sessions and their replies keep the original complete path.
+
+After editing, compare the current configuration and draft in the source node's **Path** tab. Check and apply the draft, then use `meshway ping` to inspect the actual path. See [Path checks and latency](/en/docs/console/diagnostics); for request and response fields, see [API: Evaluate configuration](/en/docs/api/configuration/evaluate-configuration).

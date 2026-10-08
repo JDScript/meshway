@@ -1,0 +1,43 @@
+---
+title: Edit configuration
+description: Use form or JSONC drafts, check changes, and review their impact before applying.
+---
+
+Owners and Admins edit the network on the **Configuration** page. Access, Topology, Routing, Groups, Tag owners, DNS, Address pools, and Defaults have their own sections. Node settings are edited in the node workspace.
+
+## Choose an editing mode
+
+**Forms** suit everyday edits. Selectors, rule ordering, and validation notes help express your changes. Secret fields keep existing values unless you write new ones.
+
+**Whole document** provides the original JSONC source, including comments. The source may contain secrets; open and handle it when you need complete-document editing.
+
+A draft uses one input mode. While forms hold edits, the source is read-only. While the source holds edits, forms are read-only. Apply or discard the current draft before changing input mode.
+
+## Where the draft lives
+
+Edits in the same sign-in and network use one draft, so you can continue across node and configuration pages. The draft lives only in the current page session's memory, not browser storage. Refreshing or closing the tab loses unsubmitted edits, and signing out clears the draft.
+
+Account, member, join-link, enrolment-key, and observation actions have their own submission flows and do not enter the configuration draft. Renaming the network also uses its own save button.
+
+## Check, review, apply
+
+1. Finish editing and resolve invalid fields highlighted by the form.
+2. Click **Apply**. The console first requests a check; server refusals appear under the relevant field or rule.
+3. After a successful check, read the review before applying: effective change count, before-and-after values, and affected nodes.
+4. Pay particular attention to address and identity changes, listeners added or removed, material to generate or complete, and permanently deleted nodes.
+5. Read warnings. They describe accepted configuration that may be unintended, such as a rule shadowed by an earlier one.
+6. Confirm **Apply** in the review to submit the target.
+
+The preview saves no configuration and contains no final generated secret material. After applying, follow actual node progress. Zero targets means this change needs no node deployment.
+
+## Someone else applied first
+
+The console keeps your draft and its original version, and announces the newer version. Start again from the new version or choose to check your existing edits against it. The latter still requires a fresh review and confirmation.
+
+A version conflict does not automatically overwrite the draft. When a request's outcome is unknown, follow the interface to retry the same proposal. A timeout alone does not establish that nothing was committed.
+
+## Inspect and restore history
+
+In **History**, choose a version to inspect differences and deployment progress. Restoring still requires a check and review; confirmation creates a new version.
+
+See [Configuration versions](/en/docs/concepts/versions) for restore boundaries and the difference between saved and applied. For exact submission structures, see [API: Validate configuration](/en/docs/api/configuration/validate-configuration), [Apply configuration](/en/docs/api/configuration/apply-configuration), and [List configuration revisions](/en/docs/api/configuration/list-configuration-revisions).

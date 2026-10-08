@@ -1,0 +1,37 @@
+---
+title: DNS and MagicDNS
+description: Use node names to reach devices in your Mesh network.
+---
+
+MagicDNS resolves node names in your network to Mesh addresses. Names come from each node's configured hostname and the network's DNS suffix.
+
+For example, hostname `web` with network suffix `mesh.example` produces `web.mesh.example`. This suffix is only an example; use the actual value from your network.
+
+## Use node names
+
+In **Configuration → DNS**, check whether MagicDNS is enabled and read the network suffix. When enabled, MagicDNS places that suffix first in the search domains so the system can complete short names.
+
+Records use the IPv4 and IPv6 Mesh addresses in the current configuration. A node with no address for a family has no corresponding A or AAAA address record. After changing a hostname or address, wait for the related configuration to synchronise.
+
+## A visible name does not mean an online node
+
+Name visibility follows the querying node's access permissions. If it may access at least one service protocol or port on a target, it can discover that target's name and addresses. The target need not be online or already connected.
+
+Successful resolution therefore does not establish reachability or open additional ports. Querying a name does not grant access to it.
+
+## Linux system DNS
+
+For system name resolution, the daemon must successfully install the required DNS components. It uses the `systemd-resolved` backend by default. A host operator can explicitly configure the supported `resolv.conf` proxy backend instead. A backend preparation failure reports a DNS problem; partial installation is not reported as applied.
+
+`control-only` mode does not install system DNS. Without overriding local resolution, ordinary domains continue to use system resolution while Meshway handles MagicDNS network names.
+
+## Investigate name problems
+
+1. Check the hostname, network suffix, and Mesh addresses in the console.
+2. Check that MagicDNS is enabled and the source has access to the target.
+3. Check whether the source has applied the current configuration and reports any DNS problem.
+4. Run `meshway ping` using the target's Mesh IP to help separate name issues from path issues.
+
+`meshway ping` also accepts node names, but success does not establish that an application has resolved a name through system DNS. To check an application, have it access the node name itself.
+
+For exact DNS configuration fields, see [API: Get configuration](/en/docs/api/configuration/get-configuration).

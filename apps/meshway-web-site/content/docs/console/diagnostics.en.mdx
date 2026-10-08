@@ -1,0 +1,45 @@
+---
+title: Path checks and latency
+description: Understand configuration decisions, then observe actual round trips between nodes.
+---
+
+The console offers configuration path checks, historical latency, and live observations. They answer “What should configuration allow?”, “What was measured before?”, and “What is happening now?” respectively.
+
+## Check a configuration path
+
+As an Owner or Admin, open the source node's **Path** tab and enter a target hostname or Mesh IP. This page takes no protocol or port; results list matching access grants and their traffic scope.
+
+Results include the destination, access rules, routing decision, candidate path problems, and each segment's topology rule. With an existing draft, compare the current configuration and draft side by side; differences are marked.
+
+Check the result's configuration version and whether the configuration or draft has changed since. A path check evaluates configuration. It does not establish that nodes are already connected or replace an actual probe.
+
+## Start a live observation
+
+1. Open the source node's **Latency** tab.
+2. Choose a target from the visible nodes.
+3. Select an exact service: ICMP echo, or TCP or UDP with a port.
+4. Select an automatic path or a known explicit path offered by the interface.
+5. Set a period of 1–30 seconds and start observing.
+
+Administrators can request authorised observations within their network. Members can use only their own user-identity devices as sources. The selected service still needs access permission. For example, TCP port 443 permission cannot replace ICMP echo permission.
+
+Observations measure authenticated round trips over the authorised node path. They are not browser-to-server HTTP latency and do not prove that a target application port accepted a connection.
+
+## Read the chart
+
+- **Preparing**: waiting for the authorised path to be prepared and connected, not a zero-latency or lost-probe sample.
+- **Reply**: an actual round-trip time; path changes start new segments.
+- **Timeout, unsent probe, or open window**: keeps its corresponding mark without inserting 0 ms.
+- **No sample**: blank, without assuming a healthy or faulty network.
+
+Live **probe non-response rate** uses replied and timed-out probes; unsent probes are counted separately. It is not the underlying link's packet-loss rate.
+
+The current observation renews while the browser tab is visible. Closing the observation panel or leaving the node tab cancels the current subscription; closing the browser lets it expire. Other active subscriptions from the same sign-in can be taken over or cancelled.
+
+## Read historical latency
+
+History is grouped by time window and properties such as source, path, and transport. The chart shows mean duration for successful probes. A period with no successes has no latency value; a period with no records is blank.
+
+Historical **non-response rate** includes timed-out or failed probes, unlike the live calculation; read the counts shown on the page. Opening history only reads existing records and starts no new measurement.
+
+You can also check a path locally with [`meshway ping`](/en/docs/cli#ping). For exact operations, see [API: Evaluate configuration](/en/docs/api/configuration/evaluate-configuration), [Create observation](/en/docs/api/observations/create-observation), and [Query observation history](/en/docs/api/observations/query-observation-history).
