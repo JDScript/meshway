@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T07:45:24.371848+00:00",
+  "updatedAt": "2026-10-08T07:47:18.741111+00:00",
   "runs": [
     {
       "id": 37745237229,
@@ -12,8 +12,8 @@
       "commit": "94b2bc6982b5b46afc214237ba4b5270ce8c17c9",
       "message": "ci: allow manual workflow dispatch",
       "createdAt": "2026-10-08T07:43:48Z",
-      "updatedAt": "2026-10-08T07:44:41Z",
-      "status": "queued",
+      "updatedAt": "2026-10-08T07:44:57Z",
+      "status": "in_progress",
       "conclusion": null,
       "url": "https://github.com/JDScript/meshway/actions/runs/37745237229",
       "jobs": [
@@ -43,22 +43,22 @@
           "id": 113205337013,
           "name": "docs-and-scripts",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-08T07:44:42Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-08T07:44:56Z",
+          "seconds": 14.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37745237229/job/113205337013"
         },
         {
           "id": 113205337038,
           "name": "console",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-08T07:44:41Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T07:44:56Z",
+          "completedAt": "2026-10-08T07:45:39Z",
+          "seconds": 43.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37745237229/job/113205337038"
         }
       ],
