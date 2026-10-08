@@ -22,6 +22,8 @@ ROWS = {
     "packet": ("packet", ()),
     "udp/off": ("runtime", ("--transport", "native-udp", "--dns-backend", "off")),
     "tcp/off": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off")),
+    "vless/off": ("runtime", ("--transport", "vless", "--dns-backend", "off")),
+    "trojan/off": ("runtime", ("--transport", "trojan", "--dns-backend", "off")),
     "udp/resolv-conf": ("runtime", ("--transport", "native-udp", "--dns-backend", "resolv-conf")),
     "udp/resolved": ("runtime", ("--transport", "native-udp", "--dns-backend", "resolved")),
     "nat/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off")),

@@ -114,8 +114,8 @@ class MatrixTests(unittest.TestCase):
                 self.assertEqual(verify.call_args.args[0]["imageId"], "sha256:existing")
                 self.assertEqual(json.loads(images["runtime"].read_text())["platform"], platform)
 
-    def test_rows_are_nine_and_filter_keeps_order_without_duplicates(self):
-        self.assertEqual(len(matrix.ROWS), 9)
+    def test_rows_are_eleven_and_filter_keeps_order_without_duplicates(self):
+        self.assertEqual(len(matrix.ROWS), 11)
         self.assertEqual(matrix.parse_args(["--rows", "nat/off", "nat+fallback/off", "nat/off"]).rows,
                          ["nat/off", "nat+fallback/off"])
         with patch("sys.stderr"), self.assertRaises(SystemExit):
@@ -136,6 +136,20 @@ class MatrixTests(unittest.TestCase):
             if name == "packet":
                 self.assertIn("--runtime-artifacts", command)
 
+    def test_streaming_rows_select_only_the_requested_carrier_and_reject_nat(self):
+        for carrier in ("vless", "trojan"):
+            command = matrix.row_command(carrier + "/off", Path("/report"),
+                                        {"runtime": Path("/artifacts")},
+                                        {"runtime": Path("/image")}, False)
+            self.assertEqual(command[command.index("--transport") + 1], carrier)
+            self.assertNotIn("--traversal", command)
+            self.assertNotIn("--short", command)
+            result = subprocess.run([sys.executable, str(matrix.ROOT / "scripts/verify_runtime.py"),
+                                     "--transport", carrier, "--traversal", "nat"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("--traversal nat requires --transport native-udp", result.stderr)
+
     def test_failure_does_not_cancel_other_rows_and_builds_once(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -154,7 +168,7 @@ class MatrixTests(unittest.TestCase):
                 code = matrix.main(["--parallel", "4", "--short", "--run", "run"])
             report = json.loads((root / ".meshway/validation/matrix/run/matrix.json").read_text())
             self.assertEqual(code, 1)
-            self.assertEqual(len(report["rows"]), 9)
+            self.assertEqual(len(report["rows"]), 11)
             self.assertEqual(len(builds), 3)
             self.assertTrue(all("--build-only" in command for command in builds))
             self.assertEqual(report["scope"], "diagnostic-short")
