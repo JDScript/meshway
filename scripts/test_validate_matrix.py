@@ -56,6 +56,19 @@ class MatrixTests(unittest.TestCase):
             self.assertIn("udp/off=queued", rendered)
             self.assertNotIn("secret", rendered)
 
+    def test_completed_remote_progress_keeps_the_recorded_duration_on_late_attach(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            identity = "20261008T010000Z-completed"
+            directory = root / "matrix" / identity
+            directory.mkdir(parents=True)
+            (directory / "matrix.json").write_text(json.dumps({
+                "status": "complete", "elapsedSeconds": 64.8, "selectedRows": [], "rows": [],
+            }))
+            state = progress.snapshot(root, identity)["progress"]
+            self.assertEqual(state["elapsedSeconds"], 64)
+            self.assertIn("1m04s", progress.display(state))
+
     def test_imported_binaries_share_only_frozen_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

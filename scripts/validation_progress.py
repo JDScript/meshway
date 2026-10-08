@@ -28,6 +28,8 @@ def snapshot(root, identity, now=None):
         elapsed = max(0, int((now - started).total_seconds()))
     except ValueError:
         elapsed = None
+    if matrix.get("status") == "complete" and isinstance(matrix.get("elapsedSeconds"), (int, float)):
+        elapsed = max(0, int(matrix["elapsedSeconds"]))
     completed = {row["row"]: row for row in matrix.get("rows", [])}
     rows = []
     for name in matrix.get("selectedRows", []):
