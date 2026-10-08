@@ -5,6 +5,7 @@ use meshway_policy::{
     is_internet_address, permit_transition,
 };
 use std::net::IpAddr;
+mod dns;
 
 fn setup() -> (NetworkConfiguration, Demand, ExitInputs) {
     let mut cfg = configuration();
@@ -37,7 +38,11 @@ fn setup() -> (NetworkConfiguration, Demand, ExitInputs) {
         address: ExecutionAddress("8.8.8.8".parse().unwrap()),
     };
     let runtime = ExitInputs {
-        instances: BTreeMap::from([(node(4), node(4).to_string().parse().unwrap())]),
+        instances: BTreeMap::from([
+            (node(1), node(1).to_string().parse().unwrap()),
+            (node(4), node(4).to_string().parse().unwrap()),
+        ]),
+        instance_expires_at_ms: BTreeMap::from([(node(1), 120_000), (node(4), 120_000)]),
         ready_until_ms: BTreeMap::from([(node(4), 100_000)]),
         ..Default::default()
     };

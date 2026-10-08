@@ -175,12 +175,14 @@ pub(crate) fn inputs(
         [now.saturating_sub((REPORT_TTL_SECONDS + CLOCK_SKEW_SECONDS) * 1000)],
     )?;
     let mut inputs = ExitInputs::default();
-    let mut statement = tx.prepare("SELECT node_id,instance_id FROM node_execution WHERE network_id=?1 AND instance_expires_at>?2 AND instance_id IS NOT NULL")?;
+    let mut statement = tx.prepare("SELECT node_id,instance_id,instance_expires_at FROM node_execution WHERE network_id=?1 AND instance_expires_at>?2 AND instance_id IS NOT NULL")?;
     let mut rows = statement.query(params![network.as_uuid().as_bytes(), now])?;
     while let Some(row) = rows.next()? {
+        let node = execution::id(row.get(0)?)?;
+        inputs.instances.insert(node, execution::id(row.get(1)?)?);
         inputs
-            .instances
-            .insert(execution::id(row.get(0)?)?, execution::id(row.get(1)?)?);
+            .instance_expires_at_ms
+            .insert(node, row.get::<_, i64>(2)? as u64);
     }
     drop(rows);
     let mut statement =

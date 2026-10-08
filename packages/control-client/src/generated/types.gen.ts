@@ -129,6 +129,7 @@ export type DnsEgress = z.output<typeof schemas.zDnsEgress>;
 export type DnsEgressUnavailable = z.output<typeof schemas.zDnsEgressUnavailable>;
 export type DnsExecution = z.output<typeof schemas.zDnsExecution>;
 export type DnsServer = z.output<typeof schemas.zDnsServer>;
+export type DnsServicePermit = z.output<typeof schemas.zDnsServicePermit>;
 export type DnsTransport = z.output<typeof schemas.zDnsTransport>;
 export type EgressCapturePlan = z.output<typeof schemas.zEgressCapturePlan>;
 export type EgressRouting = z.output<typeof schemas.zEgressRouting>;

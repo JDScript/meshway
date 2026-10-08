@@ -1,6 +1,6 @@
 //! Complete, immutable node execution targets. No runtime state grants authority.
 use crate::{
-    AddressPools, DnsConfiguration, NodeAddresses, NodeIdentity,
+    AddressPools, DnsConfiguration, DnsTransport, NodeAddresses, NodeIdentity,
     object::{object, tagged},
 };
 use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId, PublicationId, RequestId, Revision};
@@ -335,11 +335,59 @@ pub enum UnavailableReason {
     InactiveNode,
 }
 }
+object! {
+/// Internal resolver-service authority. It grants no external business traffic
+/// and cannot produce a TrustedDnsAssociation. Enclosing publication and lease
+/// remain mandatory at both endpoints and every relay.
+pub struct DnsServicePermit {
+    /// Original authenticated querying Node.
+    pub source: NodeId,
+    /// Source execution instance; replacement cannot inherit an old query.
+    pub source_instance_id: meshway_model::InstanceId,
+    /// Exact inner source addresses, never inferred from a socket peer.
+    pub source_addresses: NodeAddresses,
+    /// Only resolver Node permitted to terminate this service.
+    pub exit: NodeId,
+    /// Exact IPv4 Mesh resolver endpoint; the reserved port is 53.
+    pub address: ExecutionAddress,
+    /// Source's effective routing profile.
+    pub profile: String,
+    /// Same selection identity as source egress capture.
+    pub generation: Digest,
+    /// Exit instance and resource-role identity required by this service.
+    pub role: ExitRolePlan,
+    /// One complete ordered path, retained in reverse for replies.
+    pub path: LogicalPath,
+    /// Independently authorized transports; UDP does not imply TCP.
+    pub transports: Vec<DnsTransport>,
+    /// Maximum simultaneous queries from this source.
+    pub max_pending: u16,
+    /// Maximum query duration, also capped by permit and execution expiry.
+    pub timeout_ms: u32,
+    /// Permit deadline bounded by source instance and exit capability expiry.
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
+} }
 tagged! {
-/// Server evaluation of whether DNS routing requires an explicit exit plan.
+/// Server-compiled ordinary DNS selection, separate from business authorization.
 pub enum DnsEgress {
     /// Compilation proved that the DNS selection has no exit possibility.
     NoExit,
+    /// Ordinary queries use only this Mesh resolver service.
+    ViaExit {
+        /// Selected resolver Node.
+        exit: NodeId,
+        /// Exact service authority shared with its path participants.
+        service: Box<DnsServicePermit>,
+        /// Selection identity, equal to the service and capture generations.
+        generation: Digest
+    },
+    /// Serve source grants using verified system
+    /// upstreams. This node's own DNS selection has been proved to have no exit.
+    ServeExitResolver {
+        /// Exact source grants accepted by this resolver.
+        permit: Vec<DnsServicePermit>
+    },
     /// DNS egress lacks a required executable plan.
     Unavailable {
         /// Condition preventing DNS egress execution.
@@ -355,6 +403,12 @@ meshway_serde::string_enum! {
 pub enum DnsEgressUnavailable {
     /// A possible exit selection requires an explicit DNS plan that is not available.
     ExitPlanRequired,
+    /// The selected exit is disabled or has no current ready capability.
+    ExitUnavailable,
+    /// No complete path can satisfy the required ordered waypoints.
+    NoPath,
+    /// Original source has no external Access qualification.
+    Unauthorized,
 }
 }
 object! {
@@ -368,7 +422,7 @@ pub struct DnsExecution {
     pub associations: Vec<TrustedDnsAssociation>,
     /// Regular resolution follows this selection; explicit resolver exceptions retain useWithExit.
     pub profile: String,
-    /// Proved absence of exit selection only; never permission to open a socket.
+    /// Ordinary DNS selection; live authority also requires the execution lease.
     pub egress: DnsEgress,
 } }
 object! {

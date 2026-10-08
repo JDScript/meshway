@@ -4,6 +4,7 @@ use meshway_model::{
     state::*,
 };
 use meshway_protocol::state::StateReport;
+mod dns;
 
 pub(super) async fn report_current(
     app: &App,

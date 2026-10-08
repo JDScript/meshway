@@ -25070,6 +25070,61 @@
           },
           {
             "type": "object",
+            "description": "Ordinary queries use only this Mesh resolver service.",
+            "required": [
+              "exit",
+              "service",
+              "generation",
+              "type"
+            ],
+            "properties": {
+              "exit": {
+                "$ref": "#/components/schemas/NodeId",
+                "description": "Selected resolver Node."
+              },
+              "generation": {
+                "$ref": "#/components/schemas/Digest",
+                "description": "Selection identity, equal to the service and capture generations."
+              },
+              "service": {
+                "$ref": "#/components/schemas/DnsServicePermit",
+                "description": "Exact service authority shared with its path participants."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "viaExit"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Serve source grants using verified system\nupstreams. This node's own DNS selection has been proved to have no exit.",
+            "required": [
+              "permit",
+              "type"
+            ],
+            "properties": {
+              "permit": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DnsServicePermit"
+                },
+                "description": "Exact source grants accepted by this resolver."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "serveExitResolver"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "description": "DNS egress lacks a required executable plan.",
             "required": [
               "reason",
@@ -25090,13 +25145,16 @@
             "additionalProperties": false
           }
         ],
-        "description": "Server evaluation of whether DNS routing requires an explicit exit plan."
+        "description": "Server-compiled ordinary DNS selection, separate from business authorization."
       },
       "DnsEgressUnavailable": {
         "type": "string",
         "description": "Missing execution dependency for DNS egress.",
         "enum": [
-          "exitPlanRequired"
+          "exitPlanRequired",
+          "exitUnavailable",
+          "noPath",
+          "unauthorized"
         ]
       },
       "DnsExecution": {
@@ -25119,7 +25177,7 @@
           },
           "egress": {
             "$ref": "#/components/schemas/DnsEgress",
-            "description": "Proved absence of exit selection only; never permission to open a socket."
+            "description": "Ordinary DNS selection; live authority also requires the execution lease."
           },
           "meshHosts": {
             "type": "object",
@@ -25165,6 +25223,87 @@
           "useWithExit": {
             "type": "boolean",
             "description": "Retain this resolver's explicit DNS role when an exit is selected; defaults to false."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsServicePermit": {
+        "type": "object",
+        "description": "Internal resolver-service authority. It grants no external business traffic\nand cannot produce a TrustedDnsAssociation. Enclosing publication and lease\nremain mandatory at both endpoints and every relay.",
+        "required": [
+          "source",
+          "sourceInstanceId",
+          "sourceAddresses",
+          "exit",
+          "address",
+          "profile",
+          "generation",
+          "role",
+          "path",
+          "transports",
+          "maxPending",
+          "timeoutMs",
+          "expiresAt"
+        ],
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/ExecutionAddress",
+            "description": "Exact IPv4 Mesh resolver endpoint; the reserved port is 53."
+          },
+          "exit": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Only resolver Node permitted to terminate this service."
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Permit deadline bounded by source instance and exit capability expiry."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Same selection identity as source egress capture."
+          },
+          "maxPending": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum simultaneous queries from this source.",
+            "minimum": 0
+          },
+          "path": {
+            "$ref": "#/components/schemas/LogicalPath",
+            "description": "One complete ordered path, retained in reverse for replies."
+          },
+          "profile": {
+            "type": "string",
+            "description": "Source's effective routing profile."
+          },
+          "role": {
+            "$ref": "#/components/schemas/ExitRolePlan",
+            "description": "Exit instance and resource-role identity required by this service."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Original authenticated querying Node."
+          },
+          "sourceAddresses": {
+            "$ref": "#/components/schemas/NodeAddresses",
+            "description": "Exact inner source addresses, never inferred from a socket peer."
+          },
+          "sourceInstanceId": {
+            "$ref": "#/components/schemas/InstanceId",
+            "description": "Source execution instance; replacement cannot inherit an old query."
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum query duration, also capped by permit and execution expiry.",
+            "minimum": 0
+          },
+          "transports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DnsTransport"
+            },
+            "description": "Independently authorized transports; UDP does not imply TCP."
           }
         },
         "additionalProperties": false

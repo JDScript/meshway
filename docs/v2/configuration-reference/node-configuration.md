@@ -37,12 +37,16 @@ diagnostics 不进入普通业务 permits。没有对应许可时不能发起或
 
 ## DNS 执行内容
 
-`DnsExecution` 包含 `settings`、按源 Access 裁剪的 `meshHosts`、可信 `associations`、当前 `profile` 和 `egress`。`egress` 的现行判别联合只有：
+`DnsExecution` 包含 `settings`、按源 Access 裁剪的 `meshHosts`、可信 `associations`、当前 `profile` 和 `egress`。`egress` 的判别联合为：
 
 | 值 | 含义 |
 | --- | --- |
 | `{"type":"noExit"}` | 编译器证明当前 DNS 选择不存在出口可能；不授予上游 socket |
 | `{"type":"unavailable","reason":"exitPlanRequired"}` | 存在出口可能，缺少可执行 DNS plan |
+| `viaExit` | `exit`、`service: DnsServicePermit`、`generation` 指定单出口 resolver；仍需真实 Mesh 适配才能安装 |
+| `serveExitResolver` | `permit: DnsServicePermit[]` 为该出口接受的源许可；不自行认证 socket 来访者 |
+
+`unavailable.reason` 还可为 `exitUnavailable`、`noPath` 或 `unauthorized`。完整字段、选择、联合许可和当前接线限制统一见 [使用出口时](/v2/configuration-reference/dns#使用出口时)。
 
 出口可能性保守检查公共规则、profile 与 auto 候选中的全部出口选择，包括业务 first-match 中被遮蔽的分支；不靠一次匹配结果推定无出口。多出口的显式无循环计划尚未有配置字段，产品规则见 [DNS](/v2/configuration-reference/dns#使用出口时)。
 

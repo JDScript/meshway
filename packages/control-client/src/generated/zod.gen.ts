@@ -807,16 +807,40 @@ export const zTrustedDnsAssociation = z.strictObject({
   ["source"]: zNodeId
 });
 
-export const zDnsEgressUnavailable = z.enum(["exitPlanRequired"]);
+export const zDnsTransport = z.enum(["udp","tcp"]);
+
+export const zDnsServicePermit = z.strictObject({
+  ["address"]: zExecutionAddress,
+  ["exit"]: zNodeId,
+  ["expiresAt"]: zTimestamp,
+  ["generation"]: zDigest,
+  ["maxPending"]: z.int().gte(0).lte(2147483647),
+  ["path"]: zLogicalPath,
+  ["profile"]: z.string(),
+  ["role"]: zExitRolePlan,
+  ["source"]: zNodeId,
+  ["sourceAddresses"]: zNodeAddresses,
+  ["sourceInstanceId"]: zInstanceId,
+  ["timeoutMs"]: z.int().gte(0).lte(2147483647),
+  ["transports"]: z.array(zDnsTransport)
+});
+
+export const zDnsEgressUnavailable = z.enum(["exitPlanRequired","exitUnavailable","noPath","unauthorized"]);
 
 export const zDnsEgress = z.union([z.strictObject({
   ["type"]: z.enum(["noExit"])
 }), z.strictObject({
+  ["exit"]: zNodeId,
+  ["generation"]: zDigest,
+  ["service"]: zDnsServicePermit,
+  ["type"]: z.enum(["viaExit"])
+}), z.strictObject({
+  ["permit"]: z.array(zDnsServicePermit),
+  ["type"]: z.enum(["serveExitResolver"])
+}), z.strictObject({
   ["reason"]: zDnsEgressUnavailable,
   ["type"]: z.enum(["unavailable"])
 })]);
-
-export const zDnsTransport = z.enum(["udp","tcp"]);
 
 export const zDnsServer = z.strictObject({
   ["server"]: z.string(),

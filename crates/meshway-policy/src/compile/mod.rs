@@ -2,6 +2,7 @@
 //! The caller authenticates inventory and DNS/artifact inputs and commits with CAS.
 mod capture;
 mod diagnostics;
+mod dns;
 mod exit;
 pub use capture::{MAX_CAPTURE_PREFIXES, egress_capture_plan};
 pub use exit::ExitInputs;
@@ -130,6 +131,20 @@ pub fn compile_with_exit(
             return Err(CompileError::InvalidInput);
         }
     }
+    // Source instance renewal affects only DNS plans that actually depend on
+    // it. Ordinary no-exit targets must not churn on unrelated lease renewal.
+    let mut dns_source_deadlines = BTreeMap::new();
+    for (&node, &expiry) in &runtime.instance_expires_at_ms {
+        if input.inventory.contains_key(&node)
+            && input.configuration.nodes.contains_key(&node)
+            && !matches!(
+                matching::dns_egress(input.configuration, &selected_profile(&input, node)?),
+                DnsEgress::NoExit
+            )
+        {
+            dns_source_deadlines.insert(node, expiry);
+        }
+    }
     let dependency_digest = digest(&(
         COMPILER_VERSION,
         input.network,
@@ -143,6 +158,7 @@ pub fn compile_with_exit(
         input.selected_profiles,
         diagnostics,
         &runtime.instances,
+        &dns_source_deadlines,
         &runtime.ready_until_ms,
         &runtime.selection_generations,
     ))?;
@@ -279,6 +295,7 @@ pub fn compile_with_exit(
         }
     }
     diagnostics::install(&input, &graph, diagnostics, &mut nodes)?;
+    dns::install(&input, &graph, runtime, &mut nodes)?;
     Ok(CompiledPublication {
         network_id: input.network,
         revision: input.revision,

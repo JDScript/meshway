@@ -6,6 +6,8 @@ use meshway_model::{InstanceId, exit::ExitFamily};
 #[derive(Clone, Debug, Default)]
 pub struct ExitInputs {
     pub instances: BTreeMap<NodeId, InstanceId>,
+    /// Current instance deadlines used to bound internal DNS service grants.
+    pub instance_expires_at_ms: BTreeMap<NodeId, u64>,
     pub ready_until_ms: BTreeMap<NodeId, u64>,
     pub unavailable_reasons: BTreeMap<NodeId, meshway_model::exit::ExitUnavailableReason>,
     pub selection_generations: BTreeMap<NodeId, u64>,

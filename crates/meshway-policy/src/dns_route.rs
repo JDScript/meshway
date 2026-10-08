@@ -8,6 +8,76 @@ use meshway_configuration::{
 };
 use meshway_model::RequestId;
 
+/// Pure validation only. The observed source/path must come from authenticated
+/// data-plane ingress, never from remoteAddr or request-supplied metadata.
+pub fn dns_service_permit(
+    configuration: &NodeConfiguration,
+    permit: &meshway_configuration::execution::DnsServicePermit,
+    source: meshway_model::NodeId,
+    exit: meshway_model::NodeId,
+    path: &[meshway_model::NodeId],
+    transport: DnsTransport,
+    now_ms: u64,
+) -> Result<(), ResolverRouteError> {
+    use meshway_configuration::execution::DnsEgress;
+    if permit.expires_at_ms <= now_ms {
+        return Err(ResolverRouteError::Expired);
+    }
+    let published = match &configuration.dns.egress {
+        DnsEgress::ViaExit {
+            exit,
+            service,
+            generation,
+        } => {
+            configuration.node_id == source
+                && *exit == permit.exit
+                && service.as_ref() == permit
+                && *generation == permit.generation
+                && configuration.egress_capture.generation == *generation
+                && configuration.dns.profile == permit.profile
+                && configuration.addresses == permit.source_addresses
+                && configuration.peers.get(exit).is_some_and(|peer| {
+                    peer.addresses.ipv4.map(std::net::IpAddr::V4) == Some(permit.address.0)
+                })
+        }
+        DnsEgress::ServeExitResolver { permit: permits } => {
+            configuration.node_id == exit
+                && configuration.exit_enabled
+                && configuration.exit_role.as_ref() == Some(&permit.role)
+                && configuration.addresses.ipv4.map(std::net::IpAddr::V4) == Some(permit.address.0)
+                && configuration
+                    .peers
+                    .get(&source)
+                    .is_some_and(|peer| peer.addresses == permit.source_addresses)
+                && permits.contains(permit)
+        }
+        _ => false,
+    };
+    if !configuration.enabled
+        || !published
+        || source != permit.source
+        || exit != permit.exit
+        || source == exit
+        || path != permit.path.nodes
+        || path.first() != Some(&source)
+        || path.last() != Some(&exit)
+        || !(2..=crate::compile::MAX_HOPS).contains(&path.len())
+        || path.iter().collect::<std::collections::BTreeSet<_>>().len() != path.len()
+        || !permit.address.0.is_ipv4()
+        || permit.source_addresses.ipv4.is_none()
+        || !permit.transports.contains(&transport)
+        || permit.transports.is_empty()
+        || permit.transports.len() > 2
+        || permit.max_pending == 0
+        || permit.max_pending > 128
+        || permit.timeout_ms == 0
+        || permit.timeout_ms > 5_000
+    {
+        return Err(ResolverRouteError::Binding);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResolverRouteError {
     Missing,
