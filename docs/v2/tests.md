@@ -7,7 +7,7 @@
 | 时机 | 命令 | 耗时（M3，缓存热） | 内容 |
 | --- | --- | --- | --- |
 | 每次改完要看结果 | `mise run test:fast -- -p <crate>` | 依 crate 而定，见下表 | 所属 crate 的 fast profile |
-| 提交前 | `mise run check:fast` | ~2 分钟 | 测试文件上限、fmt、严格 Clippy、fast profile 全 workspace（947 个测试） |
+| 提交前 | `mise run check:fast` | ~2 分钟（macOS 首次另加约 2 分钟的 Linux 目标 Clippy，之后秒级） | 测试文件上限、fmt、严格 Clippy（macOS 另对 `aarch64-unknown-linux-musl` 跑一遍，覆盖只在 Linux 编译的 underlay／DNS／TUN 模块）、fast profile 全 workspace（947 个测试） |
 | 合入前 | `mise run check` | ~3.5 分钟 | T1 全量：含 fast 排除的 44 个真实时间合同测试、codegen／drift／SDK、Console、docs |
 | 合入前（触及 connectivity／control／daemon／server 执行与 State） | `mise run validate:remote --short --rows nat/off nat+fallback/off` | 提交即返回，planck 约 4 分钟 | T2 短模式门槛，结果用 `--attach` 取回 |
 | 合入后 | Actions 自动 | — | T2 全矩阵、T3 固定口径，进状态页 |

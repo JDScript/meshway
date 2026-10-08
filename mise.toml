@@ -51,7 +51,13 @@ run = [
   "python3 scripts/check_test_files.py",
   "cargo fmt --all --check",
   "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+  { task = "check:linux" },
 ]
+
+[tasks."check:linux"]
+description = "On macOS, strict Clippy for the Linux musl target so Linux-only modules (underlay, DNS, TUN) are checked before CI"
+tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
+run = "if [ \"$(uname)\" = Darwin ]; then cargo-zigbuild clippy --workspace --all-targets --all-features --locked --target aarch64-unknown-linux-musl -- -D warnings; else echo 'host is Linux; native Clippy already covers Linux-only modules'; fi"
 
 [tasks."check:fast"]
 description = "Development gate: fmt, strict Clippy and the fast nextest profile (no real-time waits)"
