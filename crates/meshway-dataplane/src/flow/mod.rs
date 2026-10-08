@@ -105,6 +105,9 @@ struct Flow {
     guard_expires_at_ms: u64,
     circuit: Option<[u8; 32]>,
     exit: Option<exit::ExitState>,
+    /// Exit TCP completion drains its final guarded output within the already
+    /// installed deadline. It accepts no further packets and never renews.
+    closing: bool,
 }
 
 impl Flow {
@@ -323,6 +326,7 @@ impl FlowTable {
         next.pending_projections = self.pending_projections.clone();
         for (key, flow) in &self.entries {
             if !flow.live_at(time.instant, time.now_ms)
+                || flow.closing
                 || flow
                     .exit
                     .as_ref()
@@ -435,6 +439,9 @@ impl FlowTable {
         } else {
             (self.entries.get(&key), Direction::Forward)
         };
+        if existing.is_some_and(|flow| flow.closing) {
+            return Err(Error::Flow);
+        }
         if let Some(exit) = existing.and_then(|flow| flow.exit.as_ref()) {
             if !exit.live(time.instant, time.now_ms) {
                 return Err(Error::Expired);
@@ -517,13 +524,25 @@ impl FlowTable {
         } else {
             false
         };
-        let expires_at = time
+        let is_exit = config
+            .permits
+            .get(&ingress.demand())
+            .is_some_and(|permit| permit.exit.is_some());
+        let closing = remove && is_exit;
+        let mut expires_at = time
             .instant
             .checked_add(self.limits.idle_timeout.min(Duration::from_millis(
                 permit_expires_at_ms.saturating_sub(time.now_ms),
             )))
             .ok_or(Error::Limits)?
             .min(time.guard_expires_at);
+        let permit_expires_at_ms = if closing {
+            let previous = existing.ok_or(Error::Flow)?;
+            expires_at = expires_at.min(previous.expires_at);
+            permit_expires_at_ms.min(previous.permit_expires_at_ms)
+        } else {
+            permit_expires_at_ms
+        };
         let flow = Flow {
             forward: existing.map_or(facts.traffic, |flow| flow.forward),
             state,
@@ -531,19 +550,13 @@ impl FlowTable {
             permit_expires_at_ms,
             guard_expires_at_ms: time.guard_expires_at_ms,
             circuit: existing.and_then(|flow| flow.circuit),
-            exit: self.exit_state(
-                &key,
-                existing,
-                config
-                    .permits
-                    .get(&ingress.demand())
-                    .is_some_and(|permit| permit.exit.is_some()),
-            )?,
+            exit: self.exit_state(&key, existing, is_exit)?,
+            closing,
         };
         Ok(Prepared {
             key,
             flow,
-            remove,
+            remove: remove && !closing,
             hop,
             direction,
             expires_at,
