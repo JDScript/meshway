@@ -274,6 +274,14 @@ OrbStack aarch64、每节点0.5 CPU／384 MiB、iperf3 3.16、TCP `-t6 -O1`、UD
 
 入口 1 分钟 load 2.29、5 分钟 5.08（无构建，仅有一个休眠的验收编排进程）；daemon 二进制 `6dc10d36…` 经 `node:lab versions` 按 PID／hash 核验。与 `4c4e231f` 行的差异包含 CPU quota 0.5→2 和 M／O／P／Y／PT 的实现变化，不是配对 A/B。当前实际部署／行为验收以[lab](/v2/node/docker-lab)及[矩阵](/v2/node/validation)为准。
 
+| 混合承载场景 | 实测 | 范围 |
+| --- | --- | --- |
+| sha→lax VLESS TCP/TLS，lax→nyc Native UDP | TCP 接收 **1157／1143 Mbps**，重传160／203，sender RTT16.4／23.2 ms；UDP 500M 接收 **456.6 Mbps**、丢包8.68%；测后诊断5/5、RTT0.32–0.74 ms via lax | `20261008T063234Z-main-1271be5d-2cpu-vless`；同 daemon／2 CPU／512 MiB，**高负载诊断，非空闲性能结论** |
+
+等待180秒仍未达到1分钟load<2.5，三次样本首尾load **7.10–7.36**；原始等待历史、客户端／接收端JSON及PID／hash在报告中。本工作包测量时未运行构建。UDP按server `end.sum_received`计量：342,717,600 B＝(312,736−27,138)×1200。相对于上方Native UDP的1321／1525 Mbps、RTT8.2／6.6 ms与475 Mbps／4.9%丢包，这组数据受不同宿主负载与旧版流式续接行为影响，不能归因成VLESS单独开销。
+
+revision 7 的State实际认证通道为sha↔lax `vless`、lax↔nyc `native_udp`，两个方向的`meshway ping`各5/5，回复沿完整via lax路径。刷新publication时VLESS link ID改变、随后短暂消失，UDP link ID保持；`1271be5d`的`renew_link`只保留Native TCP／UDP，尚未部署W2修复。因此本轮不构成流式长时连续性验收，实验后已回滚到revision 8（等价于原revision 6）。日志、State序列、材料约定及进程内复现索引位于私有`.meshway/w3-lab-vless/`；当前布局见[lab](/v2/node/docker-lab#混合承载配置)。
+
 ### 有界输出队列实测
 
 默认 **`MESHWAY_DATAPLANE_WORKERS=0`（inline）**。P在同一pending实现、硬件密码后端、32-credit下的单流quick曲线：2 CPU的worker0/1/2/3 TCP为**1859.8／1216.4／980.8／974.4 Mbps**，4 CPU为1770.9／1198.7／896.2／927.4。单在途L0两节点1280B跨线程墙钟从**8.97→24.54 µs**，三节点12.47→35.75 µs，通知／交接超过当前crypto计算；≤128 B继续inline。该曲线为单次诊断，默认另有P两次矩阵支撑，不宣称所有CPU都最优。

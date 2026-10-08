@@ -63,6 +63,18 @@ Ubuntu 的 resolved 后端承担实际系统 DNS 安装。Server 提供 STUN 发
 
 `icmp:*` 同时约束 OS `ping` 的 ICMP echo 包流与 [`meshway ping` 的独立诊断](/v2/node/diagnostics)。首次访问需要完成需求发布与认证建连，初始 echo 可能在收敛期间超时；诊断命令将 preparing 与探测 RTT 分开展示，不能只以 TUN 存在判定可达。
 
+### 混合承载配置
+
+当前常驻 lab 为 **revision 8、三节点 Native UDP**，等价于 W3 前的 revision 6；保留 sha→lax→nyc 与 nyc→lax→sha 两条必经路由。实际 daemon 仍为 `1271be5d`，未包含 W2 的流式承载续接修复；W3 在 revision 7 验证混合承载及短窗口业务后，因执行刷新时 VLESS 通道被重建而回滚。源码合入不代表已部署，重新启用混合承载前需核对真实 daemon 版本与对应验收。
+
+VLESS 边的配置方式是：sha 只启用 `vless` dialer，并禁用其 `lab-udp` listener；lax 增加 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告本容器 bridge 地址），lax 与 nyc 保留 Native UDP。仅改变 sha 的 dialers 不足以限定该边：lax 仍可反向拨入 sha 的 UDP listener，见[承载交集](/v2/node/carriers#承载交集)。
+
+TLS 使用仅限本 lab 的 provided P-256 证书／私钥，SAN 为 `meshway-lax.lab`，名称与公告 IP 分开。材料和原始配置证据位于仓库根 `.meshway/w3-lab-vless/`（目录 0700、秘密文件 0600）；私钥通过管理员配置提交，不能进入 Git 或日志。LibreSSL 生成 EC 材料时须显式选择 named curve，不能使用 explicit EC parameters。证书需在到期前通过配置更新；私有材料文件不是 Node 的本地加载入口，字段和校验见[TLS](/v2/configuration-reference/shared/tls)。
+
+实际承载核对 State 的 `nodes[id].report.report.links[peer][]`：`phase=authenticated`、`transport=vless` 与真实 `linkId`，并核对对端及 `sockets` 的 TCP 资源；候选不能代替已建立通道。当前 daemon 的 `loadedCertificateSha256` 仍为 null，默认日志未输出成功 TLS 握手，不能据配置指纹声称已经上报加载指纹。运行程序、原路径回复和吞吐的证据范围见[L5](/v2/node/performance#l5-常驻-lab-实测)。
+
+`node:lab configure` 会恢复三节点 Native UDP 默认配置；重新部署后的 bridge 地址更新与混合承载实验需分别按当前 revision 核对。
+
 也可以进入容器使用同一 CLI：
 
 ```sh
