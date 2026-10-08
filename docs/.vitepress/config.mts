@@ -32,6 +32,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
         collapsed: true,
         items: [
           { text: "总览", link: "/v2/reference/" },
+          { text: "交互式 Explorer", link: "/v2/api/explorer" },
           { text: "Console API", link: "/v2/reference/console" },
           { text: "Node API", link: "/v2/reference/agent" },
           { text: "Schemas A–C", link: "/v2/reference/schemas-a-c" },
@@ -152,8 +153,16 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
   },
 ];
 
+// `dev:docs` forwards API calls from the Explorer to the Server named by
+// MESHWAY_CONTROLLER_URL, the same way the Console's dev server does; the
+// Server itself answers same-origin requests only.
+const controller = process.env.MESHWAY_CONTROLLER_URL;
+const proxy = controller
+  ? Object.fromEntries(["/api/v1", "/agent-api/v1"].map(prefix => [prefix, { target: controller, changeOrigin: true }]))
+  : undefined;
+
 export default defineConfig({
-  vite: { plugins: [contractAssets()] },
+  vite: { plugins: [contractAssets()], server: { proxy } },
   lang: "zh-CN",
   title: "Meshway",
   description: "以 Tailscale 为产品基线，扩展自定义承载与有序指定路径的 Rust mesh 网络。",
