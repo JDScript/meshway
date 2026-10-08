@@ -98,7 +98,7 @@ impl Factory {
             acquisitions: AtomicUsize::new(0),
         })
     }
-    fn endpoint(&self, socket: UdpSocket) -> Box<dyn Datagram> {
+    pub(in crate::manager::tests) fn endpoint(&self, socket: UdpSocket) -> Box<dyn Datagram> {
         Box::new(Endpoint {
             inner: UdpTransport::adopt(socket, &Default::default()).unwrap(),
             faults: self.faults.clone(),

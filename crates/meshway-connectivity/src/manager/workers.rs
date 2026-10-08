@@ -100,7 +100,7 @@ async fn dial_epoch(
 ) {
     let lifetime = shared.scope(None, false);
     let mut updates = shared.epochs.subscribe();
-    loop {
+    'acquisition: loop {
         if lifetime.check().is_err() || shared.epoch_changed() {
             return;
         }
@@ -202,8 +202,10 @@ async fn dial_epoch(
                         },
                         result = scope.run(attempt) => result,
                     };
+                    let mut was_selected = false;
                     if let Ok((stream, fact, opening)) = result {
-                        let _ = connected(shared.clone(), stream, fact, opening).await;
+                        let _ = connected(shared.clone(), stream, fact, opening, &mut was_selected)
+                            .await;
                     }
                     drop(capacity);
                     if lifetime.check().is_err() {
@@ -213,6 +215,13 @@ async fn dial_epoch(
                     // failed-dial loop, including single-candidate publications.
                     if backoff(&shared, &lifetime, &mut updates).await.is_err() {
                         return;
+                    }
+                    if was_selected {
+                        // A selected stream ending starts a new acquisition,
+                        // not the untried suffix of its old candidate sweep.
+                        // In particular, retry configured TCP before a local
+                        // UDP blackhole after asymmetric peer health expiry.
+                        continue 'acquisition;
                     }
                 }
             }
@@ -368,7 +377,8 @@ pub(super) async fn listen(
                 ))
             };
             if let Ok((stream, fact, opening)) = scope.run(attempt).await {
-                let _ = connected(shared, stream, fact, opening).await;
+                let mut was_selected = false;
+                let _ = connected(shared, stream, fact, opening, &mut was_selected).await;
             }
         });
     }

@@ -1224,6 +1224,7 @@ async fn connected(
     stream: Box<dyn meshway_transport::raw::Stream>,
     fact: LinkFact,
     opening: Arc<scope::Opening>,
+    was_selected: &mut bool,
 ) -> Result<(), Error> {
     let mut updates = shared.epochs.subscribe();
     let mut scope = shared.scope(Some((fact.peer, fact.carrier.clone())), false);
@@ -1272,6 +1273,7 @@ async fn connected(
         let _ = sender.lock().await.shutdown().await;
         return Err(error);
     }
+    *was_selected = true;
     let result = loop {
         let receive = async {
             shared.event(&scope, Event::Changed).await?;

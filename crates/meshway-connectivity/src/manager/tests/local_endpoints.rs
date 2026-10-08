@@ -8,6 +8,7 @@ use meshway_model::state::*;
 struct LocalFactory {
     inner: Arc<Factory>,
     attempted: Mutex<Vec<DialEndpointSource>>,
+    configured_stream: AtomicBool,
 }
 impl SocketFactory for LocalFactory {
     fn connect<'a>(
@@ -24,7 +25,11 @@ impl SocketFactory for LocalFactory {
                 .endpoints[index];
             self.attempted.lock().unwrap().push(endpoint.source);
             if endpoint.source == DialEndpointSource::Configured {
-                return Err(Error::Unavailable);
+                return if self.configured_stream.load(Ordering::SeqCst) {
+                    self.inner.connect(snapshot, key, index).await
+                } else {
+                    Err(Error::Unavailable)
+                };
             }
             let stream = TcpStream::connect(("127.0.0.1", endpoint.port.get())).await?;
             Ok(AcceptedSocket {
@@ -66,7 +71,7 @@ impl SocketFactory for LocalFactory {
             }
             let socket = UdpSocket::bind("127.0.0.1:0").await?;
             Ok(vec![DatagramSocket {
-                endpoint: Box::new(UdpTransport::adopt(socket, &Default::default()).unwrap()),
+                endpoint: self.inner.endpoint(socket),
                 targets: vec![SocketAddr::from(([127, 0, 0, 1], endpoint.port.get()))],
             }])
         })
@@ -181,6 +186,7 @@ async fn connect(protocol: TransportProtocol, stale: bool) {
     let factory = Arc::new(LocalFactory {
         inner: Factory::new(&mut fixture, Arc::new(Faults::default())),
         attempted: Mutex::new(vec![]),
+        configured_stream: AtomicBool::new(false),
     });
     let mut b = fixture.manager(1, factory.clone()).start().await;
     report_listener(&mut fixture, protocol).await;
@@ -276,4 +282,114 @@ async fn configured_tcp_precedes_higher_protocol_priority_local_udp() {
     a.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     fixture.close().await;
+}
+
+#[tokio::test]
+async fn selected_tcp_fallback_reconnects_before_blackholed_local_udp_after_peer_health_skew() {
+    let mut fixture = support::Fixture::new(true, false).await;
+    let ids = fixture.ids();
+    fixture
+        .configure(|cfg| {
+            for listener in cfg.nodes.get_mut(&ids[1]).unwrap().listeners.values_mut() {
+                if let Listener::NativeUdp(listener) = listener {
+                    listener.endpoints.clear();
+                }
+            }
+        })
+        .await;
+    for index in 0..3 {
+        fixture.refresh(index).await;
+    }
+    let faults = Arc::new(Faults::default());
+    let factory = Arc::new(LocalFactory {
+        inner: Factory::new(&mut fixture, faults.clone()),
+        attempted: Mutex::new(vec![]),
+        configured_stream: AtomicBool::new(false),
+    });
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    report_listener(&mut fixture, TransportProtocol::NativeUdp).await;
+    fixture.refresh(0).await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
+    linked(&a, 1, TransportProtocol::NativeUdp).await;
+    linked(&b, 1, TransportProtocol::NativeUdp).await;
+    let original = a.snapshot().unwrap().links[0].id;
+    let mut sa = reattachment::secure(&fixture.identities[0], &a);
+    let mut sb = reattachment::secure(&fixture.identities[1], &b);
+    let cid = reattachment::handshake(
+        &mut a,
+        &mut b,
+        &mut sa,
+        &mut sb,
+        fixture.demands[0],
+        vec![ids[0], ids[1]],
+    )
+    .await;
+
+    // Real authenticated UDP owners, but different last valid Pong times.
+    // Pin their private health clocks to make the captured race deterministic:
+    // A retires first; B still prefers UDP when the first TCP Ready arrives.
+    faults.blackhole.store(true, Ordering::SeqCst);
+    let now = tokio::time::Instant::now();
+    for (manager, peer, expires) in [
+        (&a, ids[1], now),
+        (&b, ids[0], now + Duration::from_secs(4)),
+    ] {
+        let links = manager.shared.links.lock().unwrap();
+        *links[&peer].scope.health.as_ref().unwrap().lock().unwrap() = expires;
+    }
+    factory.configured_stream.store(true, Ordering::SeqCst);
+    let rejected_first = tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            let rejected = {
+                let links = a.shared.links.lock().unwrap();
+                links.last.get(&ids[1]).is_some_and(|id| *id != original)
+                    && !links.contains_key(&ids[1])
+            };
+            if rejected {
+                let links = b.shared.links.lock().unwrap();
+                assert_eq!(
+                    links[&ids[0]].fact.carrier.protocol,
+                    TransportProtocol::NativeUdp
+                );
+                assert!(links[&ids[0]].scope.check().is_ok());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    let restored = tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            let left = a.snapshot().unwrap();
+            let right = b.snapshot().unwrap();
+            if left.links.len() == 1
+                && right.links.len() == 1
+                && left.links[0].id == right.links[0].id
+                && left.links[0].carrier.protocol == TransportProtocol::NativeTcp
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    if restored.is_ok() {
+        sa.set_carriers(a.carriers().unwrap()).unwrap();
+        sb.set_carriers(b.carriers().unwrap()).unwrap();
+        reattachment::exchange(
+            &a,
+            &mut b,
+            &mut sa,
+            &mut sb,
+            cid,
+            reattachment::packet(&fixture, false),
+        )
+        .await;
+    }
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+    rejected_first.expect("first TCP must be rejected while peer UDP health is still current");
+    restored
+        .expect("selected TCP reconnect must not wait behind an unreachable local UDP candidate");
 }
