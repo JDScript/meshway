@@ -14,7 +14,7 @@ path = "junit.xml"
 [test-groups.server-fixtures]
 # Real SQLite/HTTP fixtures each retain their own directory, listener and App.
 # Bound simultaneous KDFs, fsyncs and server workers across test processes.
-max-threads = 8
+max-threads = 12
 
 [[profile.default.overrides]]
 # Start wall-clock expiry contracts first so they overlap the CPU-bound suites.
