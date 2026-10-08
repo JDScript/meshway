@@ -122,9 +122,9 @@ pub(crate) fn current_session(
     now: i64,
 ) -> Result<AuthenticatedSession, Error> {
     let row = transaction.query_row(
-        "SELECT u.id, u.email, s.id, s.created_at, s.expires_at FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?1 AND s.revoked_at IS NULL AND s.expires_at > ?2 AND s.created_at <= ?2 AND u.disabled_at IS NULL AND s.credential_version = u.credential_version",
+        "SELECT u.id, u.email, s.id, s.created_at, s.expires_at, s.delegation_client FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?1 AND s.revoked_at IS NULL AND s.expires_at > ?2 AND s.created_at <= ?2 AND u.disabled_at IS NULL AND s.credential_version = u.credential_version",
         params![digest.as_slice(), now], |row| {
-            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, Option<String>>(5)?))
         },
     ).optional()?.ok_or(Error::InvalidSession)?;
     let user_id = Uuid::from_slice(&row.0).map_err(|_| Error::decode("users.id"))?;
@@ -139,6 +139,7 @@ pub(crate) fn current_session(
             .ok_or(Error::decode("user_sessions.created_at"))?,
         expires_at: DateTime::<Utc>::from_timestamp_millis(row.4)
             .ok_or(Error::decode("user_sessions.expires_at"))?,
+        delegation_client: row.5,
     };
     // This is observed use, not a sliding auth lease. Coalesce metadata writes
     // while rechecking the actual session and credential version on every call.

@@ -24,6 +24,12 @@ pub struct Settings {
     /// Where browsers reach the Console. Links the Server hands to devices
     /// (device authorization) are built on it; without it they are null.
     pub console_origin: Option<Url>,
+    /// Browser clients allowed to obtain delegated sessions and to call the
+    /// Console API cross-origin. Empty: no delegation, no CORS.
+    pub delegation_clients: crate::accounts::delegation::DelegationClients,
+    /// The origin at which clients reach this Server, handed to delegation
+    /// clients with their session; null when the deployment has not set it.
+    pub public_origin: Option<Url>,
     /// Explicit UDP service listeners. Empty means no hosted STUN socket.
     pub stun_listen: Vec<SocketAddr>,
     /// Explicit hosted/external discovery endpoints; never inferred from HTTP.
@@ -39,6 +45,8 @@ impl Settings {
             registration_enabled: true,
             session_ttl: Duration::from_secs(24 * 60 * 60),
             console_origin: None,
+            delegation_clients: Default::default(),
+            public_origin: None,
             stun_listen: Vec::new(),
             stun_servers: BTreeMap::new(),
         }

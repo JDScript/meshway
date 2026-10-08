@@ -34,10 +34,31 @@ CREATE TABLE user_sessions (
     client_label TEXT,
     expires_at INTEGER NOT NULL CHECK (expires_at > created_at),
     revoked_at INTEGER CHECK (revoked_at >= created_at),
+    -- Set for a session issued to a delegation client through an authorization
+    -- code; such sessions cannot manage the account or other sessions.
+    delegation_client TEXT CHECK (length(delegation_client) BETWEEN 1 AND 32),
     UNIQUE (id, user_id)
 ) STRICT;
 
 CREATE INDEX user_sessions_user_id ON user_sessions(user_id);
+
+-- One-time authorization codes a signed-in user issues for a delegation
+-- client. The code is stored hashed; the PKCE challenge binds the exchange.
+CREATE TABLE delegation_codes (
+    code_hash BLOB NOT NULL PRIMARY KEY CHECK (length(code_hash) = 32),
+    user_id BLOB NOT NULL REFERENCES users(id) ON DELETE RESTRICT CHECK (length(user_id) = 16 AND user_id != zeroblob(16)),
+    -- The user session that authorized; the exchange requires it to still be valid.
+    session_id BLOB NOT NULL CHECK (length(session_id) = 16 AND session_id != zeroblob(16)),
+    client TEXT NOT NULL CHECK (length(client) BETWEEN 1 AND 32),
+    redirect_uri TEXT NOT NULL CHECK (length(redirect_uri) BETWEEN 1 AND 2048),
+    code_challenge TEXT NOT NULL CHECK (length(code_challenge) = 43),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    expires_at INTEGER NOT NULL CHECK (expires_at > created_at),
+    consumed_at INTEGER CHECK (consumed_at >= created_at),
+    FOREIGN KEY (session_id, user_id) REFERENCES user_sessions(id, user_id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE INDEX delegation_codes_expires_at ON delegation_codes(expires_at);
 
 CREATE TABLE password_resets (
     token_hash BLOB NOT NULL PRIMARY KEY CHECK (length(token_hash) = 32),
@@ -164,7 +185,7 @@ CREATE TABLE activity_events (
     actor_kind TEXT NOT NULL DEFAULT 'user' CHECK(actor_kind IN ('user','system')),
     actor_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT CHECK (length(actor_user_id) = 16 AND actor_user_id != zeroblob(16)),
     actor_email TEXT,
-    action TEXT NOT NULL CHECK (action IN ('account.register', 'session.login', 'session.logout', 'session.revoke', 'session.revokeOthers', 'session.revokeAll', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email', 'network.create', 'network.rename', 'configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke')),
+    action TEXT NOT NULL CHECK (action IN ('account.register', 'session.login', 'session.logout', 'session.revoke', 'session.revokeOthers', 'session.revokeAll', 'session.delegate', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email', 'network.create', 'network.rename', 'configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke')),
     target_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT,
     target_session_id BLOB CHECK (length(target_session_id) = 16 AND target_session_id != zeroblob(16)),
     target_membership_id BLOB,
@@ -176,7 +197,7 @@ CREATE TABLE activity_events (
     CHECK ((actor_kind='user' AND actor_user_id IS NOT NULL) OR (actor_kind='system' AND actor_user_id IS NULL)),
     CHECK ((scope = 'account' AND account_user_id IS NOT NULL AND network_id IS NULL AND (actor_user_id = account_user_id OR (actor_kind='system' AND action='account.resetIssued')) AND
         ((action IN ('account.register', 'session.revokeOthers', 'session.revokeAll', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email') AND target_user_id IS NOT NULL AND target_user_id = account_user_id AND target_session_id IS NULL)
-        OR (action IN ('session.login', 'session.logout', 'session.revoke') AND target_user_id IS NULL AND target_session_id IS NOT NULL)))
+        OR (action IN ('session.login', 'session.logout', 'session.revoke', 'session.delegate') AND target_user_id IS NULL AND target_session_id IS NOT NULL)))
         OR (scope = 'network' AND network_id IS NOT NULL AND account_user_id IS NULL AND action IN ('network.create', 'network.rename','configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke') AND target_user_id IS NULL AND target_session_id IS NULL)),
     FOREIGN KEY (target_session_id, account_user_id) REFERENCES user_sessions(id, user_id) ON DELETE RESTRICT,
     FOREIGN KEY (network_id,target_membership_id) REFERENCES memberships(network_id,id),

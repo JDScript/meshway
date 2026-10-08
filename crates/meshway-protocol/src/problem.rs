@@ -158,6 +158,8 @@ problems! {
     LinkRevoked(EmptyParams) = "join_link_revoked",
     /// The verified join token's issuer is no longer authorized to grant membership; returns HTTP 400.
     LinkIssuerUnavailable(EmptyParams) = "join_link_issuer_unavailable",
+    /// The delegation code is unknown, expired, already exchanged, or does not match its client, redirect target or PKCE verifier; returns HTTP 400 and the client must start a new authorization.
+    InvalidDelegation(EmptyParams) = "invalid_delegation",
     /// The expected configuration revision no longer matches the current revision; returns HTTP 409, so re-read the baseline and revalidate the preserved draft before applying again.
     RevisionConflict(EmptyParams) = "revision_conflict",
     /// Configuration validation fails or required preparation is incomplete; returns HTTP 422 with ConfigurationValidationParams containing issues and requirements.

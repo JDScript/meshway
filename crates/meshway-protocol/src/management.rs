@@ -74,6 +74,8 @@ pub struct AccountSessionView {
     #[serde(deserialize_with="nullable")] pub client_label: Option<String> [required=true],
     /// Whether this session authenticated the current request.
     pub current: bool,
+    /// The delegation client this session was issued to, or null for a session the user signed in with.
+    #[serde(deserialize_with="nullable")] pub delegation_client: Option<String> [required=true],
 } }
 wire_object! {
 /// A bounded page of the authenticated user's active sessions.

@@ -85,6 +85,26 @@ token 为随机不透明凭据，Server 只存摘要；HTTP 使用 `Authorizatio
 - SSE 使用 fetch 流；身份或网络切换须中止旧订阅、隔离缓存和草稿。
 - 浏览器退出不自动注销独立 Node。账户停用／离网按当前 User／Tag 身份处理，见[身份生命周期](/v2/configuration-reference/identity#身份切换与生命周期)。
 
+### 委托登录 {#delegation}
+
+部署可以让配置过的浏览器客户端（例如对外站点的 API 参考）以用户身份调用 `/api/v1`，而不把密码交给它：OAuth 2.0 授权码加 PKCE（S256），Console 负责登录与同意，Server 签发。
+
+```text
+站点生成 code_verifier，计算 code_challenge，带 client、redirect_uri、code_challenge、state 打开 Console 的同意页
+  → 已登录用户同意；Console POST /auth/delegations（createDelegation）
+  → Server 返回一次性 code；Console 跳转到 redirect_uri，查询串只带 code 与站点自己的 state
+  → 站点 POST /auth/delegations/token（exchangeDelegation），带 client、code、code_verifier、redirect_uri
+  → Server 校验并消费 code，签发委托会话
+```
+
+- 客户端由 Server 启动参数 `--delegation-client <name>=<origin>` 声明（可重复；见 [Server](/v2/server)）。`redirectUri` 必须是该 origin 上的绝对 `http(s)` URL，不含 fragment 与凭据；`codeChallenge` 为 43 字符 base64url，`codeChallengeMethod` 只接受 `S256`。不满足者为 400 `invalid_request`。`state` 不经过 Server。
+- 授权码一次性、60 秒有效，Server 只存摘要，并绑定签发它的用户会话、client、redirect_uri 与 challenge。兑换一次即消费，无论成功与否；client、redirect_uri 或 verifier 不匹配、过期、重复兑换、签发会话已失效，一律 400 `invalid_delegation`，不区分原因。
+- 委托会话 1 小时到期、不续期，`AccountSessionView.delegationClient` 为客户端名；出现在账户会话列表里，可被用户的普通会话单独撤销，自己只能 logout。普通会话 logout 不影响它；改密码、撤销全部会话使其随之失效。
+- 委托会话拥有用户的全部网络权限，但不能改密码、改邮箱、撤销其他会话，也不能再签发委托：这些返回 403 `permission_denied`。
+- 兑换响应带 `server`：客户端访问本 Server 的 origin，由 `--public-origin` 配置，未配置为 null。
+- 配置了委托客户端时，Server 对这些 origin 的 `/api/v1` 请求（含 SSE）回复 CORS 头：允许 `Authorization`、`Content-Type`、`Last-Event-ID`，暴露 `x-request-id` 与 `Date`，不带 cookie；`/agent-api/v1` 和其他 origin 不放行。未配置时没有任何 CORS 头。
+- 每次授权在账户活动中记为 `session.delegate`，目标为授权时使用的会话；兑换记为该委托会话的 `session.login`。
+
 ## Node 的三层凭据
 
 | 层 | 用途 | 生命周期 |

@@ -236,7 +236,7 @@ fn matching_version_and_columns_do_not_hide_missing_constraints() {
 fn account_rows_enforce_identity_ranges_uniqueness_and_session_lifecycle() {
     let mut connection = database();
     insert_user(&connection);
-    let session = "INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000001', 1, 100, NULL, NULL, 200, NULL)";
+    let session = "INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000001', 1, 100, NULL, NULL, 200, NULL, NULL)";
     connection.execute(session, []).unwrap();
     for sql in [
         "UPDATE users SET id = zeroblob(15)",
@@ -287,7 +287,7 @@ fn nil_resource_ids_and_references_are_rejected_and_detected_in_existing_rows() 
     ] {
         let mut connection = database();
         insert_user(&connection);
-        connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000001', 1, 100, NULL, NULL, 200, NULL)", []).unwrap();
+        connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000001', 1, 100, NULL, NULL, 200, NULL, NULL)", []).unwrap();
         // Test the ID CHECK independently of FK enforcement, including the
         // reference column. FK constraints must not mask a missing nil check.
         connection
@@ -319,7 +319,7 @@ fn full_checks_find_existing_constraint_and_foreign_key_corruption() {
     connection
         .execute_batch("UPDATE users SET credential_version = 1; PRAGMA foreign_keys = OFF")
         .unwrap();
-    connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000003', 1, 100, NULL, NULL, 200, NULL)", []).unwrap();
+    connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000003', 1, 100, NULL, NULL, 200, NULL, NULL)", []).unwrap();
     assert_eq!(check(&mut connection), Err(SchemaError::Integrity));
 }
 
@@ -328,7 +328,7 @@ fn activities_enforce_account_scope_target_ownership_and_bounded_sequence() {
     let mut connection = database();
     insert_user(&connection);
     connection.execute("INSERT INTO users VALUES (x'00000000000000000000000000000002', 'other@example.test', '$argon2id$v=19$test', 1, 100, NULL)", []).unwrap();
-    connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000003', zeroblob(32), x'00000000000000000000000000000002', 1, 100, NULL, NULL, 200, NULL)", []).unwrap();
+    connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000003', zeroblob(32), x'00000000000000000000000000000002', 1, 100, NULL, NULL, 200, NULL, NULL)", []).unwrap();
     connection.execute("INSERT INTO activity_events (id, scope, account_user_id, at, actor_user_id, action, target_user_id, request_id) VALUES (x'00000000000000000000000000000004', 'account', x'00000000000000000000000000000001', 100, x'00000000000000000000000000000001', 'account.register', x'00000000000000000000000000000001', x'00000000000000000000000000000005')", []).unwrap();
     for mutation in [
         "UPDATE activity_events SET scope = 'network'",

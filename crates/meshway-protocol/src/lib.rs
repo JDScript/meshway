@@ -85,8 +85,10 @@ pub use observations::{
 pub use state::{StateAccepted, StateQuery, StateReport, StateView};
 
 pub use auth::{
-    AuthOptionsResponse, AuthSessionResponse, LoginRequest, PasswordLengthUnit, PasswordRules,
-    RegisterRequest, SessionIssuedResponse, SessionMetadata, UserView,
+    AuthOptionsResponse, AuthSessionResponse, CodeChallengeMethod, CreateDelegationRequest,
+    DelegatedSessionResponse, DelegationCreated, ExchangeDelegationRequest, LoginRequest,
+    PasswordLengthUnit, PasswordRules, RegisterRequest, SessionIssuedResponse, SessionMetadata,
+    UserView,
 };
 pub use meshway_model::{
     ActivityId, EnrollmentKeyId, EnrollmentRequestId, InstanceId, JoinLinkId, MembershipId,

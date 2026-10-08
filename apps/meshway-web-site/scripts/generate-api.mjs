@@ -24,6 +24,8 @@ const titles = {
   revokeAccountSession: "撤销会话",
   login: "登录",
   logout: "退出登录",
+  createDelegation: "签发委托登录授权码",
+  exchangeDelegation: "兑换委托登录会话",
   getAuthOptions: "读取认证选项",
   inspectPasswordReset: "检查密码重置链接",
   redeemPasswordReset: "重置密码",

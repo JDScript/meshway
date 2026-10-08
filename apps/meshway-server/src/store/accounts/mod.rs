@@ -4,6 +4,7 @@
 use crate::effect::Effect;
 use crate::error::Error;
 mod activity;
+pub(crate) mod delegation;
 pub(crate) mod management;
 
 use std::time::Duration;
@@ -66,7 +67,7 @@ pub(crate) fn register(
     };
     transaction.execute("INSERT INTO users (id, email, password_hash, credential_version, created_at) VALUES (?1, ?2, ?3, 1, ?4)",
         params![user.id.as_uuid().as_bytes().as_slice(), user.email, password_hash.as_str(), now])?;
-    let issued = insert_session(transaction, user, 1, now, ttl, client_label)?;
+    let issued = insert_session(transaction, user, 1, now, ttl, client_label, None)?;
     record(
         transaction,
         &issued.session,
@@ -102,6 +103,7 @@ pub(crate) fn login(
         now,
         ttl,
         client_label,
+        None,
     )?;
     record(
         transaction,
@@ -120,6 +122,7 @@ fn insert_session(
     now: i64,
     ttl: Duration,
     client_label: Option<&str>,
+    delegation_client: Option<&str>,
 ) -> Result<IssuedSession, Error> {
     let session_id =
         SessionId::new(random_uuid()?).map_err(|_| Error::Internal("generated session ID"))?;
@@ -130,8 +133,8 @@ fn insert_session(
         )
         .ok_or(Error::Internal("session expiry overflow"))?;
     transaction.execute(
-        "INSERT INTO user_sessions (id, token_hash, user_id, credential_version, created_at, expires_at, client_label) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![session_id.as_uuid().as_bytes().as_slice(), digest.as_slice(), user.id.as_uuid().as_bytes().as_slice(), version, now, expires, client_label],
+        "INSERT INTO user_sessions (id, token_hash, user_id, credential_version, created_at, expires_at, client_label, delegation_client) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![session_id.as_uuid().as_bytes().as_slice(), digest.as_slice(), user.id.as_uuid().as_bytes().as_slice(), version, now, expires, client_label, delegation_client],
     )?;
     Ok(IssuedSession {
         session: AuthenticatedSession {
@@ -139,6 +142,7 @@ fn insert_session(
             session_id,
             created_at: timestamp(now)?,
             expires_at: timestamp(expires)?,
+            delegation_client: delegation_client.map(str::to_owned),
         },
         token,
     })

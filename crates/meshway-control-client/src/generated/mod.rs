@@ -902,6 +902,29 @@ impl crate::Client {
         }
     }
 
+    pub async fn create_delegation(
+        &self,
+        body: &meshway_protocol::CreateDelegationRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::DelegationCreated,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/api/v1/auth/delegations",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            201 => response.json(),
+            400 | 401 | 403 | 413 | 415 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn create_enrollment_key(
         &self,
         path: &CreateEnrollmentKeyPath,
@@ -1349,6 +1372,28 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn exchange_delegation(
+        &self,
+        body: &meshway_protocol::ExchangeDelegationRequest,
+    ) -> Result<
+        meshway_protocol::DelegatedSessionResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/api/v1/auth/delegations/token",
+                None,
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 413 | 415 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

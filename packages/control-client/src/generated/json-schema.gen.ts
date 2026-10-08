@@ -201,7 +201,8 @@ export const schemaDocument = {
           "expiresAt",
           "lastUsedAt",
           "clientLabel",
-          "current"
+          "current",
+          "delegationClient"
         ],
         "properties": {
           "clientLabel": {
@@ -219,6 +220,13 @@ export const schemaDocument = {
           "current": {
             "type": "boolean",
             "description": "Whether this session authenticated the current request."
+          },
+          "delegationClient": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The delegation client this session was issued to, or null for a session the user signed in with."
           },
           "expiresAt": {
             "type": "string",
@@ -303,7 +311,7 @@ export const schemaDocument = {
       },
       "ActivityAction": {
         "type": "string",
-        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.",
+        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.",
         "enum": [
           "account.register",
           "session.login",
@@ -311,6 +319,7 @@ export const schemaDocument = {
           "session.revoke",
           "session.revokeOthers",
           "session.revokeAll",
+          "session.delegate",
           "account.password",
           "account.passwordReset",
           "account.resetIssued",
@@ -1352,6 +1361,13 @@ export const schemaDocument = {
           "membership_revoked",
           "node_lease_expired",
           "server_shutdown"
+        ]
+      },
+      "CodeChallengeMethod": {
+        "type": "string",
+        "description": "PKCE transform of the verifier; only S256 is accepted.",
+        "enum": [
+          "S256"
         ]
       },
       "CompareConfigurationRequest": {
@@ -2740,6 +2756,34 @@ export const schemaDocument = {
           "capacity"
         ]
       },
+      "CreateDelegationRequest": {
+        "type": "object",
+        "description": "A signed-in user's request to let a configured browser client act on their behalf.",
+        "required": [
+          "client",
+          "redirectUri",
+          "codeChallenge",
+          "codeChallengeMethod"
+        ],
+        "properties": {
+          "client": {
+            "type": "string",
+            "description": "Name of a delegation client configured on the Server."
+          },
+          "codeChallenge": {
+            "type": "string",
+            "description": "base64url without padding of the SHA-256 of the client's verifier (43 characters)."
+          },
+          "codeChallengeMethod": {
+            "$ref": "#/components/schemas/CodeChallengeMethod"
+          },
+          "redirectUri": {
+            "type": "string",
+            "description": "Absolute `http(s)` URL on the client's origin that will receive the code; no fragment or credentials."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateEnrollmentKeyRequest": {
         "type": "object",
         "description": "Administrator request for a one-time, expiring Tag enrollment key.",
@@ -3028,6 +3072,73 @@ export const schemaDocument = {
           "topology": {
             "$ref": "#/components/schemas/TopologyDefault",
             "description": "Adjacency permission used when no topology rule matches."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DelegatedSessionResponse": {
+        "type": "object",
+        "description": "First and only delivery of a delegated session's bearer token.",
+        "required": [
+          "requestId",
+          "user",
+          "session",
+          "token",
+          "client",
+          "server"
+        ],
+        "properties": {
+          "client": {
+            "type": "string",
+            "description": "The client the session was issued to, shown as its label in the account's session list."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Server-generated correlation ID for this HTTP request."
+          },
+          "server": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Origin at which clients reach this Server, or null when the deployment has not configured one."
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionMetadata",
+            "description": "Identifier and validity period of the delegated session: one hour, not renewable."
+          },
+          "token": {
+            "$ref": "#/components/schemas/WireSecret",
+            "description": "Opaque bearer credential for `/api/v1`; the session cannot manage the account, other sessions or delegations."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserView",
+            "description": "Account the delegated session acts for."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DelegationCreated": {
+        "type": "object",
+        "description": "A one-time authorization code for the client; the Console appends it and the client's own `state` to the redirect target.",
+        "required": [
+          "requestId",
+          "code",
+          "expiresAt"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/WireSecret",
+            "description": "The code to deliver as the `code` query parameter; exchangeable once within 60 seconds."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the code stops being exchangeable."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Server-generated correlation ID for this HTTP request."
           }
         },
         "additionalProperties": false
@@ -5137,6 +5248,35 @@ export const schemaDocument = {
         "maxLength": 36,
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "ExchangeDelegationRequest": {
+        "type": "object",
+        "description": "A delegation client's exchange of an authorization code for a session.",
+        "required": [
+          "client",
+          "code",
+          "codeVerifier",
+          "redirectUri"
+        ],
+        "properties": {
+          "client": {
+            "type": "string",
+            "description": "The client name the code was issued for."
+          },
+          "code": {
+            "$ref": "#/components/schemas/WireSecret",
+            "description": "The `code` received in the redirect."
+          },
+          "codeVerifier": {
+            "$ref": "#/components/schemas/WireSecret",
+            "description": "The PKCE verifier whose S256 challenge was sent when authorizing; 43–128 unreserved characters."
+          },
+          "redirectUri": {
+            "type": "string",
+            "description": "The exact `redirectUri` used when authorizing."
+          }
+        },
+        "additionalProperties": false
       },
       "ExecutionAddress": {
         "type": "string",
@@ -13451,6 +13591,32 @@ export const schemaDocument = {
                 "type": "string",
                 "enum": [
                   "join_link_issuer_unavailable"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The delegation code is unknown, expired, already exchanged, or does not match its client, redirect target or PKCE verifier; returns HTTP 400 and the client must start a new authorization.",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_delegation"
                 ]
               },
               "message": {

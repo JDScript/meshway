@@ -26,6 +26,19 @@ struct Arguments {
     /// it; without it the Server hands devices no link.
     #[arg(long, env = "MESHWAY_CONSOLE_ORIGIN", value_parser = meshway_server::console_origin)]
     console_origin: Option<meshway_server::settings::Url>,
+    /// A browser client allowed to obtain delegated sessions, as
+    /// `<name>=<origin>` (https, or http on loopback); repeatable. Requests
+    /// from these origins to /api/v1 are answered cross-origin.
+    #[arg(
+        long = "delegation-client",
+        env = "MESHWAY_DELEGATION_CLIENTS",
+        value_delimiter = ','
+    )]
+    delegation_clients: Vec<String>,
+    /// Origin at which clients reach this Server, handed to delegation clients
+    /// with their session.
+    #[arg(long, env = "MESHWAY_PUBLIC_ORIGIN", value_parser = meshway_server::console_origin)]
+    public_origin: Option<meshway_server::settings::Url>,
     /// Explicit UDP Binding listener; repeat for separate address families.
     #[arg(long)]
     stun_listen: Vec<SocketAddr>,
@@ -62,6 +75,11 @@ async fn run(arguments: Arguments) -> Result<(), String> {
     settings.registration_enabled = arguments.registration_enabled;
     settings.session_ttl = Duration::from_secs(arguments.session_ttl_seconds);
     settings.console_origin = arguments.console_origin;
+    settings.delegation_clients = meshway_server::accounts::delegation::DelegationClients::parse(
+        arguments.delegation_clients.iter().map(String::as_str),
+    )
+    .map_err(|error| format!("Invalid --delegation-client: {error}."))?;
+    settings.public_origin = arguments.public_origin;
     settings.stun_listen = arguments.stun_listen;
     for (key, endpoint) in arguments.stun_server {
         if settings.stun_servers.insert(key, endpoint).is_some() {

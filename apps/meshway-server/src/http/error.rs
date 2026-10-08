@@ -278,6 +278,13 @@ impl HttpError {
                     message: "Recovery credential is invalid or no longer usable.".into(),
                 },
             ),
+            Error::InvalidDelegation => simple(
+                S::BAD_REQUEST,
+                Problem::InvalidDelegation {
+                    params: empty,
+                    message: "Delegation code is invalid or no longer usable.".into(),
+                },
+            ),
             Error::ResetUsed => simple(
                 S::BAD_REQUEST,
                 Problem::PasswordResetUsed {

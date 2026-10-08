@@ -98,6 +98,7 @@ pub(super) async fn sessions(
                 last_used_at: s.last_used_at,
                 client_label: s.client_label,
                 current: s.current,
+                delegation_client: s.delegation_client,
             })
             .collect(),
     }))

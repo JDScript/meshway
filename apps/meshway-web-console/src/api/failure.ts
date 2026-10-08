@@ -56,6 +56,7 @@ const problemMessage: Record<ProblemCode, () => string> = {
   join_link_revoked: () => m.problem_join_link_revoked(),
   join_link_expired: () => m.problem_join_link_expired(),
   join_link_issuer_unavailable: () => m.problem_join_link_issuer_unavailable(),
+  invalid_delegation: () => m.problem_invalid_delegation(),
 }
 
 /** A call's own words for some problem codes (`invalid_request` on a sign-in form). */

@@ -235,6 +235,7 @@ export const zAccountSessionView = z.strictObject({
   ["clientLabel"]: z.string().nullable(),
   ["createdAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["current"]: z.boolean(),
+  ["delegationClient"]: z.string().nullable(),
   ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["id"]: zSessionId,
   ["lastUsedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable()
@@ -265,7 +266,7 @@ export const zAcquireInstanceRequest = z.strictObject({
   ["instanceId"]: zInstanceId
 });
 
-export const zActivityAction = z.enum(["account.register","session.login","session.logout","session.revoke","session.revokeOthers","session.revokeAll","account.password","account.passwordReset","account.resetIssued","account.email","network.create","network.rename","configuration.apply","membership.role","membership.join","membership.remove","joinLink.create","joinLink.revoke"]);
+export const zActivityAction = z.enum(["account.register","session.login","session.logout","session.revoke","session.revokeOthers","session.revokeAll","session.delegate","account.password","account.passwordReset","account.resetIssued","account.email","network.create","network.rename","configuration.apply","membership.role","membership.join","membership.remove","joinLink.create","joinLink.revoke"]);
 
 export const zActivityActor = z.union([z.strictObject({
   ["email"]: z.string().nullable(),
@@ -573,6 +574,8 @@ export const zClientTls = z.strictObject({
 export const zCloseReason = z.enum(["idle","remote_closed","timeout","withdrawn","local_failure"]);
 
 export const zClosedReason = z.enum(["session_expired","membership_revoked","node_lease_expired","server_shutdown"]);
+
+export const zCodeChallengeMethod = z.enum(["S256"]);
 
 export const zCompareConfigurationPath = z.strictObject({
   ["networkId"]: zNetworkId
@@ -1520,6 +1523,13 @@ export const zCount = z.int().gte(0).lte(9007199254740991);
 
 export const zCoverageReason = z.enum(["retention","capacity"]);
 
+export const zCreateDelegationRequest = z.strictObject({
+  ["client"]: z.string(),
+  ["codeChallenge"]: z.string(),
+  ["codeChallengeMethod"]: zCodeChallengeMethod,
+  ["redirectUri"]: z.string()
+});
+
 export const zCreateEnrollmentKeyPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
@@ -1665,6 +1675,21 @@ export const zCreateObservationPath = z.strictObject({
 export const zDecisionDelta = z.strictObject({
   ["remove"]: z.array(zRequestId),
   ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zDemandDecision, {})
+});
+
+export const zDelegatedSessionResponse = z.strictObject({
+  ["client"]: z.string(),
+  ["requestId"]: zRequestId,
+  ["server"]: z.string().nullable(),
+  ["session"]: zSessionMetadata,
+  ["token"]: zWireSecret,
+  ["user"]: zUserView
+});
+
+export const zDelegationCreated = z.strictObject({
+  ["code"]: zWireSecret,
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["requestId"]: zRequestId
 });
 
 export const zDeleteNodePath = z.strictObject({
@@ -2053,6 +2078,10 @@ export const zProblem = z.union([z.strictObject({
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
+  ["code"]: z.enum(["invalid_delegation"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
   ["code"]: z.enum(["revision_conflict"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams
@@ -2218,6 +2247,13 @@ export const zEventActor = z.union([z.strictObject({
 }), z.strictObject({
   ["type"]: z.enum(["redacted"])
 })]);
+
+export const zExchangeDelegationRequest = z.strictObject({
+  ["client"]: z.string(),
+  ["code"]: zWireSecret,
+  ["codeVerifier"]: zWireSecret,
+  ["redirectUri"]: z.string()
+});
 
 export const zFreshness = z.enum(["current","awaiting_report","expired","superseded","config_mismatch","revoked"]);
 

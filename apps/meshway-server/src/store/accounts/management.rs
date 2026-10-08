@@ -68,7 +68,7 @@ pub(crate) fn sessions(
             now,
         )?,
     };
-    let mut stmt = tx.prepare("SELECT id, created_at, expires_at, last_used_at, client_label, rowid FROM user_sessions WHERE user_id=?1 AND revoked_at IS NULL AND expires_at>?2 AND credential_version=(SELECT credential_version FROM users WHERE id=?1) AND rowid<=?3 ORDER BY rowid DESC LIMIT ?4")?;
+    let mut stmt = tx.prepare("SELECT id, created_at, expires_at, last_used_at, client_label, rowid, delegation_client FROM user_sessions WHERE user_id=?1 AND revoked_at IS NULL AND expires_at>?2 AND credential_version=(SELECT credential_version FROM users WHERE id=?1) AND rowid<=?3 ORDER BY rowid DESC LIMIT ?4")?;
     let mut rows = stmt
         .query_map(
             params![
@@ -85,6 +85,7 @@ pub(crate) fn sessions(
                     r.get::<_, Option<i64>>(3)?,
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, i64>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             },
         )?
@@ -93,18 +94,22 @@ pub(crate) fn sessions(
     rows.truncate(usize::from(limit));
     let items = rows
         .into_iter()
-        .map(|(id, created, expires, used, label, sequence)| {
-            window.last = window.upper - sequence + 1;
-            let id = SessionId::new(uuid(&id)?).map_err(|_| Error::decode("user_sessions.id"))?;
-            Ok(AccountSession {
-                id,
-                created_at: timestamp(created)?,
-                expires_at: timestamp(expires)?,
-                last_used_at: used.map(timestamp).transpose()?,
-                client_label: label,
-                current: id == session.session_id,
-            })
-        })
+        .map(
+            |(id, created, expires, used, label, sequence, delegation)| {
+                window.last = window.upper - sequence + 1;
+                let id =
+                    SessionId::new(uuid(&id)?).map_err(|_| Error::decode("user_sessions.id"))?;
+                Ok(AccountSession {
+                    id,
+                    created_at: timestamp(created)?,
+                    expires_at: timestamp(expires)?,
+                    last_used_at: used.map(timestamp).transpose()?,
+                    client_label: label,
+                    current: id == session.session_id,
+                    delegation_client: delegation,
+                })
+            },
+        )
         .collect::<Result<Vec<_>, Error>>()?;
     let next_cursor = if more {
         Some(window.encode(sealer, scope)?)
@@ -133,6 +138,17 @@ pub(crate) fn record_management(
     Ok(())
 }
 
+/// Delegated sessions act as the user but cannot change the account or touch
+/// other sessions; they may only end themselves through logout.
+pub(super) fn require_primary(
+    session: &crate::accounts::AuthenticatedSession,
+) -> Result<(), Error> {
+    if session.delegated() {
+        return Err(Error::PermissionDenied);
+    }
+    Ok(())
+}
+
 pub(crate) fn revoke(
     tx: &Transaction<'_>,
     digest: [u8; 32],
@@ -141,6 +157,7 @@ pub(crate) fn revoke(
 ) -> Result<((), Vec<Effect>), Error> {
     let now = now()?;
     let session = current_session(tx, &digest, now)?;
+    require_primary(&session)?;
     let revoked = active_sessions(tx, session.user.id, now)?
         .into_iter()
         .filter(|id| match target {
@@ -193,6 +210,7 @@ pub(crate) fn revoke(
 
 pub(crate) fn candidate(tx: &Transaction<'_>, digest: [u8; 32]) -> Result<LoginCandidate, Error> {
     let session = current_session(tx, &digest, now()?)?;
+    require_primary(&session)?;
     login_candidate(tx, Some(&session.user.email))?.ok_or(Error::InvalidCredentials)
 }
 
@@ -203,6 +221,7 @@ pub(crate) fn verified_user(
     now: i64,
 ) -> Result<UserId, Error> {
     let session = current_session(tx, digest, now)?;
+    require_primary(&session)?;
     if session.user.id != verified.user_id {
         return Err(Error::InvalidCredentials);
     }

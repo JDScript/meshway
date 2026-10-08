@@ -4,6 +4,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::{WireSecret, object::wire_object};
+use meshway_serde::required_nullable as nullable;
 
 meshway_serde::string_enum! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -114,5 +115,70 @@ wire_object! {
         pub user: UserView,
         /// Identifier and validity period of the current session.
         pub session: SessionMetadata,
+    }
+}
+
+meshway_serde::string_enum! {
+/// PKCE transform of the verifier; only S256 is accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+pub enum CodeChallengeMethod {
+    S256,
+}
+}
+
+wire_object! {
+    /// A signed-in user's request to let a configured browser client act on their behalf.
+    pub struct CreateDelegationRequest {
+        /// Name of a delegation client configured on the Server.
+        pub client: String,
+        /// Absolute `http(s)` URL on the client's origin that will receive the code; no fragment or credentials.
+        pub redirect_uri: String,
+        /// base64url without padding of the SHA-256 of the client's verifier (43 characters).
+        pub code_challenge: String,
+        pub code_challenge_method: CodeChallengeMethod,
+    }
+}
+
+wire_object! {
+    /// A one-time authorization code for the client; the Console appends it and the client's own `state` to the redirect target.
+    pub struct DelegationCreated {
+        /// Server-generated correlation ID for this HTTP request.
+        pub request_id: RequestId,
+        /// The code to deliver as the `code` query parameter; exchangeable once within 60 seconds.
+        pub code: WireSecret,
+        /// When the code stops being exchangeable.
+        pub expires_at: DateTime<Utc>,
+    }
+}
+
+wire_object! {
+    /// A delegation client's exchange of an authorization code for a session.
+    pub struct ExchangeDelegationRequest {
+        /// The client name the code was issued for.
+        pub client: String,
+        /// The `code` received in the redirect.
+        pub code: WireSecret,
+        /// The PKCE verifier whose S256 challenge was sent when authorizing; 43–128 unreserved characters.
+        pub code_verifier: WireSecret,
+        /// The exact `redirectUri` used when authorizing.
+        pub redirect_uri: String,
+    }
+}
+
+wire_object! {
+    /// First and only delivery of a delegated session's bearer token.
+    pub struct DelegatedSessionResponse {
+        /// Server-generated correlation ID for this HTTP request.
+        pub request_id: RequestId,
+        /// Account the delegated session acts for.
+        pub user: UserView,
+        /// Identifier and validity period of the delegated session: one hour, not renewable.
+        pub session: SessionMetadata,
+        /// Opaque bearer credential for `/api/v1`; the session cannot manage the account, other sessions or delegations.
+        pub token: WireSecret,
+        /// The client the session was issued to, shown as its label in the account's session list.
+        pub client: String,
+        /// Origin at which clients reach this Server, or null when the deployment has not configured one.
+        #[serde(deserialize_with="nullable")] pub server: Option<String> [required=true],
     }
 }

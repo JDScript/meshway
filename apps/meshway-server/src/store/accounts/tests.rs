@@ -43,6 +43,7 @@ async fn session_use_and_reset_failures_follow_real_account_lifecycles() {
     let accounts = Accounts::new(
         handle.clone(),
         AccountOptions::new(true, Duration::from_secs(86400)).unwrap(),
+        Default::default(),
     );
     let email = "metadata-reset@example.test";
     let issued = accounts
@@ -208,6 +209,7 @@ async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
     let accounts = Accounts::new(
         handle.clone(),
         AccountOptions::new(true, Duration::from_secs(86400)).unwrap(),
+        Default::default(),
     );
     let issued = accounts
         .register(
@@ -413,6 +415,7 @@ async fn persisted_account_session_and_activity_times_are_unix_milliseconds() {
     let accounts = Accounts::new(
         handle.clone(),
         AccountOptions::new(true, Duration::from_secs(90)).unwrap(),
+        Default::default(),
     );
     let before = Utc::now().timestamp_millis();
     let registered = accounts
@@ -517,5 +520,77 @@ async fn persisted_account_session_and_activity_times_are_unix_milliseconds() {
         Err(Error::InvalidSession)
     );
     schema_check(&handle).await;
+    executor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn delegation_codes_are_one_time_and_bound_to_client_target_and_verifier() {
+    let _serial = TEST_KDF_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (executor, ()) = Executor::open(
+        temp.path().canonicalize().unwrap().join("db"),
+        Options::default(),
+        (),
+        |connection, _| schema::tests::initialize_fixture(connection),
+    )
+    .await
+    .unwrap();
+    let clients =
+        crate::accounts::delegation::DelegationClients::parse(["site=https://site.example"])
+            .unwrap();
+    let accounts = Accounts::new(
+        executor.handle(),
+        AccountOptions::new(true, Duration::from_secs(86400)).unwrap(),
+        std::sync::Arc::new(clients),
+    );
+    let issued = accounts
+        .register(
+            "delegation@example.test".into(),
+            Secret::new("valid password".into()),
+            request(),
+        )
+        .await
+        .unwrap();
+    let verifier = "v".repeat(50);
+    let code = accounts
+        .authorize_delegation(
+            issued.token.expose(),
+            crate::accounts::DelegationAuthorization {
+                client: "site".into(),
+                redirect_uri: "https://site.example/cb".into(),
+                code_challenge: crate::accounts::delegation::challenge_of(&verifier),
+            },
+            request(),
+        )
+        .await
+        .unwrap();
+    let code = code.code.expose().to_owned();
+    let delegated = accounts
+        .exchange_delegation(
+            "site".into(),
+            Secret::new(code.clone()),
+            Secret::new(verifier.clone()),
+            "https://site.example/cb".into(),
+            request(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delegated.client, "site");
+    assert_eq!(
+        delegated.issued.session.delegation_client.as_deref(),
+        Some("site")
+    );
+    assert!(
+        accounts
+            .exchange_delegation(
+                "site".into(),
+                Secret::new(code),
+                Secret::new(verifier),
+                "https://site.example/cb".into(),
+                request(),
+            )
+            .await
+            .is_err()
+    );
     executor.shutdown().await.unwrap();
 }

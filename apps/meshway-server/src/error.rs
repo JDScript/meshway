@@ -88,6 +88,10 @@ pub enum Error {
     // Password recovery credential lifecycle
     #[error("invalid or consumed recovery credential")]
     InvalidReset,
+    /// A delegation code is unknown, expired, consumed, or does not match
+    /// its client, redirect target or PKCE verifier.
+    #[error("delegation code is invalid or no longer usable")]
+    InvalidDelegation,
     #[error("recovery credential has already been used")]
     ResetUsed,
     #[error("recovery credential has expired")]

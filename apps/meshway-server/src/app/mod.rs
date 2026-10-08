@@ -31,6 +31,7 @@ pub struct App {
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
     console_origin: Option<Arc<crate::settings::Url>>,
+    public_origin: Option<Arc<crate::settings::Url>>,
 }
 
 #[derive(Default)]
@@ -122,8 +123,10 @@ impl App {
             account_options,
             downloads,
             settings.console_origin.map(Arc::new),
+            Arc::new(settings.delegation_clients),
         )
         .await?;
+        app.public_origin = settings.public_origin.map(Arc::new);
         app.stun = crate::stun::Hosted::start(stun_sockets)?;
         app.stun_servers = Arc::new(settings.stun_servers);
         Ok(app)
@@ -135,6 +138,7 @@ impl App {
         account_options: crate::accounts::Options,
         downloads: Arc<crate::resources::downloads::Downloads>,
         console_origin: Option<Arc<crate::settings::Url>>,
+        delegation: Arc<crate::accounts::delegation::DelegationClients>,
     ) -> Result<Self, AppError> {
         let state_runtime = Arc::new(std::sync::Mutex::new(
             crate::state::service::Runtime::new().map_err(|_| AppError::Worker)?,
@@ -164,7 +168,7 @@ impl App {
             OpenError::Executor(error) => AppError::from(error),
             OpenError::Initialization(error) => error,
         })?;
-        let accounts = Accounts::new(executor.handle(), account_options);
+        let accounts = Accounts::new(executor.handle(), account_options, delegation);
         let shutdown_hooks = ShutdownHooks::default();
         let shutdown_runtime = Arc::clone(&state_runtime);
         shutdown_hooks
@@ -203,6 +207,7 @@ impl App {
             state_runtime,
             shutdown_hooks,
             console_origin,
+            public_origin: None,
             observation_maintenance: std::sync::Mutex::default(),
             boot: meshway_model::InstanceId::new(
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
@@ -276,6 +281,10 @@ impl App {
             provider,
             self.downloads.clone(),
         )
+    }
+    /// The origin delegation clients should use for this Server, if configured.
+    pub fn public_origin(&self) -> Option<&crate::settings::Url> {
+        self.public_origin.as_deref()
     }
     pub fn ip_datasets(&self) -> crate::resources::datasets::IpDatasets {
         crate::resources::datasets::IpDatasets::new(

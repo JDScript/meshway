@@ -46,6 +46,7 @@ export const activityActionLabel: Record<ActivityAction, () => string> = {
   "session.revoke": () => m.activity_session_revoke(),
   "session.revokeOthers": () => m.activity_session_revoke_others(),
   "session.revokeAll": () => m.activity_session_revoke_all(),
+  "session.delegate": () => m.activity_session_delegate(),
   "account.password": () => m.activity_account_password(),
   "account.passwordReset": () => m.activity_account_password_reset(),
   "account.resetIssued": () => m.activity_account_reset_issued(),

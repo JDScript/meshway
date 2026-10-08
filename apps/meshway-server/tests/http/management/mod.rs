@@ -94,6 +94,8 @@ mod account;
 
 mod configuration;
 
+mod delegation;
+
 mod identity;
 
 mod members;

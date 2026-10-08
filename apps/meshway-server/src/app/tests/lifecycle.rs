@@ -488,6 +488,7 @@ async fn cancelling_app_open_keeps_lock_while_sqlite_open_is_blocked() {
         crate::accounts::Options::new(true, Duration::from_secs(86400)).unwrap(),
         crate::resources::downloads::Downloads::new(),
         None,
+        Default::default(),
     ));
     assert_pending(opening.as_mut());
     drop(opening);

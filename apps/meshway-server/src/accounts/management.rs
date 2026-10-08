@@ -13,6 +13,8 @@ pub struct AccountSession {
     pub last_used_at: Option<DateTime<Utc>>,
     pub client_label: Option<String>,
     pub current: bool,
+    /// The delegation client this session was issued to, if any.
+    pub delegation_client: Option<String>,
 }
 
 pub struct AccountSessionPage {

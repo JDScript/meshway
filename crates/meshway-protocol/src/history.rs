@@ -101,6 +101,8 @@ actions! {
     SessionRevokeOthers = "session.revokeOthers",
     /// Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.
     SessionRevokeAll = "session.revokeAll",
+    /// A signed-in user authorized a delegation client; the target is the authorizing session.
+    SessionDelegate = "session.delegate",
     /// Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.
     AccountPassword = "account.password",
     /// Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.

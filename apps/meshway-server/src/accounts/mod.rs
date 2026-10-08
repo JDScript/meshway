@@ -5,6 +5,8 @@
 //! Authentication results attest one transaction only: subsequent mutations must
 //! recheck the current session and account in their own transaction.
 
+pub mod delegation;
+pub use crate::store::accounts::delegation::Authorization as DelegationAuthorization;
 mod email;
 mod management;
 mod password;
@@ -71,6 +73,16 @@ pub struct AuthenticatedSession {
     pub session_id: SessionId,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// The delegation client this session was issued to, if any. Delegated
+    /// sessions act as the user but cannot manage the account, other
+    /// sessions or further delegations.
+    pub delegation_client: Option<String>,
+}
+
+impl AuthenticatedSession {
+    pub fn delegated(&self) -> bool {
+        self.delegation_client.is_some()
+    }
 }
 
 /// Deliberately neither Debug nor Clone: token delivery is explicit.
@@ -83,15 +95,91 @@ pub struct IssuedSession {
 pub struct Accounts {
     handle: Handle,
     options: Options,
+    delegation: std::sync::Arc<delegation::DelegationClients>,
+}
+
+/// A one-time authorization code for a delegation client; the Console appends
+/// it (and the client's own `state`) to the redirect target itself.
+pub struct IssuedCode {
+    pub code: Secret,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// What a delegation client receives for an exchanged code.
+pub struct DelegatedSession {
+    pub issued: IssuedSession,
+    pub client: String,
 }
 
 impl Accounts {
-    pub(crate) fn new(handle: Handle, options: Options) -> Self {
-        Self { handle, options }
+    pub(crate) fn new(
+        handle: Handle,
+        options: Options,
+        delegation: std::sync::Arc<delegation::DelegationClients>,
+    ) -> Self {
+        Self {
+            handle,
+            options,
+            delegation,
+        }
     }
 
     pub fn options(&self) -> Options {
         self.options
+    }
+
+    pub fn delegation_clients(&self) -> &delegation::DelegationClients {
+        &self.delegation
+    }
+
+    /// A signed-in, non-delegated user authorizes a configured client: the
+    /// result is the browser location carrying a one-time code and the
+    /// caller's `state`.
+    pub async fn authorize_delegation(
+        &self,
+        token: &str,
+        authorization: store::delegation::Authorization,
+        request_id: RequestId,
+    ) -> Result<IssuedCode, Error> {
+        let digest = secret::token_digest(token)?;
+        let clients = self.delegation.clone();
+        self.handle
+            .write(move |tx| {
+                store::delegation::authorize(tx, digest, &clients, &authorization, request_id)
+            })
+            .await
+    }
+
+    /// Exchanges a code and its PKCE verifier for a delegated session; the
+    /// code is consumed whether or not the exchange succeeds.
+    pub async fn exchange_delegation(
+        &self,
+        client: String,
+        code: Secret,
+        code_verifier: Secret,
+        redirect_uri: String,
+        request_id: RequestId,
+    ) -> Result<DelegatedSession, Error> {
+        let clients = self.delegation.clone();
+        self.handle
+            .write(move |tx| {
+                store::delegation::exchange(
+                    tx,
+                    &clients,
+                    &client,
+                    code.expose(),
+                    code_verifier.expose(),
+                    &redirect_uri,
+                    request_id,
+                )
+            })
+            .await
+            .and_then(|outcome| match outcome {
+                store::delegation::Exchange::Issued(issued, client) => {
+                    Ok(DelegatedSession { issued, client })
+                }
+                store::delegation::Exchange::Rejected => Err(Error::InvalidDelegation),
+            })
     }
 
     pub async fn register(

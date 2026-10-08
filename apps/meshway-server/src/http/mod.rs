@@ -4,6 +4,7 @@ mod agent;
 mod auth;
 mod configuration;
 mod connectivity;
+mod delegation;
 mod enrollment;
 mod error;
 pub mod events;
@@ -20,7 +21,7 @@ pub mod state;
 use axum::{
     Router,
     extract::{DefaultBodyLimit, FromRef, MatchedPath, Request},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
 };
@@ -85,10 +86,15 @@ pub const MAX_JSON_BODY_BYTES: usize = 16 * 1024;
 /// Full configuration documents include JSONC text and embedded protocol material.
 pub const MAX_CONFIGURATION_BODY_BYTES: usize = 8 * 1024 * 1024;
 
+/// The origin delegation clients should use for this Server, if configured.
+#[derive(Clone)]
+pub(super) struct PublicOrigin(Option<std::sync::Arc<crate::settings::Url>>);
+
 #[derive(Clone)]
 struct HttpState {
     sealer: std::sync::Arc<crate::secrets::Sealer>,
     accounts: Accounts,
+    public_origin: PublicOrigin,
     networks: Networks,
     configurations: crate::configuration::Configurations,
     history: crate::history::History,
@@ -121,6 +127,11 @@ impl FromRef<HttpState> for std::sync::Arc<crate::secrets::Sealer> {
 impl FromRef<HttpState> for Accounts {
     fn from_ref(state: &HttpState) -> Self {
         state.accounts.clone()
+    }
+}
+impl FromRef<HttpState> for PublicOrigin {
+    fn from_ref(state: &HttpState) -> Self {
+        state.public_origin.clone()
     }
 }
 
@@ -163,6 +174,8 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(auth::login))
         .routes(routes!(auth::session))
         .routes(routes!(auth::logout))
+        .routes(routes!(delegation::create))
+        .routes(routes!(delegation::exchange))
         .routes(routes!(networks::list, networks::create))
         .routes(routes!(networks::get))
         .routes(routes!(networks::rename))
@@ -335,6 +348,7 @@ pub fn router(app: &App) -> Router {
         .with_state(HttpState {
             sealer: app.sealer(),
             accounts: app.accounts(),
+            public_origin: PublicOrigin(app.public_origin().cloned().map(std::sync::Arc::new)),
             networks: app.networks(),
             configurations: app.configurations(),
             history: app.history(),
@@ -353,6 +367,7 @@ pub fn router(app: &App) -> Router {
         ))
         .merge(resources::router(app.resources()))
         .merge(observations::router(app.observations()))
+        .layer(cors(app.accounts().delegation_clients()))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request| {
@@ -366,6 +381,32 @@ pub fn router(app: &App) -> Router {
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG))
                 .on_failure(DefaultOnFailure::new().level(Level::WARN)),
         )
+}
+
+/// Browsers on a configured delegation client's origin may call `/api/v1`
+/// with a bearer token; nothing else is reachable cross-origin and cookies
+/// never take part. Without clients no CORS headers are sent at all.
+fn cors(clients: &crate::accounts::delegation::DelegationClients) -> tower_http::cors::CorsLayer {
+    use tower_http::cors::{AllowOrigin, CorsLayer};
+    if clients.is_empty() {
+        return CorsLayer::new();
+    }
+    let origins: Vec<HeaderValue> = clients
+        .origins()
+        .filter_map(|origin| HeaderValue::from_str(origin.as_str().trim_end_matches('/')).ok())
+        .collect();
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(move |origin, parts| {
+            parts.uri.path().starts_with("/api/v1/") && origins.iter().any(|o| o == origin)
+        }))
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("last-event-id"),
+        ])
+        .expose_headers([HeaderName::from_static("x-request-id"), header::DATE])
+        .max_age(std::time::Duration::from_secs(600))
 }
 
 async fn context(mut request: Request, next: Next) -> Response {
