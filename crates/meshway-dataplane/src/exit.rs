@@ -78,12 +78,53 @@ pub struct ExitTuple {
 /// Immutable original guard; the host must recheck at every kernel submission
 /// and I/O boundary. Remaining time must never be restarted after queueing.
 #[derive(Clone, Debug)]
-pub struct ProjectionScope(pub(crate) Guard);
+pub struct ProjectionScope(pub(crate) Guard, Option<Arc<Acknowledgement>>);
+#[derive(Debug)]
+struct Acknowledgement {
+    deadline: Instant,
+    deadline_ms: u64,
+    status: Arc<AtomicU8>,
+}
 impl ProjectionScope {
+    pub(crate) fn new(guard: Guard) -> Self {
+        Self(guard, None)
+    }
     pub fn ensure_current(&self) -> Result<(), Error> {
-        self.0.ensure_current().map_err(|_| Error::Expired)
+        let cutoff = self
+            .1
+            .as_ref()
+            .filter(|ack| ack.status.load(Ordering::Acquire) == PENDING)
+            .map_or(u64::MAX, |ack| ack.deadline_ms);
+        self.0.ensure_before(cutoff).map_err(|_| Error::Expired)?;
+        if self
+            .1
+            .as_ref()
+            .is_some_and(|ack| match ack.status.load(Ordering::Acquire) {
+                READY => false,
+                PENDING => Instant::now() >= ack.deadline,
+                _ => true,
+            })
+        {
+            return Err(Error::Expired);
+        }
+        Ok(())
     }
     pub async fn invalidated(&self) {
+        if self.ensure_current().is_err() {
+            return;
+        }
+        if let Some(ack) = &self.1
+            && ack.status.load(Ordering::Acquire) == PENDING
+        {
+            tokio::select! { biased;
+                _ = self.0.invalidated() => return,
+                _ = self.0.snapshot().invalidated_at(ack.deadline_ms) => {},
+                _ = tokio::time::sleep_until(ack.deadline.into()) => {},
+            }
+            if self.ensure_current().is_err() {
+                return;
+            }
+        }
         self.0.invalidated().await;
     }
     pub fn snapshot(&self) -> &ExecutionSnapshot {
@@ -105,7 +146,7 @@ pub(crate) struct Gate {
     pub scope: ProjectionScope,
     pub acknowledgement_deadline: Instant,
     pub cancellation: CancellationToken,
-    status: AtomicU8,
+    status: Arc<AtomicU8>,
     claimed: AtomicBool,
     budget: Arc<AtomicUsize>,
     released: AtomicBool,
@@ -116,26 +157,37 @@ impl Gate {
         self.status.load(Ordering::Acquire) == READY
     }
     pub fn new(
-        scope: ProjectionScope,
+        mut scope: ProjectionScope,
         cancellation: CancellationToken,
         budget: Arc<AtomicUsize>,
         limits: Limits,
         now: Instant,
-        previous_deadline: Option<Instant>,
+        previous_deadline: Option<(Instant, u64)>,
     ) -> Result<Arc<Self>, Error> {
         budget
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < limits.max_pending).then_some(n + 1)
             })
             .map_err(|_| Error::Capacity)?;
+        let acknowledgement_deadline = scope
+            .deadline()
+            .min(now + limits.projection_timeout)
+            .min(previous_deadline.map_or(scope.deadline(), |deadline| deadline.0));
+        let acknowledgement_deadline_ms = previous_deadline
+            .map_or(scope.deadline_ms(), |deadline| {
+                deadline.1.min(scope.deadline_ms())
+            });
+        let status = Arc::new(AtomicU8::new(PENDING));
+        scope.1 = Some(Arc::new(Acknowledgement {
+            deadline: acknowledgement_deadline,
+            deadline_ms: acknowledgement_deadline_ms,
+            status: status.clone(),
+        }));
         Ok(Arc::new(Self {
-            acknowledgement_deadline: scope
-                .deadline()
-                .min(now + limits.projection_timeout)
-                .min(previous_deadline.unwrap_or(scope.deadline())),
+            acknowledgement_deadline,
             scope,
             cancellation,
-            status: AtomicU8::new(PENDING),
+            status,
             claimed: AtomicBool::new(false),
             budget,
             released: AtomicBool::new(false),
@@ -163,8 +215,15 @@ impl Gate {
             }
         }
     }
-    pub fn failed(&self, now: Instant) -> bool {
-        if self.status.load(Ordering::Acquire) == PENDING && now >= self.acknowledgement_deadline {
+    pub fn failed(&self, now: Instant, now_ms: u64) -> bool {
+        if self.status.load(Ordering::Acquire) == PENDING
+            && (now >= self.acknowledgement_deadline
+                || self
+                    .scope
+                    .1
+                    .as_ref()
+                    .is_some_and(|ack| now_ms >= ack.deadline_ms))
+        {
             self.fail();
         }
         self.cancellation.is_cancelled()

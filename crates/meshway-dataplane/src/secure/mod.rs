@@ -227,10 +227,18 @@ impl Guard {
     }
 
     pub(crate) fn ensure_current(&self) -> Result<(), Error> {
+        self.ensure_before(u64::MAX)
+    }
+
+    pub(crate) fn ensure_before(&self, deadline_ms: u64) -> Result<(), Error> {
         if self.cancellation.is_cancelled() {
             return Err(Error::Expired);
         }
-        self.finish()?;
+        let reading = self.snapshot.reading().map_err(|_| Error::Authority)?;
+        self.check_at(&reading)?;
+        if reading.now_ms >= deadline_ms {
+            return Err(Error::Expired);
+        }
         if let Some(gate) = &self.projection {
             gate.ready().map_err(|_| Error::Expired)?;
         }

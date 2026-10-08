@@ -65,8 +65,12 @@ impl ExitState {
             renew: false,
         })
     }
-    pub fn live(&self, now: Instant) -> bool {
-        !self.cancellation.is_cancelled() && self.gate.as_ref().is_none_or(|gate| !gate.failed(now))
+    pub fn live(&self, now: Instant, now_ms: u64) -> bool {
+        !self.cancellation.is_cancelled()
+            && self
+                .gate
+                .as_ref()
+                .is_none_or(|gate| !gate.failed(now, now_ms))
     }
 }
 
@@ -117,7 +121,7 @@ impl FlowTable {
         let Some(exit) = &mut prepared.flow.exit else {
             return Ok(());
         };
-        if !exit.live(reading.instant) {
+        if !exit.live(reading.instant, reading.now_ms) {
             return Err(Error::Expired);
         }
         if !exit.terminal {
@@ -140,9 +144,12 @@ impl FlowTable {
                                 <= renew_after)))
         });
         if renew {
-            let previous_deadline = exit.gate.as_ref().map(|gate| gate.scope.deadline());
+            let previous_deadline = exit
+                .gate
+                .as_ref()
+                .map(|gate| (gate.scope.deadline(), gate.scope.deadline_ms()));
             exit.renew = exit.gate.is_some();
-            let scope = ProjectionScope(guard.for_projection(
+            let scope = ProjectionScope::new(guard.for_projection(
                 prepared.expires_at,
                 prepared.permit_expires_at_ms,
                 exit.cancellation.clone(),
@@ -189,14 +196,18 @@ impl FlowTable {
             });
     }
 
-    pub(super) fn expire_exits(&mut self, now: Instant) {
+    pub(super) fn expire_exits(&mut self, now: Instant, now_ms: u64) {
         if !self.has_exit_work() {
             return;
         }
         let dead: Vec<_> = self
             .entries
             .iter()
-            .filter(|(_, flow)| flow.exit.as_ref().is_some_and(|exit| !exit.live(now)))
+            .filter(|(_, flow)| {
+                flow.exit
+                    .as_ref()
+                    .is_some_and(|exit| !exit.live(now, now_ms))
+            })
             .map(|(key, _)| key.clone())
             .collect();
         for key in dead {
@@ -248,7 +259,7 @@ impl FlowTable {
             let Some(gate) = &exit.gate else {
                 continue;
             };
-            let scope = ProjectionScope(
+            let scope = ProjectionScope::new(
                 gate.scope.0.successor_projection(
                     snapshot.clone(),
                     flow.expires_at.min(reading.expires_at),
@@ -270,11 +281,17 @@ impl FlowTable {
         // even when the execution snapshot has expired.
         for tombstone in self.tombstones.values() {
             if tombstone.state.terminal && !tombstone.claimed.load(Ordering::Acquire) {
-                self.pending_projections
+                if self
+                    .pending_projections
                     .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                         (n < self.exit_limits.max_pending).then_some(n + 1)
                     })
-                    .ok()?;
+                    .is_err()
+                {
+                    // Already-reserved positive operations can still be handed
+                    // out below; their ACKs free slots for prioritized cleanup.
+                    break;
+                }
                 tombstone.claimed.store(true, Ordering::Release);
                 return Some(ExitProjection::Retire {
                     flow: tombstone.state.incarnation,
@@ -299,17 +316,20 @@ impl FlowTable {
                 continue;
             };
             if let Some(scope) = &state.successor {
-                state.gate = Some(
-                    Gate::new(
-                        scope.clone(),
-                        state.cancellation.clone(),
-                        self.pending_projections.clone(),
-                        self.exit_limits,
-                        Instant::now(),
-                        Some(flow.expires_at),
-                    )
-                    .ok()?,
-                );
+                let Ok(gate) = Gate::new(
+                    scope.clone(),
+                    state.cancellation.clone(),
+                    self.pending_projections.clone(),
+                    self.exit_limits,
+                    Instant::now(),
+                    Some((
+                        flow.expires_at,
+                        flow.permit_expires_at_ms.min(flow.guard_expires_at_ms),
+                    )),
+                ) else {
+                    continue;
+                };
+                state.gate = Some(gate);
                 state.successor = None;
             }
             let Some(gate) = &state.gate else {
@@ -350,6 +370,12 @@ impl FlowTable {
         self.exit_count != 0 || !self.tombstones.is_empty()
     }
 
+    pub fn has_exit_circuit(&self, id: [u8; 32]) -> bool {
+        self.entries
+            .values()
+            .any(|flow| flow.exit.is_some() && flow.circuit == Some(id))
+    }
+
     pub fn retire_exit_circuit(&mut self, id: [u8; 32]) {
         let keys: Vec<_> = self
             .entries
@@ -376,6 +402,9 @@ impl FlowTable {
 }
 
 impl Prepared {
+    pub fn exit_incarnation(&self) -> Option<FlowIncarnation> {
+        self.flow.exit.as_ref().map(|exit| exit.incarnation)
+    }
     pub fn exit_guards(&self) -> (Option<CancellationToken>, Option<Arc<Gate>>) {
         self.flow.exit.as_ref().map_or((None, None), |exit| {
             (Some(exit.cancellation.clone()), exit.gate.clone())

@@ -110,7 +110,7 @@ struct Flow {
 impl Flow {
     fn live_at(&self, now: Instant, now_ms: u64) -> bool {
         now < self.expires_at
-            && self.exit.as_ref().is_none_or(|exit| exit.live(now))
+            && self.exit.as_ref().is_none_or(|exit| exit.live(now, now_ms))
             && now_ms < self.permit_expires_at_ms
             && now_ms < self.guard_expires_at_ms
     }
@@ -210,7 +210,7 @@ impl FlowTable {
         self.index = Default::default();
     }
     pub fn expire(&mut self, now: Instant, now_ms: u64) {
-        self.expire_exits(now);
+        self.expire_exits(now, now_ms);
         while let Some(key) = self.index.expired(now, now_ms).cloned() {
             let flow = self.remove(&key).expect("indexed flow");
             if crate::diagnostics::event() {
@@ -436,7 +436,7 @@ impl FlowTable {
             (self.entries.get(&key), Direction::Forward)
         };
         if let Some(exit) = existing.and_then(|flow| flow.exit.as_ref()) {
-            if !exit.live(time.instant) {
+            if !exit.live(time.instant, time.now_ms) {
                 return Err(Error::Expired);
             }
             if direction == Direction::Reply

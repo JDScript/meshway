@@ -43,10 +43,14 @@ impl SecureNode {
             self.engine.flows.expire(Instant::now(), 0);
         }
         for id in self.engine.flows.retired_exit_circuits() {
+            // Several tuples may share one admitted cipher. The retired flow's
+            // own token fences its queued outputs; do not kill other live flows.
+            if self.engine.flows.has_exit_circuit(id) {
+                continue;
+            }
             if let Some(circuit) = self.circuits.get_mut(&id) {
                 circuit.retire_for("exit", "flow_retired");
             }
-            self.engine.flows.retire_exit_circuit(id);
         }
     }
 

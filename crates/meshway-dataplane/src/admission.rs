@@ -97,6 +97,7 @@ impl Engine {
         let expires_at = prepared.expires_at;
         let permit_expires_at_ms = prepared.permit_expires_at_ms;
         let (flow_cancellation, projection) = prepared.exit_guards();
+        let exit_incarnation = prepared.exit_incarnation();
         let checked = self.flows.commit(prepared);
         Ok(PendingRoute {
             snapshot: snapshot.clone(),
@@ -108,6 +109,7 @@ impl Engine {
             section: circuit.and_then(|(_, guard)| guard.section.clone()),
             flow_cancellation,
             projection,
+            exit_incarnation,
         })
     }
 }

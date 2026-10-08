@@ -214,6 +214,7 @@ pub(crate) struct PendingRoute {
     section: Option<std::sync::Arc<()>>,
     flow_cancellation: Option<tokio_util::sync::CancellationToken>,
     projection: Option<std::sync::Arc<exit::Gate>>,
+    exit_incarnation: Option<exit::FlowIncarnation>,
 }
 
 impl fmt::Debug for PendingRoute {
@@ -252,6 +253,27 @@ impl PendingAction {
             gate.ready()?;
         }
         Ok(())
+    }
+
+    /// Original per-packet lifetime for the host's guarded exit-TUN I/O adapter.
+    /// Obtain only after projection ACK. The adapter must retain this scope and
+    /// recheck it at every write poll; a later flow projection cannot replace it.
+    pub fn exit_scope(&self) -> Result<exit::ProjectionScope, Error> {
+        if self.hop() != Hop::Exit {
+            return Err(Error::Ingress);
+        }
+        self.ensure_current()?;
+        Ok(exit::ProjectionScope::new(secure::Guard::from_route(
+            &self.pending,
+        )))
+    }
+
+    /// Opaque kernel projection identity for this exact admitted exit packet.
+    /// Scheduling metadata only; `exit_scope`/`release` remain the output fence.
+    pub fn exit_flow(&self) -> Option<exit::FlowIncarnation> {
+        (self.hop() == Hop::Exit)
+            .then_some(self.pending.exit_incarnation)
+            .flatten()
     }
 
     /// Await the Install/Renew ACK while retaining the original packet guard.
