@@ -61,6 +61,10 @@ pub struct NodeConfigurationDelta {
     pub dns:DnsExecution,
     /// Complete replacement Mesh capture pools, without granting business access.
     pub mesh_address_pools:AddressPools,
+    /// Complete external packet ownership replacement.
+    pub egress_capture:EgressCapturePlan,
+    /// Complete exit role replacement; absent withdraws the role.
+    pub exit_role:Option<ExitRolePlan>,
     /// Local listener removals and complete replacements.
     pub listeners:ListenerDelta,
     /// Outbound candidate removals and complete replacements.
@@ -130,6 +134,8 @@ pub fn configuration_delta(
         identity: t.identity.clone(),
         addresses: t.addresses.clone(),
         mesh_address_pools: t.mesh_address_pools.clone(),
+        egress_capture: t.egress_capture.clone(),
+        exit_role: t.exit_role.clone(),
         self_keys: t.self_keys.clone(),
         exit_enabled: t.exit_enabled,
         dns: t.dns.clone(),
@@ -201,6 +207,8 @@ pub fn apply_configuration_delta(
     t.identity = delta.identity;
     t.addresses = delta.addresses;
     t.mesh_address_pools = delta.mesh_address_pools;
+    t.egress_capture = delta.egress_capture;
+    t.exit_role = delta.exit_role;
     t.self_keys = delta.self_keys;
     t.exit_enabled = delta.exit_enabled;
     t.dns = delta.dns;

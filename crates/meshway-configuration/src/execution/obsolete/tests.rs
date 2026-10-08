@@ -81,6 +81,8 @@ fn historical_dial_endpoints_are_validated_without_becoming_current_candidates()
             .is_err()
     );
     value["dialers"]["peer/udp"]["endpoints"][0]["source"] = json!("configured");
+    validate(&value.to_string()).unwrap();
+    value["dialers"]["peer/udp"]["endpoints"][0]["source"] = json!("unknown");
     reject(value, ObsoleteSliceError::Map);
 }
 

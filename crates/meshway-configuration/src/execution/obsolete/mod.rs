@@ -1,4 +1,4 @@
-//! Integrity checks for historical demand-1 through demand-4 slice bodies.
+//! Integrity checks for historical demand-1 through demand-5 slice bodies.
 use super::{
     DemandDecision, DiagnosticPermit, DnsExecution, LocalEgressPermit, PathPermit,
     PeerConfiguration, TrustedDnsAssociation, TrustedNode,
@@ -17,10 +17,17 @@ use std::collections::BTreeMap;
 meshway_serde::object! { pub struct HistoricalDialCandidate {
     pub peer: NodeId,
     pub listener_key: String,
-    pub endpoints: Vec<Endpoint>,
+    pub endpoints: Vec<HistoricalEndpoint>,
     pub priority: u16,
     pub parameters: DialParameters,
 } }
+
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum HistoricalEndpoint {
+    Sourced(super::DialEndpoint),
+    Original(Endpoint),
+}
 
 /// Format failures, separate from the caller's publication or enrollment binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

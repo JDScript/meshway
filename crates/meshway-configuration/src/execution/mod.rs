@@ -10,6 +10,8 @@ use std::{collections::BTreeMap, net::IpAddr};
 mod admission;
 mod delta;
 mod diagnostics;
+mod exit;
+pub use exit::*;
 mod obsolete;
 pub use delta::*;
 pub use diagnostics::*;
@@ -227,6 +229,8 @@ pub struct PathPermit {
     pub port: Option<Port>,
     /// Source routing profile used to compile the permit.
     pub profile: String,
+    /// Required execution constraints for an external exit; absent for Mesh services.
+    pub exit: Option<ExitPermit>,
     /// Allowed complete paths; a flow retains its established path.
     pub paths: Vec<LogicalPath>,
     /// Permit deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and bounded by demand and dependency deadlines.
@@ -305,6 +309,12 @@ meshway_serde::string_enum! {
 #[serde(rename_all = "camelCase")]
 /// Condition preventing Server compilation from granting the requested business execution.
 pub enum UnavailableReason {
+    /// Exit prerequisites are unknown, expired or failed.
+    ExitUnavailable,
+    /// Initial exit execution cannot forward this inner address family.
+    UnsupportedFamily,
+    /// Domain-dependent packet ownership cannot be compiled without trusted context.
+    EgressConflict,
     /// Current Access rules do not authorize the requested business scope.
     Unauthorized,
     /// No eligible complete path or assigned Mesh destination satisfies the demand.
@@ -386,6 +396,10 @@ pub struct NodeConfiguration {
     pub self_keys: TrustedNode,
     /// Complete managed capture ranges, never peer inventory or business authority.
     pub mesh_address_pools: AddressPools,
+    /// Disjoint external packet ownership and IPv6 negative capture boundary.
+    pub egress_capture: EgressCapturePlan,
+    /// Exit resource responsibility, issued before capability readiness.
+    pub exit_role: Option<ExitRolePlan>,
     /// Complete local listener parameters and material indexed by configuration key.
     pub listeners: BTreeMap<String, PreparedListener>,
     /// Authorized outbound candidates indexed by Server-compiled candidate key.

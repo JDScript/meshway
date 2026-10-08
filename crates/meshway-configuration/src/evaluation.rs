@@ -142,6 +142,10 @@ pub enum TargetProblem {
     Disabled,
     /// Not `exitEnabled`.
     ExitDisabled,
+    /// Exit prerequisites are unknown, expired or failed.
+    ExitUnavailable,
+    /// The requested inner family is unsupported by initial exit execution.
+    UnsupportedFamily,
     /// No trusted keys: never enrolled or credentials revoked.
     NotEnrolled,
     /// Every route is blocked by topology, routing or missing transports.
@@ -158,6 +162,8 @@ pub struct TargetEvaluation {
     #[serde(deserialize_with = "nullable")] pub problem: Option<TargetProblem> [required = true],
     /// Number of planned paths to this target, at most four.
     pub paths: u32,
+    /// Fresh typed exit failure when reported; absence is unknown, not success.
+    pub exit_unavailable_reason: Option<meshway_model::exit::ExitUnavailableReason>,
 } }
 
 tagged! {

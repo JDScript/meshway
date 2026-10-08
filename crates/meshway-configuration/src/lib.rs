@@ -28,7 +28,7 @@ pub use document::*;
 pub use editing::*;
 pub use fields::*;
 pub use identity::{rebind_node_user_references, rebind_policy_user_references};
-pub use internet::{AddressSet, internet_ranges};
+pub use internet::AddressSet;
 pub use meshway_transport_spec as transport;
 pub use meshway_transport_spec::{OuterSocket, TransportProtocol};
 pub use types::*;
