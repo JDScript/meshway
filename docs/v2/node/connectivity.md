@@ -41,6 +41,10 @@ TCP／VLESS／Trojan 会话建立后同样可双向收发。UDP 打洞解决路�
 
 ## STUN 与 Server 协调
 
+所有承载的直接拨号候选由 Server 合并：管理员的额外公告地址（`configured`）优先，本机 listener 上报地址（`local`）次之；同地址保留优先来源。流式承载也可使用 `local`。原始字段、过滤和每 listener 八地址上限见[本机 listener 候选](/v2/state-reference/endpoints#本机-listener-候选)。选定通道的 acquisition 分别为 `publishedEndpoint`／`localEndpoint`；接受端仍为 `acceptedInbound`。
+
+STUN 继续使用原有同 socket 观测与双边接受的协调路径，不把 UDP 映射加入 TCP／VLESS／Trojan 目标。只有本机候选而没有 configured 地址的 UDP 邻接继续保留 STUN 刷新资格；本机候选不意味着 NAT 穿透已成功。
+
 STUN 使用 RFC 8489 Binding 交换观察 socket 的外部映射；Meshway Server 负责当前主体／网络权限、获准 peer 的候选交换和有期限的尝试协调；Node 使用实际 socket 互发探测并完成认证。
 
 Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分别配置，参数见 [Server 运行参数](/v2/server#运行参数)。两者默认均为空；监听地址与对外端点分开声明，不从 wildcard bind 或 HTTP 地址猜测。

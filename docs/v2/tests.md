@@ -36,7 +36,7 @@ fast profile 实际排除的 44 个测试都是**真实时间合同**（lease �
 | meshway-transport-spec | 23 | 0／23 | 0.3 s | 0 | 承载声明 schema |
 | meshway-configuration | 20 | 9／11 | 0.3 s | 0 | 文档解析、规范值、切片格式校验 |
 | meshway-control-client | 19 | 12／7 | 3 s | 0 | 生成 Rust 客户端、SSE 解码、受保护 HTTP builder |
-| meshway-ipc | 17 | 9／8 | 13 s | 1 | IPC v4 编解码、流式帧、空闲限时 |
+| meshway-ipc | 17 | 9／8 | 13 s | 1 | IPC v5 编解码、流式帧、空闲限时 |
 | meshway-stun | 16 | 2／14 | 0.3 s | 0 | RFC 8489 编解码与限流 |
 | meshway-cli | 15 | 0／15 | 12 s | 0 | CLI 对 daemon 的 IPC 行为（起真实 daemon） |
 | meshway-tls | 14 | 1／13 | 0.4 s | 0 | ring provider、系统信任、精确叶证书 |

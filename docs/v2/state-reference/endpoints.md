@@ -49,6 +49,19 @@ configured 的地址可以是配置中的域名加端口。interface／stun 必�
 
 所有来源都关联准确的资源和外层协议，UDP 候选不能升级为 TCP／VLESS 可达性。拨号 socket 的接口地址也不自动变成固定 listener，只能按相应协调方式使用。
 
+## 本机 listener 候选
+
+`SocketState.localEndpoints` 是实际 listener 的本机地址样本，条目为 `{ "address": "192.168.1.20:8421", "source": "local" }`。省略表示未采样，空数组表示本次采样无合格地址；采样失败不伪造空集合。listener 通过 `socketIds` 关联实际 socket；已接受的流式连接不是新的 listener 候选。
+
+- wildcard bind 展开为该地址族的在线接口地址；显式 bind 只报告该地址，`bindInterface` 进一步收窄接口。
+- 排除 loopback、未指定、多播、广播、IPv4／IPv6 link-local、IPv4-mapped IPv6 及 Mesh 地址池（含自身 TUN 地址）。
+- 同 listener 地址去重后最多八个，保持确定顺序，端口来自实际 bind。
+- Server 按当前认证 instance、配置资源和报告新鲜度保存有界的临时编译投影；Server 重启后等待新 State，重复报告不续期。
+- 当前资源未变时，本机地址变化重新发布既有授权候选；安装期未采样报告不刷新旧地址期限。过期或资源／instance 变化后不再加入新的执行发布。
+- `DialCandidate.endpoints[].source` 为 `configured` 或 `local`，按这个顺序合并去重。无额外公告地址也可使用本机地址；STUN 仍走独立的 UDP 协调路径。
+
+本机接口的私网地址不保证 peer 可达。只有真实认证通道建立后，拨号方才报告 `acquisition.type=localEndpoint`；接受方仍报告 `acceptedInbound`。
+
 ## Interface candidates
 
 - wildcard bind `0.0.0.0`／`::` 不是远端可拨地址，不能直接公告。
@@ -61,7 +74,7 @@ configured 的地址可以是配置中的域名加端口。interface／stun 必�
 
 ## 使用候选
 
-使用前检查 access／topology／routing、承载限制、资源代际和地址范围。来源不是信任等级，也不定义严格串行拨号顺序；configured 的存在不表示禁止其他来源。
+使用前检查 access／topology／routing、承载限制、资源代际和地址范围。来源不是信任等级；直接拨号遵守 configured 优先、local 次之的顺序，configured 的存在不表示禁止其他来源。
 
 实际连接必须认证为正确 Node。候选选择须受建连预算约束，不能因为来源变化无条件拆换健康通道。调度与 NAT 能力范围见 [Node](/v2/node)。
 

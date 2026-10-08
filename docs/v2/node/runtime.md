@@ -65,7 +65,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 仅验证 Mesh IP、无需系统 DNS 的场景，在 Server 的 [DNS 配置](/v2/configuration-reference/dns)中明确设置 `magicDNS=false`、`overrideLocal=false`，并保持 `servers`、`default`、`routes`、`searchDomains` 为空。此时不创建 DNS 服务／锚点，也不要求机器运行 resolved。存在 DNS 需求时须完成对应安装；本机后端选择不覆盖云端 DNS 业务配置。`control-only` 不安装系统 DNS。
 
-IPC v4 的公开运行状态：
+IPC v5 的公开运行状态：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -115,7 +115,7 @@ IPC v4 的公开运行状态：
 | `transport` | 承载安装／运行失败 |
 | `apply` | 当前目标安装、回执或报告执行范围需重新同步 |
 
-IPC 封闭对象解码拒绝未知字段；新增状态字段与身份操作使用 v4，旧版本请求返回 `ErrorCode::Version`。CLI 与 daemon 同版本发布，不将缺字段补成已连接或零时间。
+IPC 封闭对象解码拒绝未知字段；当前 v5 支持 Ping 通道的 `localEndpoint` 来源，旧版本请求返回 `ErrorCode::Version`。CLI 与 daemon 同版本发布，不将缺字段补成已连接或零时间。
 
 ready／applied 只表示该目标的本机安装结果，不表示 peer 已建立认证通道或应用已收回业务包。Node State 中的 listener／link 来自组件观测；路径、RTT、丢包缺测保持空。安装与报告顺序见 [Control ApplicationTicket](/v2/node/control#安装回执与运行报告)。
 

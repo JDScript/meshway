@@ -44,7 +44,7 @@ T2 的每一行都受生产时间常量约束（60 秒 execution lease、续租�
 3. **包内门槛**：按上表运行；性能包附报告 ID 与宿主 load。
 4. **整合**：rebase 到 main → T1 全量 → T2 相关行全长 → `git merge --ff-only` → 推送 → 合入后自动层运行并写入状态页。
 5. **回收**：删除 worktree 与分支；证据写入 [changelog](/v2/changelog)（工作包、提交、T2／T3 报告 ID）。
-6. **部署**：常驻 lab 只部署合入后自动层全绿的 main；`node:lab deploy` 之后必须 `node:lab configure`（容器重建会改变 bridge IP）。
+6. **部署**：常驻 lab 只部署合入后自动层全绿的 main；首次初始化运行 `node:lab configure`。容器重建后的 bridge IP 由 Node State 自动更新，既有配置不因 IP 变化重做。
 
 ## 分支与证据
 

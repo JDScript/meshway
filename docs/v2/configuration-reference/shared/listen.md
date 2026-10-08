@@ -30,7 +30,7 @@
 | `remark` | `string` | `""` | 描述，不能为 null |
 | `listen` | IP 字符串 | `"0.0.0.0"` | IPv4／IPv6 bind 地址，不是域名 |
 | `listenPort` | `integer` | 必填 | 1–65535；端口冲突在执行时明确报告 |
-| `endpoints` | `Endpoint[]` | `[]` | 明确公告的外部 host／port，可与 bind 不同 |
+| `endpoints` | `Endpoint[]` | `[]` | 可选的额外公告 host／port，例如 NAT 公网地址或域名；可与 bind 不同 |
 | `bindInterface` | `string` | `""` | 空值由平台选择，否则在当前受控网络环境中校验接口 |
 | `socket.receiveBuffer` | `integer` | `0` | 字节；0 使用 provider 默认值，见[运行缓冲默认值](/v2/node/transport#udp-批量接口) |
 | `socket.sendBuffer` | `integer` | `0` | 字节；0 使用 provider 默认值，不保证内核接受请求大小 |
@@ -46,7 +46,7 @@
 
 公告地址不等于实测可达。STUN 候选来自 State，且须关联实际 socket；UDP 映射不推导 TCP 可达性。
 
-这份显式地址在候选视图中标记为 configured；详见[Endpoint Candidates](/v2/state-reference/endpoints)。当前 Node 对 Native TCP／VLESS／Trojan 只拨已公告的 endpoints，不从 State 的 interface／stun 候选推导流式承载的地址；interface／stun 候选只用于 Native UDP 的协调穿透，见[承载与邻接模型](/v2/node/carriers)。
+这份显式地址在执行候选中标记为 `configured`，优先于 Node 上报的 `local` 地址；省略或空数组均不关闭本机地址上报。所有已实现承载均使用 Server 发布的这两类候选；STUN 仍只用于 Native UDP 的协调穿透。来源、上报与失效定义见[Endpoint Candidates](/v2/state-reference/endpoints)，建连行为见[承载与邻接模型](/v2/node/carriers)。
 
 ### TCP
 

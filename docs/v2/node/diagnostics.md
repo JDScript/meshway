@@ -43,7 +43,7 @@ meshway ping fd12:3456::2 -c 3 --json
 
 准备阶段日志不包含凭据。INFO 的 `Diagnostic preparation stage changed` 使用稳定 `stage`：`subscription_queued`（本机接纳）、`subscription_accepted`（订阅响应携带任务 phase／publication 引用，不等于已安装许可）、`installed`（任务许可与本机已安装执行匹配并通过绑定校验）、`first_hop_channel`（等待首跳认证承载）、`path_handshake`（完整路径握手）、`path_established`（握手完成）。事件携带适用的 subscription／observation／publication／instance 引用；首跳与握手阶段附带本机 setup 耗时。DEBUG 提供 `subscription_request`、`installation_pending` 与握手重发事件。`Diagnostic preparation budget expired` 记录最后等待阶段／订阅确认状态，不作为 RTT。
 
-当前 IPC v4 的 Preparing 只携带 `elapsedMs`，CLI 显示等待耗时；具体阶段由上述日志关联，不从耗时推断 STUN、安装或某段路径失败。
+当前 IPC v5 的 Preparing 只携带 `elapsedMs`，CLI 显示等待耗时；具体阶段由上述日志关联，不从耗时推断 STUN、安装或某段路径失败。
 
 RTT 使用源端单调时钟：从完整 probe 被正式 transport sender 接纳，到完整回复被 receiver 取得并在之后通过 SecureNode 认证／关联验证。它包含发送排队、承载与终点处理；控制面请求、建连和结果上报不进入该差值。
 
@@ -53,7 +53,7 @@ source 每 observation 跨 CID 至少间隔 1 秒；relay／terminal 使用每�
 
 ## 本机与远端生命周期
 
-IPC v4 的一次 Ping 请求可返回多个 `ResultBody::Ping`，复用原 Response envelope；sequence 从 0 连续增长。Preparing 可先于唯一 Accepted，Sample 绑定 Accepted 的 ObservationId，Completed／Failed 结束流。无终态的 EOF 为错误；初始请求及每帧等待有界，取消不自动发起第二次测量。
+IPC v5 的一次 Ping 请求可返回多个 `ResultBody::Ping`，复用原 Response envelope；sequence 从 0 连续增长。Preparing 可先于唯一 Accepted，Sample 绑定 Accepted 的 ObservationId，Completed／Failed 结束流。无终态的 EOF 为错误；初始请求及每帧等待有界，取消不自动发起第二次测量。
 
 Node 订阅绑定真实 control key、instance／generation、网络和 Server boot。CLI 与用户订阅可共享同一 source task；取消一个订阅只移除它的需求，其他合法订阅继续。Node 普通续租、tasks 读取、State 和结果上报都不续活观察。
 

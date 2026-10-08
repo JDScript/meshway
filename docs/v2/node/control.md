@@ -127,12 +127,12 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 
 文件保护原语由 `meshway-private-storage` 提供，Server 与 Node 共用目录、祖先路径、文件类型／权限、锁和原子发布实现；文件名、记录格式和业务恢复仍归各自领域所有。
 
-当前私有记录格式为 2。仅对可识别且完整性／身份绑定有效的格式 1 执行升级：先持久备份原记录，再保留 origin、密钥、接入 intent 和身份绑定，清空派生 saved 缓存并原子写入格式 2。旧缓存不补默认字段变成新许可；重启重新同步。未知版本、当前格式损坏或备份失败均报错并保留原数据，不生成替代身份。
+当前私有记录格式为 3。仅对可识别且完整性／身份绑定有效的格式 1／2 执行升级：先持久备份原记录，再保留 origin、密钥、接入 intent 和身份绑定，清空派生 saved 缓存并原子写入格式 3。旧缓存不补默认字段变成新许可；重启重新同步。未知版本、当前格式损坏或备份失败均报错并保留原数据，不生成替代身份。
 
 远端连接要求 HTTPS；明文 HTTP 仅允许数字 loopback 地址。HTTP builder 由宿主提供并保留其底层 socket／解析保护；生成客户端关闭重定向。原始密钥、兑换码、token、HTTP 响应体和底层错误不会进入组件的普通 Debug／Display 输出。
 
 ## 限制
 
-IPC v4 与 CLI／daemon 同版本发布；旧版本请求返回 `ErrorCode::Version`。事件连接状态与最近有效事件接收时间只是观测，不代表执行许可，见[公开运行状态](/v2/node/runtime#安装范围与状态)。
+IPC v5 与 CLI／daemon 同版本发布，Ping 通道新增 `localEndpoint` 获取来源；旧版本请求返回 `ErrorCode::Version`。事件连接状态与最近有效事件接收时间只是观测，不代表执行许可，见[公开运行状态](/v2/node/runtime#安装范围与状态)。
 
 组件测试使用 `mise exec -- cargo test -p meshway-control -p meshway-private-storage --all-targets --locked`，以真实 Server 与独立私有数据库运行；它不替代 TUN 或业务包流验收，见[验收范围](/v2/node/validation)。

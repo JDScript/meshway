@@ -51,7 +51,7 @@ diagnostics 不进入普通业务 permits。没有对应许可时不能发起或
 | 参数 | NetworkConfiguration 或可信依赖中的来源 | 下发边界 |
 | --- | --- | --- |
 | 本机 bind／监听端口 | 本节点 listener | 本机监听参数 |
-| 目标 host／port | 对端 listener.endpoints | 获准出站候选 |
+| 目标 host／port 与 source | 对端可选 listener.endpoints（configured）与 State 本机地址（local） | 获准出站候选，configured 优先 |
 | VLESS UUID／Trojan password | listener 显式值或已保存的生成值 | 监听端与获准拨号端使用相同材料 |
 | TLS 证书／私钥 | 管理员提供或平台生成 | 私钥只发给监听端；拨号端取得验证材料 |
 | SNI、WS path／Host | 对端 listener 设置 | 相容的客户端参数 |
@@ -95,6 +95,6 @@ Server 补全并保存 B 的 UUID／TLS 材料，再向 A 编译对应的 DialCa
 
 ## Config 与 State
 
-管理员声明的 endpoint 和协议参数属于 Config。接口地址、STUN 映射、实际通道和 RTT 属于 State。动态 endpoint（当前仅 Native UDP 协调穿透的候选）只改变已获准 peer 的到达方式，不能替换身份、UUID、TLS 信任或业务许可；流式承载仍只使用已公告的 endpoints。
+管理员声明的额外 endpoint 和协议参数属于 Config。本机地址、STUN 映射、实际通道和 RTT 属于 State。Server 把当前 listener 的 local 地址加入已获准 DialCandidate，流式承载与 Native UDP 均可使用；STUN 继续走 Native UDP 协调穿透。动态地址只改变已获准 peer 的到达方式，不能替换身份、UUID、TLS 信任或业务许可；字段和上限见[本机 listener 候选](/v2/state-reference/endpoints#本机-listener-候选)。
 
 Mesh 地址修改属于 Config，不能用 endpoint State 改写。接收方须校验对应发布中的源／目的地址绑定；同一 IP 转交其他 Node 不继承旧会话资格，见[改址](/v2/configuration-reference/addressing#改址与安全切换)。

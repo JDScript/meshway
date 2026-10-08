@@ -32,7 +32,9 @@ Config 定义期望和许可，State 定义当前事实。上报 State 不会修
 
 ## links
 
-实际认证通道的观测，按 peer 和通道标识组织。topology 中允许一条边，不代表 State 中这条边已经建立。双方证据的聚合规则见[资源与连接](/v2/state-reference/resources#links)。
+实际 listener socket 的 `localEndpoints` 上报与执行候选来源见[本机 listener 候选](/v2/state-reference/endpoints#本机-listener-候选)。字段省略表示未取得样本，空数组表示已采样但无合格地址。State 不创建或扩展执行权限。
+
+实际认证通道的观测，按 peer 和通道标识组织；`acquisition` 保留真实连接获取来源，缺测为 null。topology 中允许一条边，不代表 State 中这条边已经建立。双方证据的聚合规则见[资源与连接](/v2/state-reference/resources#links)。
 
 ## paths
 

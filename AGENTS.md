@@ -4,7 +4,7 @@
 
 - `apps/meshway-server`：Rust Server；`apps/meshway-web-console`：pure SPA（`@meshway/web-console`）；`apps/meshway-web-site`：对外站点（landing、用户文档、API 参考；Next.js + Fumadocs 静态导出，`@meshway/web-site`）。
 - `crates/meshway-*`：当前共享模型、配置／编译、协议、生成客户端与严格序列化。
-- Mesh routing 由 Policy 按每段实际起终点递归 first-match；via 的段边界视为已满足，真实循环／重复节点拒绝。原业务 Access／身份与原路径回复不改成分段业务；compilerVersion 为 `meshway-demand-4`。配置结构归 Configuration，递归可执行性归 Policy 按需编译，见 `docs/v2/configuration-reference/routing.md`。
+- Mesh routing 由 Policy 按每段实际起终点递归 first-match；via 的段边界视为已满足，真实循环／重复节点拒绝。原业务 Access／身份与原路径回复不改成分段业务；compilerVersion 为 `meshway-demand-5`（执行 endpoint 来源）。配置结构归 Configuration，递归可执行性归 Policy 按需编译，见 `docs/v2/configuration-reference/routing.md`。
 - `crates/meshway-authority` 定义 `ExecutionSnapshot`／`DataPlaneIdentity`／`Clock`／`Deadline` 的类型与检查；生产唯一签发者是 `meshway-control`，`crates/` 不得出现第二个签发实现，基准／fixture 的静态签发只放 `tools/`，`meshwayd` 只装配 Control。
 - `packages/`：生成 OpenAPI／TypeScript SDK，以及 Console 与站点共享的主题和基础组件（`@meshway/ui`）；`docs/v2/`：当前唯一开发者规范与使用入口。
 - Rust 包根目录和 Cargo 包名统一 `meshway-xxx`。现行 HTTP 根仍是 `/api/v1`／`/agent-api/v1`，目录整理不自行改 wire。
@@ -13,7 +13,7 @@
 - Node 控制联系失败按真实错误分类恢复；网络／暂态响应、运行 session／instance 失效不永久卡入 Contract，当前身份和目标绑定错误仍阻断。静态 TCP／UDP、两种 DNS、双 NAT 与 TCP 退路均已验证 HTTP 中断至实际 instance／execution 到期、无第二次 up 的新资格／State／新包流恢复及旧输出拒绝；验收状态见 `docs/v2/node/validation.md`。
 - `meshway ping` 接受节点名／Mesh IP，按 `icmp:*` 和完整 routing／必经路径执行独立 DiagnosticPermit，复用唯一 SecureNode、Noise 与原路径回复；`meshway-diagnostics` 仅拥有有界测量调度／计时。Node 实例与用户订阅共用 ObservationService，真实 channel／STUN acquisition 和单调 RTT 分开于 preparing；订阅确认截止独立于 HTTP，旧输出不换绑新权限。Native TCP／UDP、双 NAT、退路与系统 DNS 场景已有真实 CLI 证据，精确范围见 `docs/v2/node/diagnostics.md`。Underlay／Manager 按资源差量续接，descriptor 取消不可逆；旧 discovery／attempt／输出 guard 仍立即失效。
 - 常驻 Node lab 使用锁定构建的可写 Ubuntu 工具镜像，含 ping／traceroute／iperf／iperf3 和独立 D-Bus／resolved；二进制只读、身份独立持久化。显式 image-build 与 deploy 分离，按真实 daemon PID／hash 核验；不得写 Docker 管理的宿主 DNS bind，详见 `docs/v2/node/docker-lab.md`。
-- 数据面当前候选 wire 为 v5：握手认证独立临时贡献与完整路径，稳态为定长 86 B 开销的相邻 MAC；中继按会话转发，业务流仅在端点准入；IPC 为 v4。包处理采用每轮最多 32 包／事件和独立 guard 的有界发送流水线。历史／当前重验边界与共享观察恢复缺口以 `docs/v2/node/validation.md` 为准。
+- 数据面当前候选 wire 为 v5：握手认证独立临时贡献与完整路径，稳态为定长 86 B 开销的相邻 MAC；中继按会话转发，业务流仅在端点准入；IPC 为 v5（新增 localEndpoint 获取来源，命令集不变）。包处理采用每轮最多 32 包／事件和独立 guard 的有界发送流水线。历史／当前重验边界与共享观察恢复缺口以 `docs/v2/node/validation.md` 为准。
 - 旧 Node、Apple、运行库与实验退出活跃树，保存在冻结 Git 分支及必要证据中。新实现只按明确白名单复用，不恢复长期 legacy 目录或旧 HTTP 兼容轨。Meshing 项目不是本项目依据。
 - 冻结参考：`archive/pre-consolidation-main-007e9deb`、`archive/node-runtime-8da83a7f`、`archive/apple-007e9deb`。未完成配置补全与旧 review WIP 保存在 `archive/wip-*-20261003` 分支，归档提交不代表通过验收；私有证据保存在 `.meshway/worktree-archives/20261003/`。
 
