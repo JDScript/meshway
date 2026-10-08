@@ -90,6 +90,35 @@ pub(super) async fn run(
             &format!("interface-{stage}"),
         )
         .await?;
+        for role in [Role::A, Role::B] {
+            let view = client
+                .get_node_state(
+                    &GetNodeStatePath {
+                        network_id: network,
+                        node_id: nodes[&role],
+                    },
+                    token,
+                )
+                .await?;
+            let Some(VisibleReport::Full { report }) = &view
+                .nodes
+                .get(&nodes[&role])
+                .ok_or("missing dialing peer State")?
+                .report
+            else {
+                return Err("missing dialing peer report".into());
+            };
+            if !report.links.get(&nodes[&Role::R]).is_some_and(|links| {
+                links.iter().any(|link| {
+                    link.phase == meshway_model::state::LinkPhase::Authenticated
+                        && link.initiator_node_id == nodes[&role]
+                        && link.acquisition
+                            == Some(meshway_model::observations::LinkAcquisition::LocalEndpoint)
+                })
+            }) {
+                return Err("interface recovery did not redial the relay's local candidate".into());
+            }
+        }
     }
     signals.write("interface-complete", &Signal::Ready).await?;
     Ok(())

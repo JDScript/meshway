@@ -511,11 +511,15 @@ async fn coordinate(
                 dialers.trojan = None;
             }
             Input::Value(dialers)
-        } else if cli.traversal == crate::TraversalMode::Nat && role == Role::R {
+        } else if (cli.traversal == crate::TraversalMode::Nat || cli.reported_endpoints)
+            && role == Role::R
+        {
             // Both tested carriers must enter R's private NAT. Otherwise R
             // could now dial B's reported public-side interface directly and
             // correctly avoid the bilateral STUN path this fixture proves.
             // Business still follows A-R-B over the bidirectional channels.
+            // Local-endpoint conformance likewise requires A/B to redial R's
+            // reported address, rather than passing through R's reverse dial.
             Input::Value(meshway_transport_spec::DialerSet {
                 native_udp: None,
                 native_tcp: None,
