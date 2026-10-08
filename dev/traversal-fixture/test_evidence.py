@@ -39,7 +39,7 @@ class CaptureReader(unittest.TestCase):
     def test_endianness_and_public_discriminators(self):
         cases = [(b"\x00\x01\x00\x00\x21\x12\xa4\x42" + bytes(12), "stunRequest"),
                  (b"MWADJv1\0\x03\x00\x01x", "adjacencyAck"),
-                 (b"MWCIR\0\0\x04", "meshCiphertext")]
+                 (b"MWCIR\0\0\x05", "meshCiphertext")]
         for order in ("<", ">"):
             for payload, kind in cases:
                 with self.subTest(order=order, kind=kind):
@@ -79,6 +79,7 @@ class CaptureReader(unittest.TestCase):
         self.assertEqual(self.read(capture(b"MWCIR-not-the-wire-version"))[0][4], "other")
         self.assertEqual(self.read(capture(b"MWCIR\0\0\x02"))[0][4], "other")
         self.assertEqual(self.read(capture(b"MWCIR\0\0\x03"))[0][4], "other")
+        self.assertEqual(self.read(capture(b"MWCIR\0\0\x04"))[0][4], "other")
 
     def test_tcp_handshake_is_distinct_from_bidirectional_data(self):
         for flags, payload, kind in ((2, b"", "tcpSyn"), (0x12, b"", "tcpSynAck"),

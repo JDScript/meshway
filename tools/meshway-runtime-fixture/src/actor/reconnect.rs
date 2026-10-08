@@ -25,6 +25,19 @@ pub(super) async fn run(context: Context<'_>) -> Result<(Evidence, String)> {
         live.first_sample().await?;
         Some(live)
     } else {
+        // Only A exercises restored business, finite ping and SIGINT before
+        // reaching this stage. Use the same existing stage budget as Controller
+        // instead of starting the HTTP-outage timer while those checks run.
+        if !matches!(
+            context
+                .signals
+                .wait_for("lease-ready-a", STARTUP + crate::ping::STAGE_LIMIT * 2,)
+                .await?,
+            Signal::Ready
+        ) {
+            return Err("invalid restored traffic/CLI lifecycle completion".into());
+        }
+        context.signals.ready("ping-outage-ready").await?;
         None
     };
     let result = exercise(context, &mut live).await;
