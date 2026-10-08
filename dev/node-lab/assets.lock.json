@@ -27,5 +27,6 @@
       }
     }
   ],
-  "packages": ["systemd-resolved", "dbus-daemon", "iputils-ping", "traceroute", "iperf", "iperf3", "iproute2", "wireguard-tools", "dnsutils", "curl", "ca-certificates", "util-linux", "procps", "python3"]
+  "requiredTools": {"nftables": "/usr/sbin/nft", "conntrack": "/usr/sbin/conntrack", "tcpdump": "/usr/bin/tcpdump"},
+  "packages": ["systemd-resolved", "dbus-daemon", "iputils-ping", "traceroute", "iperf", "iperf3", "iproute2", "wireguard-tools", "dnsutils", "curl", "ca-certificates", "util-linux", "procps", "python3", "nftables", "conntrack", "tcpdump"]
 }

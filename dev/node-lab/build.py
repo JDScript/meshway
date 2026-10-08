@@ -73,6 +73,9 @@ def build(output, platform):
                 raise RuntimeError("Cached package index digest mismatch.")
             index.update(assets.records(lzma.decompress(data).decode()))
     selected = assets.closure(index, lock["packages"])
+    for package, executable in lock["requiredTools"].items():
+        if package not in lock["packages"] or not executable.startswith(("/usr/bin/", "/usr/sbin/")):
+            raise RuntimeError("Required network tools must be explicit locked package inputs.")
     packages = [{"name": item["Package"], "version": item["Version"], "architecture": item["Architecture"],
                  "filename": item["Filename"], "sha256": item["SHA256"]} for item in selected]
     context = output / "context"
@@ -90,6 +93,7 @@ def build(output, platform):
     for name in ("Dockerfile", "entrypoint.sh", "runtime.py"):
         shutil.copyfile(HERE / name, context / name)
     (context / "packages.json").write_text(json.dumps(packages, indent=2) + "\n")
+    (context / "required-tools.json").write_text(json.dumps(lock["requiredTools"], indent=2) + "\n")
     if source_digest() != before:
         raise RuntimeError("Image sources changed during download; retry with current sources.")
     command = ["docker", "--context", CONTEXT, "buildx", "build", "--builder", CONTEXT, "--load", "--network", "none",
