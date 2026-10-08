@@ -83,6 +83,8 @@ jobs:
           mkdir -p "$(dirname "$keep")"
           cp -a "$latest" "$keep"
           echo "Evidence: $(hostname):$keep" >> "$GITHUB_STEP_SUMMARY"
+          # A full matrix with pcap is ~4 GiB; keep the eight most recent runs.
+          find "$(dirname "$keep")" -mindepth 1 -maxdepth 1 -type d | sort -r | tail -n +9 | xargs -r rm -rf
       - uses: actions/upload-artifact@v4
         if: always()
         with:
