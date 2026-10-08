@@ -3,6 +3,8 @@
 
 # generated content
 .source
+/content/docs/api/*/
+/content/docs/api/meta*.json
 
 # test & build
 /coverage

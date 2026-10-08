@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port 3002",
-    "build": "next build",
-    "typecheck": "next typegen && tsc --noEmit",
+    "generate:api": "node scripts/generate-api.mjs",
+    "dev": "pnpm run generate:api && next dev --port 3002",
+    "build": "pnpm run generate:api && next build",
+    "typecheck": "pnpm run generate:api && next typegen && tsc --noEmit",
     "lint": "eslint --max-warnings=0 --cache --cache-location node_modules/.cache/eslint/ .",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "format": "prettier --write \"**/*.{ts,tsx,mjs,css,json,mdx}\"",

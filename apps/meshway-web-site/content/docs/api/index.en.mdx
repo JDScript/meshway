@@ -1,0 +1,68 @@
+---
+title: API reference
+description: Manage accounts, networks and configuration on your own Meshway Server.
+---
+
+The user HTTP API is rooted at `/api/v1`. Each operation documents parameters, nested fields, response statuses and SDK calls. Field descriptions come directly from the published contract.
+
+## Server address
+
+Set `MESHWAY_SERVER` to your server origin, for example `https://meshway.example.com`, without appending `/api/v1`. Operation paths already include the API root. `ControlClient` also takes an origin.
+
+```sh
+export MESHWAY_SERVER="https://meshway.example.com"
+```
+
+## Authentication
+
+Read the [authentication options](/en/docs/api/auth/get-auth-options), then [log in](/en/docs/api/auth/login) with your email and password. Servers with registration enabled also support [registration](/en/docs/api/auth/register). Login returns `SessionIssuedResponse`: `requestId`, `user`, `session` and a one-time delivery of `token`.
+
+Authenticated calls send:
+
+```http
+Authorization: Bearer <session token>
+```
+
+Samples read this token from `MESHWAY_TOKEN`. [Reading the current session](/en/docs/api/auth/get-auth-session) does not return the token again. [Logout](/en/docs/api/auth/logout) revokes the current session and returns `204`. The server checks the session, account and current network permissions on every request; membership in one network does not grant access to another.
+
+## Requests and responses
+
+JSON fields use camelCase. Objects reject unknown fields. Omitted values and explicit `null` have distinct meanings. Field trees document required properties, union variants, enums and constraints.
+
+Configuration writes check the concurrency baseline using `expectedRevision`. Where declared by a create operation, `requestId` deduplicates matching requests; reusing an ID with different input conflicts. See individual operations for their conditions.
+
+curl and TypeScript samples are generated from each operation. Samples with a request body read your JSON from `request.json`; prepare it using the documented fields. TypeScript validates it with the actual runtime schema from `@meshway/control-client/schemas` before calling `@meshway/control-client`. Replace path values in angle brackets and fill the query object using the documented parameters.
+
+## Errors
+
+Each operation’s response section lists the success and error statuses declared in the contract. Errors use the JSON `ErrorResponse` envelope:
+
+| Field             | Meaning                                                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| `requestId`       | Request correlation ID; `null` only if safe ID generation is unavailable |
+| `status`          | HTTP status code                                                         |
+| `problem.code`    | Stable snake_case problem code                                           |
+| `problem.params`  | Structured parameters determined by the code; may be an empty object     |
+| `problem.message` | Safe fallback text, not a value for programmatic branching               |
+
+For example, `revision_conflict` indicates a configuration concurrency conflict, `invalid_cursor` an invalid cursor, and `invalid_session` an invalid session. `configuration_invalid` carries validation issues and requirements. The error field tree displays the shared `Problem` union; it does not mean every code can be returned by that operation.
+
+The SDK validates both success responses and error envelopes, returning a result discriminated by `ok`. If an error body cannot be decoded, the HTTP status remains available; the raw body is not treated as a verified Problem.
+
+## Pagination
+
+Paginated operations declare `limit` and an opaque `cursor`. Pass the previous page’s `nextCursor` to continue; `null` means there is no next page. Each page rechecks current permissions. Do not reuse cursors across identities or networks. Not every list is paginated.
+
+- [Networks](/en/docs/api/networks/list-networks): oldest first, default limit 100; limit ranges from 1 to 200.
+- [Configuration revisions](/en/docs/api/configuration/list-configuration-revisions): descending keyset pagination, bounded by the maximum revision at the first read.
+- [Network activity](/en/docs/api/history/list-network-activity): descending keyset pagination with a fixed initial commit-sequence bound; `asOf` identifies the read cutoff.
+
+See each operation for defaults, ordering, filters and response fields. Start a new query to obtain newly added history records.
+
+## Event streams
+
+[Watch network](/en/docs/api/events/watch-network) returns `text/event-stream`. Each default SSE message has `UserEvent` JSON in its `data` field. Ordinary error responses remain JSON `ErrorResponse`.
+
+Initial synchronization arrives as `config.snapshot → entities.snapshot → state.snapshot → sync.ready`. Save a cursor only after validating and applying a complete batch or event. Resume with `Last-Event-ID` only while retaining the same identity, network and complete cache. Receiving an event does not establish that a node has applied configuration.
+
+The TypeScript SDK provides an async iterator, runtime validation and bounded reconnection. Browsers use a fetch stream to send the authorization header.

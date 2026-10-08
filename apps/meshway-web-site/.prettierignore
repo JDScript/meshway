@@ -2,4 +2,6 @@ node_modules/
 .next/
 out/
 .source/
+content/docs/api/*/
+content/docs/api/meta*.json
 next-env.d.ts

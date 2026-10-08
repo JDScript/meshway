@@ -1,0 +1,68 @@
+---
+title: API 参考
+description: 在自己的 Meshway Server 上管理账户、网络和配置。
+---
+
+Meshway 的用户 HTTP API 以 `/api/v1` 为根路径。每个操作页列出请求参数、嵌套字段、响应状态和 SDK 调用方式；字段说明直接来自发布契约，保留英文。
+
+## Server 地址
+
+将 `MESHWAY_SERVER` 设为你自己的 Server origin，例如 `https://meshway.example.com`，不要追加 `/api/v1`。页面中的路径已包含 API 根路径，`ControlClient` 同样使用 origin。
+
+```sh
+export MESHWAY_SERVER="https://meshway.example.com"
+```
+
+## 认证
+
+先读取[认证选项](/docs/api/auth/get-auth-options)，再使用邮箱和密码[登录](/docs/api/auth/login)。开启注册的 Server 也可通过[注册](/docs/api/auth/register)创建账户。登录返回 `SessionIssuedResponse`：`requestId`、`user`、`session` 和一次交付的 `token`。
+
+后续需要认证的调用携带：
+
+```http
+Authorization: Bearer <session token>
+```
+
+示例通过 `MESHWAY_TOKEN` 读取该 token。[读取当前会话](/docs/api/auth/get-auth-session)不会再次返回 token；[退出登录](/docs/api/auth/logout)撤销当前会话，成功返回 `204`。Server 在每次请求时检查会话、账户和当前网络权限；一个网络的成员关系不授予其他网络的访问权。
+
+## 请求与响应
+
+JSON 字段采用 camelCase。对象拒绝未知字段；可省略与明确 `null` 分别表达。操作页的字段树展示必填字段、联合分支、枚举和约束。
+
+配置写入使用 `expectedRevision` 检查并发基准。创建操作中声明的 `requestId` 用于幂等去重：相同 ID 与不同输入冲突。具体条件见各操作描述。
+
+curl 与 TypeScript 示例由同一操作生成。带请求体的示例从 `request.json` 读取你按字段准备的 JSON；TypeScript 使用 `@meshway/control-client/schemas` 的实际运行时 schema 校验，再调用 `@meshway/control-client`。路径中的尖括号值需要替换，查询对象可按参数表填写。
+
+## 错误
+
+每个操作的「响应体与状态码」列出契约声明的成功和错误状态。错误 JSON 为 `ErrorResponse`：
+
+| 字段              | 含义                                       |
+| ----------------- | ------------------------------------------ |
+| `requestId`       | 请求关联 ID；安全 ID 生成不可用时为 `null` |
+| `status`          | HTTP 状态码                                |
+| `problem.code`    | 稳定的 snake_case 问题码                   |
+| `problem.params`  | 由 code 决定的结构化参数，可能为空对象     |
+| `problem.message` | 安全后备文本，不用于程序分支               |
+
+例如，`revision_conflict` 表示配置并发基准冲突，`invalid_cursor` 表示无效游标，`invalid_session` 表示无效会话。`configuration_invalid` 携带验证 issues 与 requirements。错误字段树展示共享 `Problem` 联合；这不表示其中每个问题码都能由当前操作返回。
+
+SDK 校验成功响应和错误 envelope，返回带 `ok` 判别字段的结果。无法解码错误体时保留 HTTP 状态，不把原始内容当作已验证的 Problem。
+
+## 分页
+
+有分页的操作声明 `limit` 和不透明 `cursor`，后续请求使用上一页的 `nextCursor`；`null` 表示没有下一页。每页重新检查当前权限，不把游标跨身份或网络复用。并非所有列表都分页。
+
+- [网络列表](/docs/api/networks/list-networks)：默认 100，最旧在前；limit 为 1–200。
+- [配置版本](/docs/api/configuration/list-configuration-revisions)：以首次读取的最大 revision 为上界，倒序 keyset 分页。
+- [网络活动](/docs/api/history/list-network-activity)：固定首次读取的提交序列上界，倒序 keyset 分页；`asOf` 表示读取截点。
+
+各列表的默认值、排序、过滤与返回字段见对应操作。新增历史记录通过新一轮查询获取。
+
+## 事件流
+
+[订阅网络事件](/docs/api/events/watch-network)返回 `text/event-stream`，每个默认 SSE message 的 `data` 为 `UserEvent`。普通错误响应仍为 JSON `ErrorResponse`。
+
+初始同步按 `config.snapshot → entities.snapshot → state.snapshot → sync.ready` 到达。只有完整批次或事件已校验并应用后才保存 cursor；保留同一身份、网络和完整缓存后，才能使用 `Last-Event-ID` 续传。收到事件不表示节点已应用配置。
+
+TypeScript SDK 提供异步迭代器、运行时校验与有界重连；浏览器使用 fetch 流携带认证头。
