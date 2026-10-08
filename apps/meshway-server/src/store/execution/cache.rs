@@ -142,13 +142,7 @@ pub(super) fn read(
     {
         return Err(Error::decode("execution cache header"));
     }
-    // demand-3 shares the current node configuration shape; only the compiler
-    // (recursive routing) changed, so its slices are checked like current ones
-    // and then retired instead of executed.
-    if matches!(
-        envelope.compiler_version.as_str(),
-        meshway_policy::compile::COMPILER_VERSION | "meshway-demand-3"
-    ) {
+    if envelope.compiler_version == meshway_policy::compile::COMPILER_VERSION {
         let current: CompiledPublication = decode(plain.as_bytes())?;
         for (node, slice) in &current.nodes {
             let cfg = &slice.configuration;
@@ -162,30 +156,11 @@ pub(super) fn read(
                 return Err(Error::decode("execution cache slice"));
             }
         }
-        if current.compiler_version == meshway_policy::compile::COMPILER_VERSION {
-            return Ok(Stored::Current(current));
-        }
-        return Ok(Stored::Obsolete {
-            revision: current.revision,
-            nodes: current
-                .nodes
-                .iter()
-                .map(|(node, slice)| {
-                    (
-                        *node,
-                        ConfigurationRef {
-                            revision: current.revision,
-                            execution_publication: publication,
-                            digest: slice.digest,
-                        },
-                    )
-                })
-                .collect(),
-        });
+        return Ok(Stored::Current(current));
     }
     if !matches!(
         envelope.compiler_version.as_str(),
-        "meshway-demand-1" | "meshway-demand-2"
+        "meshway-demand-1" | "meshway-demand-2" | "meshway-demand-3" | "meshway-demand-4"
     ) {
         return Err(Error::decode("execution cache version"));
     }
@@ -212,6 +187,15 @@ fn validate_obsolete(
     node: NodeId,
     slice: &Slice<'_>,
 ) -> Result<(), Error> {
+    let fields: BTreeMap<String, &RawValue> = decode(slice.configuration.get().as_bytes())?;
+    if fields.contains_key("meshAddressPools")
+        != matches!(
+            envelope.compiler_version.as_str(),
+            "meshway-demand-3" | "meshway-demand-4"
+        )
+    {
+        return Err(Error::decode("obsolete execution cache version shape"));
+    }
     let header = validate_obsolete_slice(slice.configuration, slice.digest).map_err(|error| {
         Error::decode(match error {
             ObsoleteSliceError::Decode => "execution cache",

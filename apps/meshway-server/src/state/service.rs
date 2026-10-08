@@ -153,6 +153,21 @@ impl crate::effect::EffectSink for Mutex<Runtime> {
             return;
         };
         match effect {
+            Effect::AcceptedState {
+                admission,
+                report,
+                observed_at,
+            } => {
+                // The same serialized owner prechecked this exact body and time.
+                if runtime
+                    .hub
+                    .accept_report(&admission, *report, observed_at)
+                    .is_err()
+                {
+                    tracing::error!("Prechecked State report could not be committed");
+                    runtime.close();
+                }
+            }
             crate::effect::Effect::SessionRevoked { session_id } => {
                 runtime.observations.revoke_session(session_id);
                 runtime.hub.wakeups.bump(None);
@@ -306,12 +321,33 @@ impl<P: StateProvider> StateService<P> {
     ) -> Result<StateAccepted, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
+        let sealer = Arc::clone(&self.sealer);
         self.handle
-            .read(move |tx| {
+            .transact(TransactionBehavior::Immediate, move |tx| {
                 let now = Utc::now();
                 let admission = provider.report(tx, &authorization, now)?;
-                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
-                runtime.hub.accept_report(&admission, report, now)
+                let runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
+                let accepted = runtime.hub.check_report(&admission, &report, now)?;
+                let changed = !accepted.duplicate
+                    && super::local_endpoints::replace(tx, &sealer, &admission, &report, now)?;
+                let mut effects = vec![Effect::AcceptedState {
+                    admission: Box::new(admission.clone()),
+                    report: Box::new(report),
+                    observed_at: now,
+                }];
+                if changed {
+                    crate::store::execution::publish(
+                        tx,
+                        &sealer,
+                        admission.network_id,
+                        "refresh",
+                        now.timestamp_millis(),
+                    )?;
+                    effects.push(Effect::Progress {
+                        network_id: admission.network_id,
+                    });
+                }
+                Ok((accepted, effects))
             })
             .await
     }

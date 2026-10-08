@@ -90,6 +90,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
             sockets: BTreeMap::from([(
                 "s1".into(),
                 SocketState {
+                    local_endpoints: None,
                     resource,
                     configuration: None,
                     generation: Sequence::new(1).unwrap(),

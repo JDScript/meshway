@@ -350,6 +350,7 @@ async fn production_demand_receipts_peer_expansion_and_node_termination() {
     source_report.state.sockets.insert(
         "udp-socket".into(),
         SocketState {
+            local_endpoints: None,
             resource: ResourceRef::Listener { key: "udp".into() },
             configuration: Some(target.clone()),
             generation: Sequence::new(1).unwrap(),

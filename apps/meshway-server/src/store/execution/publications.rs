@@ -333,6 +333,7 @@ pub(crate) fn publish_with_rule_sets(
         diagnostics.retain(|id, _| !unsupported.contains(id));
         compiled = compile_diagnostics(&diagnostics)?;
     }
+    crate::state::local_endpoints::apply(tx, network, &cfg, &mut compiled, now)?;
     let mut stmt = tx.prepare(
         "SELECT node_id,target_publication_id,execution_expires_at FROM node_execution
          WHERE network_id=?1 AND target_publication_id IS NOT NULL",

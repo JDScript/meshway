@@ -117,6 +117,7 @@ fn report(target: &CompiledNode, instance: &InstanceRequest, address: &str) -> S
             sockets: BTreeMap::from([(
                 "socket".into(),
                 SocketState {
+                    local_endpoints: None,
                     resource: ResourceRef::Listener { key: "udp".into() },
                     configuration: Some(reference),
                     generation: Sequence::new(1).unwrap(),
@@ -314,6 +315,7 @@ async fn offer(app: &App, a: &Node, request: PrepareUdpTraversalRequest) -> UdpT
 }
 
 mod authority;
+mod local_endpoints;
 
 mod expiry;
 

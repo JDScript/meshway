@@ -337,6 +337,7 @@ fn link_evidence_requires_a_current_execution_not_only_a_fresh_report() {
     report.state.links.insert(
         peer,
         vec![LinkState {
+            acquisition: None,
             link_id: "link-1".into(),
             transport: "native_udp".into(),
             initiator_node_id: admission.node_id,

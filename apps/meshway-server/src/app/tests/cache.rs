@@ -45,6 +45,7 @@ async fn acquire(app: &App, token: &NodeSessionResponse) -> InstanceLease {
 fn old_slice(current: &CompiledNode) -> (String, ConfigurationRef) {
     let cfg = &current.configuration;
     let mut body = serde_json::to_string(cfg).unwrap();
+    body = body.replace(",\"source\":\"configured\"", "");
     for (name, value) in [
         (
             "meshAddressPools",
@@ -95,28 +96,43 @@ fn old_publication(
     (serde_json::to_vec(&fields).unwrap(), references)
 }
 
-/// demand-3 kept the current slice shape; only its compiler version differs.
+/// demand-3/4 use the previous endpoint shape and retain all execution fields.
 fn same_shape_publication(
     current: &CompiledPublication,
     version: &str,
 ) -> (Vec<u8>, BTreeMap<NodeId, ConfigurationRef>) {
-    let mut aged = current.clone();
-    aged.compiler_version = version.to_owned();
-    let references = current
-        .nodes
-        .iter()
-        .map(|(node, slice)| {
-            (
-                *node,
-                ConfigurationRef {
-                    revision: current.revision,
-                    execution_publication: current.publication,
-                    digest: slice.digest,
-                },
-            )
-        })
-        .collect();
-    (serde_json::to_vec(&aged).unwrap(), references)
+    let mut fields: BTreeMap<String, Box<RawValue>> =
+        serde_json::from_slice(&serde_json::to_vec(current).unwrap()).unwrap();
+    let mut nodes = BTreeMap::new();
+    let mut references = BTreeMap::new();
+    for (node, slice) in &current.nodes {
+        let body = serde_json::to_string(&slice.configuration)
+            .unwrap()
+            .replace(",\"source\":\"configured\"", "");
+        let digest = Digest::from_bytes(Sha256::digest(body.as_bytes()).into());
+        nodes.insert(
+            *node,
+            RawValue::from_string(format!(r#"{{"digest":"{digest}","configuration":{body}}}"#))
+                .unwrap(),
+        );
+        references.insert(
+            *node,
+            ConfigurationRef {
+                revision: current.revision,
+                execution_publication: current.publication,
+                digest,
+            },
+        );
+    }
+    fields.insert(
+        "nodes".into(),
+        RawValue::from_string(serde_json::to_string(&nodes).unwrap()).unwrap(),
+    );
+    fields.insert(
+        "compilerVersion".into(),
+        RawValue::from_string(serde_json::to_string(version).unwrap()).unwrap(),
+    );
+    (serde_json::to_vec(&fields).unwrap(), references)
 }
 
 async fn age(
@@ -132,7 +148,7 @@ async fn age(
             params![network.as_uuid().as_bytes().as_slice(), publication.as_uuid().as_bytes().as_slice()], |row| row.get(0)).unwrap();
         let plain = sealer.open_execution(network, publication, &payload).unwrap();
         let compiled: CompiledPublication = serde_json::from_slice(plain.as_bytes()).unwrap();
-        let (old, references) = if version == "meshway-demand-3" {
+        let (old, references) = if matches!(version.as_str(), "meshway-demand-3" | "meshway-demand-4") {
             same_shape_publication(&compiled, &version)
         } else {
             old_publication(&compiled, &version)
@@ -181,6 +197,15 @@ fn snapshot(db: &Connection, cache: bool) -> Rows {
 
 #[tokio::test]
 async fn startup_retires_only_old_cache_preserves_history_and_reauthenticates_same_node() {
+    startup_retires_previous_cache("meshway-demand-3").await;
+}
+
+#[tokio::test]
+async fn startup_retires_demand4_cache_for_endpoint_provenance_without_reenrollment() {
+    startup_retires_previous_cache("meshway-demand-4").await;
+}
+
+async fn startup_retires_previous_cache(version: &str) {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let (dir, app, network, a, b, ak, bk, signer_a, signer_b) = fixture().await;
     let service = app.execution();
@@ -207,7 +232,7 @@ async fn startup_retires_only_old_cache_preserves_history_and_reauthenticates_sa
         .await
         .unwrap();
     let old_a = age(&app, network, ap, "meshway-demand-1").await[&a].clone();
-    age(&app, network, bp, "meshway-demand-3").await;
+    age(&app, network, bp, version).await;
     let before = app
         .executor
         .handle()

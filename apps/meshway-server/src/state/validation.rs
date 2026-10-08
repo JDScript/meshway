@@ -139,6 +139,16 @@ pub(super) fn report(
                 return Err(Error::InvalidRequest);
             }
         }
+        if listener
+            .socket_ids
+            .iter()
+            .filter_map(|id| state.sockets.get(id))
+            .map(|socket| socket.local_endpoints.as_ref().map_or(0, Vec::len))
+            .sum::<usize>()
+            > MAX_LOCAL_ENDPOINTS
+        {
+            return Err(Error::StateLimit);
+        }
     }
     for (socket_id, socket) in &state.sockets {
         let reference = socket
@@ -163,6 +173,29 @@ pub(super) fn report(
             || socket.endpoints.len() > 32
         {
             return Err(Error::InvalidRequest);
+        }
+        if let Some(local) = &socket.local_endpoints {
+            if !matches!(socket.resource, ResourceRef::Listener { .. })
+                || local.len() > MAX_LOCAL_ENDPOINTS
+            {
+                return Err(Error::InvalidRequest);
+            }
+            let mut addresses = BTreeSet::new();
+            for endpoint in local {
+                check_address(&endpoint.address.to_string(), socket, admission)?;
+                super::connectivity::eligible_address(
+                    &endpoint.address.to_string(),
+                    &context.mesh_address_pools,
+                )
+                .map_err(|_| Error::InvalidRequest)?;
+                if endpoint.address.port() != socket.bound_address.port()
+                    || !socket.bound_address.ip().is_unspecified()
+                        && endpoint.address.ip() != socket.bound_address.ip()
+                    || !addresses.insert(endpoint.address)
+                {
+                    return Err(Error::InvalidRequest);
+                }
+            }
         }
         for candidate in &socket.endpoints {
             if !time(candidate.observed_at, candidate.expires_at, now) {

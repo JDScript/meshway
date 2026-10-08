@@ -1,6 +1,7 @@
 //! Volatile source reports and read-time projections. All calls are serialized
 //! with commits on the SQLite owner; no HTTP future owns committed effects.
 pub(crate) mod connectivity;
+pub(crate) mod local_endpoints;
 pub mod service;
 pub mod stream;
 pub(crate) mod validation;
@@ -196,12 +197,66 @@ impl StateHub {
         report: StateReport,
         now: DateTime<Utc>,
     ) -> Result<StateAccepted, Error> {
-        validation::report(admission, &report, now)?;
+        let accepted = self.check_report(admission, &report, now)?;
+        if accepted.duplicate {
+            if let Some(previous) = self
+                .reports
+                .get_mut(&(admission.network_id, admission.node_id))
+            {
+                previous.authenticated_at = now;
+            }
+            return Ok(accepted);
+        }
+        let report_bytes = serde_json::to_vec(&report)
+            .map_err(|_| Error::encode("state report"))?
+            .len();
+        let key = (admission.network_id, admission.node_id);
+        let previous_bytes = self.reports.get(&key).map_or(0, |stored| stored.bytes);
+        let total_bytes = self
+            .bytes
+            .saturating_sub(previous_bytes)
+            .saturating_add(report_bytes);
+        let sequence = report.sequence;
+        let expires_at = (report.observed_at + Duration::seconds(REPORT_TTL_SECONDS))
+            .min(now + Duration::seconds(REPORT_TTL_SECONDS))
+            .min(admission.lease_expires_at);
+        let next_expiration = next_expiration(&report, expires_at, now);
+        self.reports.insert(
+            key,
+            StoredReport {
+                report,
+                instance_generation: admission.instance_generation,
+                received_at: now,
+                expires_at,
+                authenticated_at: now,
+                bytes: report_bytes,
+                next_expiration,
+            },
+        );
+        self.bytes = total_bytes;
+        self.publish_committed(crate::effect::Effect::State {
+            network_id: admission.network_id,
+            node_id: admission.node_id,
+        });
+        Ok(StateAccepted {
+            sequence,
+            received_at: now,
+            duplicate: false,
+        })
+    }
+
+    pub(super) fn check_report(
+        &self,
+        admission: &ReportAdmission,
+        report: &StateReport,
+        now: DateTime<Utc>,
+    ) -> Result<StateAccepted, Error> {
+        validation::report(admission, report, now)?;
         let key = (admission.network_id, admission.node_id);
         let report_bytes = serde_json::to_vec(&report)
             .map_err(|_| Error::encode("state report"))?
             .len();
-        if let Some(previous) = self.reports.get_mut(&key)
+        if let Some(previous) = self.reports.get(&key)
             && previous.report.instance_id == report.instance_id
             && previous.instance_generation == admission.instance_generation
         {
@@ -209,10 +264,9 @@ impl StateHub {
                 return Err(Error::StateConflict);
             }
             if report.sequence == previous.report.sequence {
-                if report != previous.report {
+                if report != &previous.report {
                     return Err(Error::StateConflict);
                 }
-                previous.authenticated_at = now;
                 return Ok(StateAccepted {
                     sequence: report.sequence,
                     received_at: previous.received_at,
@@ -244,30 +298,8 @@ impl StateHub {
         if total_bytes > MAX_STATE_BYTES {
             return Err(Error::StateLimit);
         }
-        let sequence = report.sequence;
-        let expires_at = (report.observed_at + Duration::seconds(REPORT_TTL_SECONDS))
-            .min(now + Duration::seconds(REPORT_TTL_SECONDS))
-            .min(admission.lease_expires_at);
-        let next_expiration = next_expiration(&report, expires_at, now);
-        self.reports.insert(
-            key,
-            StoredReport {
-                report,
-                instance_generation: admission.instance_generation,
-                received_at: now,
-                expires_at,
-                authenticated_at: now,
-                bytes: report_bytes,
-                next_expiration,
-            },
-        );
-        self.bytes = total_bytes;
-        self.publish_committed(crate::effect::Effect::State {
-            network_id: admission.network_id,
-            node_id: admission.node_id,
-        });
         Ok(StateAccepted {
-            sequence,
+            sequence: report.sequence,
             received_at: now,
             duplicate: false,
         })

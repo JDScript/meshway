@@ -49,6 +49,7 @@ fn report(target: &CompiledNode, instance_id: InstanceId, sequence: u64) -> Stat
             sockets: BTreeMap::from([(
                 "socket".into(),
                 SocketState {
+                    local_endpoints: None,
                     resource: ResourceRef::Listener { key: "udp".into() },
                     configuration: Some(reference),
                     generation: Sequence::new(1).unwrap(),
@@ -60,6 +61,7 @@ fn report(target: &CompiledNode, instance_id: InstanceId, sequence: u64) -> Stat
             links: BTreeMap::from([(
                 peer,
                 vec![LinkState {
+                    acquisition: None,
                     link_id: "fixture-link".into(),
                     transport: "native_udp".into(),
                     initiator_node_id: peer,

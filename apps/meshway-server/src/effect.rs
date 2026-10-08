@@ -9,6 +9,12 @@ use meshway_model::{NetworkId, NodeId, ObservationId, SessionId};
 
 #[derive(Clone, Debug)]
 pub enum Effect {
+    /// Prechecked on the SQLite owner; applied only after its publication commits.
+    AcceptedState {
+        admission: Box<crate::state::ReportAdmission>,
+        report: Box<meshway_protocol::state::StateReport>,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    },
     /// Publish only after permanent credential revocation and configuration
     /// removal commit. Frees volatile report storage; SQL retains revocation.
     NodeRetired {
@@ -57,7 +63,7 @@ impl Effect {
             | Self::ObservationSample { network_id, .. }
             | Self::Resource { network_id } => Some(*network_id),
             Self::Configuration { notice } => Some(notice.network_id),
-            Self::SessionRevoked { .. } => None,
+            Self::SessionRevoked { .. } | Self::AcceptedState { .. } => None,
         }
     }
 }
