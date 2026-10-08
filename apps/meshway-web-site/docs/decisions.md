@@ -80,5 +80,20 @@ is served; the session never becomes a field of Fumadocs' playground (it
 keeps those in localStorage) but is added to each request, a write is
 confirmed before it goes, a 401 drops the session, and "stop trying" ends
 it at the server. The playground's response examples sampled from the
-schema are hidden: only a real response shows. `lib/openapi-options.ts`
+schema are hidden: only a real response shows.
+
+A JSON response opens as a tree (`components/try/json-tree.tsx`):
+objects and arrays fold (two levels open, fifty items at a time), values
+are coloured by type, and each field's description from the contract
+follows its value, muted and cut to the line (in full on hover); one
+switch hides them, and the raw view is Fumadocs' own. The schema is the
+operation's for the status received (none for a status it does not
+declare); the value picks the way through it (`lib/schema-walk.ts`): a
+union's branch by its `type`, `kind` or `code`, else by its required
+fields, a nullable's non-null side. An event stream (`watchNetwork`) is
+tried in its own panel, since the playground waits for a whole body: a
+network of the reader's (read with the session), an optional cursor to
+resume from, connect and stop; the generated SDK checks each event
+against the contract, the latest 200 are kept newest first, and each
+opens as the same tree with the event schema. `lib/openapi-options.ts`
 turns trying off.

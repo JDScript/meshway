@@ -4,20 +4,21 @@ import { Dialog } from "@base-ui/react/dialog"
 import { Button } from "@meshway/ui/button"
 import type { APIPlaygroundProps } from "fumadocs-openapi"
 import PlaygroundClient, {
-  DefaultResultDisplay,
   type ResultDisplayProps,
 } from "fumadocs-openapi/ui/playground/client"
 import { useI18n } from "fumadocs-ui/contexts/i18n"
-import { useEffect, useRef, useState } from "react"
+import { createContext, use, useEffect, useRef, useState } from "react"
 
 import { i18n, type Lang } from "@/lib/i18n"
 import {
-  dropTrySession,
   signOutOfTry,
   startSignIn,
   trySession,
   useTrySession,
 } from "@/lib/try-it"
+
+import { ResultView } from "./result"
+import { StreamTry } from "./stream"
 
 const words = {
   zh: {
@@ -55,13 +56,26 @@ const words = {
 const langOf = (locale: string | undefined): Lang =>
   i18n.languages.find((lang) => lang === locale) ?? i18n.defaultLanguage
 
-/** A reply that says the session is no longer taken drops it, so the page asks again. */
+const TryContext = createContext<{ lang: Lang; ownErrors: string[] }>({
+  lang: i18n.defaultLanguage,
+  ownErrors: [],
+})
+
+/** The playground's result, as the page's language and the errors this site raised call for. */
 function ResultDisplay(props: ResultDisplayProps) {
-  const rejected = props.data.type === "response" && props.data.status === 401
-  useEffect(() => {
-    if (rejected) dropTrySession()
-  }, [rejected])
-  return <DefaultResultDisplay data-meshway-result {...props} />
+  const { lang, ownErrors } = use(TryContext)
+  return <ResultView {...props} lang={lang} ownErrors={ownErrors} />
+}
+
+/** The schema an event stream's events follow (`x-meshway-sse`), or null for an ordinary operation. */
+function eventSchemaOf(operation: APIPlaygroundProps["operation"]): unknown {
+  const extension: unknown =
+    "x-meshway-sse" in operation ? operation["x-meshway-sse"] : undefined
+  return typeof extension === "object" &&
+    extension !== null &&
+    "eventSchema" in extension
+    ? extension.eventSchema
+    : null
 }
 
 /**
@@ -69,7 +83,7 @@ function ResultDisplay(props: ResultDisplayProps) {
  * (never a field of the form: Fumadocs keeps those in localStorage). A
  * write is confirmed before it goes.
  */
-export function TryIt({ method, path }: APIPlaygroundProps) {
+export function TryIt({ method, path, operation }: APIPlaygroundProps) {
   const { locale } = useI18n()
   const lang = langOf(locale)
   const text = words[lang]
@@ -106,6 +120,7 @@ export function TryIt({ method, path }: APIPlaygroundProps) {
     return { ...init, headers }
   }
 
+  const eventSchema = eventSchemaOf(operation)
   const live = session && session.expiresAt > now ? session : null
   const minutes = live
     ? Math.max(1, Math.ceil((live.expiresAt - now) / 60_000))
@@ -136,11 +151,19 @@ export function TryIt({ method, path }: APIPlaygroundProps) {
           </Button>
         )}
       </div>
-      <PlaygroundClient
-        transformAuthInputs={() => []}
-        fetchOptions={{ onRequestInit }}
-        components={{ ResultDisplay }}
-      />
+      {eventSchema !== null ? (
+        <StreamTry lang={lang} eventSchema={eventSchema} />
+      ) : (
+        <TryContext
+          value={{ lang, ownErrors: [text.notSignedIn, text.cancelled] }}
+        >
+          <PlaygroundClient
+            transformAuthInputs={() => []}
+            fetchOptions={{ onRequestInit }}
+            components={{ ResultDisplay }}
+          />
+        </TryContext>
+      )}
       <Dialog.Root
         open={asking}
         onOpenChange={(open) => {
