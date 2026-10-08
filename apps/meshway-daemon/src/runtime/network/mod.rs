@@ -28,7 +28,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
 
 #[cfg(any(target_os = "linux", test))]
-pub(super) fn startup_problem(error: &meshway_underlay::Error) -> Problem {
+fn startup_problem(error: &meshway_underlay::Error) -> Problem {
     use meshway_underlay::Error;
     match error {
         Error::Storage(meshway_private_storage::Error::InUse) => Problem::Underlay,
@@ -958,6 +958,26 @@ mod publication;
 mod tests {
     use super::Retry;
     use meshway_protocol::execution::ApplyFailure;
+
+    #[test]
+    fn corrupt_underlay_journal_is_storage_but_live_conflict_is_retryable_underlay() {
+        use super::startup_problem;
+        use meshway_ipc::Problem;
+        assert_eq!(
+            startup_problem(&meshway_underlay::Error::Journal),
+            Problem::Storage
+        );
+        assert_eq!(
+            startup_problem(&meshway_underlay::Error::Conflict),
+            Problem::Underlay
+        );
+        assert_eq!(
+            startup_problem(&meshway_underlay::Error::Storage(
+                meshway_private_storage::Error::InUse
+            )),
+            Problem::Underlay
+        );
+    }
 
     #[test]
     fn installation_failure_has_a_finite_retry_budget_and_dns_needs_new_work() {

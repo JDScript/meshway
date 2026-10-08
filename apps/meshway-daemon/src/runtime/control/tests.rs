@@ -116,24 +116,6 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
     fixture.close().await;
 }
 
-#[test]
-fn corrupt_underlay_journal_is_storage_but_live_conflict_is_retryable_underlay() {
-    assert_eq!(
-        network::startup_problem(&meshway_underlay::Error::Journal),
-        Problem::Storage
-    );
-    assert_eq!(
-        network::startup_problem(&meshway_underlay::Error::Conflict),
-        Problem::Underlay
-    );
-    assert_eq!(
-        network::startup_problem(&meshway_underlay::Error::Storage(
-            meshway_private_storage::Error::InUse
-        )),
-        Problem::Underlay
-    );
-}
-
 #[tokio::test]
 async fn cancelled_queued_demand_does_not_fence_an_unrelated_live_instance() {
     use crate::runtime::ping::integration::Fixture;
