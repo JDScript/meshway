@@ -1,21 +1,13 @@
 use super::*;
 
 pub(super) async fn native_tcp_session_survives_staggered_control_publications_without_reopening() {
-    let mut fixture = fixture::Fixture::new(true, false).await;
+    let mut fixture = fixture::Fixture::builder().stream(true).build().await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     faults.blackhole.store(true, Ordering::SeqCst);
     let factory = Factory::new(&mut fixture, faults);
-    let mut a = Manager::start(
-        fixture.identities[0].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut b = Manager::start(fixture.identities[1].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut a = fixture.manager(0, factory.clone()).start().await;
+    let mut b = fixture.manager(1, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeTcp).await;
     linked(&b, 1, TransportProtocol::NativeTcp).await;
     let af = a.snapshot().unwrap().links[0].clone();
@@ -82,26 +74,12 @@ pub(super) async fn native_tcp_session_survives_staggered_control_publications_w
 
 #[tokio::test]
 async fn direct_publication_retires_only_the_unadmitted_peer_on_a_shared_udp_descriptor() {
-    let mut fixture = fixture::Fixture::new(false, false).await;
+    let mut fixture = fixture::Fixture::builder().build().await;
     let ids = fixture.ids();
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
-    let mut a = Manager::start(
-        fixture.identities[0].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut c = Manager::start(fixture.identities[2].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut a = fixture.manager(0, factory.clone()).start().await;
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut c = fixture.manager(2, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 2, TransportProtocol::NativeUdp).await;
     linked(&c, 1, TransportProtocol::NativeUdp).await;
@@ -190,7 +168,7 @@ async fn direct_publication_retires_only_the_unadmitted_peer_on_a_shared_udp_des
 
 pub(super) async fn staggered_three_node_managers_and_real_demand_publication_keep_original_circuit()
  {
-    let mut fixture = fixture::Fixture::reverse().await;
+    let mut fixture = fixture::Fixture::builder().reverse().build().await;
     let ids = fixture.ids();
     let path = vec![ids[0], ids[2], ids[1]];
     assert!(
@@ -205,12 +183,8 @@ pub(super) async fn staggered_three_node_managers_and_real_demand_publication_ke
     );
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
     let mut managers = Vec::new();
-    for identity in &fixture.identities {
-        managers.push(
-            Manager::start(identity.clone(), factory.clone(), Default::default())
-                .await
-                .unwrap(),
-        );
+    for index in 0..fixture.identities.len() {
+        managers.push(fixture.manager(index, factory.clone()).start().await);
     }
     all_links(&managers, &ids).await;
     let mut nodes: Vec<_> = fixture

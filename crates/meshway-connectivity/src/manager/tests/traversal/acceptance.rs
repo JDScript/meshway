@@ -80,57 +80,20 @@ impl TraversalGateway for AcceptSchedulingGateway {
 }
 
 pub(super) async fn accept_scheduling(uncertain: bool, invalidate: bool) {
-    let stun = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let stun_address = public(stun.local_addr().unwrap());
-    let stop = CancellationToken::new();
-    let stopped = stop.clone();
-    let service = tokio::spawn(async move {
-        let mut bytes = [0; meshway_stun::MAX_DATAGRAM_SIZE];
-        loop {
-            let (len, source) = tokio::select! {
-                _ = stopped.cancelled() => break,
-                result = stun.recv_from(&mut bytes) => result.unwrap(),
-            };
-            let request = meshway_stun::parse_request(&bytes[..len]).unwrap();
-            stun.send_to(
-                &meshway_stun::encode_response(&request, public(source)),
-                source,
-            )
-            .await
-            .unwrap();
-        }
-    });
-    let mut fixture = fixture::Fixture::traversal(stun_address).await;
+    let StunService {
+        address: stun_address,
+        stop,
+        service,
+        ..
+    } = StunService::start(false).await;
+    let mut fixture = fixture::Fixture::builder().stun(stun_address).build().await;
     let traffic = Arc::new(Traffic::default());
-    let factory = Arc::new(NatFactory {
-        sockets: Mutex::new(
-            [
-                fixture.udp.take().unwrap(),
-                fixture.reverse_udp.take().unwrap(),
-            ]
-            .into_iter()
-            .map(|socket| (socket.local_addr().unwrap(), socket))
-            .collect(),
-        ),
-        stun: stun_address,
-        traffic: traffic.clone(),
-    });
+    let factory = NatFactory::new(&mut fixture, stun_address, traffic.clone());
     let release_peer = Arc::new(AtomicBool::new(false));
     let mut gateways = Vec::new();
-    for mut control in fixture.controls.drain(..2) {
-        control.acknowledge_saved().await.unwrap();
-        let ticket = control.begin_application().await.unwrap();
-        control
-            .finish_application(&ticket, Ok(()), chrono::Utc::now())
-            .await
-            .unwrap();
+    for control in fixture.controls.drain(..2) {
         gateways.push(Arc::new(AcceptSchedulingGateway {
-            inner: Arc::new(Gateway {
-                queries: AtomicUsize::new(0),
-                control: AsyncMutex::new(control),
-                acknowledged: Mutex::new(Vec::new()),
-                timeline: None,
-            }),
+            inner: Gateway::applied(control, None).await,
             prepared: Mutex::new(None),
             accepts: AtomicUsize::new(0),
             overtaken: AtomicBool::new(false),
@@ -142,15 +105,11 @@ pub(super) async fn accept_scheduling(uncertain: bool, invalidate: bool) {
     let mut managers = Vec::new();
     for (index, gateway) in gateways.iter().enumerate() {
         managers.push(
-            Manager::start_with_traversal(
-                fixture.identities[index].clone(),
-                factory.clone(),
-                Default::default(),
-                gateway.clone(),
-                Sequence::MIN.checked_next().unwrap(),
-            )
-            .await
-            .unwrap(),
+            fixture
+                .manager(index, factory.clone())
+                .traversal(gateway.clone(), Sequence::MIN.checked_next().unwrap())
+                .start()
+                .await,
         );
     }
     tokio::time::timeout(Duration::from_secs(8), async {

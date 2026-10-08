@@ -2,24 +2,18 @@ use super::*;
 
 pub(super) async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_poll() {
     for protocol in [TransportProtocol::NativeUdp, TransportProtocol::NativeTcp] {
-        let mut fixture =
-            support::Fixture::new(protocol == TransportProtocol::NativeTcp, false).await;
+        let mut fixture = support::Fixture::builder()
+            .stream(protocol == TransportProtocol::NativeTcp)
+            .build()
+            .await;
         let ids = fixture.ids();
         let faults = Arc::new(Faults::default());
         faults
             .blackhole
             .store(protocol == TransportProtocol::NativeTcp, Ordering::SeqCst);
         let factory = Factory::new(&mut fixture, faults);
-        let mut b = Manager::start(
-            fixture.identities[1].clone(),
-            factory.clone(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
-        let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-            .await
-            .unwrap();
+        let mut b = fixture.manager(1, factory.clone()).start().await;
+        let mut a = fixture.manager(0, factory.clone()).start().await;
         linked(&a, 1, protocol).await;
         linked(&b, 1, protocol).await;
         let a_link = a.snapshot().unwrap().links[0].clone();
@@ -89,22 +83,18 @@ pub(super) async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_p
 
 #[tokio::test]
 async fn udp_burst_yields_to_a_one_slot_event_consumer_without_growing_the_queue() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Limits {
+    let mut b = fixture
+        .manager(1, factory.clone())
+        .limits(Limits {
             events: 1,
             ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-        .await
-        .unwrap();
+        })
+        .start()
+        .await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 1, TransportProtocol::NativeUdp).await;
     while b.events.try_recv().is_ok() {}
@@ -185,7 +175,7 @@ async fn udp_burst_yields_to_a_one_slot_event_consumer_without_growing_the_queue
 
 #[tokio::test]
 async fn receive_batch_is_bounded_ordered_and_fences_queued_frames_after_control_stop() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
     let limits = Limits {
@@ -193,12 +183,16 @@ async fn receive_batch_is_bounded_ordered_and_fences_queued_frames_after_control
         session: meshway_transport::Limits::new(128 * 1024, 64, 1024 * 1024, 64, 64).unwrap(),
         ..Default::default()
     };
-    let mut b = Manager::start(fixture.identities[1].clone(), factory.clone(), limits)
-        .await
-        .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, limits)
-        .await
-        .unwrap();
+    let mut b = fixture
+        .manager(1, factory.clone())
+        .limits(limits)
+        .start()
+        .await;
+    let mut a = fixture
+        .manager(0, factory.clone())
+        .limits(limits)
+        .start()
+        .await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 1, TransportProtocol::NativeUdp).await;
     while b.events.try_recv().is_ok() {}

@@ -50,33 +50,35 @@ pub(in crate::manager) struct Fixture {
 
 impl Fixture {
     pub async fn new(stream: bool, ipv6: bool) -> Self {
-        Self::build(stream, ipv6, false, false, None, None).await
+        Self::builder().stream(stream).ipv6(ipv6).build().await
     }
 
-    pub async fn reverse() -> Self {
-        Self::build(false, false, true, false, None, None).await
+    pub fn builder() -> FixtureBuilder {
+        FixtureBuilder::default()
     }
 
-    pub async fn multiple_listeners() -> Self {
-        Self::build(false, false, false, true, None, None).await
+    pub fn manager(
+        &self,
+        index: usize,
+        factory: std::sync::Arc<dyn super::SocketFactory>,
+    ) -> ManagerBuilder {
+        ManagerBuilder {
+            identity: self.identities[index].clone(),
+            factory,
+            limits: super::Limits::default(),
+            traversal: None,
+        }
     }
 
-    pub async fn traversal(stun: SocketAddr) -> Self {
-        Self::build(false, false, true, false, Some(stun), None).await
-    }
-
-    pub async fn traversal_ordered(stun: SocketAddr, indirect_first: bool) -> Self {
-        Self::build(false, false, true, false, Some(stun), Some(indirect_first)).await
-    }
-
-    async fn build(
-        stream: bool,
-        ipv6: bool,
-        reverse: bool,
-        multiple: bool,
-        stun: Option<SocketAddr>,
-        indirect_first: Option<bool>,
-    ) -> Self {
+    async fn build(options: FixtureBuilder) -> Self {
+        let FixtureBuilder {
+            stream,
+            ipv6,
+            reverse,
+            multiple,
+            stun,
+            indirect_first,
+        } = options;
         use meshway_configuration::execution::{BusinessProtocol, BusinessTarget, DemandDecision};
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -192,61 +194,29 @@ impl Fixture {
         for node in cfg.nodes.values_mut() {
             node.listeners.clear();
         }
-        let listener = NativeUdpListener {
-            listen: udp_address.ip(),
-            listen_port: udp_address.port().try_into().unwrap(),
-            endpoints: vec![Endpoint {
-                host: udp_address.ip().to_string(),
-                port: udp_address.port().try_into().unwrap(),
-            }],
-            enabled: true,
-            remark: String::new(),
-            bind_interface: String::new(),
-            socket: Default::default(),
-        };
         cfg.nodes
             .get_mut(&ids[1])
             .unwrap()
             .listeners
-            .insert("udp".into(), Listener::NativeUdp(listener));
+            .insert("udp".into(), udp_listener(udp_address));
         let mut extra_udp = Vec::new();
         if multiple {
             let socket = UdpSocket::bind(local).await.unwrap();
             let address = socket.local_addr().unwrap();
-            cfg.nodes.get_mut(&ids[1]).unwrap().listeners.insert(
-                "udp2".into(),
-                Listener::NativeUdp(NativeUdpListener {
-                    listen: address.ip(),
-                    listen_port: address.port().try_into().unwrap(),
-                    endpoints: vec![Endpoint {
-                        host: address.ip().to_string(),
-                        port: address.port().try_into().unwrap(),
-                    }],
-                    enabled: true,
-                    remark: String::new(),
-                    bind_interface: String::new(),
-                    socket: Default::default(),
-                }),
-            );
+            cfg.nodes
+                .get_mut(&ids[1])
+                .unwrap()
+                .listeners
+                .insert("udp2".into(), udp_listener(address));
             extra_udp.push(socket);
         }
         if let Some(socket) = &reverse_udp {
             let address = socket.local_addr().unwrap();
-            cfg.nodes.get_mut(&ids[0]).unwrap().listeners.insert(
-                "udp".into(),
-                Listener::NativeUdp(NativeUdpListener {
-                    enabled: true,
-                    remark: String::new(),
-                    listen: address.ip(),
-                    listen_port: address.port().try_into().unwrap(),
-                    endpoints: vec![Endpoint {
-                        host: address.ip().to_string(),
-                        port: address.port().try_into().unwrap(),
-                    }],
-                    bind_interface: String::new(),
-                    socket: Default::default(),
-                }),
-            );
+            cfg.nodes
+                .get_mut(&ids[0])
+                .unwrap()
+                .listeners
+                .insert("udp".into(), udp_listener(address));
         }
         if let Some(tcp) = &tcp {
             let address = tcp.local_addr().unwrap();
@@ -442,77 +412,31 @@ impl Fixture {
     }
 
     pub async fn change_udp_buffer(&self, node: meshway_model::NodeId) {
-        let source = self
-            .client
-            .get_configuration_source(
-                &GetConfigurationSourcePath {
-                    network_id: self.network,
-                },
-                &GetConfigurationSourceQuery::default(),
-                self.user_token.expose(),
-            )
-            .await
-            .unwrap();
-        let mut cfg = NetworkConfigurationInput::from(&source.configuration);
-        let Listener::NativeUdp(listener) = cfg
-            .nodes
-            .get_mut(&node)
-            .unwrap()
-            .listeners
-            .get_mut("udp")
-            .unwrap()
-        else {
-            panic!("UDP listener");
-        };
-        listener.socket.receive_buffer = 65_536;
-        self.client
-            .apply_configuration(
-                &ApplyConfigurationPath {
-                    network_id: self.network,
-                },
-                &ConfigurationRequest::Document {
-                    expected_revision: source.revision,
-                    request_id: request(),
-                    source_jsonc: WireSecret::new(serde_json::to_string(&cfg).unwrap()),
-                },
-                self.user_token.expose(),
-            )
-            .await
-            .unwrap();
+        self.configure(|cfg| {
+            let Listener::NativeUdp(listener) = cfg
+                .nodes
+                .get_mut(&node)
+                .unwrap()
+                .listeners
+                .get_mut("udp")
+                .unwrap()
+            else {
+                panic!("UDP listener");
+            };
+            listener.socket.receive_buffer = 65_536;
+        })
+        .await;
     }
 
     pub async fn set_access(&self, allowed: bool) {
-        let source = self
-            .client
-            .get_configuration_source(
-                &GetConfigurationSourcePath {
-                    network_id: self.network,
-                },
-                &GetConfigurationSourceQuery::default(),
-                self.user_token.expose(),
-            )
-            .await
-            .unwrap();
-        let mut cfg = NetworkConfigurationInput::from(&source.configuration);
-        cfg.access = if allowed {
-            self.access.clone()
-        } else {
-            Vec::new()
-        };
-        self.client
-            .apply_configuration(
-                &ApplyConfigurationPath {
-                    network_id: self.network,
-                },
-                &ConfigurationRequest::Document {
-                    expected_revision: source.revision,
-                    request_id: request(),
-                    source_jsonc: WireSecret::new(serde_json::to_string(&cfg).unwrap()),
-                },
-                self.user_token.expose(),
-            )
-            .await
-            .unwrap();
+        self.configure(|cfg| {
+            cfg.access = if allowed {
+                self.access.clone()
+            } else {
+                Vec::new()
+            };
+        })
+        .await;
     }
 
     pub async fn close(self) {
@@ -550,4 +474,155 @@ pub(in crate::manager) fn carriers(
             )
         })
         .collect()
+}
+
+fn udp_listener(address: SocketAddr) -> Listener {
+    Listener::NativeUdp(NativeUdpListener {
+        listen: address.ip(),
+        listen_port: address.port().try_into().unwrap(),
+        endpoints: vec![Endpoint {
+            host: address.ip().to_string(),
+            port: address.port().try_into().unwrap(),
+        }],
+        enabled: true,
+        remark: String::new(),
+        bind_interface: String::new(),
+        socket: Default::default(),
+    })
+}
+
+/// One topology/Server owner for plain, reverse, dual-stack and STUN scenarios.
+#[derive(Default)]
+pub(in crate::manager) struct FixtureBuilder {
+    stream: bool,
+    ipv6: bool,
+    reverse: bool,
+    multiple: bool,
+    stun: Option<SocketAddr>,
+    indirect_first: Option<bool>,
+}
+
+impl FixtureBuilder {
+    pub fn stream(mut self, enabled: bool) -> Self {
+        self.stream = enabled;
+        self
+    }
+
+    pub fn ipv6(mut self, enabled: bool) -> Self {
+        self.ipv6 = enabled;
+        self
+    }
+
+    pub fn reverse(mut self) -> Self {
+        self.reverse = true;
+        self
+    }
+
+    pub fn multiple_listeners(mut self) -> Self {
+        self.multiple = true;
+        self
+    }
+
+    pub fn stun(mut self, address: SocketAddr) -> Self {
+        self.stun = Some(address);
+        self.reverse = true;
+        self
+    }
+
+    pub fn indirect_first(mut self, order: Option<bool>) -> Self {
+        self.indirect_first = order;
+        self
+    }
+
+    pub async fn build(self) -> Fixture {
+        Fixture::build(self).await
+    }
+}
+
+/// Startup is separate from topology publication and never waits for a link.
+/// Tests retain control of start order, limits, fault injection and shutdown.
+pub(in crate::manager) struct ManagerBuilder {
+    identity: DataPlaneIdentity,
+    factory: std::sync::Arc<dyn super::SocketFactory>,
+    limits: super::Limits,
+    traversal: Option<(
+        std::sync::Arc<dyn crate::traversal::TraversalGateway>,
+        meshway_model::Sequence,
+    )>,
+}
+
+impl ManagerBuilder {
+    pub fn limits(mut self, limits: super::Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    pub fn traversal(
+        mut self,
+        gateway: std::sync::Arc<dyn crate::traversal::TraversalGateway>,
+        generation: meshway_model::Sequence,
+    ) -> Self {
+        self.traversal = Some((gateway, generation));
+        self
+    }
+
+    pub async fn try_start(self) -> Result<super::Manager, crate::Error> {
+        match self.traversal {
+            Some((gateway, generation)) => {
+                super::Manager::start_with_traversal(
+                    self.identity,
+                    self.factory,
+                    self.limits,
+                    gateway,
+                    generation,
+                )
+                .await
+            }
+            None => super::Manager::start(self.identity, self.factory, self.limits).await,
+        }
+    }
+
+    pub async fn start(self) -> super::Manager {
+        self.try_start().await.unwrap()
+    }
+}
+
+mod sockets;
+pub(super) use sockets::{Factory, Faults};
+
+pub(super) async fn linked(
+    manager: &super::Manager,
+    count: usize,
+    protocol: super::TransportProtocol,
+) {
+    tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            let facts = manager.snapshot().unwrap();
+            if facts.links.len() == count
+                && facts
+                    .links
+                    .iter()
+                    .all(|link| link.carrier.protocol == protocol)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("bounded actual peer handshake/failover");
+}
+
+pub(super) async fn frame(manager: &mut super::Manager) -> (super::LinkFact, super::Frame) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match manager.recv().await {
+                super::Event::Frame { link, frame, .. } => return (*link, frame),
+                super::Event::Changed => {}
+                super::Event::Closed => panic!("manager closed"),
+            }
+        }
+    })
+    .await
+    .unwrap()
 }

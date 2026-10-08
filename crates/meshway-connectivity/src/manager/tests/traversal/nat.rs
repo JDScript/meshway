@@ -166,6 +166,25 @@ pub(super) struct NatFactory {
     pub(super) traffic: Arc<Traffic>,
 }
 impl NatFactory {
+    pub(super) fn new(
+        fixture: &mut fixture::Fixture,
+        stun: SocketAddr,
+        traffic: Arc<Traffic>,
+    ) -> Arc<Self> {
+        let sockets = [
+            fixture.udp.take().unwrap(),
+            fixture.reverse_udp.take().unwrap(),
+        ]
+        .into_iter()
+        .map(|socket| (socket.local_addr().unwrap(), socket))
+        .collect();
+        Arc::new(Self {
+            sockets: Mutex::new(sockets),
+            stun,
+            traffic,
+        })
+    }
+
     fn wrap(
         &self,
         snapshot: &ExecutionSnapshot,

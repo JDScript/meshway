@@ -2,21 +2,13 @@ use super::*;
 
 #[tokio::test]
 async fn owned_receipt_future_outlives_manager_borrow_and_rejects_drop_before_first_poll() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults.clone());
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
     let send = {
-        let a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-            .await
-            .unwrap();
+        let a = fixture.manager(0, factory.clone()).start().await;
         linked(&a, 1, TransportProtocol::NativeUdp).await;
         let mut secure = meshway_dataplane::secure::SecureNode::new(
             fixture.identities[0].clone(),
@@ -46,20 +38,12 @@ async fn owned_receipt_future_outlives_manager_borrow_and_rejects_drop_before_fi
 
 #[tokio::test]
 async fn owned_receipt_future_rejects_retained_channel_old_scope_before_first_poll() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults.clone());
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     let original = a.snapshot().unwrap().links[0].clone();
     let old_scope = a.shared.links.lock().unwrap()[&ids[1]].scope.clone();
@@ -93,20 +77,12 @@ async fn owned_receipt_future_rejects_retained_channel_old_scope_before_first_po
 
 #[tokio::test]
 async fn pipelined_owned_sends_keep_independent_circuit_cancellation_and_receipts() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults.clone());
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 1, TransportProtocol::NativeUdp).await;
     let mut secure = meshway_dataplane::secure::SecureNode::new(

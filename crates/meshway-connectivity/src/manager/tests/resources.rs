@@ -10,7 +10,7 @@ use meshway_transport_spec::{
 
 pub(super) async fn setup(protocol: TransportProtocol) -> support::Fixture {
     let stream = protocol == TransportProtocol::NativeTcp;
-    let mut fixture = support::Fixture::new(stream, false).await;
+    let mut fixture = support::Fixture::builder().stream(stream).build().await;
     let ids = fixture.ids();
     let mut addresses = Vec::new();
     for index in [0, 2] {
@@ -150,12 +150,8 @@ async fn churn(protocol: TransportProtocol, relay_dials: bool) {
         .unwrap()
         .insert(if relay_dials { ids[0] } else { ids[2] });
     let mut managers = Vec::new();
-    for identity in &fixture.identities {
-        managers.push(
-            Manager::start(identity.clone(), factory.clone(), Default::default())
-                .await
-                .unwrap(),
-        );
+    for index in 0..fixture.identities.len() {
+        managers.push(fixture.manager(index, factory.clone()).start().await);
     }
     tokio::time::timeout(Duration::from_secs(12), async {
         loop {

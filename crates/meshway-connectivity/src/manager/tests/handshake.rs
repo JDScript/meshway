@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn real_udp_four_message_loss_shared_listener_and_unpolled_output_fence() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     *faults.drops.lock().unwrap() = BTreeSet::from([1, 2, 3, 4]);
@@ -11,20 +11,14 @@ async fn real_udp_four_message_loss_shared_listener_and_unpolled_output_fence() 
         session: meshway_transport::Limits::new(4096, 16, 65_536, 16, 16).unwrap(),
         ..Default::default()
     };
-    let mut b = Manager::start(fixture.identities[1].clone(), factory.clone(), limits)
-        .await
-        .unwrap();
-    let mut a = Manager::start(
-        fixture.identities[0].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    let mut b = fixture
+        .manager(1, factory.clone())
+        .limits(limits)
+        .start()
+        .await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
-    let mut c = Manager::start(fixture.identities[2].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut c = fixture.manager(2, factory.clone()).start().await;
     linked(&c, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 2, TransportProtocol::NativeUdp).await;
     let facts = b.snapshot().unwrap();
@@ -116,20 +110,16 @@ async fn real_udp_four_message_loss_shared_listener_and_unpolled_output_fence() 
 
 pub(super) async fn real_ipv6_udp_blackhole_selects_allowed_stream_without_replacing_secure_owner()
 {
-    let mut fixture = support::Fixture::new(true, true).await;
+    let mut fixture = support::Fixture::builder()
+        .stream(true)
+        .ipv6(true)
+        .build()
+        .await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults.clone());
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 1, TransportProtocol::NativeUdp).await;
     let mut secure_a = meshway_dataplane::secure::SecureNode::new(
@@ -187,7 +177,7 @@ pub(super) async fn real_ipv6_udp_blackhole_selects_allowed_stream_without_repla
 }
 
 pub(super) async fn simultaneous_configured_initiators_converge_on_one_logical_carrier() {
-    let mut fixture = support::Fixture::reverse().await;
+    let mut fixture = support::Fixture::builder().reverse().build().await;
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults);
     let (a, b) = tokio::join!(

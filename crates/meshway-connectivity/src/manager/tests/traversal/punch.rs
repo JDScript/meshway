@@ -1,25 +1,13 @@
 use super::*;
 
 pub(super) async fn exercise_traversal(healthy_only: bool) {
-    let stun = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let stun_address = public(stun.local_addr().unwrap());
-    let stop = CancellationToken::new();
-    let stopped = stop.clone();
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let observers = observed.clone();
-    let service = tokio::spawn(async move {
-        let mut bytes = [0; meshway_stun::MAX_DATAGRAM_SIZE];
-        loop {
-            let (len, source) = tokio::select! { _ = stopped.cancelled() => break, result = stun.recv_from(&mut bytes) => result.unwrap() };
-            let request = meshway_stun::parse_request(&bytes[..len]).unwrap();
-            observers.lock().unwrap().push(source);
-            let response = meshway_stun::encode_response(&request, public(source));
-            stun.send_to(&response, source).await.unwrap();
-            // A replay must not manufacture another observation.
-            stun.send_to(&response, source).await.unwrap();
-        }
-    });
-    let mut fixture = fixture::Fixture::traversal(stun_address).await;
+    let StunService {
+        address: stun_address,
+        stop,
+        service,
+        observed,
+    } = StunService::start(true).await;
+    let mut fixture = fixture::Fixture::builder().stun(stun_address).build().await;
     let ids = fixture.ids();
     if healthy_only {
         // The normal fixture admits alternate paths through offline C, even
@@ -41,52 +29,22 @@ pub(super) async fn exercise_traversal(healthy_only: bool) {
         }
     }
     let traffic = Arc::new(Traffic::default());
-    let sockets = [
-        fixture.udp.take().unwrap(),
-        fixture.reverse_udp.take().unwrap(),
-    ]
-    .into_iter()
-    .map(|socket| (socket.local_addr().unwrap(), socket))
-    .collect();
-    let factory = Arc::new(NatFactory {
-        sockets: Mutex::new(sockets),
-        stun: stun_address,
-        traffic: traffic.clone(),
-    });
+    let factory = NatFactory::new(&mut fixture, stun_address, traffic.clone());
     let mut gateways = Vec::new();
-    for mut control in fixture.controls.drain(..2) {
-        control.acknowledge_saved().await.unwrap();
-        let ticket = control.begin_application().await.unwrap();
-        control
-            .finish_application(&ticket, Ok(()), chrono::Utc::now())
-            .await
-            .unwrap();
-        gateways.push(Arc::new(Gateway {
-            queries: AtomicUsize::new(0),
-            control: AsyncMutex::new(control),
-            acknowledged: Mutex::new(Vec::new()),
-            timeline: None,
-        }));
+    for control in fixture.controls.drain(..2) {
+        gateways.push(Gateway::applied(control, None).await);
     }
     let generation = Sequence::MIN.checked_next().unwrap();
-    let mut a = Manager::start_with_traversal(
-        fixture.identities[0].clone(),
-        factory.clone(),
-        Default::default(),
-        gateways[0].clone(),
-        generation,
-    )
-    .await
-    .unwrap();
-    let mut b = Manager::start_with_traversal(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-        gateways[1].clone(),
-        generation,
-    )
-    .await
-    .unwrap();
+    let mut a = fixture
+        .manager(0, factory.clone())
+        .traversal(gateways[0].clone(), generation)
+        .start()
+        .await;
+    let mut b = fixture
+        .manager(1, factory.clone())
+        .traversal(gateways[1].clone(), generation)
+        .start()
+        .await;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if a.snapshot()
@@ -729,15 +687,11 @@ pub(super) async fn exercise_traversal(healthy_only: bool) {
     fixture.identities[0] = incompatible;
     a.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
-    let mut replacement = Manager::start_with_traversal(
-        fixture.identities[0].clone(),
-        factory,
-        Default::default(),
-        gateways[0].clone(),
-        generation.checked_next().unwrap(),
-    )
-    .await
-    .unwrap();
+    let mut replacement = fixture
+        .manager(0, factory.clone())
+        .traversal(gateways[0].clone(), generation.checked_next().unwrap())
+        .start()
+        .await;
     let new = listener_socket(&replacement).reference;
     assert_ne!(original.socket_id, new.socket_id);
     assert_ne!(original.socket_generation, new.socket_generation);

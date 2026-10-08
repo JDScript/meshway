@@ -7,23 +7,11 @@ async fn new_epoch_dialer_waits_for_selected_owner_handoff_before_acquiring() {
         task::Poll,
     };
 
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
-    let mut a = Manager::start(
-        fixture.identities[0].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    let mut a = fixture.manager(0, factory.clone()).start().await;
+    let mut b = fixture.manager(1, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 1, TransportProtocol::NativeUdp).await;
     let original = a.snapshot().unwrap().links;
@@ -81,7 +69,7 @@ async fn new_epoch_dialer_waits_for_selected_owner_handoff_before_acquiring() {
 
 #[tokio::test]
 async fn expired_business_candidate_gains_a_worker_scope_on_direct_publication() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let instance = fixture.controls[0].execution_snapshot().unwrap().instance();
     fixture.controls[0]
@@ -105,9 +93,7 @@ async fn expired_business_candidate_gains_a_worker_scope_on_direct_publication()
     let mut a = Manager::start(old.clone(), factory.clone(), Default::default())
         .await
         .unwrap();
-    let mut b = Manager::start(fixture.identities[1].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert!(
         faults.controls.lock().unwrap().is_empty(),
@@ -133,7 +119,7 @@ async fn expired_business_candidate_gains_a_worker_scope_on_direct_publication()
 
 #[tokio::test]
 async fn retained_listener_rechecks_peer_capacity_before_accepting_a_publication() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let instance = fixture.controls[2].execution_snapshot().unwrap().instance();
     fixture.controls[2]
         .cancel_demand(&meshway_protocol::CancelDemandRequest {
@@ -182,19 +168,11 @@ async fn retained_listener_rechecks_peer_capacity_before_accepting_a_publication
 
 #[tokio::test]
 async fn same_target_renewal_rejects_a_still_live_previous_ready_scope() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
-    let mut a = Manager::start(
-        fixture.identities[0].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut b = Manager::start(fixture.identities[1].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut a = fixture.manager(0, factory.clone()).start().await;
+    let mut b = fixture.manager(1, factory.clone()).start().await;
     linked(&a, 1, TransportProtocol::NativeUdp).await;
     linked(&b, 1, TransportProtocol::NativeUdp).await;
     let previous = b.shared.clone();
@@ -240,7 +218,7 @@ async fn same_target_renewal_rejects_a_still_live_previous_ready_scope() {
 
 #[tokio::test]
 async fn same_target_renewal_wakes_dormant_dialer_without_waiting_old_backoff() {
-    let mut fixture = support::Fixture::new(false, false).await;
+    let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
     factory.blocked_dialers.lock().unwrap().insert(ids[0]);
@@ -255,13 +233,7 @@ async fn same_target_renewal_wakes_dormant_dialer_without_waiting_old_backoff() 
     )
     .await
     .unwrap();
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert!(a.snapshot().unwrap().links.is_empty());
     fixture.controls[0].renew_instance().await.unwrap();

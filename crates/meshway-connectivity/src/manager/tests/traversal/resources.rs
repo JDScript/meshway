@@ -5,7 +5,7 @@ async fn incompatible_listener_binds_exact_dial_family_and_capacity_failure_rele
     use meshway_configuration::Input;
     use meshway_transport_spec::{DialerSet, NativeUdpDialer};
     let stun = "198.51.100.1:3478".parse().unwrap();
-    let mut fixture = fixture::Fixture::traversal(stun).await;
+    let mut fixture = fixture::Fixture::builder().stun(stun).build().await;
     let ids = fixture.ids();
     fixture
         .configure(|cfg| {
@@ -92,7 +92,7 @@ async fn incompatible_listener_binds_exact_dial_family_and_capacity_failure_rele
 #[tokio::test]
 async fn uncovered_dial_resources_beyond_four_are_all_bound() {
     let stun = "198.51.100.1:3478".parse().unwrap();
-    let mut fixture = fixture::Fixture::traversal(stun).await;
+    let mut fixture = fixture::Fixture::builder().stun(stun).build().await;
     let ids = fixture.ids();
     let mut reserved = Vec::new();
     for _ in 0..5 {

@@ -2,20 +2,12 @@ use super::*;
 
 #[tokio::test]
 async fn receipt_uses_replacement_channel_and_rejects_same_carrier_old_scope_waiting_for_sender() {
-    let mut fixture = fixture::Fixture::new(false, false).await;
+    let mut fixture = fixture::Fixture::builder().build().await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults.clone());
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     converged(&a, &b, ids[0], ids[1], None).await;
     let (mut sa, mut sb) = (
         secure(&fixture.identities[0], &a),
@@ -98,24 +90,12 @@ async fn receipt_uses_replacement_channel_and_rejects_same_carrier_old_scope_wai
 
 #[tokio::test]
 async fn copied_init_and_wrong_source_or_old_ack_do_not_replace_same_tuple_until_fresh_ack() {
-    let mut fixture = fixture::Fixture::new(false, false).await;
+    let mut fixture = fixture::Fixture::builder().build().await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults.clone());
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(
-        fixture.identities[0].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     converged(&a, &b, ids[0], ids[1], None).await;
     let old = b
         .shared
@@ -144,9 +124,7 @@ async fn copied_init_and_wrong_source_or_old_ack_do_not_replace_same_tuple_until
         .unwrap()
         .2
         .clone();
-    let mut c = Manager::start(fixture.identities[2].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut c = fixture.manager(2, factory.clone()).start().await;
     linked(&b, 2, TransportProtocol::NativeUdp).await;
     let sibling = b
         .shared
@@ -196,19 +174,14 @@ async fn copied_init_and_wrong_source_or_old_ack_do_not_replace_same_tuple_until
 
 #[tokio::test]
 async fn pending_supersession_cannot_replace_a_newer_authenticated_channel() {
-    let mut fixture = fixture::Fixture::multiple_listeners().await;
+    let mut fixture = fixture::Fixture::builder()
+        .multiple_listeners()
+        .build()
+        .await;
     let ids = fixture.ids();
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     converged(&a, &b, ids[0], ids[1], None).await;
     let old = b.shared.links.lock().unwrap()[&ids[0]].fact.id;
     let sender = b.shared.links.lock().unwrap()[&ids[0]].sender.clone();
@@ -278,19 +251,11 @@ async fn pending_supersession_cannot_replace_a_newer_authenticated_channel() {
 
 #[tokio::test]
 async fn copied_signed_init_without_source_ack_keeps_live_channel_and_business_output() {
-    let mut fixture = fixture::Fixture::new(false, false).await;
+    let mut fixture = fixture::Fixture::builder().build().await;
     let ids = fixture.ids();
     let factory = Factory::new(&mut fixture, Arc::new(Faults::default()));
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     converged(&a, &b, ids[0], ids[1], None).await;
     let (mut sa, mut sb) = (
         secure(&fixture.identities[0], &a),

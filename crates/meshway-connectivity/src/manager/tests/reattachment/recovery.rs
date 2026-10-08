@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) async fn passive_restart_challenges_dial_only_peer_without_retiring_it_until_fresh_ack_and_ready()
  {
-    let mut fixture = fixture::Fixture::new(false, false).await;
+    let mut fixture = fixture::Fixture::builder().build().await;
     let ids = fixture.ids();
     assert!(
         fixture.identities[0]
@@ -14,16 +14,8 @@ pub(super) async fn passive_restart_challenges_dial_only_peer_without_retiring_i
     );
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults.clone());
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut a = Manager::start(fixture.identities[0].clone(), factory, Default::default())
-        .await
-        .unwrap();
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
     converged(&a, &b, ids[0], ids[1], None).await;
     let (mut sa, mut sb) = (
         secure(&fixture.identities[0], &a),
@@ -86,7 +78,7 @@ pub(super) async fn passive_restart_challenges_dial_only_peer_without_retiring_i
 
 #[tokio::test]
 async fn recovery_probe_and_challenge_bind_registered_peer_channel_role_and_outstanding_nonce() {
-    let fixture = fixture::Fixture::new(false, false).await;
+    let fixture = fixture::Fixture::builder().build().await;
     let ids = fixture.ids();
     let carrier = fixture::carriers(&fixture.identities[0])[&ids[1]].clone();
     let (_, intro) = Initiation::new(&fixture.identities[0], &carrier).unwrap();
@@ -131,26 +123,14 @@ async fn recovery_probe_and_challenge_bind_registered_peer_channel_role_and_outs
 
 #[tokio::test]
 async fn restart_reattaches_across_opposite_udp_carrier_and_fences_unpolled_old_output() {
-    let mut fixture = fixture::Fixture::reverse().await;
+    let mut fixture = fixture::Fixture::builder().reverse().build().await;
     let ids = fixture.ids();
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults.clone());
     // Initial physical orientation is B -> A, independently of ID ordering.
     factory.blocked_dialers.lock().unwrap().insert(ids[0]);
-    let mut a = Manager::start(
-        fixture.identities[0].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let mut b = Manager::start(
-        fixture.identities[1].clone(),
-        factory.clone(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    let mut a = fixture.manager(0, factory.clone()).start().await;
+    let mut b = fixture.manager(1, factory.clone()).start().await;
     converged(&a, &b, ids[0], ids[1], None).await;
     assert_eq!(b.snapshot().unwrap().links[0].carrier.dialer, ids[1]);
     let (mut sa, mut sb) = (

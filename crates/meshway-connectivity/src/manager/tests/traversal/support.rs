@@ -425,3 +425,69 @@ impl Gateway {
         *self.acknowledged.lock().unwrap() = candidates;
     }
 }
+
+pub(super) struct StunService {
+    pub(super) address: SocketAddr,
+    pub(super) stop: CancellationToken,
+    pub(super) service: tokio::task::JoinHandle<()>,
+    pub(super) observed: Arc<Mutex<Vec<SocketAddr>>>,
+}
+
+impl StunService {
+    pub(super) async fn start(replay: bool) -> Self {
+        let stun = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = public(stun.local_addr().unwrap());
+        let stop = CancellationToken::new();
+        let stopped = stop.clone();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observers = observed.clone();
+        let service = tokio::spawn(async move {
+            let mut bytes = [0; meshway_stun::MAX_DATAGRAM_SIZE];
+            loop {
+                let (len, source) = tokio::select! {
+                    _ = stopped.cancelled() => break,
+                    result = stun.recv_from(&mut bytes) => result.unwrap(),
+                };
+                let request = meshway_stun::parse_request(&bytes[..len]).unwrap();
+                {
+                    let mut observed = observers.lock().unwrap();
+                    if observed.len() < 4096 {
+                        observed.push(source);
+                    }
+                }
+                let response = meshway_stun::encode_response(&request, public(source));
+                stun.send_to(&response, source).await.unwrap();
+                if replay {
+                    // Replay must not manufacture another observation.
+                    stun.send_to(&response, source).await.unwrap();
+                }
+            }
+        });
+        Self {
+            address,
+            stop,
+            service,
+            observed,
+        }
+    }
+}
+
+impl Gateway {
+    pub(super) async fn applied(
+        mut control: Control,
+        timeline: Option<Arc<AcquisitionTimeline>>,
+    ) -> Arc<Self> {
+        control.acknowledge_saved().await.unwrap();
+        let ticket = control.begin_application().await.unwrap();
+        control
+            .finish_application(&ticket, Ok(()), chrono::Utc::now())
+            .await
+            .unwrap();
+        Arc::new(Self {
+            queries: AtomicUsize::new(0),
+            control: AsyncMutex::new(control),
+            acknowledged: Mutex::new(Vec::new()),
+            timeline,
+        })
+    }
+}
