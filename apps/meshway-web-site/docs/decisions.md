@@ -30,6 +30,14 @@ which encodes queries the way each language's index was built (Fumadocs'
 static client uses the default encoder, so Chinese found nothing). The API reference's field descriptions come from the contract
 and are English in both.
 
+## Navigation
+
+The docs have two tabs: the user guides (`content/docs/(guide)/`, a folder
+group, so their URLs stay `/docs/…`) and the API reference
+(`content/docs/api/`). The landing's header links the docs, the API
+reference and the console; inside the docs the tabs say which part is open
+and the sidebar links only the console.
+
 ## Links out
 
 The console the site signs in to is `NEXT_PUBLIC_MESHWAY_CONSOLE_URL`, set
@@ -50,7 +58,9 @@ people. One page per operation at `/docs/api/<tag>/<operationId in
 kebab-case>` (and `/en/…`), generated before `dev`, `build` and
 `typecheck` (`scripts/README.md`), with curl and `@meshway/control-client`
 samples generated from the operation; the user docs link to these pages
-for exact fields instead of restating them. Trying an operation will take a delegated session from the console
+for exact fields instead of restating them. Constraints every ID and
+integer carries (the UUID pattern and length, the JSON-safe maximum) are
+said once on the overview page, not on each field. Trying an operation will take a delegated session from the console
 (authorization code with PKCE: the console asks for consent, the server
 issues a one-hour session that cannot change the password or email, revoke
 sessions or delegate again); writes are confirmed first. That needs the

@@ -23,6 +23,12 @@
   text-wrap: pretty;
 }
 
+/* Chinese headings break at punctuation, not inside a word; a run too long for the line still breaks. */
+.landing :is(h1, h2, h3) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
 .eyebrow {
   font-size: 11px;
   line-height: 18px;

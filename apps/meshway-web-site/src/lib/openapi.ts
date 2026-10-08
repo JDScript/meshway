@@ -125,7 +125,7 @@ export function operationDocument(
     },
     security: document.security,
   }
-  return isolateFieldAnnotations(result)
+  return quietConstraints(isolateFieldAnnotations(result))
 }
 
 /** Scalar's shared ref proxies otherwise let one field's description overwrite another. */
@@ -190,4 +190,34 @@ function isolateFieldAnnotations(document: Document): Document {
   visit(result.paths)
   for (const schema of Object.values(schemas)) visit(schema)
   return result
+}
+
+/** The contract's ID pattern: lowercase hyphenated UUIDs, never all zeros. */
+const UUID_PATTERN =
+  "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+
+/**
+ * Constraints every ID and integer carries, said once on the overview page
+ * instead of on each field: an ID's pattern and length (its format, uuid,
+ * stays) and the JSON-safe integer maximum.
+ */
+function quietConstraints(document: Document): Document {
+  function visit(value: unknown) {
+    if (!value || typeof value !== "object") return
+    if (
+      "format" in value &&
+      value.format === "uuid" &&
+      "pattern" in value &&
+      value.pattern === UUID_PATTERN
+    ) {
+      for (const key of ["pattern", "minLength", "maxLength"])
+        Reflect.deleteProperty(value, key)
+    }
+    if ("maximum" in value && value.maximum === Number.MAX_SAFE_INTEGER)
+      Reflect.deleteProperty(value, "maximum")
+    for (const child of Object.values(value)) visit(child)
+  }
+  visit(document.paths)
+  visit(document.components?.schemas)
+  return document
 }

@@ -1,13 +1,13 @@
 ---
 title: API 参考
-description: 在自己的 Meshway Server 上管理账户、网络和配置。
+description: 在你自己的 Meshway 服务端上管理账户、网络和配置。
 ---
 
 Meshway 的用户 HTTP API 以 `/api/v1` 为根路径。每个操作页列出请求参数、嵌套字段、响应状态和 SDK 调用方式；字段说明直接来自发布契约，保留英文。
 
-## Server 地址
+## 服务端地址
 
-将 `MESHWAY_SERVER` 设为你自己的 Server origin，例如 `https://meshway.example.com`，不要追加 `/api/v1`。页面中的路径已包含 API 根路径，`ControlClient` 同样使用 origin。
+将 `MESHWAY_SERVER` 设为你自己服务端的 origin，例如 `https://meshway.example.com`，不要追加 `/api/v1`。页面中的路径已包含 API 根路径，`ControlClient` 同样使用 origin。
 
 ```sh
 export MESHWAY_SERVER="https://meshway.example.com"
@@ -15,7 +15,7 @@ export MESHWAY_SERVER="https://meshway.example.com"
 
 ## 认证
 
-先读取[认证选项](/docs/api/auth/get-auth-options)，再使用邮箱和密码[登录](/docs/api/auth/login)。开启注册的 Server 也可通过[注册](/docs/api/auth/register)创建账户。登录返回 `SessionIssuedResponse`：`requestId`、`user`、`session` 和一次交付的 `token`。
+先读取[认证选项](/docs/api/auth/get-auth-options)，再使用邮箱和密码[登录](/docs/api/auth/login)。开启了注册的服务端也可通过[注册](/docs/api/auth/register)创建账户。登录返回 `SessionIssuedResponse`：`requestId`、`user`、`session` 和一次交付的 `token`。
 
 后续需要认证的调用携带：
 
@@ -23,11 +23,13 @@ export MESHWAY_SERVER="https://meshway.example.com"
 Authorization: Bearer <session token>
 ```
 
-示例通过 `MESHWAY_TOKEN` 读取该 token。[读取当前会话](/docs/api/auth/get-auth-session)不会再次返回 token；[退出登录](/docs/api/auth/logout)撤销当前会话，成功返回 `204`。Server 在每次请求时检查会话、账户和当前网络权限；一个网络的成员关系不授予其他网络的访问权。
+示例通过 `MESHWAY_TOKEN` 读取该 token。[读取当前会话](/docs/api/auth/get-auth-session)不会再次返回 token；[退出登录](/docs/api/auth/logout)撤销当前会话，成功返回 `204`。服务端在每次请求时检查会话、账户和当前网络权限；一个网络的成员关系不授予其他网络的访问权。
 
 ## 请求与响应
 
 JSON 字段采用 camelCase。对象拒绝未知字段；可省略与明确 `null` 分别表达。操作页的字段树展示必填字段、联合分支、枚举和约束。
+
+各种 ID 都是小写、带连字符的 UUID，不能全为零；整数都不超过 2^53 − 1（JSON 能精确表示的最大整数）。字段树里不再逐个重复这两条约束。
 
 配置写入使用 `expectedRevision` 检查并发基准。创建操作中声明的 `requestId` 用于幂等去重：相同 ID 与不同输入冲突。具体条件见各操作描述。
 

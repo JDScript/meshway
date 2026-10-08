@@ -112,7 +112,7 @@ function SampleHeading() {
       </h2>
       <p className="mb-4 text-xs leading-relaxed text-fd-muted-foreground">
         {locale === "zh"
-          ? "将环境变量设为你自己的 Server origin 和会话 token；替换尖括号中的路径值。TypeScript 示例在 Node.js 中运行。"
+          ? "将环境变量设为你自己服务端的 origin 和会话 token；替换尖括号中的路径值。TypeScript 示例在 Node.js 中运行。"
           : "Set the environment variables to your server origin and session token; replace path values in angle brackets. TypeScript samples run in Node.js."}
         {requestBody &&
           (locale === "zh"

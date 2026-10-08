@@ -1,0 +1,6 @@
+{
+  "title": "User guide",
+  "description": "Concepts, quickstart and guides",
+  "root": true,
+  "pages": ["index", "quickstart", "concepts", "console", "cli"]
+}

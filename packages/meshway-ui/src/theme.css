@@ -8,6 +8,19 @@
  */
 @import "@fontsource-variable/inter";
 
+/*
+ * Until Inter has loaded, Arial sized and spaced like it, so text does not
+ * move when Inter arrives (the metrics Next.js's font fallback uses).
+ */
+@font-face {
+  font-family: "Inter Variable Fallback";
+  src: local("Arial");
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0%;
+  size-adjust: 107.12%;
+}
+
 /* The components in this package. */
 @source "./";
 
@@ -51,8 +64,8 @@
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans:
-    "Inter Variable", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    sans-serif;
+    "Inter Variable", "Inter Variable Fallback", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono:
     ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --color-success: var(--success);

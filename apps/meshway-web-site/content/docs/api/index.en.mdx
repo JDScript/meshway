@@ -1,6 +1,6 @@
 ---
 title: API reference
-description: Manage accounts, networks and configuration on your own Meshway Server.
+description: Manage accounts, networks and configuration on your own Meshway server.
 ---
 
 The user HTTP API is rooted at `/api/v1`. Each operation documents parameters, nested fields, response statuses and SDK calls. Field descriptions come directly from the published contract.
@@ -28,6 +28,8 @@ Samples read this token from `MESHWAY_TOKEN`. [Reading the current session](/en/
 ## Requests and responses
 
 JSON fields use camelCase. Objects reject unknown fields. Omitted values and explicit `null` have distinct meanings. Field trees document required properties, union variants, enums and constraints.
+
+IDs are lowercase hyphenated UUIDs and never all zeros; integers never exceed 2^53 − 1 (the largest integer JSON represents exactly). The field trees do not repeat these two constraints on every field.
 
 Configuration writes check the concurrency baseline using `expectedRevision`. Where declared by a create operation, `requestId` deduplicates matching requests; reusing an ID with different input conflicts. See individual operations for their conditions.
 

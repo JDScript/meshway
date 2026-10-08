@@ -1,4 +1,3 @@
 {
-  "title": "User guide",
-  "pages": ["index", "quickstart", "concepts", "console", "cli", "api"]
+  "pages": ["(guide)", "api"]
 }

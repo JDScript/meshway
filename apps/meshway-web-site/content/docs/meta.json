@@ -1,4 +1,3 @@
 {
-  "title": "用户文档",
-  "pages": ["index", "quickstart", "concepts", "console", "cli", "api"]
+  "pages": ["(guide)", "api"]
 }

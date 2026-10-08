@@ -11,7 +11,7 @@ import { notFound } from "next/navigation"
 import type { ReactNode } from "react"
 
 import { getMDXComponents } from "@/components/mdx"
-import { baseOptions } from "@/components/site/layout"
+import { docsOptions } from "@/components/site/layout"
 import type { Lang } from "@/lib/i18n"
 import { source } from "@/lib/source"
 
@@ -24,7 +24,7 @@ export function DocsShell({
   children: ReactNode
 }) {
   return (
-    <DocsLayout tree={source.getPageTree(lang)} {...baseOptions(lang)}>
+    <DocsLayout tree={source.getPageTree(lang)} {...docsOptions(lang)}>
       {children}
     </DocsLayout>
   )
