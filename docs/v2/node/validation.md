@@ -24,7 +24,7 @@
 | `test:runtime:linux` | Native UDP 静态端点 | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 当前 wire 已通过；`20261007T213446Z-7b1b18a3` |
 | `test:runtime:linux` | Native TCP | off | — | daemon 整组：共同场景 | 当前 wire 已通过；`20261007T214309Z-a2b9e93f` |
 | `test:runtime:linux` | Native UDP 静态端点 | resolv-conf | — | 共同场景＋[DNS 场景](#dns-场景) | 未通过；`20261007T215139Z-6b08959d`、`20261007T215819Z-790fc5f7` |
-| `test:runtime:linux` | Native UDP 静态端点 | resolved | — | 共同场景＋DNS 场景 | 当前 wire 已通过；`20261007T220446Z-5360cb6e` |
+| `test:runtime:linux` | Native UDP 静态端点 | resolved | — | 共同场景＋DNS 场景 | V1 串行：当前 wire 已通过，`20261007T220446Z-5360cb6e`；Planck：未通过，见[远程矩阵证据](#remote-matrix-evidence) |
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋[穿透场景](#穿透场景) | 未通过；`20261007T221353Z-bd8c8c29`、`20261007T221747Z-6137d668` |
 | `test:runtime:linux --traversal nat --traversal-fallback` | Native UDP＋A–R Native TCP 退路 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋穿透场景＋同路径 TCP 退路 | 未通过；`20261007T222406Z-706619eb`、`20261007T222802Z-896b1580` |
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 端口保持型 SNAT | 整组组合 | 未通过；`20261007T223053Z-6d3d9c48`、`20261007T223451Z-5fe61a8d` |
@@ -43,6 +43,16 @@
 TUN 报告位于 `.meshway/validation/tun/<报告 ID>/report.json`；runtime 位于 `.meshway/validation/runtime/<报告 ID>/report.json`；packet 原始报告位于执行 worktree 下的 `.meshway/validation/packet/<报告 ID>/report.json`，并在仓库同名目录保留副本。入口记录为 `invocationEvidence`；runtime 另记录实际启动前的 `loadBeforeRuntime` 和 `runtimeElapsedSeconds`。packet 的 `daemonReport` 指向整组通过的 `20261007T212412Z-807e82ca`。
 
 packet／runtime 各次运行的构建、导入及结束源码指纹一致：`052e82e75417c17457c5e40951e2d1098147e2be56d3156f89a5cf465eb653c6`。TUN 使用较小的专属输入集合，指纹为 `477af3a17bc873c2346314c1dc27145230821df287fb91b22b6995932ce7b066`。入口记录汇总位于 `.meshway/validation/v1/20261007-main-3887256b/`；报告中各 `passed` 原样保留。
+
+### 远程矩阵证据 {#remote-matrix-evidence}
+
+Planck x86 使用生产基线 `1fb484bf`、工具提交 `8c656007` 的九行矩阵 `20261007T234146Z-c299a3b8`，并发 4，总耗时 872.8 秒（含构建）；TUN、packet、UDP/off、TCP/off 通过，其余五行未通过。每行及远程结束后的容器／网络检查均无本 run 遗留资源。V1 约 70 分钟为串行且包含失败复跑，不能把两次运行的耗时比当作同次数、同通过结果的基准。
+
+与 V1 相比，额外未通过的是 UDP/resolved：并行报告出现 `lease-expired` 系统解析断言及缺少 pre-outage execution lease；专用 detached worktree 的串行复跑 `20261008T002050Z-1d853e58`／行报告 `20261008T002332Z-de9c1b24` 仍在 ping 首样本及会合期限检查失败，构建与结束源码指纹一致。不能将其仅归因为并发 4，也不能用 V1 的通过记录覆盖该平台失败。NAT 的 STUN State／ping 检查和 resolv-conf 的 ping 检查仍保留失败结论。
+
+NAT/off 与 NAT＋fallback/off 的短模式矩阵 `20261007T235638Z-8e189afd` 耗时 220.8 秒，均在持续流之前失败。独立 UDP/off 短模式 `20261008T000934Z-930fcb37`／行报告 `20261008T001339Z-1cfc5083` 通过，纯接收窗口为 30,499 ms，未观测到的需求延长为 `laterExpiryMs=null`；它验证短模式工具行为，不构成 125 秒验收。
+
+上述远程原件位于执行 clone 的 `.meshway/validation/matrix/<run>/`；本地副本位于执行工作树 `.meshway/validation/remote/zj2631@ai4ce-planck.dyn.poly.edu-<run>/`。矩阵、每行报告、私有 actor 错误、pcap、源码指纹和远程完成状态一并保留，具体入口见[开发环境](/v2/development#validation-matrix)。
 
 ### 未通过边界
 
