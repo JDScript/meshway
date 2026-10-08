@@ -147,11 +147,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             save()
             for link in links[1:]:
                 run("docker", "network", "connect", "--ip", addresses[link][role], networks[link], containers[role], capture=True)
+            run("docker", "start", containers[role], capture=True)
             inspection = owned("container", containers[role])
             if {value["NetworkID"] for value in inspection["NetworkSettings"]["Networks"].values()} != {networks[link] for link in links}:
                 raise RuntimeError("unexpected exit actor attachment")
             manifest["resources"].setdefault("actorInspections", {})[role] = inspection
-            run("docker", "start", containers[role], capture=True)
         deadline = time.monotonic() + 30
         for role in ROLES:
             while command(role, "test", "-f", "/evidence/ready", required=False)["exitCode"]:
@@ -189,12 +189,14 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             write(report / "infrastructure-probes.json", probes)
             if probes[link]["e"]["exitCode"] or any(probes[link][role]["exitCode"] == 0 for role in ("a", "r", "controller")):
                 raise RuntimeError("external/LAN reachability is not E-only")
-            interface = interfaces["e"][addresses[link]["e"]]
-            probes[link]["block"] = command("e", "ip", "link", "set", "dev", interface, "down")
+            # An exact, fixture-owned unreachable route blocks E's egress
+            # without closing the interface's packet socket during capture.
+            # Use add/del (never replace) so an unexpected existing route fails.
+            probes[link]["block"] = command("e", "ip", "route", "add", "unreachable", target + "/32")
             try:
                 probes[link]["eBlocked"] = command("e", *request, required=False)
             finally:
-                probes[link]["restore"] = command("e", "ip", "link", "set", "dev", interface, "up")
+                probes[link]["restore"] = command("e", "ip", "route", "del", "unreachable", target + "/32")
             probes[link]["eRestored"] = command("e", *request, required=False)
             write(report / "infrastructure-probes.json", probes)
             if probes[link]["eBlocked"]["exitCode"] == 0 or probes[link]["eRestored"]["exitCode"]:

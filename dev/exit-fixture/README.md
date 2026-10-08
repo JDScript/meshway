@@ -99,8 +99,10 @@ and is inspected before exact removal; the matrix independently checks leftovers
   logs. Current probes originate **locally from E**, proving only collector and
   topology health, never masquerade or A→R→E business success.
 - `infrastructure-probes.json` checks E→service success, A/R/Controller→service
-  failure, then takes down only E's owned service interface, observes failure,
-  restores it and observes success. Future business control must repeat the
+  failure, then adds an exact fixture-owned unreachable /32 route on E for the
+  service, observes failure, deletes that exact route and observes success. This
+  keeps the egress interface's capture socket alive and never replaces a route.
+  Future business control must repeat the
   same window with A's live flow, correlate service logs and E's pcap, and verify
   no fallback on A or shortcut around R. It remains `pending-x2-x5` now.
 - `exit-stages.json`, source/binary hashes, image provenance, Docker inspection,
