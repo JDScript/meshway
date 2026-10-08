@@ -22,14 +22,15 @@ const TAPS = 5
 /** A click on the globe (not a node): deselects; five quick ones swap the little planet look. */
 function makeGlobeClick() {
   let taps: number[] = []
-  return (nodeId: string | null) => {
-    selectFromGlobe(nodeId)
-    if (nodeId !== null) return
+  return (nodeId: string | null, group?: readonly string[]) => {
+    const handled = selectFromGlobe(nodeId, group)
+    if (nodeId !== null) return handled
     const now = performance.now()
     taps = [...taps.filter((at) => now - at < TAPS_MS * TAPS), now]
-    if (taps.length < TAPS) return
+    if (taps.length < TAPS) return handled
     taps = []
     toast(togglePlanet() ? m.planet_on() : m.planet_off(), { id: "planet" })
+    return handled
   }
 }
 
@@ -119,6 +120,7 @@ export function GlobeStage() {
         aria-label={m.globe_region()}
         data-boot={boot}
         data-receded={state.recede}
+        style={{ visibility: state.hidden ? "hidden" : undefined }}
         className="globe-stage fixed inset-0"
       />
     </>

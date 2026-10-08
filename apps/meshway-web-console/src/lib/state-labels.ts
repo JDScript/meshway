@@ -1,4 +1,5 @@
 import type {
+  AggregatedLink,
   ApplyPhase,
   EndpointKind,
   EndpointSource,
@@ -15,6 +16,31 @@ import type {
 
 import type { NodeStatus } from "@/lib/nodes/status"
 import { m } from "@/paraglide/messages.js"
+
+/** Evidence qualifies the reported phase on every compact connection summary. */
+export function connectionText(link: AggregatedLink): string {
+  return link.evidence === "expired" ||
+    link.evidence === "conflicting" ||
+    (link.phase === "authenticated" && link.evidence === "oneSided")
+    ? evidenceLabel[link.evidence]()
+    : linkPhaseLabel[link.phase]()
+}
+
+/** Known carrier names use the same wording as configuration; future providers keep their name. */
+export function transportText(transport: string): string {
+  switch (transport) {
+    case "native_udp":
+      return m.configuration_dialer_native_udp()
+    case "native_tcp":
+      return m.configuration_dialer_native_tcp()
+    case "vless":
+      return m.configuration_dialer_vless()
+    case "trojan":
+      return m.configuration_dialer_trojan()
+    default:
+      return transport
+  }
+}
 
 // The words for runtime State, one per value the controller sends, the
 // same on every page that shows it.

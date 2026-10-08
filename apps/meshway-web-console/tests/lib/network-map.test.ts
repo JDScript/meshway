@@ -137,6 +137,19 @@ const link = (
   ...patch,
 })
 
+test("registered nodes without a State report remain visible with unknown status", () => {
+  const nodes = mapNodes(
+    state({}),
+    new Map([listed(A, "new-node")]),
+    () => null
+  )
+  assert.equal(nodes.length, 1)
+  assert.equal(nodes[0]?.id, A)
+  assert.equal(nodes[0]?.status, "unknown")
+  assert.equal(nodes[0]?.location, null)
+  assert.equal(nodes[0]?.receivedAt, null)
+})
+
 test("a node is located where geojs places the server's address; the others say why not", () => {
   const view = state({
     [A]: located(TOKYO),

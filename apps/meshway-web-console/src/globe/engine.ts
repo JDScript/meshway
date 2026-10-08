@@ -607,7 +607,7 @@ type LinkObject = {
 
 export function createGlobeEngine(
   container: HTMLElement,
-  onSelect: (nodeId: string | null) => void,
+  onSelect: (nodeId: string | null, group?: readonly string[]) => boolean,
   onHover: (nodeIds: readonly string[]) => void,
   onRevealed: () => void
 ): GlobeEngine {
@@ -1382,7 +1382,8 @@ export function createGlobeEngine(
       event.stopPropagation()
       const [only, ...others] = datum.members
       if (only !== undefined && others.length === 0) onSelect(only)
-      else setOpen(openGroup === key ? null : key)
+      else if (!onSelect(only ?? null, datum.members))
+        setOpen(openGroup === key ? null : key)
     })
     element.addEventListener("pointerenter", () => onHover(datum.members))
     element.addEventListener("pointerleave", () => onHover([]))

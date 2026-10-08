@@ -10,7 +10,10 @@ import type { ReactNode } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { DraftMark } from "@/components/chrome/draft-mark"
-import { SegmentedTabs } from "@/components/chrome/segmented-control"
+import {
+  SegmentedControl,
+  SegmentedTabs,
+} from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { surfaceTitleId } from "@/components/surface/page-frame"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -25,6 +28,7 @@ import { useConfigurationDraft } from "@/state/configuration-draft"
 
 import { identityText } from "../-labels"
 import { NODE_TABS, type NodeTab } from "../-search"
+import { NodeDevice } from "./-device"
 import { NodeDiagnostics } from "./-diagnostics"
 import { LatencyTab } from "./-latency/latency-tab"
 import { LiveStatus } from "./-live-status"
@@ -32,10 +36,28 @@ import { NodeManage } from "./-manage"
 import { NodeOverview } from "./-overview"
 import { PathTab } from "./-path/path-tab"
 import { NodeSettings } from "./-settings"
-import { NodeTransport } from "./-transport/transport-tab"
+import {
+  NodeConnectionSettings,
+  NodeTransport,
+} from "./-transport/transport-tab"
 
 const isTab = (value: unknown): value is NodeTab =>
   NODE_TABS.some((tab) => tab === value)
+
+type Section = "overview" | "transport" | "diagnostics" | "settings"
+const sectionOf = (tab: NodeTab): Section => {
+  switch (tab) {
+    case "overview":
+    case "transport":
+      return tab
+    case "latency":
+    case "path":
+    case "diagnostics":
+      return "diagnostics"
+    default:
+      return "settings"
+  }
+}
 
 /**
  * One node in full: its status in the header; what matters about it
@@ -105,7 +127,7 @@ export function NodeWorkspace({
  * the tabs hide an old panel only once its own animations finish, and the
  * scroll-driven edge fade never does.
  */
-function Pane({ value, children }: { value: NodeTab; children: ReactNode }) {
+function Pane({ value, children }: { value: Section; children: ReactNode }) {
   return (
     <TabsContent value={value} className="flex min-h-0 flex-col">
       <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-(--commit-space)">
@@ -145,6 +167,7 @@ function Body({
   // The path check reads the whole configuration: owners and admins.
   const planning = network?.actions.readConfiguration === true
   const shownTab = tab === "path" && !planning ? "overview" : tab
+  const section = sectionOf(shownTab)
   const openSource = () =>
     void navigate({
       to: "/networks/$network/configuration/$view",
@@ -166,16 +189,14 @@ function Body({
         )}
         action={<CloseButton onClick={onClose} />}
         meta={
-          <div className="flex h-5 min-w-0 items-center gap-3 text-row text-muted-foreground">
+          <div className="flex h-5 min-w-0 items-baseline gap-3 text-row leading-5 text-muted-foreground">
             {state.data !== undefined ? (
-              <span className="shrink-0 text-foreground">
-                <LiveStatus
-                  status={nodeStatus(node, view)}
-                  seen={lastSeen(view)}
-                />
-              </span>
+              <LiveStatus
+                status={nodeStatus(node, view)}
+                seen={lastSeen(view)}
+              />
             ) : null}
-            <span className="shrink-0 font-mono text-meta">
+            <span className="shrink-0 font-mono">
               {node.addresses.ipv4 ?? node.addresses.ipv6 ?? "—"}
             </span>
             <span className="min-w-0 truncate">
@@ -191,30 +212,27 @@ function Body({
       />
 
       <Tabs
-        value={shownTab}
+        value={section}
         onValueChange={(value) => {
-          if (isTab(value)) onTab(value)
+          if (isTab(value)) onTab(value === "diagnostics" ? "latency" : value)
         }}
         className="min-h-0 flex-1 gap-0"
       >
         <div className="mx-6 mb-4 overflow-x-auto">
           <SegmentedTabs
-            value={shownTab}
+            value={section}
             options={[
               { value: "overview", label: m.nodes_tab_overview() },
-              { value: "settings", label: m.nodes_tab_settings() },
               { value: "transport", label: m.nodes_tab_transport() },
-              { value: "latency", label: m.history_tab() },
-              ...(planning
-                ? [{ value: "path" as const, label: m.nodes_tab_path() }]
-                : []),
               { value: "diagnostics", label: m.nodes_tab_diagnostics() },
-              { value: "manage", label: m.nodes_tab_manage() },
+              { value: "settings", label: m.nodes_tab_settings() },
             ]}
           />
         </div>
         <Pane value="overview">
           <NodeOverview
+            networkId={networkId}
+            network={network}
             node={node}
             state={state}
             currentRevision={currentRevision}
@@ -222,12 +240,52 @@ function Body({
           />
         </Pane>
         <Pane value="settings">
-          <NodeSettings
-            networkId={networkId}
-            nodeId={node.id}
-            network={network}
-            onEditSource={openSource}
-          />
+          <div className="mb-6 overflow-x-auto">
+            <SegmentedControl<NodeTab>
+              label={m.nodes_tab_settings()}
+              size="sm"
+              value={shownTab}
+              onChange={onTab}
+              options={[
+                { value: "settings", label: m.nodes_settings_basics() },
+                {
+                  value: "connection-settings",
+                  label: m.nodes_connection_settings(),
+                },
+                { value: "device", label: m.nodes_facts() },
+                { value: "manage", label: m.nodes_tab_manage() },
+              ]}
+            />
+          </div>
+          {shownTab === "device" ? (
+            <NodeDevice node={node} state={state.data} />
+          ) : shownTab === "manage" ? (
+            <NodeManage
+              networkId={networkId}
+              node={node}
+              onDeleted={onDeleted}
+            />
+          ) : (
+            <div className="flex max-w-workspace flex-col gap-8">
+              <NodeSettings
+                networkId={networkId}
+                nodeId={node.id}
+                network={network}
+                onEditSource={openSource}
+                section={
+                  shownTab === "connection-settings" ? "connections" : "general"
+                }
+              />
+              {shownTab === "connection-settings" ? (
+                <NodeConnectionSettings
+                  networkId={networkId}
+                  nodeId={node.id}
+                  network={network}
+                  state={state}
+                />
+              ) : null}
+            </div>
+          )}
         </Pane>
         <Pane value="transport">
           <NodeTransport
@@ -238,29 +296,39 @@ function Body({
             nodes={nodes}
           />
         </Pane>
-        <Pane value="latency">
-          <LatencyTab networkId={networkId} nodeId={node.id} />
-        </Pane>
-        {planning ? (
-          <Pane value="path">
+        <Pane value="diagnostics">
+          <div className="mb-6 overflow-x-auto">
+            <SegmentedControl<NodeTab>
+              label={m.nodes_tab_diagnostics()}
+              size="sm"
+              value={shownTab}
+              onChange={onTab}
+              options={[
+                { value: "latency", label: m.nodes_measurements() },
+                ...(planning
+                  ? [{ value: "path" as const, label: m.nodes_tab_path() }]
+                  : []),
+                { value: "diagnostics", label: m.nodes_runtime() },
+              ]}
+            />
+          </div>
+          {shownTab === "latency" ? (
+            <LatencyTab networkId={networkId} nodeId={node.id} />
+          ) : shownTab === "path" && planning ? (
             <PathTab
               networkId={networkId}
               nodeId={node.id}
               network={network}
               nodes={nodes}
             />
-          </Pane>
-        ) : null}
-        <Pane value="diagnostics">
-          <NodeDiagnostics
-            nodeId={node.id}
-            desired={node.desiredExecution}
-            state={state}
-            currentRevision={currentRevision}
-          />
-        </Pane>
-        <Pane value="manage">
-          <NodeManage networkId={networkId} node={node} onDeleted={onDeleted} />
+          ) : (
+            <NodeDiagnostics
+              nodeId={node.id}
+              desired={node.desiredExecution}
+              state={state}
+              currentRevision={currentRevision}
+            />
+          )}
         </Pane>
       </Tabs>
     </div>

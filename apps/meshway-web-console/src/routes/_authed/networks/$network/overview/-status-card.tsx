@@ -8,16 +8,9 @@ import { NodeStatusDot } from "@/components/chrome/node-status"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
-import {
-  countBy,
-  EVIDENCE_ORDER,
-  linkKey,
-  linkLook,
-  PHASE_ORDER,
-  type MapNode,
-} from "@/lib/network-map"
+import { countBy, linkKey, linkLook, type MapNode } from "@/lib/network-map"
 import { STATUS_ORDER } from "@/lib/nodes/status"
-import { evidenceLabel, linkPhaseLabel, statusLabel } from "@/lib/state-labels"
+import { connectionText, statusLabel, transportText } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 import { useGlobeAvailable } from "@/state/boot"
 import { highlightOnGlobe } from "@/state/globe"
@@ -43,6 +36,7 @@ export function StatusCard({
   onOpenNode,
   history,
   mobile,
+  topology = false,
 }: {
   state: StateView | undefined
   stateError: unknown
@@ -54,6 +48,7 @@ export function StatusCard({
   onOpenNode: (nodeId: string) => void
   history: HistoryLayerProps
   mobile: boolean
+  topology?: boolean
 }) {
   const now = useNow(5_000)
   const globe = useGlobeAvailable()
@@ -150,24 +145,15 @@ export function StatusCard({
               <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="font-medium tabular-nums">{links.length}</span>
                 <Counts
-                  items={countBy(
-                    links.map((link) => link.phase),
-                    PHASE_ORDER
-                  ).map(({ value, count }) => [linkPhaseLabel[value](), count])}
-                />
-              </span>
-              <span className="flex flex-wrap gap-x-3 gap-y-1">
-                <Counts
-                  items={countBy(
-                    links.map((link) => link.evidence),
-                    EVIDENCE_ORDER
-                  ).map(({ value, count }) => [evidenceLabel[value](), count])}
+                  items={countBy(links.map(connectionText), [
+                    ...new Set(links.map(connectionText)),
+                  ]).map(({ value, count }) => [value, count])}
                 />
               </span>
             </dd>
           </dl>
 
-          {globe ? null : (
+          {globe || topology ? null : (
             <p className="text-row text-muted-foreground">
               {m.overview_globe_unavailable()}
             </p>
@@ -179,7 +165,7 @@ export function StatusCard({
             </p>
           ) : null}
 
-          {unlocated.length ? (
+          {unlocated.length && !topology ? (
             <Group title={m.overview_unlocated()} count={unlocated.length}>
               <ul className="flex flex-col gap-0.5">
                 {unlocated.map((node) => (
@@ -208,20 +194,16 @@ export function StatusCard({
             </Group>
           ) : null}
 
-          <Group
-            title={m.overview_current_links()}
-            count={links.length}
-            note={
-              undrawn.length
-                ? m.overview_links_undrawn({ count: String(undrawn.length) })
-                : undefined
-            }
-          >
-            {links.length === 0 ? (
-              <p className="px-2.5 text-row text-muted-foreground">
-                {m.overview_no_links()}
-              </p>
-            ) : (
+          {links.length > 0 ? (
+            <Group
+              title={m.overview_current_links()}
+              count={links.length}
+              note={
+                undrawn.length
+                  ? m.overview_links_undrawn({ count: String(undrawn.length) })
+                  : undefined
+              }
+            >
               <ul className="flex flex-col gap-0.5">
                 {links.map((link) => (
                   <LinkRow
@@ -233,8 +215,8 @@ export function StatusCard({
                   />
                 ))}
               </ul>
-            )}
-          </Group>
+            </Group>
+          ) : null}
 
           <HistoryLayer {...history} />
         </div>
@@ -284,11 +266,7 @@ function LinkRow({
           {nameOf(link.a)} ↔ {nameOf(link.b)}
         </span>
         <span className="block truncate text-meta text-muted-foreground">
-          {[
-            link.transport,
-            linkPhaseLabel[link.phase](),
-            evidenceLabel[link.evidence](),
-          ].join(" · ")}
+          {[transportText(link.transport), connectionText(link)].join(" · ")}
         </span>
         <span className="block truncate text-meta text-muted-foreground">
           {[

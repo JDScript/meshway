@@ -1,7 +1,5 @@
 import type {
   AggregatedLink,
-  LinkEvidence,
-  LinkPhase,
   LocationAbsentReason,
   NodeInventoryView,
   RecentLink,
@@ -52,20 +50,6 @@ export type MapNode = {
   lastAuthenticatedAt: string | null
 }
 
-export const PHASE_ORDER: readonly LinkPhase[] = [
-  "authenticated",
-  "preparing",
-  "failed",
-  "closed",
-]
-
-export const EVIDENCE_ORDER: readonly LinkEvidence[] = [
-  "matched",
-  "oneSided",
-  "conflicting",
-  "expired",
-]
-
 /** The addresses the nodes' locations rest on (all public): what the globe looks up. */
 export function locationAddresses(state: StateView): Map<string, AddressScope> {
   return new Map(
@@ -107,20 +91,23 @@ export function mapNodes(
   inventory: ReadonlyMap<string, NodeInventoryView>,
   geoOf: GeoOf
 ): MapNode[] {
-  return Object.entries(state.nodes)
-    .map(([id, view]): MapNode => {
-      const { location, locationAbsent } = nodeAddresses(view.derived)
+  return [...new Set([...Object.keys(state.nodes), ...inventory.keys()])]
+    .map((id): MapNode => {
+      const view = Object.hasOwn(state.nodes, id) ? state.nodes[id] : undefined
+      const { location, locationAbsent } = view
+        ? nodeAddresses(view.derived)
+        : { location: null, locationAbsent: null }
       const geo = location ? geoOf(location.address) : null
       const listed = inventory.get(id) ?? null
       return {
         id,
-        name: listed?.hostname ?? view.hostname,
+        name: listed?.hostname ?? view?.hostname ?? id.slice(0, 8),
         status: nodeStatus(listed, view),
         location,
         geo,
         unlocated: unlocatedOf(location, locationAbsent, geo),
-        receivedAt: view.receivedAt ?? null,
-        lastAuthenticatedAt: view.lastAuthenticatedAt ?? null,
+        receivedAt: view?.receivedAt ?? null,
+        lastAuthenticatedAt: view?.lastAuthenticatedAt ?? null,
       }
     })
     .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))

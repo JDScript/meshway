@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { useMatch } from "@tanstack/react-router"
+import { useMatch, useNavigate } from "@tanstack/react-router"
 import { useEffect, useMemo } from "react"
 
 import { useAddressGeo } from "@/api/queries/ip-geo"
@@ -18,6 +18,7 @@ import {
 import { stateOf } from "@/lib/nodes/state-model"
 import { onGlobeSelect, setGlobe } from "@/state/globe"
 import { useHistoryLayer } from "@/state/history-layer"
+import { useOverviewView } from "@/state/overview-view"
 
 import { useNodeNavigation } from "../nodes/-navigation"
 
@@ -81,6 +82,7 @@ export function useNetworkScene(networkId: string) {
 
   return {
     state,
+    inventory: inventory.data?.items,
     nodes,
     nameOf,
     scene,
@@ -98,6 +100,13 @@ export function useNetworkScene(networkId: string) {
  */
 export function useGlobeNetwork(networkId: string) {
   const { scene } = useNetworkScene(networkId)
+  const rememberedView = useOverviewView()
+  const navigate = useNavigate()
+  const overview = useMatch({
+    from: "/_authed/networks/$network/overview",
+    shouldThrow: false,
+    select: (match) => ({ node: match.search.node, view: match.search.view }),
+  })
   const openNodeId =
     useMatch({
       from: "/_authed/networks/$network/nodes/$node",
@@ -106,19 +115,42 @@ export function useGlobeNetwork(networkId: string) {
     }) ?? null
 
   useEffect(() => {
-    setGlobe({ scene, selectedNodeId: openNodeId })
-  }, [scene, openNodeId])
+    setGlobe({
+      scene,
+      selectedNodeId: openNodeId ?? overview?.node ?? null,
+      hidden:
+        overview !== undefined &&
+        (overview.view ?? rememberedView) === "topology",
+    })
+  }, [scene, openNodeId, overview, rememberedView])
   useEffect(
-    () => () => setGlobe({ scene: EMPTY_SCENE, selectedNodeId: null }),
+    () => () =>
+      setGlobe({ scene: EMPTY_SCENE, selectedNodeId: null, hidden: false }),
     []
   )
 
   const { openNode } = useNodeNavigation(networkId)
   useEffect(
     () =>
-      onGlobeSelect((nodeId) => {
+      onGlobeSelect((nodeId, group) => {
+        if (overview !== undefined) {
+          void navigate({
+            to: "/networks/$network/overview",
+            params: { network: networkId },
+            search: {
+              view: overview.view,
+              node:
+                group && group.length > 1 ? undefined : (nodeId ?? undefined),
+              group: group && group.length > 1 ? [...group] : undefined,
+            },
+            replace: true,
+          })
+          return true
+        }
+        if (group && group.length > 1) return false
         if (nodeId) openNode(nodeId)
+        return true
       }),
-    [openNode]
+    [openNode, overview, navigate, networkId]
   )
 }

@@ -19,7 +19,7 @@
   "observation_mode_auto": "Automatic",
   "observation_mode_explicit": "Explicit",
   "observation_path": "Explicit path",
-  "observation_measures": "Measures probe round trips and the probe no-reply rate; the server provides no traffic counts",
+  "observation_measures": "Node round trip · Probe no-reply rate",
   "observation_start": "Start observing",
   "observation_denied": "The server does not allow this observation: the source, target, service or path is outside what is currently permitted",
   "observation_conflict": "The server refused: the source node has no running instance or usable execution configuration",

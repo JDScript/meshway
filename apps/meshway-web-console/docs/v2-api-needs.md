@@ -140,6 +140,9 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ### 请后端调整
 
+- **节点详情的 Mesh DNS 名称**：新版概览需要可复制的规范化 FQDN，并能区分 MagicDNS 已启用／已关闭。当前名称规则是配置 hostname 加 `dns.domain`；Owner／Admin 能读完整配置，普通成员的 `NetworkSummary`、`NodeInventoryView`、`NodeSettingsView` 均没有 DNS 后缀和 MagicDNS 开关。
+  - 请在调用者有权读取的节点／网络视图提供最小的命名信息（规范化名称与开关，或足以无歧义展示它们的投影），GET 与对应 SSE 一致；节点改名、网络后缀变化和开关变化应随同版配置更新。
+  - 这是配置名称，不是系统 resolver 已安装或其他节点已有访问权限的证明；控制台不调用 Node 凭据专用的 `queryNodeDns` 来补齐，也不向普通成员读取完整配置。
 - **State 不再返回 GeoIP／ASN**（产品决定：地点由 console 查 geojs.io，服务端的 GeoIP 只给 `routing.egress.auto` 用）。
   - `derived.location` 只描述依据的地址：`{ address, endpointSource, observedAt, expiresAt, sourceSocketId, sourceGeneration }`，去掉 `data` 和 `datasetId`。只要有合格的实测地址就给出，不依赖数据集。
   - 多个合格地址时，选择不能再依赖它们的地区是否一致：请定一个确定的选择规则，或者在不止一个时返回 `ambiguousObservation`。

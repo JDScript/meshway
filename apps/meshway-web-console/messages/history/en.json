@@ -16,7 +16,7 @@
   "history_coverage_retention": "{node}: records before {time} are past retention",
   "history_coverage_capacity": "{node}: records before {time} were cleared for capacity",
   "history_coverage_gap": "{node}: {count} records dropped {range}",
-  "history_tab": "Latency",
+  "history_tab": "History",
   "history_direction": "Direction",
   "history_direction_out": "Sent by this node",
   "history_direction_in": "Sent to this node",

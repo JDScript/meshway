@@ -4,21 +4,22 @@ import type {
   NodeState,
   StateView,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { cn } from "@meshway/ui/cn"
 import { type UseQueryResult } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
+import { ChevronDownIcon } from "lucide-react"
 import { useMemo } from "react"
 
 import { failureText } from "@/api/failure"
 import { useAddressGeo } from "@/api/queries/ip-geo"
-import { NodeStatusDot } from "@/components/chrome/node-status"
-import { RefList, RefRow } from "@/components/chrome/ref-row"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { StatusDot } from "@/components/chrome/status-dot"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime, relativeTime } from "@/lib/format"
 import { NO_ADDRESSES, nodeAddresses, type GeoOf } from "@/lib/geo"
+import { linkLook } from "@/lib/network-map"
 import {
   isPast,
   listenerRuntime,
@@ -29,19 +30,18 @@ import {
   stateOf,
   unconfiguredListeners,
 } from "@/lib/nodes/state-model"
-import { lastSeen, nodeStatus, type NodeStatus } from "@/lib/nodes/status"
 import {
   acquisitionText,
+  connectionText,
   evidenceLabel,
-  linkPhaseLabel,
   pathEvidenceLabel,
   reporterRoleLabel,
   resourceText,
+  transportText,
 } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
 import { useNodeConfiguration } from "../-draft"
-import { statusText } from "../../-labels"
 import { ConfiguredListeners } from "./listeners"
 import { EndpointGeo, Runtime, SocketBlock } from "./runtime"
 
@@ -77,12 +77,14 @@ export function NodeTransport({
   network,
   state,
   nodes,
+  settings = false,
 }: {
   networkId: string
   nodeId: string
   network: NetworkSummary | null
   state: UseQueryResult<StateView>
   nodes: NodeInventoryResponse | undefined
+  settings?: boolean
 }) {
   const now = useNow(1_000)
   const configuration = useNodeConfiguration(networkId, nodeId, network)
@@ -109,131 +111,109 @@ export function NodeTransport({
 
   return (
     <div className="flex flex-col gap-8">
-      <ReportLine
-        loading={state.data === undefined && !state.isError}
-        failed={
-          state.isError
-            ? (failureText(state.error) ?? m.nodes_state_failed())
-            : null
-        }
-        view={view}
-        status={nodeStatus(
-          nodes?.items.find((node) => node.id === nodeId) ?? null,
-          view
-        )}
-        reportView={report.view}
-        now={now}
-      />
-      <ConfiguredListeners
-        nodeId={nodeId}
-        configuration={configuration}
-        report={full}
-        geoOf={geoOf}
-        now={now}
-      />
-      {full ? (
-        <ReportedOnly
-          report={full}
-          geoOf={geoOf}
-          configured={
-            configuration.state.kind === "manager"
-              ? Object.keys(
-                  configuration.state.view.configuration.nodes[nodeId]
-                    ?.listeners ?? {}
-                )
-              : configuration.state.kind === "member"
-                ? Object.keys(configuration.state.settings.listeners)
-                : null
-          }
-          now={now}
-        />
+      {state.isError ? (
+        <EmptyLine>
+          {failureText(state.error) ?? m.nodes_state_failed()}
+        </EmptyLine>
       ) : null}
-      {report.view === "peer" ? (
-        <Section
-          title={m.nodes_peer_endpoints()}
-          count={report.report.endpoints.length}
-        >
-          {report.report.endpoints.length === 0 ? (
-            <EmptyLine>{m.nodes_endpoints_none()}</EmptyLine>
-          ) : (
-            <ul className="flex flex-col gap-1">
-              {report.report.endpoints.map((endpoint) => (
-                <li
-                  key={`${endpoint.socketId}-${endpoint.candidate.address}`}
-                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-tile bg-fill-subtle px-3.5 py-2 text-row"
-                >
-                  <span className="flex min-w-0 items-baseline gap-2">
-                    <span className="truncate font-mono">
-                      {endpoint.candidate.address}
-                    </span>
-                    <EndpointGeo
-                      address={endpoint.candidate.address}
-                      geoOf={geoOf}
-                    />
-                  </span>
-                  <span className="text-meta text-muted-foreground">
-                    {endpoint.network.toUpperCase()} ·{" "}
-                    {resourceText(endpoint.resource)}
-                  </span>
-                  <span className="col-span-2 text-meta text-muted-foreground">
-                    <TimeFact
-                      at={endpoint.candidate.expiresAt}
-                      now={now}
-                      expiry
-                    />
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-      ) : null}
-      <Links
-        networkId={networkId}
-        nodeId={nodeId}
-        state={state.data}
-        names={names}
-        nodes={nodes}
-        now={now}
-      />
-      <Paths nodeId={nodeId} state={state.data} names={names} now={now} />
+      {settings ? (
+        <>
+          <ConfiguredListeners
+            nodeId={nodeId}
+            configuration={configuration}
+            report={full}
+            geoOf={geoOf}
+            now={now}
+          />
+          {full ? (
+            <details className="rounded-tile border border-divider p-3.5">
+              <summary className="cursor-pointer text-meta text-muted-foreground">
+                {m.nodes_runtime()}
+              </summary>
+              <div className="pt-4">
+                <ReportedOnly
+                  report={full}
+                  geoOf={geoOf}
+                  configured={
+                    configuration.state.kind === "manager"
+                      ? Object.keys(
+                          configuration.state.view.configuration.nodes[nodeId]
+                            ?.listeners ?? {}
+                        )
+                      : configuration.state.kind === "member"
+                        ? Object.keys(configuration.state.settings.listeners)
+                        : null
+                  }
+                  now={now}
+                />
+              </div>
+            </details>
+          ) : null}
+        </>
+      ) : (
+        <>
+          {report.view === "peer" ? (
+            <Section
+              title={m.nodes_peer_endpoints()}
+              count={report.report.endpoints.length}
+            >
+              {report.report.endpoints.length === 0 ? (
+                <EmptyLine>{m.nodes_endpoints_none()}</EmptyLine>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {report.report.endpoints.map((endpoint) => (
+                    <li
+                      key={`${endpoint.socketId}-${endpoint.candidate.address}`}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-tile bg-fill-subtle px-3.5 py-2 text-row"
+                    >
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <span className="truncate font-mono">
+                          {endpoint.candidate.address}
+                        </span>
+                        <EndpointGeo
+                          address={endpoint.candidate.address}
+                          geoOf={geoOf}
+                        />
+                      </span>
+                      <span className="text-meta text-muted-foreground">
+                        {endpoint.network.toUpperCase()} ·{" "}
+                        {resourceText(endpoint.resource)}
+                      </span>
+                      <span className="col-span-2 text-meta text-muted-foreground">
+                        <TimeFact
+                          at={endpoint.candidate.expiresAt}
+                          now={now}
+                          expiry
+                        />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          ) : null}
+          <Links
+            networkId={networkId}
+            nodeId={nodeId}
+            state={state.data}
+            names={names}
+            nodes={nodes}
+            now={now}
+          />
+          <Paths nodeId={nodeId} state={state.data} names={names} now={now} />
+        </>
+      )}
     </div>
   )
 }
 
-function ReportLine({
-  loading,
-  failed,
-  view,
-  status,
-  reportView,
-  now,
-}: {
-  loading: boolean
-  failed: string | null
-  view: ReturnType<typeof stateOf>
-  status: NodeStatus
-  reportView: "full" | "peer" | "none"
-  now: number
+export function NodeConnectionSettings(props: {
+  networkId: string
+  nodeId: string
+  network: NetworkSummary | null
+  state: UseQueryResult<StateView>
 }) {
-  if (loading) return <Skeleton className="h-12 w-full rounded-tile" />
-  if (failed !== null) return <EmptyLine>{failed}</EmptyLine>
-  if (!view) return <EmptyLine>{m.nodes_state_absent()}</EmptyLine>
-  return (
-    <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 rounded-tile bg-fill-subtle px-3.5 py-2 text-row">
-      <NodeStatusDot status={status} />
-      <span className="font-medium">
-        {statusText(status, lastSeen(view), now)}
-      </span>
-      <span className="ml-auto text-meta text-muted-foreground">
-        {reportView === "full"
-          ? m.nodes_report_full()
-          : reportView === "peer"
-            ? m.nodes_report_peer()
-            : null}
-      </span>
-    </div>
-  )
+  return <NodeTransport {...props} nodes={undefined} settings />
 }
 
 /** What the report has that no configured listener names: dial and coordination sockets, listeners not configured. */
@@ -313,14 +293,16 @@ function Links({
       ) : links.length === 0 ? (
         <EmptyLine>{m.nodes_links_none()}</EmptyLine>
       ) : (
-        <RefList>
+        <div className="flex flex-col gap-2">
           {links.map((link) => {
             const listed =
               nodes?.items.some((node) => node.id === link.peerId) ?? false
             return (
-              <RefRow
+              <details
                 key={link.linkId}
-                lead={
+                className="group rounded-tile border border-divider"
+              >
+                <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <StatusDot
                     color={
                       link.phase === "authenticated" &&
@@ -335,44 +317,73 @@ function Links({
                         : "hollow"
                     }
                   />
-                }
-                title={names(link.peerId)}
-                subtitle={[
-                  evidenceLabel[link.evidence](),
-                  link.transport,
-                  link.acquisition
-                    ? acquisitionText(link.acquisition)
-                    : link.initiatorNodeId === nodeId
-                      ? m.nodes_link_initiated_here()
-                      : m.nodes_link_initiated_peer(),
-                  link.inUse === true
-                    ? m.nodes_link_in_use()
-                    : link.inUse === false
-                      ? m.nodes_link_idle()
-                      : m.nodes_link_use_unknown(),
-                  link.since
-                    ? m.nodes_link_since({
-                        at: agoTime(link.since, now) ?? link.since,
-                      })
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-                state={linkPhaseLabel[link.phase]()}
-                onOpen={
-                  listed
-                    ? () =>
+                  <span className="min-w-0 flex-1 truncate text-row font-medium">
+                    {names(link.peerId)}
+                  </span>
+                  <span className="text-meta text-muted-foreground">
+                    {transportText(link.transport)}
+                  </span>
+                  <span
+                    className="text-meta text-muted-foreground"
+                    style={{
+                      color:
+                        linkLook(link) === "matched"
+                          ? "var(--status-online)"
+                          : undefined,
+                    }}
+                  >
+                    {connectionText(link)}
+                  </span>
+                  <ChevronDownIcon
+                    aria-hidden="true"
+                    className="size-3.5 text-muted-foreground transition-transform group-open:rotate-180"
+                  />
+                </summary>
+                <div className="flex flex-col gap-3 border-t border-divider px-4 py-3 text-meta text-muted-foreground">
+                  <p>
+                    {[
+                      evidenceLabel[link.evidence](),
+                      transportText(link.transport),
+                      link.acquisition
+                        ? acquisitionText(link.acquisition)
+                        : link.initiatorNodeId === nodeId
+                          ? m.nodes_link_initiated_here()
+                          : m.nodes_link_initiated_peer(),
+                      link.inUse === true
+                        ? m.nodes_link_in_use()
+                        : link.inUse === false
+                          ? m.nodes_link_idle()
+                          : m.nodes_link_use_unknown(),
+                      link.since
+                        ? m.nodes_link_since({
+                            at: agoTime(link.since, now) ?? link.since,
+                          })
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  {listed ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="self-start"
+                      onClick={() =>
                         void navigate({
                           to: "/networks/$network/nodes/$node",
                           params: { network: networkId, node: link.peerId },
                           search: { tab: "transport" },
                         })
-                    : undefined
-                }
-              />
+                      }
+                    >
+                      {names(link.peerId)} ↗
+                    </Button>
+                  ) : null}
+                </div>
+              </details>
             )
           })}
-        </RefList>
+        </div>
       )}
     </Section>
   )
@@ -390,7 +401,7 @@ function Paths({
   now: number
 }) {
   const paths = nodePaths(state, nodeId)
-  if (state === undefined) return null
+  if (state === undefined || paths.length === 0) return null
   return (
     <Section title={m.nodes_paths()} count={paths.length}>
       {paths.length === 0 ? (

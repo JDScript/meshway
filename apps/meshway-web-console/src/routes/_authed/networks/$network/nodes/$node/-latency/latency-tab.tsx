@@ -84,6 +84,7 @@ export function LatencyTab({
     <div className="flex flex-col gap-6">
       <ObservationPanel networkId={networkId} nodeId={nodeId} />
       <div className="flex flex-col gap-2">
+        <h3 className="text-row font-medium">{m.history_tab()}</h3>
         <div className="flex flex-wrap items-center gap-2">
           <SegmentedControl
             size="sm"

@@ -16,7 +16,7 @@
   "history_coverage_retention": "{node}：{time} 之前的记录已超出保留期",
   "history_coverage_capacity": "{node}：{time} 之前的记录因容量上限已清除",
   "history_coverage_gap": "{node}：{range} 丢弃了 {count} 条记录",
-  "history_tab": "延迟",
+  "history_tab": "历史记录",
   "history_direction": "方向",
   "history_direction_out": "此节点发出",
   "history_direction_in": "发往此节点",

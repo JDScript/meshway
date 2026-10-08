@@ -54,6 +54,7 @@ export type GlobeState = {
   /** A workspace covers the globe: it dims and stays where it is. */
   recede: boolean
   alert: GlobeAlert | null
+  hidden: boolean
 }
 
 const globeStore = createStore<GlobeState>(() => ({
@@ -65,6 +66,7 @@ const globeStore = createStore<GlobeState>(() => ({
   insets: NO_INSETS,
   recede: false,
   alert: null,
+  hidden: false,
 }))
 
 /** What the globe shows, for its stage. */
@@ -92,6 +94,7 @@ export function showWelcomeGlobe() {
     hoveredNodeId: null,
     insets: NO_INSETS,
     recede: false,
+    hidden: false,
   })
 }
 
@@ -101,20 +104,26 @@ export function highlightOnGlobe(nodeId: string | null) {
     globeStore.setState({ hoveredNodeId: nodeId })
 }
 
-let selectHandler: (nodeId: string | null) => void = () => undefined
+let selectHandler: (
+  nodeId: string | null,
+  group?: readonly string[]
+) => boolean = () => false
 
 /** The view that shows a network owns what a click on a node means. Returns the cleanup. */
 export function onGlobeSelect(
-  handler: (nodeId: string | null) => void
+  handler: (nodeId: string | null, group?: readonly string[]) => boolean
 ): () => void {
   selectHandler = handler
   return () => {
-    if (selectHandler === handler) selectHandler = () => undefined
+    if (selectHandler === handler) selectHandler = () => false
   }
 }
 
-export function selectFromGlobe(nodeId: string | null) {
-  selectHandler(nodeId)
+export function selectFromGlobe(
+  nodeId: string | null,
+  group?: readonly string[]
+) {
+  return selectHandler(nodeId, group)
 }
 
 /** The stage reports where the pointer is. */

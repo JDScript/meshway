@@ -1,157 +1,127 @@
-import type { AggregatedLink } from "@meshway/control-client"
+import type { AggregatedLink, NodeInventoryView } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
+import { ArrowLeftIcon, ArrowUpRightIcon } from "lucide-react"
 
+import { CloseButton } from "@/components/chrome/close-button"
+import { CopyButton } from "@/components/chrome/copy-button"
+import { IconAction } from "@/components/chrome/icon-action"
 import { NodeStatusDot } from "@/components/chrome/node-status"
-import { dateTime } from "@/lib/format"
-import { LOCATION_SOURCE, placeText } from "@/lib/geo"
-import type { MapNode } from "@/lib/network-map"
+import { asnText, placeText } from "@/lib/geo"
+import { linkLook, type MapNode } from "@/lib/network-map"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
-/** Where geojs places a node's address; "—" when it names no place. */
-const place = (node: MapNode) =>
-  (node.geo?.kind === "found" ? placeText(node.geo.geo) : null) ?? "—"
-
-/**
- * A located node pointed at on the globe: where geojs places it and on
- * what that rests (the address, its source and validity). Clicking the
- * node opens it.
- */
-export function NodeCard({ node }: { node: MapNode }) {
-  const location = node.location
-  const position = node.geo?.kind === "found" ? node.geo.geo.position : null
+/** A selection stays put until closed; the compact card is the entry to the workspace. */
+export function NodeCard({
+  node,
+  inventory,
+  links,
+  onOpen,
+  onClose,
+  onBack,
+}: {
+  node: MapNode
+  inventory: NodeInventoryView | undefined
+  links: readonly AggregatedLink[]
+  onOpen: () => void
+  onClose: () => void
+  onBack?: () => void
+}) {
+  const connected = links.filter(
+    (link) =>
+      (link.a === node.id || link.b === node.id) && linkLook(link) === "matched"
+  ).length
+  const addresses = inventory
+    ? [inventory.addresses.ipv4, inventory.addresses.ipv6].filter(
+        (value) => value !== null
+      )
+    : []
   return (
-    <div className="flex flex-col gap-3 p-4">
+    <div className="flex flex-col gap-4 p-4">
       <div className="flex min-w-0 items-center gap-2">
-        <NodeStatusDot status={node.status} />
-        <span className="min-w-0 flex-1 truncate text-row font-medium">
+        {onBack ? (
+          <IconAction
+            label={m.overview_nodes()}
+            icon={ArrowLeftIcon}
+            onClick={onBack}
+          />
+        ) : null}
+        <h2 className="min-w-0 flex-1 truncate text-lead font-medium">
           {node.name}
-        </span>
-        <span className="shrink-0 text-meta text-muted-foreground">
-          {statusLabel[node.status]()}
-        </span>
+        </h2>
+        <CloseButton onClick={onClose} />
       </div>
-      {location ? (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-meta">
-          <dt className="text-muted-foreground">
-            {m.overview_location_approximate()}
-          </dt>
-          <dd className="min-w-0 truncate">
-            {place(node)}
-            {position?.accuracyKm != null ? (
-              <span className="text-muted-foreground">
-                {" "}
-                ·{" "}
-                {m.overview_location_accuracy({
-                  km: String(Math.round(position.accuracyKm)),
-                })}
+      <div className="flex items-center gap-2 text-row">
+        <NodeStatusDot status={node.status} />
+        {statusLabel[node.status]()}
+      </div>
+      {addresses.length ? (
+        <div className="rounded-tile bg-fill-subtle px-3 py-1">
+          {addresses.map((address) => (
+            <div key={address} className="flex min-h-9 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate font-mono text-meta">
+                {address}
               </span>
-            ) : null}
-          </dd>
-          <dt className="text-muted-foreground">
-            {m.overview_location_address()}
-          </dt>
-          <dd className="min-w-0 truncate font-mono">
-            {location.address}
-            <span className="font-sans text-muted-foreground">
-              {" "}
-              · {LOCATION_SOURCE[location.endpointSource]()}
-            </span>
-          </dd>
-          <dt className="text-muted-foreground">
-            {m.overview_location_observed()}
-          </dt>
-          <dd className="tabular-nums">{dateTime(location.observedAt)}</dd>
-          <dt className="text-muted-foreground">
-            {m.overview_location_expires()}
-          </dt>
-          <dd className="tabular-nums">{dateTime(location.expiresAt)}</dd>
-          <dt className="text-muted-foreground">{m.overview_location_by()}</dt>
-          <dd>geojs.io</dd>
-        </dl>
+              <CopyButton value={address} label={m.nodes_mesh_access()} />
+            </div>
+          ))}
+        </div>
       ) : null}
+      <div className="min-h-12 text-meta text-muted-foreground">
+        {node.geo?.kind === "found" ? (
+          <>
+            <div>{placeText(node.geo.geo)}</div>
+            <div className="mt-1">{asnText(node.geo)}</div>
+          </>
+        ) : null}
+      </div>
+      <div className="text-meta text-muted-foreground">
+        {m.overview_connected({ count: connected })}
+      </div>
+      <Button onClick={onOpen} className="w-full">
+        {m.overview_open_node()}
+        <ArrowUpRightIcon />
+      </Button>
     </div>
   )
 }
 
-/** The one value every node gives, or null when they differ. */
-const shared = <T,>(values: readonly T[]): T | null =>
-  values.length > 0 && values.every((value) => value === values[0])
-    ? (values[0] ?? null)
-    : null
-
-/**
- * Nodes pointed at together: too close on the globe to tell apart. Each
- * with its status; their place and address once when they share it, else
- * by node; and the current links between them, which the globe cannot draw.
- */
 export function GroupCard({
   nodes,
-  links,
+  onSelect,
+  onClose,
 }: {
   nodes: readonly MapNode[]
-  links: readonly AggregatedLink[]
+  onSelect: (id: string) => void
+  onClose: () => void
 }) {
-  const ids = new Set(nodes.map((node) => node.id))
-  const between = links.filter((link) => ids.has(link.a) && ids.has(link.b))
-  const address = (node: MapNode) =>
-    node.location
-      ? `${node.location.address} · ${LOCATION_SOURCE[node.location.endpointSource]()}`
-      : "—"
-  const commonPlace = shared(nodes.map(place))
-  const commonAddress = shared(nodes.map(address))
   return (
-    <div className="flex flex-col gap-3 p-4">
-      <div className="flex min-w-0 items-baseline gap-2">
-        <span className="shrink-0 text-row font-medium">
+    <div className="flex min-h-0 flex-col p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-lead font-medium">
           {m.overview_group_nodes({ count: nodes.length })}
-        </span>
-        {commonPlace !== null ? (
-          <span className="min-w-0 flex-1 truncate text-right text-meta text-muted-foreground">
-            {commonPlace}
-          </span>
-        ) : null}
+        </h2>
+        <CloseButton onClick={onClose} />
       </div>
-      <ul className="flex flex-col gap-1.5">
+      <ul className="scroll-edge min-h-0 overflow-y-auto">
         {nodes.map((node) => (
-          <li key={node.id} className="flex min-w-0 flex-col">
-            <div className="flex min-w-0 items-center gap-2">
+          <li key={node.id}>
+            <button
+              type="button"
+              onClick={() => onSelect(node.id)}
+              className="list-row flex min-h-14 w-full items-center gap-3 px-2 text-left"
+            >
               <NodeStatusDot status={node.status} />
               <span className="min-w-0 flex-1 truncate text-row">
                 {node.name}
               </span>
-              <span className="shrink-0 text-meta text-muted-foreground">
+              <span className="text-meta text-muted-foreground">
                 {statusLabel[node.status]()}
               </span>
-            </div>
-            {commonPlace === null || commonAddress === null ? (
-              <span className="truncate pl-4 text-meta text-muted-foreground">
-                {[
-                  commonPlace === null ? place(node) : null,
-                  commonAddress === null ? address(node) : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-            ) : null}
+            </button>
           </li>
         ))}
       </ul>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-meta">
-        {commonAddress !== null ? (
-          <>
-            <dt className="text-muted-foreground">
-              {m.overview_location_address()}
-            </dt>
-            <dd className="min-w-0 truncate">{commonAddress}</dd>
-          </>
-        ) : null}
-        <dt className="text-muted-foreground">{m.overview_group_between()}</dt>
-        <dd>
-          {between.length === 0
-            ? m.overview_group_links_none()
-            : m.overview_group_links({ count: between.length })}
-        </dd>
-      </dl>
     </div>
   )
 }

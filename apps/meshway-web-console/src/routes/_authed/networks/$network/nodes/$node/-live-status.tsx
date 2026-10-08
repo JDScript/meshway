@@ -17,8 +17,10 @@ export function LiveStatus({
 }) {
   const now = useNow(1_000)
   return (
-    <span className="inline-flex min-w-0 items-center gap-2">
-      <NodeStatusDot status={status} />
+    <span className="inline-flex min-w-0 shrink-0 items-baseline gap-2 text-foreground">
+      <span className="flex self-center">
+        <NodeStatusDot status={status} />
+      </span>
       <span className="truncate">{statusText(status, seen, now)}</span>
     </span>
   )

@@ -44,6 +44,7 @@ import {
   type Preset,
 } from "@/lib/nodes/listener-model"
 import { listenerRuntime } from "@/lib/nodes/state-model"
+import { listenerPhaseLabel, problemText } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
 import { useNodeConfiguration } from "../-draft"
@@ -455,7 +456,7 @@ function ListenerBlock({
 }) {
   const runtime = report ? listenerRuntime(report, name) : null
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2 rounded-tile border border-divider p-3.5">
       <div className="flex h-8 min-w-0 items-center gap-2 text-row">
         <span
           className={cn(
@@ -466,6 +467,18 @@ function ListenerBlock({
           {name}
         </span>
         <span className="shrink-0 text-muted-foreground">{facts.kind}</span>
+        {runtime ? (
+          <span
+            className={cn(
+              "text-meta",
+              runtime.state.phase === "failed"
+                ? "text-destructive"
+                : "text-muted-foreground"
+            )}
+          >
+            {listenerPhaseLabel[runtime.state.phase]()}
+          </span>
+        ) : null}
         {facts.enabled ? null : (
           <span className="shrink-0 rounded-full bg-fill-raised px-1.5 text-meta text-muted-foreground">
             {m.nodes_listener_off()}
@@ -482,61 +495,81 @@ function ListenerBlock({
           {actions}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-        <Tile label={m.nodes_listener_bind()}>
-          <span className="font-mono font-normal">{facts.bind}</span>
-        </Tile>
-        <Tile label={m.nodes_listener_endpoints()}>
-          {facts.endpoints.length === 0 ? (
-            <span className="font-normal text-muted-foreground">
-              {m.nodes_listener_endpoints_none()}
-            </span>
-          ) : (
-            <span className="font-mono font-normal">
-              {facts.endpoints
-                .map((endpoint) => endpointText(endpoint.host, endpoint.port))
-                .join(", ")}
-            </span>
-          )}
-        </Tile>
-        {facts.serverName !== null ? (
-          <Tile label={m.nodes_listener_server_name()}>
-            <span className="font-mono font-normal">{facts.serverName}</span>
-          </Tile>
-        ) : null}
-        {facts.websocket !== null ? (
-          <Tile label={m.nodes_listener_ws_path()}>
-            <span className="font-mono font-normal">{facts.websocket}</span>
-          </Tile>
-        ) : null}
-        {facts.headers.length > 0 ? (
-          <Tile label={m.nodes_listener_ws_headers()}>
-            <span className="font-mono font-normal">
-              {facts.headers.join(", ")}
-            </span>
-          </Tile>
-        ) : null}
-        {facts.secret !== null ? (
-          <div className="col-span-2">
-            <Tile label={m.nodes_listener_material()}>
-              <span className="font-normal">{facts.secret}</span>
-            </Tile>
-          </div>
-        ) : null}
-        {facts.remark ? (
-          <div className="col-span-2">
-            <Tile label={m.nodes_listener_remark()}>{facts.remark}</Tile>
-          </div>
-        ) : null}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-row">
+        <span className="font-mono">{facts.bind}</span>
+        <span className="text-meta text-muted-foreground">{facts.remark}</span>
       </div>
-      {notes ? <Notes notes={notes} /> : null}
-      {report ? (
-        runtime ? (
-          <Runtime runtime={runtime} geoOf={geoOf} now={now} />
-        ) : (
-          <EmptyLine size="sm">{m.nodes_listener_unreported()}</EmptyLine>
-        )
+      {runtime?.state.problem ? (
+        <p className="text-row text-destructive">
+          {problemText(runtime.state.problem)}
+        </p>
       ) : null}
+      <details>
+        <summary className="cursor-pointer py-1 text-meta text-muted-foreground">
+          {m.nodes_listener_details()}
+        </summary>
+        <div className="mt-3 flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+            <Tile label={m.nodes_listener_bind()}>
+              <span className="font-mono font-normal">{facts.bind}</span>
+            </Tile>
+            <Tile label={m.nodes_listener_endpoints()}>
+              {facts.endpoints.length === 0 ? (
+                <span className="font-normal text-muted-foreground">
+                  {m.nodes_listener_endpoints_none()}
+                </span>
+              ) : (
+                <span className="font-mono font-normal">
+                  {facts.endpoints
+                    .map((endpoint) =>
+                      endpointText(endpoint.host, endpoint.port)
+                    )
+                    .join(", ")}
+                </span>
+              )}
+            </Tile>
+            {facts.serverName !== null ? (
+              <Tile label={m.nodes_listener_server_name()}>
+                <span className="font-mono font-normal">
+                  {facts.serverName}
+                </span>
+              </Tile>
+            ) : null}
+            {facts.websocket !== null ? (
+              <Tile label={m.nodes_listener_ws_path()}>
+                <span className="font-mono font-normal">{facts.websocket}</span>
+              </Tile>
+            ) : null}
+            {facts.headers.length > 0 ? (
+              <Tile label={m.nodes_listener_ws_headers()}>
+                <span className="font-mono font-normal">
+                  {facts.headers.join(", ")}
+                </span>
+              </Tile>
+            ) : null}
+            {facts.secret !== null ? (
+              <div className="col-span-2">
+                <Tile label={m.nodes_listener_material()}>
+                  <span className="font-normal">{facts.secret}</span>
+                </Tile>
+              </div>
+            ) : null}
+            {facts.remark ? (
+              <div className="col-span-2">
+                <Tile label={m.nodes_listener_remark()}>{facts.remark}</Tile>
+              </div>
+            ) : null}
+          </div>
+          {report ? (
+            runtime ? (
+              <Runtime runtime={runtime} geoOf={geoOf} now={now} />
+            ) : (
+              <EmptyLine size="sm">{m.nodes_listener_unreported()}</EmptyLine>
+            )
+          ) : null}
+        </div>
+      </details>
+      {notes ? <Notes notes={notes} /> : null}
     </div>
   )
 }
