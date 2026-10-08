@@ -254,7 +254,7 @@ function familyText(value: string | undefined): string {
 }
 
 /** A profile as the routing form names it: the built-ins by their labels. */
-function profileText(name: string, node: NodeNamer): string {
+export function profileText(name: string, node: NodeNamer): string {
   if (name === "mesh") return m.configuration_routing_profile_mesh()
   if (name === "auto") return m.configuration_routing_profile_auto()
   if (name.startsWith("global:"))

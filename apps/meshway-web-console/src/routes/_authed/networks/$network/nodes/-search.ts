@@ -15,6 +15,7 @@ export const NODE_TABS = [
   "settings",
   "transport",
   "latency",
+  "path",
   "diagnostics",
   "manage",
 ] as const
@@ -22,7 +23,7 @@ export type NodeTab = (typeof NODE_TABS)[number]
 
 export const zNodeSearch = z.object({
   tab: z
-    .enum(["settings", "transport", "latency", "diagnostics", "manage"])
+    .enum(["settings", "transport", "latency", "path", "diagnostics", "manage"])
     .optional()
     .catch(undefined),
 })

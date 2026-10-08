@@ -20,7 +20,7 @@
 ## 已商定的接口约定
 
 - **权限**：每类资源带服务端计算的 `actions`，console 不从角色推导；mutation 仍由服务端实时重新检查。
-- **错误**：`ErrorResponse { requestId, status, problem: { code, params, message } }`，`code` 是每个操作的封闭枚举。配置诊断带 pointer；State 的问题带资源和观测时间。
+- **错误**：`ErrorResponse { requestId, status, problem: { code, params, message } }`，`code` 是每个操作的封闭枚举。改 `ProblemCode`／`IssueCode` 时一并补 console 的消息，并跑 `mise run check`（含 console 的 typecheck）再合。配置诊断带 pointer；State 的问题带资源和观测时间。
 - **幂等与秘密**：
   - 创建类请求都带 `requestId`。
   - 接入密钥和加入链接的原值只在首次响应里交付。重试拿到的是同一资源的元数据，并注明原值不可重取。
@@ -51,7 +51,7 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `01da4515`）
+## 接入状态（后端 `233a8233`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
@@ -64,16 +64,18 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 接入密钥和设备授权（`authorizationUrl` 打开的就是 console 的授权页）；
 - 按 revision 的部署进度；
 - 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；管理者的配置快照按 GET 响应写入缓存；续传不重发初始批次，console 以 SDK 的 `onOpen`（连接被接受）确认服务端接受了 cursor；
-- 规则集；
+- 规则集（刷新带 `requestId`：结果未知时再刷新沿用同一 ID，服务端返回当前视图、不再下载）；
+- 路径检测（`evaluateConfiguration`）：节点的“路径”标签（D6），当前版本和草稿并排，不同的部分标出；规则按 pointer 命名，当前版本的可以打开到源文件。需要 `readConfiguration`，成员看不到这个标签；
 - 观测历史；
 - 主动路径观察。
+
+8420 已在 `233a8233` 上重新初始化（旧库移入 `.meshway/backups/server-20261008T020616Z-88335cb8bb8b/`），三个 Docker 节点用新身份重新接入并应用了 lab 配置。
 
 撤销已失效的加入链接、接入密钥，以及重复吊销节点密钥时的 409 `state_conflict`，console 提示"这次没有撤销"并重读列表。
 
 ## 尚未提供的接口
 
 - 删除网络（含删除时节点凭据的处理和保留期）。
-- ~~**路径检测 `configuration/evaluate`**~~：已提供 `POST configuration/evaluate`（`evaluateConfiguration`），见 [evaluation.md](../../../docs/v2/configuration-reference/evaluation.md)。与上面提的输入一致（`current`／`document`／`operations`，source，`target` 为 node／address／domain／internet，可选 `profile`）。输出按字段：`destination`、`profile`（含 assignment pointer）、`access.grants[]`（rule pointer + traffic + reverse + resolutionDependent）、`route`（kind、决定它的 pointer、profile、ruleSet {key, entry}、targets、via、resolutionDependent）、`targets[]`（每个候选的 problem）、`paths[]`（每跳 + 每边 topology pointer）、`outcome`。与原提议的差别：拒绝原因是 `outcome.unavailable.reason`（和执行的 UnavailableReason 同一枚举），不是 route 的一个分支；"取决于解析"按两个方向都列（域名目的地跳过 IP 规则，地址目的地跳过域名规则）；access 不带协议端口，返回每条 grant 的 traffic 列表。成员从自己设备出发暂未开放（仍需 `readConfiguration`）。
 - 成员切换路由方案：`requestedProfile`、`appliedProfile`、允许的方案、`locked` 和自动方案的判断依据。
 - 节点的版本兼容状态 `versionStatus`（current、outdated、unsupported），由服务端按兼容门槛判定。
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
@@ -82,7 +84,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ## 待处理的问题
 
-以下按 `01da4515` 核对：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
+以下按 `01da4515` 核对（`233a8233` 的路径检测另在 8420 上用 console 检测过节点、域名、公网目的地和草稿并排）：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
 
 **已修复并已验证**（不再跟踪）：
 
@@ -121,17 +123,13 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 **后端已说明、console 未实测**：
 
+- 旧版本保存的配置可以读回：`RouteMatch.domain`、inline `RuleSet.domain`、`RuleSetData.domain` 为空时不再序列化，旧版本的规范 JSON 和 artifact 摘要逐字不变；映射成 503 的服务端错误都记一条 error 日志。8420 这次是重新初始化的，没有用旧库验证。
+- `createEnrollmentKey` 的请求 ID 冲突改为 `request_id_conflict`；同一 `requestId` 同内容仍返回同一 key 的元数据（`secretDelivery: unavailable`）。`binding_conflict` 只剩设备接入请求／兑换的绑定不匹配。
 - Node 控制联系失败按真实错误分类恢复：网络、暂态响应和 session／instance 失效不再永久停在 `Contract`／`blocked`。
 - `revokeNodeKey` 重复吊销返回 409 `state_conflict`，已退休代际仍可吊销（204，不撤当前执行），generation 不匹配是 409 `version_conflict`。
 - 绑定大规则集（8483 条）后 validate 很慢的问题，在 `70f5e95f` 改为线性覆盖计算。
 - 托管证书改 `serverName` 时重新生成证书；provided 材料仍按省略继承。
 - 规则集检查记录：来源与绑定内容都不变就跨版本延续，包括还没有成功内容的集合。console 报过的 `not_ready`／`checkedAt: null` 后端没有复现，再遇到时补充步骤。
-
-### 需要修正
-
-- ~~旧版本保存的配置在新版本里打不开~~：已修。`RouteMatch.domain`、inline `RuleSet.domain` 和 `RuleSetData.domain` 为空时不再序列化，旧版本的规范 JSON 和 artifact 摘要逐字不变，不需要迁移；`2a4bd0cc` 之后新建、含 `domain` 的版本照常。另外所有映射成 503 的服务端错误现在都记一条 error 日志（安全的类别标签，例如 `stored value could not be decoded: configuration_versions.configuration`），不再无声。8420 可以升级了。
-- ~~新增 Problem code 没有同步 console~~：`mise run check` 本来就包含 console 的 typecheck，`548ffc9d` 是 Node 合并时没有跑完整检查。规则不变：改 `ProblemCode`／`IssueCode` 的人补 console 的消息并跑 `mise run check` 再合（我这边 `invalid_domain` 就是这样处理的）。
-- ~~`createEnrollmentKey` 用 `binding_conflict` 表示请求 ID 冲突~~：已改为 `request_id_conflict`；同一 `requestId` 同内容仍返回同一 key 的元数据（`secretDelivery: unavailable`）。`binding_conflict` 只剩设备接入请求／兑换的绑定不匹配。
 
 ### 请后端调整
 
@@ -153,7 +151,6 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 后端排期中
 
-- ~~**规则集**：`refreshRuleSet` 加请求体和 `requestId`~~：已做（breaking）。`POST rule-sets/{key}/refresh` 现在必须带 `RefreshRuleSetRequest { requestId }`；同一用户同一 `requestId` 重试同一 key 返回当前 `RuleSetView`、不再下载（`checkedAt` 不变），用于别的 key 返回 409 `request_id_conflict`，保留 24 小时。schema 新增表 `rule_set_refreshes`，开发库要重新初始化。console 的 `useRefreshRuleSet` 已做最小编译修补（每次新 `requestId`）；要让"结果未知时重试同一 ID"生效，接上 `attemptFor` 即可。
 - **主动观察与历史**：observations 模块冻结，待 Node 实现后按真实消费者重做。
   - 响应没有服务器时间（续租时机按浏览器时钟计算），没有观察权限的 `actions`（console 按"角色 + 身份"重述规则），也没有允许的目标和路径候选清单。
   - 429 `observation_limit` 同时表示续租过早、预算用满、已到终态和 4096 窗口满。

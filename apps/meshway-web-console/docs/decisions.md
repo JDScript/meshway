@@ -137,7 +137,7 @@ its generated client only, and only what the controller delivers:
   (not in the State). An online node shows no time: a report every few
   seconds is not news. An offline one says 最后在线 … (its last report,
   else its last sign-in), by this browser's clock, ticking every second.
-  A node's workspace (`/nodes/<id>?tab=overview|settings|transport|latency|diagnostics|manage`),
+  A node's workspace (`/nodes/<id>?tab=overview|settings|transport|latency|path|diagnostics|manage`),
   its status in the header:
   - overview, what matters first: health (status, the configuration as one
     fact — up to date, applying r…, r… failed, still on r… against the
@@ -173,6 +173,24 @@ its generated client only, and only what the controller delivers:
     under the switch), and a VLESS listener moved to TCP drops its
     WebSocket block (`websocket: null`). Trojan listeners are edited in the
     source.
+  - path (`evaluateConfiguration`; owners and admins, `readConfiguration`):
+    from this node to a destination typed as a node's hostname (offered as
+    they are typed), an IP address or a domain, or a public destination no
+    rule matches; no protocol or port. The controller plans it over the
+    current version and, while the draft holds edits, over the draft too
+    (a change at its base, strict CAS), side by side: the outcome, the
+    resolved destination, the profile and the assignment that set it, the
+    access grants (each rule, its traffic, reverse or resolution-dependent),
+    the route (its kind and the deciding rule, or what decided it
+    implicitly; the rule set entry; exits and via; the rules left out as
+    resolution-dependent), the candidates with their problems and the
+    planned paths with each edge's topology rule. A part that differs in
+    the draft is marked. Rules are named as the forms number them, with
+    their remarks; the current version's open in the source. Once the
+    controller says which profiles are allowed, another one can be asked.
+    A result says the revision it is for, and that the configuration or the
+    draft changed since. Nothing is kept: the draft's source is sent, never
+    stored or cached.
   - manage: the keys with their creation times, each revoked (with
     `expectedGeneration`) where `canRevokeControlKey` /
     `canRevokeDataplaneKey`; a `version_conflict` reads the nodes again
@@ -487,7 +505,7 @@ controller supports today; the rest of each row is the target design.
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
 | Overview `/overview` | the globe with located nodes and current links; the status corner (counts, 待定位, current links, the history layer) and the node the pointer is on | none: the globe is its index | none (a node opens its workspace on the nodes page) | |
-| Nodes `/nodes?q=` | each node's status; a node's health, facts and addresses, settings, listeners with their runtime, links and paths, latency, what its status rests on, keys and deletion; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=overview\|settings\|transport\|latency\|diagnostics\|manage`, `/nodes/add` | revoke, enrolment key |
+| Nodes `/nodes?q=` | each node's status; a node's health, facts and addresses, settings, listeners with their runtime, links and paths, latency, what its status rests on, keys and deletion; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=overview\|settings\|transport\|latency\|path\|diagnostics\|manage`, `/nodes/add` | revoke, enrolment key |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
 | Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity | leave |

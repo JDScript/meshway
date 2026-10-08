@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query"
 
 import { authed, client } from "@/api/client"
+import { attempts } from "@/state/attempts"
 
 import { networkKey } from "./network"
 
@@ -24,18 +25,32 @@ export const ruleSetsQuery = (networkId: string) =>
     staleTime: 10_000,
   })
 
-/** Downloads and converts one set again; its view is the controller's answer. */
+/** By network and set: a refresh whose outcome is unknown is sent again with its ID. */
+const refreshes = attempts<Record<string, never>>("rule-set-refresh")
+
+/**
+ * Downloads and converts one set again; its view is the controller's
+ * answer. Trying again after a refresh whose outcome is unknown sends the
+ * same request ID, which the controller answers with the set's current
+ * view instead of downloading again.
+ */
 export function useRefreshRuleSet(networkId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (ruleSetKey: string) =>
-      authed((token) =>
-        refreshRuleSet(
-          client,
-          { networkId, ruleSetKey },
-          { requestId: crypto.randomUUID() },
-          { token }
-        )
+      refreshes.send(
+        `${networkId}/${ruleSetKey}`,
+        ruleSetKey,
+        () => ({}),
+        (attempt) =>
+          authed((token) =>
+            refreshRuleSet(
+              client,
+              { networkId, ruleSetKey },
+              { requestId: attempt.requestId },
+              { token }
+            )
+          )
       ),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ruleSetsKey(networkId) }),

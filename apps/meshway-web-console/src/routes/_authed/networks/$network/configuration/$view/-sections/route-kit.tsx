@@ -25,6 +25,7 @@ import {
   type Names,
   type Note,
 } from "@/components/configuration/form-kit"
+import { profileText } from "@/lib/configuration/diagnostics"
 import { pointerOf, type JsonPath } from "@/lib/configuration/jsonc"
 import {
   EXACT_PREFIX,
@@ -140,22 +141,8 @@ export function destinationChips(
 }
 
 /** A profile's name as people read it. */
-export function profileLabel(name: string, names: Names): string {
-  switch (profileKind(name)) {
-    case "mesh":
-      return m.configuration_routing_profile_mesh()
-    case "auto":
-      return m.configuration_routing_profile_auto()
-    case "global": {
-      const id = name.slice(7)
-      return m.configuration_routing_profile_global({
-        node: names.nodes.get(id) ?? id.slice(0, 8),
-      })
-    }
-    case "custom":
-      return name
-  }
-}
+export const profileLabel = (name: string, names: Names): string =>
+  profileText(name, (id) => names.nodes.get(id) ?? id.slice(0, 8))
 
 const PROFILE_ICON = {
   mesh: WaypointsIcon,

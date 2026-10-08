@@ -30,6 +30,7 @@ import { LatencyTab } from "./-latency/latency-tab"
 import { LiveStatus } from "./-live-status"
 import { NodeManage } from "./-manage"
 import { NodeOverview } from "./-overview"
+import { PathTab } from "./-path/path-tab"
 import { NodeSettings } from "./-settings"
 import { NodeTransport } from "./-transport/transport-tab"
 
@@ -40,7 +41,8 @@ const isTab = (value: unknown): value is NodeTab =>
  * One node in full: its status in the header; what matters about it
  * first (overview); its settings and listeners (edited into the
  * configuration draft) with what it reports about its sockets, links and
- * paths; its latency; what its status rests on (diagnostics); its keys and
+ * paths; its latency; how the configuration plans a way from it (owners
+ * and admins); what its status rests on (diagnostics); its keys and
  * deletion.
  */
 export function NodeWorkspace({
@@ -140,6 +142,9 @@ function Body({
   const view = stateOf(state.data, node.id)
   const currentRevision =
     state.data?.configurationRevision ?? network?.currentRevision
+  // The path check reads the whole configuration: owners and admins.
+  const planning = network?.actions.readConfiguration === true
+  const shownTab = tab === "path" && !planning ? "overview" : tab
   const openSource = () =>
     void navigate({
       to: "/networks/$network/configuration/$view",
@@ -186,7 +191,7 @@ function Body({
       />
 
       <Tabs
-        value={tab}
+        value={shownTab}
         onValueChange={(value) => {
           if (isTab(value)) onTab(value)
         }}
@@ -194,12 +199,15 @@ function Body({
       >
         <div className="mx-6 mb-4 overflow-x-auto">
           <SegmentedTabs
-            value={tab}
+            value={shownTab}
             options={[
               { value: "overview", label: m.nodes_tab_overview() },
               { value: "settings", label: m.nodes_tab_settings() },
               { value: "transport", label: m.nodes_tab_transport() },
               { value: "latency", label: m.history_tab() },
+              ...(planning
+                ? [{ value: "path" as const, label: m.nodes_tab_path() }]
+                : []),
               { value: "diagnostics", label: m.nodes_tab_diagnostics() },
               { value: "manage", label: m.nodes_tab_manage() },
             ]}
@@ -233,6 +241,16 @@ function Body({
         <Pane value="latency">
           <LatencyTab networkId={networkId} nodeId={node.id} />
         </Pane>
+        {planning ? (
+          <Pane value="path">
+            <PathTab
+              networkId={networkId}
+              nodeId={node.id}
+              network={network}
+              nodes={nodes}
+            />
+          </Pane>
+        ) : null}
         <Pane value="diagnostics">
           <NodeDiagnostics
             nodeId={node.id}
