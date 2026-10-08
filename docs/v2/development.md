@@ -19,6 +19,28 @@
 
 三个 `verify_*.py` 是递进的真实隔离验收，各自保留失败定位所需的证据，复用正式实现。性能测量与真实 Linux 隔离验收均由开发者显式运行，不进入常规 `check`。进程健康、控制面接入、真实包流和性能结果分别读取其证据。
 
+## Rust 测试
+
+`mise run test:rust` 先以锁定版本的 cargo-nextest 执行 workspace／all-targets／all-features 测试，再以 `cargo test --workspace --all-features --locked --doc` 执行 doctest。nextest 本身不执行 doctest；文档示例因此有独立入口。
+
+```sh
+mise install --locked
+mise run test:rust
+NEXTEST_PROFILE=ci mise run test:rust
+mise exec -- cargo nextest run -p meshway-control --test control
+```
+
+`.config/nextest.toml` 的 default／ci profile 均不重试失败，单例运行超过 60 秒时报警；全局并发默认使用可用逻辑 CPU 数。真实 Server／SQLite／HTTP fixture 使用有界 test group，避免跨进程的 KDF、文件同步和后台 worker 同时拥塞。每个测试保留独立临时数据库、网络和 listener，全部自包含；nextest 每个 case 独立进程，进程内 singleton 不构成跨 case 的共享 Server。ci profile 收集全部失败并写入 `target/nextest/ci/junit.xml`。
+
+诊断时可回退到 libtest，命令覆盖与 nextest 相同的目标，并保留独立 doctest：
+
+```sh
+mise exec -- cargo test --workspace --all-targets --all-features --locked -- --test-threads=4
+mise exec -- cargo test --workspace --all-features --locked --doc
+```
+
+单 crate 修改优先执行 `mise exec -- cargo test -p <crate>` 或对应 nextest filter。完整计时记录源码提交、runner、宿主 load、构建是否已热身及测试墙钟；测试总数、最长单例与并发运行时的累计测试时间分别记录。
+
 ## 本机服务
 
 在要部署的工作树执行：
