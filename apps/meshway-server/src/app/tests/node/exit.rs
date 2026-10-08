@@ -229,7 +229,7 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
         inputs.unavailable_reasons.get(&b),
         Some(&ExitUnavailableReason::IpForwardDisabled)
     );
-    report_current(&app, bt.token.expose(), &bi, 2, ExitStatus::Ready).await;
+    let ready = report_current(&app, bt.token.expose(), &bi, 2, ExitStatus::Ready).await;
     assert!(matches!(
         service
             .demand(at.token.expose(), d.clone())
@@ -238,11 +238,29 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
             .decision,
         DemandDecision::Permitted { .. }
     ));
+    let mut unknown = ready;
+    unknown.sequence = Sequence::new(3).unwrap();
+    unknown.state.exit_capability = None;
+    app.node_state_service()
+        .unwrap()
+        .accept_report(bt.token.expose().to_owned(), unknown)
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .demand(at.token.expose(), d.clone())
+            .await
+            .unwrap()
+            .decision,
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::ExitUnavailable
+        }
+    );
     let last = report_current(
         &app,
         bt.token.expose(),
         &bi,
-        3,
+        4,
         ExitStatus::Unavailable {
             reason: ExitUnavailableReason::NftUnavailable,
         },
@@ -259,7 +277,7 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
         }
     );
     let mut forged = last.clone();
-    forged.sequence = Sequence::new(4).unwrap();
+    forged.sequence = Sequence::new(5).unwrap();
     forged.state.exit_capability.as_mut().unwrap().instance_id = ai.instance_id;
     assert!(matches!(
         app.node_state_service()
@@ -269,7 +287,7 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
         Err(Error::InvalidRequest)
     ));
     let mut stale = last;
-    stale.sequence = Sequence::new(4).unwrap();
+    stale.sequence = Sequence::new(5).unwrap();
     stale.state.exit_capability.as_mut().unwrap().target.digest = Digest::from_bytes([7; 32]);
     assert!(matches!(
         app.node_state_service()

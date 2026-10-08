@@ -35,7 +35,15 @@ pub(super) fn replace(
 ) -> Result<bool, Error> {
     initialize(tx)?;
     let Some(capability) = &report.state.exit_capability else {
-        return Ok(false);
+        // Reports are complete snapshots: unknown must withdraw a previous
+        // readiness observation, rather than silently reusing it until expiry.
+        return Ok(tx.execute(
+            "DELETE FROM temp.state_exit WHERE network_id=?1 AND node_id=?2",
+            params![
+                admission.network_id.as_uuid().as_bytes(),
+                admission.node_id.as_uuid().as_bytes()
+            ],
+        )? > 0);
     };
     if capability.instance_id != admission.instance_id
         || !admission.configurations.contains(&capability.target)
