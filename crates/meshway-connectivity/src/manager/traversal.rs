@@ -64,6 +64,14 @@ struct Pending {
     accept_at: Instant,
 }
 
+// Capability knowledge from the latest bounded metadata resolution, not I/O
+// authority. A missing STUN address family cannot make healthy sockets poll
+// forever; failures remain retryable and metadata expiry forces a fresh query.
+struct Observers {
+    expires: Instant,
+    endpoints: std::collections::BTreeSet<[u8; 32]>,
+}
+
 // Retained across execution/resource handoffs: churn cannot reset admission.
 // Acquisition can use a short publication overlap immediately, without an
 // unbounded poll loop: 30 starts in any half-open minute, paced at 250 ms.
@@ -257,6 +265,7 @@ async fn run_epoch(
     let mut retired: BTreeMap<UdpTraversalId, u64> = BTreeMap::new();
     let mut prepare_at = Instant::now();
     let mut context: Option<DiscoveryContext> = None;
+    let mut observers: Option<Observers> = None;
     let work = async {
         loop {
             if shared.epoch_changed() {
@@ -296,7 +305,11 @@ async fn run_epoch(
             // the new, independently checked authority.
             let acquisition = !endpoints.is_empty() && needs_acquisition(&shared, &pending);
             let observation = needs_observation(&shared)
-                && endpoints.keys().any(|id| observation_due(&shared, id));
+                && endpoints.keys().any(|id| {
+                    observers.as_ref().is_none_or(|known| {
+                        Instant::now() >= known.expires || known.endpoints.contains(id)
+                    }) && observation_due(&shared, id)
+                });
             if queries.admit(Instant::now(), acquisition, observation) {
                 let query = gateway
                     .request(Operation::Query(Box::new(
@@ -305,6 +318,7 @@ async fn run_epoch(
                     .await;
                 if let Ok(Reply::Query(Outcome::Current(discovery))) = query {
                     context = Some(discovery.context);
+                    observers = None;
                     let visible: Vec<_> = discovery
                         .attempts
                         .iter()
@@ -381,24 +395,47 @@ async fn run_epoch(
                     // retries independently, and schedule the normal refresh
                     // from actual validated observation timestamps above.
                     *discover_at = Instant::now() + Duration::from_secs(2);
+                    let mut available = std::collections::BTreeSet::new();
                     for (id, endpoint) in endpoints {
-                        if !observation_due(&shared, id) {
+                        let family = shared.sockets.lock().ok().and_then(|sockets| {
+                            sockets.get(id).map(|socket| socket.bound_address.is_ipv4())
+                        });
+                        let Some(ipv4) = family else {
                             continue;
-                        }
+                        };
+                        let due = observation_due(&shared, id);
                         for server in context.servers() {
                             let resolved = tokio::select! { biased;
                                 _ = context.invalidated() => break,
                                 result = endpoint.authorization.authorize_stun(context, &server.id) => result,
                             };
-                            if let Ok(targets) = resolved {
-                                let _ = endpoint.commands.try_send(Command::Discover {
-                                    context: context.clone(),
-                                    server: server.id.clone(),
-                                    targets,
-                                });
+                            match resolved {
+                                Ok(targets) => {
+                                    let targets: Vec<_> = targets
+                                        .into_iter()
+                                        .filter(|target| target.is_ipv4() == ipv4)
+                                        .collect();
+                                    if !targets.is_empty() {
+                                        available.insert(*id);
+                                        if due {
+                                            let _ = endpoint.commands.try_send(Command::Discover {
+                                                context: context.clone(),
+                                                server: server.id.clone(),
+                                                targets,
+                                            });
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    available.insert(*id);
+                                }
                             }
                         }
                     }
+                    observers = Some(Observers {
+                        expires: context.expires_at().into(),
+                        endpoints: available,
+                    });
                 }
                 if Instant::now() >= prepare_at && pending.len() < 8 {
                     prepare_at = Instant::now() + Duration::from_secs(1);

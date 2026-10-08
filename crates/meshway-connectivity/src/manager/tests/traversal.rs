@@ -1333,17 +1333,34 @@ async fn exercise_traversal(healthy_only: bool) {
         .into_iter()
         .map(|manager| listener_socket(manager).endpoints)
         .collect();
+    if healthy_only {
+        for manager in [&a, &b] {
+            assert!(
+                manager.snapshot().unwrap().sockets.iter().any(|socket| {
+                    socket.bound_address.is_ipv6() && socket.endpoints.is_empty()
+                })
+            );
+        }
+        // Drain discovery already issued before bilateral channel selection;
+        // the following window measures steady observation refresh only.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
     let queries: Vec<_> = gateways
         .iter()
         .map(|gateway| gateway.queries.load(Ordering::SeqCst))
         .collect();
-    tokio::time::sleep(Duration::from_millis(2250)).await;
+    tokio::time::sleep(if healthy_only {
+        Duration::from_secs(6)
+    } else {
+        Duration::from_millis(2250)
+    })
+    .await;
     for (gateway, before) in gateways.iter().zip(queries) {
         let count = gateway.queries.load(Ordering::SeqCst) - before;
         if healthy_only {
             assert!(
-                count <= 2,
-                "only the independent NAT observation query budget is available"
+                count <= 1,
+                "an unobservable IPv6 socket must not keep polling IPv4-only STUN metadata: {count}"
             );
         } else {
             assert!(count <= 10, "offline alternate peer keeps paced discovery");
