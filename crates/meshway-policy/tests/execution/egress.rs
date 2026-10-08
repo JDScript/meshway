@@ -45,24 +45,27 @@ fn egress_first_match_no_fallback_on_revocation_and_dns_is_trusted() {
     }];
     let r = run(&c, &inventory(), &ds, &dns);
     assert_eq!(
-        r.nodes[&node(1)].configuration.permits[&request(1)].expires_at_ms,
-        2000
+        r.nodes[&node(1)].configuration.decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::EgressConflict
+        }
     );
-    // Renewing the intent cannot extend the trusted DNS association itself.
+    // Renewing the intent cannot unlock a missing packet ownership context.
     let mut renewed = ds.clone();
     renewed.get_mut(&request(1)).unwrap().expires_at_ms = 200_000;
     let renewal = run(&c, &inventory(), &renewed, &dns);
     assert_eq!(
-        renewal.nodes[&node(1)].configuration.permits[&request(1)],
-        r.nodes[&node(1)].configuration.permits[&request(1)]
+        renewal.nodes[&node(1)].configuration.decisions[&request(1)],
+        r.nodes[&node(1)].configuration.decisions[&request(1)]
     );
     renewed.get_mut(&request(1)).unwrap().expires_at_ms = 1500;
     assert_eq!(
         run(&c, &inventory(), &renewed, &dns).nodes[&node(1)]
             .configuration
-            .permits[&request(1)]
-            .expires_at_ms,
-        1500
+            .decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::EgressConflict
+        }
     );
     let mut expired_dns = dns.clone();
     expired_dns[0].expires_at_ms = 1000;
@@ -74,24 +77,28 @@ fn egress_first_match_no_fallback_on_revocation_and_dns_is_trusted() {
             reason: UnavailableReason::MissingDns,
         }
     );
-    // TUN packets contain an IP, not the browser's domain string. The same
-    // trusted association must drive routing and bound the grant lifetime.
+    // TUN packets cannot borrow an earlier DNS name to open an exit route.
     let mut ips = ds.clone();
     ips.get_mut(&request(1)).unwrap().target = BusinessTarget::Ip {
         address: ExecutionAddress("1.1.1.1".parse().unwrap()),
     };
     let ip_result = run(&c, &inventory(), &ips, &dns);
-    let permit = &ip_result.nodes[&node(1)].configuration.permits[&request(1)];
-    assert_eq!(permit.expires_at_ms, 2000);
-    assert!(permit.paths.iter().all(|p| p.nodes.contains(&node(3))));
-    // Even a non-DNS route must not extend a domain-only access grant.
+    assert_eq!(
+        ip_result.nodes[&node(1)].configuration.decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::EgressConflict
+        }
+    );
+    // IP routing alone does not unlock domain-only Access in the first release.
     c.routing.egress.rules[0].matcher.ip_cidr = vec!["1.1.1.1/32".into()];
+    c.routing.egress.rules[0].matcher.domain_suffix.clear();
     assert_eq!(
         run(&c, &inventory(), &ips, &dns).nodes[&node(1)]
             .configuration
-            .permits[&request(1)]
-            .expires_at_ms,
-        2000
+            .decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::Unauthorized
+        }
     );
     let mut stale = dns.clone();
     stale[0].expires_at_ms = 1000;
@@ -113,7 +120,7 @@ fn egress_first_match_no_fallback_on_revocation_and_dns_is_trusted() {
     ));
 }
 #[test]
-fn exact_domain_rules_match_one_name_through_trusted_dns() {
+fn exact_domain_rules_keep_capture_closed_for_both_exact_and_child_names() {
     let mut c = configuration();
     c.access = vec![AccessRule {
         remark: String::new(),
@@ -156,11 +163,13 @@ fn exact_domain_rules_match_one_name_through_trusted_dns() {
         address: ExecutionAddress("1.1.1.1".parse().unwrap()),
     };
     let ds = BTreeMap::from([(d.id, d)]);
-    // A child name is not the exact name: no rule fires, the fallback applies.
+    // The first release cannot install name-dependent packet ownership.
     let r = run(&c, &inventory(), &ds, &[association("api.example.com")]);
     assert!(matches!(
         r.nodes[&node(1)].configuration.decisions[&request(1)],
-        DemandDecision::Unmanaged
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::EgressConflict
+        }
     ));
     let mut exact = ds.clone();
     exact.get_mut(&request(1)).unwrap().target = BusinessTarget::Domain {
@@ -173,8 +182,12 @@ fn exact_domain_rules_match_one_name_through_trusted_dns() {
         &exact,
         &[association("Example.com."), association("api.example.com")],
     );
-    let permit = &r.nodes[&node(1)].configuration.permits[&request(1)];
-    assert_eq!(permit.expires_at_ms, 2000);
+    assert_eq!(
+        r.nodes[&node(1)].configuration.decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::EgressConflict
+        }
+    );
 }
 
 #[test]

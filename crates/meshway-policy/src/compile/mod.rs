@@ -1,6 +1,10 @@
 //! Pure bounded demand compilation from one trusted input snapshot.
 //! The caller authenticates inventory and DNS/artifact inputs and commits with CAS.
+mod capture;
 mod diagnostics;
+mod exit;
+pub use capture::{MAX_CAPTURE_PREFIXES, egress_capture_plan};
+pub use exit::ExitInputs;
 mod edge_constraints;
 mod matching;
 mod paths;
@@ -12,10 +16,10 @@ pub(crate) use edge_constraints::validate_edge_transports;
 pub use matching::profile_allowed;
 use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
-pub use plan::{PlanDestination, PlanRequest, plan};
+pub use plan::{PlanDestination, PlanRequest, plan, plan_with_exit};
 use std::collections::BTreeMap;
 
-pub const COMPILER_VERSION: &str = "meshway-demand-5";
+pub const COMPILER_VERSION: &str = "meshway-demand-6";
 pub const MAX_DEMANDS: usize = 256;
 pub const MAX_PATHS: usize = 4;
 /// Ordered exit candidates have a separate budget from alternatives per exit.
@@ -88,6 +92,14 @@ pub fn compile_with_diagnostics(
     input: CompilationInput<'_>,
     diagnostics: &BTreeMap<meshway_model::ObservationId, DiagnosticDemand>,
 ) -> Result<CompiledPublication, CompileError> {
+    compile_with_exit(input, diagnostics, &ExitInputs::default())
+}
+
+pub fn compile_with_exit(
+    input: CompilationInput<'_>,
+    diagnostics: &BTreeMap<meshway_model::ObservationId, DiagnosticDemand>,
+    runtime: &ExitInputs,
+) -> Result<CompiledPublication, CompileError> {
     if input.demands.len() > MAX_DEMANDS
         || input.configuration.nodes.len() > 10_000
         || input.dns.len() > 4096
@@ -130,6 +142,9 @@ pub fn compile_with_diagnostics(
         input.rule_sets,
         input.selected_profiles,
         diagnostics,
+        &runtime.instances,
+        &runtime.ready_until_ms,
+        &runtime.selection_generations,
     ))?;
     let mut nodes = BTreeMap::new();
     // Every trusted configured node gets a full target, including empty/disabled
@@ -161,6 +176,12 @@ pub fn compile_with_diagnostics(
                 identity: settings.identity.clone(),
                 addresses: settings.addresses.clone(),
                 mesh_address_pools: input.configuration.address_pools.clone(),
+                egress_capture: egress_capture_plan(
+                    &input,
+                    *id,
+                    runtime.selection_generations.get(id).copied().unwrap_or(0),
+                )?,
+                exit_role: exit::role(&input, runtime, *id)?,
                 self_keys: trusted.clone(),
                 listeners: if settings.enabled {
                     settings.listeners.clone()
@@ -190,7 +211,7 @@ pub fn compile_with_diagnostics(
         .values()
         .filter(|d| d.expires_at_ms > input.now_ms)
     {
-        let (decision, local_egress) = evaluate_with_local(&input, &graph, demand)?;
+        let (decision, local_egress) = evaluate_with_local(&input, &graph, demand, runtime)?;
         if let DemandDecision::Permitted { permit } = &decision {
             for path in &permit.paths {
                 for id in &path.nodes {
@@ -284,13 +305,14 @@ fn evaluate(
     graph: &paths::Graph,
     demand: &Demand,
 ) -> Result<DemandDecision, CompileError> {
-    evaluate_with_local(input, graph, demand).map(|(decision, _)| decision)
+    evaluate_with_local(input, graph, demand, &ExitInputs::default()).map(|(decision, _)| decision)
 }
 
 fn evaluate_with_local(
     input: &CompilationInput<'_>,
     graph: &paths::Graph,
     demand: &Demand,
+    runtime: &ExitInputs,
 ) -> Result<(DemandDecision, Option<LocalEgressPermit>), CompileError> {
     let unavailable = |reason| Ok((DemandDecision::Unavailable { reason }, None));
     let cfg = input.configuration;
@@ -351,6 +373,20 @@ fn evaluate_with_local(
         }
     }
     let demand = &normalized;
+    let capture = egress_capture_plan(
+        input,
+        demand.source,
+        runtime
+            .selection_generations
+            .get(&demand.source)
+            .copied()
+            .unwrap_or(0),
+    )?;
+    if !matches!(demand.target, BusinessTarget::Mesh { .. })
+        && let Some(reason) = capture.unavailable
+    {
+        return unavailable(reason);
+    }
     let local = |action, routing_expiry| {
         Ok((
             match action {
@@ -394,6 +430,19 @@ fn evaluate_with_local(
     let Some(access_expiry) = matching::access_expiry(input, demand) else {
         return unavailable(UnavailableReason::Unauthorized);
     };
+    let external = !matches!(demand.target, BusinessTarget::Mesh { .. });
+    if external {
+        let address = match demand.target {
+            BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } => address.0,
+            _ => unreachable!(),
+        };
+        if address.is_ipv6() || cfg.nodes[&demand.source].addresses.ipv4.is_none() {
+            return unavailable(UnavailableReason::UnsupportedFamily);
+        }
+        if !crate::is_exit_destination(address) {
+            return unavailable(UnavailableReason::Unauthorized);
+        }
+    }
     let via = via
         .map(|via| {
             via.iter()
@@ -402,15 +451,32 @@ fn evaluate_with_local(
         })
         .transpose()?;
     let mut candidates = Vec::new();
+    let mut roles = BTreeMap::new();
+    let mut capability_expiry = u64::MAX;
     let mut reason = UnavailableReason::NoPath;
     if targets.len() > MAX_EXIT_CANDIDATES {
         return Err(CompileError::Budget);
     }
     for target in targets {
+        if external && target == demand.source {
+            continue;
+        }
         if !cfg.nodes.get(&target).is_some_and(|n| {
             n.enabled && (matches!(demand.target, BusinessTarget::Mesh { .. }) || n.exit_enabled)
         }) {
             continue;
+        }
+        if external {
+            let ready = runtime.ready_until_ms.get(&target).copied().unwrap_or(0);
+            let role = exit::role(input, runtime, target)?;
+            if !exit::available(input.topology(), runtime, target, input.now_ms) || role.is_none() {
+                reason = UnavailableReason::ExitUnavailable;
+                continue;
+            }
+            if let Some(role) = role {
+                roles.insert(target, role);
+            }
+            capability_expiry = capability_expiry.min(ready);
         }
         // Each ordered exit owns a bounded search. An invalid route produces
         // no permission, without blocking revocation/publication for other demands.
@@ -425,7 +491,28 @@ fn evaluate_with_local(
     if candidates.is_empty() {
         return unavailable(reason);
     }
-    let expires_at_ms = dns_expiry.min(access_expiry).min(routing_expiry);
+    let expires_at_ms = dns_expiry
+        .min(access_expiry)
+        .min(routing_expiry)
+        .min(capability_expiry);
+    let exit = if external {
+        let Some(destination) = exit::destination(input, demand) else {
+            return unavailable(UnavailableReason::Unauthorized);
+        };
+        roles.retain(|node, _| {
+            candidates
+                .iter()
+                .any(|path| path.nodes.last() == Some(node))
+        });
+        Some(ExitPermit {
+            generation: capture.generation,
+            family: meshway_model::exit::ExitFamily::Ipv4,
+            destination,
+            roles,
+        })
+    } else {
+        None
+    };
     Ok((
         DemandDecision::Permitted {
             permit: PathPermit {
@@ -436,6 +523,7 @@ fn evaluate_with_local(
                 protocol: demand.protocol,
                 port: demand.port,
                 profile: demand.profile.clone(),
+                exit,
                 paths: candidates,
                 expires_at_ms,
                 replies: ReplyPolicy::StatefulExactReversePath,

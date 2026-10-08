@@ -150,6 +150,40 @@ fn admitted_path(
         if addresses(configuration, origin)? != &business.source_addresses {
             return Err(AdmissionError::Traffic);
         }
+        match (&business.target, &business.exit) {
+            (BusinessTarget::Mesh { .. }, None) => {}
+            (BusinessTarget::Ip { address }, Some(exit)) => {
+                if exit.family != meshway_model::exit::ExitFamily::Ipv4
+                    || !crate::is_exit_destination(address.0)
+                    || business.source_addresses.ipv4.is_none()
+                    || configuration.mesh_address_pools.ipv4.iter().any(|pool| {
+                        pool.parse::<ipnet::IpNet>()
+                            .is_ok_and(|net| net.contains(&address.0))
+                    })
+                {
+                    return Err(AdmissionError::Traffic);
+                }
+                let terminal = path.last().ok_or(AdmissionError::Path)?;
+                let role = exit.roles.get(terminal).ok_or(AdmissionError::Permit)?;
+                if role.family != exit.family
+                    || role.nat != ExitNat::Masquerade
+                    || (terminal == &configuration.node_id
+                        && configuration.exit_role.as_ref() != Some(role))
+                {
+                    return Err(AdmissionError::Permit);
+                }
+                let covered = match &exit.destination {
+                    ExitDestinationScope::Internet => crate::is_internet_address(address.0),
+                    ExitDestinationScope::Cidr { prefix } => prefix
+                        .parse::<ipnet::IpNet>()
+                        .is_ok_and(|net| net.contains(&address.0)),
+                };
+                if !covered {
+                    return Err(AdmissionError::Traffic);
+                }
+            }
+            _ => return Err(AdmissionError::Permit),
+        }
     }
     if let Some(target) = permit.target
         && path.last() != Some(&target)

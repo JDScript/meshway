@@ -58,13 +58,19 @@ pub(super) fn inventory() -> BTreeMap<NodeId, TrustedNode> {
                 TrustedNode {
                     control_key: key(0, KeyAlgorithm::Ed25519),
                     dataplane_key: key(10, KeyAlgorithm::X25519),
-                    capabilities: BTreeMap::from([(
-                        "transport:native_udp".into(),
-                        Capability::Transport {
-                            roles: vec![TransportRole::Dial, TransportRole::Listen],
-                            streams: vec![StreamKind::Udp],
-                        },
-                    )]),
+                    capabilities: BTreeMap::from([
+                        (
+                            "feature:exit-ipv4".into(),
+                            Capability::Feature { version: 1 },
+                        ),
+                        (
+                            "transport:native_udp".into(),
+                            Capability::Transport {
+                                roles: vec![TransportRole::Dial, TransportRole::Listen],
+                                streams: vec![StreamKind::Udp],
+                            },
+                        ),
+                    ]),
                 },
             )
         })
@@ -97,18 +103,29 @@ pub(super) fn run_with_subjects(
     dns: &[TrustedDnsAssociation],
     subjects: &SubjectContext,
 ) -> CompiledPublication {
-    compile(CompilationInput {
-        network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
-        revision: Revision::MIN,
-        publication: "00000000-0000-4004-8000-000000000001".parse().unwrap(),
-        configuration: c,
-        subjects,
-        inventory: inv,
-        demands,
-        dns,
-        rule_sets: &BTreeMap::new(),
-        selected_profiles: &BTreeMap::new(),
-        now_ms: 1000,
-    })
+    meshway_policy::compile::compile_with_exit(
+        CompilationInput {
+            network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
+            revision: Revision::MIN,
+            publication: "00000000-0000-4004-8000-000000000001".parse().unwrap(),
+            configuration: c,
+            subjects,
+            inventory: inv,
+            demands,
+            dns,
+            rule_sets: &BTreeMap::new(),
+            selected_profiles: &BTreeMap::new(),
+            now_ms: 1000,
+        },
+        &BTreeMap::new(),
+        &meshway_policy::compile::ExitInputs {
+            instances: inv
+                .keys()
+                .map(|node| (*node, node.to_string().parse().unwrap()))
+                .collect(),
+            ready_until_ms: inv.keys().map(|node| (*node, 100_000)).collect(),
+            ..Default::default()
+        },
+    )
     .unwrap()
 }

@@ -20,17 +20,9 @@ pub(super) fn cidr(s: &str, address: IpAddr) -> bool {
     s.parse::<IpNet>().is_ok_and(|n| n.contains(&address))
 }
 
-/// Use the same address-set definition as configuration validation. IPv4-mapped
-/// IPv6 uses the IPv4 classification instead of bypassing exclusions.
+/// Shared with declaration validation and packet admission.
 pub(super) fn internet(address: IpAddr) -> bool {
-    if let IpAddr::V6(v6) = address
-        && let Some(v4) = v6.to_ipv4_mapped()
-    {
-        return internet(v4.into());
-    }
-    meshway_configuration::internet_ranges()
-        .iter()
-        .any(|range| range.contains(&address))
+    crate::is_internet_address(address)
 }
 /// A domain selector matches through the source's live DNS associations whose
 /// name satisfies `matches` and whose addresses include the demand target.

@@ -132,6 +132,18 @@ A→C via B
 
 Server 为最终出口生成绑定 origin、实际目的范围、出口和完整 path 的许可。公共规则抢先指定 E 的范围，不会又从 F 的 fallback 获得准入。
 
+### 执行捕获与精确许可
+
+`meshway-demand-6` 的 `NodeConfiguration.egressCapture` 是独立的包归属计划，不扩大 `meshAddressPools` 或 Access。`managedIpv4`、`directIpv4`、`unmanagedIpv4` 是按 first-match 切分后的互斥 CIDR；`defaultCapture` 明确表示默认捕获。受管 IPv6 通过 `sinkIpv6` 拒绝，先于外部默认路由，已授权 Mesh IPv6 仍走 Mesh 路由。源端没有 IPv6 地址也不能省略该拒绝边界。
+
+Policy 按顺序从尚未命中的地址集合扣除每条规则的 CIDR，然后应用 fallback。最多输出 4,096 个前缀，单次切分最多 131,072 工作项；超限或缺少依赖发布带 `unavailable` 的全范围捕获／sink，不发布 direct 例外。涉及出口且需要域名上下文的归属在首版返回 `egressConflict`，等待可信解析与冲突处理；不能把 DNS 查询猜成普通 IP 包的业务身份。
+
+`PathPermit` 仍绑定精确源地址、目的 IP、协议／端口、完整路径、到期与原路径回复。外部许可另有 `exit: ExitPermit`：`family`、`generation`、`destination`（`internet` 或显式 `cidr.prefix`）和按出口索引的 `roles`。范围分类只限制精确目的，不授予范围内其他目的。`ExitRolePlan` 绑定 instance、角色 generation、IPv4 与 masquerade；network／node／publication 和执行截止由外围 target／lease 绑定。职责在能力探测前发布，职责本身不能转发包。
+
+出口能力未知、过期或失败时返回 `unavailable/exitUnavailable`，保留捕获边界；路径检测的 `targets[].exitUnavailableReason` 展示新鲜的具体失败。IPv6 出口返回 `unsupportedFamily`。能力事实不能增加 Access 或绕过 topology。
+
+capture／exit permit 的 generation 包含源 revision、有效方案和持久选择版本；切换回同名方案也获得新 generation。`meshway_policy::permit_transition` 仅在旧许可仍活且完整授权摘要一致时返回 `Renewal`，其余为 `Replacement`；Control 仍须检查实例和快照连续性。真实出口安装与包流验收范围见 [Node](/v2/node)。
+
 新方案分配含主体未获授权的目标时拒绝保存。后续身份／access／出口撤销必须可以执行，不能被旧方案引用阻止；受影响执行变为拒绝／不可用，不偷偷恢复 direct 或其他更宽路径。
 
 ### 内置方案与当前选择

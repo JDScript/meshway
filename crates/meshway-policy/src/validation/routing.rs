@@ -1,6 +1,7 @@
 use super::{references::*, *};
+use crate::internet_ranges;
 use ipnet::IpNet;
-use meshway_configuration::{AddressSet, internet_ranges};
+use meshway_configuration::AddressSet;
 
 #[derive(Clone, Copy)]
 struct PriorRules<'a> {

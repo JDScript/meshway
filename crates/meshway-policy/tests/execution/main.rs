@@ -16,6 +16,7 @@ mod support;
 use support::*;
 mod discovery;
 mod egress;
+mod exit_contract;
 mod permissions;
 mod publication;
 mod topology;

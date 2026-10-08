@@ -134,7 +134,7 @@ fn external_exit_requires_access_routing_and_exit_while_service_is_mesh_delivery
 }
 
 #[test]
-fn domain_address_and_dns_expiry_survive_compilation_to_admission() {
+fn domain_exit_is_not_admitted_before_trusted_capture_context_is_implemented() {
     let (mut configuration, mut demand, mut traffic) = mesh(BusinessProtocol::Udp);
     configuration.access[0].dst = vec!["domain:example.test".into()];
     assign_exit_profile(
@@ -172,7 +172,7 @@ fn domain_address_and_dns_expiry_survive_compilation_to_admission() {
             &traffic,
             1000
         ),
-        Ok(Hop::Exit)
+        Err(AdmissionError::Permit)
     );
     assert_eq!(
         admit_forward(
@@ -184,7 +184,7 @@ fn domain_address_and_dns_expiry_survive_compilation_to_admission() {
             &traffic,
             2000
         ),
-        Err(AdmissionError::Expired)
+        Err(AdmissionError::Permit)
     );
     traffic.destination = "8.8.4.4".parse().unwrap();
     assert!(

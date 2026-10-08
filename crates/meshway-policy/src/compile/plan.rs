@@ -31,6 +31,22 @@ pub struct PlanRequest<'a> {
 /// profile the source may not use. Missing remote rule-set content is an
 /// `unavailable` outcome, not an error.
 pub fn plan(request: PlanRequest<'_>) -> Result<Evaluation, CompileError> {
+    plan_inner(request, None, 0)
+}
+
+pub fn plan_with_exit(
+    request: PlanRequest<'_>,
+    runtime: &ExitInputs,
+    now_ms: u64,
+) -> Result<Evaluation, CompileError> {
+    plan_inner(request, Some(runtime), now_ms)
+}
+
+fn plan_inner(
+    request: PlanRequest<'_>,
+    runtime: Option<&ExitInputs>,
+    now_ms: u64,
+) -> Result<Evaluation, CompileError> {
     let top = request.topology;
     let cfg = top.configuration;
     let source = request.source;
@@ -100,6 +116,16 @@ pub fn plan(request: PlanRequest<'_>) -> Result<Evaluation, CompileError> {
                 Some(TargetProblem::ExitDisabled)
             } else if !top.inventory.contains_key(target) {
                 Some(TargetProblem::NotEnrolled)
+            } else if route.kind == RouteKind::Exit
+                && matches!(&destination, EvaluatedDestination::Address { address, .. } if address.parse::<IpAddr>().is_ok_and(|ip| ip.is_ipv6()))
+            {
+                reason = UnavailableReason::UnsupportedFamily;
+                Some(TargetProblem::UnsupportedFamily)
+            } else if route.kind == RouteKind::Exit
+                && runtime.is_some_and(|runtime| !exit::available(top, runtime, *target, now_ms))
+            {
+                reason = UnavailableReason::ExitUnavailable;
+                Some(TargetProblem::ExitUnavailable)
             } else {
                 None
             };
@@ -136,6 +162,11 @@ pub fn plan(request: PlanRequest<'_>) -> Result<Evaluation, CompileError> {
                 node_id: *target,
                 problem,
                 paths: u32::try_from(found.len()).unwrap_or(u32::MAX),
+                exit_unavailable_reason: if route.kind == RouteKind::Exit {
+                    runtime.and_then(|runtime| runtime.unavailable_reasons.get(target).copied())
+                } else {
+                    None
+                },
             });
             for path in found {
                 paths.push(planned(&top, path));
