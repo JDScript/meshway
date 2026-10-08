@@ -25,7 +25,9 @@ and `/en/docs/…` English. Each language is its own root layout (`(zh)/`,
 `en/`), so the static export needs no middleware. A page `x.mdx` is
 Chinese and `x.en.mdx` its English; Fumadocs' own words are translated in
 `lib/translations.ts`. Search is static (Flexsearch), Chinese with the CJK
-tokenizer. The API reference's field descriptions come from the contract
+encoder; the site queries it with its own client (`lib/search-client.ts`),
+which encodes queries the way each language's index was built (Fumadocs'
+static client uses the default encoder, so Chinese found nothing). The API reference's field descriptions come from the contract
 and are English in both.
 
 ## Links out
@@ -44,7 +46,11 @@ deployment and pricing) is not mentioned.
 
 Generated from `packages/protocol/openapi.json` (the published contract),
 `/api/v1` only: `/agent-api/v1` needs Node credentials and is not for
-people. Trying an operation will take a delegated session from the console
+people. One page per operation at `/docs/api/<tag>/<operationId in
+kebab-case>` (and `/en/…`), generated before `dev`, `build` and
+`typecheck` (`scripts/README.md`), with curl and `@meshway/control-client`
+samples generated from the operation; the user docs link to these pages
+for exact fields instead of restating them. Trying an operation will take a delegated session from the console
 (authorization code with PKCE: the console asks for consent, the server
 issues a one-hour session that cannot change the password or email, revoke
 sessions or delegate again); writes are confirmed first. That needs the

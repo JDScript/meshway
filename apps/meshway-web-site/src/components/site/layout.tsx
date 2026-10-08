@@ -5,7 +5,7 @@ import { localized, type Lang } from "@/lib/i18n"
 import { appName, consoleUrl } from "@/lib/site"
 
 const words = {
-  zh: { docs: "文档", signIn: "登录 console" },
+  zh: { docs: "文档", signIn: "登录控制台" },
   en: { docs: "Docs", signIn: "Sign in to the console" },
 } satisfies Record<Lang, Record<string, string>>
 

@@ -6,6 +6,7 @@ import { appName } from "@/lib/site"
 
 export const metadata: Metadata = {
   title: { default: appName, template: `%s · ${appName}` },
+  icons: { icon: "/favicon.svg" },
 }
 
 export default function Layout({ children }: { children: ReactNode }) {

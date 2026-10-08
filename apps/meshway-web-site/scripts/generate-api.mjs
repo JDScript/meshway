@@ -43,7 +43,7 @@ const titles = {
   getConfiguration: "读取配置",
   applyConfiguration: "应用配置",
   compareConfiguration: "比较配置版本",
-  evaluateConfiguration: "检测路径",
+  evaluateConfiguration: "路径检测",
   listConfigurationRevisions: "列出配置版本",
   getConfigurationRevision: "读取配置版本",
   getConfigurationProgress: "读取配置应用进度",

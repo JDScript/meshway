@@ -1,9 +1,9 @@
 ---
-title: 路径检查与延迟观察
+title: 路径检测与延迟观察
 description: 先理解配置如何选路，再观察节点之间的实际往返。
 ---
 
-Console 提供配置路径检查、历史延迟和实时观察。三者分别回答“按配置应该怎样走”“过去测到了什么”和“现在实际怎样”。
+控制台提供配置路径检测、历史延迟和实时观察。三者分别回答“按配置应该怎样走”“过去测到了什么”和“现在实际怎样”。
 
 ## 检查配置路径
 
@@ -11,7 +11,7 @@ Console 提供配置路径检查、历史延迟和实时观察。三者分别回
 
 结果包括目标、访问规则、路由决定、候选路径的问题，以及每段连接的组网规则。已有草稿时，可以将当前配置与草稿并排比较，变化的部分会标记出来。
 
-留意结果所属的配置版本，以及结果之后配置或草稿是否又发生变化。路径检查是配置推演，不会证明节点已经建立连接，也不会代替实际探测。
+留意结果所属的配置版本，以及结果之后配置或草稿是否又发生变化。路径检测是配置推演，不会证明节点已经建立连接，也不会代替实际探测。
 
 ## 发起实时观察
 
@@ -42,4 +42,4 @@ Console 提供配置路径检查、历史延迟和实时观察。三者分别回
 
 历史**未回应率**包含超时或失败的探测，口径与实时观察不同，应按页面的计数阅读。打开历史只读取已有记录，不会启动新测量。
 
-本机也可用 [`meshway ping`](/docs/cli#ping)检查路径。精确操作见 [API：评估配置](/docs/api/configuration/evaluate-configuration)、[创建观察](/docs/api/observations/create-observation)和[查询观察历史](/docs/api/observations/query-observation-history)。
+本机也可用 [`meshway ping`](/docs/cli#ping)检查路径。精确操作见 [API：路径检测](/docs/api/configuration/evaluate-configuration)、[创建观察](/docs/api/observations/create-observation)和[查询观察历史](/docs/api/observations/query-observation-history)。

@@ -47,7 +47,7 @@ export const landingCopy: Record<Lang, LandingCopy> = {
       "Meshway 将节点连成端到端保护的 Mesh 网络。谁能访问、如何连接、经过哪里，都由明确的规则决定。",
     docs: "阅读文档",
     signIn: "登录控制台",
-    heroNote: "端到端加密 · 显式访问授权 · 必经路径",
+    heroNote: "端到端保护 · 显式访问授权 · 必经路径",
     mesh: {
       caption: "MESH / 路径示意",
       source: "源节点",
@@ -105,7 +105,7 @@ export const landingCopy: Record<Lang, LandingCopy> = {
           body: "查看节点返回的实时探测结果与延迟历史；没有样本的时段保留为空。",
         },
         {
-          title: "路径检查",
+          title: "路径检测",
           body: "按当前配置或草稿查看路径规划与匹配规则。规划结果不代表实测连通。",
         },
       ],
@@ -127,7 +127,7 @@ export const landingCopy: Record<Lang, LandingCopy> = {
       "Meshway connects nodes in an end-to-end protected mesh. Explicit rules govern access, connections, and the paths traffic takes.",
     docs: "Read the docs",
     signIn: "Sign in to the console",
-    heroNote: "End-to-end encryption · Explicit access · Required paths",
+    heroNote: "End-to-end protection · Explicit access · Required paths",
     mesh: {
       caption: "MESH / PATH ILLUSTRATION",
       source: "Source",
