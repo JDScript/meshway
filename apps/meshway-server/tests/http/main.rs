@@ -105,6 +105,25 @@ async fn error(response: Response, status: StatusCode, code: &str) -> ErrorRespo
     error
 }
 
+async fn json<T: serde::de::DeserializeOwned>(request: reqwest::RequestBuilder) -> T {
+    let response = request.send().await.unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert!(status.is_success(), "{status}: {body}");
+    serde_json::from_str(&body).unwrap_or_else(|error| panic!("{error}: {body}"))
+}
+
+async fn reject(request: reqwest::RequestBuilder, status: StatusCode, code: &str) -> ErrorResponse {
+    error(request.send().await.unwrap(), status, code).await
+}
+
+async fn empty(request: reqwest::RequestBuilder) {
+    assert_eq!(
+        request.send().await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+}
+
 async fn register(
     client: &Client,
     server: &Server,
@@ -176,68 +195,47 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
         r#"{"email":"sensitive@example.com","password":"sensitive password","password":"duplicate"}"#,
         r#"{"email":"sensitive""#,
     ] {
-        error(
+        reject(
             client
                 .post(server.auth("register"))
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(body)
-                .send()
-                .await
-                .unwrap(),
+                .body(body),
             StatusCode::BAD_REQUEST,
             "invalid_request",
         )
         .await;
     }
-    error(
-        client
-            .post(server.auth("register"))
-            .body("sensitive body")
-            .send()
-            .await
-            .unwrap(),
+    reject(
+        client.post(server.auth("register")).body("sensitive body"),
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
         "unsupported_media_type",
     )
     .await;
-    error(
+    reject(
         client
             .post(server.auth("login"))
             .header(header::CONTENT_TYPE, "application/json")
-            .body("sensitive".repeat(http::MAX_JSON_BODY_BYTES))
-            .send()
-            .await
-            .unwrap(),
+            .body("sensitive".repeat(http::MAX_JSON_BODY_BYTES)),
         StatusCode::PAYLOAD_TOO_LARGE,
         "request_too_large",
     )
     .await;
-    error(
-        client
-            .post(server.auth("register"))
-            .json(&RegisterRequest {
-                email: "not an email".into(),
-                password: WireSecret::new("sensitive password".into()),
-            })
-            .send()
-            .await
-            .unwrap(),
+    reject(
+        client.post(server.auth("register")).json(&RegisterRequest {
+            email: "not an email".into(),
+            password: WireSecret::new("sensitive password".into()),
+        }),
         StatusCode::BAD_REQUEST,
         "invalid_request",
     )
     .await;
 
     // Six supplementary-plane scalars are twelve UTF-16 units, but still weak.
-    let weak = error(
-        client
-            .post(server.auth("register"))
-            .json(&RegisterRequest {
-                email: "short@example.com".into(),
-                password: WireSecret::new("😀".repeat(6)),
-            })
-            .send()
-            .await
-            .unwrap(),
+    let weak = reject(
+        client.post(server.auth("register")).json(&RegisterRequest {
+            email: "short@example.com".into(),
+            password: WireSecret::new("😀".repeat(6)),
+        }),
         StatusCode::UNPROCESSABLE_ENTITY,
         "password_weak",
     )
@@ -259,44 +257,29 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
         session(&client, &server, bob.token.expose()).await.user,
         bob.user
     );
-    error(
-        client
-            .post(server.auth("register"))
-            .json(&RegisterRequest {
-                email: alice.user.email.clone(),
-                password: WireSecret::new(password.clone()),
-            })
-            .send()
-            .await
-            .unwrap(),
+    reject(
+        client.post(server.auth("register")).json(&RegisterRequest {
+            email: alice.user.email.clone(),
+            password: WireSecret::new(password.clone()),
+        }),
         StatusCode::CONFLICT,
         "email_taken",
     )
     .await;
-    error(
-        client
-            .post(server.auth("login"))
-            .json(&LoginRequest {
-                email: alice.user.email.clone(),
-                password: WireSecret::new("sensitive wrong password".into()),
-            })
-            .send()
-            .await
-            .unwrap(),
+    reject(
+        client.post(server.auth("login")).json(&LoginRequest {
+            email: alice.user.email.clone(),
+            password: WireSecret::new("sensitive wrong password".into()),
+        }),
         StatusCode::UNAUTHORIZED,
         "invalid_credentials",
     )
     .await;
-    error(
-        client
-            .post(server.auth("login"))
-            .json(&LoginRequest {
-                email: "unknown@local".into(),
-                password: WireSecret::new("sensitive wrong password".into()),
-            })
-            .send()
-            .await
-            .unwrap(),
+    reject(
+        client.post(server.auth("login")).json(&LoginRequest {
+            email: "unknown@local".into(),
+            password: WireSecret::new("sensitive wrong password".into()),
+        }),
         StatusCode::UNAUTHORIZED,
         "invalid_credentials",
     )
@@ -345,29 +328,22 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
         )
         .await;
     }
-    error(
-        client.post(server.auth("logout")).send().await.unwrap(),
+    reject(
+        client.post(server.auth("logout")),
         StatusCode::UNAUTHORIZED,
         "invalid_session",
     )
     .await;
-    error(
+    reject(
         client
             .get(format!("{}/api/v1/not-an-operation", server.url))
-            .bearer_auth(alice.token.expose())
-            .send()
-            .await
-            .unwrap(),
+            .bearer_auth(alice.token.expose()),
         StatusCode::NOT_FOUND,
         "not_found",
     )
     .await;
-    error(
-        client
-            .get(format!("{}/agent-api/v1/auth/session", server.url))
-            .send()
-            .await
-            .unwrap(),
+    reject(
+        client.get(format!("{}/agent-api/v1/auth/session", server.url)),
         StatusCode::METHOD_NOT_ALLOWED,
         "method_not_allowed",
     )
@@ -381,14 +357,7 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
     server.close().await;
 
     let server = Server::start(&path, false).await;
-    let options: AuthOptionsResponse = client
-        .get(server.auth("options"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let options: AuthOptionsResponse = json(client.get(server.auth("options"))).await;
     assert!(!options.registration_enabled);
     assert_eq!(
         session(&client, &server, alice.token.expose())
@@ -396,16 +365,11 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
             .session,
         alice.session
     );
-    error(
-        client
-            .post(server.auth("register"))
-            .json(&RegisterRequest {
-                email: "new@local".into(),
-                password: WireSecret::new(password.clone()),
-            })
-            .send()
-            .await
-            .unwrap(),
+    reject(
+        client.post(server.auth("register")).json(&RegisterRequest {
+            email: "new@local".into(),
+            password: WireSecret::new(password.clone()),
+        }),
         StatusCode::FORBIDDEN,
         "registration_disabled",
     )
@@ -433,13 +397,10 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
     assert_eq!(logout.status(), StatusCode::NO_CONTENT);
     assert_headers(&logout);
     assert!(logout.bytes().await.unwrap().is_empty());
-    error(
+    reject(
         client
             .post(server.auth("logout"))
-            .bearer_auth(alice.token.expose())
-            .send()
-            .await
-            .unwrap(),
+            .bearer_auth(alice.token.expose()),
         StatusCode::UNAUTHORIZED,
         "invalid_session",
     )
@@ -455,13 +416,10 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
     server.close().await;
 
     let server = Server::start(&path, false).await;
-    error(
+    reject(
         client
             .get(server.auth("session"))
-            .bearer_auth(alice.token.expose())
-            .send()
-            .await
-            .unwrap(),
+            .bearer_auth(alice.token.expose()),
         StatusCode::UNAUTHORIZED,
         "invalid_session",
     )
@@ -482,13 +440,10 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
         task,
     } = server;
     app.shutdown().await.unwrap();
-    error(
+    reject(
         client
             .get(format!("{url}/api/v1/auth/session"))
-            .bearer_auth(login.token.expose())
-            .send()
-            .await
-            .unwrap(),
+            .bearer_auth(login.token.expose()),
         StatusCode::SERVICE_UNAVAILABLE,
         "service_unavailable",
     )
