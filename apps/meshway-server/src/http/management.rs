@@ -11,6 +11,9 @@ use axum::{
 use meshway_model::{RequestId, SessionId};
 use meshway_protocol::{ErrorResponse, NetworkPageQuery, UserView, management::*};
 
+/// Change the authenticated account's login email.
+///
+/// Requires the current password and synchronizes bound configuration references while preserving the User ID.
 #[utoipa::path(post,path="/api/v1/account/email",operation_id="changeAccountEmail",tag="account",security(("userSession"=[])),request_body=ChangeEmailRequest,responses((status=200,body=AccountResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn email(
     State(accounts): State<Accounts>,
@@ -39,6 +42,7 @@ pub(super) async fn email(
     }))
 }
 
+/// Read the authenticated user's current account metadata.
 #[utoipa::path(get,path="/api/v1/account",operation_id="getAccount",tag="account",security(("userSession"=[])),responses((status=200,body=AccountResponse),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn account(
     State(accounts): State<Accounts>,
@@ -59,6 +63,9 @@ pub(super) async fn account(
     }))
 }
 
+/// List the authenticated user's active sessions.
+///
+/// Returns newest-first pages with a default limit of 50, without bearer credentials.
 #[utoipa::path(get,path="/api/v1/account/sessions",operation_id="listAccountSessions",tag="account",security(("userSession"=[])),params(NetworkPageQuery),responses((status=200,body=AccountSessionsResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn sessions(
     State(accounts): State<Accounts>,
@@ -109,6 +116,7 @@ async fn revoke(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Revoke one session belonging to the authenticated user.
 #[utoipa::path(post,path="/api/v1/account/sessions/{sessionId}/revoke",operation_id="revokeAccountSession",tag="account",security(("userSession"=[])),params(("sessionId"=SessionId,Path)),responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn revoke_one(
     State(accounts): State<Accounts>,
@@ -119,6 +127,7 @@ pub(super) async fn revoke_one(
     let Path(session) = path.map_err(|_| HttpError::invalid_request(id))?;
     revoke(accounts, id, headers, RevokeSessions::One(session)).await
 }
+/// Revoke the authenticated user's sessions except the current session.
 #[utoipa::path(post,path="/api/v1/account/sessions/revoke-others",operation_id="revokeOtherAccountSessions",tag="account",security(("userSession"=[])),responses((status=204),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn revoke_others(
     State(accounts): State<Accounts>,
@@ -127,6 +136,7 @@ pub(super) async fn revoke_others(
 ) -> Result<StatusCode, HttpError> {
     revoke(accounts, id, headers, RevokeSessions::Others).await
 }
+/// Revoke all sessions belonging to the authenticated user, including the current session.
 #[utoipa::path(post,path="/api/v1/account/sessions/revoke-all",operation_id="revokeAllAccountSessions",tag="account",security(("userSession"=[])),responses((status=204),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn revoke_all(
     State(accounts): State<Accounts>,
@@ -136,6 +146,9 @@ pub(super) async fn revoke_all(
     revoke(accounts, id, headers, RevokeSessions::All).await
 }
 
+/// Change the authenticated user's password using the current password.
+///
+/// The replacement must satisfy the advertised password rules.
 #[utoipa::path(post,path="/api/v1/account/password",operation_id="changeAccountPassword",tag="account",security(("userSession"=[])),request_body=ChangePasswordRequest,responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn password(
     State(accounts): State<Accounts>,
@@ -156,6 +169,9 @@ pub(super) async fn password(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Inspect a password reset credential without consuming it.
+///
+/// Accepts the operator-issued credential in the request body and returns its expiry without account details.
 #[utoipa::path(post,path="/api/v1/auth/password-reset/inspect",operation_id="inspectPasswordReset",tag="auth",request_body=PasswordResetInspectRequest,responses((status=200,body=PasswordResetInspection),(status=400,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn reset_inspect(
     State(accounts): State<Accounts>,
@@ -172,6 +188,9 @@ pub(super) async fn reset_inspect(
         expires_at: reset.expires_at,
     }))
 }
+/// Redeem a one-time password reset credential and replace the account password.
+///
+/// Validates the credential binding and password rules, consumes the reset, and revokes old user sessions.
 #[utoipa::path(post,path="/api/v1/auth/password-reset/redeem",operation_id="redeemPasswordReset",tag="auth",request_body=PasswordResetRedeemRequest,responses((status=204),(status=400,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn reset_redeem(
     State(accounts): State<Accounts>,

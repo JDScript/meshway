@@ -6,6 +6,7 @@ use meshway_model::NodeId;
 use meshway_serde::required_nullable as nullable_listener;
 use std::collections::BTreeMap;
 
+/// Address family selected for Mesh address allocation or reassignment.
 #[derive(
     Clone,
     Copy,
@@ -20,7 +21,9 @@ use std::collections::BTreeMap;
 )]
 #[serde(rename_all = "camelCase", try_from = "String")]
 pub enum AddressFamily {
+    /// Select IPv4 pools and assignments.
     Ipv4,
+    /// Select IPv6 pools and assignments.
     Ipv6,
 }
 impl TryFrom<String> for AddressFamily {
@@ -34,28 +37,103 @@ impl TryFrom<String> for AddressFamily {
     }
 }
 
-object! { #[derive(Default)] pub struct NodeSettingsPatch {
+object! { #[derive(Default)]
+/// Typed node settings edits; omitted fields retain their current values.
+pub struct NodeSettingsPatch {
+    /// Replacement network-unique DNS label; omission retains the current hostname.
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub hostname: Input<String> [value_type=String],
+    /// Replacement description; omission retains it and an empty string clears it.
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub remark: Input<String> [value_type=String],
+    /// Business execution setting; omission retains it and false withdraws execution without revoking synchronization credentials.
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub enabled: Input<bool> [value_type=bool],
+    /// Administrative exit eligibility; omission retains the current setting.
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub exit_enabled: Input<bool> [value_type=bool],
+    /// Omission retains the override, null restores network inheritance, and an explicit set replaces the protocol selection, with `{}` disabling active dialing.
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub dialers: Input<Option<DialerSetUpdate>> [value_type=Option<DialerSetUpdate>],
 } }
-tagged! { pub enum ConfigurationOperation {
-    ReplaceAccess { access: Vec<AccessRule> },
-    ReplaceTopology { topology: Vec<TopologyRule> },
-    ReplaceRouting { routing: RoutingConfiguration },
-    ReplaceDns { dns: DnsConfiguration },
-    ReplaceDefaults { defaults: DefaultsUpdate },
-    ReplaceGroups { #[serde(deserialize_with="unique_map")] groups: BTreeMap<String,Vec<String>> },
-    ReplaceTagsOwners { #[serde(rename="tagsOwners",deserialize_with="unique_map")] tags_owners: BTreeMap<String,Vec<String>> },
-    ReplaceRuleSets { #[serde(rename="ruleSets",deserialize_with="unique_map")] rule_sets: BTreeMap<String,RuleSet> },
-    SetNodeSettings { #[serde(rename="nodeId")] node_id: NodeId, fields: NodeSettingsPatch },
-    SetListener { #[serde(rename="nodeId")] node_id: NodeId, key: String, #[serde(deserialize_with="nullable_listener")] listener: Option<ListenerUpdate> [required=true] },
-    SetIdentityTags { #[serde(rename="nodeId")] node_id: NodeId, tags: Vec<String> },
-    SetAddressPools { #[serde(rename="addressPools")] address_pools: AddressPoolsInput },
-    SetAddresses { #[serde(rename="nodeId")] node_id: NodeId, addresses: NodeAddressesInput },
-    DeleteNode { #[serde(rename="nodeId")] node_id: NodeId },
+tagged! {
+/// Typed edit applied in request order, with per-operation authorization and atomic full-target validation under CAS.
+pub enum ConfigurationOperation {
+    /// Replace all business access grants.
+    ReplaceAccess {
+        /// Complete replacement grant list; an empty list denies new Mesh business traffic.
+        access: Vec<AccessRule>
+    },
+    /// Replace all adjacency rules.
+    ReplaceTopology {
+        /// Complete replacement topology list; an empty list uses the network topology default.
+        topology: Vec<TopologyRule>
+    },
+    /// Replace Mesh and egress routing declarations together.
+    ReplaceRouting {
+        /// Complete replacement routing settings, including profiles and assignments.
+        routing: RoutingConfiguration
+    },
+    /// Replace network DNS settings.
+    ReplaceDns {
+        /// Complete replacement naming, resolver and split-DNS configuration.
+        dns: DnsConfiguration
+    },
+    /// Update explicitly provided network default fields.
+    ReplaceDefaults {
+        /// Default-field updates; omitted fields retain their baseline values.
+        defaults: DefaultsUpdate
+    },
+    /// Replace all user group definitions.
+    ReplaceGroups {
+        /// `group:<name>` keys mapped to direct member emails; an empty map removes all groups.
+        #[serde(deserialize_with="unique_map")] groups: BTreeMap<String,Vec<String>>
+    },
+    /// Replace all tag definitions and assignment owners.
+    ReplaceTagsOwners {
+        /// `tag:<name>` keys mapped to owner emails or groups; an empty owner list allows only network administrators to assign the tag.
+        #[serde(rename="tagsOwners",deserialize_with="unique_map")] tags_owners: BTreeMap<String,Vec<String>>
+    },
+    /// Replace all destination rule-set declarations.
+    ReplaceRuleSets {
+        /// Complete named rule-set map; remote contents are prepared and validated before publication.
+        #[serde(rename="ruleSets",deserialize_with="unique_map")] rule_sets: BTreeMap<String,RuleSet>
+    },
+    /// Update allowed settings of an existing node.
+    SetNodeSettings {
+        /// Existing node in the target network whose settings are edited.
+        #[serde(rename="nodeId")] node_id: NodeId,
+        /// Explicit field changes, preserving every omitted setting.
+        fields: NodeSettingsPatch
+    },
+    /// Create, replace or remove one fixed listener.
+    SetListener {
+        /// Existing node that owns the listener.
+        #[serde(rename="nodeId")] node_id: NodeId,
+        /// Nonempty node-local listener key.
+        key: String,
+        /// Replacement listener with secret-retention semantics, or explicit null to remove it; this field is required.
+        #[serde(deserialize_with="nullable_listener")] listener: Option<ListenerUpdate> [required=true]
+    },
+    /// Set a node's tag authorization identity subject to assignment and identity-transition permissions.
+    SetIdentityTags {
+        /// Existing node whose effective identity is changed.
+        #[serde(rename="nodeId")] node_id: NodeId,
+        /// Nonempty, duplicate-free `tag:<name>` references; clearing the last tag cannot restore a user identity.
+        tags: Vec<String>
+    },
+    /// Update the network's allocatable Mesh pools.
+    SetAddressPools {
+        /// Per-family pool replacements; omission retains existing pools and `[]` removes a family's pools.
+        #[serde(rename="addressPools")] address_pools: AddressPoolsInput
+    },
+    /// Update one node's desired Mesh addresses.
+    SetAddresses {
+        /// Existing node whose address assignments are edited.
+        #[serde(rename="nodeId")] node_id: NodeId,
+        /// Per-family address updates; omission retains an assignment and null explicitly clears it.
+        addresses: NodeAddressesInput
+    },
+    /// Permanently delete a node, revoke its credentials and retire its addresses on commit.
+    DeleteNode {
+        /// Existing node to remove permanently; historical restore cannot revive it.
+        #[serde(rename="nodeId")] node_id: NodeId
+    },
 } }
 
 /// Apply typed edits to values. Authorization, material preparation, source-text
@@ -162,15 +240,26 @@ pub fn apply_operations(
 }
 
 meshway_serde::string_enum! {
+/// Structural difference at a configuration JSON Pointer.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ChangeKind {
+    /// A member or array element exists only in the target.
     Added,
+    /// A member or array element exists only in the baseline.
     Removed,
+    /// A value exists in both versions but differs.
     Changed,
 }
 }
-object! { pub struct ConfigurationChange { pub path: String, pub kind: ChangeKind } }
+object! {
+/// Secret-free summary of one final configuration or stable-binding difference.
+pub struct ConfigurationChange {
+    /// JSON Pointer to the deepest differing value, or the added or removed member as a whole.
+    pub path: String,
+    /// Whether the target adds, removes or changes the value at this pointer.
+    pub kind: ChangeKind
+} }
 
 /// Value comparison only; no raw before/after values escape this function.
 /// Objects and arrays are compared member by member, so a change is reported

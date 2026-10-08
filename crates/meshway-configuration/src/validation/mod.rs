@@ -26,9 +26,12 @@ pub fn valid_node_hostname(name: &str) -> bool {
 }
 
 meshway_serde::object! {
+/// Stable user and network membership identity bound to a readable configuration reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserBinding {
+    /// Account identity that owns the referenced membership.
     pub user_id: UserId,
+    /// Exact network membership incarnation, preventing name reuse or rejoining from reviving old grants.
     pub membership_id: MembershipId,
 }
 }
@@ -57,15 +60,23 @@ pub struct ValidationContext<'a> {
     pub previous_rule_sets: BTreeMap<String, meshway_model::resources::RuleSetData>,
 }
 
+/// Dependency that must be prepared or verified before a declaration can become executable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PreparationKind {
+    /// Prepare the initial IPv4 address pools.
     AddressPoolV4,
+    /// Prepare the initial IPv6 address pools.
     AddressPoolV6,
+    /// Allocate an initial desired IPv4 address from the network pools.
     AddressV4,
+    /// Allocate an initial desired IPv6 address from the network pools.
     AddressV6,
+    /// Verify authorization and any device proof required for an identity transition or membership binding.
     IdentityProof,
+    /// Generate, supply or verify the specified listener credential or TLS material.
     Material(MaterialRequirement),
+    /// Obtain validated immutable content for a remote rule-set declaration.
     RuleSetContent,
 }
 impl<'de> Deserialize<'de> for PreparationKind {
@@ -150,9 +161,12 @@ impl ToSchema for PreparationKind {
     }
 }
 meshway_serde::object! {
+/// Preparation work associated with an input configuration location.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparationRequirement {
+    /// JSON Pointer to the declaration requiring preparation, such as a listener or address family.
     pub path: String,
+    /// Material, address, identity or rule-set dependency that is not yet prepared.
     pub kind: PreparationKind,
 }
 }

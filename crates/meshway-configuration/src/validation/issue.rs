@@ -19,52 +19,64 @@ pub enum IssueCode {
     /// A persisted version cannot be restored as written.
     IncompleteVersion,
     // References and names.
-    /// params `user`
+    /// A user reference is unknown, inactive or bound to a different membership; params `user`.
     UnknownUser,
-    /// params `name`
+    /// A group key lacks `group:` followed by letters, digits, hyphens, underscores or dots; params `name`.
     InvalidGroupName,
-    /// params `name`
+    /// A tag key lacks `tag:` followed by letters, digits, hyphens, underscores or dots; params `name`.
     InvalidTagName,
-    /// params `name`
+    /// A referenced group is not defined in `groups`; params `name`.
     UnknownGroup,
-    /// params `name`
+    /// A referenced tag is not defined in `tagsOwners`; params `name`.
     UnknownTag,
-    /// params `name`
+    /// A tag is repeated within one node identity; params `name`.
     DuplicateTag,
     /// A User identity names an account without an active bound membership;
     /// params `user`.
     IdentityMembershipMissing,
+    /// A tag identity contains no tags; params are empty.
     EmptyTagIdentity,
-    /// params `node`
+    /// A referenced node is unknown or revoked in the current network; params `node`.
     UnknownNode,
-    /// params `node`
+    /// A required concrete selector is not a known `node:<id>` reference; params `node`.
     UnknownNodeSelector,
+    /// A retained user reference no longer matches its active bound membership; params `user`.
     RetainedMembershipInactive,
+    /// A required source, destination or assignment selector set is empty; params are empty.
     EmptySelectorSet,
+    /// Bidirectional access includes a destination outside the Mesh node selector space; params are empty.
     BidirectionalRequiresMesh,
+    /// A traffic grant has an empty or invalid protocol/port set; params are empty.
     InvalidPortSet,
-    /// params `value`
+    /// A domain suffix cannot be normalized as a valid DNS name; params `value`.
     InvalidDomainSuffix,
-    /// params `value`
+    /// An exact domain cannot be normalized as a valid DNS name; params `value`.
     InvalidDomain,
-    /// params `value`
+    /// An access CIDR is not in canonical network-prefix form; params `value`.
     NoncanonicalCidr,
     // DNS.
+    /// The network DNS suffix is invalid; params are empty.
     InvalidDnsDomain,
+    /// A hostname and network suffix do not form a non-IP DNS name of at most 253 bytes; params are empty.
     InvalidNodeDnsName,
+    /// `overrideLocal` is true but the default resolver list is empty; params are empty.
     DnsOverrideRequiresDefault,
-    /// params `name`
+    /// A default or split-DNS resolver key is not defined in `servers`; params `name`.
     UnknownResolver,
+    /// A resolver key is empty or its IP address is unspecified or multicast; params are empty.
     InvalidResolver,
+    /// A split-DNS route contains no resolver keys; params are empty.
     EmptyResolverSet,
-    /// params `value`
+    /// Multiple split-DNS route keys normalize to the same suffix; params `value`.
     DuplicateDnsSuffix,
-    /// params `value`
+    /// A split-DNS or search suffix is not a valid DNS name; params `value`.
     InvalidDnsSuffix,
     // Nodes, addresses and transports.
+    /// A hostname is not a 1–63 character DNS label with only letters, digits and interior hyphens; params are empty.
     InvalidHostname,
-    /// params `hostname`
+    /// Another node uses the same normalized hostname; params `hostname`.
     DuplicateHostname,
+    /// A node's listener map contains an empty key; params are empty.
     EmptyListenerKey,
     /// A listener or dialer declaration is invalid; params `reason` is the
     /// transport declaration code. `edge_transport_unavailable` additionally
@@ -73,60 +85,67 @@ pub enum IssueCode {
     /// Listener credentials or TLS certificate, key, name or validity failed
     /// verification.
     InvalidListenerMaterials,
+    /// Address pools in the same family overlap or are duplicated; params are empty.
     OverlappingPools,
-    /// params `family` (`ipv4` | `ipv6`)
+    /// An address pool is not a valid canonical unicast range; params `family` (`ipv4` or `ipv6`).
     InvalidPool,
-    /// params `address`
+    /// A desired node address is outside the usable range of its configured pools; params `address`.
     AddressOutsidePool,
-    /// params `address`
+    /// Multiple nodes have the same desired Mesh address; params `address`.
     DuplicateAddress,
-    /// params `node`
+    /// Address reassignment names a node absent from the configuration; params `node`.
     UnknownReassignmentTarget,
-    /// params `family`
+    /// Allocation cannot find another usable unoccupied address; params `family`.
     NoAddressAvailable,
     // Routing.
-    /// params `node`
+    /// A required waypoint is repeated in a declared route; params `node`.
     RepeatedRequiredNode,
+    /// An exit action has no candidate nodes; params are empty.
     EmptyExitSet,
-    /// params `node`
+    /// An exit candidate is repeated or also appears in the required waypoints; params `node`.
     RepeatedExit,
-    /// params `node`
+    /// A referenced exit node lacks `exitEnabled`; params `node`.
     ExitNotEnabled,
-    /// params `value`
+    /// A routing destination CIDR is invalid or not canonical; params `value`.
     InvalidDestinationCidr,
+    /// An egress rule supplies no exact names, suffixes, CIDRs or rule-set references; params are empty.
     EmptyRouteMatch,
-    /// params `key`
+    /// A routing rule references a rule-set key that is not defined; params `key`.
     UnknownRuleSet,
+    /// A remote rule-set URL is not HTTPS or includes credentials or a fragment; params are empty.
     InvalidRuleSource,
+    /// A rule-set declaration has an empty key; params are empty.
     EmptyRuleSetKey,
+    /// An inline rule set contains no CIDRs, suffixes or exact names; params are empty.
     EmptyInlineRuleSet,
-    /// Remote rule set content is larger than the network budget.
+    /// Rule-set preparation or bound execution content exceeds its budget; params include the applicable `maxSets`, `maxBytes` or `maxEntries` limits.
     RuleSetBudget,
     /// Remote rule set content could not be prepared; params `reason` is the
     /// resource problem code.
     RuleSetUnavailable,
+    /// Remote rule-set preparation exceeds its total deadline; params `seconds`.
     RuleSetTimeout,
-    /// params `name`
+    /// A profile name is empty or reserved for `mesh`, `auto` or `global:` entries; params `name`.
     ReservedProfileName,
-    /// params `name`
+    /// An assignment references an undefined or unavailable routing profile; params `name`.
     UnknownProfile,
-    /// params `profile`
+    /// An assignment's default profile is outside the merged allowed set; params `profile`.
     DefaultNotAllowed,
-    /// params `profile`
+    /// An automatic selection target or fallback is outside a subject's allowed profiles; params `profile`.
     AutoTargetNotAllowed,
-    /// params `profile`
+    /// An automatic selection target is unknown or recursively names `auto`; params `profile`.
     AutoTargetUnknown,
     /// An earlier assignment with an overlapping target has a different
     /// default or lock; params `other` (its index).
     ConflictingAssignments,
-    /// params `value`
+    /// A country list is empty or contains a value other than an uppercase two-letter code; params `value` identifies an invalid entry and is absent for an empty list.
     InvalidCountryCode,
     /// An exit rule sends a destination the node has no access grant for;
     /// params `node`, `destination`.
     ExitOutsideAccess,
-    /// params `node`, `profile`
+    /// A node is assigned a global exit profile without an Internet access grant; params `node`, `profile`.
     GlobalExitRequiresInternet,
-    /// params `node`, `profile`
+    /// A node is assigned a profile whose exit fallback lacks an Internet access grant; params `node`, `profile`.
     ExitFallbackRequiresInternet,
     // Warnings.
     /// Every destination of this rule is matched by earlier rules; params
@@ -212,10 +231,12 @@ impl IssueCode {
 }
 
 meshway_serde::object! {
+/// Structured configuration error, warning or retained unavailable dependency, without sensitive input values in its message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigurationIssue {
     /// JSON pointer into the configuration input; empty for the document.
     pub path: String,
+    /// Stable condition identifier that determines the parameter keys and message rendering.
     pub code: IssueCode,
     /// Parameters named by the code's documentation. Always present.
     pub params: BTreeMap<String, String>,

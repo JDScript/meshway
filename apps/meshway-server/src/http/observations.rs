@@ -31,6 +31,10 @@ pub fn router<P: ObservationProvider>(service: ObservationService<P>) -> Router 
         .layer(middleware::from_fn(super::context))
         .with_state(service)
 }
+/// Create a short-lived diagnostic observation subscription.
+///
+/// Requires a user session and authority over the source Node and exact service path.
+/// Retrying the same subscription identifier does not extend its lease.
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/observations",operation_id="createObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CreateObservation,responses((status=201,body=ObservationTask),(status=401,body=ErrorResponse)))]
 async fn create<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -51,6 +55,9 @@ async fn create<P: ObservationProvider>(
         ),
     ))
 }
+/// List the user session's visible observation subscriptions.
+///
+/// Requires a user session; each subscription retains its own authorization and lease.
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/observations",operation_id="listObservations",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
 async fn list<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -69,6 +76,9 @@ async fn list<P: ObservationProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Read an observation subscription's current result and lifecycle.
+///
+/// Requires the subscribing user session and current permissions; reading does not renew the lease.
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/observations/{subscriptionId}",operation_id="getObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
 async fn detail<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -87,6 +97,9 @@ async fn detail<P: ObservationProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Renew an observation subscription under current permissions.
+///
+/// Requires the subscribing user session; renewal affects only the specified subscription's short lease.
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/observations/{subscriptionId}/renew",operation_id="renewObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
 async fn renew<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -105,6 +118,9 @@ async fn renew<P: ObservationProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Cancel an observation subscription.
+///
+/// Requires the subscribing user session; other subscriptions sharing the measurement task remain independent.
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/observations/{subscriptionId}/cancel",operation_id="cancelObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=204),(status=401,body=ErrorResponse)))]
 async fn cancel<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -122,6 +138,9 @@ async fn cancel<P: ObservationProvider>(
         .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
+/// Read diagnostic tasks assigned to the authenticated Node.
+///
+/// Requires a Node session; tasks remain bound to the source instance, execution target and deadline.
 #[utoipa::path(get,path="/agent-api/v1/tasks",operation_id="getNodeTasks",tag="observations",security(("nodeSession"=[])),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
 async fn tasks<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -135,6 +154,10 @@ async fn tasks<P: ObservationProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Report a diagnostic task's actual phase or measurement window.
+///
+/// Requires the source Node's session and matching live instance and execution target.
+/// Results do not renew task authorization.
 #[utoipa::path(post,path="/agent-api/v1/tasks/{taskId}/results",operation_id="reportTaskResult",tag="observations",security(("nodeSession"=[])),params(("taskId"=ObservationId,Path)),request_body=ObservationResult,responses((status=200,body=ObservationTask),(status=401,body=ErrorResponse)))]
 async fn result<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -152,6 +175,9 @@ async fn result<P: ObservationProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Create an instance-bound Node diagnostic subscription.
+///
+/// Requires a Node session and current instance qualification for the exact authorized diagnostic scope.
 #[utoipa::path(post,path="/agent-api/v1/observations",operation_id="createNodeObservation",tag="observations",security(("nodeSession"=[])),request_body=CreateNodeObservation,responses((status=201,body=NodeObservationResponse),(status=401,body=ErrorResponse)))]
 async fn node_create<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -197,6 +223,9 @@ impl NodeObservationUriQuery {
     }
 }
 
+/// Read a Node diagnostic subscription.
+///
+/// Requires the subscribing Node's session and exact instance generation; reading does not extend its lease.
 #[utoipa::path(get,path="/agent-api/v1/observations/{subscriptionId}",operation_id="getNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path),("instanceId"=meshway_model::InstanceId,Query),("generation"=meshway_model::Version,Query)),responses((status=200,body=NodeObservationResponse),(status=401,body=ErrorResponse)))]
 async fn node_detail<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -224,6 +253,9 @@ async fn node_detail<P: ObservationProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Renew a Node diagnostic subscription to an absolute requested deadline.
+///
+/// Requires the subscribing Node's session and current instance; replay does not add a relative duration.
 #[utoipa::path(post,path="/agent-api/v1/observations/{subscriptionId}/renew",operation_id="renewNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path)),request_body=RenewNodeObservation,responses((status=200,body=NodeObservationResponse),(status=401,body=ErrorResponse)))]
 async fn node_renew<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
@@ -246,6 +278,9 @@ async fn node_renew<P: ObservationProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Cancel an instance-bound Node diagnostic subscription.
+///
+/// Requires the subscribing Node's session and exact instance qualification.
 #[utoipa::path(post,path="/agent-api/v1/observations/{subscriptionId}/cancel",operation_id="cancelNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path)),request_body=InstanceRequest,responses((status=200,body=NodeObservationCancelled),(status=401,body=ErrorResponse)))]
 async fn node_cancel<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,

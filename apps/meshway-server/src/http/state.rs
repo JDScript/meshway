@@ -50,6 +50,9 @@ pub(super) fn node(headers: &HeaderMap, id: RequestId) -> Result<String, HttpErr
     }
     Ok(value.to_owned())
 }
+/// Read the network's currently visible State.
+///
+/// Requires a user session; current network permissions filter reports and execution dependencies.
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}/state", operation_id = "getNetworkState", tag = "state", security(("userSession"=[])), params(("networkId"=NetworkId, Path)), responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn network_state<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -64,6 +67,9 @@ async fn network_state<P: StateProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Read visible State for a selected Node.
+///
+/// Requires a user session; selecting a Node only narrows the caller's authorized view.
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}/nodes/{nodeId}/state", operation_id = "getNodeState", tag = "state", security(("userSession"=[])), params(("networkId"=NetworkId, Path),("nodeId"=NodeId, Path)), responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn node_state<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -78,6 +84,10 @@ async fn node_state<P: StateProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Report a complete Node runtime snapshot.
+///
+/// Requires the reporting Node's session and current instance; identical retries preserve freshness.
+/// A changed execution scope returns 409 state_scope_changed without accepting the snapshot.
 #[utoipa::path(post, path = "/agent-api/v1/state", operation_id = "reportNodeState", tag = "state", security(("nodeSession"=[])), request_body=StateReport, responses((status=200, body=StateAccepted),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn report<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -94,6 +104,9 @@ async fn report<P: StateProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Query the Node's own State and authorized peer dependencies.
+///
+/// Requires a Node session; the Server determines the network and filters peer details.
 #[utoipa::path(post, path = "/agent-api/v1/state/query", operation_id = "queryPeerState", tag = "state", security(("nodeSession"=[])), request_body=StateQuery, responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn peer_query<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -112,6 +125,9 @@ async fn peer_query<P: StateProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Report a batch of real Node observation events.
+///
+/// Requires the source Node's session and instance; event identifiers deduplicate identical retries.
 #[utoipa::path(post, path = "/agent-api/v1/history", operation_id = "reportNodeHistory", tag = "observations", security(("nodeSession"=[])), request_body=HistoryReport, responses((status=200, body=HistoryAccepted),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn report_history<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -128,6 +144,9 @@ async fn report_history<P: StateProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
+/// Query visible observation history within a fixed time window.
+///
+/// Requires a user session and current visibility; reads return stored evidence without starting probes.
 #[utoipa::path(post, path = "/api/v1/networks/{networkId}/history/query", operation_id = "queryObservationHistory", tag = "observations", security(("userSession"=[])), params(("networkId"=NetworkId, Path)), request_body=HistoryQuery, responses((status=200, body=HistoryPage),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn history<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -179,6 +198,10 @@ async fn events<P: StateProvider>(
     );
     Ok(response)
 }
+/// Subscribe to visible network events.
+///
+/// Requires a user session; SSE synchronization and updates recheck current permissions.
+/// Last-Event-ID supplies a previous stream recovery point.
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}/events", operation_id = "watchNetwork", tag = "events", security(("userSession"=[])), params(("networkId"=NetworkId, Path), ("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn user_events<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -188,6 +211,9 @@ async fn user_events<P: StateProvider>(
 ) -> Result<Response, HttpError> {
     events(service, user(&headers, network, id)?, headers, id).await
 }
+/// Subscribe to events visible to the authenticated Node.
+///
+/// Requires a Node session; SSE synchronization and updates include only authorized execution dependencies.
 #[utoipa::path(get, path = "/agent-api/v1/events", operation_id = "watchNode", tag = "events", security(("nodeSession"=[])), params(("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn node_events<P: StateProvider>(
     State(service): State<StateService<P>>,
@@ -225,6 +251,10 @@ pub(crate) fn progress_router(
         .layer(middleware::from_fn(super::context))
         .with_state(service)
 }
+/// Read application progress for a configuration revision's fixed targets.
+///
+/// Requires a user session; hidden Nodes are excluded from member-visible progress counts.
+/// Receipt phase and current freshness are returned separately.
 #[utoipa::path(get, path="/api/v1/networks/{networkId}/configuration/revisions/{revision}/progress", operation_id="getConfigurationProgress", tag="configuration", security(("userSession"=[])), params(("networkId"=NetworkId, Path),("revision"=meshway_model::Revision, Path)), responses((status=200, body=meshway_protocol::ConfigurationApplyProgress),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
 async fn progress(
     State(service): State<StateService<crate::state::provider::UserProvider>>,

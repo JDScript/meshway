@@ -7,13 +7,17 @@ use meshway_serde::required_nullable as required_request_id;
 
 wire_object! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    /// Empty parameter object for problem codes that expose no additional context.
     pub struct EmptyParams {}
 }
 
 wire_object! {
     #[derive(Debug, Clone, PartialEq, Eq)]
+    /// Typed configuration errors and preparation requirements reported by validation.
     pub struct ConfigurationValidationParams {
+        /// Validation issues located by JSON Pointer in the submitted input.
         pub issues: Vec<meshway_configuration::ConfigurationIssue>,
+        /// Material, address, or other preparation requirements for the submitted configuration.
         pub requirements: Vec<meshway_configuration::PreparationRequirement>,
     }
 }
@@ -27,6 +31,7 @@ macro_rules! problems {
         #[serde(tag = "code", deny_unknown_fields)]
         pub enum Problem {
             $(#[serde(rename = $code)] $variant {
+                /// Structured context defined by this problem code, or an empty object when none is exposed.
                 params: $params,
                 /// Safe fallback text. Clients branch on code.
                 message: String,
@@ -122,11 +127,14 @@ problems! {
 
 wire_object! {
     #[derive(Debug)]
+    /// HTTP failure envelope with a stable problem code and safe fallback text.
     pub struct ErrorResponse {
         /// Null only when secure request-ID generation itself is unavailable.
         #[serde(deserialize_with = "required_request_id")]
         pub request_id: Option<RequestId> [required = true],
+        /// HTTP status code of the failed response.
         pub status: u16 [minimum = 0, maximum = 65535],
+        /// Typed failure whose code determines the available parameters.
         pub problem: Problem,
     }
 }

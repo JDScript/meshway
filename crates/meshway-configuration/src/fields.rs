@@ -5,8 +5,10 @@ use utoipa::{PartialSchema, ToSchema};
 /// null when T itself is nullable). Never use this as an execution value.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Input<T> {
+    /// No field was supplied; the containing input determines whether to retain or inherit its value.
     #[default]
     Omitted,
+    /// An explicit replacement, including null only when the field's value permits it.
     Value(T),
 }
 impl<T> Input<T> {
@@ -45,9 +47,11 @@ impl<T: ToSchema> ToSchema for Input<T> {
     }
 }
 
+/// Behavior for Mesh business traffic without an explicit access grant.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", try_from = "String")]
 pub enum AccessDefault {
+    /// Deny unmatched traffic; the only supported default.
     #[default]
     Deny,
 }
@@ -61,11 +65,14 @@ impl TryFrom<String> for AccessDefault {
         }
     }
 }
+/// Adjacency permission when neither a block nor an allow topology rule matches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", try_from = "String")]
 pub enum TopologyDefault {
+    /// Permit adjacency without an edge-specific transport restriction; the default value.
     #[default]
     Allow,
+    /// Deny adjacency unless an explicit allow rule matches.
     Deny,
 }
 impl TryFrom<String> for TopologyDefault {
@@ -78,10 +85,13 @@ impl TryFrom<String> for TopologyDefault {
         }
     }
 }
+/// Permission applied to a matching undirected node pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", try_from = "String")]
 pub enum TopologyAction {
+    /// Permit adjacency if no block matches, using the first matching allow rule's transport restriction.
     Allow,
+    /// Reject the entire adjacency regardless of any matching allow rule.
     Block,
 }
 impl TryFrom<String> for TopologyAction {

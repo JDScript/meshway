@@ -72,6 +72,7 @@ pub(super) fn bearer(headers: &HeaderMap, id: RequestId) -> Result<&str, HttpErr
     Ok(token)
 }
 
+/// Read public registration settings and input validation rules.
 #[utoipa::path(get, path = "/api/v1/auth/options", operation_id = "getAuthOptions", tag = "auth",
     responses((status = 200, body = AuthOptionsResponse), (status = 503, body = ErrorResponse)))]
 pub(super) async fn options(
@@ -86,6 +87,9 @@ pub(super) async fn options(
     }))
 }
 
+/// Register an account and issue its first user session.
+///
+/// Registration must be enabled; the token is delivered once and requestId is only a correlation ID.
 #[utoipa::path(post, path = "/api/v1/auth/register", operation_id = "register", tag = "auth", request_body = RegisterRequest,
     responses((status = 201, body = SessionIssuedResponse), (status = 400, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 409, body = ErrorResponse), (status = 413, body = ErrorResponse), (status = 415, body = ErrorResponse), (status = 422, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
 pub(super) async fn register(
@@ -107,6 +111,9 @@ pub(super) async fn register(
     Ok((StatusCode::CREATED, Json(issued_view(id, issued))))
 }
 
+/// Authenticate an account and issue a user session.
+///
+/// The opaque bearer token is delivered in this response; invalid credentials return a uniform 401 error.
 #[utoipa::path(post, path = "/api/v1/auth/login", operation_id = "login", tag = "auth", request_body = LoginRequest,
     responses((status = 200, body = SessionIssuedResponse), (status = 400, body = ErrorResponse), (status = 401, body = ErrorResponse), (status = 413, body = ErrorResponse), (status = 415, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
 pub(super) async fn login(
@@ -175,6 +182,9 @@ fn client_label(headers: &HeaderMap) -> Option<String> {
     })
 }
 
+/// Read the current authenticated account and session metadata.
+///
+/// Rechecks current account and session validity without returning the bearer token.
 #[utoipa::path(get, path = "/api/v1/auth/session", operation_id = "getAuthSession", tag = "auth", security(("userSession" = [])),
     responses((status = 200, body = AuthSessionResponse), (status = 401, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
 pub(super) async fn session(
@@ -189,6 +199,9 @@ pub(super) async fn session(
     Ok(Json(session_view(id, session)))
 }
 
+/// Revoke the current user session.
+///
+/// Requires a valid user session and returns 204 after revocation.
 #[utoipa::path(post, path = "/api/v1/auth/logout", operation_id = "logout", tag = "auth", security(("userSession" = [])),
     responses((status = 204, description = "Current session revoked"), (status = 401, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
 pub(super) async fn logout(

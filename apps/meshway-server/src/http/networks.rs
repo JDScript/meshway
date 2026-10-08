@@ -24,6 +24,9 @@ fn page_query(
         .map_err(|_| HttpError::invalid_request(id))
 }
 
+/// List networks in which the authenticated user has an active membership.
+///
+/// Returns oldest-first pages with a default limit of 100 and rechecks visibility on each page.
 #[utoipa::path(get, path = "/api/v1/networks", operation_id = "listNetworks", tag = "networks",
     security(("userSession" = [])), params(NetworkPageQuery),
     responses((status = 200, body = NetworkListResponse), (status = 400, body = ErrorResponse),
@@ -49,6 +52,9 @@ pub(super) async fn list(
     }))
 }
 
+/// Create an isolated network and an Owner membership for the caller.
+///
+/// Any valid user session may call this; requestId deduplicates matching input and conflicting reuse returns 409.
 #[utoipa::path(post, path = "/api/v1/networks", operation_id = "createNetwork", tag = "networks",
     security(("userSession" = [])), request_body = CreateNetworkRequest,
     responses((status = 201, body = NetworkResponse), (status = 400, body = ErrorResponse),
@@ -76,6 +82,9 @@ pub(super) async fn create(
     ))
 }
 
+/// Read network metadata and the caller's current membership permissions.
+///
+/// Requires an active membership in the requested network.
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}", operation_id = "getNetwork", tag = "networks",
     security(("userSession" = [])), params(("networkId" = NetworkId, Path)),
     responses((status = 200, body = NetworkResponse), (status = 400, body = ErrorResponse),
@@ -98,6 +107,9 @@ pub(super) async fn get(
     }))
 }
 
+/// Rename a network using its previously read name as a concurrency guard.
+///
+/// Requires Owner or Admin permission; requestId deduplicates matching rename input.
 #[utoipa::path(post, path = "/api/v1/networks/{networkId}/rename", operation_id = "renameNetwork", tag = "networks",
     security(("userSession" = [])), params(("networkId" = NetworkId, Path)), request_body = RenameNetworkRequest,
     responses((status = 200, body = NetworkResponse), (status = 400, body = ErrorResponse),
@@ -130,6 +142,9 @@ pub(super) async fn rename(
     }))
 }
 
+/// List current members of a network.
+///
+/// Requires Owner or Admin permission and returns oldest-first pages with a default limit of 100.
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}/members", operation_id = "listNetworkMembers", tag = "networks",
     security(("userSession" = [])), params(("networkId" = NetworkId, Path), NetworkPageQuery),
     responses((status = 200, body = NetworkMembersResponse), (status = 400, body = ErrorResponse),

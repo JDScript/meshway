@@ -4,7 +4,9 @@ use crate::object::wire_object;
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase", try_from = "String")]
+/// Whitespace normalization applied to network names after raw input validation.
 pub enum NetworkNameTrim {
+    /// Trim leading and trailing Unicode White_Space characters, excluding U+FEFF.
     UnicodeWhiteSpace,
 }
 impl TryFrom<String> for NetworkNameTrim {
@@ -20,9 +22,13 @@ impl TryFrom<String> for NetworkNameTrim {
 
 wire_object! {
     #[derive(Debug,Clone,Copy,PartialEq,Eq)]
+    /// Validation and normalization rules for network creation and rename input.
     pub struct NetworkNameRules {
+        /// Minimum number of Unicode scalar values after trimming.
         pub min_codepoints: u16 [minimum=0,maximum=65535],
+        /// Maximum number of Unicode scalar values after trimming.
         pub max_codepoints: u16 [minimum=0,maximum=65535],
+        /// Maximum UTF-8 byte length of the raw input before trimming.
         pub max_input_utf8_bytes: u16 [minimum=0,maximum=65535],
         /// Unicode White_Space: U+0009..000D, 0020, 0085, 00A0, 1680,
         /// 2000..200A, 2028, 2029, 202F, 205F, 3000. U+FEFF is not trimmed.

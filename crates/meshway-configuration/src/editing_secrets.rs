@@ -2,21 +2,37 @@
 use crate::{object::object, *};
 use meshway_transport_spec::*;
 
-object! { #[derive(Default)] pub struct DialerWebSocketUpdate {
+object! { #[derive(Default)]
+/// WebSocket request header edits that retain omitted sensitive values.
+pub struct DialerWebSocketUpdate {
+    /// Omission retains existing extra headers, `{}` clears them, and a nonempty map replaces them without overriding handshake or framing headers.
     #[serde(default, skip_serializing_if="Input::is_omitted")]
     pub headers: Input<WebSocketHeaders> [value_type=WebSocketHeaders],
 } }
-object! { pub struct VlessDialerUpdate {
+object! {
+/// Replacement VLESS dialer options with explicit retention of omitted WebSocket settings.
+pub struct VlessDialerUpdate {
+    /// Allow active dialing with this protocol; defaults to true.
     #[serde(default="enabled")] pub enabled: bool,
+    /// Free-form description; defaults to an empty string.
     #[serde(default)] pub remark: String,
+    /// Preference in 0–65535, with smaller values preferred; defaults to 300.
     #[serde(default="priority")] pub priority: u16,
+    /// Positive total resolution, connection and handshake budget; defaults to `5s` and remains bounded by the execution lease.
     #[serde(default="timeout")] pub connect_timeout: PositiveDuration,
+    /// Requested underlay interface; defaults to an empty string for platform selection.
     #[serde(default)] pub bind_interface: String,
+    /// Local outbound IP address; defaults to an empty string for automatic selection and cannot bypass Mesh address protection.
     #[serde(default)] pub local_address: String,
+    /// Socket buffer requests in bytes; omitted settings use zero for provider defaults.
     #[serde(default)] pub socket: SocketOptions,
+    /// TCP no-delay and keepalive settings; omission uses the shared TCP defaults.
     #[serde(default)] pub tcp: TcpOptions,
+    /// Encapsulation filter, defaulting to `auto` to use the selected listener's stream.
     #[serde(default)] pub stream: DialerStream,
+    /// TLS verification and negotiation settings; defaults to managed trust, TLS 1.2–1.3 and a `5s` handshake budget.
     #[serde(default)] pub tls: DialerTls,
+    /// Omission retains previous WebSocket options, null removes them, and a value updates them; incompatible with explicit `tcp`.
     #[serde(default, skip_serializing_if="Input::is_omitted")]
     pub websocket: Input<Option<DialerWebSocketUpdate>> [value_type=Option<DialerWebSocketUpdate>],
 } }
@@ -30,13 +46,19 @@ fn timeout() -> PositiveDuration {
     VlessDialer::default().connect_timeout
 }
 
-object! { #[derive(Default)] pub struct DialerSetUpdate {
+object! { #[derive(Default)]
+/// Replacement outbound protocol set; omitted protocol entries are removed and `{}` disables active dialing.
+pub struct DialerSetUpdate {
+    /// Native UDP options to include; omission excludes this protocol from the replacement set.
     #[serde(default, skip_serializing_if="Input::is_omitted", rename="native_udp")]
     pub native_udp: Input<NativeUdpDialer> [value_type=NativeUdpDialer],
+    /// Native TCP options to include; omission excludes this protocol from the replacement set.
     #[serde(default, skip_serializing_if="Input::is_omitted", rename="native_tcp")]
     pub native_tcp: Input<NativeTcpDialer> [value_type=NativeTcpDialer],
+    /// VLESS options to include, retaining omitted WebSocket secrets within this entry; omission excludes VLESS.
     #[serde(default, skip_serializing_if="Input::is_omitted")]
     pub vless: Input<VlessDialerUpdate> [value_type=VlessDialerUpdate],
+    /// Trojan options to include; omission excludes this protocol from the replacement set.
     #[serde(default, skip_serializing_if="Input::is_omitted")]
     pub trojan: Input<TrojanDialer> [value_type=TrojanDialer],
 } }
@@ -86,11 +108,16 @@ impl DialerSetUpdate {
         }
     }
 }
-object! { pub struct DefaultsUpdate {
+object! {
+/// Network default edits that preserve every omitted baseline field.
+pub struct DefaultsUpdate {
+    /// Unmatched Mesh traffic behavior; omission retains the current value and the only explicit value is `deny`.
     #[serde(default, skip_serializing_if="Input::is_omitted")]
     pub access: Input<AccessDefault> [value_type=AccessDefault],
+    /// Unmatched adjacency permission; omission retains the current value.
     #[serde(default, skip_serializing_if="Input::is_omitted")]
     pub topology: Input<TopologyDefault> [value_type=TopologyDefault],
+    /// Replacement default protocol set; omission retains it and `{}` disables network-default active dialing.
     #[serde(default, skip_serializing_if="Input::is_omitted")]
     pub dialers: Input<DialerSetUpdate> [value_type=DialerSetUpdate],
 } }
@@ -130,9 +157,14 @@ fn listen() -> std::net::IpAddr {
 
 // WebSocket settings of a listener update: omitted response headers keep the
 // previous value, like dialer headers do.
-object! { pub struct ListenerWebSocketUpdate {
+object! {
+/// Replacement WebSocket listener options with retention of omitted response headers.
+pub struct ListenerWebSocketUpdate {
+    /// Exact request path beginning with `/`, without query, fragment or whitespace; defaults to `/meshway`.
     #[serde(default = "ws_path")] pub path: WebSocketPath,
+    /// Explicit HTTP Host; omission uses the TLS server name and null is rejected.
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] pub host: Option<String> [value_type = String],
+    /// Omission retains extra response headers, `{}` clears them, and a nonempty map replaces them without overriding handshake or framing headers.
     #[serde(default, skip_serializing_if = "Input::is_omitted")]
     pub response_headers: Input<WebSocketHeaders> [value_type = WebSocketHeaders],
 } }
@@ -152,19 +184,34 @@ impl ListenerWebSocketUpdate {
 }
 // A VLESS listener as an update: the declaration's fields, with the WebSocket
 // block and its response headers inheritable by omission.
-object! { pub struct VlessListenerUpdate {
+object! {
+/// VLESS listener replacement with retention of omitted materials within the same resource.
+pub struct VlessListenerUpdate {
+    /// Request creation of the fixed listener; defaults to true.
     #[serde(default = "yes")] pub enabled: bool,
+    /// Free-form description; defaults to an empty string.
     #[serde(default)] pub remark: String,
+    /// Local IPv4 or IPv6 bind address; defaults to `0.0.0.0`.
     #[serde(default = "listen")] pub listen: std::net::IpAddr [value_type = String],
+    /// Required local listening port in 1–65535.
     pub listen_port: Port,
+    /// Explicitly advertised external host/port pairs; defaults to an empty list.
     #[serde(default)] pub endpoints: Vec<Endpoint>,
+    /// Requested underlay interface; defaults to an empty string for platform selection.
     #[serde(default)] pub bind_interface: String,
+    /// Socket buffer requests in bytes; omitted settings use zero for provider defaults.
     #[serde(default)] pub socket: SocketOptions,
+    /// TCP no-delay and keepalive settings; omission uses the shared TCP defaults.
     #[serde(default)] pub tcp: TcpOptions,
+    /// VLESS encapsulation, `tcp` or `websocket`; defaults to `tcp` and both use TLS over TCP.
     #[serde(default = "tcp_stream")] pub stream: VlessStream,
+    /// Protocol UUID; omission retains this resource's saved UUID or generates one initially, while null is rejected.
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] pub uuid: Option<SecretString> [value_type = SecretString],
+    /// VLESS flow; only the default empty string is supported.
     #[serde(default)] pub flow: String,
+    /// TLS declaration; omitted materials are retained for the same mode, and managed certificates are regenerated when the server name changes.
     pub tls: ListenerTls,
+    /// Omission retains this resource's WebSocket options, null removes them, and a value updates them; only allowed with `websocket` stream.
     #[serde(default, skip_serializing_if = "Input::is_omitted")]
     pub websocket: Input<Option<ListenerWebSocketUpdate>> [value_type = Option<ListenerWebSocketUpdate>],
 } }
@@ -205,9 +252,13 @@ impl VlessListenerUpdate {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ListenerUpdate {
+    /// Configure a Native UDP listener without TCP, TLS or proxy credentials.
     NativeUdp(NativeUdpListener),
+    /// Configure a Native TCP listener using Meshway authentication and encryption.
     NativeTcp(NativeTcpListener),
+    /// Configure VLESS over TCP/TLS or WebSocket/TLS.
     Vless(VlessListenerUpdate),
+    /// Configure Trojan TCP CONNECT over TLS.
     Trojan(TrojanListener),
 }
 impl<'de> serde::Deserialize<'de> for ListenerUpdate {

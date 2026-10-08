@@ -13,8 +13,13 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct RoutingSelectionRe
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct AcquireInstanceRequest {
     pub instance_id: InstanceId, pub capabilities: BTreeMap<String,meshway_model::state::Capability>,
 } }
-wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InstanceRequest {
-    pub instance_id: InstanceId, pub generation: Version,
+wire_object! {
+/// Exact runtime instance qualification required for an instance-bound operation.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct InstanceRequest {
+    /// Instance identifier acquired for the current Node runtime.
+    pub instance_id: InstanceId,
+    /// Server-issued instance generation that rejects superseded callers.
+    pub generation: Version,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InstanceLease {
     pub instance_id: InstanceId, pub generation: Version,
@@ -84,26 +89,52 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeConfigurationR
     pub full: Option<CompiledNode>,
     pub delta: Option<NodeConfigurationDelta>,
 } }
-wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct PublicationProgress {
-    pub publication: PublicationId, pub revision: Revision, pub sequence: Sequence,
+wire_object! {
+/// Administrator-visible execution publication targets and Server-derived receipt progress.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct PublicationProgress {
+    /// Execution publication whose fixed targets are described.
+    pub publication: PublicationId,
+    /// Source configuration revision used by the publication.
+    pub revision: Revision,
+    /// Stored sequence of this execution publication.
+    pub sequence: Sequence,
+    /// UTC withdrawal time, or null while the publication has not been withdrawn.
     #[serde(rename="withdrawnAt", with="meshway_model::timestamp::optional")]
     pub withdrawn_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
+    /// Per-Node targets and receipt projections for this publication.
     pub nodes: BTreeMap<NodeId,NodePublicationProgress>,
 } }
-wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodePublicationProgress {
-    pub target: ConfigurationRef, pub current: bool, pub saved: bool,
-    pub applied: bool, pub failed: bool,
+wire_object! {
+/// Server-derived receipt projection for one Node's target within a publication.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct NodePublicationProgress {
+    /// Exact target assigned to this Node by the publication.
+    pub target: ConfigurationRef,
+    /// Whether this publication is still the Node's desired execution publication.
+    pub current: bool,
+    /// Whether a saved receipt exists for the current instance and generation in this publication.
+    pub saved: bool,
+    /// Whether freshness is current and the latest attempt and sequence report applied.
+    pub applied: bool,
+    /// Whether the latest receipt by attempt and sequence for the current instance reports failure.
+    pub failed: bool,
+    /// Current validity of the target and instance, evaluated independently of receipt phase.
     pub freshness: ReceiptFreshness,
+    /// Latest Server reception time among this Node's publication receipts, or null when none exist.
     #[serde(rename="lastReceivedAt", with="meshway_model::timestamp::optional")]
     pub last_received_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
 } }
 meshway_serde::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+/// Server evaluation of target retirement, instance binding and execution deadlines.
 pub enum ReceiptFreshness {
+    /// The target and instance bindings match and their applicable deadlines have not elapsed.
     Current,
+    /// The matching instance or its execution lease has reached its deadline.
     Expired,
+    /// No matching instance context exists for the current Server boot and receipt binding.
     AwaitingInstance,
+    /// The target was retired or replaced, its publication withdrawn, or its identity revoked.
     Superseded,
 }
 }
