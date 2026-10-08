@@ -14,6 +14,8 @@ T2 的短模式（`--short`，持续流约 30 秒）只用于诊断与包内门�
 
 T1 的 Rust 行为测试由 `mise run test:rust` 使用 nextest 跨测试二进制调度，随后单独运行 doctest；失败重试为零，真实 Server fixture 按 test group 限制并发。配置、包内运行与 libtest 回退命令见[Rust 测试](/v2/development#rust-测试)。计时比较须使用同机、相同 feature 与明确的构建热身条件，不能把并发单例时长之和当作套件墙钟。
 
+完整的测试清单、每个套件验证什么与本机开发门槛（`mise run check:fast`）见[测试清单与开发门槛](/v2/tests)。
+
 ## 触发规则
 
 | 变更范围 | 包内门槛（合入前） | 整合（合入 main 时） | 合入后自动 |

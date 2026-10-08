@@ -9,6 +9,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "总体结构与 Crates", link: "/v2/architecture" },
       { text: "开发服务、测试与环境", link: "/v2/development" },
       { text: "工程流程：测试、触发与合入", link: "/v2/process" },
+      { text: "测试清单与开发门槛", link: "/v2/tests" },
       { text: "Changelog", link: "/v2/changelog" },
       { text: "Status", link: "/v2/status" },
       { text: "运行日志", link: "/v2/logging" },

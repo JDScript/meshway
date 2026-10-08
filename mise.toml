@@ -52,6 +52,18 @@ run = [
   "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
 ]
 
+[tasks."check:fast"]
+description = "Development gate: fmt, strict Clippy and the fast nextest profile (no real-time waits)"
+run = [
+  { task = "check:rust" },
+  { task = "test:fast" },
+]
+
+[tasks."test:fast"]
+description = "nextest `fast` profile: all tests except the measured >=5 s real-time contracts"
+env = { RUST_MIN_STACK = "8388608" }
+run = "umask 077; cargo nextest run --workspace --all-targets --all-features --locked --profile fast"
+
 [tasks."test:rust"]
 description = "Test every Rust target/feature with nextest, then Rust doctests"
 env = { RUST_MIN_STACK = "8388608" }
