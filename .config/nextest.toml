@@ -17,5 +17,11 @@ path = "junit.xml"
 max-threads = 8
 
 [[profile.default.overrides]]
+# Start wall-clock expiry contracts first so they overlap the CPU-bound suites.
+filter = 'test(rejected_expired_rotation_rolls_back_only_after_old_key_authentication) | test(background_expiry_and_session_revocation_never_renew_diagnostic_authority)'
+priority = 100
+test-group = 'server-fixtures'
+
+[[profile.default.overrides]]
 filter = 'package(meshway-server) | package(meshway-control) | package(meshway-control-client) | package(meshway-daemon) | package(meshway-connectivity)'
 test-group = 'server-fixtures'
