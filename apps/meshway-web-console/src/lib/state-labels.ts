@@ -1,5 +1,4 @@
 import type {
-  AggregatedLink,
   ApplyPhase,
   EndpointKind,
   EndpointSource,
@@ -14,16 +13,15 @@ import type {
   StateProblem,
 } from "@meshway/control-client"
 
+import type { ConnectionStatus } from "@/lib/nodes/connections"
 import type { NodeStatus } from "@/lib/nodes/status"
 import { m } from "@/paraglide/messages.js"
 
-/** Evidence qualifies the reported phase on every compact connection summary. */
-export function connectionText(link: AggregatedLink): string {
-  return link.evidence === "expired" ||
-    link.evidence === "conflicting" ||
-    (link.phase === "authenticated" && link.evidence === "oneSided")
-    ? evidenceLabel[link.evidence]()
-    : linkPhaseLabel[link.phase]()
+export const connectionStatusLabel: Record<ConnectionStatus, () => string> = {
+  connected: () => linkPhaseLabel.authenticated(),
+  connecting: () => linkPhaseLabel.preparing(),
+  failed: () => linkPhaseLabel.failed(),
+  unknown: () => statusLabel.unknown(),
 }
 
 /** Known carrier names use the same wording as configuration; future providers keep their name. */

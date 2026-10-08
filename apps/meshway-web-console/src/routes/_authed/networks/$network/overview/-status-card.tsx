@@ -1,4 +1,4 @@
-import type { AggregatedLink, StateView } from "@meshway/control-client"
+import type { StateView } from "@meshway/control-client"
 import { cn } from "@meshway/ui/cn"
 import { ChevronDownIcon } from "lucide-react"
 import { useState } from "react"
@@ -8,9 +8,18 @@ import { NodeStatusDot } from "@/components/chrome/node-status"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
-import { countBy, linkKey, linkLook, type MapNode } from "@/lib/network-map"
+import { connectionLook, countBy, type MapNode } from "@/lib/network-map"
+import {
+  CONNECTION_STATUS_ORDER,
+  neighborConnections,
+  type NeighborConnection,
+} from "@/lib/nodes/connections"
 import { STATUS_ORDER } from "@/lib/nodes/status"
-import { connectionText, statusLabel, transportText } from "@/lib/state-labels"
+import {
+  connectionStatusLabel,
+  statusLabel,
+  transportText,
+} from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 import { useGlobeAvailable } from "@/state/boot"
 import { highlightOnGlobe } from "@/state/globe"
@@ -53,7 +62,7 @@ export function StatusCard({
   const now = useNow(5_000)
   const globe = useGlobeAvailable()
   const [open, setOpen] = useState(!mobile)
-  const links = state?.links ?? []
+  const links = neighborConnections(state?.links ?? [])
   const unlocated = nodes.filter((node) => node.unlocated !== null)
   const undrawn = links.filter(
     (link) => !located.has(link.a) || !located.has(link.b)
@@ -83,7 +92,9 @@ export function StatusCard({
           {state && !open
             ? m.overview_summary({
                 nodes: String(nodes.length),
-                links: String(links.length),
+                links: String(
+                  links.filter((link) => link.status === "connected").length
+                ),
               })
             : null}
           <ChevronDownIcon
@@ -143,11 +154,19 @@ export function StatusCard({
             <dt className="text-muted-foreground">{m.overview_links()}</dt>
             <dd className="flex min-w-0 flex-col gap-1">
               <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="font-medium tabular-nums">{links.length}</span>
+                {links.length === 0 ? (
+                  <span className="text-meta text-muted-foreground">
+                    {m.nodes_links_none()}
+                  </span>
+                ) : null}
                 <Counts
-                  items={countBy(links.map(connectionText), [
-                    ...new Set(links.map(connectionText)),
-                  ]).map(({ value, count }) => [value, count])}
+                  items={countBy(
+                    links.map((link) => link.status),
+                    CONNECTION_STATUS_ORDER
+                  ).map(({ value, count }) => [
+                    connectionStatusLabel[value](),
+                    count,
+                  ])}
                 />
               </span>
             </dd>
@@ -197,7 +216,6 @@ export function StatusCard({
           {links.length > 0 ? (
             <Group
               title={m.overview_current_links()}
-              count={links.length}
               note={
                 undrawn.length
                   ? m.overview_links_undrawn({ count: String(undrawn.length) })
@@ -207,11 +225,10 @@ export function StatusCard({
               <ul className="flex flex-col gap-0.5">
                 {links.map((link) => (
                   <LinkRow
-                    key={linkKey(link)}
+                    key={link.key}
                     link={link}
                     drawn={located.has(link.a) && located.has(link.b)}
                     nameOf={nameOf}
-                    now={now}
                   />
                 ))}
               </ul>
@@ -237,19 +254,11 @@ function LinkRow({
   link,
   drawn,
   nameOf,
-  now,
 }: {
-  link: AggregatedLink
+  link: NeighborConnection
   drawn: boolean
   nameOf: (id: string) => string
-  now: number
 }) {
-  const use =
-    link.inUse === true
-      ? m.overview_link_in_use()
-      : link.inUse === false
-        ? m.overview_link_not_in_use()
-        : m.overview_link_use_unknown()
   return (
     <li
       className="flex min-h-12 items-center gap-3 rounded-row px-2.5 py-1.5"
@@ -259,24 +268,16 @@ function LinkRow({
       <span
         aria-hidden="true"
         className="h-0.5 w-3 shrink-0 rounded-full"
-        style={{ background: lookColor[linkLook(link)] }}
+        style={{ background: lookColor[connectionLook(link)] }}
       />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-row font-medium">
           {nameOf(link.a)} ↔ {nameOf(link.b)}
         </span>
         <span className="block truncate text-meta text-muted-foreground">
-          {[transportText(link.transport), connectionText(link)].join(" · ")}
-        </span>
-        <span className="block truncate text-meta text-muted-foreground">
           {[
-            use,
-            m.overview_link_initiator({ node: nameOf(link.initiatorNodeId) }),
-            link.since
-              ? m.overview_link_since({
-                  time: agoTime(link.since, now) ?? "—",
-                })
-              : null,
+            link.transports.map(transportText).join(" / "),
+            connectionStatusLabel[link.status](),
           ]
             .filter(Boolean)
             .join(" · ")}

@@ -11,8 +11,8 @@ import { test } from "vitest"
 import type { AddressGeo, GeoOf } from "@/lib/geo"
 import {
   countBy,
-  linkLook,
   locationAddresses,
+  mapConnections,
   mapNodes,
   mergeRecentLinks,
   overviewScene,
@@ -243,22 +243,28 @@ test("a link is drawn only between two located nodes", () => {
   )
 })
 
-test("a link's look follows its evidence before its phase", () => {
-  assert.equal(linkLook(link(A, B, "1")), "matched")
-  assert.equal(linkLook(link(A, B, "1", { evidence: "oneSided" })), "one_sided")
-  assert.equal(
-    linkLook(link(A, B, "1", { evidence: "expired", phase: "authenticated" })),
-    "expired"
+test("the maps show one adjacency for a visible current channel and its old predecessor", () => {
+  const links = [
+    link(A, B, "old", { evidence: "expired", transport: "native_tcp" }),
+    link(A, B, "new", { evidence: "oneSided" }),
+  ]
+  const edges = mapConnections(links, null)
+  assert.equal(edges.length, 1)
+  assert.equal(edges[0]?.status, "connected")
+  assert.equal(edges[0]?.look, "matched")
+  assert.deepEqual(edges[0]?.transports, ["native_udp"])
+  const nodes = mapNodes(
+    state({ [A]: located(TOKYO), [B]: located(SEOUL) }),
+    new Map(),
+    PLACES
   )
-  assert.equal(
-    linkLook(link(A, B, "1", { evidence: "conflicting" })),
-    "conflicting"
+  assert.deepEqual(
+    overviewScene(nodes, links, null).links.map((edge) => [
+      edge.nodeIds,
+      edge.look,
+    ]),
+    [[[A, B], "matched"]]
   )
-  assert.equal(
-    linkLook(link(A, B, "1", { phase: "preparing", evidence: "oneSided" })),
-    "preparing"
-  )
-  assert.equal(linkLook(link(A, B, "1", { phase: "failed" })), "failed")
 })
 
 test("counts keep the given order and leave out empty values", () => {
@@ -308,7 +314,7 @@ test("both ends' records of one link merge; the latest event decides open or clo
   })
 })
 
-test("the scene draws history links apart from current ones, never both for one link, in lanes", () => {
+test("the scene draws at most one edge per pair, with history only for pairs absent from current adjacency", () => {
   const nodes = mapNodes(
     state({
       [A]: located(TOKYO),
@@ -347,11 +353,9 @@ test("the scene draws history links apart from current ones, never both for one 
   const scene = overviewScene(nodes, [link(A, B, "1")], history)
   assert.deepEqual(
     scene.links.map((l) => [l.look, l.lane]),
-    [
-      ["matched", 0],
-      ["history", 1],
-    ]
+    [["matched", 0]]
   )
   assert.equal(overviewScene(nodes, [link(A, B, "1")], null).links.length, 1)
+  assert.equal(mapConnections([link(A, B, "1")], history).length, 2)
   assert.equal(scene.nodes.find((n) => n.id === C)?.placement, null)
 })

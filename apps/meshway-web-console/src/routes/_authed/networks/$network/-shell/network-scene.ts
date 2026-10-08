@@ -9,7 +9,6 @@ import { recentLinksOf, useHistory } from "@/api/queries/use-history"
 import { EMPTY_SCENE } from "@/globe/scene"
 import { shortId } from "@/lib/format"
 import {
-  linkKey,
   locationAddresses,
   mapNodes,
   mergeRecentLinks,
@@ -75,11 +74,6 @@ export function useNetworkScene(networkId: string) {
       ),
     [scene]
   )
-  const currentKeys = useMemo(
-    () => new Set((links ?? []).map(linkKey)),
-    [links]
-  )
-
   return {
     state,
     inventory: inventory.data?.items,
@@ -87,7 +81,6 @@ export function useNetworkScene(networkId: string) {
     nameOf,
     scene,
     located,
-    currentKeys,
     window,
     history,
     historyLinks,

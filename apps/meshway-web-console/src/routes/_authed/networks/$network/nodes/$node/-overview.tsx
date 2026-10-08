@@ -16,16 +16,23 @@ import { EmptyLine, Section } from "@/components/chrome/section"
 import { useNow } from "@/hooks/use-now"
 import { agoTime } from "@/lib/format"
 import { asnText, geoText, NO_ADDRESSES, nodeAddresses } from "@/lib/geo"
-import { linkLook } from "@/lib/network-map"
+import { countBy } from "@/lib/network-map"
+import {
+  CONNECTION_STATUS_ORDER,
+  nodeConnections,
+} from "@/lib/nodes/connections"
 import {
   configurationSync,
   desiredAgainst,
   fullReport,
-  nodeLinks,
   stateOf,
   type ConfigurationSync,
 } from "@/lib/nodes/state-model"
-import { locationAbsentLabel, problemText } from "@/lib/state-labels"
+import {
+  connectionStatusLabel,
+  locationAbsentLabel,
+  problemText,
+} from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
 import { useNodeConfiguration } from "./-draft"
@@ -76,8 +83,16 @@ export function NodeOverview({
     desiredAgainst(node.desiredExecution, report?.configuration ?? null) ===
     "applied"
   const current = targetApplied && view?.freshness === "current"
-  const links = nodeLinks(state.data, node.id)
-  const connected = links.filter((link) => linkLook(link) === "matched").length
+  const connections = nodeConnections(state.data?.links ?? [], node.id)
+  const connected = connections.filter(
+    (connection) => connection.status === "connected"
+  ).length
+  const otherStates = countBy(
+    connections
+      .filter((connection) => connection.status !== "connected")
+      .map((connection) => connection.status),
+    CONNECTION_STATUS_ORDER
+  )
   const addresses = view ? nodeAddresses(view.derived) : null
   const geoOf = useAddressGeo(addresses?.scopes ?? NO_ADDRESSES)
   const ips = [...(addresses?.scopes ?? NO_ADDRESSES)]
@@ -130,12 +145,15 @@ export function NodeOverview({
         <Section title={m.nodes_runtime()}>
           <FactList>
             <FactRow
-              label={m.nodes_confirmed_connections()}
+              label={m.nodes_connected_peers()}
               detail={
-                links.length > connected
-                  ? m.nodes_connections_other({
-                      count: links.length - connected,
-                    })
+                otherStates.length
+                  ? otherStates
+                      .map(
+                        ({ value, count }) =>
+                          `${connectionStatusLabel[value]()} ${count}`
+                      )
+                      .join(" · ")
                   : undefined
               }
               action={
@@ -150,7 +168,7 @@ export function NodeOverview({
               }
             >
               <span className="tabular-nums">
-                {state.data ? connected : "—"}
+                {view?.freshness === "current" ? connected : "—"}
               </span>
             </FactRow>
             <FactRow label={m.nodes_configuration()}>

@@ -7,7 +7,8 @@ import { CopyButton } from "@/components/chrome/copy-button"
 import { IconAction } from "@/components/chrome/icon-action"
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import { asnText, placeText } from "@/lib/geo"
-import { linkLook, type MapNode } from "@/lib/network-map"
+import type { MapNode } from "@/lib/network-map"
+import { nodeConnections } from "@/lib/nodes/connections"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
@@ -27,9 +28,8 @@ export function NodeCard({
   onClose: () => void
   onBack?: () => void
 }) {
-  const connected = links.filter(
-    (link) =>
-      (link.a === node.id || link.b === node.id) && linkLook(link) === "matched"
+  const connected = nodeConnections(links, node.id).filter(
+    (connection) => connection.status === "connected"
   ).length
   const addresses = inventory
     ? [inventory.addresses.ipv4, inventory.addresses.ipv6].filter(
@@ -76,7 +76,9 @@ export function NodeCard({
         ) : null}
       </div>
       <div className="text-meta text-muted-foreground">
-        {m.overview_connected({ count: connected })}
+        {node.status === "current"
+          ? m.overview_connected({ count: connected })
+          : m.nodes_connections_unknown()}
       </div>
       <Button onClick={onOpen} className="w-full">
         {m.overview_open_node()}

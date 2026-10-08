@@ -19,12 +19,11 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime, relativeTime } from "@/lib/format"
 import { NO_ADDRESSES, nodeAddresses, type GeoOf } from "@/lib/geo"
-import { linkLook } from "@/lib/network-map"
+import { nodeConnections } from "@/lib/nodes/connections"
 import {
   isPast,
   listenerRuntime,
   nodeLinks,
-  nodePaths,
   otherSockets,
   reportOf,
   stateOf,
@@ -32,10 +31,9 @@ import {
 } from "@/lib/nodes/state-model"
 import {
   acquisitionText,
-  connectionText,
+  connectionStatusLabel,
   evidenceLabel,
-  pathEvidenceLabel,
-  reporterRoleLabel,
+  linkPhaseLabel,
   resourceText,
   transportText,
 } from "@/lib/state-labels"
@@ -200,7 +198,6 @@ export function NodeTransport({
             nodes={nodes}
             now={now}
           />
-          <Paths nodeId={nodeId} state={state.data} names={names} now={now} />
         </>
       )}
     </div>
@@ -285,54 +282,62 @@ function Links({
   now: number
 }) {
   const navigate = useNavigate()
-  const links = nodeLinks(state, nodeId)
+  const channels = nodeLinks(state, nodeId)
+  const connections = nodeConnections(state?.links ?? [], nodeId)
   return (
-    <Section title={m.nodes_links()} count={state ? links.length : null}>
+    <Section
+      title={m.nodes_links()}
+      count={stateOf(state, nodeId)?.report ? connections.length : null}
+    >
       {state === undefined ? (
         <Skeleton className="h-12 w-full rounded-tile" />
-      ) : links.length === 0 ? (
+      ) : !stateOf(state, nodeId)?.report ? (
+        <EmptyLine>{m.nodes_state_absent()}</EmptyLine>
+      ) : connections.length === 0 ? (
         <EmptyLine>{m.nodes_links_none()}</EmptyLine>
       ) : (
         <div className="flex flex-col gap-2">
-          {links.map((link) => {
+          {connections.map((connection) => {
             const listed =
-              nodes?.items.some((node) => node.id === link.peerId) ?? false
+              nodes?.items.some((node) => node.id === connection.peerId) ??
+              false
             return (
               <details
-                key={link.linkId}
+                key={connection.key}
                 className="group rounded-tile border border-divider"
               >
                 <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <StatusDot
                     color={
-                      link.phase === "authenticated" &&
-                      link.evidence === "matched"
+                      connection.status === "connected"
                         ? "var(--status-online)"
-                        : "var(--status-inactive)"
+                        : connection.status === "failed"
+                          ? "var(--status-offline)"
+                          : connection.status === "connecting"
+                            ? "var(--status-attention)"
+                            : "var(--status-inactive)"
                     }
                     shape={
-                      link.phase === "authenticated" &&
-                      link.evidence === "matched"
-                        ? "live"
-                        : "hollow"
+                      connection.status === "connected" ? "live" : "hollow"
                     }
                   />
                   <span className="min-w-0 flex-1 truncate text-row font-medium">
-                    {names(link.peerId)}
+                    {names(connection.peerId)}
                   </span>
                   <span className="text-meta text-muted-foreground">
-                    {transportText(link.transport)}
+                    {connection.transports.map(transportText).join(" / ") ||
+                      "—"}
                   </span>
                   <span
                     className="text-meta text-muted-foreground"
                     style={{
                       color:
-                        linkLook(link) === "matched"
+                        connection.status === "connected"
                           ? "var(--status-online)"
                           : undefined,
                     }}
                   >
-                    {connectionText(link)}
+                    {connectionStatusLabel[connection.status]()}
                   </span>
                   <ChevronDownIcon
                     aria-hidden="true"
@@ -340,29 +345,34 @@ function Links({
                   />
                 </summary>
                 <div className="flex flex-col gap-3 border-t border-divider px-4 py-3 text-meta text-muted-foreground">
-                  <p>
-                    {[
-                      evidenceLabel[link.evidence](),
-                      transportText(link.transport),
-                      link.acquisition
-                        ? acquisitionText(link.acquisition)
-                        : link.initiatorNodeId === nodeId
-                          ? m.nodes_link_initiated_here()
-                          : m.nodes_link_initiated_peer(),
-                      link.inUse === true
-                        ? m.nodes_link_in_use()
-                        : link.inUse === false
-                          ? m.nodes_link_idle()
-                          : m.nodes_link_use_unknown(),
-                      link.since
-                        ? m.nodes_link_since({
-                            at: agoTime(link.since, now) ?? link.since,
-                          })
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
+                  {channels
+                    .filter((link) => link.peerId === connection.peerId)
+                    .map((link) => (
+                      <p key={link.linkId}>
+                        {[
+                          linkPhaseLabel[link.phase](),
+                          evidenceLabel[link.evidence](),
+                          transportText(link.transport),
+                          link.acquisition
+                            ? acquisitionText(link.acquisition)
+                            : link.initiatorNodeId === nodeId
+                              ? m.nodes_link_initiated_here()
+                              : m.nodes_link_initiated_peer(),
+                          link.inUse === true
+                            ? m.nodes_link_in_use()
+                            : link.inUse === false
+                              ? m.nodes_link_idle()
+                              : m.nodes_link_use_unknown(),
+                          link.since
+                            ? m.nodes_link_since({
+                                at: agoTime(link.since, now) ?? link.since,
+                              })
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    ))}
                   {listed ? (
                     <Button
                       variant="ghost"
@@ -371,12 +381,15 @@ function Links({
                       onClick={() =>
                         void navigate({
                           to: "/networks/$network/nodes/$node",
-                          params: { network: networkId, node: link.peerId },
+                          params: {
+                            network: networkId,
+                            node: connection.peerId,
+                          },
                           search: { tab: "transport" },
                         })
                       }
                     >
-                      {names(link.peerId)} ↗
+                      {names(connection.peerId)} ↗
                     </Button>
                   ) : null}
                 </div>
@@ -384,52 +397,6 @@ function Links({
             )
           })}
         </div>
-      )}
-    </Section>
-  )
-}
-
-function Paths({
-  nodeId,
-  state,
-  names,
-  now,
-}: {
-  nodeId: string
-  state: StateView | undefined
-  names: (id: string) => string
-  now: number
-}) {
-  const paths = nodePaths(state, nodeId)
-  if (state === undefined || paths.length === 0) return null
-  return (
-    <Section title={m.nodes_paths()} count={paths.length}>
-      {paths.length === 0 ? (
-        <EmptyLine>{m.nodes_paths_none()}</EmptyLine>
-      ) : (
-        <ul className="flex flex-col gap-1">
-          {paths.map((path) => (
-            <li
-              key={`${path.pathId}-${path.reporter.nodeId}`}
-              className="flex flex-col gap-0.5 rounded-tile bg-fill-subtle px-3.5 py-2"
-            >
-              <span className="truncate text-row font-medium">
-                {path.state.nodes.map(names).join(" → ")}
-              </span>
-              <span className="text-meta text-muted-foreground">
-                {[
-                  pathEvidenceLabel[path.state.evidence](),
-                  m.nodes_path_reported_by({
-                    name: names(path.reporter.nodeId),
-                    role: reporterRoleLabel[path.state.reporterRole](),
-                  }),
-                ].join(" · ")}
-                {" · "}
-                <TimeFact at={path.state.expiresAt} now={now} expiry />
-              </span>
-            </li>
-          ))}
-        </ul>
       )}
     </Section>
   )

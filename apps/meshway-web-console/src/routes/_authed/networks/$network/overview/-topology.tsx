@@ -5,12 +5,15 @@ import { useEffect, useRef, useState } from "react"
 
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import {
-  linkKey,
-  linkLook,
+  mapConnections,
   type HistoryLink,
   type MapNode,
 } from "@/lib/network-map"
-import { connectionText, statusLabel, transportText } from "@/lib/state-labels"
+import {
+  connectionStatusLabel,
+  statusLabel,
+  transportText,
+} from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
 import { lookColor } from "./-labels"
@@ -83,27 +86,12 @@ export function Topology({
     ...[...slots.values()].map((point) => point.y + 100)
   )
   const byId = new Map(nodes.map((node) => [node.id, node]))
-  const current = new Set(links.map(linkKey))
-  const edges = [
-    ...links.map((link) => ({
-      ...link,
-      look: linkLook(link),
-      label: connectionText(link),
-    })),
-    ...(history ?? [])
-      .filter((link) => !current.has(linkKey(link)))
-      .map((link) => ({
-        ...link,
-        look: "history" as const,
-        label: m.overview_history(),
-      })),
-  ]
+  const edges = mapConnections(links, history)
   const peers = new Set(
-    links.flatMap((link) =>
+    edges.flatMap((link) =>
       link.a === selected ? [link.b] : link.b === selected ? [link.a] : []
     )
   )
-  const lanes = new Map<string, number>()
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -168,24 +156,13 @@ export function Topology({
             const a = slots.get(link.a),
               b = slots.get(link.b)
             if (!a || !b) return null
-            const pair = [link.a, link.b].sort().join("|")
-            const lane = lanes.get(pair) ?? 0
-            lanes.set(pair, lane + 1)
-            const distance = Math.hypot(b.x - a.x, b.y - a.y) || 1
-            const offset =
-              lane === 0
-                ? 0
-                : Math.ceil(lane / 2) * 32 * (lane % 2 === 0 ? -1 : 1)
-            const x =
-              (a.x + b.x) / 2 -
-              ((b.y - a.y) / distance) * offset +
-              (a.x === b.x ? 70 : 0)
-            const y = (a.y + b.y) / 2 + ((b.x - a.x) / distance) * offset
+            const x = (a.x + b.x) / 2 + (a.x === b.x ? 70 : 0)
+            const y = (a.y + b.y) / 2
             const active =
               selected === null || link.a === selected || link.b === selected
             return (
               <path
-                key={`${link.look === "history" ? "history" : "current"}-${linkKey(link)}`}
+                key={link.key}
                 d={`M ${a.x} ${a.y} Q ${x} ${y} ${b.x} ${b.y}`}
                 fill="none"
                 stroke={lookColor[link.look]}
@@ -201,7 +178,10 @@ export function Topology({
               >
                 <title>
                   {byId.get(link.a)?.name} ↔ {byId.get(link.b)?.name} ·{" "}
-                  {transportText(link.transport)} · {link.label}
+                  {link.transports.map(transportText).join(" / ")} ·{" "}
+                  {link.status === "history"
+                    ? m.overview_history()
+                    : connectionStatusLabel[link.status]()}
                 </title>
               </path>
             )
@@ -250,9 +230,9 @@ export function Topology({
           })}
         </svg>
       </div>
-      {nodes.length > 0 && links.length === 0 ? (
+      {nodes.length > 0 && edges.length === 0 ? (
         <p className="pointer-events-none absolute bottom-4 left-4 text-meta text-muted-foreground">
-          {m.overview_no_links()}
+          {m.nodes_links_none()}
         </p>
       ) : null}
     </div>

@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { dateTime } from "@/lib/format"
 import type { HistoryWindow, WindowChoice } from "@/lib/history/window"
 import { linkKey, type HistoryLink } from "@/lib/network-map"
+import { transportText } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
 import { Group } from "./-group"
@@ -22,7 +23,6 @@ export type HistoryLayerProps = {
   history: ReturnType<typeof useHistory>
   links: readonly HistoryLink[] | null
   located: ReadonlySet<string>
-  currentKeys: ReadonlySet<string>
   nameOf: (id: string) => string
 }
 
@@ -38,7 +38,6 @@ export function HistoryLayer({
   history,
   links,
   located,
-  currentKeys,
   nameOf,
 }: HistoryLayerProps) {
   const { query } = history
@@ -86,7 +85,6 @@ export function HistoryLayer({
             >
               <ul className="flex flex-col gap-0.5">
                 {links.map((link) => {
-                  const current = currentKeys.has(linkKey(link))
                   return (
                     <li
                       key={linkKey(link)}
@@ -101,12 +99,7 @@ export function HistoryLayer({
                           {nameOf(link.a)} ↔ {nameOf(link.b)}
                         </span>
                         <span className="block truncate text-meta text-muted-foreground">
-                          {[
-                            link.transport,
-                            current ? m.overview_history_current() : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
+                          {transportText(link.transport)}
                         </span>
                         <span className="block truncate text-meta text-muted-foreground">
                           {link.closed

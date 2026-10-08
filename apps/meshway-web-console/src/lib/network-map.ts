@@ -14,6 +14,12 @@ import {
   type GeoOf,
   type LocationAddress,
 } from "@/lib/geo"
+import {
+  groupNodePairs,
+  neighborConnections,
+  type ConnectionStatus,
+  type NeighborConnection,
+} from "@/lib/nodes/connections"
 import { nodeStatus, type NodeStatus } from "@/lib/nodes/status"
 
 // The overview's reading of the network's State: which nodes are located,
@@ -129,26 +135,24 @@ function sceneNode(node: MapNode): SceneNode {
   }
 }
 
-/** How a current link looks: evidence problems first, then the reported phase. */
-export function linkLook(link: AggregatedLink): LinkLook {
-  if (link.evidence === "expired") return "expired"
-  if (link.evidence === "conflicting") return "conflicting"
-  switch (link.phase) {
-    case "authenticated":
-      return link.evidence === "matched" ? "matched" : "one_sided"
-    case "preparing":
+/** Product adjacency styling; report provenance stays in channel details. */
+export function connectionLook(connection: NeighborConnection): LinkLook {
+  switch (connection.status) {
+    case "connected":
+      return "matched"
+    case "connecting":
       return "preparing"
     case "failed":
       return "failed"
-    case "closed":
-      return "closed"
+    case "unknown":
+      return "expired"
   }
 }
 
 export const linkKey = (link: { a: string; b: string; linkId: string }) =>
   `${link.a}|${link.b}|${link.linkId}`
 
-/** Links with both ends located are drawn; the others are only counted and listed. */
+/** Edges with both ends located can also be drawn on the globe. */
 const drawnBetween = <T extends { a: string; b: string }>(
   links: readonly T[],
   located: ReadonlySet<string>
@@ -220,7 +224,7 @@ export function mergeRecentLinks(items: readonly RecentLink[]): HistoryLink[] {
 /**
  * The globe's scene: located nodes, current links between them, and (when
  * the history layer is on) history links between them that are not current.
- * Links between the same two nodes take successive lanes.
+ * Each adjacent pair has one edge, using the same model as the topology/list.
  */
 export function overviewScene(
   nodes: readonly MapNode[],
@@ -231,36 +235,54 @@ export function overviewScene(
   const located = new Set(
     scene.filter((node) => node.placement).map((node) => node.id)
   )
-  const current = drawnBetween(links, located)
-  const currentKeys = new Set(links.map(linkKey))
-  const past = history
-    ? drawnBetween(
-        history.filter((link) => !currentKeys.has(linkKey(link))),
-        located
-      )
-    : []
-  const lanes = new Map<string, number>()
-  const lane = (a: string, b: string) => {
-    const pair = `${a}|${b}`
-    const next = lanes.get(pair) ?? 0
-    lanes.set(pair, next + 1)
-    return next
-  }
-  const sceneLinks: SceneLink[] = [
-    ...[...current]
-      .sort((x, y) => x.linkId.localeCompare(y.linkId))
-      .map((link) => ({
-        key: linkKey(link),
-        nodeIds: [link.a, link.b] satisfies [string, string],
-        look: linkLook(link),
-        lane: lane(link.a, link.b),
-      })),
-    ...past.map((link) => ({
-      key: `history|${linkKey(link)}`,
-      nodeIds: [link.a, link.b] satisfies [string, string],
-      look: "history" as const,
-      lane: lane(link.a, link.b),
-    })),
-  ]
+  const sceneLinks: SceneLink[] = drawnBetween(
+    mapConnections(links, history),
+    located
+  ).map((link) => ({
+    key: link.key,
+    nodeIds: [link.a, link.b] satisfies [string, string],
+    look: link.look,
+    lane: 0,
+  }))
   return { nodes: scene, links: sceneLinks }
+}
+
+export type MapConnection = {
+  key: string
+  a: string
+  b: string
+  look: LinkLook
+  status: ConnectionStatus | "history"
+  transports: string[]
+}
+
+/** Shared graph projection: one current edge per adjacent pair, optional historical pairs apart. */
+export function mapConnections(
+  links: readonly AggregatedLink[],
+  history: readonly HistoryLink[] | null
+): MapConnection[] {
+  const current = neighborConnections(links)
+  const present = new Set(current.map((connection) => connection.key))
+  return [
+    ...current.map((connection) => ({
+      key: connection.key,
+      a: connection.a,
+      b: connection.b,
+      status: connection.status,
+      transports: connection.transports,
+      look: connectionLook(connection),
+    })),
+    ...groupNodePairs(history ?? [])
+      .filter((pair) => !present.has(pair.key))
+      .map((pair) => ({
+        key: `history|${pair.key}`,
+        a: pair.a,
+        b: pair.b,
+        status: "history" as const,
+        look: "history" as const,
+        transports: [
+          ...new Set(pair.channels.map((channel) => channel.transport)),
+        ].sort(),
+      })),
+  ]
 }

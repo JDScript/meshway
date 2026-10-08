@@ -27,6 +27,7 @@ import {
   configurationFacts,
   desiredAgainst,
   isPast,
+  nodePaths,
   reportOf,
   stateOf,
   type DesiredMatch,
@@ -34,7 +35,9 @@ import {
 import {
   applyPhaseLabel,
   locationAbsentLabel,
+  pathEvidenceLabel,
   problemText,
+  reporterRoleLabel,
 } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
@@ -121,8 +124,48 @@ export function NodeDiagnostics({
           now={now}
         />
       ) : null}
+      <ReportedPaths nodeId={nodeId} state={state.data} now={now} />
       <Location derived={view.derived} now={now} />
     </div>
+  )
+}
+
+/** End-to-end path evidence is distinct from a node's direct neighbors. */
+function ReportedPaths({
+  nodeId,
+  state,
+  now,
+}: {
+  nodeId: string
+  state: StateView
+  now: number
+}) {
+  const paths = nodePaths(state, nodeId)
+  const name = (id: string) => stateOf(state, id)?.hostname ?? id.slice(0, 8)
+  if (!paths.length) return null
+  return (
+    <Section title={m.nodes_paths()} count={paths.length}>
+      <ul className="flex flex-col gap-1">
+        {paths.map((path) => (
+          <li
+            key={`${path.pathId}-${path.reporter.nodeId}`}
+            className="flex flex-col gap-0.5 rounded-tile bg-fill-subtle px-3.5 py-2"
+          >
+            <span className="truncate text-row font-medium">
+              {path.state.nodes.map(name).join(" → ")}
+            </span>
+            <span className="text-meta text-muted-foreground">
+              {pathEvidenceLabel[path.state.evidence]()} ·{" "}
+              {m.nodes_path_reported_by({
+                name: name(path.reporter.nodeId),
+                role: reporterRoleLabel[path.state.reporterRole](),
+              })}{" "}
+              · <When at={path.state.expiresAt} now={now} expiry />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Section>
   )
 }
 

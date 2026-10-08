@@ -210,7 +210,6 @@ function OverviewPage() {
                   view === "topology"
                     ? new Set(nodes.map((node) => node.id))
                     : located,
-                currentKeys: scene.currentKeys,
                 nameOf,
               }}
             />

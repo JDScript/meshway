@@ -147,15 +147,16 @@ its generated client only, and only what the controller delivers:
   Overview, Connections, Diagnostics and Settings. The URL's `tab` selects
   a specific view within them; node status stays in the header.
   - overview: the saved configuration's DNS name (while readable) and
-    MagicDNS setting, Mesh IPv4/IPv6, confirmed connection count, every
+    MagicDNS setting, Mesh IPv4/IPv6, connected neighbor count, every
     observed public IP with its place and AS, compact configuration progress
     and reported problems. Matching revision alone is not enough to say
     current: the desired execution must match the reported applied reference,
     and State must be current. Other reports say what was last applied.
-  - connections (`tab=transport`): peers, transport and evidence-qualified
-    state first; expanding a connection reveals acquisition, business
-    dependencies, start time and the action to open the peer. Reported paths
-    appear when present, with each reporter's evidence.
+  - connections (`tab=transport`): one row per directly adjacent peer, with
+    current reported transport and connection state. Multiple channel IDs
+    between the same pair do not add rows or connected peers. Expansion
+    preserves each channel's phase, evidence, acquisition, business dependencies
+    and start time, with the action to open the peer.
   - runtime details (`tab=diagnostics`, under Diagnostics), what the status rests on: the report's times (received,
     recorded by the node, valid until, last sign-in), instance and report
     number; the inventory's `desiredExecution` (the configuration the
@@ -163,7 +164,8 @@ its generated client only, and only what the controller delivers:
     applied, said against the report's saved and applied (applied, only
     saved, another one, no report); saved / applied / in progress against
     the current revision; what the location rests on (address, source,
-    observed, valid until) and where geojs places it.
+    observed, valid until) and where geojs places it; reported end-to-end paths,
+    when present, retain each reporter's evidence.
   - general settings (`tab=settings`): hostname, remark, enabled, exit, tags (a User identity given
     tags becomes a Tag identity; the last tag cannot be taken), Mesh
     addresses within the pools (empty: no address of that family).
@@ -338,12 +340,12 @@ its generated client only, and only what the controller delivers:
   other node is listed under 待定位 with the reason: the server's
   `locationAbsent`, or that the lookup is off, under way or failed (an
   answer without coordinates names its region). Current links (`StateView.links`)
-  are drawn only between located ends, styled by evidence, then phase
-  (matched, one end, conflicting, expired, preparing, failed, closed), and
+  are grouped by adjacent node pair and drawn only between located ends,
+  styled as connected, connecting, failed or unknown, and
   never animated: nothing travels along a line, and `inUse` is a listed
   fact. Links with an unlocated end are counted and listed, not drawn. Links
-  between the same nodes take successive arcs. The corner counts nodes by
-  status and links by phase and evidence, with the State's `asOf` and
+  between the same nodes share one edge. The corner counts nodes by
+  status and adjacent pairs by connection state, with the State's `asOf` and
   whether the stream keeps it live. Nodes whose dots would overlap at the current zoom
   (the same IP or city, or neighbouring cities from afar) are one marker at
   the first one's place, nothing moved: its dot counts them in the tone of
@@ -358,8 +360,9 @@ its generated client only, and only what the controller delivers:
   the controller's longest) is fixed when chosen, and refreshing reads a new
   one, because cursors are bound to the window and lapse after 15 minutes.
   `recentLinks` (kinds `link_opened`, `link_closed`), both ends' records of
-  a link merged, the latest deciding opened or closed; drawn faint, apart
-  from current links, and never for a link that is current. The first 5
+  a link merged, the latest deciding opened or closed; historical pairs are
+  drawn faint, apart from current adjacency, and never over a pair already
+  represented by current State. The detailed history retains channel records. The first 5
   pages (200 each) are read on their own, then on request. Coverage is
   shown as the controller states it: pruning that reaches into the window,
   and each collection gap with its own interval and drop count.
@@ -496,8 +499,8 @@ its generated client only, and only what the controller delivers:
 ## Overview globe motion
 
 Nothing on the globe animates to suggest activity: links and nodes are
-static, styled by their state (`lib/network-map.ts`, the evidence before
-the phase). Only the globe turns, slowly, while nothing on it is focused
+static, styled by their connection state (`lib/nodes/connections.ts` and
+`lib/network-map.ts`). Only the globe turns, slowly, while nothing on it is focused
 and motion is allowed; it stops on interaction or on focusing a placed
 node, and eases back in after a pause. `prefers-reduced-motion` stops it;
 states stay distinguishable by stroke and colour.
@@ -521,13 +524,39 @@ states stay distinguishable by stroke and colour.
 
 ## Overview and node information hierarchy
 
-- Network overview switches between the globe and a topology view in the
+- Target network topology: its base edges are the permitted undirected pairs
+  from configuration `topology` and `defaults.topology`, evaluated by the
+  Server's existing Policy owner. Any matching block wins; otherwise the first
+  matching allow supplies transports; otherwise the default applies. With no
+  rules, allow means the complete permitted graph, deny means no permitted
+  edges. State annotates these edges with runtime state and never determines
+  whether the configured edge exists. This permission graph is not business
+  access or a selected routing path. The required authoritative projection is
+  tracked in `v2-api-needs.md`; the delivered preview remains explicitly named
+  Live connections until that contract is available. `evaluateConfiguration`
+  is a business-path plan, not a substitute for this graph.
+- A connection means direct Node adjacency: if A reaches B through R, A's
+  connection page lists R and the network graph shows A—R—B. It does not list
+  B as directly connected. Online is the node's reported runtime/control state,
+  not a statement that every allowed adjacency already exists.
+- `lib/nodes/connections.ts` owns the shared projection used by the node list,
+  compact card, counts, globe and topology. Each pair has one row/edge. A
+  current authenticated channel (`matched` or `oneSided`) makes it connected;
+  single-sided visibility is not itself degraded connectivity. A current
+  preparing/failed channel says connecting/failed when no connected channel
+  exists. Only expired/conflicting evidence means unknown, not a current
+  connection or proof of disconnection. Closed-only pairs leave the current
+  view. A valid replacement takes precedence over its stale predecessor.
+  Counts labelled connected count peers/pairs in that state, not channel IDs
+  or report records. The neighbor list can also show known pending/unknown
+  peers, with their states explicit; absent node reports do not become zero.
+- The current network preview switches between the globe and a live connection view in the
   same canvas, remembering the choice. The topology shows actual reported
   connections from State, with each visible node separate, including nodes
   without a location or a connection. It does not expand configuration
-  rules into allowed edges. A missing line says nothing about whether a
+  rules into allowed edges yet. A missing runtime line says nothing about whether a
   future connection is permitted or will succeed. Node positions stay stable
-  across status updates. Evidence remains distinct from connection phase;
+  across status updates. Original channel evidence remains available in details;
   history remains an explicitly selected layer.
 - Clicking a node selects a persistent compact card on the right, with its
   name, status, useful addresses, place/network summary and an explicit
@@ -543,10 +572,10 @@ states stay distinguishable by stroke and colour.
     second health dashboard. Device metadata moves to Settings.
   - Connections starts with peers, connection state and transport. How each
     side acquired a channel and its supporting runtime details are revealed
-    on expansion. Reported running paths retain their own evidence and are
-    not inferred by chaining links.
+    on expansion.
   - Diagnostics has separate entries for actual measurements (live and
     history), route checks against configuration/draft, and runtime details.
+    Reported running paths are here too, never inferred by chaining links.
     A route check remains planning; a diagnostic reply proves the authorised
     Node round trip, not an application's TCP/UDP port health.
   - Settings groups general settings, connection configuration, device
@@ -567,12 +596,10 @@ states stay distinguishable by stroke and colour.
   Relevant evidence belongs in runtime details; the location lookup service
   remains named with its account setting. Empty diagnostic sections and
   repeated status/identity cards do not occupy the overview.
-- An authenticated
-  link with expired/conflicting evidence must not count as confirmed connected;
-  a matching revision alone must not say the current execution target is
+- A matching revision alone must not say the current execution target is
   applied. Summaries use State evidence and the complete desired/saved/applied
   references already used by diagnostics, preserving unknown values.
-- The topology uses small device symbols and status dots, on a quiet grid
+- The connection diagram uses small device symbols and status dots, on a quiet grid
   without a surrounding panel. It draws real State connections and optional
   recorded history; no lines stand in for missing records. Names stay legible
   on small screens, where nodes occupy separate rows.
