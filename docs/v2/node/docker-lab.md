@@ -65,7 +65,7 @@ Ubuntu 的 resolved 后端承担实际系统 DNS 安装。Server 提供 STUN 发
 
 ### 混合承载配置
 
-当前常驻 lab 为 main `11d65768` 的 release（daemon `f04dd1ce…`，含 W2 流式承载续接修复），**revision 10、混合承载**：sha 只启用 `vless` dialer 且禁用 `lab-udp` listener，lax 持有 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告 `192.168.97.2:35443`）与 `lab-udp`，nyc 保持 Native UDP；保留 sha→lax→nyc 与 nyc→lax→sha 两条必经路由。持续业务下 VLESS link 跨多次执行续租保持同一 link ID，见 [L5](/v2/node/performance#l5-常驻-lab-实测)。源码合入不代表已部署；W3 第一轮在 `1271be5d` 上观察到的流式通道重建由该修复消除。
+当前常驻 lab 为 main `3b088dd7` 的 release（含 W2 流式续接、V3 中继交接、V4 重启自愈），**revision 14、混合承载**：sha 只启用 `vless` dialer 且禁用 `lab-udp` listener，lax 持有 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告 `192.168.97.2:35443`）与 `lab-udp`，nyc 保持 Native UDP；保留 sha→lax→nyc 与 nyc→lax→sha 两条必经路由。持续业务下 VLESS link 跨多次执行续租保持同一 link ID，见 [L5](/v2/node/performance#l5-常驻-lab-实测)。源码合入不代表已部署；W3 第一轮在 `1271be5d` 上观察到的流式通道重建由该修复消除。
 
 VLESS 边的配置方式是：sha 只启用 `vless` dialer，并禁用其 `lab-udp` listener；lax 增加 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告本容器 bridge 地址），lax 与 nyc 保留 Native UDP。仅改变 sha 的 dialers 不足以限定该边：lax 仍可反向拨入 sha 的 UDP listener，见[承载交集](/v2/node/carriers#承载交集)。
 
@@ -74,6 +74,8 @@ TLS 使用仅限本 lab 的 provided P-256 证书／私钥，SAN 为 `meshway-la
 实际承载核对 State 的 `nodes[id].report.report.links[peer][]`：`phase=authenticated`、`transport=vless` 与真实 `linkId`，并核对对端及 `sockets` 的 TCP 资源；候选不能代替已建立通道。当前 daemon 的 `loadedCertificateSha256` 仍为 null，默认日志未输出成功 TLS 握手，不能据配置指纹声称已经上报加载指纹。运行程序、原路径回复和吞吐的证据范围见[L5](/v2/node/performance#l5-常驻-lab-实测)。
 
 `node:lab configure` 会恢复三节点 Native UDP 默认配置；重新部署后的 bridge 地址更新与混合承载实验需分别按当前 revision 核对。
+
+容器重启／重建（新 network namespace、同 boot）不再需要人工处理：daemon 启动时把旧 journal 归档为 `underlay.json.stale-*` 并重新建立 Underlay（2026-10-08 `docker restart meshway-lax` 后 5 秒内 `running／ready／applied`，sha→nyc via lax 立即可达）。Docker 重新分配 bridge 地址时，配置里公告的 `endpoints` 仍会过期，需重新 `configure`／更新端点——这是 W5（节点自报端点）要消除的最后一处人工步骤。
 
 也可以进入容器使用同一 CLI：
 
