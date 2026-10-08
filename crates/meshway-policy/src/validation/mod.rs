@@ -31,6 +31,7 @@ impl ConfigurationSemantics for PolicySemantics {
         report: &mut ValidationReport,
     ) {
         routing::validate(configuration, context, report);
+        crate::compile::validate_edge_transports(configuration, context, report);
     }
 }
 

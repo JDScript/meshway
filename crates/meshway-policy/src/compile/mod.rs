@@ -1,12 +1,14 @@
 //! Pure bounded demand compilation from one trusted input snapshot.
 //! The caller authenticates inventory and DNS/artifact inputs and commits with CAS.
 mod diagnostics;
+mod edge_constraints;
 mod matching;
 mod paths;
 mod plan;
 mod routing;
 mod transports;
 use crate::{SubjectContext, domain_name_matches, domain_suffix_matches, topology_allows};
+pub(crate) use edge_constraints::validate_edge_transports;
 pub use matching::profile_allowed;
 use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
@@ -52,6 +54,10 @@ pub enum CompileError {
     InvalidInput,
     #[error("complete transport material is missing or incompatible")]
     Material,
+    #[error(
+        "/topology/{rule}/transports: edge {a}--{b} has no allowed transport in either dial direction"
+    )]
+    EdgeTransportUnavailable { rule: usize, a: NodeId, b: NodeId },
     #[error("execution dependency is unavailable")]
     UnavailableDependency,
     #[error("compilation serialization failed")]
@@ -412,6 +418,7 @@ fn evaluate_with_local(
             Ok(paths) => candidates.extend(paths),
             Err(routing::PathError::Cycle) => reason = UnavailableReason::RoutingCycle,
             Err(routing::PathError::Limit) => reason = UnavailableReason::RoutingLimit,
+            Err(routing::PathError::Compile(CompileError::EdgeTransportUnavailable { .. })) => {}
             Err(routing::PathError::Compile(error)) => return Err(error),
         }
     }

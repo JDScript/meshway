@@ -14,3 +14,4 @@ mod diagnostics;
 mod identity_addressing;
 mod routing;
 mod schema;
+mod topology;

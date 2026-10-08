@@ -7,17 +7,28 @@ use std::{
 
 pub(super) struct Graph<'a> {
     input: Topology<'a>,
+    declarations_only: bool,
+    pub transport_failures: RefCell<BTreeMap<(NodeId, NodeId), usize>>,
     pub candidates: RefCell<BTreeMap<NodeId, BTreeMap<String, DialCandidate>>>,
 }
 impl<'a> Graph<'a> {
     pub fn new(input: Topology<'a>) -> Result<Self, CompileError> {
-        if input.inventory.len() > 10_000 {
+        if input.inventory.len() > 10_000 || input.configuration.nodes.len() > 10_000 {
             return Err(CompileError::Budget);
         }
         Ok(Self {
             input,
+            declarations_only: false,
+            transport_failures: RefCell::new(BTreeMap::new()),
             candidates: RefCell::new(BTreeMap::new()),
         })
+    }
+    /// Preview shares route search, but neither requires trusted inventory nor
+    /// manufactures credentials/candidates. Its paths are never published.
+    pub fn declarations(input: Topology<'a>) -> Result<Self, CompileError> {
+        let mut graph = Self::new(input)?;
+        graph.declarations_only = true;
+        Ok(graph)
     }
     pub fn paths(
         &self,
@@ -26,6 +37,7 @@ impl<'a> Graph<'a> {
         via: Option<&[NodeId]>,
         limit: usize,
     ) -> Result<Vec<LogicalPath>, PathError> {
+        self.transport_failures.borrow_mut().clear();
         let mut routes = routing::Routes::new(self.input);
         let required = match via {
             Some(via) => routes.through(source, target, via)?,
@@ -44,8 +56,14 @@ impl<'a> Graph<'a> {
             let a = *path.last().ok_or(CompileError::InvalidInput)?;
             // Required waypoint first keeps the common direct case bounded.
             let goal = required[0];
-            let candidates = std::iter::once(goal)
-                .chain(self.input.inventory.keys().copied().filter(|n| *n != goal));
+            let candidates = std::iter::once(goal).chain(
+                self.input
+                    .configuration
+                    .nodes
+                    .keys()
+                    .copied()
+                    .filter(|n| *n != goal),
+            );
             for b in candidates {
                 if routes.spend().is_err() {
                     break 'search;
@@ -66,9 +84,20 @@ impl<'a> Graph<'a> {
                     Err(PathError::Limit) => continue,
                     Err(error) => return Err(error),
                 }
-                let ab = transports::candidates(&self.input, a, b)?;
-                let ba = transports::candidates(&self.input, b, a)?;
-                if ab.is_empty() && ba.is_empty() {
+                if !self.has_transport(a, b)? {
+                    if let Some(Some(index)) = crate::topology_decision(
+                        self.input.configuration,
+                        self.input.subjects,
+                        a,
+                        b,
+                    ) && matches!(
+                        self.input.configuration.topology[index].transports,
+                        Input::Value(_)
+                    ) {
+                        self.transport_failures
+                            .borrow_mut()
+                            .insert((a.min(b), a.max(b)), index);
+                    }
                     continue;
                 }
                 let mut extended = path.clone();
@@ -107,12 +136,26 @@ impl<'a> Graph<'a> {
         }
         if found.is_empty() && (truncated || routes.exhausted()) {
             Err(PathError::Limit)
+        } else if found.is_empty()
+            && let Some((&(a, b), &rule)) = self.transport_failures.borrow().first_key_value()
+        {
+            Err(CompileError::EdgeTransportUnavailable { rule, a, b }.into())
         } else {
             Ok(found)
         }
     }
+    fn has_transport(&self, a: NodeId, b: NodeId) -> Result<bool, CompileError> {
+        if self.declarations_only {
+            return Ok(
+                transports::declared(self.input.configuration, self.input.subjects, a, b)
+                    || transports::declared(self.input.configuration, self.input.subjects, b, a),
+            );
+        }
+        Ok(!transports::candidates(&self.input, a, b)?.is_empty()
+            || !transports::candidates(&self.input, b, a)?.is_empty())
+    }
     fn available(&self, node: NodeId) -> bool {
-        self.input.inventory.contains_key(&node)
+        (self.declarations_only || self.input.inventory.contains_key(&node))
             && self
                 .input
                 .configuration
@@ -122,6 +165,12 @@ impl<'a> Graph<'a> {
     }
     fn materialize(&self, nodes: Vec<NodeId>) -> Result<LogicalPath, CompileError> {
         let mut keys: BTreeMap<NodeId, Vec<String>> = BTreeMap::new();
+        if self.declarations_only {
+            return Ok(LogicalPath {
+                nodes,
+                dial_candidates: keys,
+            });
+        }
         for pair in nodes.windows(2) {
             for (a, b) in [(pair[0], pair[1]), (pair[1], pair[0])] {
                 for c in transports::candidates(&self.input, a, b)? {

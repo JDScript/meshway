@@ -18,3 +18,4 @@ mod discovery;
 mod egress;
 mod permissions;
 mod publication;
+mod topology;

@@ -251,6 +251,7 @@ fn every_expanded_hop_requires_inventory_topology_and_transport_and_recovers() {
                 c.nodes.get_mut(&node(2)).unwrap().enabled = false;
             }
             2 => c.topology.push(TopologyRule {
+                transports: Input::Omitted,
                 remark: String::new(),
                 action: TopologyAction::Block,
                 a: format!("node:{}", node(2)),
@@ -283,6 +284,7 @@ fn automatic_bridges_obey_segment_rules_and_preserve_waypoint_order() {
     c.defaults.topology = TopologyDefault::Deny;
     c.topology = [(1, 2), (2, 3), (2, 5), (5, 3), (3, 4)]
         .map(|(a, b)| TopologyRule {
+            transports: Input::Omitted,
             remark: String::new(),
             action: TopologyAction::Allow,
             a: format!("node:{}", node(a)),

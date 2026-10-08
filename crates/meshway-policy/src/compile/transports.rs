@@ -19,6 +19,10 @@ pub(super) fn candidates(
     if !source.enabled || !target.enabled {
         return Ok(vec![]);
     }
+    let Some(rule) = crate::topology_decision(cfg, input.subjects, a, b) else {
+        return Ok(vec![]);
+    };
+    let allowed = rule.map(|index| &cfg.topology[index].transports);
     let set = match &source.dialers {
         Input::Value(d) => d,
         Input::Omitted => &cfg.defaults.dialers,
@@ -33,6 +37,13 @@ pub(super) fn candidates(
         supports(ac, TransportRole::Dial) && supports(bc, TransportRole::Listen)
     };
     for (key, l) in &target.listeners {
+        let protocol = protocol(l.declaration());
+        if matches!(allowed, Some(Input::Value(protocols)) if !protocols.contains(&protocol)) {
+            continue;
+        }
+        if !compatible(set, l.declaration()) {
+            continue;
+        }
         let (endpoints, priority, parameters) = match l.declaration() {
             Listener::NativeUdp(l) if l.enabled && capable("native_udp", StreamKind::Udp) => {
                 let Some(d) = set.native_udp.as_ref().filter(|d| d.enabled) else {
@@ -68,18 +79,8 @@ pub(super) fn candidates(
                 let Some(d) = set.vless.as_ref().filter(|d| d.enabled) else {
                     continue;
                 };
-                if !matches!(
-                    (d.stream, l.stream),
-                    (DialerStream::Auto, _)
-                        | (DialerStream::Tcp, VlessStream::Tcp)
-                        | (DialerStream::WebSocket, VlessStream::WebSocket)
-                ) {
-                    continue;
-                }
                 let uuid = l.uuid.clone().ok_or(CompileError::Material)?;
-                let Some(tls) = tls(&l.tls, &d.tls)? else {
-                    continue;
-                };
+                let tls = tls(&l.tls, &d.tls)?;
                 (
                     &l.endpoints,
                     d.priority,
@@ -98,9 +99,7 @@ pub(super) fn candidates(
                     continue;
                 };
                 let password = l.password.clone().ok_or(CompileError::Material)?;
-                let Some(tls) = tls(&l.tls, &d.tls)? else {
-                    continue;
-                };
+                let tls = tls(&l.tls, &d.tls)?;
                 (
                     &l.endpoints,
                     d.priority,
@@ -129,20 +128,81 @@ pub(super) fn candidates(
     }
     Ok(out)
 }
-fn tls(l: &ListenerTls, d: &DialerTls) -> Result<Option<ClientTls>, CompileError> {
+fn protocol(listener: &Listener) -> TransportProtocol {
+    match listener {
+        Listener::NativeUdp(_) => TransportProtocol::NativeUdp,
+        Listener::NativeTcp(_) => TransportProtocol::NativeTcp,
+        Listener::Vless(_) => TransportProtocol::Vless,
+        Listener::Trojan(_) => TransportProtocol::Trojan,
+    }
+}
+
+/// Preview uses the same edge, protocol, stream and TLS intersection, without
+/// manufacturing runtime capabilities or material.
+pub(super) fn declared(
+    cfg: &NetworkConfiguration,
+    subjects: &SubjectContext,
+    a: NodeId,
+    b: NodeId,
+) -> bool {
+    let Some(rule) = crate::topology_decision(cfg, subjects, a, b) else {
+        return false;
+    };
+    let allowed = rule.map(|index| &cfg.topology[index].transports);
+    let source = &cfg.nodes[&a];
+    if !source.enabled || !cfg.nodes[&b].enabled {
+        return false;
+    }
+    let set = match &source.dialers {
+        Input::Value(set) => set,
+        Input::Omitted => &cfg.defaults.dialers,
+    };
+    cfg.nodes[&b].listeners.values().any(|listener| {
+        !matches!(allowed, Some(Input::Value(protocols)) if !protocols.contains(&protocol(listener.declaration())))
+            && compatible(set, listener.declaration())
+    })
+}
+
+fn compatible(set: &DialerSet, listener: &Listener) -> bool {
+    let tls = |l: &ListenerTls, d: &DialerTls| {
+        l.min_version <= d.max_version && d.min_version <= l.max_version
+    };
+    match listener {
+        Listener::NativeUdp(l) => l.enabled && set.native_udp.as_ref().is_some_and(|d| d.enabled),
+        Listener::NativeTcp(l) => l.enabled && set.native_tcp.as_ref().is_some_and(|d| d.enabled),
+        Listener::Vless(l) => {
+            l.enabled
+                && set.vless.as_ref().is_some_and(|d| {
+                    d.enabled
+                        && tls(&l.tls, &d.tls)
+                        && matches!(
+                            (d.stream, l.stream),
+                            (DialerStream::Auto, _)
+                                | (DialerStream::Tcp, VlessStream::Tcp)
+                                | (DialerStream::WebSocket, VlessStream::WebSocket)
+                        )
+                })
+        }
+        Listener::Trojan(l) => {
+            l.enabled
+                && set
+                    .trojan
+                    .as_ref()
+                    .is_some_and(|d| d.enabled && tls(&l.tls, &d.tls))
+        }
+    }
+}
+fn tls(l: &ListenerTls, d: &DialerTls) -> Result<ClientTls, CompileError> {
     // PreparedListener is the trusted certificate validation boundary. Missing
-    // material is corruption, even if this pair also has disjoint TLS bounds.
+    // material on a compatible candidate is corruption.
     let certificate_chain = l.certificate.clone().ok_or(CompileError::Material)?;
     if l.private_key.is_none() {
         return Err(CompileError::Material);
     }
-    // Both peers must support a common range; never weaken configured verification.
-    if l.min_version > d.max_version || d.min_version > l.max_version {
-        return Ok(None);
-    }
-    Ok(Some(ClientTls {
+    // Declaration compatibility has already checked the version intersection.
+    Ok(ClientTls {
         server_name: l.server_name.clone(),
         certificate_chain,
         options: d.clone(),
-    }))
+    })
 }

@@ -86,6 +86,7 @@ pub fn plan(request: PlanRequest<'_>) -> Result<Evaluation, CompileError> {
 
     let mut targets = Vec::new();
     let mut paths = Vec::new();
+    let mut transport_error = None;
     if let Some(route) = &route
         && matches!(route.kind, RouteKind::Mesh | RouteKind::Exit)
     {
@@ -121,6 +122,12 @@ pub fn plan(request: PlanRequest<'_>) -> Result<Evaluation, CompileError> {
                             reason = UnavailableReason::RoutingLimit;
                             Some(TargetProblem::RoutingLimit)
                         }
+                        Err(routing::PathError::Compile(
+                            error @ CompileError::EdgeTransportUnavailable { .. },
+                        )) => {
+                            transport_error.get_or_insert(error);
+                            Some(TargetProblem::NoPath)
+                        }
                         Err(routing::PathError::Compile(error)) => return Err(error),
                     }
                 }
@@ -133,6 +140,14 @@ pub fn plan(request: PlanRequest<'_>) -> Result<Evaluation, CompileError> {
             for path in found {
                 paths.push(planned(&top, path));
             }
+        }
+        if outcome.is_none()
+            && paths.is_empty()
+            && source_active
+            && access.allowed
+            && let Some(error) = transport_error
+        {
+            return Err(error);
         }
         if outcome.is_none() {
             outcome = Some(if !source_active {

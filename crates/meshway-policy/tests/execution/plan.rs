@@ -59,6 +59,7 @@ fn routed() -> NetworkConfiguration {
         },
     ];
     c.topology = vec![TopologyRule {
+        transports: Input::Omitted,
         remark: String::new(),
         a: format!("node:{}", node(1)),
         b: format!("node:{}", node(3)),
@@ -406,6 +407,7 @@ fn targets_explain_why_no_path_exists_and_inputs_are_checked() {
     assert_eq!(e.targets[0].problem, Some(TargetProblem::NotEnrolled));
     // A topology block towards the exit leaves no path, whatever the relay.
     c.topology.push(TopologyRule {
+        transports: Input::Omitted,
         remark: String::new(),
         a: "*".into(),
         b: format!("node:{}", node(4)),
