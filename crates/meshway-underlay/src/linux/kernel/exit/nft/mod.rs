@@ -14,10 +14,10 @@ pub(super) fn probe_batch(name: &str) -> Value {
         {"add": {"set": {
             "family": "inet", "table": name, "name": "flows",
             "type": ["ipv4_addr", "ipv4_addr", "inet_proto", "inet_service", "inet_service"],
-            "flags": ["timeout"], "timeout": 1000, "size": 1
+            "flags": ["timeout"], "timeout": 1, "size": 1
         }}},
         {"add": {"element": {"family": "inet", "table": name, "name": "flows", "elem": [
-            {"elem": {"val": {"concat": ["192.0.2.1", "198.51.100.1", 17, 12345, 53]}, "timeout": 1000}}
+            {"elem": {"val": {"concat": ["192.0.2.1", "198.51.100.1", 17, 12345, 53]}, "timeout": 1}}
         ]}}},
         {"add": {"chain": {"family": "inet", "table": name, "name": "check"}}},
         {"add": {"rule": {"family": "inet", "table": name, "chain": "check", "expr": [

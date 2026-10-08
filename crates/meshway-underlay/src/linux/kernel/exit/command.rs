@@ -1,7 +1,7 @@
 //! One joinable process operation at a time, including abandoned async waiters.
 use std::{
     io::{Read, Write},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -81,6 +81,17 @@ fn read_bounded(reader: impl Read) -> Result<Vec<u8>, Failure> {
     Ok(bytes)
 }
 
+struct Reap(Child);
+
+impl Drop for Reap {
+    fn drop(&mut self) {
+        // Also runs if starting/joining a pipe worker panics or fails. This guard
+        // lives inside the scoped closure, before scope joins blocked readers.
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Failure> {
     let started = Instant::now();
     let mut child = Command::new(tool.path())
@@ -94,7 +105,8 @@ fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Fai
     let stdin = child.stdin.take().ok_or(Failure::Worker)?;
     let stdout = child.stdout.take().ok_or(Failure::Worker)?;
     let stderr = child.stderr.take().ok_or(Failure::Worker)?;
-    std::thread::scope(|scope| {
+    std::thread::scope(move |scope| {
+        let mut child = Reap(child);
         let writer = scope.spawn(move || {
             let mut stdin = stdin;
             stdin.write_all(input)
@@ -102,15 +114,15 @@ fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Fai
         let reader = scope.spawn(move || read_bounded(stdout));
         let errors = scope.spawn(move || read_bounded(stderr));
         let status = loop {
-            match child.try_wait() {
+            match child.0.try_wait() {
                 Ok(Some(status)) => break Ok(status),
                 Ok(None) if started.elapsed() < BUDGET => {
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 result => {
                     // An ACK may have been lost. Killing/reaping is not rollback.
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    let _ = child.0.kill();
+                    let _ = child.0.wait();
                     break match result {
                         Err(error) => Err(Failure::Io(error)),
                         _ => Err(Failure::Limit),

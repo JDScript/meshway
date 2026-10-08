@@ -45,3 +45,58 @@ async fn exit_nft_atomic_batch_readback_and_failed_transaction_leave_no_table() 
     assert!(submit(&mut commands, &batch).await.is_err());
     verify_absent(&mut commands, &name).await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires isolated Linux namespace, nft and NET_ADMIN"]
+async fn exit_nft_timed_set_expiry_uses_seconds_and_does_not_revive_elements() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let mut commands = Commands::default();
+    let name = format!("meshway_probe_timeout_{}", std::process::id());
+    verify_absent(&mut commands, &name).await.unwrap();
+    let mut batch = probe_batch(&name);
+    let delete = batch["nftables"].as_array_mut().unwrap().pop().unwrap();
+    submit(&mut commands, &batch).await.unwrap();
+    let initial = elements(&mut commands, &name).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    let expired = elements(&mut commands, &name).await;
+    submit(&mut commands, &json!({"nftables": [delete]}))
+        .await
+        .unwrap();
+    verify_absent(&mut commands, &name).await.unwrap();
+    assert_eq!(initial, 1);
+    assert_eq!(expired, 0);
+}
+
+async fn elements(commands: &mut Commands, name: &str) -> usize {
+    let output = commands
+        .run(
+            Tool::Nft,
+            vec![
+                "-j".into(),
+                "list".into(),
+                "set".into(),
+                "inet".into(),
+                name.into(),
+                "flows".into(),
+            ],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    assert!(output.success);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let sets: Vec<_> = value["nftables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry.get("set"))
+        .collect();
+    assert_eq!(sets.len(), 1);
+    assert_eq!(sets[0]["name"], "flows");
+    sets[0]
+        .get("elem")
+        .map_or(0, |entries| entries.as_array().unwrap().len())
+}

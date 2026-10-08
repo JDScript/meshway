@@ -76,6 +76,7 @@ impl ExitProbe {
             .map_err(|_| Reason::ForwardingProbeFailed)?;
         for interface in interfaces {
             if interface.is_empty()
+                || matches!(interface.as_str(), "." | "..")
                 || interface.len() > 15
                 || !interface
                     .bytes()
