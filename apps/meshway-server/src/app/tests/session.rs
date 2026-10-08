@@ -287,7 +287,7 @@ async fn expired_proof_anchor_survives_cleanup_but_only_a_fresh_proof_can_recove
         &signer,
     );
     allocation.intent.expires_at_ms =
-        u64::try_from(store::execution::now().unwrap()).unwrap() + 2000;
+        u64::try_from(store::execution::now().unwrap()).unwrap() + 500;
     allocation.signature = WireSecret::new(
         URL_SAFE_NO_PAD.encode(
             signer

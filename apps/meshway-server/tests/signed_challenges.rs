@@ -352,9 +352,12 @@ async fn expired_signed_allocation_cannot_be_recreated_after_challenge_cleanup()
         Err(meshway_server::error::Error::InvalidCredentials)
     ));
     let mut short = fixture.intent(&session);
-    short.expires_at_ms = now() + 2_000;
+    short.expires_at_ms = now() + 500;
     let original = fixture.challenge(&short).await;
-    tokio::time::sleep(std::time::Duration::from_millis(2_100)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(
+        short.expires_at_ms.saturating_sub(now()) + 1,
+    ))
+    .await;
     // Successful fresh allocation runs cleanup of the expired unconsumed row.
     fixture.challenge(&fixture.intent(&session)).await;
     assert_eq!(
