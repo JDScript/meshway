@@ -783,7 +783,7 @@ pub(super) async fn request(
     control: &mut Control,
     request: Request,
 ) -> Result<(), meshway_control::Error> {
-    let (operation, reply) = match request {
+    let (operation, mut reply) = match request {
         Request::ObservationResult { output, mut reply } => {
             if reply.is_closed() || !output.is_current() {
                 return Ok(());
@@ -858,54 +858,76 @@ pub(super) async fn request(
             };
         }
     };
-    let (result, renewal) = match operation {
-        Operation::Create(value) => (
-            control.create_demand(&value).await.map(|response| {
-                if let meshway_configuration::execution::DemandDecision::Permitted { permit } =
-                    response.decision
-                {
-                    tracing::debug!(
-                        request_id = %value.request_id,
-                        operation = "create",
-                        protocol = ?value.protocol,
-                        port = value.port.map(|port| port.get()),
-                        expires_at_ms = permit.expires_at_ms,
-                        "Demand request acknowledged"
-                    );
-                }
-            }),
-            None,
-        ),
-        Operation::Renew {
-            mut request,
-            prepared,
-        } => {
-            // The single Control owner chooses the first absolute deadline at
-            // dispatch, using its current instance rather than a worker's old
-            // execution lease. Failed delivery returns this exact retry value.
-            if !prepared
-                && let Some(instance) = control.status().instance
-                && instance.instance_id == request.instance.instance_id
-                && instance.generation == request.instance.generation
-            {
-                request.expires_at_ms = instance.expires_at_ms;
-            }
-            (
-                control.renew_demand(&request).await.map(|response| {
+    // Retired packet intents close their reply when their original demand or
+    // activity lifetime ends. Like DNS/traversal work, a queued request no
+    // longer owned by a caller must not issue a late control mutation.
+    if reply.is_closed() {
+        tracing::debug!(
+            cause = "caller_cancelled",
+            "Queued demand retired before dispatch"
+        );
+        return Ok(());
+    }
+    let (request_id, kind) = match &operation {
+        Operation::Create(request) => (request.request_id, "create"),
+        Operation::Renew { request, .. } => (request.request_id, "renew"),
+    };
+    tracing::debug!(%request_id, operation = kind, "Demand request dispatched");
+    let work = async {
+        match operation {
+            Operation::Create(value) => (
+                control.create_demand(&value).await.map(|response| {
                     if let meshway_configuration::execution::DemandDecision::Permitted { permit } =
                         response.decision
                     {
                         tracing::debug!(
-                            request_id = %request.request_id,
-                            operation = "renew",
+                            request_id = %value.request_id,
+                            operation = "create",
+                            protocol = ?value.protocol,
+                            port = value.port.map(|port| port.get()),
                             expires_at_ms = permit.expires_at_ms,
                             "Demand request acknowledged"
                         );
                     }
                 }),
-                Some(request),
-            )
+                None,
+            ),
+            Operation::Renew {
+                mut request,
+                prepared,
+            } => {
+                // The single Control owner chooses the first absolute deadline at
+                // dispatch, using its current instance rather than a worker's old
+                // execution lease. Failed delivery returns this exact retry value.
+                if !prepared
+                    && let Some(instance) = control.status().instance
+                    && instance.instance_id == request.instance.instance_id
+                    && instance.generation == request.instance.generation
+                {
+                    request.expires_at_ms = instance.expires_at_ms;
+                }
+                (
+                    control.renew_demand(&request).await.map(|response| {
+                        if let meshway_configuration::execution::DemandDecision::Permitted {
+                            permit,
+                        } = response.decision
+                        {
+                            tracing::debug!(
+                                request_id = %request.request_id,
+                                operation = "renew",
+                                expires_at_ms = permit.expires_at_ms,
+                                "Demand request acknowledged"
+                            );
+                        }
+                    }),
+                    Some(request),
+                )
+            }
         }
+    };
+    let (result, renewal) = tokio::select! { biased;
+        _ = reply.closed() => return Ok(()),
+        result = work => result,
     };
     let _ = reply.send(Reply {
         result: result.as_ref().map(|_| ()).map_err(|_| ()),

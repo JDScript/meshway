@@ -5,6 +5,38 @@ use std::{
 };
 
 #[tokio::test]
+async fn cancelled_queued_demand_does_not_fence_an_unrelated_live_instance() {
+    use crate::runtime::ping::integration::Fixture;
+    let mut fixture = Fixture::open().await;
+    let control = &mut fixture.controls[0];
+    let guard = control.execution_snapshot().unwrap();
+    let instance = guard.instance();
+    let (reply, receiver) = tokio::sync::oneshot::channel();
+    drop(receiver);
+    network::request(
+        control,
+        network::Request::Demand {
+            operation: network::Operation::Renew {
+                request: meshway_protocol::RenewDemandRequest {
+                    instance: instance.clone(),
+                    // There is no such demand. Dispatching this abandoned request
+                    // would produce a real binding rejection and fence Control.
+                    request_id: "00000000-0000-4000-8000-000000000099".parse().unwrap(),
+                    expires_at_ms: guard.expires_at_ms(),
+                },
+                prepared: true,
+            },
+            reply,
+        },
+    )
+    .await
+    .unwrap();
+    guard.ensure_current().unwrap();
+    assert_eq!(control.execution_snapshot().unwrap().instance(), instance);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn ready_report_settles_receipt_without_refreshing_acquisition_authority() {
     use crate::runtime::{network::testing::Worker, ping::integration::Fixture};
     let mut fixture = Fixture::open().await;
