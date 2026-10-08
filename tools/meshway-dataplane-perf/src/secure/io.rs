@@ -24,7 +24,7 @@ pub(super) enum Io {
     #[cfg(target_os = "linux")]
     Manager {
         manager: Box<Manager>,
-        host: Option<meshway_underlay::Host>,
+        host: Option<Box<meshway_underlay::Host>>,
     },
 }
 
@@ -125,7 +125,7 @@ impl Io {
         .await??;
         Ok(Self::Manager {
             manager: Box::new(manager),
-            host: Some(host),
+            host: Some(Box::new(host)),
         })
     }
 
@@ -155,7 +155,7 @@ impl Io {
     #[cfg(target_os = "linux")]
     pub fn take_host(&mut self) -> Option<meshway_underlay::Host> {
         match self {
-            Self::Manager { host, .. } => host.take(),
+            Self::Manager { host, .. } => host.take().map(|host| *host),
             Self::Session { .. } => None,
         }
     }
