@@ -4,7 +4,7 @@ mod actor;
 pub(super) mod intents;
 pub(super) use actor::Attachment;
 use meshway_authority::ExecutionSnapshot;
-use meshway_configuration::execution::NodeConfiguration;
+use meshway_configuration::execution::{DnsEgress, NodeConfiguration};
 use meshway_dns::{
     CancellationToken, DiscoveryGateway, OwnerDispatcher, ResolverDemand, ResolverExchange,
     ResolverSource, Scope, Service, SystemDnsBackend, SystemDnsError, SystemDnsOwner,
@@ -87,9 +87,11 @@ impl Runtime {
     /// exact Ip demands through the unique Control and atomic refresh path.
     pub fn demands(&self, cfg: &NodeConfiguration) -> Result<Vec<ResolverDemand>, SystemDnsError> {
         let plan = SystemDnsPlan::new(&cfg.dns.settings, &cfg.dns.egress)?;
+        let via_exit = matches!(cfg.dns.egress, DnsEgress::ViaExit { .. });
         if cfg.dns.settings.servers.values().any(|server| {
-            server.server.is_loopback()
-                || matches!(server.server, std::net::IpAddr::V6(ip) if ip.is_unicast_link_local())
+            (!via_exit || server.use_with_exit)
+                && (server.server.is_loopback()
+                    || matches!(server.server, std::net::IpAddr::V6(ip) if ip.is_unicast_link_local()))
         }) {
             // A local stub can recurse through the very split route being
             // installed; scoped IPv6 also lacks a published interface context.
@@ -106,6 +108,7 @@ impl Runtime {
             .settings
             .servers
             .iter()
+            .filter(|(_, server)| !via_exit || server.use_with_exit)
             .map(|(key, server)| ResolverDemand {
                 source: ResolverSource::Configured(key.clone()),
                 endpoint: SocketAddr::new(server.server, server.server_port.get()),
@@ -113,7 +116,7 @@ impl Runtime {
                 profile: cfg.dns.profile.clone(),
             })
             .collect();
-        if let Some(system) = self.system.system_resolvers() {
+        if !via_exit && let Some(system) = self.system.system_resolvers() {
             demands.extend(system.demands(&cfg.dns.profile));
         }
         if demands.len() > 256 {
@@ -153,7 +156,11 @@ impl Runtime {
         // Subsequent failure retains the stub and settings, with Scope=None.
         self.hold(cfg).await?;
         self.demands(cfg)?;
-        let system_resolvers = self.system.system_resolvers();
+        let system_resolvers = if matches!(cfg.dns.egress, DnsEgress::ViaExit { .. }) {
+            None
+        } else {
+            self.system.system_resolvers()
+        };
         let mut configured = BTreeMap::new();
         let mut system_demands = BTreeMap::new();
         let mut system_tcp_demands = BTreeMap::new();
@@ -189,8 +196,8 @@ impl Runtime {
             system_demands,
             system_tcp_demands,
         };
-        scope
-            .validate_resolvers()
+        self.dispatcher
+            .validate_scope(&scope)
             .map_err(|_| SystemDnsError::ResolverPlan)?;
         if self.service.is_finished() {
             return Err(SystemDnsError::Backend);

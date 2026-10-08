@@ -1,8 +1,8 @@
 //! Gateways delegate to the host's unique Control driver and approved local
 //! business socket adapter. Neither trait passes credentials or bootstrap grants.
 use crate::{
-    Answer, Begin, Limits, LocalResolverRoute, Owner, Query, ResponseTransport, Ticket,
-    TrustedUpstreamResponse, Unavailable,
+    Answer, Begin, Limits, LocalResolverRoute, MeshResolverRoute, Owner, Query, ResolverRoute,
+    ResponseTransport, Ticket, TrustedUpstreamResponse, Unavailable,
 };
 use bytes::Bytes;
 use meshway_authority::ExecutionSnapshot;
@@ -36,6 +36,18 @@ pub trait DiscoveryGateway: Send + Sync + 'static {
 /// ID randomization is adapter-owned; restore the input ID after validation.
 /// No UDP-to-TCP retry is authorized by a UDP route.
 pub trait ResolverExchange: Send + Sync + 'static {
+    /// Must prove an installed service-purpose path on the unique SecureNode.
+    /// Default adapters explicitly lack Mesh support; never use local sockets.
+    fn validate_mesh(&self, _route: &MeshResolverRoute) -> Result<(), GatewayError> {
+        Err(GatewayError)
+    }
+    fn exchange_mesh<'a>(
+        &'a self,
+        _route: &'a MeshResolverRoute,
+        _query: Bytes,
+    ) -> DnsFuture<'a, Result<Bytes, GatewayError>> {
+        Box::pin(async { Err(GatewayError) })
+    }
     fn exchange<'a>(
         &'a self,
         route: &'a LocalResolverRoute,
@@ -63,9 +75,9 @@ impl Scope {
             .snapshot
             .configuration()
             .map_err(|_| DispatchError::Scope)?;
-        if !matches!(
+        if matches!(
             cfg.dns.egress,
-            meshway_configuration::execution::DnsEgress::NoExit
+            meshway_configuration::execution::DnsEgress::Unavailable { .. }
         ) {
             return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
         }
@@ -74,7 +86,30 @@ impl Scope {
         {
             return Err(DispatchError::Scope);
         }
-        for key in cfg.dns.settings.servers.keys() {
+        let via_exit = matches!(
+            cfg.dns.egress,
+            meshway_configuration::execution::DnsEgress::ViaExit { .. }
+        );
+        if via_exit {
+            for transport in [DnsTransport::Udp, DnsTransport::Tcp] {
+                MeshResolverRoute::new(
+                    self.snapshot.clone(),
+                    transport,
+                    self.snapshot.expires_at(),
+                )
+                .map_err(|_| DispatchError::Unavailable(Unavailable::MissingExitPlan))?;
+            }
+            if self.system_resolvers.is_some()
+                || !self.system_demands.is_empty()
+                || !self.system_tcp_demands.is_empty()
+            {
+                return Err(DispatchError::Scope);
+            }
+        }
+        for (key, server) in &cfg.dns.settings.servers {
+            if via_exit && !server.use_with_exit {
+                continue;
+            }
             let id = self
                 .resolver_demands
                 .get(key)
@@ -177,6 +212,36 @@ pub struct OwnerDispatcher {
 }
 
 impl OwnerDispatcher {
+    /// Installation checks include the real adapter. A syntactically valid
+    /// ViaExit plan cannot be reported applied with the local-only adapter.
+    pub fn validate_scope(&self, scope: &Scope) -> Result<(), DispatchError> {
+        scope.validate_resolvers()?;
+        let cfg = scope
+            .snapshot
+            .configuration()
+            .map_err(|_| DispatchError::Scope)?;
+        match cfg.dns.egress {
+            meshway_configuration::execution::DnsEgress::ViaExit { .. } => {
+                for transport in [DnsTransport::Udp, DnsTransport::Tcp] {
+                    let route = MeshResolverRoute::new(
+                        scope.snapshot.clone(),
+                        transport,
+                        scope.snapshot.expires_at(),
+                    )
+                    .map_err(|_| DispatchError::Scope)?;
+                    self.exchange
+                        .validate_mesh(&route)
+                        .map_err(|_| DispatchError::Gateway)?;
+                }
+            }
+            // A local-loopback dispatcher cannot prove authenticated ingress.
+            meshway_configuration::execution::DnsEgress::ServeExitResolver { .. } => {
+                return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
     pub fn new(
         scopes: watch::Receiver<Option<Scope>>,
         discovery: Arc<dyn DiscoveryGateway>,
@@ -343,7 +408,10 @@ impl OwnerDispatcher {
                             _ = work.ticket.cancelled() => return Err(DispatchError::Expired),
                             _ = work.route.invalidated() => return Err(DispatchError::Expired),
                             _ = tokio::time::sleep_until(attempt_deadline.into()) => Err(GatewayError),
-                            result = self.exchange.exchange(&exchange.0, query) => result,
+                            result = async { match &exchange.0 {
+                                ResolverRoute::Local(route) => self.exchange.exchange(route, query).await,
+                                ResolverRoute::Mesh(route) => self.exchange.exchange_mesh(route, query).await,
+                            } } => result,
                         }
                     };
                     // Completion can race withdrawal or a permit deadline. Do
@@ -364,8 +432,8 @@ impl OwnerDispatcher {
                             if let Some(tcp) = &next.fallback {
                                 tcp.ensure_current().map_err(|_| DispatchError::Expired)?;
                             }
-                            work.route = next.route;
-                            work.fallback = next.fallback;
+                            work.route = ResolverRoute::Local(next.route);
+                            work.fallback = next.fallback.map(ResolverRoute::Local);
                             attempt_deadline = upstream_deadline(
                                 work.ticket.expires_at(),
                                 work.remaining.len() + 1,
@@ -459,7 +527,7 @@ fn upstream_deadline(deadline: Instant, remaining: usize) -> Instant {
     now + deadline.saturating_duration_since(now) / remaining as u32
 }
 
-struct ExchangeScope(LocalResolverRoute);
+struct ExchangeScope(ResolverRoute);
 impl Drop for ExchangeScope {
     fn drop(&mut self) {
         self.0.cancel_exchange();

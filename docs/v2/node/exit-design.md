@@ -162,9 +162,11 @@ sha 应用 IPv4
 
 采用与 peerapi DoH 相同的信任形态：客户端 DNS owner 通过**完整获准 Mesh 路径**访问出口 DNS owner，Noise 在源／出口间保护；不额外建设公网 DNS HTTP 端口。建议首版使用标准 UDP DNS＋独立 TCP fallback，监听出口 Mesh 地址的保留端点；端点地址／端口由职责计划发布，尚无固定公共 API。
 
-仅监听 Mesh IP 不足以认证：同 namespace 进程可直连 socket。扩展现有 loopback Service 时，新增密封的 Mesh ingress 适配：输入由唯一 dataplane 在专用 DNS permit 下交付，携带 origin、实际完整 path、scope、流关联；回包也交同一 SecureNode。若选内核 socket 接入，则必须证明 socket 输入只可能来自相同准入入口，并保留不可伪造关联；不能用 `remoteAddr` 反查 Node 替代密码身份。daemon 只驱动适配，DNS owner 不另持 SecureNode／流表。
+仅监听 Mesh IP 不足以认证：同 namespace 进程可直连 socket。扩展现有 loopback Service 时，新增密封的 Mesh ingress 适配：输入由唯一 dataplane 在专用 DNS permit 下交付，携带 origin、实际完整 path、scope、流关联；回包也交同一 SecureNode。若选内核 socket 接入，则必须证明 socket 输入只可能来自相同准入入口，并保留不可伪造关联；不能用 `remoteAddr` 反查 Node 替代密码身份。daemon 只驱动适配，DNS owner 不另持 SecureNode／流表。现有 Service 仍保持 loopback 边界，真实 ingress 是待整合依赖。
 
-出口 DNS permit 是目的受限的内部用途：只能调用指定出口 resolver，不因授予 DNS 服务而开放访问该出口所有端口或转发任意 IP。绑定 source、exit、path、profile generation、查询范围／预算及 deadline；允许域名型 LAN 访问的主体也可有相应查询资格，不能复制 Tailscale 的 Internet-only 探针。
+出口 DNS permit 是目的受限的内部用途：只能调用指定出口 resolver，不因授予 DNS 服务而开放访问该出口所有端口或转发任意 IP。真实类型是 `execution/mod.rs::DnsServicePermit`，绑定 source／sourceAddresses、exit／address、完整 path、profile／generation、出口 role、transports、maxPending／timeoutMs 和 expiresAt。客户端 `DnsEgress::ViaExit`、出口 `ServeExitResolver` 由 Policy DNS 编译发布；`meshway_policy::dns_route::dns_service_permit` 是纯绑定检查，不把调用者提交的 source/path 变为认证身份。允许域名型 LAN 访问的主体也可有相应查询资格，不能复制 Tailscale 的 Internet-only 探针。
+
+客户端 owner 使用 `meshway_dns::MeshResolverRoute` 和原有 ticket／输出取消；`ResolverExchange::validate_mesh`／`exchange_mesh` 是宿主实现接入点，默认返回不可用。适配须复用唯一 SecureNode、独立 DNS purpose、原路径回包，并为中继发布相应授权；当前缺少这些适配时安装拒绝。普通 local resolver route 与 bootstrap API 不能承接 Mesh resolver work。
 
 出口 DNS owner 调用**出口机器的系统 resolver**。优先实现可验证的 resolved 适配（保留系统按链路／后缀选上游，排除本机 Mesh stub 递归）；文件后端使用 owner 记录的真实系统上游。不能把 `/run/systemd/resolve/resolv.conf` 中的平面列表当成完整 split DNS 语义。首版仅支持已证明无环的真实上游／resolved 路线；未知本地 stub、回指 Meshway、自依赖出口 resolver 返回不可用，不选公共 DNS 补救。查询上游 I/O 有专门职责许可和 socket 保护，不借 bootstrap API；UDP→TCP 重试需要独立传输资格。
 
@@ -195,7 +197,7 @@ Noise 证明回答来自出口，不证明出口上报的域名／地址自然�
 - X2 消费 `PathPermit.exit`、精确 target／sourceAddresses／服务／paths／expiresAt，并使用 Policy 准入与 `permit_authorization_digest`／`permit_transition`。公网边界唯一实现为 `meshway_policy::is_internet_address`。
 - X3 消费 `NodeConfiguration.egressCapture` 与 `exitRole`；职责只准许准备资源，实际 NAT 投影仍需 X2 的活 flow 与 guard。IPv6 受管范围必须 sink。
 - X4 把真实探测写入 `NodeState.exitCapability`，携带 instanceId、精确 target、supportedFamilies、installedFamilies、status 与原始 observedAt；报告失败不要求 applied。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1。没有观测保持省略，不补 ready。
-- X5 复用 capture generation 与角色绑定处理 DNS 撤回；可执行出口 DNS service permit／resolver plan 仍须由 X5 与契约 owner 联合补齐，现有 `DnsEgress::Unavailable/ExitPlanRequired` 保持阻断。
+- X5 的 `DnsServicePermit`／`DnsEgress::ViaExit`／`ServeExitResolver` 复用 capture generation 与角色绑定处理 DNS 撤回；单出口联合编译与客户端 owner 已具备类型化路线。密封 Mesh ingress、独立 purpose 的中继授权、出口受保护系统 resolver 和真实 listener 尚待跨包接线；缺适配保持安装阻断。
 
 Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择版本与新鲜能力预算由 Server 当前事务提供。旧 demand-5 派生缓存经原始摘要／身份检查后退役，不解码成当前执行权限。此段冻结类型不代表 X2–X5 的运行安装或 T2 已验收。
 

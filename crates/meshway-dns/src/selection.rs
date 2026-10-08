@@ -54,6 +54,8 @@ pub struct ResolverCandidate<'a> {
 pub enum Selection<'a> {
     Published(PublishedAnswer<'a>),
     Resolvers(Vec<ResolverCandidate<'a>>),
+    /// Published single-exit service; the owner still validates its live permit.
+    ExitResolver,
     /// Preserve normal host resolution; this is not a bootstrap socket grant.
     Unmanaged,
     Unavailable(SelectionUnavailable),
@@ -102,6 +104,7 @@ pub struct PublishedDns {
     routes: BTreeMap<Name, Vec<String>>,
     default: Vec<String>,
     override_local: bool,
+    executable_exit: bool,
 }
 
 impl fmt::Debug for PublishedDns {
@@ -161,6 +164,10 @@ impl PublishedDns {
             routes,
             default: settings.default.clone(),
             override_local: settings.override_local,
+            executable_exit: matches!(
+                execution.egress,
+                meshway_configuration::execution::DnsEgress::ViaExit { .. }
+            ),
         })
     }
 
@@ -208,7 +215,11 @@ impl PublishedDns {
             })
             .collect();
         if candidates.is_empty() {
-            Selection::Unavailable(SelectionUnavailable::MissingExitPlan)
+            if exit == ExitSelection::Exit && self.executable_exit {
+                Selection::ExitResolver
+            } else {
+                Selection::Unavailable(SelectionUnavailable::MissingExitPlan)
+            }
         } else {
             Selection::Resolvers(candidates)
         }
@@ -223,3 +234,6 @@ fn configuration_name(value: &str) -> Result<Name, ConfigurationError> {
     name.set_fqdn(true);
     Ok(name)
 }
+
+#[cfg(test)]
+mod tests;

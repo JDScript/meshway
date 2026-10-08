@@ -13,6 +13,7 @@ pub use system::SystemDnsReservation;
 pub use tokio_util::sync::CancellationToken;
 
 mod dispatcher;
+mod exit_route;
 mod owner;
 mod route;
 mod selection;
@@ -25,6 +26,7 @@ pub use dispatcher::{
     DiscoveryGateway, DispatchError, Dispatcher, DnsFuture, GatewayError, OwnerDispatcher,
     ResolverExchange, Scope,
 };
+pub use exit_route::{MeshResolverRoute, ResolverRoute};
 pub use owner::{
     Answer, Begin, DiscoveryRequest, Limits, Owner, OwnerError, Ticket, Unavailable, UpstreamWork,
 };

@@ -78,11 +78,17 @@
 
 ## 使用出口时
 
-普通 DNS 须交给选中出口的系统 resolver 解析，只有明确配置的例外解析器保留。MagicDNS 仍按节点记录处理；useWithExit=true 的解析器保留其明确的 split/default 用途。出口 resolver 的生产接线尚未实现。
+单出口编译通过 `DnsEgress::ViaExit { exit, service, generation }` 指定普通查询的 Mesh resolver。只要当前方案的 fallback 或 CIDR 规则使用同一个出口及同一组有序 via，普通名称在解析前即选择该出口，不先查询客户端上游再根据答案选择路径。MagicDNS 仍按本地记录／精确发现处理；`useWithExit: true` 的解析器保留最长后缀 split／default 用途。
+
+`DnsServicePermit` 绑定源节点／instance 及 Mesh 源地址、出口 Mesh IPv4 地址的 UDP／TCP 53、完整有序路径、源 profile／capture generation、出口 instance／role、并发／查询时间预算和到期；到期取源 instance 与出口 ready 观测期限的交集。联合编译要求出口已启用、能力观测仍 ready、路径可行且源有外部 Access 资格。缺少 ready／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有无环单出口方案返回 `exitPlanRequired`。
 
 例外不是目的地址的全局放行；解析器流量仍须走明确、获准的网络路径。没有有效出口／解析依赖时报告不可用，不静默落回另一路公共解析器。
 
-存在歧义的多出口方案必须在解析业务域名之前提供**显式、无循环的 DNS plan**。需要 DNS 结果才能确定的 IP 规则，不能反过来成为它自身唯一的解析器选择依据；缺少可信解析依赖时，相关需求不可执行。该 plan 的配置字段尚未实现，不能通过虚构配置宣称可用。当前编译产物仅提供保守的 [DnsExecution.egress](/v2/configuration-reference/node-configuration#dns-执行内容) 无出口证明或 `exitPlanRequired`，不下发可执行出口 DNS 路线。
+存在歧义的多出口、不同 via、auto 和域名依赖方案继续要求**显式、无循环的 DNS plan**；首版单出口编译不推测这些依赖。出口自己的 egress 必须证明无出口，避免 resolver 再指回 Mesh。该显式 plan 的用户配置字段尚未实现。
+
+客户端 owner 将普通查询生成独立 `MeshResolverRoute`，出口不可达时失败，不进入客户端系统上游重试队列。UDP 截断只可使用同一个 service permit 中独立允许的 TCP；旧查询、过期回答和切换前的输出保留原 ticket／scope 截止。
+
+**运行接线限制：**当前 `ServeExitResolver { permit }` 发布接受的源许可，但生产 SecureNode DNS-purpose ingress／原路径回复、受保护出口上游适配和 Mesh listener 尚未接通。`OwnerDispatcher::validate_scope` 对缺少真实适配的计划拒绝安装，不能据上述编译结果报告 applied。`exit/resolved` 与 `exit/resolv-conf` 尚需整组验收；这两个系统后端的通过状态不得相互替代。
 
 Server 通信／transport／协调的 bootstrap DNS 必须使用受保护系统通路，和业务 DNS 分开。运行实现范围见 [Node](/v2/node)。
 
@@ -90,4 +96,4 @@ Node 的 TTL 0 MagicDNS、REFUSED／NODATA、loopback Service、路由证据及�
 
 ## 域名执行关联
 
-解析所得地址集合由受控解析／验证流程建立并绑定发布、源范围、名称、地址、TTL；节点原始 State 不能自行扩大出口接受范围。正常分流保留域名上下文，同 IP 域名不具有严格服务隔离保证，见 [Access](/v2/configuration-reference/access#domains)。
+经出口 resolver 的回答只用于客户端解析，不自动创建 `TrustedDnsAssociation`，也不授予解析地址的业务访问。关联 producer 属于后续 X6：受控解析／验证流程须绑定发布、源范围、名称、地址和 TTL；节点原始 State 不能自行扩大出口接受范围。同 IP 域名不具有严格服务隔离保证，见 [Access](/v2/configuration-reference/access#domains)。

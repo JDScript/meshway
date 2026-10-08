@@ -137,7 +137,7 @@ pub struct SystemDnsPlan {
 }
 impl SystemDnsPlan {
     pub fn new(settings: &DnsConfiguration, egress: &DnsEgress) -> Result<Self, SystemDnsError> {
-        if !matches!(egress, DnsEgress::NoExit) {
+        if matches!(egress, DnsEgress::Unavailable { .. }) {
             return Err(SystemDnsError::ExitPlan);
         }
         Self::required(settings, egress)
@@ -171,7 +171,11 @@ impl SystemDnsPlan {
             }
             domains.insert(suffix, false);
         }
-        let root = settings.override_local || !matches!(egress, DnsEgress::NoExit);
+        let root = settings.override_local
+            || matches!(
+                egress,
+                DnsEgress::ViaExit { .. } | DnsEgress::Unavailable { .. }
+            );
         if root {
             domains.insert(".".into(), true);
         }

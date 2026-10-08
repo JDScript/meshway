@@ -1,8 +1,12 @@
 //! The host executes discovery with its unique `Control::query_dns` driver.
 //! Neither this owner nor a discovery result can authorize resolver traffic.
+mod exit;
+mod response;
+mod system;
 use crate::{
-    ConfigurationError, ExitSelection, LocalResolverRoute, PublishedDns, Query, ResponseTransport,
-    Selection, SelectionUnavailable, TrustedUpstreamResponse, WireError, encode_response,
+    ConfigurationError, ExitSelection, LocalResolverRoute, PublishedDns, Query, ResolverRoute,
+    ResponseTransport, Selection, SelectionUnavailable, TrustedUpstreamResponse, WireError,
+    encode_response,
 };
 use bytes::Bytes;
 use hickory_proto::{
@@ -117,9 +121,9 @@ pub struct DiscoveryRequest {
 #[derive(Debug)]
 pub struct UpstreamWork {
     pub(crate) ticket: Ticket,
-    pub(crate) route: LocalResolverRoute,
+    pub(crate) route: ResolverRoute,
     pub(crate) query: Query,
-    pub(crate) fallback: Option<LocalResolverRoute>,
+    pub(crate) fallback: Option<ResolverRoute>,
     pub(crate) remaining: VecDeque<SystemUpstream>,
 }
 
@@ -133,7 +137,7 @@ impl UpstreamWork {
     pub fn ticket(&self) -> &Ticket {
         &self.ticket
     }
-    pub fn route(&self) -> &LocalResolverRoute {
+    pub fn route(&self) -> &ResolverRoute {
         &self.route
     }
     pub fn query(&self) -> &Query {
@@ -169,76 +173,6 @@ pub struct Answer {
 impl fmt::Debug for Answer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Answer").finish_non_exhaustive()
-    }
-}
-
-impl Answer {
-    pub(crate) fn answers(&self, query: &Query) -> bool {
-        self.ready.query == *query
-    }
-
-    pub(crate) fn with_scope_fence(mut self, fence: crate::dispatcher::ScopeFence) -> Self {
-        self.scope_fence = Some(fence);
-        self
-    }
-
-    pub fn ensure_current(&self) -> Result<(), OwnerError> {
-        self.snapshot
-            .ensure_current()
-            .map_err(|_| OwnerError::Inactive)?;
-        if self.ready.cancelled.is_cancelled() || Instant::now() >= self.ready.deadline {
-            return Err(OwnerError::Cancelled);
-        }
-        if self
-            .scope_fence
-            .as_ref()
-            .is_some_and(|fence| !fence.current())
-        {
-            return Err(OwnerError::Cancelled);
-        }
-        if let Some(route) = &self.ready.route {
-            route.ensure_current().map_err(|_| OwnerError::Cancelled)?;
-        }
-        Ok(())
-    }
-
-    pub fn encode(
-        &self,
-        transport: ResponseTransport,
-        udp_payload_limit: u16,
-    ) -> Result<Bytes, OwnerError> {
-        self.ensure_current()?;
-        let bytes = encode_response(
-            &self.ready.query,
-            &self.ready.message,
-            transport,
-            udp_payload_limit,
-        )?;
-        self.ensure_current()?;
-        Ok(bytes)
-    }
-
-    pub async fn invalidated(&self) {
-        if self.ensure_current().is_err() {
-            return;
-        }
-        tokio::select! { biased;
-            _ = self.snapshot.invalidated() => {},
-            _ = self.ready.cancelled.cancelled() => {},
-            _ = tokio::time::sleep_until(self.ready.deadline.into()) => {},
-            _ = async {
-                match &self.ready.route {
-                    Some(route) => route.invalidated().await,
-                    None => std::future::pending().await,
-                }
-            } => {},
-            _ = async {
-                match &self.scope_fence {
-                    Some(fence) => fence.invalidated().await,
-                    None => std::future::pending().await,
-                }
-            } => {},
-        }
     }
 }
 
@@ -346,13 +280,19 @@ impl Owner {
             Ok(configuration) => configuration,
             Err(_) => return Begin::Unavailable(Unavailable::Inactive),
         };
-        let no_exit = matches!(configuration.dns.egress, DnsEgress::NoExit);
+        let no_exit = matches!(
+            configuration.dns.egress,
+            DnsEgress::NoExit | DnsEgress::ServeExitResolver { .. }
+        );
         let exit = if no_exit {
             ExitSelection::NoExit
         } else {
             ExitSelection::Exit
         };
         let selected = self.state.published.select(&query, exit);
+        if matches!(selected, Selection::ExitResolver) {
+            return self.begin_exit(query, request_deadline);
+        }
         let Selection::Resolvers(candidates) = selected else {
             let mut begin = self.begin(query, exit);
             match &mut begin {
@@ -369,7 +309,7 @@ impl Owner {
             }
             return begin;
         };
-        if !no_exit {
+        if matches!(configuration.dns.egress, DnsEgress::Unavailable { .. }) {
             return Begin::Unavailable(Unavailable::MissingExitPlan);
         }
         let now = Instant::now();
@@ -407,7 +347,7 @@ impl Owner {
         route.bind_cancellation(ticket.cancelled.clone());
         Begin::Upstream(Box::new(UpstreamWork {
             ticket,
-            route,
+            route: ResolverRoute::Local(route),
             query,
             fallback: None,
             remaining: VecDeque::new(),
@@ -462,51 +402,11 @@ impl Owner {
         let first = upstreams.pop_front().expect("nonempty checked system list");
         Begin::Upstream(Box::new(UpstreamWork {
             ticket,
-            route: first.route,
+            route: ResolverRoute::Local(first.route),
             query,
-            fallback: first.fallback,
+            fallback: first.fallback.map(ResolverRoute::Local),
             remaining: upstreams,
         }))
-    }
-
-    fn system_upstreams(
-        &self,
-        system: &crate::SystemResolverSnapshot,
-        demands: &BTreeMap<usize, RequestId>,
-        tcp_demands: &BTreeMap<usize, RequestId>,
-        deadline: Instant,
-    ) -> Result<VecDeque<SystemUpstream>, Unavailable> {
-        use meshway_configuration::DnsTransport;
-        if system.upstreams.is_empty() || system.upstreams.len() > 8 {
-            return Err(Unavailable::MissingResolverPlan);
-        }
-        let route = |index, transport, ids: &BTreeMap<usize, RequestId>| {
-            let demand = ids.get(&index).ok_or(Unavailable::MissingResolverPlan)?;
-            LocalResolverRoute::system(
-                self.snapshot.clone(),
-                system.clone(),
-                index,
-                transport,
-                *demand,
-                deadline,
-            )
-            .map_err(|error| match error {
-                crate::RouteError::Expired => Unavailable::Expired,
-                crate::RouteError::Binding => Unavailable::MissingResolverPlan,
-            })
-        };
-        (0..system.upstreams.len())
-            .map(|index| {
-                Ok(SystemUpstream {
-                    route: route(index, system.primary, demands)?,
-                    fallback: if system.primary == DnsTransport::Udp {
-                        Some(route(index, DnsTransport::Tcp, tcp_demands)?)
-                    } else {
-                        None
-                    },
-                })
-            })
-            .collect()
     }
 
     /// A response cannot be transplanted across owner generations or renewed
@@ -645,7 +545,7 @@ struct ReadyAnswer {
     message: Message,
     cancelled: CancellationToken,
     deadline: Instant,
-    route: Option<LocalResolverRoute>,
+    route: Option<ResolverRoute>,
 }
 
 enum Outcome {
@@ -800,6 +700,7 @@ impl State {
             }
             // Candidate configuration never becomes socket/route authority.
             Selection::Resolvers(_)
+            | Selection::ExitResolver
             | Selection::Unavailable(SelectionUnavailable::MissingResolverPlan) => {
                 Outcome::Unavailable(Unavailable::MissingResolverPlan)
             }
@@ -885,66 +786,7 @@ impl Drop for State {
     }
 }
 
-impl Binding {
-    fn validate(
-        &self,
-        pending: &Pending,
-        response: &NodeDnsQueryResponse,
-    ) -> Result<Option<RData>, Unavailable> {
-        if response.network_id != self.network || response.source_node_id != self.source {
-            return Err(Unavailable::BindingMismatch);
-        }
-        if response.configuration_revision != self.revision {
-            return Err(Unavailable::ReloadRequired);
-        }
-        let record = response.record.as_ref().ok_or(Unavailable::NotVisible)?;
-        if record.name != pending.name
-            || normalize_dns_name(&record.name).ok().as_ref() != Some(&record.name)
-        {
-            return Err(Unavailable::BindingMismatch);
-        }
-        if (record.node_id == self.source) != (record.name == self.self_name)
-            || (record.node_id == self.source && record.addresses != self.self_addresses)
-            || self
-                .peers
-                .get(&record.node_id)
-                .is_some_and(|addresses| *addresses != record.addresses)
-        {
-            return Err(Unavailable::BindingMismatch);
-        }
-        // Partial peers cannot prove absence or identify a target by its address.
-        // The Server's exact-name response binds previously undiscovered nodes.
-        match pending.query.question().query_type() {
-            RecordType::A => Ok(record
-                .addresses
-                .ipv4
-                .map(|address| RData::A(rdata::A(address)))),
-            RecordType::AAAA => Ok(record
-                .addresses
-                .ipv6
-                .map(|address| RData::AAAA(rdata::AAAA(address)))),
-            _ => Err(Unavailable::UnsupportedRecordType),
-        }
-    }
-}
-
-fn discovery_name(query: &Query) -> Option<String> {
-    // DNS wire labels are arbitrary octets. Do not feed escaped presentation
-    // strings or lossy UTF-8 into HTTP discovery, or turn a label dot into a
-    // separator. A-labels and valid UTF-8 both use the shared normalizer.
-    let mut labels = Vec::new();
-    for label in query.question().name().iter() {
-        let label = std::str::from_utf8(label).ok()?;
-        if label
-            .chars()
-            .any(|ch| matches!(ch, '.' | '\u{3002}' | '\u{ff0e}' | '\u{ff61}'))
-        {
-            return None;
-        }
-        labels.push(label);
-    }
-    normalize_dns_name(&labels.join(".")).ok()
-}
+use response::discovery_name;
 
 #[cfg(test)]
 mod tests;

@@ -230,7 +230,7 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 生产 `ResolverExchange` 由 Underlay 的 `SocketFactory` 实现，复用同一 socket 保护机制；UDP／TCP 每次实际 I/O 都检查原 sealed route、执行期限和取消。发送前随机化查询事务 ID，响应经实际来源、原问题及报文／帧边界校验后恢复客户端 ID。daemon 经唯一 Control owner 预先建立、续租 resolver 需求，再以原子刷新所得的快照安装 DNS scope；查询不借用 bootstrap 权限。
 
-出口 resolver、显式出口 DNS plan 和可信域名关联入口仍未接线，见 [DNS](/v2/configuration-reference/dns#使用出口时)。这些范围或任何必需安装失败均阻断整体 applied。
+单出口客户端 owner 消费 `DnsEgress::ViaExit`，使用独立密封 `MeshResolverRoute`，复用 ticket／dispatcher／输出取消；普通查询失败不会转成本机上游查询。`ResolverExchange::validate_mesh` 必须证明真实安装，`exchange_mesh` 只能经唯一 SecureNode 的受许可路径执行；默认 local-only 适配返回不可用。`ServeExitResolver` 的密封 Mesh ingress／出口系统上游与 listener、显式多出口 DNS plan 和可信域名关联入口仍未接线，见 [DNS](/v2/configuration-reference/dns#使用出口时)。这些范围或任何必需安装失败均阻断整体 applied。
 
 ## 系统 DNS 安装
 
