@@ -345,19 +345,15 @@ impl App {
         &self,
         provider: P,
     ) -> Result<crate::state::service::StateService<P>, crate::error::Error> {
-        let service = crate::state::service::StateService::new(
+        // Runtime shutdown is registered once when the App opens. Registering
+        // each handle would retain its provider and replay subscriptions until
+        // App shutdown, even after the last caller has dropped that service.
+        crate::state::service::StateService::new(
             self.executor.handle(),
             provider,
             self.sealer(),
             Arc::clone(&self.state_runtime),
-        )?;
-        let shutdown = service.clone();
-        self.shutdown_hooks
-            .0
-            .lock()
-            .map_err(|_| crate::error::Error::RUNTIME)?
-            .push(Box::new(move || shutdown.close()));
-        Ok(service)
+        )
     }
     pub fn execution(&self) -> crate::execution::Execution {
         crate::execution::Execution::new(self.executor.handle(), self.sealer(), self.boot)

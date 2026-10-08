@@ -53,6 +53,11 @@ async fn empty_directory_private_files_exclusion_shutdown_and_reopen() {
     let (_parent, path) = location();
     let app = App::open(Settings::new(&path)).await.unwrap();
     app.check_storage().await.unwrap();
+    // The App owns runtime shutdown, not every temporary projection/provider.
+    let state = app.user_state_service().unwrap();
+    let provider = Arc::downgrade(&state.provider);
+    drop(state);
+    assert!(provider.upgrade().is_none());
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
         0o700
