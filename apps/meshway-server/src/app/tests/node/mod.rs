@@ -272,6 +272,7 @@ async fn try_enroll_user_node(
 }
 
 mod demands;
+mod edge_transports;
 
 mod enrollment_http;
 

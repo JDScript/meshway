@@ -232,6 +232,17 @@ impl From<CompileError> for Error {
             // Demand fields are part of the compiler input, so an inconsistent
             // input may still originate from the requesting Node.
             CompileError::InvalidInput => Self::InvalidRequest,
+            CompileError::EdgeTransportUnavailable { rule, a, b } => {
+                Self::InvalidConfiguration(ConfigurationError::Invalid(vec![
+                    meshway_configuration::ConfigurationIssue::new(
+                        format!("/topology/{rule}/transports"),
+                        meshway_configuration::IssueCode::InvalidTransport,
+                    )
+                    .with("reason", "edge_transport_unavailable")
+                    .with("a", a)
+                    .with("b", b),
+                ]))
+            }
             CompileError::Material | CompileError::UnavailableDependency => {
                 Self::DependencyUnavailable
             }

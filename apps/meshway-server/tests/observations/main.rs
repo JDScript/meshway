@@ -264,6 +264,7 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
     server
         .configure(&user, network.id, |cfg| {
             cfg.topology.push(meshway_configuration::TopologyRule {
+                transports: meshway_configuration::Input::Omitted,
                 remark: String::new(),
                 action: meshway_configuration::TopologyAction::Block,
                 a: format!("node:{}", c.id),

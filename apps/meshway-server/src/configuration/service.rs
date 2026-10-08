@@ -8,6 +8,7 @@ use crate::store::configuration::{commits, versions};
 use crate::{accounts::token_digest, store::Handle};
 use meshway_configuration::{configuration_changes, edit_source, parse_jsonc};
 use meshway_model::{NetworkId, RequestId, Revision, UserId};
+use meshway_policy::compile::CompileError;
 use meshway_protocol::{WireSecret, configuration::*};
 use rusqlite::Transaction;
 use rusqlite::TransactionBehavior;
@@ -250,10 +251,9 @@ impl Configurations {
                         profile: profile.as_deref(),
                     })
                     .map_err(|error| match error {
-                        meshway_policy::compile::CompileError::InvalidInput => {
-                            Error::InvalidRequest
-                        }
-                        meshway_policy::compile::CompileError::Budget => Error::StateLimit,
+                        CompileError::InvalidInput => Error::InvalidRequest,
+                        CompileError::Budget => Error::StateLimit,
+                        error @ CompileError::EdgeTransportUnavailable { .. } => Error::from(error),
                         _ => Error::DependencyUnavailable,
                     })?;
                 Ok(EvaluationResponse {

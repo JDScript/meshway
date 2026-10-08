@@ -224,6 +224,7 @@ async fn discovery_http_uses_identity_access_and_current_atomic_configuration_wi
             ConfigurationOperation::ReplaceAccess { access: vec![] },
             ConfigurationOperation::ReplaceTopology {
                 topology: vec![TopologyRule {
+                    transports: Input::Omitted,
                     remark: String::new(),
                     action: TopologyAction::Block,
                     a: "*".into(),

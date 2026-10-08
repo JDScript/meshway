@@ -37,6 +37,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
     let mut input = NetworkConfigurationInput::from(&source.configuration);
     input.nodes.get_mut(&b.node_id).unwrap().exit_enabled = true;
     input.topology.push(TopologyRule {
+        transports: Input::Omitted,
         remark: String::new(),
         action: TopologyAction::Block,
         a: format!("node:{}", c.node_id),

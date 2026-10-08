@@ -231,6 +231,7 @@ async fn independent_demands_keep_unrelated_publication_lease_and_progress() {
     config.topology = [(a, b), (c.node_id, d.node_id)]
         .into_iter()
         .map(|(a, b)| TopologyRule {
+            transports: Input::Omitted,
             remark: String::new(),
             action: TopologyAction::Allow,
             a: format!("node:{a}"),

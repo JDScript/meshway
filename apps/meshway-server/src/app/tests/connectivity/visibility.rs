@@ -204,6 +204,7 @@ async fn complete_logical_path_visibility_does_not_disclose_nonadjacent_endpoint
     cfg.topology = [(a.id, relay.node_id), (relay.node_id, b.id)]
         .into_iter()
         .map(|(a, b)| TopologyRule {
+            transports: meshway_configuration::Input::Omitted,
             remark: String::new(),
             action: TopologyAction::Allow,
             a: format!("node:{a}"),

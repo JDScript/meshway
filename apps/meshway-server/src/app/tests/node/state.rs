@@ -323,6 +323,7 @@ async fn real_multihop_admission_separates_neighbors_paths_and_receipt_history()
     config.topology = [(a, c.node_id), (c.node_id, b)]
         .into_iter()
         .map(|(a, b)| TopologyRule {
+            transports: Input::Omitted,
             remark: String::new(),
             action: TopologyAction::Allow,
             a: format!("node:{a}"),
