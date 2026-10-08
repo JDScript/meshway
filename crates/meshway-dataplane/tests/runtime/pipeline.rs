@@ -6,7 +6,7 @@ use meshway_dataplane::secure::{
 use std::collections::VecDeque;
 
 #[tokio::test]
-async fn parallel_crypto_preserves_order_and_commits_replay_only_after_verification() {
+async fn parallel_crypto_preserves_order_replay_and_close_fences_at_both_commit_boundaries() {
     let mut fixture = SecureMesh::start().await;
     let circuit = fixture.handshake().await;
     for workers in [0, 3] {
@@ -104,6 +104,21 @@ async fn parallel_crypto_preserves_order_and_commits_replay_only_after_verificat
         }
         assert!(jobs.is_empty());
     }
+    // Both worker paths retain the original circuit guard. Closing after open
+    // must reject owner commit just as closing after prepare_send rejects release.
+    let frame = fixture
+        .a
+        .send(circuit, datagram(&fixture.mesh, false, false))
+        .unwrap();
+    let incoming = fixture
+        .r
+        .prepare_receive(&fixture.ar.carrier, frame.release(|bytes| bytes).unwrap())
+        .unwrap();
+    let opened = pipeline::open(incoming).unwrap();
+    fixture.r.close(circuit);
+    assert!(fixture.r.commit_receive(opened).is_err());
+    assert_eq!(fixture.r.retained_flows(), 0);
+
     let packet = datagram(&fixture.mesh, false, false);
     let job = fixture
         .a
@@ -112,22 +127,5 @@ async fn parallel_crypto_preserves_order_and_commits_replay_only_after_verificat
     fixture.a.close(circuit);
     // Crypto completion is not authority: worker can finish, release must fail.
     assert!(pipeline::seal(job).unwrap().release(|_| ()).is_err());
-    fixture.close().await;
-}
-
-#[tokio::test]
-async fn closing_between_open_and_commit_never_delivers_or_advances_owner() {
-    let mut fixture = SecureMesh::start().await;
-    let circuit = fixture.handshake().await;
-    let packet = datagram(&fixture.mesh, false, false);
-    let frame = fixture.a.send(circuit, packet).unwrap();
-    let job = fixture
-        .r
-        .prepare_receive(&fixture.ar.carrier, frame.release(|bytes| bytes).unwrap())
-        .unwrap();
-    let opened = pipeline::open(job).unwrap();
-    fixture.r.close(circuit);
-    assert!(fixture.r.commit_receive(opened).is_err());
-    assert_eq!(fixture.r.retained_flows(), 0);
     fixture.close().await;
 }
