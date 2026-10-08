@@ -8,15 +8,17 @@ use crate::object::{object, tagged};
 use meshway_model::NodeId;
 use meshway_serde::required_nullable as nullable;
 
-tagged! { pub enum EvaluatedDestination {
-    // A configured node, named directly or through its Mesh address.
+tagged! {
+/// What the request's target resolved to in the evaluated configuration.
+pub enum EvaluatedDestination {
+    /// A configured node, named directly or through its Mesh address.
     Node { node_id: NodeId },
-    // An address that is not a node's: an unassigned Mesh pool address, a
-    // private/non-public range, or the public Internet.
+    /// An address that is not a node's: an unassigned Mesh pool address, a
+    /// private/non-public range, or the public Internet.
     Address { address: String, class: AddressClass },
-    // A DNS name; which addresses it resolves to is unknown to the plan.
+    /// A DNS name; which addresses it resolves to is unknown to the plan.
     Domain { name: String },
-    // A public destination no rule names: only fallbacks apply.
+    /// A public destination no rule names: only fallbacks apply.
     Internet,
 } }
 meshway_serde::string_enum! {
@@ -106,8 +108,10 @@ object! { pub struct TargetEvaluation {
     pub paths: u32,
 } }
 
-tagged! { pub enum EvaluationOutcome {
-    // Paths exist and access allows the traffic; `paths` lists them, primary first.
+tagged! {
+/// What a demand from the source to the destination would get, as compilation decides it.
+pub enum EvaluationOutcome {
+    /// Paths exist and access allows the traffic; `paths` lists them, primary first.
     Permitted,
     Direct, Unmanaged,
     Unavailable { reason: UnavailableReason },

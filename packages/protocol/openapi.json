@@ -4774,6 +4774,8 @@
         "tags": [
           "configuration"
         ],
+        "summary": "Plan one source and target over the current version or a draft.",
+        "description": "Reports the deciding rule, the Access grants that cover the target, the\nplanned paths and why nothing would be permitted. A draft is evaluated as a\nchange to the current version and is not saved.",
         "operationId": "evaluateConfiguration",
         "parameters": [
           {
@@ -9548,7 +9550,8 @@
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Cancellation ends unfinished acquisition only, never an established business link."
       },
       "CandidateReference": {
         "type": "object",
@@ -12619,6 +12622,7 @@
         "oneOf": [
           {
             "type": "object",
+            "description": "A configured node, named directly or through its Mesh address.",
             "required": [
               "nodeId",
               "type"
@@ -12638,6 +12642,7 @@
           },
           {
             "type": "object",
+            "description": "An address that is not a node's: an unassigned Mesh pool address, a\nprivate/non-public range, or the public Internet.",
             "required": [
               "address",
               "class",
@@ -12661,6 +12666,7 @@
           },
           {
             "type": "object",
+            "description": "A DNS name; which addresses it resolves to is unknown to the plan.",
             "required": [
               "name",
               "type"
@@ -12680,6 +12686,7 @@
           },
           {
             "type": "object",
+            "description": "A public destination no rule names: only fallbacks apply.",
             "required": [
               "type"
             ],
@@ -12693,7 +12700,8 @@
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "What the request's target resolved to in the evaluated configuration."
       },
       "Evaluation": {
         "type": "object",
@@ -12821,6 +12829,7 @@
         "oneOf": [
           {
             "type": "object",
+            "description": "Paths exist and access allows the traffic; `paths` lists them, primary first.",
             "required": [
               "type"
             ],
@@ -12883,7 +12892,8 @@
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "What a demand from the source to the destination would get, as compilation decides it."
       },
       "EvaluationResponse": {
         "type": "object",
@@ -14157,7 +14167,8 @@
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "How the actual physical channel was acquired, not business authorization."
       },
       "LinkEvidence": {
         "type": "string",
@@ -20581,7 +20592,8 @@
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "A current-authority snapshot. Reading it never renews attempts or observations."
       },
       "ReceiptFreshness": {
         "type": "string",

@@ -982,7 +982,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Cancellation ends unfinished acquisition only, never an established business link."
       },
       "CandidateReference": {
         "type": "object",
@@ -4053,6 +4054,7 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "A configured node, named directly or through its Mesh address.",
             "required": [
               "nodeId",
               "type"
@@ -4072,6 +4074,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "An address that is not a node's: an unassigned Mesh pool address, a\nprivate/non-public range, or the public Internet.",
             "required": [
               "address",
               "class",
@@ -4095,6 +4098,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "A DNS name; which addresses it resolves to is unknown to the plan.",
             "required": [
               "name",
               "type"
@@ -4114,6 +4118,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "A public destination no rule names: only fallbacks apply.",
             "required": [
               "type"
             ],
@@ -4127,7 +4132,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "What the request's target resolved to in the evaluated configuration."
       },
       "Evaluation": {
         "type": "object",
@@ -4255,6 +4261,7 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Paths exist and access allows the traffic; `paths` lists them, primary first.",
             "required": [
               "type"
             ],
@@ -4317,7 +4324,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "What a demand from the source to the destination would get, as compilation decides it."
       },
       "EvaluationResponse": {
         "type": "object",
@@ -5591,7 +5599,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "How the actual physical channel was acquired, not business authorization."
       },
       "LinkEvidence": {
         "type": "string",
@@ -12015,7 +12024,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "A current-authority snapshot. Reading it never renews attempts or observations."
       },
       "ReceiptFreshness": {
         "type": "string",

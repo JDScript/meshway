@@ -92,6 +92,11 @@ pub(super) async fn source(
         .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(crate::configuration::source_response(&snapshot, id)))
 }
+/// Plan one source and target over the current version or a draft.
+///
+/// Reports the deciding rule, the Access grants that cover the target, the
+/// planned paths and why nothing would be permitted. A draft is evaluated as a
+/// change to the current version and is not saved.
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/evaluate",operation_id="evaluateConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=EvaluateConfigurationRequest,responses((status=200,body=EvaluationResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=429,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn evaluate(
     State(service): State<Configurations>,

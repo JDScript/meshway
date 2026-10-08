@@ -66,12 +66,12 @@ macro_rules! tagged {
         $crate::tagged!(tag="type"; $(#[$attribute])* pub enum $name { $($variants)* });
     };
     (tag=$tag:literal; $(#[$attribute:meta])* pub enum $name:ident {
-        $($variant:ident $(= $wire:literal)? $({ $($(#[$field_attribute:meta])* $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)? })?),* $(,)?
+        $($(#[$variant_attribute:meta])* $variant:ident $(= $wire:literal)? $({ $($(#[$field_attribute:meta])* $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)? })?),* $(,)?
     }) => {
         $(#[$attribute])*
         #[derive(serde::Serialize)]
         #[serde(tag = $tag, rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
-        pub enum $name { $($(#[serde(rename = $wire)])? $variant $({ $($(#[$field_attribute])* $field: $ty),* })?),* }
+        pub enum $name { $($(#[$variant_attribute])* $(#[serde(rename = $wire)])? $variant $({ $($(#[$field_attribute])* $field: $ty),* })?),* }
 
         impl<'de> serde::Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -95,9 +95,17 @@ macro_rules! tagged {
         impl utoipa::PartialSchema for $name {
             fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
                 use utoipa::openapi::{RefOr, schema::{Schema, ObjectBuilder, OneOfBuilder, Type}};
-                let mut union = OneOfBuilder::new();
+                // Doc comments on the enum and its variants become the union's
+                // and each branch's description; the derive sees them only on
+                // these stand-in declarations.
+                $crate::object! { $(#[$attribute])* pub struct $name {} }
+                let description = match <$name as utoipa::PartialSchema>::schema() {
+                    RefOr::T(Schema::Object(object)) => object.description,
+                    _ => None,
+                };
+                let mut union = OneOfBuilder::new().description(description);
                 $(
-                    $crate::object! { pub struct $variant {
+                    $crate::object! { $(#[$variant_attribute])* pub struct $variant {
                         $($($(#[$field_attribute])* pub $field: $ty $([$($schema)*])?),*)?
                     } }
                     let RefOr::T(Schema::Object(mut object)) = <$variant as utoipa::PartialSchema>::schema() else {
