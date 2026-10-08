@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 pub(super) const LIMIT: usize = 16 * 1024 * 1024;
 const RECORD: &str = "control.json";
 const MARKER: &[u8] = b"meshway-control/1\n";
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 
 fn marker(directory: &meshway_private_storage::Directory) -> Result<bool, Error> {
     let file = directory
@@ -130,7 +130,7 @@ impl Record {
         }
         let previous_version = envelope.version;
         let upgrading = match previous_version {
-            1 | 2 => true,
+            1 | 2 | 3 => true,
             VERSION => false,
             _ => return Err(Error::Record),
         };
@@ -209,7 +209,8 @@ fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
     Ok(value)
 }
 
-/// Only record v1 may contain this opaque derived body. MapOnly recursively
+/// Records before the current version carry derived bodies of retired compiler
+/// versions (v1: demand-4 without pools, v2: demand-4, v3: demand-5). MapOnly recursively
 /// rejects duplicate keys, including inside fields that are not execution inputs
 /// anymore. Header values retain their original strong types.
 fn validate_obsolete(
@@ -227,7 +228,7 @@ fn validate_obsolete(
     let slice: Slice<'_> = decode(raw.get().as_bytes())?;
     let fields: std::collections::BTreeMap<String, &RawValue> =
         decode(slice.configuration.get().as_bytes())?;
-    if fields.contains_key("meshAddressPools") != (version == 2) {
+    if fields.contains_key("meshAddressPools") != (version >= 2) {
         return Err(Error::Record);
     }
     let header =

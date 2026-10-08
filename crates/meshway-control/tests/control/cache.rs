@@ -1,15 +1,29 @@
 use super::{Control, Server};
-use meshway_configuration::execution::CompiledNode;
+use meshway_configuration::execution::{CompiledNode, NodeConfiguration};
 use meshway_control::Error;
 use serde_json::value::RawValue;
 use sha2::{Digest as _, Sha256};
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt};
 
+/// The demand-6 exit contract fields never existed in retired bodies.
+fn without_exit_contract(cfg: &NodeConfiguration) -> serde_json::Value {
+    let mut body = serde_json::to_value(cfg).unwrap();
+    let object = body.as_object_mut().unwrap();
+    object.remove("egressCapture");
+    object.remove("exitRole");
+    if let Some(permits) = object.get_mut("permits").and_then(|p| p.as_array_mut()) {
+        for permit in permits {
+            permit.as_object_mut().unwrap().remove("exit");
+        }
+    }
+    body
+}
+
 fn old_slice(current: &CompiledNode) -> String {
     // This is the exact prior serialization order, obtained from the production
     // compiler output by removing only the three new derived contract fields.
     let cfg = &current.configuration;
-    let mut body = serde_json::to_string(cfg).unwrap();
+    let mut body = serde_json::to_string(&without_exit_contract(cfg)).unwrap();
     body = body.replace(",\"source\":\"configured\"", "");
     for (name, value) in [
         (
@@ -64,6 +78,11 @@ async fn v2_cache_retires_without_reenrollment_for_endpoint_source_upgrade() {
     upgrade(2).await;
 }
 
+#[tokio::test]
+async fn v3_cache_retires_without_reenrollment_for_exit_contract_upgrade() {
+    upgrade(3).await;
+}
+
 async fn upgrade(version: u8) {
     let server = Server::start().await;
     let owner = server.owner().await;
@@ -84,9 +103,17 @@ async fn upgrade(version: u8) {
     let old = if version == 1 {
         old_slice(control.cached_target().unwrap())
     } else {
-        let body = serde_json::to_string(&control.cached_target().unwrap().configuration)
-            .unwrap()
-            .replace(",\"source\":\"configured\"", "");
+        // Derive the retired compiler body from the current one: v3 carried
+        // demand-5 (endpoint sources, no exit contract), v2 demand-4 (no sources).
+        let body = serde_json::to_string(&without_exit_contract(
+            &control.cached_target().unwrap().configuration,
+        ))
+        .unwrap();
+        let body = if version == 2 {
+            body.replace(",\"source\":\"configured\"", "")
+        } else {
+            body
+        };
         let digest = meshway_model::Digest::from_bytes(Sha256::digest(body.as_bytes()).into());
         format!(r#"{{"digest":"{digest}","configuration":{body}}}"#)
     };
@@ -116,7 +143,7 @@ async fn upgrade(version: u8) {
     for field in ["origin", "keys", "enrollment", "binding"] {
         assert_eq!(upgraded[field], original[field]);
     }
-    assert_eq!(upgraded["version"], 3);
+    assert_eq!(upgraded["version"], 4);
     assert!(upgraded["saved"].is_null());
     assert_eq!(fs::read(path.join("node-control.lock")).unwrap(), marker);
     assert_eq!(fs::read(&intent).unwrap(), b"retained host intent evidence");
