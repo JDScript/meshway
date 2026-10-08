@@ -63,10 +63,7 @@ Console 使用其所属任务运行：
 
 ```sh
 MESHWAY_CONTROLLER_URL=https://meshway-dev-api.jdscript.dev mise run dev:console
-MESHWAY_CONTROLLER_URL=http://127.0.0.1:8420 mise run dev:docs
 ```
-
-docs 的 dev 服务器带同一变量时把 `/api/v1`、`/agent-api/v1` 转发到该 Server，[API Explorer](/v2/api/explorer) 才能从文档站直接发请求；`dev.py` 启动的 docs 服务默认指向本机 `http://127.0.0.1:8420`。Server 只回答同源请求，不开 CORS。
 
 对外域名只提供 HTTPS 转发。开发 Server 以 `--stun-server dev-public=stun.l.google.com:19302` 发布外部 STUN，由 Node 的实际 UDP socket 查询，需要实际网络可达；托管 STUN 另需显式的 `--stun-listen`。HTTPS 域名可用不证明任何公网 UDP 映射可用。lab 容器的 bootstrap DNS 见[三节点环境](/v2/node/docker-lab#节点与持久状态)。
 
