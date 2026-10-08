@@ -63,6 +63,8 @@ pub(super) struct Report {
     pub facts_observed_at: DateTime<Utc>,
     pub facts: Option<meshway_connectivity::Snapshot>,
     pub generation: meshway_model::Sequence,
+    pub interface_epoch: u64,
+    pub owned_interfaces: Vec<String>,
     pub dependencies: std::collections::BTreeMap<meshway_model::NodeId, u32>,
     pub observation_dependencies:
         std::collections::BTreeMap<meshway_model::NodeId, Vec<meshway_model::ObservationId>>,
@@ -80,6 +82,8 @@ impl Report {
             facts_observed_at: Utc::now(),
             facts: None,
             generation: meshway_model::Sequence::MIN,
+            interface_epoch: 0,
+            owned_interfaces: Vec::new(),
             dependencies: Default::default(),
             observation_dependencies: Default::default(),
         }

@@ -6,6 +6,7 @@ use rtnetlink::{
         RouteNetlinkMessage,
         address::AddressAttribute,
         link::{LinkAttribute, LinkFlags},
+        route::RouteAttribute,
     },
     sys::{Socket, SocketAddr, protocols::NETLINK_ROUTE},
 };
@@ -236,7 +237,8 @@ pub(super) async fn run(
     expected: Arc<Mutex<Expected>>,
     table: u32,
 ) {
-    if let Err(_error) = monitor(socket, &expected, table).await {
+    if let Err(_error) = monitor(socket, &expected, table, &shared.network_changes).await {
+        tracing::warn!(error = %_error, "Underlay kernel monitor stopped");
         #[cfg(test)]
         if let Ok(mut state) = expected.lock() {
             Facts {
@@ -255,7 +257,12 @@ pub(super) async fn run(
     }
 }
 
-async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32) -> Result<()> {
+async fn monitor(
+    socket: AsyncFd<Socket>,
+    expected: &Mutex<Expected>,
+    table: u32,
+    changes: &tokio::sync::watch::Sender<u64>,
+) -> Result<()> {
     let mut buffer = vec![0; 65536];
     let wake = expected.lock().map_err(|_| Error::Worker)?.wake.clone();
     loop {
@@ -279,7 +286,15 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                 }
                 Err(error) => return Err(error.into()),
             };
-            if size == 0 || size >= buffer.len() || source.port_number() != 0 {
+            // Only kernel-originated notifications are authoritative. A process
+            // with NET_ADMIN can multicast to this group (Docker does so during
+            // interface replacement); its message must neither mutate our
+            // projection nor permanently revoke the kernel owner's protection.
+            if source.port_number() != 0 {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            if size == 0 || size >= buffer.len() {
                 #[cfg(test)]
                 if let Ok(mut state) = expected.lock() {
                     Facts {
@@ -307,11 +322,13 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                 let facts = Facts::from_payload(&message.payload);
                 macro_rules! conflict {
                     ($branch:literal) => {{
+                        tracing::warn!(reason = $branch, "Underlay kernel protection conflict");
                         #[cfg(test)]
                         facts.reject(&mut state, $branch);
                         return Err(Error::Conflict);
                     }};
                 }
+                let changed = network_changed(&state, &message.payload);
                 let owned =
                     state
                         .tun
@@ -501,10 +518,45 @@ async fn monitor(socket: AsyncFd<Socket>, expected: &Mutex<Expected>, table: u32
                     _ => return Err(Error::Netlink),
                 }
                 offset += (length + 3) & !3;
+                if changed {
+                    changes.send_modify(|epoch| *epoch = epoch.wrapping_add(1));
+                }
             }
             // Every received datagram is finite; cooperate even during event floods.
             tokio::task::yield_now().await;
         }
+    }
+}
+
+fn network_changed(state: &Expected, payload: &NetlinkPayload<RouteNetlinkMessage>) -> bool {
+    let external = |index| {
+        index != 1
+            && state
+                .tun
+                .as_ref()
+                .is_none_or(|(owned, _, _, _)| *owned != index)
+            && state
+                .anchor
+                .as_ref()
+                .is_none_or(|anchor| anchor.identity.index != index)
+    };
+    match payload {
+        NetlinkPayload::InnerMessage(
+            RouteNetlinkMessage::NewLink(link) | RouteNetlinkMessage::DelLink(link),
+        ) => external(link.header.index),
+        NetlinkPayload::InnerMessage(
+            RouteNetlinkMessage::NewAddress(address) | RouteNetlinkMessage::DelAddress(address),
+        ) => external(address.header.index),
+        NetlinkPayload::InnerMessage(
+            RouteNetlinkMessage::NewRoute(route) | RouteNetlinkMessage::DelRoute(route),
+        ) => {
+            route_table(route) == 254
+                && route.attributes.iter().all(|attribute| match attribute {
+                    RouteAttribute::Oif(index) => external(*index),
+                    _ => true,
+                })
+        }
+        _ => false,
     }
 }
 

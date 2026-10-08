@@ -43,6 +43,7 @@ pub(super) async fn run(
     mtu: usize,
 ) -> Result<(), Problem> {
     let (mut dns, dns_plans) = dns;
+    let mut network_changes = host.network_changes();
     let mut installed: Option<Installed> = None;
     let mut packets = Packets::default();
     let workers = std::env::var("MESHWAY_DATAPLANE_WORKERS")
@@ -82,7 +83,7 @@ pub(super) async fn run(
         if let Some(reply) = deferred_sample.take()
             && !reply.is_closed()
         {
-            let report = sample(&installed, reports.borrow().clone());
+            let report = sample_host(&host, &installed, reports.borrow().clone());
             let _ = reply.send(reports.sample(report));
             sample_at = None;
         }
@@ -106,6 +107,7 @@ pub(super) async fn run(
             CarrierClosed,
             Tick,
             SampleDue,
+            NetworkChanged,
         }
         let live = installed.as_ref().is_some_and(|state| state.live);
         let can_read = live && packets.can_read(&pool);
@@ -142,6 +144,7 @@ pub(super) async fn run(
                     }
                 } else { std::future::pending::<()>().await; }
             } => Work::Invalid,
+            changed = network_changes.changed() => if changed.is_ok() { Work::NetworkChanged } else { Work::Command(None) },
             _ = async { match sample_at { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::SampleDue,
             work = async {
                 // Packet pressure must not starve incoming handshakes or lease
@@ -178,8 +181,14 @@ pub(super) async fn run(
         let structural = matches!(&work, Work::Target | Work::DnsTimeout)
             || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
+            Work::NetworkChanged => {
+                network_changes.borrow_and_update();
+                let report = sample_host(&host, &installed, reports.borrow().clone());
+                reports.send_replace(report);
+                continue;
+            }
             Work::SampleDue => {
-                let report = sample(&installed, reports.borrow().clone());
+                let report = sample_host(&host, &installed, reports.borrow().clone());
                 reports.send_replace(report);
                 sample_at = None;
                 continue;
@@ -205,7 +214,7 @@ pub(super) async fn run(
                 continue;
             }
             Work::Command(Some(Command::Sample(reply))) => {
-                let report = sample(&installed, reports.borrow().clone());
+                let report = sample_host(&host, &installed, reports.borrow().clone());
                 let _ = reply.send(reports.sample(report));
                 sample_at = None;
                 continue;
@@ -546,7 +555,7 @@ pub(super) async fn run(
             }
         }
         if structural {
-            let report = sample(&installed, reports.borrow().clone());
+            let report = sample_host(&host, &installed, reports.borrow().clone());
             reports.send_replace(report);
             sample_at = None;
         } else {
@@ -604,6 +613,12 @@ fn handoff_deadline(guard: &meshway_authority::ExecutionSnapshot) -> Option<toki
 
 /// An explicit measurement by the resource owner. Application observation time
 /// remains immutable; sampling current sockets is distinct from receipt replay.
+fn sample_host(host: &Host, installed: &Option<Installed>, mut report: Report) -> Report {
+    report.interface_epoch = *host.network_changes().borrow();
+    report.owned_interfaces = host.owned_interfaces();
+    sample(installed, report)
+}
+
 fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("host.sample");

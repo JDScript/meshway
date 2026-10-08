@@ -24,6 +24,7 @@ use meshway_transport_spec::{
 use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 use tokio::{net::TcpListener, sync::watch, task::JoinSet};
 
+mod interface_change;
 mod streaming;
 
 pub async fn run(cli: &Cli) -> Result<()> {
@@ -826,6 +827,7 @@ async fn coordinate(
         ("restored", None),
     )
     .await?;
+    interface_change::run(cli, &signals, &client, network, token, &nodes).await?;
     for role in Role::ALL {
         if !matches!(
             signals

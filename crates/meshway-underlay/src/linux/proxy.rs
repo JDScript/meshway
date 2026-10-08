@@ -95,7 +95,11 @@ impl Proxy {
                 if tasks
                     .spawn(async move {
                         let _permit = permit;
-                        let _ = relay(stream, &host, port, shared, resolver, timeout).await;
+                        if let Err(error) =
+                            relay(stream, &host, port, shared, resolver, timeout).await
+                        {
+                            tracing::warn!(error = %error, "Protected control relay failed");
+                        }
                     })
                     .is_err()
                 {
@@ -118,6 +122,21 @@ impl Proxy {
 }
 
 async fn relay(
+    local: UnixStream,
+    host: &str,
+    port: u16,
+    shared: Arc<Shared>,
+    resolver: Resolver,
+    timeout: Duration,
+) -> Result<()> {
+    let mut changes = shared.network_changes.subscribe();
+    tokio::select! { biased;
+        _ = changes.changed() => Ok(()),
+        result = relay_current(local, host, port, shared, resolver, timeout) => result,
+    }
+}
+
+async fn relay_current(
     mut local: UnixStream,
     host: &str,
     port: u16,

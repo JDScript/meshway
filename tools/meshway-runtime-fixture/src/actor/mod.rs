@@ -1,3 +1,4 @@
+mod interface_change;
 mod reconnect;
 
 use crate::{
@@ -519,6 +520,7 @@ async fn exercise(
         &(initial_rx, initial_rx + received),
     )
     .await?;
+    interface_change::run(cli, role, signals, revision, &mut traffic).await?;
     let pre_outage = running(cli, revision).await?;
     save(cli, "before-outage-status", &pre_outage).await?;
     signals

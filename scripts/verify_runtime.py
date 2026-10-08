@@ -31,6 +31,7 @@ PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests
 ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
 KERNEL_TESTS = {
+    "underlay-interface-multicast": "linux::tests::userspace_multicast_cannot_poison_kernel_monitor_or_control_proxy",
     "underlay-journal-classification": "linux::kernel::journal::tests::journal_classifies_same_namespace_changed_namespace_and_changed_boot",
     "underlay-journal-archive": "linux::kernel::journal::tests::changed_namespace_archives_exact_journal_and_same_namespace_recovers",
     "underlay-journal-boot": "linux::kernel::journal::tests::previous_boot_journal_is_not_a_conflict_or_a_recovery",
@@ -654,8 +655,47 @@ def main():
                     "MESHWAY_UNDERLAY_ORIGIN": "https://meshway-packet-controller:8443/",
                     "MESHWAY_UNDERLAY_ORIGIN_IP": addresses["controller"],
                     "MESHWAY_UNDERLAY_CA": "/public/server.pem"})
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
             futures = {executor.submit(execute, role): role for role in ROLES}
+            def interface_change():
+                replacement = str(ipv4.network_address + 30)
+                if replacement in addresses.values() or replacement in gateways:
+                    raise RuntimeError("interface replacement address is not reserved")
+                write_json(report / "signals/interface-addresses.json", {"old": addresses["r"], "new": replacement})
+                def link_addresses():
+                    links = json.loads(run("docker", "exec", containers["r"], "ip", "-json", "address", "show", "dev", "eth0", capture=True))
+                    return [address for link in links for address in link["addr_info"]
+                            if address["family"] == "inet6" and address["scope"] == "link"]
+                original_link_addresses = None
+                for stage, address in (("changed", replacement), ("restored", addresses["r"])):
+                    deadline = time.monotonic() + 900
+                    while not (report / f"signals/interface-request-{stage}.json").exists():
+                        if any(future.done() for future in futures) or time.monotonic() >= deadline:
+                            raise RuntimeError("interface replacement rendezvous failed")
+                        time.sleep(0.1)
+                    owned_container(containers["r"])
+                    if stage == "changed":
+                        original_link_addresses = link_addresses()
+                        if len(original_link_addresses) != 1:
+                            raise RuntimeError("expected this fixture's settled IPv6 link-local address")
+                    run("docker", "network", "disconnect", network, containers["r"], capture=True)
+                    run("docker", "network", "connect", "--ip", address, "--ip6", addresses6["r"], network, containers["r"], capture=True)
+                    if stage == "restored":
+                        # Docker assigns a new MAC to the replacement veth. Restore
+                        # only our fixture's original link-local address too, so
+                        # the existing exact-down baseline still compares the same
+                        # underlay; never remove or normalize Meshway resources.
+                        original = original_link_addresses[0]
+                        current = link_addresses()
+                        run("docker", "exec", containers["r"], "ip", "-6", "addr", "replace",
+                            f"{original['local']}/{original['prefixlen']}", "dev", "eth0", "scope", "link", "nodad", capture=True)
+                        for item in current:
+                            if item["local"] != original["local"]:
+                                run("docker", "exec", containers["r"], "ip", "-6", "addr", "del",
+                                    f"{item['local']}/{item['prefixlen']}", "dev", "eth0", capture=True)
+                    (report / f"interface-{stage}-addresses.json").write_text(run("docker", "exec", containers["r"], "ip", "-json", "address", capture=True))
+                    write_json(report / f"signals/interface-{stage}.json", {"kind": "ready"})
+            interface = executor.submit(interface_change) if args.reported_endpoints else None
             def bootstrap_check():
                 deadline = time.monotonic() + 30
                 while not (report / "signals/enroll.json").exists():
@@ -669,6 +709,8 @@ def main():
                 manifest["processes"][role] = future.result()
                 write_json(metadata, manifest)
             result = bootstrap.result()
+            if interface:
+                interface.result()
             passed = (not any(result.values()) and "test result: ok. 1 passed; 0 failed; 0 ignored;" in (report / "bootstrap.log").read_text())
             manifest["bootstrapHttpsTest"] = {"passed": passed, **result}
             if not passed:

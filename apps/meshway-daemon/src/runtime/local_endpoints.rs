@@ -14,7 +14,11 @@ struct InterfaceAddress {
     address: IpAddr,
 }
 
-pub(super) fn sample(state: &mut NodeState, configuration: &NodeConfiguration) {
+pub(super) fn sample(
+    state: &mut NodeState,
+    configuration: &NodeConfiguration,
+    owned_interfaces: &[String],
+) {
     let Ok(interfaces) = interfaces() else {
         return;
     };
@@ -51,7 +55,13 @@ pub(super) fn sample(state: &mut NodeState, configuration: &NodeConfiguration) {
             Listener::Vless(listener) => &listener.bind_interface,
             Listener::Trojan(listener) => &listener.bind_interface,
         };
-        let mut local = candidates(socket.bound_address, interface, &interfaces, &pools);
+        let mut local = candidates(
+            socket.bound_address,
+            interface,
+            &interfaces,
+            &pools,
+            owned_interfaces,
+        );
         let count = counts.entry(key).or_insert(0);
         local.truncate(MAX_LOCAL_ENDPOINTS - *count);
         *count += local.len();
@@ -89,6 +99,7 @@ fn candidates(
     interface: &str,
     interfaces: &[InterfaceAddress],
     pools: &[ipnet::IpNet],
+    owned_interfaces: &[String],
 ) -> Vec<LocalEndpoint> {
     if bound.port() == 0 {
         return Vec::new();
@@ -97,6 +108,7 @@ fn candidates(
         .iter()
         .filter(|candidate| {
             (interface.is_empty() || candidate.name == interface)
+                && !owned_interfaces.contains(&candidate.name)
                 && bound.is_ipv4() == candidate.address.is_ipv4()
                 && (bound.ip().is_unspecified() || bound.ip() == candidate.address)
                 && usable(candidate.address, pools)
@@ -151,14 +163,20 @@ mod tests {
             "100.64.0.0/10".parse().unwrap(),
             "fd00::/64".parse().unwrap(),
         ];
-        let v4 = candidates("0.0.0.0:35000".parse().unwrap(), "", &interfaces, &pools);
+        let v4 = candidates(
+            "0.0.0.0:35000".parse().unwrap(),
+            "",
+            &interfaces,
+            &pools,
+            &[],
+        );
         assert_eq!(
             v4.iter()
                 .map(|endpoint| endpoint.address.to_string())
                 .collect::<Vec<_>>(),
             ["10.0.0.2:35000", "192.168.1.2:35000"]
         );
-        let v6 = candidates("[::]:35000".parse().unwrap(), "", &interfaces, &pools);
+        let v6 = candidates("[::]:35000".parse().unwrap(), "", &interfaces, &pools, &[]);
         assert_eq!(v6[0].address, "[2001:db8::2]:35000".parse().unwrap());
         assert_eq!(v6.len(), 1);
     }
@@ -169,16 +187,64 @@ mod tests {
             .collect();
         interfaces.push(interface("eth0", "10.0.0.1"));
         assert_eq!(
-            candidates("0.0.0.0:35000".parse().unwrap(), "", &interfaces, &[]).len(),
+            candidates("0.0.0.0:35000".parse().unwrap(), "", &interfaces, &[], &[]).len(),
             8
         );
-        assert!(candidates("0.0.0.0:35000".parse().unwrap(), "eth1", &interfaces, &[]).is_empty());
+        assert!(
+            candidates(
+                "0.0.0.0:35000".parse().unwrap(),
+                "eth1",
+                &interfaces,
+                &[],
+                &[]
+            )
+            .is_empty()
+        );
         let bound = "10.0.0.19:35000".parse().unwrap();
         assert_eq!(
-            candidates(bound, "eth0", &interfaces, &[])[0].address,
+            candidates(bound, "eth0", &interfaces, &[], &[])[0].address,
             bound
         );
         interfaces.retain(|interface| interface.address != bound.ip());
-        assert!(candidates(bound, "eth0", &interfaces, &[]).is_empty());
+        assert!(candidates(bound, "eth0", &interfaces, &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn owned_dns_anchor_and_tun_are_excluded_by_identity_not_address_prefix() {
+        let interfaces = [
+            interface("anchor-owned", "198.18.255.254"),
+            interface("anchor-owned", "192.0.2.12"),
+            interface("tun-owned", "192.0.2.13"),
+            interface("eth0", "198.18.1.2"),
+            interface("mwd-foreign", "192.0.2.14"),
+        ];
+        let owned = ["anchor-owned".into(), "tun-owned".into()];
+        let endpoints = candidates(
+            "0.0.0.0:35000".parse().unwrap(),
+            "",
+            &interfaces,
+            &[],
+            &owned,
+        );
+        assert_eq!(
+            endpoints
+                .iter()
+                .map(|endpoint| endpoint.address.ip())
+                .collect::<Vec<_>>(),
+            vec![
+                "192.0.2.14".parse::<IpAddr>().unwrap(),
+                "198.18.1.2".parse().unwrap()
+            ]
+        );
+        assert!(
+            candidates(
+                "198.18.255.254:35000".parse().unwrap(),
+                "anchor-owned",
+                &interfaces,
+                &[],
+                &owned
+            )
+            .is_empty()
+        );
     }
 }

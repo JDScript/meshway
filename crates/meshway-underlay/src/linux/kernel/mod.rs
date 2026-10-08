@@ -51,6 +51,20 @@ pub(super) struct Kernel {
 }
 
 impl Kernel {
+    pub fn owned_interfaces(&self) -> Vec<String> {
+        self.journal
+            .tun
+            .iter()
+            .map(|tun| tun.name.clone())
+            .chain(
+                self.journal
+                    .anchor
+                    .iter()
+                    .map(|anchor| anchor.identity.name.clone()),
+            )
+            .collect()
+    }
+
     pub async fn open(directory: Arc<Directory>, options: Options, tasks: Tasks) -> Result<Self> {
         // Subscribe before the baseline dump so rule changes cannot disappear
         // between discovery and the monitor's start.
@@ -119,6 +133,7 @@ impl Kernel {
             mark: journal.mark,
             selectors,
             conflict,
+            network_changes: tokio::sync::watch::channel(0).0,
             tasks: tasks.clone(),
             sockets: Arc::new(Semaphore::new(bootstrap_sockets)),
             data_sockets: Arc::new(Semaphore::new(options.max_sockets - bootstrap_sockets)),

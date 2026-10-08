@@ -43,6 +43,7 @@ pub(super) struct Shared {
     pub mark: Mark,
     pub selectors: Vec<Selector>,
     pub conflict: CancellationToken,
+    pub network_changes: tokio::sync::watch::Sender<u64>,
     pub tasks: Tasks,
     pub sockets: Arc<Semaphore>,
     pub data_sockets: Arc<Semaphore>,

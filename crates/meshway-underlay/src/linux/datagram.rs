@@ -191,6 +191,7 @@ mod tests {
             },
             selectors: Vec::new(),
             conflict: CancellationToken::new(),
+            network_changes: tokio::sync::watch::channel(0).0,
             tasks: Tasks::new(16),
             sockets: Arc::new(Semaphore::new(8)),
             data_sockets: Arc::new(Semaphore::new(8)),

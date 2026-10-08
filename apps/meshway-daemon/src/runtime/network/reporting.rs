@@ -22,6 +22,7 @@ pub(super) struct Key {
     problem: Option<meshway_ipc::Problem>,
     completion: Option<Result<(), ApplyFailure>>,
     generation: Sequence,
+    interface_epoch: u64,
     execution_live: bool,
     dns_live: bool,
     listeners: BTreeMap<[u8; 32], Listener>,
@@ -51,6 +52,7 @@ impl Key {
             problem: report.problem,
             completion: report.completion,
             generation: report.generation,
+            interface_epoch: report.interface_epoch,
             execution_live,
             dns_live,
             listeners: BTreeMap::new(),
@@ -288,7 +290,11 @@ impl super::Handle {
         if let Some(guard) = &facts.guard
             && let Ok(configuration) = guard.configuration()
         {
-            crate::runtime::local_endpoints::sample(&mut state, configuration);
+            crate::runtime::local_endpoints::sample(
+                &mut state,
+                configuration,
+                &facts.owned_interfaces,
+            );
         }
         // Guard changes between sampling and projection must not acknowledge
         // the earlier positive observation with a now-empty outgoing report.

@@ -139,6 +139,15 @@ impl Host {
     pub fn sockets(&self) -> SocketFactory {
         self.sockets.clone()
     }
+    /// Coalesced link/address/route changes observed by the existing kernel
+    /// monitor. Observations carry no execution authority.
+    pub fn network_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.kernel.shared.network_changes.subscribe()
+    }
+    /// Exact interface names held by this owner's journal (TUN and DNS anchor).
+    pub fn owned_interfaces(&self) -> Vec<String> {
+        self.kernel.owned_interfaces()
+    }
     pub async fn dns_anchor(
         &mut self,
         reservation: &meshway_dns::SystemDnsReservation,

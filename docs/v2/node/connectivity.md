@@ -43,6 +43,8 @@ TCP／VLESS／Trojan 会话建立后同样可双向收发。UDP 打洞解决路�
 
 所有承载的直接拨号候选由 Server 合并：管理员的额外公告地址（`configured`）优先，本机 listener 上报地址（`local`）次之；同地址保留优先来源。流式承载也可使用 `local`。原始字段、过滤和每 listener 八地址上限见[本机 listener 候选](/v2/state-reference/endpoints#本机-listener-候选)。选定通道的 acquisition 分别为 `publishedEndpoint`／`localEndpoint`；接受端仍为 `acceptedInbound`。
 
+Linux 的 `localEndpoints` 只从实际 listener 的地址族、bind 地址及已启用本机接口枚举。除 Mesh 地址池、loopback、未指定、多播、广播及不可用 link-local／scoped 地址外，还排除 Underlay journal 明确持有的 TUN 与独立 DNS 锚点接口上的全部地址；不按 `mwd*` 名称或 `198.18/15` 等地址前缀猜测归属。外部 link／address／route 事件唤醒现有 State 报告调度，最多每秒一次，20 秒例行报告继续作为兜底。新报告重新枚举，删除已消失的地址；待确认旧报告仍重试原内容，其成功不确认后来发生的接口变化。peer 在后续获准连接获取时使用更新后的候选，候选变化不授予新权限或延长旧 lease。
+
 STUN 继续使用原有同 socket 观测与双边接受的协调路径，不把 UDP 映射加入 TCP／VLESS／Trojan 目标。只有本机候选而没有 configured 地址的 UDP 邻接继续保留 STUN 刷新资格；本机候选不意味着 NAT 穿透已成功。
 
 STUN 使用 RFC 8489 Binding 交换观察 socket 的外部映射；Meshway Server 负责当前主体／网络权限、获准 peer 的候选交换和有期限的尝试协调；Node 使用实际 socket 互发探测并完成认证。
