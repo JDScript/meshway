@@ -649,9 +649,12 @@ export const zDiagnosticPermit = z.strictObject({
   ["target"]: zNodeId
 });
 
-export const zEndpoint = z.strictObject({
+export const zDialEndpointSource = z.enum(["configured","local"]);
+
+export const zDialEndpoint = z.strictObject({
   ["host"]: z.string(),
-  ["port"]: zPort
+  ["port"]: zPort,
+  ["source"]: zDialEndpointSource
 });
 
 export const zSocketOptions = z.strictObject({
@@ -758,7 +761,7 @@ export const zDialParameters = z.union([z.strictObject({
 })]);
 
 export const zDialCandidate = z.strictObject({
-  ["endpoints"]: z.array(zEndpoint),
+  ["endpoints"]: z.array(zDialEndpoint),
   ["listenerKey"]: z.string(),
   ["parameters"]: zDialParameters,
   ["peer"]: zNodeId,
@@ -818,6 +821,11 @@ export const zNodeIdentity = z.union([z.strictObject({
   ["tags"]: z.array(z.string()),
   ["type"]: z.enum(["tag"])
 })]);
+
+export const zEndpoint = z.strictObject({
+  ["host"]: z.string(),
+  ["port"]: zPort
+});
 
 export const zTlsMode = z.enum(["managed","provided"]);
 
@@ -2309,6 +2317,8 @@ export const zGetRuleSetPath = z.strictObject({
 export const zLinkAcquisition = z.union([z.strictObject({
   ["type"]: z.enum(["publishedEndpoint"])
 }), z.strictObject({
+  ["type"]: z.enum(["localEndpoint"])
+}), z.strictObject({
   ["type"]: z.enum(["acceptedInbound"])
 }), z.strictObject({
   ["attemptId"]: zUdpTraversalId,
@@ -2563,6 +2573,7 @@ export const zLeaveNetworkPath = z.strictObject({
 });
 
 export const zLinkState = z.strictObject({
+  ["acquisition"]: zLinkAcquisition.nullable().exactOptional(),
   ["businessDependencies"]: z.int().gte(0).lte(2147483647),
   ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["initiatorNodeId"]: zNodeId,
@@ -2665,6 +2676,13 @@ export const zListenerState = z.strictObject({
 export const zLocalEgressDelta = z.strictObject({
   ["remove"]: z.array(zRequestId),
   ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zLocalEgressPermit, {})
+});
+
+export const zLocalEndpointSource = z.enum(["local"]);
+
+export const zLocalEndpoint = z.strictObject({
+  ["address"]: z.string(),
+  ["source"]: zLocalEndpointSource
 });
 
 export const zLoginRequest = z.strictObject({
@@ -2893,6 +2911,7 @@ export const zSocketState = z.strictObject({
   ["configuration"]: zConfigurationRef.nullable().exactOptional(),
   ["endpoints"]: z.array(zEndpointCandidate),
   ["generation"]: zSequence,
+  ["localEndpoints"]: z.array(zLocalEndpoint).max(8).nullable().exactOptional(),
   ["network"]: zSocketNetwork,
   ["resource"]: zResourceRef
 });
