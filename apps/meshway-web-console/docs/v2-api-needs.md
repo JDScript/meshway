@@ -81,6 +81,15 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
 - 安装脚本和 Agent 发布。
 - 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
+- **对外站点的委托登录**（`apps/meshway-web-site` 的 API 参考里「试用」用，产品已定）：OAuth 授权码 + PKCE，console 负责登录和同意，服务端签发。
+  - 授权码：已登录用户请求，绑定 `client`、`redirect_uri`（按白名单）、`code_challenge`（S256）和 `state`；一次性、短期（例如 60 秒）。console 的同意页调用它，再跳回站点，地址里只带 code 和 state。
+  - 换 token：站点用 code 和 `code_verifier` 换取委托会话，响应里带服务端的对外地址。委托会话 1 小时到期、不续期，有自己的 client 标签，出现在账户会话列表里，可以单独撤销；console 登出不影响它。
+  - 权限：和用户一样，但不能改密码、改邮箱、撤销其他会话，也不能再签发委托。
+  - CORS：像 `--console-origin` 一样配置站点的 origin 白名单，只放行 Bearer，不带 cookie，覆盖 `/api/v1` 和换 token 的接口。
+- **API 参考需要的契约内容**（站点从 `openapi.json` 生成参考页）：
+  - 示例：现在没有任何请求／响应示例。建议放成 fixture，由生成器的测试用 zod 校验后写进 OpenAPI。
+  - 每个操作可能返回的 problem code：现在只有 HTTP 状态码，读者看不出 409 是 `revision_conflict` 还是 `state_conflict`。
+  - tag 的顺序和分组：现在是平铺列表，顺序跟着路由注册走。
 
 ## 待处理的问题
 
