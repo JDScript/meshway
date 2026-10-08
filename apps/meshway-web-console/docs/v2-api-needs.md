@@ -85,7 +85,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 安装脚本和 Agent 发布。
 - 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
 - **API 参考需要的契约内容**（站点从 `openapi.json` 生成参考页）：
-  - 示例：现在没有任何请求／响应示例。建议放成 fixture，由生成器的测试用 zod 校验后写进 OpenAPI。
+  - ~~示例~~：已提供。fixture 在 `packages/protocol/examples/<tag>.json`，按 operationId 给 `request` 和 `responses.<status>`；Server 导出契约时写进 `requestBody.content[...].example` 和 `responses[...].content[...].example`，所以 `openapi.json` 直接带示例。SDK 测试（`packages/control-client/test/examples.test.ts`）用生成的 zod schema 校验每个示例，并要求所有 JSON 请求体和 2xx 响应都有示例；错误响应不用手写，Server 用该响应首个 problem code 的真实 `ErrorResponse` 作为示例（`password_weak` 带真实 PasswordRules，`configuration_invalid` 在 validate 上有手写的 `invalid_domain` 例子）。所有示例描述同一个 `lab` 网络（paris 中继、NAT 后的 office-gw、alice-laptop、bob-phone），ID／时间在各操作间一致。注意示例对象的键按字母序输出（Rust 侧 `serde_json::Value` 不保序）。
   - tag 的顺序和分组：现在是平铺列表，顺序跟着路由注册走。
 
 ## 待处理的问题

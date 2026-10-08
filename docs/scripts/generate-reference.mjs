@@ -221,7 +221,19 @@ function renderOperation(path, method, op) {
     lines.push(`| ${status} | ${isError && response.description ? typeOf(contents[0][1].schema) : text} | ${codes} |`);
   }
   lines.push("");
+  // Request and success-response examples from the contract; error responses
+  // all share the ErrorResponse shape documented in api/problems.md.
+  const requestExample = body?.content?.["application/json"]?.example;
+  if (requestExample !== undefined) lines.push(details("Request example", requestExample));
+  for (const [status, response] of Object.entries(op.responses ?? {}).sort(([a], [b]) => Number(a) - Number(b))) {
+    const example = response.content?.["application/json"]?.example;
+    if (status.startsWith("2") && example !== undefined) lines.push(details(`Response ${status} example`, example));
+  }
   return lines.join("\n");
+}
+
+function details(title, value) {
+  return [`::: details ${title}`, "```json", JSON.stringify(value, null, 2), "```", ":::", ""].join("\n");
 }
 
 function renderOperationsPage(title, intro, prefix) {

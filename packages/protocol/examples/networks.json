@@ -1,1 +1,164 @@
-{}
+{
+  "listNetworks": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "items": [
+          {
+            "id": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+            "name": "lab",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "currentRevision": 7,
+            "membershipId": "c3d2e1f0-9a8b-4c7d-8e6f-5a4b3c2d1e30",
+            "role": "owner",
+            "actions": {
+              "rename": true,
+              "readConfiguration": true,
+              "editConfiguration": true,
+              "manageMembers": true,
+              "joinLinkRoles": [
+                "owner",
+                "admin",
+                "member"
+              ]
+            }
+          }
+        ],
+        "nextCursor": null,
+        "asOf": "2026-10-08T09:10:00Z",
+        "total": 1
+      }
+    }
+  },
+  "createNetwork": {
+    "request": {
+      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "name": "lab"
+    },
+    "responses": {
+      "201": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "network": {
+          "id": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+          "name": "lab",
+          "createdAt": "2026-10-08T09:00:00Z",
+          "currentRevision": 7,
+          "membershipId": "c3d2e1f0-9a8b-4c7d-8e6f-5a4b3c2d1e30",
+          "role": "owner",
+          "actions": {
+            "rename": true,
+            "readConfiguration": true,
+            "editConfiguration": true,
+            "manageMembers": true,
+            "joinLinkRoles": [
+              "owner",
+              "admin",
+              "member"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "getNetwork": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "network": {
+          "id": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+          "name": "lab",
+          "createdAt": "2026-10-08T09:00:00Z",
+          "currentRevision": 7,
+          "membershipId": "c3d2e1f0-9a8b-4c7d-8e6f-5a4b3c2d1e30",
+          "role": "owner",
+          "actions": {
+            "rename": true,
+            "readConfiguration": true,
+            "editConfiguration": true,
+            "manageMembers": true,
+            "joinLinkRoles": [
+              "owner",
+              "admin",
+              "member"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "listNetworkMembers": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "items": [
+          {
+            "membershipId": "c3d2e1f0-9a8b-4c7d-8e6f-5a4b3c2d1e30",
+            "userId": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+            "email": "alice@example.com",
+            "role": "owner",
+            "version": 1,
+            "joinedAt": "2026-10-08T09:00:00Z",
+            "actions": {
+              "changeRole": false,
+              "assignableRoles": [
+                "owner"
+              ],
+              "remove": false
+            }
+          },
+          {
+            "membershipId": "d4e3f2a1-8b9c-4d6e-9f7a-6b5c4d3e2f40",
+            "userId": "b2e1d0c9-a8f7-4e65-9d4c-3b2a1f0e9d20",
+            "email": "bob@example.com",
+            "role": "member",
+            "version": 1,
+            "joinedAt": "2026-10-08T09:05:00Z",
+            "actions": {
+              "changeRole": true,
+              "assignableRoles": [
+                "owner",
+                "admin",
+                "member"
+              ],
+              "remove": true
+            }
+          }
+        ],
+        "nextCursor": null,
+        "asOf": "2026-10-08T09:10:00Z",
+        "total": 2
+      }
+    }
+  },
+  "renameNetwork": {
+    "request": {
+      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "name": "lab",
+      "expectedName": "lab-draft"
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "network": {
+          "id": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+          "name": "lab",
+          "createdAt": "2026-10-08T09:00:00Z",
+          "currentRevision": 7,
+          "membershipId": "c3d2e1f0-9a8b-4c7d-8e6f-5a4b3c2d1e30",
+          "role": "owner",
+          "actions": {
+            "rename": true,
+            "readConfiguration": true,
+            "editConfiguration": true,
+            "manageMembers": true,
+            "joinLinkRoles": [
+              "owner",
+              "admin",
+              "member"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

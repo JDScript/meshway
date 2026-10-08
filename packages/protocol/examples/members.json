@@ -1,1 +1,195 @@
-{}
+{
+  "inspectJoinLink": {
+    "request": {
+      "token": "mwj_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "link": {
+          "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+          "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+          "role": "member",
+          "createdAt": "2026-10-08T09:03:00Z",
+          "expiresAt": "2026-10-09T09:03:00Z",
+          "issuedBy": {
+            "userId": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+            "email": "alice@example.com"
+          },
+          "revokedAt": null,
+          "consumedAt": null,
+          "consumedBy": null,
+          "actions": {
+            "revoke": true
+          }
+        },
+        "networkName": "lab",
+        "alreadyMember": true
+      }
+    }
+  },
+  "redeemJoinLink": {
+    "request": {
+      "token": "mwj_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+        "membershipId": "d4e3f2a1-8b9c-4d6e-9f7a-6b5c4d3e2f40"
+      }
+    }
+  },
+  "listJoinLinks": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "items": [
+          {
+            "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+            "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+            "role": "member",
+            "createdAt": "2026-10-08T09:03:00Z",
+            "expiresAt": "2026-10-09T09:03:00Z",
+            "issuedBy": {
+              "userId": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+              "email": "alice@example.com"
+            },
+            "revokedAt": null,
+            "consumedAt": null,
+            "consumedBy": null,
+            "actions": {
+              "revoke": true
+            }
+          }
+        ],
+        "nextCursor": null,
+        "asOf": "2026-10-08T09:04:00Z",
+        "total": 1
+      }
+    }
+  },
+  "createJoinLink": {
+    "request": {
+      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "role": "member",
+      "expiresInSeconds": 86400
+    },
+    "responses": {
+      "201": {
+        "secretDelivery": "available",
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "link": {
+          "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+          "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+          "role": "member",
+          "createdAt": "2026-10-08T09:03:00Z",
+          "expiresAt": "2026-10-09T09:03:00Z",
+          "issuedBy": {
+            "userId": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+            "email": "alice@example.com"
+          },
+          "revokedAt": null,
+          "consumedAt": null,
+          "consumedBy": null,
+          "actions": {
+            "revoke": true
+          }
+        },
+        "secret": "mwj_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
+    }
+  },
+  "leaveNetwork": {
+    "request": {
+      "expectedVersion": 1,
+      "expectedRevision": 7
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "revision": 8
+      }
+    }
+  },
+  "getLeaveImpact": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "membershipId": "c3d2e1f0-9a8b-4c7d-8e6f-5a4b3c2d1e30",
+        "version": 1,
+        "revision": 7,
+        "nodeIds": [
+          "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60"
+        ],
+        "nodeCount": 1
+      }
+    }
+  },
+  "getMemberRemovalImpact": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "membershipId": "d4e3f2a1-8b9c-4d6e-9f7a-6b5c4d3e2f40",
+        "version": 1,
+        "revision": 7,
+        "nodeIds": [
+          "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80"
+        ],
+        "nodeCount": 1
+      }
+    }
+  },
+  "removeMember": {
+    "request": {
+      "expectedVersion": 1,
+      "expectedRevision": 7
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "revision": 8
+      }
+    }
+  },
+  "changeMemberRole": {
+    "request": {
+      "expectedVersion": 1,
+      "role": "owner"
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "member": {
+          "membershipId": "d4e3f2a1-8b9c-4d6e-9f7a-6b5c4d3e2f40",
+          "userId": "b2e1d0c9-a8f7-4e65-9d4c-3b2a1f0e9d20",
+          "email": "bob@example.com",
+          "role": "owner",
+          "version": 2,
+          "joinedAt": "2026-10-08T09:05:00Z",
+          "actions": {
+            "changeRole": true,
+            "assignableRoles": [
+              "owner",
+              "admin",
+              "member"
+            ],
+            "remove": true
+          }
+        }
+      }
+    }
+  },
+  "getMemberRoleChangeImpact": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "membershipId": "d4e3f2a1-8b9c-4d6e-9f7a-6b5c4d3e2f40",
+        "version": 1,
+        "role": "owner",
+        "joinLinks": [],
+        "joinLinkCount": 0
+      }
+    }
+  }
+}

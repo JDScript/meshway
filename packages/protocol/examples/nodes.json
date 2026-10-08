@@ -1,1 +1,155 @@
-{}
+{
+  "listNodes": {
+    "responses": {
+      "200": {
+        "items": [
+          {
+            "id": "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80",
+            "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+            "registeredAt": "2026-10-08T09:01:00Z",
+            "hostname": "bob-phone",
+            "enabled": true,
+            "identity": {
+              "type": "user",
+              "user": "bob@example.com"
+            },
+            "addresses": {
+              "ipv4": "100.80.0.13",
+              "ipv6": "fd42:7a65:8800::13"
+            },
+            "keys": {
+              "control": {
+                "id": "e18c9d0e-1f2a-4b3c-8d4e-6f7a8b9c0d12",
+                "generation": 1,
+                "publicKey": {
+                  "algorithm": "ed25519",
+                  "bytes": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+                }
+              },
+              "dataplane": {
+                "id": "f29d0e1f-2a3b-4c5d-8e6f-7a8b9c0d1e23",
+                "generation": 1,
+                "publicKey": {
+                  "algorithm": "x25519",
+                  "bytes": "44e9a51f6328b04d7ac130f58d6e923ba40c716e39f8a502bd7e640c128f35a9"
+                }
+              }
+            },
+            "controlKeyRevokedAt": null,
+            "dataplaneKeyRevokedAt": null,
+            "canDelete": false,
+            "desiredExecution": {
+              "revision": 7,
+              "executionPublication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20",
+              "digest": "c6291573f40ab28d915ce376a0bf482cd319e507fb0468c912d35a0f7eac4986"
+            },
+            "canRevokeControlKey": false,
+            "canRevokeDataplaneKey": false,
+            "controlKeyCreatedAt": "2026-10-08T09:01:00Z",
+            "dataplaneKeyCreatedAt": "2026-10-08T09:01:00Z"
+          }
+        ]
+      }
+    }
+  },
+  "getNode": {
+    "responses": {
+      "200": {
+        "id": "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80",
+        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+        "registeredAt": "2026-10-08T09:01:00Z",
+        "hostname": "bob-phone",
+        "enabled": true,
+        "identity": {
+          "type": "user",
+          "user": "bob@example.com"
+        },
+        "addresses": {
+          "ipv4": "100.80.0.13",
+          "ipv6": "fd42:7a65:8800::13"
+        },
+        "keys": {
+          "control": {
+            "id": "e18c9d0e-1f2a-4b3c-8d4e-6f7a8b9c0d12",
+            "generation": 1,
+            "publicKey": {
+              "algorithm": "ed25519",
+              "bytes": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+            }
+          },
+          "dataplane": {
+            "id": "f29d0e1f-2a3b-4c5d-8e6f-7a8b9c0d1e23",
+            "generation": 1,
+            "publicKey": {
+              "algorithm": "x25519",
+              "bytes": "44e9a51f6328b04d7ac130f58d6e923ba40c716e39f8a502bd7e640c128f35a9"
+            }
+          }
+        },
+        "controlKeyRevokedAt": null,
+        "dataplaneKeyRevokedAt": null,
+        "canDelete": false,
+        "desiredExecution": {
+          "revision": 7,
+          "executionPublication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20",
+          "digest": "c6291573f40ab28d915ce376a0bf482cd319e507fb0468c912d35a0f7eac4986"
+        },
+        "canRevokeControlKey": false,
+        "canRevokeDataplaneKey": false,
+        "controlKeyCreatedAt": "2026-10-08T09:01:00Z",
+        "dataplaneKeyCreatedAt": "2026-10-08T09:01:00Z"
+      }
+    }
+  },
+  "deleteNode": {
+    "request": {
+      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "expectedRevision": 7
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+        "revision": 8,
+        "publicationIds": [
+          "ae5f6a7b-8c9d-4e0f-8a1b-3c4d5e6f7a80"
+        ],
+        "targetCount": 3,
+        "deletedNodeIds": [
+          "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80"
+        ]
+      }
+    }
+  },
+  "revokeNodeKey": {
+    "request": {
+      "keyId": "e18c9d0e-1f2a-4b3c-8d4e-6f7a8b9c0d12",
+      "expectedGeneration": 1
+    }
+  },
+  "getNodeSettings": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+        "nodeId": "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80",
+        "revision": 7,
+        "settings": {
+          "hostname": "bob-phone",
+          "remark": "Bob's phone",
+          "identity": {
+            "type": "user",
+            "user": "bob@example.com"
+          },
+          "enabled": true,
+          "addresses": {
+            "ipv4": "100.80.0.13",
+            "ipv6": "fd42:7a65:8800::13"
+          },
+          "listeners": {},
+          "exitEnabled": false
+        }
+      }
+    }
+  }
+}

@@ -2,6 +2,8 @@
 
 下载 [OpenAPI 契约（JSON）](/v2/contracts/openapi.json) 查看完整操作、参数和类型。该文件由 Rust 类型与实际路由生成，本站在构建／预览时原样发布；Rust／TypeScript SDK 使用同一来源。本文定义共同语义，可用范围见 [Server](/v2/server)。
 
+契约里每个 JSON 请求体和 2xx 响应带一个示例，描述同一个示例网络（`lab`：中继 `paris`、NAT 后的 `office-gw`、用户设备 `alice-laptop`／`bob-phone`）；示例来自 `packages/protocol/examples/<tag>.json`，由生成 SDK 的 zod schema 校验并要求全覆盖。错误响应的示例是 Server 对该响应首个 problem code 的真实输出。
+
 ## 两类调用者
 
 | 根路径 | 调用者与凭据 | 职责 |

@@ -1,1 +1,347 @@
-{}
+{
+  "prepareUdpTraversal": {
+    "request": {
+      "instance": {
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "generation": 1
+      },
+      "configuration": {
+        "revision": 7,
+        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "expiresAt": "2026-10-08T09:00:10Z",
+      "peerId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+      "carrier": {
+        "dialer": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+        "listener": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+        "listenerKey": "mesh-udp",
+        "protocol": "native_udp"
+      },
+      "localCandidate": {
+        "socket": {
+          "nodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+          "instance": {
+            "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "generation": 1
+          },
+          "configuration": {
+            "revision": 7,
+            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "socketId": "udp-paris-1",
+          "socketGeneration": 3,
+          "resource": {
+            "kind": "dial",
+            "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
+          }
+        },
+        "observationDigest": "ad3166bbd39f2cabdb74c04b8f7cfb48a31d5f4f09cc180c61fc4143b35dc4d3"
+      },
+      "peerCandidate": {
+        "socket": {
+          "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+          "instance": {
+            "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+            "generation": 1
+          },
+          "configuration": {
+            "revision": 7,
+            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+            "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          },
+          "socketId": "udp-listener-1",
+          "socketGeneration": 1,
+          "resource": {
+            "kind": "listener",
+            "key": "mesh-udp"
+          }
+        },
+        "observationDigest": "d2b92ab6a90bad74c35709af05efb596d0a9092207e5066fa5bfee61c25ca855"
+      }
+    },
+    "responses": {
+      "200": {
+        "status": "offer",
+        "offer": {
+          "attemptId": "6e7f8a9b-0c1d-4e2f-8a3b-4c5d6e7f8a9b",
+          "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+          "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+          "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+          "version": 1,
+          "digest": "a18e3573109f92d278eb9ddc5d74f78415639f15b06bc774309b025f060e460b",
+          "nonce": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+          "carrier": {
+            "dialer": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+            "listener": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+            "listenerKey": "mesh-udp",
+            "protocol": "native_udp"
+          },
+          "local": {
+            "candidate": {
+              "socket": {
+                "nodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "instance": {
+                  "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+                  "generation": 1
+                },
+                "configuration": {
+                  "revision": 7,
+                  "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                  "digest": "abababababababababababababababababababababababababababababababab"
+                },
+                "socketId": "udp-paris-1",
+                "socketGeneration": 3,
+                "resource": {
+                  "kind": "dial",
+                  "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
+                }
+              },
+              "observationDigest": "ad3166bbd39f2cabdb74c04b8f7cfb48a31d5f4f09cc180c61fc4143b35dc4d3"
+            },
+            "address": "198.51.100.42:40001",
+            "source": "stun"
+          },
+          "peer": {
+            "candidate": {
+              "socket": {
+                "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                "instance": {
+                  "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+                  "generation": 1
+                },
+                "configuration": {
+                  "revision": 7,
+                  "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                  "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                },
+                "socketId": "udp-listener-1",
+                "socketGeneration": 1,
+                "resource": {
+                  "kind": "listener",
+                  "key": "mesh-udp"
+                }
+              },
+              "observationDigest": "d2b92ab6a90bad74c35709af05efb596d0a9092207e5066fa5bfee61c25ca855"
+            },
+            "address": "203.0.113.10:8421",
+            "source": "configured"
+          },
+          "expiresAt": "2026-10-08T09:00:10Z"
+        }
+      }
+    }
+  },
+  "acceptUdpTraversal": {
+    "request": {
+      "instance": {
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "generation": 1
+      },
+      "configuration": {
+        "revision": 7,
+        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+      "version": 1,
+      "digest": "a18e3573109f92d278eb9ddc5d74f78415639f15b06bc774309b025f060e460b"
+    },
+    "responses": {
+      "200": {
+        "status": "active",
+        "offer": {
+          "attemptId": "6e7f8a9b-0c1d-4e2f-8a3b-4c5d6e7f8a9b",
+          "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+          "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+          "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+          "version": 1,
+          "digest": "a18e3573109f92d278eb9ddc5d74f78415639f15b06bc774309b025f060e460b",
+          "nonce": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+          "carrier": {
+            "dialer": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+            "listener": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+            "listenerKey": "mesh-udp",
+            "protocol": "native_udp"
+          },
+          "local": {
+            "candidate": {
+              "socket": {
+                "nodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "instance": {
+                  "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+                  "generation": 1
+                },
+                "configuration": {
+                  "revision": 7,
+                  "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                  "digest": "abababababababababababababababababababababababababababababababab"
+                },
+                "socketId": "udp-paris-1",
+                "socketGeneration": 3,
+                "resource": {
+                  "kind": "dial",
+                  "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
+                }
+              },
+              "observationDigest": "ad3166bbd39f2cabdb74c04b8f7cfb48a31d5f4f09cc180c61fc4143b35dc4d3"
+            },
+            "address": "198.51.100.42:40001",
+            "source": "stun"
+          },
+          "peer": {
+            "candidate": {
+              "socket": {
+                "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                "instance": {
+                  "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+                  "generation": 1
+                },
+                "configuration": {
+                  "revision": 7,
+                  "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                  "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                },
+                "socketId": "udp-listener-1",
+                "socketGeneration": 1,
+                "resource": {
+                  "kind": "listener",
+                  "key": "mesh-udp"
+                }
+              },
+              "observationDigest": "d2b92ab6a90bad74c35709af05efb596d0a9092207e5066fa5bfee61c25ca855"
+            },
+            "address": "203.0.113.10:8421",
+            "source": "configured"
+          },
+          "expiresAt": "2026-10-08T09:00:10Z"
+        }
+      }
+    }
+  },
+  "cancelUdpTraversal": {
+    "request": {
+      "instance": {
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "generation": 1
+      },
+      "configuration": {
+        "revision": 7,
+        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+      "version": 1,
+      "digest": "a18e3573109f92d278eb9ddc5d74f78415639f15b06bc774309b025f060e460b"
+    },
+    "responses": {
+      "200": {
+        "status": "cancelled"
+      }
+    }
+  },
+  "queryUdpTraversal": {
+    "request": {
+      "instance": {
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "generation": 1
+      },
+      "configuration": {
+        "revision": 7,
+        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "digest": "abababababababababababababababababababababababababababababababab"
+      }
+    },
+    "responses": {
+      "200": {
+        "status": "current",
+        "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+        "asOf": "2026-10-08T09:00:02Z",
+        "expiresAt": "2026-10-08T09:00:32Z",
+        "stunServers": [
+          {
+            "id": "primary",
+            "endpoint": {
+              "host": "stun.example.com",
+              "port": 3478
+            }
+          }
+        ],
+        "attempts": [
+          {
+            "offer": {
+              "attemptId": "6e7f8a9b-0c1d-4e2f-8a3b-4c5d6e7f8a9b",
+              "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+              "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+              "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+              "version": 1,
+              "digest": "a18e3573109f92d278eb9ddc5d74f78415639f15b06bc774309b025f060e460b",
+              "nonce": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+              "carrier": {
+                "dialer": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "listener": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                "listenerKey": "mesh-udp",
+                "protocol": "native_udp"
+              },
+              "local": {
+                "candidate": {
+                  "socket": {
+                    "nodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                    "instance": {
+                      "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+                      "generation": 1
+                    },
+                    "configuration": {
+                      "revision": 7,
+                      "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                      "digest": "abababababababababababababababababababababababababababababababab"
+                    },
+                    "socketId": "udp-paris-1",
+                    "socketGeneration": 3,
+                    "resource": {
+                      "kind": "dial",
+                      "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
+                    }
+                  },
+                  "observationDigest": "ad3166bbd39f2cabdb74c04b8f7cfb48a31d5f4f09cc180c61fc4143b35dc4d3"
+                },
+                "address": "198.51.100.42:40001",
+                "source": "stun"
+              },
+              "peer": {
+                "candidate": {
+                  "socket": {
+                    "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                    "instance": {
+                      "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+                      "generation": 1
+                    },
+                    "configuration": {
+                      "revision": 7,
+                      "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                      "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                    },
+                    "socketId": "udp-listener-1",
+                    "socketGeneration": 1,
+                    "resource": {
+                      "kind": "listener",
+                      "key": "mesh-udp"
+                    }
+                  },
+                  "observationDigest": "d2b92ab6a90bad74c35709af05efb596d0a9092207e5066fa5bfee61c25ca855"
+                },
+                "address": "203.0.113.10:8421",
+                "source": "configured"
+              },
+              "expiresAt": "2026-10-08T09:00:10Z"
+            },
+            "phase": "waiting"
+          }
+        ]
+      }
+    }
+  }
+}

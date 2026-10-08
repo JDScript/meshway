@@ -1,1 +1,108 @@
-{}
+{
+  "getAccount": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "user": {
+          "id": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+          "email": "alice@example.com"
+        }
+      }
+    }
+  },
+  "listAccountActivity": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "items": [
+          {
+            "id": "ab1c2d3e-4f50-4a6b-8c7d-8e9f0a1b2c3d",
+            "at": "2026-10-08T09:01:00Z",
+            "actor": {
+              "type": "user",
+              "userId": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+              "email": "alice@example.com"
+            },
+            "action": "session.delegate",
+            "target": {
+              "type": "session",
+              "sessionId": "5e8f1a2b-3c4d-4e5f-9a6b-7c8d9e0f1a2b"
+            },
+            "beforeRevision": null,
+            "afterRevision": null,
+            "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          },
+          {
+            "id": "bc2d3e4f-5061-4a7b-8c8d-9e0f1a2b3c4d",
+            "at": "2026-10-08T09:00:00Z",
+            "actor": {
+              "type": "user",
+              "userId": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+              "email": "alice@example.com"
+            },
+            "action": "session.login",
+            "target": {
+              "type": "session",
+              "sessionId": "5e8f1a2b-3c4d-4e5f-9a6b-7c8d9e0f1a2b"
+            },
+            "beforeRevision": null,
+            "afterRevision": null,
+            "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          }
+        ],
+        "nextCursor": null,
+        "asOf": "2026-10-08T09:01:00Z"
+      }
+    }
+  },
+  "changeAccountEmail": {
+    "request": {
+      "password": "correct horse battery staple",
+      "email": "alice@example.com"
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "user": {
+          "id": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+          "email": "alice@example.com"
+        }
+      }
+    }
+  },
+  "changeAccountPassword": {
+    "request": {
+      "currentPassword": "correct horse battery staple",
+      "password": "fresh meadow silver lantern"
+    }
+  },
+  "listAccountSessions": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "items": [
+          {
+            "id": "6f9a2b3c-4d5e-4f60-8a7b-8c9d0e1f2a3b",
+            "createdAt": "2026-10-08T09:01:30Z",
+            "expiresAt": "2026-10-08T10:01:30Z",
+            "lastUsedAt": null,
+            "clientLabel": "site",
+            "current": false,
+            "delegationClient": "site"
+          },
+          {
+            "id": "5e8f1a2b-3c4d-4e5f-9a6b-7c8d9e0f1a2b",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "expiresAt": "2026-10-09T09:00:00Z",
+            "lastUsedAt": "2026-10-08T09:02:00Z",
+            "clientLabel": "Chrome · macOS",
+            "current": true,
+            "delegationClient": null
+          }
+        ],
+        "nextCursor": null,
+        "asOf": "2026-10-08T09:02:00Z"
+      }
+    }
+  }
+}

@@ -1,1 +1,71 @@
-{}
+{
+  "listNetworkActivity": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "items": [
+          {
+            "id": "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d",
+            "at": "2026-10-08T09:10:00Z",
+            "actor": {
+              "type": "user",
+              "userId": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+              "email": "alice@example.com"
+            },
+            "action": "configuration.apply",
+            "target": {
+              "type": "configuration",
+              "revision": 7
+            },
+            "beforeRevision": 6,
+            "afterRevision": 7,
+            "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          },
+          {
+            "id": "cd3e4f50-6172-4a8b-8c9d-0e1f2a3b4c5d",
+            "at": "2026-10-08T09:05:00Z",
+            "actor": {
+              "type": "user",
+              "userId": "b2e1d0c9-a8f7-4e65-9d4c-3b2a1f0e9d20",
+              "email": "bob@example.com"
+            },
+            "action": "membership.join",
+            "target": {
+              "type": "membership",
+              "membershipId": "d4e3f2a1-8b9c-4d6e-9f7a-6b5c4d3e2f40"
+            },
+            "beforeRevision": null,
+            "afterRevision": null,
+            "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          }
+        ],
+        "nextCursor": null,
+        "asOf": "2026-10-08T09:10:00Z"
+      }
+    }
+  },
+  "getNetworkActivity": {
+    "responses": {
+      "200": {
+        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "activity": {
+          "id": "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d",
+          "at": "2026-10-08T09:10:00Z",
+          "actor": {
+            "type": "user",
+            "userId": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
+            "email": "alice@example.com"
+          },
+          "action": "configuration.apply",
+          "target": {
+            "type": "configuration",
+            "revision": 7
+          },
+          "beforeRevision": 6,
+          "afterRevision": 7,
+          "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        }
+      }
+    }
+  }
+}

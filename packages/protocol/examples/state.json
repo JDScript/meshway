@@ -1,1 +1,646 @@
-{}
+{
+  "reportNodeState": {
+    "request": {
+      "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+      "sequence": 18,
+      "observedAt": "2026-10-08T09:00:00Z",
+      "state": {
+        "system": {
+          "hostname": "office-gw-linux",
+          "os": "linux",
+          "arch": "arm64",
+          "agentVersion": "0.1.0"
+        },
+        "capabilities": {
+          "transport:native_tcp": {
+            "kind": "transport",
+            "roles": [
+              "dial",
+              "listen"
+            ],
+            "streams": [
+              "tcp"
+            ]
+          },
+          "transport:native_udp": {
+            "kind": "transport",
+            "roles": [
+              "dial",
+              "listen"
+            ],
+            "streams": [
+              "udp"
+            ]
+          }
+        },
+        "configuration": {
+          "saved": {
+            "revision": 7,
+            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "applied": {
+            "revision": 7,
+            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "progress": null
+        },
+        "listeners": {
+          "mesh-udp": {
+            "phase": "listening",
+            "socketIds": [
+              "udp-office-listener-1"
+            ],
+            "loadedCertificateSha256": null,
+            "problem": null,
+            "configuration": null
+          }
+        },
+        "sockets": {
+          "udp-office-listener-1": {
+            "resource": {
+              "kind": "listener",
+              "key": "mesh-udp"
+            },
+            "configuration": null,
+            "generation": 1,
+            "network": "udp",
+            "boundAddress": "0.0.0.0:8421",
+            "endpoints": []
+          },
+          "udp-paris-1": {
+            "resource": {
+              "kind": "dial",
+              "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
+            },
+            "configuration": null,
+            "generation": 3,
+            "network": "udp",
+            "boundAddress": "0.0.0.0:41641",
+            "endpoints": [
+              {
+                "address": "198.51.100.42:40001",
+                "origin": {
+                  "source": "stun",
+                  "observer": "stun.example.com:3478"
+                },
+                "observedAt": "2026-10-08T09:00:00Z",
+                "expiresAt": "2026-10-08T09:00:20Z"
+              }
+            ]
+          }
+        },
+        "links": {},
+        "paths": {},
+        "selection": {
+          "appliedProfile": "mesh"
+        },
+        "probes": [],
+        "problems": []
+      }
+    },
+    "responses": {
+      "200": {
+        "sequence": 18,
+        "receivedAt": "2026-10-08T09:00:01Z",
+        "duplicate": false
+      }
+    }
+  },
+  "queryPeerState": {
+    "request": {
+      "nodes": [
+        "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+      ]
+    },
+    "responses": {
+      "200": {
+        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+        "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+        "sequence": 24,
+        "configurationRevision": 7,
+        "asOf": "2026-10-08T09:00:02Z",
+        "nodes": {
+          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50": {
+            "hostname": "paris",
+            "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+            "reportSequence": 12,
+            "observedAt": "2026-10-08T09:00:00Z",
+            "receivedAt": "2026-10-08T09:00:01Z",
+            "reportExpiresAt": "2026-10-08T09:01:00Z",
+            "lastAuthenticatedAt": "2026-10-08T09:00:01Z",
+            "freshness": "current",
+            "report": {
+              "view": "peer",
+              "report": {
+                "capabilities": {
+                  "transport:native_tcp": {
+                    "kind": "transport",
+                    "roles": [
+                      "dial",
+                      "listen"
+                    ],
+                    "streams": [
+                      "tcp"
+                    ]
+                  },
+                  "transport:native_udp": {
+                    "kind": "transport",
+                    "roles": [
+                      "dial",
+                      "listen"
+                    ],
+                    "streams": [
+                      "udp"
+                    ]
+                  }
+                },
+                "configuration": {
+                  "saved": {
+                    "revision": 7,
+                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                  },
+                  "applied": {
+                    "revision": 7,
+                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                  },
+                  "progress": null
+                },
+                "endpoints": [
+                  {
+                    "socketId": "udp-listener-1",
+                    "resource": {
+                      "kind": "listener",
+                      "key": "mesh-udp"
+                    },
+                    "generation": 1,
+                    "network": "udp",
+                    "candidate": {
+                      "address": "203.0.113.10:8421",
+                      "source": "configured",
+                      "observedAt": "2026-10-08T09:00:00Z",
+                      "expiresAt": "2026-10-08T09:00:30Z"
+                    },
+                    "candidateReference": {
+                      "socket": {
+                        "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                        "instance": {
+                          "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+                          "generation": 1
+                        },
+                        "configuration": {
+                          "revision": 7,
+                          "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                          "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                        },
+                        "socketId": "udp-listener-1",
+                        "socketGeneration": 1,
+                        "resource": {
+                          "kind": "listener",
+                          "key": "mesh-udp"
+                        }
+                      },
+                      "observationDigest": "d2b92ab6a90bad74c35709af05efb596d0a9092207e5066fa5bfee61c25ca855"
+                    }
+                  }
+                ]
+              }
+            },
+            "derived": {
+              "ipInfo": {
+                "203.0.113.10": {
+                  "geoip": {
+                    "status": "notApplicable",
+                    "reason": "nonPublicAddress"
+                  },
+                  "asn": {
+                    "status": "notApplicable",
+                    "reason": "nonPublicAddress"
+                  }
+                }
+              },
+              "location": null,
+              "locationAbsent": "noObservation"
+            }
+          }
+        },
+        "links": [],
+        "paths": []
+      }
+    }
+  },
+  "getNodeState": {
+    "responses": {
+      "200": {
+        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+        "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+        "sequence": 24,
+        "configurationRevision": 7,
+        "asOf": "2026-10-08T09:00:02Z",
+        "nodes": {
+          "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70": {
+            "hostname": "office-gw",
+            "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "reportSequence": 18,
+            "observedAt": "2026-10-08T09:00:00Z",
+            "receivedAt": "2026-10-08T09:00:01Z",
+            "reportExpiresAt": "2026-10-08T09:01:00Z",
+            "lastAuthenticatedAt": "2026-10-08T09:00:01Z",
+            "freshness": "current",
+            "report": {
+              "view": "full",
+              "report": {
+                "system": {
+                  "hostname": "office-gw-linux",
+                  "os": "linux",
+                  "arch": "arm64",
+                  "agentVersion": "0.1.0"
+                },
+                "capabilities": {
+                  "transport:native_tcp": {
+                    "kind": "transport",
+                    "roles": [
+                      "dial",
+                      "listen"
+                    ],
+                    "streams": [
+                      "tcp"
+                    ]
+                  },
+                  "transport:native_udp": {
+                    "kind": "transport",
+                    "roles": [
+                      "dial",
+                      "listen"
+                    ],
+                    "streams": [
+                      "udp"
+                    ]
+                  }
+                },
+                "configuration": {
+                  "saved": {
+                    "revision": 7,
+                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "digest": "abababababababababababababababababababababababababababababababab"
+                  },
+                  "applied": {
+                    "revision": 7,
+                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "digest": "abababababababababababababababababababababababababababababababab"
+                  },
+                  "progress": null
+                },
+                "listeners": {
+                  "mesh-udp": {
+                    "phase": "listening",
+                    "socketIds": [
+                      "udp-office-listener-1"
+                    ],
+                    "loadedCertificateSha256": null,
+                    "problem": null,
+                    "configuration": null
+                  }
+                },
+                "sockets": {
+                  "udp-office-listener-1": {
+                    "resource": {
+                      "kind": "listener",
+                      "key": "mesh-udp"
+                    },
+                    "configuration": null,
+                    "generation": 1,
+                    "network": "udp",
+                    "boundAddress": "0.0.0.0:8421",
+                    "endpoints": []
+                  },
+                  "udp-paris-1": {
+                    "resource": {
+                      "kind": "dial",
+                      "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
+                    },
+                    "configuration": null,
+                    "generation": 3,
+                    "network": "udp",
+                    "boundAddress": "0.0.0.0:41641",
+                    "endpoints": [
+                      {
+                        "address": "198.51.100.42:40001",
+                        "origin": {
+                          "source": "stun",
+                          "observer": "stun.example.com:3478"
+                        },
+                        "observedAt": "2026-10-08T09:00:00Z",
+                        "expiresAt": "2026-10-08T09:00:20Z"
+                      }
+                    ]
+                  }
+                },
+                "links": {},
+                "paths": {},
+                "selection": {
+                  "appliedProfile": "mesh"
+                },
+                "probes": [],
+                "problems": []
+              }
+            },
+            "derived": {
+              "ipInfo": {
+                "198.51.100.42": {
+                  "geoip": {
+                    "status": "notApplicable",
+                    "reason": "nonPublicAddress"
+                  },
+                  "asn": {
+                    "status": "notApplicable",
+                    "reason": "nonPublicAddress"
+                  }
+                }
+              },
+              "location": null,
+              "locationAbsent": "noObservation"
+            }
+          }
+        },
+        "links": [],
+        "paths": []
+      }
+    }
+  },
+  "getNetworkState": {
+    "responses": {
+      "200": {
+        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+        "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+        "sequence": 24,
+        "configurationRevision": 7,
+        "asOf": "2026-10-08T09:00:02Z",
+        "nodes": {
+          "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70": {
+            "hostname": "office-gw",
+            "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "reportSequence": 18,
+            "observedAt": "2026-10-08T09:00:00Z",
+            "receivedAt": "2026-10-08T09:00:01Z",
+            "reportExpiresAt": "2026-10-08T09:01:00Z",
+            "lastAuthenticatedAt": "2026-10-08T09:00:01Z",
+            "freshness": "current",
+            "report": {
+              "view": "full",
+              "report": {
+                "system": {
+                  "hostname": "office-gw-linux",
+                  "os": "linux",
+                  "arch": "arm64",
+                  "agentVersion": "0.1.0"
+                },
+                "capabilities": {
+                  "transport:native_tcp": {
+                    "kind": "transport",
+                    "roles": [
+                      "dial",
+                      "listen"
+                    ],
+                    "streams": [
+                      "tcp"
+                    ]
+                  },
+                  "transport:native_udp": {
+                    "kind": "transport",
+                    "roles": [
+                      "dial",
+                      "listen"
+                    ],
+                    "streams": [
+                      "udp"
+                    ]
+                  }
+                },
+                "configuration": {
+                  "saved": {
+                    "revision": 7,
+                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "digest": "abababababababababababababababababababababababababababababababab"
+                  },
+                  "applied": {
+                    "revision": 7,
+                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "digest": "abababababababababababababababababababababababababababababababab"
+                  },
+                  "progress": null
+                },
+                "listeners": {
+                  "mesh-udp": {
+                    "phase": "listening",
+                    "socketIds": [
+                      "udp-office-listener-1"
+                    ],
+                    "loadedCertificateSha256": null,
+                    "problem": null,
+                    "configuration": null
+                  }
+                },
+                "sockets": {
+                  "udp-office-listener-1": {
+                    "resource": {
+                      "kind": "listener",
+                      "key": "mesh-udp"
+                    },
+                    "configuration": null,
+                    "generation": 1,
+                    "network": "udp",
+                    "boundAddress": "0.0.0.0:8421",
+                    "endpoints": []
+                  },
+                  "udp-paris-1": {
+                    "resource": {
+                      "kind": "dial",
+                      "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
+                    },
+                    "configuration": null,
+                    "generation": 3,
+                    "network": "udp",
+                    "boundAddress": "0.0.0.0:41641",
+                    "endpoints": [
+                      {
+                        "address": "198.51.100.42:40001",
+                        "origin": {
+                          "source": "stun",
+                          "observer": "stun.example.com:3478"
+                        },
+                        "observedAt": "2026-10-08T09:00:00Z",
+                        "expiresAt": "2026-10-08T09:00:20Z"
+                      }
+                    ]
+                  }
+                },
+                "links": {},
+                "paths": {},
+                "selection": {
+                  "appliedProfile": "mesh"
+                },
+                "probes": [],
+                "problems": []
+              }
+            },
+            "derived": {
+              "ipInfo": {
+                "198.51.100.42": {
+                  "geoip": {
+                    "status": "notApplicable",
+                    "reason": "nonPublicAddress"
+                  },
+                  "asn": {
+                    "status": "notApplicable",
+                    "reason": "nonPublicAddress"
+                  }
+                }
+              },
+              "location": null,
+              "locationAbsent": "noObservation"
+            }
+          },
+          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50": {
+            "hostname": "paris",
+            "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+            "reportSequence": 12,
+            "observedAt": "2026-10-08T09:00:00Z",
+            "receivedAt": "2026-10-08T09:00:01Z",
+            "reportExpiresAt": "2026-10-08T09:01:00Z",
+            "lastAuthenticatedAt": "2026-10-08T09:00:01Z",
+            "freshness": "current",
+            "report": {
+              "view": "full",
+              "report": {
+                "system": {
+                  "hostname": "paris-linux",
+                  "os": "linux",
+                  "arch": "x86_64",
+                  "agentVersion": "0.1.0"
+                },
+                "capabilities": {
+                  "transport:native_tcp": {
+                    "kind": "transport",
+                    "roles": [
+                      "dial",
+                      "listen"
+                    ],
+                    "streams": [
+                      "tcp"
+                    ]
+                  },
+                  "transport:native_udp": {
+                    "kind": "transport",
+                    "roles": [
+                      "dial",
+                      "listen"
+                    ],
+                    "streams": [
+                      "udp"
+                    ]
+                  }
+                },
+                "configuration": {
+                  "saved": {
+                    "revision": 7,
+                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                  },
+                  "applied": {
+                    "revision": 7,
+                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                  },
+                  "progress": null
+                },
+                "listeners": {
+                  "mesh-tcp": {
+                    "phase": "listening",
+                    "socketIds": [
+                      "tcp-listener-1"
+                    ],
+                    "loadedCertificateSha256": null,
+                    "problem": null,
+                    "configuration": null
+                  },
+                  "mesh-udp": {
+                    "phase": "listening",
+                    "socketIds": [
+                      "udp-listener-1"
+                    ],
+                    "loadedCertificateSha256": null,
+                    "problem": null,
+                    "configuration": null
+                  }
+                },
+                "sockets": {
+                  "tcp-listener-1": {
+                    "resource": {
+                      "kind": "listener",
+                      "key": "mesh-tcp"
+                    },
+                    "configuration": null,
+                    "generation": 1,
+                    "network": "tcp",
+                    "boundAddress": "0.0.0.0:8421",
+                    "endpoints": []
+                  },
+                  "udp-listener-1": {
+                    "resource": {
+                      "kind": "listener",
+                      "key": "mesh-udp"
+                    },
+                    "configuration": null,
+                    "generation": 1,
+                    "network": "udp",
+                    "boundAddress": "0.0.0.0:41641",
+                    "endpoints": [
+                      {
+                        "address": "203.0.113.10:8421",
+                        "origin": {
+                          "source": "configured",
+                          "configPath": "/nodes/e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/listeners/mesh-udp/endpoints/0"
+                        },
+                        "observedAt": "2026-10-08T09:00:00Z",
+                        "expiresAt": "2026-10-08T09:00:30Z"
+                      }
+                    ]
+                  }
+                },
+                "links": {},
+                "paths": {},
+                "selection": {
+                  "appliedProfile": "mesh"
+                },
+                "probes": [],
+                "problems": []
+              }
+            },
+            "derived": {
+              "ipInfo": {
+                "203.0.113.10": {
+                  "geoip": {
+                    "status": "notApplicable",
+                    "reason": "nonPublicAddress"
+                  },
+                  "asn": {
+                    "status": "notApplicable",
+                    "reason": "nonPublicAddress"
+                  }
+                }
+              },
+              "location": null,
+              "locationAbsent": "noObservation"
+            }
+          }
+        },
+        "links": [],
+        "paths": []
+      }
+    }
+  }
+}

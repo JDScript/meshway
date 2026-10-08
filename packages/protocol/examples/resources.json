@@ -1,1 +1,106 @@
-{}
+{
+  "listRuleSets": {
+    "responses": {
+      "200": {
+        "items": [
+          {
+            "key": "office",
+            "configurationRevision": 7,
+            "definition": {
+              "type": "inline",
+              "ipCIDR": [
+                "10.20.0.0/16"
+              ],
+              "domainSuffix": [
+                "intranet.example.com"
+              ],
+              "domain": [
+                "login.partner.example.com"
+              ]
+            },
+            "artifact": null,
+            "problem": null,
+            "publication": null,
+            "checkedAt": null,
+            "lastSuccessAt": null
+          },
+          {
+            "key": "regional",
+            "configurationRevision": 7,
+            "definition": {
+              "type": "remote",
+              "url": "https://rules.example.com/regional.json",
+              "format": "sing-box-source",
+              "updateInterval": "24h"
+            },
+            "artifact": {
+              "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50",
+              "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+              "createdAt": "2026-10-08T09:05:00Z",
+              "entries": 128
+            },
+            "problem": null,
+            "publication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20",
+            "checkedAt": "2026-10-08T09:07:00Z",
+            "lastSuccessAt": "2026-10-08T09:07:00Z"
+          }
+        ]
+      }
+    }
+  },
+  "getRuleSet": {
+    "responses": {
+      "200": {
+        "items": [
+          {
+            "key": "regional",
+            "configurationRevision": 7,
+            "definition": {
+              "type": "remote",
+              "url": "https://rules.example.com/regional.json",
+              "format": "sing-box-source",
+              "updateInterval": "24h"
+            },
+            "artifact": {
+              "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50",
+              "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+              "createdAt": "2026-10-08T09:05:00Z",
+              "entries": 128
+            },
+            "problem": null,
+            "publication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20",
+            "checkedAt": "2026-10-08T09:07:00Z",
+            "lastSuccessAt": "2026-10-08T09:07:00Z"
+          }
+        ]
+      }
+    }
+  },
+  "refreshRuleSet": {
+    "request": {
+      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    },
+    "responses": {
+      "200": {
+        "key": "regional",
+        "configurationRevision": 7,
+        "definition": {
+          "type": "remote",
+          "url": "https://rules.example.com/regional.json",
+          "format": "sing-box-source",
+          "updateInterval": "24h"
+        },
+        "artifact": {
+          "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50",
+          "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+          "createdAt": "2026-10-08T09:05:00Z",
+          "entries": 128
+        },
+        "problem": null,
+        "publication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20",
+        "checkedAt": "2026-10-08T09:07:00Z",
+        "lastSuccessAt": "2026-10-08T09:07:00Z"
+      }
+    }
+  }
+}

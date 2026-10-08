@@ -1,1 +1,686 @@
-{}
+{
+  "reportNodeHistory": {
+    "request": {
+      "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+      "events": [
+        {
+          "eventId": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+          "configuration": {
+            "revision": 7,
+            "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "occurredAt": "2026-10-08T09:00:03.018400Z",
+          "payload": {
+            "kind": "probe_completed",
+            "probe": {
+              "measurementId": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+              "kind": "path",
+              "linkId": null,
+              "transport": null,
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ],
+              "publicationId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "startedAt": "2026-10-08T09:00:03Z",
+              "completedAt": "2026-10-08T09:00:03.018400Z",
+              "outcome": "success",
+              "durationUs": 18400
+            }
+          }
+        },
+        {
+          "eventId": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+          "configuration": {
+            "revision": 7,
+            "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "occurredAt": "2026-10-08T09:00:04.021700Z",
+          "payload": {
+            "kind": "probe_completed",
+            "probe": {
+              "measurementId": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+              "kind": "path",
+              "linkId": null,
+              "transport": null,
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ],
+              "publicationId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "startedAt": "2026-10-08T09:00:04Z",
+              "completedAt": "2026-10-08T09:00:04.021700Z",
+              "outcome": "success",
+              "durationUs": 21700
+            }
+          }
+        },
+        {
+          "eventId": "3e4f5a6b-7c8d-4e9f-8a0b-2c3d4e5f6a7b",
+          "configuration": {
+            "revision": 7,
+            "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "occurredAt": "2026-10-08T09:00:05.019600Z",
+          "payload": {
+            "kind": "probe_completed",
+            "probe": {
+              "measurementId": "3e4f5a6b-7c8d-4e9f-8a0b-2c3d4e5f6a7b",
+              "kind": "path",
+              "linkId": null,
+              "transport": null,
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ],
+              "publicationId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "startedAt": "2026-10-08T09:00:05Z",
+              "completedAt": "2026-10-08T09:00:05.019600Z",
+              "outcome": "success",
+              "durationUs": 19600
+            }
+          }
+        }
+      ]
+    },
+    "responses": {
+      "200": {
+        "accepted": 3,
+        "duplicates": 0
+      }
+    }
+  },
+  "createNodeObservation": {
+    "request": {
+      "instance": {
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "generation": 1
+      },
+      "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+      "target": {
+        "type": "name",
+        "name": "paris"
+      },
+      "service": {
+        "type": "icmpEcho"
+      },
+      "selection": {
+        "mode": "explicit",
+        "path": [
+          "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+          "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+        ]
+      },
+      "metrics": ["rtt", "traffic", "probeLoss"],
+      "intervalMs": 1000
+    },
+    "responses": {
+      "201": {
+        "task": {
+          "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+          "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+          "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+          "service": { "type": "icmpEcho" },
+          "selection": {
+            "mode": "explicit",
+            "path": [
+              "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+              "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+              "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+            ]
+          },
+          "path": null,
+          "pathSegment": null,
+          "configuration": {
+            "revision": 7,
+            "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+          "metrics": ["rtt", "traffic", "probeLoss"],
+          "intervalMs": 1000,
+          "phase": "preparing",
+          "unsupportedMetrics": ["traffic"],
+          "expiresAt": "2026-10-08T09:00:30Z",
+          "renewAfter": "2026-10-08T09:00:10Z",
+          "latest": null,
+          "subscriberExpiresAt": "2026-10-08T09:00:30Z",
+          "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a"
+        },
+        "target": {
+          "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+          "hostname": "paris",
+          "addresses": {
+            "ipv4": "100.80.0.10",
+            "ipv6": "fd42:7a65:8800::10"
+          }
+        }
+      }
+    }
+  },
+  "getNodeObservation": {
+    "responses": {
+      "200": {
+        "task": {
+          "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+          "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+          "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+          "service": { "type": "icmpEcho" },
+          "selection": {
+            "mode": "explicit",
+            "path": [
+              "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+              "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+              "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+            ]
+          },
+          "path": null,
+          "pathSegment": null,
+          "configuration": {
+            "revision": 7,
+            "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+          "metrics": ["rtt", "traffic", "probeLoss"],
+          "intervalMs": 1000,
+          "phase": "preparing",
+          "unsupportedMetrics": ["traffic"],
+          "expiresAt": "2026-10-08T09:00:30Z",
+          "renewAfter": "2026-10-08T09:00:10Z",
+          "latest": null,
+          "subscriberExpiresAt": "2026-10-08T09:00:30Z",
+          "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a"
+        },
+        "target": {
+          "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+          "hostname": "paris",
+          "addresses": {
+            "ipv4": "100.80.0.10",
+            "ipv6": "fd42:7a65:8800::10"
+          }
+        }
+      }
+    }
+  },
+  "cancelNodeObservation": {
+    "request": {
+      "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+      "generation": 1
+    },
+    "responses": {
+      "200": {
+        "task": null
+      }
+    }
+  },
+  "renewNodeObservation": {
+    "request": {
+      "instance": {
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "generation": 1
+      },
+      "expiresAt": "2026-10-08T09:00:40Z"
+    },
+    "responses": {
+      "200": {
+        "task": {
+          "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+          "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+          "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+          "service": { "type": "icmpEcho" },
+          "selection": {
+            "mode": "explicit",
+            "path": [
+              "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+              "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+              "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+            ]
+          },
+          "path": null,
+          "pathSegment": null,
+          "configuration": {
+            "revision": 7,
+            "executionPublication": "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d",
+            "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          },
+          "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+          "metrics": ["rtt", "traffic", "probeLoss"],
+          "intervalMs": 1000,
+          "phase": "preparing",
+          "unsupportedMetrics": ["traffic"],
+          "expiresAt": "2026-10-08T09:00:40Z",
+          "renewAfter": "2026-10-08T09:00:20Z",
+          "latest": null,
+          "subscriberExpiresAt": "2026-10-08T09:00:40Z",
+          "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a"
+        },
+        "target": {
+          "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+          "hostname": "paris",
+          "addresses": {
+            "ipv4": "100.80.0.10",
+            "ipv6": "fd42:7a65:8800::10"
+          }
+        }
+      }
+    }
+  },
+  "getNodeTasks": {
+    "responses": {
+      "200": {
+        "items": [
+          {
+            "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+            "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+            "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+            "service": { "type": "icmpEcho" },
+            "selection": {
+              "mode": "explicit",
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ]
+            },
+            "path": null,
+            "pathSegment": null,
+            "configuration": {
+              "revision": 7,
+              "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "digest": "abababababababababababababababababababababababababababababababab"
+            },
+            "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "metrics": ["rtt", "traffic", "probeLoss"],
+            "intervalMs": 1000,
+            "phase": "preparing",
+            "unsupportedMetrics": ["traffic"],
+            "expiresAt": "2026-10-08T09:00:30Z",
+            "renewAfter": "2026-10-08T09:00:10Z",
+            "latest": null,
+            "subscriberExpiresAt": null,
+            "subscriptionId": null
+          }
+        ]
+      }
+    }
+  },
+  "reportTaskResult": {
+    "request": {
+      "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+      "configuration": {
+        "revision": 7,
+        "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+        "digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "result": {
+        "type": "sample",
+        "path": [
+          "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+          "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+        ],
+        "pathSegment": 1,
+        "sample": {
+          "measurementId": "3e4f5a6b-7c8d-4e9f-8a0b-2c3d4e5f6a7b",
+          "version": 1,
+          "windowStart": "2026-10-08T09:00:05Z",
+          "windowEnd": "2026-10-08T09:00:05.019600Z",
+          "partial": false,
+          "probe": {
+            "measurementId": "3e4f5a6b-7c8d-4e9f-8a0b-2c3d4e5f6a7b",
+            "kind": "path",
+            "linkId": null,
+            "transport": null,
+            "path": [
+              "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+              "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+              "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+            ],
+            "publicationId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+            "startedAt": "2026-10-08T09:00:05Z",
+            "completedAt": "2026-10-08T09:00:05.019600Z",
+            "outcome": "success",
+            "durationUs": 19600
+          },
+          "traffic": null,
+          "probeCounts": {
+            "sent": 1,
+            "repliedWithinDeadline": 1,
+            "timeout": 0,
+            "pending": 0
+          }
+        }
+      }
+    },
+    "responses": {
+      "200": {
+        "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+        "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+        "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+        "service": { "type": "icmpEcho" },
+        "selection": {
+          "mode": "explicit",
+          "path": [
+            "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+            "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+            "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+          ]
+        },
+        "path": [
+          "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+          "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+        ],
+        "pathSegment": 1,
+        "configuration": {
+          "revision": 7,
+          "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "metrics": ["rtt", "traffic", "probeLoss"],
+        "intervalMs": 1000,
+        "phase": "running",
+        "unsupportedMetrics": ["traffic"],
+        "expiresAt": "2026-10-08T09:00:30Z",
+        "renewAfter": "2026-10-08T09:00:10Z",
+        "latest": {
+          "measurementId": "3e4f5a6b-7c8d-4e9f-8a0b-2c3d4e5f6a7b",
+          "version": 1,
+          "windowStart": "2026-10-08T09:00:05Z",
+          "windowEnd": "2026-10-08T09:00:05.019600Z",
+          "partial": false,
+          "probe": {
+            "measurementId": "3e4f5a6b-7c8d-4e9f-8a0b-2c3d4e5f6a7b",
+            "kind": "path",
+            "linkId": null,
+            "transport": null,
+            "path": [
+              "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+              "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+              "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+            ],
+            "publicationId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+            "startedAt": "2026-10-08T09:00:05Z",
+            "completedAt": "2026-10-08T09:00:05.019600Z",
+            "outcome": "success",
+            "durationUs": 19600
+          },
+          "traffic": null,
+          "probeCounts": {
+            "sent": 1,
+            "repliedWithinDeadline": 1,
+            "timeout": 0,
+            "pending": 0
+          }
+        },
+        "subscriberExpiresAt": null,
+        "subscriptionId": null
+      }
+    }
+  },
+  "queryObservationHistory": {
+    "request": {
+      "from": "2026-10-08T09:00:00Z",
+      "to": "2026-10-08T09:01:00Z",
+      "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+      "peerNodeId": null,
+      "mode": "buckets",
+      "bucketSeconds": 1,
+      "cursor": null,
+      "limit": 100,
+      "kinds": ["probe_completed"],
+      "linkId": null
+    },
+    "responses": {
+      "200": {
+        "from": "2026-10-08T09:00:00Z",
+        "to": "2026-10-08T09:01:00Z",
+        "asOf": "2026-10-08T09:01:00Z",
+        "nextCursor": null,
+        "coverage": [],
+        "result": {
+          "mode": "buckets",
+          "items": [
+            {
+              "from": "2026-10-08T09:00:03Z",
+              "to": "2026-10-08T09:00:04Z",
+              "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+              "sampleCount": 1,
+              "success": 1,
+              "timeout": 0,
+              "failed": 0,
+              "meanSuccessDurationUs": 18400,
+              "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "publicationId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ],
+              "kind": "path",
+              "linkId": null,
+              "transport": null
+            },
+            {
+              "from": "2026-10-08T09:00:04Z",
+              "to": "2026-10-08T09:00:05Z",
+              "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+              "sampleCount": 1,
+              "success": 1,
+              "timeout": 0,
+              "failed": 0,
+              "meanSuccessDurationUs": 21700,
+              "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "publicationId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ],
+              "kind": "path",
+              "linkId": null,
+              "transport": null
+            },
+            {
+              "from": "2026-10-08T09:00:05Z",
+              "to": "2026-10-08T09:00:06Z",
+              "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+              "sampleCount": 1,
+              "success": 1,
+              "timeout": 0,
+              "failed": 0,
+              "meanSuccessDurationUs": 19600,
+              "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "publicationId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ],
+              "kind": "path",
+              "linkId": null,
+              "transport": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  "listObservations": {
+    "responses": {
+      "200": {
+        "items": [
+          {
+            "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+            "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+            "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+            "service": { "type": "icmpEcho" },
+            "selection": {
+              "mode": "explicit",
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ]
+            },
+            "path": null,
+            "pathSegment": null,
+            "configuration": {
+              "revision": 7,
+              "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "digest": "abababababababababababababababababababababababababababababababab"
+            },
+            "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "metrics": ["rtt", "traffic", "probeLoss"],
+            "intervalMs": 1000,
+            "phase": "preparing",
+            "unsupportedMetrics": ["traffic"],
+            "expiresAt": "2026-10-08T09:00:30Z",
+            "renewAfter": "2026-10-08T09:00:10Z",
+            "latest": null,
+            "subscriberExpiresAt": "2026-10-08T09:00:30Z",
+            "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a"
+          }
+        ]
+      }
+    }
+  },
+  "createObservation": {
+    "request": {
+      "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+      "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+      "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+      "selection": {
+        "mode": "explicit",
+        "path": [
+          "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+          "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+        ]
+      },
+      "service": { "type": "icmpEcho" },
+      "metrics": ["rtt", "traffic", "probeLoss"],
+      "intervalMs": 1000
+    },
+    "responses": {
+      "201": {
+        "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+        "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+        "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+        "service": { "type": "icmpEcho" },
+        "selection": {
+          "mode": "explicit",
+          "path": [
+            "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+            "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+            "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+          ]
+        },
+        "path": null,
+        "pathSegment": null,
+        "configuration": {
+          "revision": 7,
+          "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "metrics": ["rtt", "traffic", "probeLoss"],
+        "intervalMs": 1000,
+        "phase": "preparing",
+        "unsupportedMetrics": ["traffic"],
+        "expiresAt": "2026-10-08T09:00:30Z",
+        "renewAfter": "2026-10-08T09:00:10Z",
+        "latest": null,
+        "subscriberExpiresAt": "2026-10-08T09:00:30Z",
+        "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a"
+      }
+    }
+  },
+  "getObservation": {
+    "responses": {
+      "200": {
+        "items": [
+          {
+            "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+            "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+            "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+            "service": { "type": "icmpEcho" },
+            "selection": {
+              "mode": "explicit",
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ]
+            },
+            "path": null,
+            "pathSegment": null,
+            "configuration": {
+              "revision": 7,
+              "executionPublication": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+              "digest": "abababababababababababababababababababababababababababababababab"
+            },
+            "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "metrics": ["rtt", "traffic", "probeLoss"],
+            "intervalMs": 1000,
+            "phase": "preparing",
+            "unsupportedMetrics": ["traffic"],
+            "expiresAt": "2026-10-08T09:00:30Z",
+            "renewAfter": "2026-10-08T09:00:10Z",
+            "latest": null,
+            "subscriberExpiresAt": "2026-10-08T09:00:30Z",
+            "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a"
+          }
+        ]
+      }
+    }
+  },
+  "renewObservation": {
+    "responses": {
+      "200": {
+        "items": [
+          {
+            "id": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a",
+            "sourceNodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+            "targetNodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+            "service": { "type": "icmpEcho" },
+            "selection": {
+              "mode": "explicit",
+              "path": [
+                "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ]
+            },
+            "path": null,
+            "pathSegment": null,
+            "configuration": {
+              "revision": 7,
+              "executionPublication": "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d",
+              "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            },
+            "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "metrics": ["rtt", "traffic", "probeLoss"],
+            "intervalMs": 1000,
+            "phase": "preparing",
+            "unsupportedMetrics": ["traffic"],
+            "expiresAt": "2026-10-08T09:00:40Z",
+            "renewAfter": "2026-10-08T09:00:20Z",
+            "latest": null,
+            "subscriberExpiresAt": "2026-10-08T09:00:40Z",
+            "subscriptionId": "4d5e6f7a-8b9c-4d0e-9f2a-3b4c5d6e7f8a"
+          }
+        ]
+      }
+    }
+  }
+}
