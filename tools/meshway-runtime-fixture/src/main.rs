@@ -7,6 +7,7 @@ mod control_requests;
 mod controller;
 mod diagnostics;
 mod dns;
+mod exit;
 mod fallback;
 mod peer;
 mod ping;
@@ -90,6 +91,7 @@ impl Cli {
 enum TraversalMode {
     Off,
     Nat,
+    Exit,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
@@ -144,6 +146,11 @@ impl CarrierMode {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Exit fixture infrastructure only; product stages remain unsupported.
+    ExitActor {
+        #[arg(long, value_enum)]
+        role: exit::Role,
+    },
     Prepare,
     Controller,
     Actor {
@@ -162,6 +169,12 @@ enum Command {
 async fn main() -> std::process::ExitCode {
     STARTED.get_or_init(std::time::Instant::now);
     let cli = Cli::parse();
+    if (cli.traversal == TraversalMode::Exit) != matches!(cli.command, Command::ExitActor { .. })
+        || (cli.traversal == TraversalMode::Exit && cli.dns_backend != DnsBackend::Off)
+    {
+        eprintln!("--traversal exit requires exit-actor and --dns-backend off");
+        return std::process::ExitCode::FAILURE;
+    }
     if cli.reported_endpoints
         && (cli.traversal != TraversalMode::Off
             || !matches!(cli.transport, CarrierMode::NativeUdp)
@@ -183,6 +196,7 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     let result = match cli.command {
+        Command::ExitActor { role } => exit::run(&cli, role).await,
         Command::Prepare => prepare(&cli).await,
         Command::Controller => controller::run(&cli).await,
         Command::Actor { role } => actor::run(&cli, role).await,

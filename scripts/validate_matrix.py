@@ -29,7 +29,10 @@ ROWS = {
     "nat/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off")),
     "nat+fallback/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--traversal-fallback", "--dns-backend", "off")),
     "nat/resolved": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "resolved")),
+    "exit/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit", "--dns-backend", "off")),
 }
+PENDING_ROWS = {"exit/off": "pending-x2-x5: 产品未接线前该行预期失败 (unsupported)"}
+DEFAULT_ROWS = tuple(name for name in ROWS if name not in PENDING_ROWS)
 
 
 def validation_root():
@@ -49,7 +52,7 @@ def default_parallel():
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rows", nargs="+", choices=ROWS, default=list(ROWS))
+    parser.add_argument("--rows", nargs="+", choices=ROWS, default=list(DEFAULT_ROWS))
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--parallel", type=positive, default=default_parallel())
     parser.add_argument("--short", action="store_true")
@@ -202,13 +205,18 @@ def execute_row(name, directory, artifacts, images, args):
     logfile = row_dir / "invocation.log"
     started = time.monotonic()
     result = dict(row=name, passed=False, reportId=report.name, report=str(report.relative_to(directory) / "report.json"),
-                  scope="diagnostic-short" if args.short else "acceptance", loadBeforeStart=load())
+                   scope="diagnostic-short" if args.short else "acceptance", loadBeforeStart=load())
+    if name in PENDING_ROWS:
+        result["expectation"] = PENDING_ROWS[name]
     try:
         command = row_command(name, report, artifacts, images, args.short)
         result["command"] = command
         result["exitCode"] = invoke(command, logfile, dict(os.environ, MESHWAY_MATRIX_RUN=directory.name))
         metadata = json.loads((report / "report.json").read_text())
         result["passed"] = result["exitCode"] == 0 and metadata.get("passed") is True
+        if name in PENDING_ROWS:
+            result["status"] = metadata.get("status", "incomplete")
+            result["passed"] = False
     except Exception as error:
         result["error"] = str(error)
     try:
@@ -236,7 +244,7 @@ def summary(report):
              "| Row | passed | Report ID | Seconds | Start load (1/5/15m) | Failure stage excerpt |",
              "| --- | --- | --- | ---: | --- | --- |"]
     for row in report["rows"]:
-        failure = row.get("error", "") + " " + row.get("failureExcerpt", "")
+        failure = row.get("expectation", "") + " " + row.get("error", "") + " " + row.get("failureExcerpt", "")
         failure = failure.replace("|", "\\|").replace("\n", " ")[:600]
         lines.append(f"| {row['row']} | {row['passed']} | `{row.get('reportId', '—')}` | {row['elapsedSeconds']:.1f} | "
                      + "/".join(str(v) for v in row["loadBeforeStart"]["loadAverage"]) + " | " + failure + " |")
@@ -248,8 +256,8 @@ def summary(report):
 def main(argv=None):
     args = parse_args(argv)
     if args.list:
-        for name in args.rows:
-            print(name)
+        for name in ROWS:
+            print(name + (" [explicit-only; " + PENDING_ROWS[name] + "]" if name in PENDING_ROWS else ""))
         return 0
     os.umask(0o077)
     directory = validation_root() / "matrix" / (args.run or run_id())

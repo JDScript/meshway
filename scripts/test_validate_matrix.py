@@ -115,7 +115,10 @@ class MatrixTests(unittest.TestCase):
                 self.assertEqual(json.loads(images["runtime"].read_text())["platform"], platform)
 
     def test_rows_are_eleven_and_filter_keeps_order_without_duplicates(self):
-        self.assertEqual(len(matrix.ROWS), 11)
+        self.assertEqual(len(matrix.DEFAULT_ROWS), 11)
+        self.assertEqual(len(matrix.ROWS), 12)
+        self.assertNotIn("exit/off", matrix.parse_args([]).rows)
+        self.assertEqual(matrix.parse_args(["--rows", "exit/off"]).rows, ["exit/off"])
         self.assertEqual(matrix.parse_args(["--rows", "nat/off", "nat+fallback/off", "nat/off"]).rows,
                          ["nat/off", "nat+fallback/off"])
         with patch("sys.stderr"), self.assertRaises(SystemExit):
@@ -188,6 +191,24 @@ class MatrixTests(unittest.TestCase):
                 result = matrix.execute_row("tun", directory, {"tun": Path("/bin")}, {}, args)
             self.assertFalse(result["passed"])
             self.assertEqual(result["remainingResources"]["containers"], ["owned"])
+
+    def test_pending_exit_cannot_become_an_acceptance_pass(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            args = matrix.parse_args(["--rows", "exit/off"])
+            def invoke(command, logfile, env):
+                report = Path(command[command.index("--report-dir") + 1])
+                report.mkdir()
+                (report / "report.json").write_text('{"passed": true, "status": "unsupported"}')
+                logfile.write_text("unsupported")
+                return 0
+            with patch.object(matrix, "load", return_value={}), patch.object(matrix, "invoke", side_effect=invoke), \
+                    patch.object(matrix, "remaining_resources", return_value={"containers": [], "networks": []}):
+                result = matrix.execute_row("exit/off", directory, {"runtime": Path("/bin")},
+                                            {"runtime": Path("/image")}, args)
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["status"], "unsupported")
+            self.assertIn("pending-x2-x5", result["expectation"])
 
     def test_wrong_source_artifact_rejected_before_copy(self):
         with tempfile.TemporaryDirectory() as temporary:

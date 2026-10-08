@@ -51,6 +51,10 @@ def fingerprint():
     return source_fingerprint(ROOT)
 
 
+def exit_fixture_sources():
+    return {str(path.relative_to(ROOT)): sha256(path) for path in sorted((ROOT / "dev/exit-fixture").glob("*")) if path.is_file()}
+
+
 def record_load():
     """Record host load for the report; functional conformance has no idle gate.
     The matrix runner owns parallelism and is recorded when present."""
@@ -71,6 +75,7 @@ def write_json(path, value):
 
 
 def build(directory, target, platform, machine, source):
+    exit_sources = exit_fixture_sources()
     if shutil.disk_usage(ROOT).free < 50 * 1024 ** 3:
         raise RuntimeError("Linux host build needs at least 50 GiB free.")
     env = dict(os.environ, CARGO_INCREMENTAL="0",
@@ -91,7 +96,7 @@ def build(directory, target, platform, machine, source):
                     print(message["message"].get("rendered", ""), file=sys.stderr)
         raise
     (directory / "build.jsonl").write_text(output)
-    if fingerprint() != source:
+    if fingerprint() != source or exit_fixture_sources() != exit_sources:
         raise RuntimeError("Sources changed during the shared daemon/CLI/fixture build.")
     hashes = {}
     for name in BINARIES:
@@ -141,6 +146,7 @@ def build(directory, target, platform, machine, source):
         (directory / name).chmod(0o500)
         hashes[name] = sha256(directory / name)
     manifest = {"sourceDigest": source, "sourceRoot": str(ROOT.resolve()), "target": target, "platform": platform,
+                "exitFixtureSources": exit_sources,
                  "sha256": hashes, "buildCommands": [command],
                 "revision": run("git", "rev-parse", "HEAD", capture=True).strip()}
     write_json(directory / "source-manifest.json", manifest)
@@ -150,7 +156,8 @@ def build(directory, target, platform, machine, source):
 def import_artifacts(source_dir, directory, target, platform, machine, source):
     manifest = json.loads((source_dir / "source-manifest.json").read_text())
     if (manifest["sourceDigest"] != source or manifest["sourceRoot"] != str(ROOT.resolve()) or manifest["target"] != target
-            or manifest["platform"] != platform or set(manifest["sha256"]) != set(ARTIFACTS)):
+            or manifest["platform"] != platform or set(manifest["sha256"]) != set(ARTIFACTS)
+            or manifest.get("exitFixtureSources") != exit_fixture_sources()):
         raise RuntimeError("Prebuilt manifest does not match this source/target/binary set.")
     for name in ARTIFACTS:
         binary = source_dir / name
@@ -175,7 +182,7 @@ def main():
                         help="real libc DNS conformance in an owned private mount namespace")
     parser.add_argument("--dns-image-manifest", type=Path,
                         help="parent-built dev/dns-fixture/build.py immutable OS image manifest")
-    parser.add_argument("--traversal", choices=("off", "nat"), default="off",
+    parser.add_argument("--traversal", choices=("off", "nat", "exit"), default="off",
                         help="real two-router IPv4 NAT acquisition with empty UDP endpoints")
     parser.add_argument("--traversal-fallback", action="store_true",
                          help="preauthorize TCP on R, then block only A-R UDP during the same 125-second flows")
@@ -184,6 +191,8 @@ def main():
     parser.add_argument("--traversal-image-manifest", type=Path,
                         help="immutable OS manifest built with dev/dns-fixture/build.py --lock-file dev/traversal-fixture/assets.lock.json")
     args = parser.parse_args()
+    if args.traversal == "exit" and (args.dns_backend != "off" or args.transport != "native-udp"):
+        parser.error("--traversal exit requires --transport native-udp --dns-backend off")
     if args.reported_endpoints and (args.transport != "native-udp" or args.traversal != "off" or args.dns_backend != "off"):
         parser.error("--reported-endpoints requires native-udp with traversal and DNS off")
     if not args.build_only and (args.dns_backend != "off") != bool(args.dns_image_manifest):
@@ -223,6 +232,14 @@ def main():
     description = json.loads(run("docker", "image", "inspect", image, capture=True))[0]
     if description["Os"] != "linux" or description["Architecture"] != platform.split("/")[1] or description["Config"].get("Volumes"):
         raise RuntimeError("Expected the existing native Linux digest-pinned runtime image without volumes.")
+    if args.traversal == "exit":
+        spec = importlib.util.spec_from_file_location("meshway_exit_fixture", ROOT / "dev/exit-fixture/runtime.py")
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Exit fixture orchestrator unavailable")
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        fixture.execute(report, artifacts, runtime_os, platform, args.short, load)
+        return
     dns_image = None
     dns_assets = None
     if args.dns_backend != "off":
