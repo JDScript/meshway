@@ -1,31 +1,33 @@
 # 测试清单与开发门槛
 
-本页是全部测试与 fixture 的唯一清单：它们各是什么、验证什么、跑多久、在哪一层触发。分层与触发规则见[工程流程](/v2/process)，入口命令见[开发服务、测试与环境](/v2/development)。数字来自 2026-10-08 TD 的 nextest 实测（Apple M3，`mise run test:rust`，热构建）。
+本页是全部测试与 fixture 的唯一清单：它们各是什么、验证什么、跑多久、在哪一层触发。分层与触发规则见[工程流程](/v2/process)，入口命令见[开发服务、测试与环境](/v2/development)。测试数量与文件规模经 2026-10-08 TD2 复核；T1 耗时保留 TD 的 nextest 实测（Apple M3，`mise run test:rust`，热构建），TD2 的包级 fast 墙钟另列。
 
 ## 开发时怎么约束
 
 | 时机 | 命令 | 耗时（M3，缓存热） | 内容 |
 | --- | --- | --- | --- |
-| 每次改完要看结果 | `mise run test:fast -- -p <crate>` | 秒级 | 所属 crate 的 fast profile |
-| 提交前 | `mise run check:fast` | ~2 分钟 | 测试文件上限、fmt、严格 Clippy、fast profile 全 workspace（943 个测试） |
-| 合入前 | `mise run check` | ~3.5 分钟 | T1 全量：含 45 个真实时间合同测试、codegen／drift／SDK、Console、docs |
+| 每次改完要看结果 | `mise run test:fast -- -p <crate>` | 依 crate 而定，见下表 | 所属 crate 的 fast profile |
+| 提交前 | `mise run check:fast` | ~2 分钟 | 测试文件上限、fmt、严格 Clippy、fast profile 全 workspace（947 个测试） |
+| 合入前 | `mise run check` | ~3.5 分钟 | T1 全量：含 fast 排除的 44 个真实时间合同测试、codegen／drift／SDK、Console、docs |
 | 合入前（触及 connectivity／control／daemon／server 执行与 State） | `mise run validate:remote --short --rows nat/off nat+fallback/off` | 提交即返回，planck 约 4 分钟 | T2 短模式门槛，结果用 `--attach` 取回 |
 | 合入后 | Actions 自动 | — | T2 全矩阵、T3 固定口径，进状态页 |
 
-fast profile 排除的 45 个测试都是**真实时间合同**（lease 到期、HTTP 中断恢复、30 秒采样、换钥过期回滚等，各 5–68 s），它们不能用虚拟时间代替，但也不该挡住每次迭代；`mise run check` 必跑。本机不跑 T2 整组、不做正式性能测量。
+fast profile 实际排除的 44 个测试都是**真实时间合同**（lease 到期、HTTP 中断恢复、30 秒采样、换钥过期回滚等，各 5–68 s），它们不能用虚拟时间代替，但也不该挡住每次迭代；`mise run check` 必跑。本机不跑 T2 整组、不做正式性能测量。
+
+当前 fast 名单仍含健康观察测试的旧名称，因此 `healthy_adjacency_keeps_nat_observations_fresh_without_reacquisition` 仍随 fast 运行，包含跨越观察有效期的真实等待。Connectivity 的 fast 实际运行 36 个测试、排除 16 个；文件拆分保留现有精确匹配入口名称。
 
 ## Rust 测试：按 crate
 
 单测 = `cfg(test)` 私有模块；集成 = `tests/`；时间合同按 `profile.fast` 排除集合统计，不把调度／负载导致的慢测试归为时间合同。耗时是一次运行的观测值。全部自包含：需要 Server 的套件在进程内起 Server＋临时 SQLite＋随机端口，不依赖 8420 的开发服务。
 
-| crate | 测试 | 单测／集成 | 合计耗时 | 时间合同 | 验证什么 |
+| crate | 测试 | 单测／集成 | 合计耗时（TD） | 时间合同 | 验证什么 |
 | --- | ---: | --- | ---: | ---: | --- |
 | meshway-server | 232 | 185／47 | 263 s | 7 | 账户、网络、配置 CAS、执行发布、State／SSE、观察、HTTP 路由；app 私有套件与 `tests/http`／`observations`／`accounts` 起真实 Server |
 | meshway-dataplane | 125 | 80／45 | 255 s | 7 | v5 codec、Noise／AEAD／MAC 一致性、流表／replay、流水线保序与 credit；`tests/runtime` 用静态签发的许可跑 A→R→B 进程内包流、续租、撤销、诊断 |
 | meshway-policy | 86 | 0／86 | 2.4 s | 0 | 配置编译：Access、递归 routing、topology、profiles、DNS 规则 |
 | meshway-control | 57 | 12／45 | 149 s | 2 | Node 控制面对真实 Server：接入、认证、刷新、换钥、SSE、回执、故障注入 |
-| meshway-daemon | 53 | 42／11 | 319 s | 10 | 控制周期、恢复分类、IPC、ping；`tests/lifecycle` 起真实 Server 与 daemon 进程 |
-| meshway-connectivity | 51 | 51／0 | 265 s | 17 | Manager：邻接认证、选链、协调穿透、健康、资源续接、事件队列（含真实 UDP／TCP 本机 socket） |
+| meshway-daemon | 55 | 44／11 | 319 s | 10 | 控制周期、恢复分类、IPC、ping；`tests/lifecycle` 起真实 Server 与 daemon 进程 |
+| meshway-connectivity | 52 | 52／0 | 265 s | 16 | Manager：邻接认证、选链、协调穿透、健康、资源续接、事件队列（含真实 UDP／TCP 本机 socket）；按行为拆分，共用 Server／拓扑／Manager builder 与 socket support |
 | meshway-dns | 46 | 21／25 | 7.9 s | 0 | 名称权限、查询 owner、系统 DNS 安装意图 |
 | meshway-transport | 40 | 40／0 | 0.9 s | 0 | Session、framing、批量提交、scope |
 | meshway-transport-vless | 37 | 23／14 | 2.8 s | 0 | VLESS TCP/TLS、WS 协议 I/O 与互通向量 |
@@ -42,9 +44,20 @@ fast profile 排除的 45 个测试都是**真实时间合同**（lease 到期�
 | meshway-transport-trojan | 10 | 3／7 | 0.4 s | 0 | Trojan TCP/TLS |
 | meshway-diagnostics | 8 | 8／0 | 38 s | 1 | 有界测量调度与计时 |
 | meshway-transport-udp、-tcp、-tun、-authority、-private-storage、-static-authority、-serde、-logging、perf 工具 | 40 | — | 3.8 s | 0 | 各自原语 |
-| **合计** | **988** | | **1,339 s 求和；nextest 并行 120.7 s；命令墙钟 128.3 s** | **45** | |
+| **合计** | **991** | | **TD：1,339 s 求和；nextest 并行 120.7 s；命令墙钟 128.3 s** | **44** | |
 
-专用 Rust 测试／support 文件共 70,467 物理行（含空行和注释，不含产品文件内的 inline 测试模块）；其中 Server 25,911 行、transport 1,935 行。此口径与下述文件上限检查一致，不能直接与去掉注释／空行的代码行统计比较。
+专用 Rust 测试／support 文件共 271 个、70,584 物理行（含空行和注释，不含产品文件内的 inline 测试模块）；其中 Server 25,911 行、transport 1,935 行、connectivity 5,957 行、policy 5,225 行。此口径与下述文件上限检查一致，不能直接与去掉注释／空行的代码行统计比较。全部文件不超过 800 行，现有白名单例外为 0。
+
+### TD2 包级复核
+
+同一 Apple M3 Pro、同一 target、`CARGO_INCREMENTAL=0`；每个包先预热，再测一次 `mise run test:fast -- -p <crate>` 的完整命令墙钟。前值来自 `e9c7a376`，测试选择保持一致；以下是观测值，不作性能结论。
+
+| crate | 测试数：前 → 后 | 专用测试／support 行数：前 → 后 | fast 墙钟：前 → 后 |
+| --- | ---: | ---: | ---: |
+| meshway-connectivity | 52 → 52 | 6,009 → 5,957 | 47.990 s → 52.011 s |
+| meshway-policy | 86 → 86 | 5,180 → 5,225 | 0.861 s → 0.874 s |
+
+全仓专用测试／support 为 70,587 → 70,584 行、241 → 271 个文件；其中还含 DNS 既有测试 helper 的 4 行纯格式增量。文件拆分、入口与 builder 增加结构行，共用搭建代码减少重复；没有删除测试。
 
 另有 17 个 `#[ignore]`：13 个要求隔离 Linux namespace／NET_ADMIN／TUN（由 T2 的 Linux 入口显式运行，不在本机），1 个五分钟真实 Server session 到期，1 个只读历史报告检查，2 个显式 opt-in。
 
@@ -78,7 +91,13 @@ fast profile 排除的 45 个测试都是**真实时间合同**（lease 到期�
 - 新测试先问归属：原语与状态机进单测；跨 crate 的行为进所属 crate 的 `tests/<suite>/`；需要内核／namespace 的进 T2 行，不新增入口。
 - 同一行为只保留一处断言最严格的测试；工作包补回归测试时先搜已有套件。
 - HTTP 层断言路由、鉴权／主体边界、序列化、错误码与 SSE 帧；CAS、lease、吊销、成员生命周期、执行发布和回执排序由 app／所属状态机套件负责。删去重复覆盖时必须指出保留的测试及其更严格的断言；共享场景不等于重复覆盖。
-- Rust 专用测试文件（含 `tests/` 下 support、`tests.rs`、`*_tests.rs`）最多 **800 行**，按行为拆为普通子模块，共享 fixture 留在测试父模块。不得压行、扩大生产可见性或用 `include!`／`#[path]` 绕过限制。
+- Rust 专用测试文件（含 `tests/` 下 support、`tests.rs`、`*_tests.rs`）最多 **800 行**，按行为拆为普通子模块，共享 fixture 归所属套件的 `support.rs` 或 `support/`。不得压行、扩大生产可见性或用 `include!`／`#[path]` 绕过限制。
 - `mise run check:rust`（因此也包括 `check:fast`／`check`）运行 `scripts/check_test_files.py`，同时扫描已跟踪及未忽略的新文件。`scripts/test_file_limits.json` 只记录既有超限文件的冻结上限；不能增长，降到 800 行后删除条目。Server 与 transport 不允许例外。
 - 真实时间合同测试保持真实时间，但必须有明确的到期语义注释，并自动落入 `profile.fast` 的排除名单（名单在 `.config/nextest.toml`，按实测 ≥5 s 维护）。
 - 不新增依赖外部服务的测试；需要 Server 的测试在进程内起。
+
+## 结构变更记录
+
+| 日期 | 变更 |
+| --- | --- |
+| 2026-10-08（TD2） | Connectivity 的接收／回执、重接、穿透与 policy 的配置／执行／准入按行为拆分；共用真实 Server／拓扑、Manager、socket、STUN 与已应用 gateway 的搭建代码。六个文件上限例外清零；connectivity 52 个、policy 86 个测试均保留，policy 测试正文不变。 |

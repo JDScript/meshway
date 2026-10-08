@@ -1,11 +1,4 @@
 {
-  "description": "Pre-existing files outside TD; ceilings may only shrink. Remove entries once at most 800 lines.",
-  "existing_files": {
-    "crates/meshway-connectivity/src/manager/tests/mod.rs": 947,
-    "crates/meshway-connectivity/src/manager/tests/reattachment.rs": 1122,
-    "crates/meshway-connectivity/src/manager/tests/traversal.rs": 2083,
-    "crates/meshway-policy/tests/configuration.rs": 1248,
-    "crates/meshway-policy/tests/execution/admission.rs": 861,
-    "crates/meshway-policy/tests/execution/main.rs": 984
-  }
+  "description": "Dedicated Rust test/support files are limited to 800 lines. No existing size exceptions remain.",
+  "existing_files": {}
 }
