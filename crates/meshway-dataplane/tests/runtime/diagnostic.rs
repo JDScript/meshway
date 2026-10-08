@@ -419,6 +419,134 @@ async fn diagnostic_continuation_retains_cipher_but_cancels_original_probe_and_r
 }
 
 #[tokio::test]
+async fn retained_relay_delivers_inflight_diagnostic_and_business_reply_exactly_once() {
+    let (mut fixture, task) = setup().await;
+    let diagnostic = handshake(&mut fixture, &task).await;
+    let business = fixture.handshake().await;
+    let old = fixture.mesh.r.control.execution_snapshot().unwrap();
+    let lease = fixture.mesh.a.control.renew_instance().await.unwrap();
+    fixture
+        .mesh
+        .a
+        .control
+        .renew_demand(&meshway_protocol::RenewDemandRequest {
+            instance: fixture.mesh.a.instance(),
+            request_id: fixture.mesh.demand,
+            expires_at_ms: lease.expires_at_ms,
+        })
+        .await
+        .unwrap();
+    // Reproduce the real staggered installation: A and B use the successor,
+    // while R admits the request immediately before its retained handoff.
+    for (node, secure) in [
+        (&mut fixture.mesh.a, &mut fixture.a),
+        (&mut fixture.mesh.b, &mut fixture.b),
+    ] {
+        let snapshot = node.sync_current().await;
+        secure
+            .reconcile(node.control.dataplane_identity(snapshot).unwrap())
+            .unwrap();
+    }
+    let id = measurement();
+    let challenge = Digest::from_bytes([31; 32]);
+    let request = fixture
+        .a
+        .probe(
+            diagnostic,
+            id,
+            challenge,
+            Instant::now() + Duration::from_secs(5),
+            &fixture.ar.carrier,
+        )
+        .unwrap();
+    let request_wire = wire(request);
+    let request = forward(fixture.r.receive(&fixture.ar.carrier, request_wire.clone()));
+    let Received::ProbeRequest { response, .. } = fixture
+        .b
+        .receive(&fixture.rb.carrier, wire(request))
+        .unwrap()
+    else {
+        panic!("terminal diagnostic")
+    };
+    let diagnostic_reply = wire(response);
+    let packet = fixture
+        .a
+        .send(business, datagram(&fixture.mesh, false, false))
+        .unwrap();
+    let packet = forward(fixture.r.receive(&fixture.ar.carrier, wire(packet)));
+    let Received::Packet(packet) = fixture
+        .b
+        .receive(&fixture.rb.carrier, wire(packet))
+        .unwrap()
+    else {
+        panic!("terminal business")
+    };
+    packet.release(|_| ()).unwrap();
+    let business_reply = wire(
+        fixture
+            .b
+            .send(business, datagram(&fixture.mesh, false, true))
+            .unwrap(),
+    );
+    let snapshot = fixture.mesh.r.sync_current().await;
+    assert_ne!(old.reference(), snapshot.reference());
+    assert!(old.ensure_current().is_err());
+    fixture
+        .r
+        .reconcile(fixture.mesh.r.control.dataplane_identity(snapshot).unwrap())
+        .unwrap();
+    // Explicit maintenance must preserve eligible relay correlation state too.
+    fixture.r.maintain().unwrap();
+    let reply = forward(
+        fixture
+            .r
+            .receive(&fixture.rb.carrier, diagnostic_reply.clone()),
+    );
+    let reply = wire(reply);
+    assert!(matches!(
+        fixture.a.receive(&fixture.ar.carrier, reply.clone()).unwrap(),
+        Received::ProbeReply { circuit, measurement_id, challenge: returned }
+            if circuit == diagnostic && measurement_id == id && returned == challenge
+    ));
+    assert!(matches!(
+        fixture.a.receive(&fixture.ar.carrier, reply),
+        Err(Error::Replay)
+    ));
+    assert!(matches!(
+        fixture.r.receive(&fixture.ar.carrier, request_wire),
+        Err(Error::Replay)
+    ));
+    assert!(matches!(
+        fixture.r.receive(&fixture.rb.carrier, diagnostic_reply),
+        Err(Error::Replay)
+    ));
+    let packet = forward(
+        fixture
+            .r
+            .receive(&fixture.rb.carrier, business_reply.clone()),
+    );
+    let packet = wire(packet);
+    let Received::Packet(delivery) = fixture
+        .a
+        .receive(&fixture.ar.carrier, packet.clone())
+        .unwrap()
+    else {
+        panic!("business reply")
+    };
+    delivery.release(|_| ()).unwrap();
+    assert!(matches!(
+        fixture.a.receive(&fixture.ar.carrier, packet),
+        Err(Error::Replay)
+    ));
+    assert!(matches!(
+        fixture.r.receive(&fixture.rb.carrier, business_reply),
+        Err(Error::Replay)
+    ));
+    assert_eq!(fixture.r.retained_flows(), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn diagnostic_original_probe_expiry_rejects_queued_and_late_reply() {
     let (mut fixture, task) = setup().await;
     let circuit = handshake(&mut fixture, &task).await;
@@ -438,6 +566,38 @@ async fn diagnostic_original_probe_expiry_rejects_queued_and_late_reply() {
     tokio::time::sleep(Duration::from_millis(350)).await;
     assert!(fixture.a.receive(&fixture.ar.carrier, bytes).is_err());
     fixture.close().await;
+}
+
+#[tokio::test]
+async fn retained_relay_correlation_never_renews_probe_deadline_or_source_scope() {
+    for refresh_source in [false, true] {
+        let (mut fixture, task) = setup().await;
+        let circuit = handshake(&mut fixture, &task).await;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let request = fixture
+            .a
+            .probe(
+                circuit,
+                measurement(),
+                [32; 32].into(),
+                deadline,
+                &fixture.ar.carrier,
+            )
+            .unwrap();
+        let response = terminal_response(&mut fixture, request);
+        let reply = wire(response);
+        let old = fixture.mesh.a.control.execution_snapshot().unwrap();
+        fixture.renew().await;
+        if refresh_source {
+            assert!(old.ensure_current().is_err());
+            let reply = forward(fixture.r.receive(&fixture.rb.carrier, reply));
+            assert!(fixture.a.receive(&fixture.ar.carrier, wire(reply)).is_err());
+        } else {
+            tokio::time::sleep_until((deadline + Duration::from_millis(10)).into()).await;
+            assert!(fixture.r.receive(&fixture.rb.carrier, reply).is_err());
+        }
+        fixture.close().await;
+    }
 }
 
 #[tokio::test]

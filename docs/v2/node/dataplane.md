@@ -163,6 +163,8 @@ Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代�
 
 `SecureNode::reconcile` 在相同授权、原路径和有效直接交接下保留 Noise／会话 MAC keys、nonce、重放窗口与同一流表。显式授权续租可在旧 UTC／单调期限到达前延长活 circuit 的期限；已关闭／过期 circuit 不复活，握手期限也不由续租重置。已签发输出保留旧 guard；流截止按上节处理。
 
+诊断中继的 request correlation 属于已提交会话状态：同一活跃 circuit 合法接续时保留 measurement、完成标记和原 UTC／单调截止，不延长探测窗口。交接后新收到的 reply 仍须通过当前完整准入、相邻认证、重放与关联检查，才产生本次输出。已经签发或排队的 request／reply 不重新绑定；源端 challenge／sample 的原 scope 约束也不因此改变。
+
 执行快照在同步包处理期间被替换时，该操作及其旧输出立即拒绝；快照失效本身不等于 circuit 的永久关闭。尚在原期限内的密码状态、已提交流状态和 nonce／重放窗口仅作不可执行的待交接状态保留，仍须由上述 Control 连续性检查决定能否接续。未提交的新流丢弃，已消耗的 nonce 不回滚；实际到期、取消、关闭及握手密码处理失败保持原有终止规则。
 
 `carrier::send` 把完整 I/O lifetime 随已接纳工作交给正式 transport worker；即使完成等待者暂不被轮询，每次底层 write／flush 也检查同一许可期限和失效条件。`carrier::deliver` 在每次恢复 TUN 写入前检查所有限制。完成只表示本机写入完成，对端接收／应用回包另行证明。

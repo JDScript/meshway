@@ -1,6 +1,7 @@
 //! Fixed-size diagnostic messages over the sole circuit/Noise/proof owner.
-//! Request correlations are separate from IP flows and retain their original
-//! execution guard across circuit continuation. Reading never renews a request.
+//! Request correlations are separate from IP flows. Endpoints retain their
+//! original execution guard; relay state may follow a directly retained circuit
+//! without renewing a request or rebinding any already-issued output.
 use super::*;
 use codec::ProbeMetadata;
 use meshway_model::{Digest, EventId, ObservationId};
@@ -36,6 +37,37 @@ pub(super) struct Probes {
     rates: BTreeMap<ObservationId, Rate>,
 }
 impl Probes {
+    pub(super) fn reconcile(
+        &mut self,
+        circuits: &BTreeMap<[u8; 32], Box<Circuit>>,
+        snapshot: &ExecutionSnapshot,
+        reading: &Reading<'_>,
+    ) {
+        self.pending.retain(|(id, _), request| {
+            // Source challenges and terminal replies belong to the original
+            // operation. Only opaque relay correlation is continuation state.
+            if request.challenge.is_some() {
+                return request.guard.ensure_current().is_ok();
+            }
+            let Some(circuit) = circuits.get(id) else {
+                return false;
+            };
+            if !matches!(circuit.state, State::RelayEstablished)
+                || circuit.check_at(reading).is_err()
+                || request.guard.check_at(reading).is_err()
+                || snapshot.continuation_from(&request.guard.snapshot).is_err()
+            {
+                return false;
+            }
+            // reconcile has already checked this circuit's authorization,
+            // path and keys. Keep both original deadlines and completed state.
+            // PendingFrame owns a separate guard clone, so old outputs remain
+            // fenced. A new reply must still pass normal receive admission.
+            request.guard.snapshot = snapshot.clone();
+            true
+        });
+    }
+
     pub(super) fn maintain(&mut self, reading: &Reading<'_>) {
         self.pending
             .retain(|_, request| request.guard.ensure_current().is_ok());

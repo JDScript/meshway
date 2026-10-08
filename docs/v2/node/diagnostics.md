@@ -59,7 +59,7 @@ Node 订阅绑定真实 control key、instance／generation、网络和 Server b
 
 Control 以 RPC 开始时的时钟高水位和单调时钟固定已确认的订阅截止；相同响应重放、失败续租或时钟回拨均不延长它。结果上报受阻时仍提供有界等待进度；到期由独立本机计时明确结束 CLI，不等待 HTTP 返回，也不以该本机订阅到期暂停其他有效共享订阅。
 
-实例替换、权限撤回、租约／原 probe deadline 到达、scope 失效均阻止旧排队输出和样本交付。合法直接交接可保留 cipher，旧 request／reply／sample 不换绑到延长后的权限。daemon 重启不恢复旧 CLI ping 意图。
+实例替换、权限撤回、租约／原 probe deadline 到达、scope 失效均阻止旧排队输出和样本交付。合法直接交接可保留 cipher，旧 request／reply 输出及源端 sample 不换绑到延长后的权限；中继已提交关联状态对新入站 reply 的接续规则见[发送流水线与连续性](/v2/node/dataplane#发送流水线与连续性)。daemon 重启不恢复旧 CLI ping 意图。
 
 ## Node 订阅 API
 

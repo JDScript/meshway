@@ -1493,6 +1493,7 @@ impl SecureNode {
                 circuit.retire_for("reconcile", cause);
             }
         }
+        self.probes.reconcile(&self.circuits, snapshot, &current);
         self.engine.flows = flows;
         self.engine.snapshot = snapshot.clone();
         self.identity = identity;
