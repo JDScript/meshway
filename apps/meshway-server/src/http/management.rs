@@ -14,7 +14,7 @@ use meshway_protocol::{ErrorResponse, NetworkPageQuery, UserView, management::*}
 /// Change the authenticated account's login email.
 ///
 /// Requires the current password and synchronizes bound configuration references while preserving the User ID.
-#[utoipa::path(post,path="/api/v1/account/email",operation_id="changeAccountEmail",tag="account",security(("userSession"=[])),request_body=ChangeEmailRequest,responses((status=200,body=AccountResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/account/email",operation_id="changeAccountEmail",tag="account",security(("userSession"=[])),request_body=ChangeEmailRequest,responses((status=200,body=AccountResponse),(status=400,body=ErrorResponse,description="invalid_current_password, invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials, invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="email_taken, revision_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="service_unavailable, busy")))]
 pub(super) async fn email(
     State(accounts): State<Accounts>,
     State(configurations): State<crate::configuration::Configurations>,
@@ -43,7 +43,7 @@ pub(super) async fn email(
 }
 
 /// Read the authenticated user's current account metadata.
-#[utoipa::path(get,path="/api/v1/account",operation_id="getAccount",tag="account",security(("userSession"=[])),responses((status=200,body=AccountResponse),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/account",operation_id="getAccount",tag="account",security(("userSession"=[])),responses((status=200,body=AccountResponse),(status=401,body=ErrorResponse,description="invalid_session"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn account(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
@@ -66,7 +66,7 @@ pub(super) async fn account(
 /// List the authenticated user's active sessions.
 ///
 /// Returns newest-first pages with a default limit of 50, without bearer credentials.
-#[utoipa::path(get,path="/api/v1/account/sessions",operation_id="listAccountSessions",tag="account",security(("userSession"=[])),params(NetworkPageQuery),responses((status=200,body=AccountSessionsResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/account/sessions",operation_id="listAccountSessions",tag="account",security(("userSession"=[])),params(NetworkPageQuery),responses((status=200,body=AccountSessionsResponse),(status=400,body=ErrorResponse,description="invalid_cursor, invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn sessions(
     State(accounts): State<Accounts>,
     State(sealer): State<std::sync::Arc<crate::secrets::Sealer>>,
@@ -118,7 +118,7 @@ async fn revoke(
 }
 
 /// Revoke one session belonging to the authenticated user.
-#[utoipa::path(post,path="/api/v1/account/sessions/{sessionId}/revoke",operation_id="revokeAccountSession",tag="account",security(("userSession"=[])),params(("sessionId"=SessionId,Path)),responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/account/sessions/{sessionId}/revoke",operation_id="revokeAccountSession",tag="account",security(("userSession"=[])),params(("sessionId"=SessionId,Path)),responses((status=204),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn revoke_one(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
@@ -129,7 +129,7 @@ pub(super) async fn revoke_one(
     revoke(accounts, id, headers, RevokeSessions::One(session)).await
 }
 /// Revoke the authenticated user's sessions except the current session.
-#[utoipa::path(post,path="/api/v1/account/sessions/revoke-others",operation_id="revokeOtherAccountSessions",tag="account",security(("userSession"=[])),responses((status=204),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/account/sessions/revoke-others",operation_id="revokeOtherAccountSessions",tag="account",security(("userSession"=[])),responses((status=204),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn revoke_others(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
@@ -138,7 +138,7 @@ pub(super) async fn revoke_others(
     revoke(accounts, id, headers, RevokeSessions::Others).await
 }
 /// Revoke all sessions belonging to the authenticated user, including the current session.
-#[utoipa::path(post,path="/api/v1/account/sessions/revoke-all",operation_id="revokeAllAccountSessions",tag="account",security(("userSession"=[])),responses((status=204),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/account/sessions/revoke-all",operation_id="revokeAllAccountSessions",tag="account",security(("userSession"=[])),responses((status=204),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn revoke_all(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
@@ -150,7 +150,7 @@ pub(super) async fn revoke_all(
 /// Change the authenticated user's password using the current password.
 ///
 /// The replacement must satisfy the advertised password rules.
-#[utoipa::path(post,path="/api/v1/account/password",operation_id="changeAccountPassword",tag="account",security(("userSession"=[])),request_body=ChangePasswordRequest,responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/account/password",operation_id="changeAccountPassword",tag="account",security(("userSession"=[])),request_body=ChangePasswordRequest,responses((status=204),(status=400,body=ErrorResponse,description="invalid_current_password, invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials, invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="password_weak"),(status=503,body=ErrorResponse,description="service_unavailable, busy")))]
 pub(super) async fn password(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
@@ -173,7 +173,7 @@ pub(super) async fn password(
 /// Inspect a password reset credential without consuming it.
 ///
 /// Accepts the operator-issued credential in the request body and returns its expiry without account details.
-#[utoipa::path(post,path="/api/v1/auth/password-reset/inspect",operation_id="inspectPasswordReset",tag="auth",request_body=PasswordResetInspectRequest,responses((status=200,body=PasswordResetInspection),(status=400,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/auth/password-reset/inspect",operation_id="inspectPasswordReset",tag="auth",request_body=PasswordResetInspectRequest,responses((status=200,body=PasswordResetInspection),(status=400,body=ErrorResponse,description="invalid_password_reset, password_reset_used, password_reset_expired, password_reset_replaced, invalid_request"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn reset_inspect(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
@@ -192,7 +192,7 @@ pub(super) async fn reset_inspect(
 /// Redeem a one-time password reset credential and replace the account password.
 ///
 /// Validates the credential binding and password rules, consumes the reset, and revokes old user sessions.
-#[utoipa::path(post,path="/api/v1/auth/password-reset/redeem",operation_id="redeemPasswordReset",tag="auth",request_body=PasswordResetRedeemRequest,responses((status=204),(status=400,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/auth/password-reset/redeem",operation_id="redeemPasswordReset",tag="auth",request_body=PasswordResetRedeemRequest,responses((status=204),(status=400,body=ErrorResponse,description="invalid_password_reset, password_reset_used, password_reset_expired, password_reset_replaced, invalid_request"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="password_weak"),(status=503,body=ErrorResponse,description="service_unavailable, busy")))]
 pub(super) async fn reset_redeem(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,

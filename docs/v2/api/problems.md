@@ -21,6 +21,8 @@
 
 Problem 的每个分支均有 code、params、message。params 由 code 决定，多数分支为 EmptyParams；message 是安全后备文本，不能用作程序分支。
 
+每个操作在契约中逐状态声明可能返回的 code：ErrorResponse 响应的 `description` 是逗号分隔的 code 列表，[API 参考](/v2/reference/)的响应表列为「Problem codes」。未声明的（状态, code）组合不会由该操作返回。
+
 <!-- schema: ErrorResponse -->
 ```json
 {

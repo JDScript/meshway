@@ -84,7 +84,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
 - **API 参考需要的契约内容**（站点从 `openapi.json` 生成参考页）：
   - 示例：现在没有任何请求／响应示例。建议放成 fixture，由生成器的测试用 zod 校验后写进 OpenAPI。
-  - 每个操作可能返回的 problem code：现在只有 HTTP 状态码，读者看不出 409 是 `revision_conflict` 还是 `state_conflict`。
+  - ~~每个操作可能返回的 problem code~~：已提供。每个 `ErrorResponse` 响应的 `description` 就是该状态下可能出现的 code 列表（逗号分隔，如 `"revision_conflict, request_id_conflict, state_conflict"`），直接读 `openapi.json` 即可；契约测试要求每个错误响应都声明，且每个（状态, code）确实是 Server 错误映射能产生的。顺带修正：Node 路由（`nodeSession`）缺失或畸形 Authorization 头现在返回 401 `invalid_credentials`，不再是 `invalid_session`；`redeemJoinLink` 的 404、`getNodeSettings` 的 403、`listNetworks`／`createNetwork` 的 404 和 connectivity 四个操作的 403 没有可达路径，已从契约移除。
   - tag 的顺序和分组：现在是平铺列表，顺序跟着路由注册走。
 
 ## 待处理的问题

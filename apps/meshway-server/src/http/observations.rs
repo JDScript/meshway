@@ -35,7 +35,7 @@ pub fn router<P: ObservationProvider>(service: ObservationService<P>) -> Router 
 ///
 /// Requires a user session and authority over the source Node and exact service path.
 /// Retrying the same subscription identifier does not extend its lease.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/observations",operation_id="createObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CreateObservation,responses((status=201,body=ObservationTask),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/observations",operation_id="createObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CreateObservation,responses((status=201,body=ObservationTask),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=429,body=ErrorResponse,description="observation_limit"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn create<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -58,7 +58,7 @@ async fn create<P: ObservationProvider>(
 /// List the user session's visible observation subscriptions.
 ///
 /// Requires a user session; each subscription retains its own authorization and lease.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/observations",operation_id="listObservations",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/observations",operation_id="listObservations",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=ObservationList),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn list<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -79,7 +79,7 @@ async fn list<P: ObservationProvider>(
 /// Read an observation subscription's current result and lifecycle.
 ///
 /// Requires the subscribing user session and current permissions; reading does not renew the lease.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/observations/{subscriptionId}",operation_id="getObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/observations/{subscriptionId}",operation_id="getObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=200,body=ObservationList),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn detail<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -100,7 +100,7 @@ async fn detail<P: ObservationProvider>(
 /// Renew an observation subscription under current permissions.
 ///
 /// Requires the subscribing user session; renewal affects only the specified subscription's short lease.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/observations/{subscriptionId}/renew",operation_id="renewObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/observations/{subscriptionId}/renew",operation_id="renewObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=200,body=ObservationList),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=429,body=ErrorResponse,description="observation_limit"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn renew<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -121,7 +121,7 @@ async fn renew<P: ObservationProvider>(
 /// Cancel an observation subscription.
 ///
 /// Requires the subscribing user session; other subscriptions sharing the measurement task remain independent.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/observations/{subscriptionId}/cancel",operation_id="cancelObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=204),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/observations/{subscriptionId}/cancel",operation_id="cancelObservation",tag="observations",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("subscriptionId"=ObservationSubscriptionId,Path)),responses((status=204),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn cancel<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -141,7 +141,7 @@ async fn cancel<P: ObservationProvider>(
 /// Read diagnostic tasks assigned to the authenticated Node.
 ///
 /// Requires a Node session; tasks remain bound to the source instance, execution target and deadline.
-#[utoipa::path(get,path="/agent-api/v1/tasks",operation_id="getNodeTasks",tag="observations",security(("nodeSession"=[])),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
+#[utoipa::path(get,path="/agent-api/v1/tasks",operation_id="getNodeTasks",tag="observations",security(("nodeSession"=[])),responses((status=200,body=ObservationList),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn tasks<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -158,7 +158,7 @@ async fn tasks<P: ObservationProvider>(
 ///
 /// Requires the source Node's session and matching live instance and execution target.
 /// Results do not renew task authorization.
-#[utoipa::path(post,path="/agent-api/v1/tasks/{taskId}/results",operation_id="reportTaskResult",tag="observations",security(("nodeSession"=[])),params(("taskId"=ObservationId,Path)),request_body=ObservationResult,responses((status=200,body=ObservationTask),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/agent-api/v1/tasks/{taskId}/results",operation_id="reportTaskResult",tag="observations",security(("nodeSession"=[])),params(("taskId"=ObservationId,Path)),request_body=ObservationResult,responses((status=200,body=ObservationTask),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=429,body=ErrorResponse,description="observation_limit, state_limit"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn result<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -178,7 +178,7 @@ async fn result<P: ObservationProvider>(
 /// Create an instance-bound Node diagnostic subscription.
 ///
 /// Requires a Node session and current instance qualification for the exact authorized diagnostic scope.
-#[utoipa::path(post,path="/agent-api/v1/observations",operation_id="createNodeObservation",tag="observations",security(("nodeSession"=[])),request_body=CreateNodeObservation,responses((status=201,body=NodeObservationResponse),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/agent-api/v1/observations",operation_id="createNodeObservation",tag="observations",security(("nodeSession"=[])),request_body=CreateNodeObservation,responses((status=201,body=NodeObservationResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=429,body=ErrorResponse,description="observation_limit"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn node_create<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -226,7 +226,7 @@ impl NodeObservationUriQuery {
 /// Read a Node diagnostic subscription.
 ///
 /// Requires the subscribing Node's session and exact instance generation; reading does not extend its lease.
-#[utoipa::path(get,path="/agent-api/v1/observations/{subscriptionId}",operation_id="getNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path),("instanceId"=meshway_model::InstanceId,Query),("generation"=meshway_model::Version,Query)),responses((status=200,body=NodeObservationResponse),(status=401,body=ErrorResponse)))]
+#[utoipa::path(get,path="/agent-api/v1/observations/{subscriptionId}",operation_id="getNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path),("instanceId"=meshway_model::InstanceId,Query),("generation"=meshway_model::Version,Query)),responses((status=200,body=NodeObservationResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn node_detail<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -256,7 +256,7 @@ async fn node_detail<P: ObservationProvider>(
 /// Renew a Node diagnostic subscription to an absolute requested deadline.
 ///
 /// Requires the subscribing Node's session and current instance; replay does not add a relative duration.
-#[utoipa::path(post,path="/agent-api/v1/observations/{subscriptionId}/renew",operation_id="renewNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path)),request_body=RenewNodeObservation,responses((status=200,body=NodeObservationResponse),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/agent-api/v1/observations/{subscriptionId}/renew",operation_id="renewNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path)),request_body=RenewNodeObservation,responses((status=200,body=NodeObservationResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=429,body=ErrorResponse,description="observation_limit"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn node_renew<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -281,7 +281,7 @@ async fn node_renew<P: ObservationProvider>(
 /// Cancel an instance-bound Node diagnostic subscription.
 ///
 /// Requires the subscribing Node's session and exact instance qualification.
-#[utoipa::path(post,path="/agent-api/v1/observations/{subscriptionId}/cancel",operation_id="cancelNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path)),request_body=InstanceRequest,responses((status=200,body=NodeObservationCancelled),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/agent-api/v1/observations/{subscriptionId}/cancel",operation_id="cancelNodeObservation",tag="observations",security(("nodeSession"=[])),params(("subscriptionId"=ObservationSubscriptionId,Path)),request_body=InstanceRequest,responses((status=200,body=NodeObservationCancelled),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn node_cancel<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -299,42 +299,20 @@ async fn node_cancel<P: ObservationProvider>(
     ))
 }
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(create, list, detail, renew, cancel, tasks, result, node_create, node_detail, node_renew, node_cancel), components(schemas(NodeObservationQuery)), modifiers(&ObservationErrors))]
+#[openapi(
+    paths(
+        create,
+        list,
+        detail,
+        renew,
+        cancel,
+        tasks,
+        result,
+        node_create,
+        node_detail,
+        node_renew,
+        node_cancel
+    ),
+    components(schemas(NodeObservationQuery))
+)]
 pub struct ObservationApi;
-
-/// Every observation handler uses the same typed State error mapping.
-struct ObservationErrors;
-impl utoipa::Modify for ObservationErrors {
-    fn modify(&self, spec: &mut utoipa::openapi::OpenApi) {
-        use utoipa::openapi::{Ref, RefOr};
-        for path in spec.paths.paths.values_mut() {
-            for operation in [&mut path.get, &mut path.post].into_iter().flatten() {
-                for status in ["400", "403", "404", "409", "429", "503"]
-                    .into_iter()
-                    .chain(
-                        operation
-                            .request_body
-                            .is_some()
-                            .then_some(["413", "415", "422"])
-                            .into_iter()
-                            .flatten(),
-                    )
-                {
-                    let response = utoipa::openapi::response::ResponseBuilder::new()
-                        .description("Typed observation error")
-                        .content(
-                            "application/json",
-                            utoipa::openapi::Content::new(Some(Ref::from_schema_name(
-                                "ErrorResponse",
-                            ))),
-                        )
-                        .build();
-                    operation
-                        .responses
-                        .responses
-                        .insert(status.into(), RefOr::T(response));
-                }
-            }
-        }
-    }
-}

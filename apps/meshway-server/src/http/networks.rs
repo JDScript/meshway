@@ -29,8 +29,8 @@ fn page_query(
 /// Returns oldest-first pages with a default limit of 100 and rechecks visibility on each page.
 #[utoipa::path(get, path = "/api/v1/networks", operation_id = "listNetworks", tag = "networks",
     security(("userSession" = [])), params(NetworkPageQuery),
-    responses((status = 200, body = NetworkListResponse), (status = 400, body = ErrorResponse),
-        (status = 401, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+    responses((status = 200, body = NetworkListResponse), (status = 400, body = ErrorResponse, description = "invalid_cursor, invalid_request"),
+        (status = 401, body = ErrorResponse, description = "invalid_session"), (status = 503, body = ErrorResponse, description = "service_unavailable")))]
 pub(super) async fn list(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -57,10 +57,10 @@ pub(super) async fn list(
 /// Any valid user session may call this; requestId deduplicates matching input and conflicting reuse returns 409.
 #[utoipa::path(post, path = "/api/v1/networks", operation_id = "createNetwork", tag = "networks",
     security(("userSession" = [])), request_body = CreateNetworkRequest,
-    responses((status = 201, body = NetworkResponse), (status = 400, body = ErrorResponse),
-        (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse),
-        (status = 409, body = ErrorResponse), (status = 413, body = ErrorResponse),
-        (status = 415, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+    responses((status = 201, body = NetworkResponse), (status = 400, body = ErrorResponse, description = "invalid_request"),
+        (status = 401, body = ErrorResponse, description = "invalid_session"),
+        (status = 409, body = ErrorResponse, description = "request_id_conflict"), (status = 413, body = ErrorResponse, description = "request_too_large"),
+        (status = 415, body = ErrorResponse, description = "unsupported_media_type"), (status = 503, body = ErrorResponse, description = "service_unavailable")))]
 pub(super) async fn create(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -87,8 +87,8 @@ pub(super) async fn create(
 /// Requires an active membership in the requested network.
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}", operation_id = "getNetwork", tag = "networks",
     security(("userSession" = [])), params(("networkId" = NetworkId, Path)),
-    responses((status = 200, body = NetworkResponse), (status = 400, body = ErrorResponse),
-        (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+    responses((status = 200, body = NetworkResponse), (status = 400, body = ErrorResponse, description = "invalid_request"),
+        (status = 401, body = ErrorResponse, description = "invalid_session"), (status = 404, body = ErrorResponse, description = "not_found"), (status = 503, body = ErrorResponse, description = "service_unavailable")))]
 pub(super) async fn get(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -112,10 +112,10 @@ pub(super) async fn get(
 /// Requires Owner or Admin permission; requestId deduplicates matching rename input.
 #[utoipa::path(post, path = "/api/v1/networks/{networkId}/rename", operation_id = "renameNetwork", tag = "networks",
     security(("userSession" = [])), params(("networkId" = NetworkId, Path)), request_body = RenameNetworkRequest,
-    responses((status = 200, body = NetworkResponse), (status = 400, body = ErrorResponse),
-        (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse),
-        (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse),
-        (status = 413, body = ErrorResponse), (status = 415, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+    responses((status = 200, body = NetworkResponse), (status = 400, body = ErrorResponse, description = "invalid_request"),
+        (status = 401, body = ErrorResponse, description = "invalid_session"), (status = 403, body = ErrorResponse, description = "permission_denied"),
+        (status = 404, body = ErrorResponse, description = "not_found"), (status = 409, body = ErrorResponse, description = "name_conflict"),
+        (status = 413, body = ErrorResponse, description = "request_too_large"), (status = 415, body = ErrorResponse, description = "unsupported_media_type"), (status = 503, body = ErrorResponse, description = "service_unavailable")))]
 pub(super) async fn rename(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -147,9 +147,9 @@ pub(super) async fn rename(
 /// Requires Owner or Admin permission and returns oldest-first pages with a default limit of 100.
 #[utoipa::path(get, path = "/api/v1/networks/{networkId}/members", operation_id = "listNetworkMembers", tag = "networks",
     security(("userSession" = [])), params(("networkId" = NetworkId, Path), NetworkPageQuery),
-    responses((status = 200, body = NetworkMembersResponse), (status = 400, body = ErrorResponse),
-        (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse),
-        (status = 404, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+    responses((status = 200, body = NetworkMembersResponse), (status = 400, body = ErrorResponse, description = "invalid_cursor, invalid_request"),
+        (status = 401, body = ErrorResponse, description = "invalid_session"), (status = 403, body = ErrorResponse, description = "permission_denied"),
+        (status = 404, body = ErrorResponse, description = "not_found"), (status = 503, body = ErrorResponse, description = "service_unavailable")))]
 pub(super) async fn members(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,

@@ -553,13 +553,18 @@ fn exported_openapi_is_the_actual_router_contract() {
 fn error_responses_declare_consistent_problem_codes() {
     let spec = serde_json::to_value(http::openapi()).unwrap();
     let table = http::problem_table();
-    let codes: std::collections::BTreeSet<String> = spec["components"]["schemas"]["Problem"]
-        ["oneOf"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|variant| variant["properties"]["code"]["enum"][0].as_str().unwrap().to_owned())
-        .collect();
+    let codes: std::collections::BTreeSet<String> =
+        spec["components"]["schemas"]["Problem"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|variant| {
+                variant["properties"]["code"]["enum"][0]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
     let mut declared = 0;
     for (path, item) in spec["paths"].as_object().unwrap() {
         for (method, operation) in item.as_object().unwrap() {

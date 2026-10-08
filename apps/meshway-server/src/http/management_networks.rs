@@ -14,7 +14,7 @@ use meshway_protocol::{ErrorResponse, NetworkPageQuery, WireSecret, management::
 /// Preview the User-identity nodes affected by removing a member.
 ///
 /// Requires access to the target's removal impact and returns the membership and configuration concurrency guards.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/members/{membershipId}/removal-impact",operation_id="getMemberRemovalImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),responses((status=200,body=RemovalImpactResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/members/{membershipId}/removal-impact",operation_id="getMemberRemovalImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),responses((status=200,body=RemovalImpactResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn removal_impact(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -32,7 +32,7 @@ pub(super) async fn removal_impact(
 /// Preview the caller's User-identity nodes affected by leaving a network.
 ///
 /// Returns a read-only impact set and the current membership and configuration concurrency guards.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/leave-impact",operation_id="getLeaveImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=RemovalImpactResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/leave-impact",operation_id="getLeaveImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=RemovalImpactResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn leave_impact(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -50,7 +50,7 @@ pub(super) async fn leave_impact(
 /// Remove a network member and permanently delete their current User-identity nodes.
 ///
 /// Rechecks target-role permission, last-Owner protection, and both expected versions in the commit transaction.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/members/{membershipId}/remove",operation_id="removeMember",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),request_body=RemoveMemberRequest,responses((status=200,body=MemberRemovedResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/members/{membershipId}/remove",operation_id="removeMember",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),request_body=RemoveMemberRequest,responses((status=200,body=MemberRemovedResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="last_owner, revision_conflict, version_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="service_unavailable, busy")))]
 pub(super) async fn remove(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -79,7 +79,7 @@ pub(super) async fn remove(
 /// Leave a network and permanently delete the caller's current User-identity nodes.
 ///
 /// Requires matching membership and configuration versions; the final Owner cannot leave.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/leave",operation_id="leaveNetwork",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=RemoveMemberRequest,responses((status=200,body=MemberRemovedResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/leave",operation_id="leaveNetwork",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=RemoveMemberRequest,responses((status=200,body=MemberRemovedResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="last_owner, revision_conflict, version_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="service_unavailable, busy")))]
 pub(super) async fn leave(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -109,7 +109,7 @@ pub(super) async fn leave(
 /// Preview join links that a proposed member role change would revoke.
 ///
 /// Uses the same role authorization as the mutation and returns at most 100 affected links plus the total.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/members/{membershipId}/role-change-impact/{role}",operation_id="getMemberRoleChangeImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path),("role"=MembershipRole,Path)),responses((status=200,body=RoleChangeImpactResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/members/{membershipId}/role-change-impact/{role}",operation_id="getMemberRoleChangeImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path),("role"=MembershipRole,Path)),responses((status=200,body=RoleChangeImpactResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="last_owner"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn role_change_impact(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -127,7 +127,7 @@ pub(super) async fn role_change_impact(
 /// Change a member's role using the previously read membership version.
 ///
 /// Enforces assignable roles and last-Owner protection, revoking live links the new role may no longer issue.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/members/{membershipId}/role",operation_id="changeMemberRole",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),request_body=ChangeMemberRoleRequest,responses((status=200,body=MemberMutationResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/members/{membershipId}/role",operation_id="changeMemberRole",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),request_body=ChangeMemberRoleRequest,responses((status=200,body=MemberMutationResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="last_owner, version_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn role(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -157,7 +157,7 @@ pub(super) async fn role(
 /// Issue a one-time join link for a role the caller may grant.
 ///
 /// requestId deduplicates matching input; only the first response delivers the secret, while retries return unavailable delivery.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/join-links",operation_id="createJoinLink",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CreateJoinLinkRequest,responses((status=201,body=JoinLinkCreated),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/join-links",operation_id="createJoinLink",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CreateJoinLinkRequest,responses((status=201,body=JoinLinkCreated),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="request_id_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn create_link(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -194,7 +194,7 @@ pub(super) async fn create_link(
 /// List non-secret join link metadata for a network.
 ///
 /// Requires Owner or Admin permission and returns newest-first pages with a default limit of 50.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/join-links",operation_id="listJoinLinks",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),NetworkPageQuery),responses((status=200,body=JoinLinkListResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/join-links",operation_id="listJoinLinks",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),NetworkPageQuery),responses((status=200,body=JoinLinkListResponse),(status=400,body=ErrorResponse,description="invalid_cursor, invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn links(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -225,7 +225,7 @@ pub(super) async fn links(
 /// Inspect a join link without consuming it.
 ///
 /// Requires a user session and the secret in the request body; inspection does not replace redemption-time checks.
-#[utoipa::path(post,path="/api/v1/join-links/inspect",operation_id="inspectJoinLink",tag="members",security(("userSession"=[])),request_body=JoinLinkCredentialRequest,responses((status=200,body=JoinLinkInspection),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/join-links/inspect",operation_id="inspectJoinLink",tag="members",security(("userSession"=[])),request_body=JoinLinkCredentialRequest,responses((status=200,body=JoinLinkInspection),(status=400,body=ErrorResponse,description="invalid_join_link, join_link_used, join_link_revoked, join_link_expired, join_link_issuer_unavailable, invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn inspect_link(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -248,7 +248,7 @@ pub(super) async fn inspect_link(
 /// Redeem a join link to create a membership for the authenticated user.
 ///
 /// Consumption and membership creation are atomic; same-consumer retries recover only the original still-active membership.
-#[utoipa::path(post,path="/api/v1/join-links/redeem",operation_id="redeemJoinLink",tag="members",security(("userSession"=[])),request_body=JoinLinkCredentialRequest,responses((status=200,body=JoinLinkRedeemed),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/join-links/redeem",operation_id="redeemJoinLink",tag="members",security(("userSession"=[])),request_body=JoinLinkCredentialRequest,responses((status=200,body=JoinLinkRedeemed),(status=400,body=ErrorResponse,description="invalid_join_link, join_link_used, join_link_revoked, join_link_expired, join_link_issuer_unavailable, invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=409,body=ErrorResponse,description="already_member"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn redeem_link(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,
@@ -270,7 +270,7 @@ pub(super) async fn redeem_link(
 /// Revoke a network join link under the caller's current permissions.
 ///
 /// Revocation does not remove a membership created by an already-consumed link.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/join-links/{linkId}/revoke",operation_id="revokeJoinLink",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("linkId"=JoinLinkId,Path)),responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/join-links/{linkId}/revoke",operation_id="revokeJoinLink",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("linkId"=JoinLinkId,Path)),responses((status=204),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="state_conflict"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn revoke_link(
     State(networks): State<Networks>,
     Extension(id): Extension<RequestId>,

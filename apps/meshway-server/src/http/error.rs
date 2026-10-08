@@ -450,15 +450,19 @@ pub fn problem_table() -> Vec<(u16, String)> {
         Error::AlreadyMember,
         Error::InvalidRequest,
         Error::InvalidEmail,
-        Error::InvalidPassword(crate::accounts::Options::new(true, std::time::Duration::from_secs(60))
-            .expect("valid options")
-            .password),
+        Error::InvalidPassword(
+            crate::accounts::Options::new(true, std::time::Duration::from_secs(60))
+                .expect("valid options")
+                .password,
+        ),
         Error::InvalidCurrentPassword,
         Error::EmailTaken,
         Error::InvalidName,
         Error::InvalidLimit,
         Error::InvalidCursor,
-        Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(Vec::new())),
+        Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(
+            Vec::new(),
+        )),
         Error::InvalidReset,
         Error::InvalidDelegation,
         Error::ResetUsed,
@@ -482,8 +486,7 @@ pub fn problem_table() -> Vec<(u16, String)> {
         .into_iter()
         .map(|error| {
             let HttpError(response) = HttpError::domain(id, error);
-            let code = serde_json::to_value(&response.problem)
-                .expect("problem serializes")["code"]
+            let code = serde_json::to_value(&response.problem).expect("problem serializes")["code"]
                 .as_str()
                 .expect("problem code")
                 .to_owned();
@@ -498,4 +501,3 @@ pub fn problem_table() -> Vec<(u16, String)> {
     ]);
     table
 }
-

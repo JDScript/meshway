@@ -3,7 +3,7 @@ use super::{auth::bearer, error::HttpError};
 /// Read the complete network configuration JSON Schema.
 ///
 /// Requires an authenticated user session; the document contains definitions and constraints without configuration values.
-#[utoipa::path(get,path="/api/v1/configuration/schema",operation_id="getConfigurationSchema",tag="configuration",security(("userSession"=[])),responses((status=200,body=ConfigurationSchemaResponse),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/configuration/schema",operation_id="getConfigurationSchema",tag="configuration",security(("userSession"=[])),responses((status=200,body=ConfigurationSchemaResponse),(status=401,body=ErrorResponse,description="invalid_session"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn schema(
     State(accounts): State<crate::accounts::Accounts>,
     Extension(id): Extension<RequestId>,
@@ -20,7 +20,7 @@ pub(super) async fn schema(
 /// List supported transport declarations and their schema references.
 ///
 /// Requires an authenticated user session; catalog entries do not attest a node's runtime support.
-#[utoipa::path(get,path="/api/v1/transport-catalog",operation_id="getTransportCatalog",tag="configuration",security(("userSession"=[])),responses((status=200,body=TransportCatalogResponse),(status=401,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/transport-catalog",operation_id="getTransportCatalog",tag="configuration",security(("userSession"=[])),responses((status=200,body=TransportCatalogResponse),(status=401,body=ErrorResponse,description="invalid_session"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn catalog(
     State(accounts): State<crate::accounts::Accounts>,
     Extension(id): Extension<RequestId>,
@@ -47,7 +47,7 @@ use meshway_protocol::{ErrorResponse, configuration::*};
 /// Read the current redacted network configuration.
 ///
 /// Requires current Owner or Admin membership in the network and returns the exact source revision for subsequent edits.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/configuration",operation_id="getConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=ConfigurationResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/configuration",operation_id="getConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=ConfigurationResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn get(
     State(service): State<Configurations>,
     Extension(id): Extension<RequestId>,
@@ -69,7 +69,7 @@ pub(super) async fn get(
 /// Read a saved redacted configuration revision.
 ///
 /// Requires current Owner or Admin membership in the network; historical values are returned without applying them.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/configuration/revisions/{revision}",operation_id="getConfigurationRevision",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("revision"=Revision,Path)),responses((status=200,body=ConfigurationResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/configuration/revisions/{revision}",operation_id="getConfigurationRevision",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("revision"=Revision,Path)),responses((status=200,body=ConfigurationResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn revision(
     State(service): State<Configurations>,
     Extension(id): Extension<RequestId>,
@@ -91,7 +91,7 @@ pub(super) async fn revision(
 /// Read the complete sensitive JSONC source and canonical configuration.
 ///
 /// Requires current Owner or Admin membership in the network; omitting `revision` selects the current source version.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/configuration/source",operation_id="getConfigurationSource",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path),ConfigurationRevisionQuery),responses((status=200,body=ConfigurationSourceResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/configuration/source",operation_id="getConfigurationSource",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path),ConfigurationRevisionQuery),responses((status=200,body=ConfigurationSourceResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn source(
     State(service): State<Configurations>,
     Extension(id): Extension<RequestId>,
@@ -112,7 +112,7 @@ pub(super) async fn source(
 /// Reports the deciding rule, the Access grants that cover the target, the
 /// planned paths and why nothing would be permitted. A draft is evaluated as a
 /// change to the current version and is not saved.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/evaluate",operation_id="evaluateConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=EvaluateConfigurationRequest,responses((status=200,body=EvaluationResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=429,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/evaluate",operation_id="evaluateConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=EvaluateConfigurationRequest,responses((status=200,body=EvaluationResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="revision_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=429,body=ErrorResponse,description="state_limit"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn evaluate(
     State(service): State<Configurations>,
     Extension(id): Extension<RequestId>,
@@ -133,7 +133,7 @@ pub(super) async fn evaluate(
 ///
 /// Checks current edit permissions and strict `expectedRevision` without reserving a revision or permanent materials.
 /// Returns 409 for a stale baseline and 422 for invalid configuration or unmet preparation requirements.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/validate",operation_id="validateConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=ConfigurationRequest,responses((status=200,body=ConfigurationPreviewResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/validate",operation_id="validateConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=ConfigurationRequest,responses((status=200,body=ConfigurationPreviewResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="revision_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn validate(
     State(service): State<Configurations>,
     Extension(id): Extension<RequestId>,
@@ -154,7 +154,7 @@ pub(super) async fn validate(
 ///
 /// Rechecks edit permissions, dependencies and strict `expectedRevision` in the final transaction.
 /// Identical `requestId` retries are idempotent; changed input or a stale baseline returns 409, and invalid configuration returns 422.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration",operation_id="applyConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=ConfigurationRequest,responses((status=200,body=ConfigurationAppliedResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration",operation_id="applyConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=ConfigurationRequest,responses((status=200,body=ConfigurationAppliedResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="revision_conflict, request_id_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 pub(super) async fn apply(
     State(service): State<Configurations>,
     Extension(id): Extension<RequestId>,
@@ -174,7 +174,7 @@ pub(super) async fn apply(
 /// Compare two saved configuration revisions without exposing secret values.
 ///
 /// Requires current Owner or Admin membership in the network and reports source, canonical configuration and stable-binding differences.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/compare",operation_id="compareConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CompareConfigurationRequest,responses((status=200,body=ConfigurationComparison),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/compare",operation_id="compareConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=CompareConfigurationRequest,responses((status=200,body=ConfigurationComparison),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn compare(
     State(service): State<Configurations>,
     Extension(id): Extension<RequestId>,

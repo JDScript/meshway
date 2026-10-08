@@ -12,7 +12,7 @@ use meshway_protocol::{ErrorResponse, execution::PublicationProgress, node::*};
 /// Read non-secret settings for a Node.
 ///
 /// Requires a user session; ordinary members may read only their current User-identity devices.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}/settings",operation_id="getNodeSettings",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=NodeSettingsResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}/settings",operation_id="getNodeSettings",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=NodeSettingsResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn settings(
     State(service): State<Execution>,
     Extension(id): Extension<RequestId>,
@@ -37,7 +37,7 @@ pub(super) async fn settings(
 ///
 /// Requires a network administrator's user session and the expected configuration revision.
 /// The request identifier deduplicates retries of the same deletion.
-#[utoipa::path(delete,path="/api/v1/networks/{networkId}/nodes/{nodeId}",operation_id="deleteNode",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=DeleteNodeRequest,responses((status=200,body=meshway_protocol::configuration::ConfigurationAppliedResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
+#[utoipa::path(delete,path="/api/v1/networks/{networkId}/nodes/{nodeId}",operation_id="deleteNode",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=DeleteNodeRequest,responses((status=200,body=meshway_protocol::configuration::ConfigurationAppliedResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="revision_conflict, request_id_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 pub(super) async fn delete(
     State(service): State<crate::configuration::Configurations>,
     Extension(id): Extension<RequestId>,
@@ -68,7 +68,7 @@ pub(super) async fn delete(
 /// Permanently revoke an exact Node key binding.
 ///
 /// Requires a network administrator's user session; the expected generation guards against key replacement.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke",operation_id="revokeNodeKey",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=RevokeNodeKeyRequest,responses((status=204),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke",operation_id="revokeNodeKey",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=RevokeNodeKeyRequest,responses((status=204),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=409,body=ErrorResponse,description="version_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn revoke_key(
     State(service): State<Execution>,
     Extension(id): Extension<RequestId>,
@@ -88,7 +88,7 @@ pub(super) async fn revoke_key(
 /// List visible registered Nodes and their current action eligibility.
 ///
 /// Requires a user session and evaluates visibility within the requested network.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes",operation_id="listNodes",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=NodeInventoryResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes",operation_id="listNodes",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=NodeInventoryResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn list(
     State(service): State<Execution>,
     Extension(id): Extension<RequestId>,
@@ -106,7 +106,7 @@ pub(super) async fn list(
 /// Read a visible Node's registration and configured identity.
 ///
 /// Requires a user session; an absent or non-visible Node returns 404.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}",operation_id="getNode",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=NodeInventoryView),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}",operation_id="getNode",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=NodeInventoryView),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn get(
     State(service): State<Execution>,
     Extension(id): Extension<RequestId>,
@@ -128,7 +128,7 @@ pub(super) async fn get(
 /// Read an execution publication's targets and receipt progress.
 ///
 /// Requires a network administrator's user session; target validity is separate from installation receipts.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/publications/{publicationId}",operation_id="getExecutionPublication",tag="execution",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("publicationId"=PublicationId,Path)),responses((status=200,body=PublicationProgress),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/publications/{publicationId}",operation_id="getExecutionPublication",tag="execution",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("publicationId"=PublicationId,Path)),responses((status=200,body=PublicationProgress),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn progress(
     State(service): State<Execution>,
     Extension(id): Extension<RequestId>,

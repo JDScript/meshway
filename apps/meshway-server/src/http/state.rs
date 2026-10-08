@@ -1,7 +1,10 @@
 //! Actual State/SSE routes with separate transactional user and Node adapters.
 //! Execution authenticates Node sessions, instances and publication lifetimes.
 use super::TypedPath as Path;
-use super::{auth::bearer, error::HttpError};
+use super::{
+    auth::{bearer, node_bearer},
+    error::HttpError,
+};
 use crate::state::service::{ReadIdentity, StateProvider, StateService};
 use axum::{
     Extension, Json, Router,
@@ -44,7 +47,7 @@ pub(super) fn user(
         .map_err(|error| HttpError::domain(id, error))
 }
 pub(super) fn node(headers: &HeaderMap, id: RequestId) -> Result<String, HttpError> {
-    let value = bearer(headers, id)?;
+    let value = node_bearer(headers, id)?;
     if value.len() > 8192 {
         return Err(HttpError::invalid_request(id));
     }
@@ -53,7 +56,7 @@ pub(super) fn node(headers: &HeaderMap, id: RequestId) -> Result<String, HttpErr
 /// Read the network's currently visible State.
 ///
 /// Requires a user session; current network permissions filter reports and execution dependencies.
-#[utoipa::path(get, path = "/api/v1/networks/{networkId}/state", operation_id = "getNetworkState", tag = "state", security(("userSession"=[])), params(("networkId"=NetworkId, Path)), responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v1/networks/{networkId}/state", operation_id = "getNetworkState", tag = "state", security(("userSession"=[])), params(("networkId"=NetworkId, Path)), responses((status=200, body=StateView),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_session"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
 async fn network_state<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -70,7 +73,7 @@ async fn network_state<P: StateProvider>(
 /// Read visible State for a selected Node.
 ///
 /// Requires a user session; selecting a Node only narrows the caller's authorized view.
-#[utoipa::path(get, path = "/api/v1/networks/{networkId}/nodes/{nodeId}/state", operation_id = "getNodeState", tag = "state", security(("userSession"=[])), params(("networkId"=NetworkId, Path),("nodeId"=NodeId, Path)), responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v1/networks/{networkId}/nodes/{nodeId}/state", operation_id = "getNodeState", tag = "state", security(("userSession"=[])), params(("networkId"=NetworkId, Path),("nodeId"=NodeId, Path)), responses((status=200, body=StateView),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_session"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
 async fn node_state<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -88,7 +91,7 @@ async fn node_state<P: StateProvider>(
 ///
 /// Requires the reporting Node's session and current instance; identical retries preserve freshness.
 /// A changed execution scope returns 409 state_scope_changed without accepting the snapshot.
-#[utoipa::path(post, path = "/agent-api/v1/state", operation_id = "reportNodeState", tag = "state", security(("nodeSession"=[])), request_body=StateReport, responses((status=200, body=StateAccepted),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(post, path = "/agent-api/v1/state", operation_id = "reportNodeState", tag = "state", security(("nodeSession"=[])), request_body=StateReport, responses((status=200, body=StateAccepted),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_credentials"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_scope_changed, state_conflict"),(status=413, body=ErrorResponse, description="request_too_large"),(status=415, body=ErrorResponse, description="unsupported_media_type"),(status=422, body=ErrorResponse, description="configuration_invalid"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="busy, service_unavailable")))]
 async fn report<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -107,7 +110,7 @@ async fn report<P: StateProvider>(
 /// Query the Node's own State and authorized peer dependencies.
 ///
 /// Requires a Node session; the Server determines the network and filters peer details.
-#[utoipa::path(post, path = "/agent-api/v1/state/query", operation_id = "queryPeerState", tag = "state", security(("nodeSession"=[])), request_body=StateQuery, responses((status=200, body=StateView),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(post, path = "/agent-api/v1/state/query", operation_id = "queryPeerState", tag = "state", security(("nodeSession"=[])), request_body=StateQuery, responses((status=200, body=StateView),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_credentials"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=413, body=ErrorResponse, description="request_too_large"),(status=415, body=ErrorResponse, description="unsupported_media_type"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
 async fn peer_query<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -128,7 +131,7 @@ async fn peer_query<P: StateProvider>(
 /// Report a batch of real Node observation events.
 ///
 /// Requires the source Node's session and instance; event identifiers deduplicate identical retries.
-#[utoipa::path(post, path = "/agent-api/v1/history", operation_id = "reportNodeHistory", tag = "observations", security(("nodeSession"=[])), request_body=HistoryReport, responses((status=200, body=HistoryAccepted),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(post, path = "/agent-api/v1/history", operation_id = "reportNodeHistory", tag = "observations", security(("nodeSession"=[])), request_body=HistoryReport, responses((status=200, body=HistoryAccepted),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_credentials"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=413, body=ErrorResponse, description="request_too_large"),(status=415, body=ErrorResponse, description="unsupported_media_type"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
 async fn report_history<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -147,7 +150,7 @@ async fn report_history<P: StateProvider>(
 /// Query visible observation history within a fixed time window.
 ///
 /// Requires a user session and current visibility; reads return stored evidence without starting probes.
-#[utoipa::path(post, path = "/api/v1/networks/{networkId}/history/query", operation_id = "queryObservationHistory", tag = "observations", security(("userSession"=[])), params(("networkId"=NetworkId, Path)), request_body=HistoryQuery, responses((status=200, body=HistoryPage),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(post, path = "/api/v1/networks/{networkId}/history/query", operation_id = "queryObservationHistory", tag = "observations", security(("userSession"=[])), params(("networkId"=NetworkId, Path)), request_body=HistoryQuery, responses((status=200, body=HistoryPage),(status=400, body=ErrorResponse, description="invalid_cursor, invalid_request"),(status=401, body=ErrorResponse, description="invalid_session"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=413, body=ErrorResponse, description="request_too_large"),(status=415, body=ErrorResponse, description="unsupported_media_type"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
 async fn history<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -202,7 +205,7 @@ async fn events<P: StateProvider>(
 ///
 /// Requires a user session; SSE synchronization and updates recheck current permissions.
 /// Last-Event-ID supplies a previous stream recovery point.
-#[utoipa::path(get, path = "/api/v1/networks/{networkId}/events", operation_id = "watchNetwork", tag = "events", security(("userSession"=[])), params(("networkId"=NetworkId, Path), ("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v1/networks/{networkId}/events", operation_id = "watchNetwork", tag = "events", security(("userSession"=[])), params(("networkId"=NetworkId, Path), ("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_session"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
 async fn user_events<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -214,7 +217,7 @@ async fn user_events<P: StateProvider>(
 /// Subscribe to events visible to the authenticated Node.
 ///
 /// Requires a Node session; SSE synchronization and updates include only authorized execution dependencies.
-#[utoipa::path(get, path = "/agent-api/v1/events", operation_id = "watchNode", tag = "events", security(("nodeSession"=[])), params(("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(get, path = "/agent-api/v1/events", operation_id = "watchNode", tag = "events", security(("nodeSession"=[])), params(("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_credentials"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
 async fn node_events<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -255,7 +258,7 @@ pub(crate) fn progress_router(
 ///
 /// Requires a user session; hidden Nodes are excluded from member-visible progress counts.
 /// Receipt phase and current freshness are returned separately.
-#[utoipa::path(get, path="/api/v1/networks/{networkId}/configuration/revisions/{revision}/progress", operation_id="getConfigurationProgress", tag="configuration", security(("userSession"=[])), params(("networkId"=NetworkId, Path),("revision"=meshway_model::Revision, Path)), responses((status=200, body=meshway_protocol::ConfigurationApplyProgress),(status=400, body=ErrorResponse),(status=401, body=ErrorResponse),(status=403, body=ErrorResponse),(status=404, body=ErrorResponse),(status=409, body=ErrorResponse),(status=429, body=ErrorResponse),(status=503, body=ErrorResponse)))]
+#[utoipa::path(get, path="/api/v1/networks/{networkId}/configuration/revisions/{revision}/progress", operation_id="getConfigurationProgress", tag="configuration", security(("userSession"=[])), params(("networkId"=NetworkId, Path),("revision"=meshway_model::Revision, Path)), responses((status=200, body=meshway_protocol::ConfigurationApplyProgress),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_session"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
 async fn progress(
     State(service): State<StateService<crate::state::provider::UserProvider>>,
     Extension(id): Extension<RequestId>,

@@ -1,4 +1,4 @@
-use super::{TypedPath, auth::bearer, error::HttpError};
+use super::{TypedPath, auth::node_bearer, error::HttpError};
 use crate::connectivity::Connectivity;
 use axum::{
     Extension, Json,
@@ -11,9 +11,9 @@ use meshway_protocol::{ErrorResponse, connectivity::*};
 macro_rules! query_route {
     ($(#[$doc:meta])* $method:ident, $path:literal, $operation:literal, $request:ty, $response:ty) => {
         $(#[$doc])*
-        #[utoipa::path(post,path=$path,operation_id=$operation,tag="connectivity",security(("nodeSession"=[])),request_body=$request,responses((status=200,body=$response),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+        #[utoipa::path(post,path=$path,operation_id=$operation,tag="connectivity",security(("nodeSession"=[])),request_body=$request,responses((status=200,body=$response),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
         pub(super) async fn $method(State(service): State<Connectivity>, Extension(id): Extension<RequestId>, headers: HeaderMap, body: Result<Json<$request>, JsonRejection>) -> Result<Json<$response>, HttpError> {
-            let token = bearer(&headers, id)?;
+            let token = node_bearer(&headers, id)?;
             let Json(body) = body.map_err(|error| HttpError::json(id, error))?;
             service.$method(token, body).await.map(Json).map_err(|error| HttpError::domain(id, error))
         }
@@ -45,9 +45,9 @@ query_route!(
 macro_rules! attempt_route {
     ($(#[$doc:meta])* $method:ident, $path:literal, $operation:literal, $response:ty) => {
         $(#[$doc])*
-        #[utoipa::path(post,path=$path,operation_id=$operation,tag="connectivity",security(("nodeSession"=[])),params(("attemptId"=UdpTraversalId,Path)),request_body=UdpTraversalAttemptRequest,responses((status=200,body=$response),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+        #[utoipa::path(post,path=$path,operation_id=$operation,tag="connectivity",security(("nodeSession"=[])),params(("attemptId"=UdpTraversalId,Path)),request_body=UdpTraversalAttemptRequest,responses((status=200,body=$response),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
         pub(super) async fn $method(State(service): State<Connectivity>, Extension(id): Extension<RequestId>, TypedPath(attempt): TypedPath<UdpTraversalId>, headers: HeaderMap, body: Result<Json<UdpTraversalAttemptRequest>, JsonRejection>) -> Result<Json<$response>, HttpError> {
-            let token = bearer(&headers, id)?;
+            let token = node_bearer(&headers, id)?;
             let Json(body) = body.map_err(|error| HttpError::json(id, error))?;
             service.$method(token, attempt, body).await.map(Json).map_err(|error| HttpError::domain(id, error))
         }

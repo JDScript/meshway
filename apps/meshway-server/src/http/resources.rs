@@ -23,7 +23,7 @@ pub fn router<P: ResourceProvider>(service: ResourceService<P>) -> Router {
 /// List the network's rule-set definitions and current check results.
 ///
 /// Requires current Owner or Admin membership; artifact creation and successful check times remain distinct.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets",operation_id="listRuleSets",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=RuleSetList),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets",operation_id="listRuleSets",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=RuleSetList),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 async fn list<P: ResourceProvider>(
     State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,
@@ -40,7 +40,7 @@ async fn list<P: ResourceProvider>(
 /// Read one rule set's definition, selected artifact and check status.
 ///
 /// Requires current Owner or Admin membership and returns a one-item list; an unknown key returns 404.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}",operation_id="getRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetList),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}",operation_id="getRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetList),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 async fn detail<P: ResourceProvider>(
     State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,
@@ -59,7 +59,7 @@ async fn detail<P: ResourceProvider>(
 /// Requires current Owner or Admin membership, rechecked before binding the downloaded content.
 /// For 24 hours, same-user and same-network `requestId` retries for this key return its current view; reuse for another key returns 409.
 /// Failed checks preserve the last validated artifact and report the problem in the returned view.
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/refresh",operation_id="refreshRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),request_body=RefreshRuleSetRequest,responses((status=200,body=RuleSetView),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=429,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/refresh",operation_id="refreshRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),request_body=RefreshRuleSetRequest,responses((status=200,body=RuleSetView),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="request_id_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=429,body=ErrorResponse,description="state_limit"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 async fn refresh<P: ResourceProvider>(
     State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,

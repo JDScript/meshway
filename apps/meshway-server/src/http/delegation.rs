@@ -20,7 +20,7 @@ use meshway_protocol::{
 /// this (403); unknown clients, off-origin redirect targets and malformed
 /// challenges are `invalid_request`.
 #[utoipa::path(post, path = "/api/v1/auth/delegations", operation_id = "createDelegation", tag = "auth", security(("userSession" = [])), request_body = CreateDelegationRequest,
-    responses((status = 201, body = DelegationCreated), (status = 400, body = ErrorResponse), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 413, body = ErrorResponse), (status = 415, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+    responses((status = 201, body = DelegationCreated), (status = 400, body = ErrorResponse, description = "invalid_request"), (status = 401, body = ErrorResponse, description = "invalid_session"), (status = 403, body = ErrorResponse, description = "permission_denied"), (status = 413, body = ErrorResponse, description = "request_too_large"), (status = 415, body = ErrorResponse, description = "unsupported_media_type"), (status = 503, body = ErrorResponse, description = "service_unavailable")))]
 pub(super) async fn create(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
@@ -60,7 +60,7 @@ pub(super) async fn create(
 /// the user except for account, session and delegation management, and
 /// appears in the user's session list under the client's name.
 #[utoipa::path(post, path = "/api/v1/auth/delegations/token", operation_id = "exchangeDelegation", tag = "auth", request_body = ExchangeDelegationRequest,
-    responses((status = 200, body = DelegatedSessionResponse), (status = 400, body = ErrorResponse), (status = 413, body = ErrorResponse), (status = 415, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+    responses((status = 200, body = DelegatedSessionResponse), (status = 400, body = ErrorResponse, description = "invalid_delegation, invalid_request"), (status = 413, body = ErrorResponse, description = "request_too_large"), (status = 415, body = ErrorResponse, description = "unsupported_media_type"), (status = 503, body = ErrorResponse, description = "service_unavailable")))]
 pub(super) async fn exchange(
     State(accounts): State<Accounts>,
     State(public_origin): State<super::PublicOrigin>,
