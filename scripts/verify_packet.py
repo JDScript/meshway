@@ -12,7 +12,7 @@ import sys
 
 from node_lab import ROOT, check_elf, docker_target, run, sha256
 from verify_tun import pinned_image
-from verify_runtime import wait_for_idle
+from verify_runtime import record_load
 from verification_sources import fingerprint as source_fingerprint
 from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact, run_id, bind_access_options, export_evidence
 
@@ -56,7 +56,7 @@ def main():
         print(report / "bin")
         return
     image = pinned_image(platform, report / "bin")
-    load = wait_for_idle()
+    load = record_load()
     label = "io.meshway.packet-fixture=" + identity
     containers = {}
     network = None
