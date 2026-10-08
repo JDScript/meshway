@@ -1,0 +1,21 @@
+[profile.default]
+retries = 0
+slow-timeout = "60s"
+# Leave test-threads unset: nextest uses the available logical CPU count.
+
+[profile.ci]
+retries = 0
+slow-timeout = "60s"
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[test-groups.server-fixtures]
+# Real SQLite/HTTP fixtures each retain their own directory, listener and App.
+# Bound simultaneous KDFs, fsyncs and server workers across test processes.
+max-threads = 8
+
+[[profile.default.overrides]]
+filter = 'package(meshway-server) | package(meshway-control) | package(meshway-control-client) | package(meshway-daemon) | package(meshway-connectivity)'
+test-group = 'server-fixtures'

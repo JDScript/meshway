@@ -3,6 +3,7 @@ rust = { version = "1.98.0", profile = "minimal", components = "clippy,rustfmt" 
 node = "24.19.0"
 pnpm = "11.24.0"
 python = "3.14.7"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
 
 [settings.zig]
 use_community_mirrors = false
@@ -52,8 +53,11 @@ run = [
 ]
 
 [tasks."test:rust"]
-description = "Test every Rust target/feature (4 test threads; override RUST_TEST_THREADS)"
-run = "cargo test --workspace --all-targets --all-features --locked -- --test-threads=\"${RUST_TEST_THREADS:-4}\""
+description = "Test every Rust target/feature with nextest, then Rust doctests"
+run = [
+  "cargo nextest run --workspace --all-targets --all-features --locked --profile \"${NEXTEST_PROFILE:-default}\"",
+  "cargo test --workspace --all-features --locked --doc",
+]
 
 [tasks."build:server"]
 description = "Build the Server binary used by local services and SDK tests"
