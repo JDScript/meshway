@@ -51,7 +51,7 @@ concurrency:
 
 jobs:
   matrix:
-    runs-on: [self-hosted, linux, x64, docker, cgroup2]
+    runs-on: [self-hosted, linux, x64, docker, cgroup2, planck]
     timeout-minutes: 120
     env:
       CARGO_INCREMENTAL: "0"
