@@ -5,6 +5,7 @@ import type {
   ConfigurationRef,
   ConfigurationState,
   EndpointCandidate,
+  LinkAcquisition,
   ListenerState,
   NodeState,
   NodeStateView,
@@ -192,16 +193,28 @@ export const unconfiguredListeners = (
     .filter((key) => !configured.includes(key))
     .sort()
 
-export type NodeLink = AggregatedLink & { peerId: string }
+export type NodeLink = AggregatedLink & {
+  peerId: string
+  /** How this node acquired the channel, by its own report; null when it does not say (or this account does not see its report). */
+  acquisition: LinkAcquisition | null
+}
 
 /** The node's links, each with the other end; by peer, then link ID. */
 export function nodeLinks(
   state: StateView | undefined,
   nodeId: string
 ): NodeLink[] {
+  const own = fullReport(stateOf(state, nodeId))
   return (state?.links ?? [])
     .filter((link) => link.a === nodeId || link.b === nodeId)
-    .map((link) => ({ ...link, peerId: link.a === nodeId ? link.b : link.a }))
+    .map((link) => {
+      const peerId = link.a === nodeId ? link.b : link.a
+      const reported =
+        own && Object.hasOwn(own.links, peerId)
+          ? own.links[peerId]?.find((item) => item.linkId === link.linkId)
+          : undefined
+      return { ...link, peerId, acquisition: reported?.acquisition ?? null }
+    })
     .sort(
       (x, y) =>
         (x.peerId < y.peerId ? -1 : x.peerId > y.peerId ? 1 : 0) ||

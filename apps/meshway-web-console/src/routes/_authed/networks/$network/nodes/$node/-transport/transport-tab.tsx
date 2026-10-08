@@ -31,6 +31,7 @@ import {
 } from "@/lib/nodes/state-model"
 import { lastSeen, nodeStatus, type NodeStatus } from "@/lib/nodes/status"
 import {
+  acquisitionText,
   evidenceLabel,
   linkPhaseLabel,
   pathEvidenceLabel,
@@ -339,9 +340,11 @@ function Links({
                 subtitle={[
                   evidenceLabel[link.evidence](),
                   link.transport,
-                  link.initiatorNodeId === nodeId
-                    ? m.nodes_link_initiated_here()
-                    : m.nodes_link_initiated_peer(),
+                  link.acquisition
+                    ? acquisitionText(link.acquisition)
+                    : link.initiatorNodeId === nodeId
+                      ? m.nodes_link_initiated_here()
+                      : m.nodes_link_initiated_peer(),
                   link.inUse === true
                     ? m.nodes_link_in_use()
                     : link.inUse === false

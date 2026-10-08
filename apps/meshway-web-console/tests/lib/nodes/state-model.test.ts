@@ -185,6 +185,52 @@ test("listener runtime names its sockets; others are dial sockets", () => {
   assert.deepEqual(unconfiguredListeners(REPORT, ["vless"]), ["udp"])
 })
 
+test("a link says how the node acquired it, by its own report", () => {
+  const a = STATE.nodes[A]
+  assert.ok(a)
+  const reported: StateView = {
+    ...STATE,
+    nodes: {
+      ...STATE.nodes,
+      [A]: {
+        ...a,
+        report: {
+          view: "full",
+          report: {
+            ...REPORT,
+            links: {
+              [B]: [
+                {
+                  linkId: "l2",
+                  phase: "authenticated",
+                  transport: "native_udp",
+                  socketId: "s1",
+                  initiatorNodeId: A,
+                  businessDependencies: 0,
+                  observationIds: [],
+                  observedAt: T0,
+                  expiresAt: T1,
+                  acquisition: { type: "localEndpoint" },
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  }
+  assert.deepEqual(
+    nodeLinks(reported, A).map((entry) => [entry.linkId, entry.acquisition]),
+    [
+      ["l2", { type: "localEndpoint" }],
+      // Its report does not name this one.
+      ["l1", null],
+    ]
+  )
+  // Another node's view of the same link is its own report's, unseen here.
+  assert.equal(nodeLinks(reported, B)[0]?.acquisition, null)
+})
+
 test("links and paths through a node", () => {
   assert.deepEqual(
     nodeLinks(STATE, A).map((entry) => [entry.peerId, entry.linkId]),

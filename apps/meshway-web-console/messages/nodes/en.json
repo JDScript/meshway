@@ -142,6 +142,7 @@
   "nodes_dialers_inherited": "The network's defaults:",
   "nodes_dialers_none_fact": "This node dials nothing; its listeners still accept",
   "nodes_endpoints_none": "No endpoint candidates",
+  "nodes_local_endpoints_none": "No usable local address",
   "nodes_link_idle": "No business dependency",
   "nodes_link_in_use": "Business depends on it",
   "nodes_link_use_unknown": "Business use unknown",

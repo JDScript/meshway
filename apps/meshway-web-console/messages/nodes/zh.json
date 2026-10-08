@@ -142,6 +142,7 @@
   "nodes_dialers_inherited": "网络默认值：",
   "nodes_dialers_none_fact": "这个节点不主动建立连接，监听仍可接收",
   "nodes_endpoints_none": "没有对外候选",
+  "nodes_local_endpoints_none": "本机没有可用的地址",
   "nodes_link_idle": "无业务依赖",
   "nodes_link_in_use": "有业务依赖",
   "nodes_link_use_unknown": "业务依赖未知",

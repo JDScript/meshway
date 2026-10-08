@@ -1,6 +1,8 @@
 import type {
   ApplyPhase,
+  EndpointKind,
   EndpointSource,
+  LinkAcquisition,
   LinkEvidence,
   LinkPhase,
   ListenerPhase,
@@ -91,6 +93,29 @@ export function endpointSourceText(origin: EndpointSource): string {
       return m.state_endpoint_interface({ name: origin.interface })
     case "stun":
       return m.state_endpoint_stun({ observer: origin.observer })
+  }
+}
+
+/** An endpoint's source without its details (a coordinated attempt names only the kind). */
+const endpointKindLabel: Record<EndpointKind, () => string> = {
+  configured: () => m.state_endpoint_configured(),
+  interface: () => m.state_endpoint_kind_interface(),
+  stun: () => m.state_endpoint_kind_stun(),
+}
+
+/** How a node acquired one of its channels, as it reports it. */
+export function acquisitionText(acquisition: LinkAcquisition): string {
+  switch (acquisition.type) {
+    case "publishedEndpoint":
+      return m.state_acquisition_published()
+    case "localEndpoint":
+      return m.state_acquisition_local()
+    case "acceptedInbound":
+      return m.state_acquisition_inbound()
+    case "coordinatedUdp":
+      return m.state_acquisition_coordinated({
+        source: endpointKindLabel[acquisition.endpointSource](),
+      })
   }
 }
 

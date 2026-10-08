@@ -125,6 +125,33 @@ export function SocketBlock({
           ))}
         </ul>
       )}
+      {/* Omitted: not sampled (dial and coordination sockets); empty: sampled, none usable. */}
+      {socket.localEndpoints === undefined ||
+      socket.localEndpoints === null ? null : socket.localEndpoints.length ===
+        0 ? (
+        <p className="px-1.5 text-meta text-muted-foreground">
+          {m.nodes_local_endpoints_none()}
+        </p>
+      ) : (
+        <ul className="flex flex-col">
+          {socket.localEndpoints.map((local) => (
+            <li
+              key={local.address}
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 rounded-[10px] px-1.5 py-1 sm:grid-cols-[minmax(0,22rem)_minmax(0,1fr)_auto]"
+            >
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span className="truncate font-mono text-row">
+                  {local.address}
+                </span>
+                <EndpointGeo address={local.address} geoOf={geoOf} />
+              </span>
+              <span className="truncate text-meta text-muted-foreground max-sm:col-start-1">
+                {m.state_endpoint_local()}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

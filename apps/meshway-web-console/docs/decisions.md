@@ -168,9 +168,14 @@ its generated client only, and only what the controller delivers:
     dialers: inherit the defaults (shown), a set of its own, or none (`{}`).
   - transport: each configured listener with what the report says of it
     (phase, problem, loaded certificate, sockets and their endpoint
-    candidates by origin, observed and expiry, expired ones marked), other
-    sockets, listeners reported but not configured, the node's links
-    (peer, evidence, transport, who dialed, business use, since, phase)
+    candidates by origin, observed and expiry, expired ones marked, and the
+    local addresses the node reported for it: none when it did not sample,
+    "no usable local address" when it sampled none), other sockets,
+    listeners reported but not configured, the node's links (peer,
+    evidence, transport, how this node acquired the channel by its own
+    report — dialed a published endpoint or an address the peer reported,
+    accepted from the peer, UDP hole punching — else who dialed, business
+    use, since, phase)
     and paths. A listener is edited inline and enters the draft only when
     valid; it restates the view's other fields; secrets are write-only (the
     UUID and a provided certificate are kept unless written; recreating

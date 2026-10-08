@@ -51,7 +51,7 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `69110045`）
+## 接入状态（后端 `1bb3d137`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
@@ -59,13 +59,15 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 网络、成员（改角色前确认要撤销的加入链接）、加入链接（签发人、使用者）和网络活动；
 - 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同；组网的允许规则可以限制承载 `transports`：不限即省略，指定为 UDP／TCP／VLESS／Trojan 中的几种，一个不选是 `[]`，阻断规则不设置）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
 - 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值；`edge_transport_unavailable` 说明哪条 Mesh 路由要经过哪两端之间的边，挂在 `/topology/<i>/transports` 的承载上），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
-- 地点与 ASN：console 不再读服务端的 GeoIP 结果（`derived.location.data`、`datasetId`、`ipInfo` 的查询结果），只用 `derived.location` 的地址和 `derived.ipInfo` 的键（`notApplicable` 视为非公网，不发出），向 geojs.io 查询。在服务端按下面"请后端调整"改完之前，`derived.location` 只在服务端自己的 GeoIP 有结果时才出现，没有数据集的部署里节点仍然没有位置。8420 的三个节点还没有上报 endpoint，地球上暂时没有节点。
+- 地点与 ASN：console 不再读服务端的 GeoIP 结果（`derived.location.data`、`datasetId`、`ipInfo` 的查询结果），只用 `derived.location` 的地址和 `derived.ipInfo` 的键（`notApplicable` 视为非公网，不发出），向 geojs.io 查询。在服务端按下面"请后端调整"改完之前，`derived.location` 只在服务端自己的 GeoIP 有结果时才出现，没有数据集的部署里节点仍然没有位置。8420 的节点通过 STUN 上报了公网映射，地球上已经有节点；三个节点共用宿主出口，同一地址的节点合成一组，没有 STUN 观测的列在「待定位」。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
 - 接入密钥和设备授权（`authorizationUrl` 打开的就是 console 的授权页）；
 - 按 revision 的部署进度；
 - 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；管理者的配置快照按 GET 响应写入缓存；续传不重发初始批次，console 以 SDK 的 `onOpen`（连接被接受）确认服务端接受了 cursor；
 - 规则集（刷新带 `requestId`：结果未知时再刷新沿用同一 ID，服务端返回当前视图、不再下载）；
 - 路径检测（`evaluateConfiguration`）：节点的“路径”标签（D6），当前版本和草稿并排，不同的部分标出；规则按 pointer 命名，当前版本的可以打开到源文件。需要 `readConfiguration`，成员看不到这个标签；
+- 节点上报的本机地址（`SocketState.localEndpoints`：省略即未采样，空数组即没有可用地址）列在传输页对应套接字下；连接按节点自己的报告显示获取方式（`LinkState.acquisition`：拨号到已发布的端点、拨号到对端上报的本机地址、接受对端拨入、UDP 打洞），没有报告时仍显示由谁发起。在 8420 上用 `meshway ping` 建立连接后核对过；
+- 每个错误响应的 `description` 列出该状态下可能的 problem code，站点的 API 参考随状态码显示；
 - 站点的委托登录（`createDelegation`）：同意页 `/authorize-site`，授权后跳回站点地址并带上 `code` 和站点的 `state`；会话列表按 `delegationClient` 标出授权给哪个站点。站点用 `exchangeDelegation` 换到 1 小时的会话，在 API 参考里试用（只放内存，写操作先确认）。8420 以 `--delegation-client docs=http://localhost:3002` 启动，在 8420 上走通了授权、读、写操作取消后不发送和确认后发送、会话列表、结束试用；委托会话改邮箱等被拒（403）没有单独验证；
 - 观测历史；
 - 主动路径观察。
@@ -84,7 +86,6 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
 - **API 参考需要的契约内容**（站点从 `openapi.json` 生成参考页）：
   - 示例：现在没有任何请求／响应示例。建议放成 fixture，由生成器的测试用 zod 校验后写进 OpenAPI。
-  - ~~每个操作可能返回的 problem code~~：已提供。每个 `ErrorResponse` 响应的 `description` 就是该状态下可能出现的 code 列表（逗号分隔，如 `"revision_conflict, request_id_conflict, state_conflict"`），直接读 `openapi.json` 即可；契约测试要求每个错误响应都声明，且每个（状态, code）确实是 Server 错误映射能产生的。顺带修正：Node 路由（`nodeSession`）缺失或畸形 Authorization 头现在返回 401 `invalid_credentials`，不再是 `invalid_session`；`redeemJoinLink` 的 404、`getNodeSettings` 的 403、`listNetworks`／`createNetwork` 的 404 和 connectivity 四个操作的 403 没有可达路径，已从契约移除。
   - tag 的顺序和分组：现在是平铺列表，顺序跟着路由注册走。
 
 ## 待处理的问题
@@ -150,11 +151,11 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ### 需要真实 Node 复核
 
-Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置、上报状态），三节点 Docker 环境已接入 main 的 Server。下面几项可以用它复核，这一轮没有做：
+三节点 Docker 环境接在 8420 上。
 
-1. 节点应用配置后重新 acquire instance，原版本中是否仍被标为 `superseded`。
-2. 节点发起 demand 是否重新发布整网配置，使其他节点变成 `config_mismatch`、links 变成 `expired`，直到重新上报。
-3. 主动观察的创建、续租、取消是否重新生成整网执行发布；有观察时 Agent 请求（tasks、renew、receipts）的耗时。
+1. 节点应用配置后重新 acquire instance，原版本中是否仍被标为 `superseded`：未复核。
+2. 节点发起 demand 时：已看到。`meshway ping` 期间（8420，`1bb3d137`），发布随需求更新，相关节点在 `current` 和 `config_mismatch` 之间来回，links 变成 `expired`，大约 30 秒内随新报告恢复。console 按事实显示，节点列表和地球会跟着闪。请后端确认这是预期；如果"已收到新发布、正在应用"不应算配置不一致，State 能否把这段过渡和真正的不一致分开。
+3. 主动观察的创建、续租、取消是否重新生成整网执行发布；有观察时 Agent 请求（tasks、renew、receipts）的耗时：未复核。
 
 ### 后端排期中
 
