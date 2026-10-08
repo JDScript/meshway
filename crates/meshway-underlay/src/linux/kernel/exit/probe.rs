@@ -108,6 +108,14 @@ impl ExitProbe {
             }
             _ => Reason::TunUnavailable,
         })?;
+        let ingress_rpf = read_sysctl(&format!("/proc/sys/net/ipv4/conf/{}/rp_filter", tun.name()))
+            .map_err(|_| Reason::ForwardingProbeFailed)?;
+        let ingress_mark = read_sysctl(&format!(
+            "/proc/sys/net/ipv4/conf/{}/src_valid_mark",
+            tun.name()
+        ))
+        .map_err(|_| Reason::ForwardingProbeFailed)?;
+        reverse_path(all_rpf, ingress_rpf, all_mark, ingress_mark)?;
         drop(tun);
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|_| Reason::NftUnavailable)?;
@@ -182,6 +190,35 @@ fn reverse_path(all: u32, interface: u32, all_mark: u32, mark: u32) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires isolated Linux namespace, forwarding, loose/off RPF, nft and conntrack"]
+    async fn exit_preflight_preserves_target_and_observation_without_claiming_ready() {
+        assert_eq!(
+            std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+            Ok("1")
+        );
+        let mut probe = crate::Host::exit_probe().unwrap();
+        let instance = "11111111-1111-4111-8111-111111111111".parse().unwrap();
+        let target = ConfigurationRef {
+            revision: meshway_model::Revision::MIN,
+            execution_publication: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
+            digest: meshway_model::Digest::from_bytes([3; 32]),
+        };
+        let before = SystemTime::now();
+        let observation = probe
+            .observe(instance, target.clone(), &["lo".into()])
+            .await;
+        assert_eq!(observation.status, ExitStatus::Probing);
+        assert_eq!(observation.instance_id, instance);
+        assert_eq!(observation.target, target);
+        assert!(observation.installed_families.is_empty());
+        assert!(observation.observed_at >= before.into());
+        assert!(observation.observed_at <= SystemTime::now().into());
+        let frozen = observation.clone();
+        probe.finish().await.unwrap();
+        assert_eq!(observation, frozen);
+    }
 
     #[tokio::test]
     #[ignore = "requires isolated Linux namespace with ip_forward=0"]

@@ -287,6 +287,11 @@ impl Kernel {
             return Err(Error::Target);
         }
         if cfg.exit_enabled
+            || cfg.exit_role.is_some()
+            || cfg.egress_capture.default_capture
+            || !cfg.egress_capture.managed_ipv4.is_empty()
+            || !cfg.egress_capture.sink_ipv6.is_empty()
+            || cfg.egress_capture.unavailable.is_some()
             || cfg.permits.values().any(|permit| {
                 !matches!(
                     permit.target,

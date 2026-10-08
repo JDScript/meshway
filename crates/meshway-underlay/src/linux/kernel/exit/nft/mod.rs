@@ -43,6 +43,11 @@ pub(super) async fn submit(commands: &mut Commands, batch: &Value) -> Result<(),
         .await
         .map_err(|_| Reason::NftUnavailable)?;
     if !result.success {
+        #[cfg(test)]
+        eprintln!(
+            "nft fixture rejection: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
         return Err(Reason::NftUnavailable.into());
     }
     Ok(())

@@ -36,6 +36,8 @@ pub(super) enum Failure {
 pub(super) struct Output {
     pub success: bool,
     pub stdout: Vec<u8>,
+    #[cfg(test)]
+    pub stderr: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -142,6 +144,8 @@ fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Fai
         Ok(Output {
             success: status.success(),
             stdout,
+            #[cfg(test)]
+            stderr: _stderr,
         })
     })
 }
