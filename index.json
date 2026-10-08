@@ -1,8 +1,97 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T22:28:44.716754+00:00",
+  "updatedAt": "2026-10-08T22:52:12.279990+00:00",
   "runs": [
+    {
+      "id": 37854831560,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "6b31dc0c7fbdf080d4490c5f4bf6fbbf37b5614e",
+      "message": "test(exit): verify live attachments and keep capture alive during egress block",
+      "createdAt": "2026-10-08T22:39:25Z",
+      "updatedAt": "2026-10-08T22:49:53Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37854831560",
+      "jobs": [
+        {
+          "id": 113576394424,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T22:39:28Z",
+          "completedAt": "2026-10-08T22:39:41Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37854831560/job/113576394424"
+        },
+        {
+          "id": 113576480064,
+          "name": "cargo",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-08T22:39:43Z",
+          "completedAt": "2026-10-08T22:49:52Z",
+          "seconds": 609.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37854831560/job/113576480064"
+        },
+        {
+          "id": 113576480168,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T22:39:43Z",
+          "completedAt": "2026-10-08T22:41:21Z",
+          "seconds": 98.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37854831560/job/113576480168"
+        },
+        {
+          "id": 113576480191,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T22:41:24Z",
+          "completedAt": "2026-10-08T22:42:25Z",
+          "seconds": 61.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37854831560/job/113576480191"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37854831459,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "6b31dc0c7fbdf080d4490c5f4bf6fbbf37b5614e",
+      "message": "test(exit): verify live attachments and keep capture alive during egress block",
+      "createdAt": "2026-10-08T22:39:25Z",
+      "updatedAt": "2026-10-08T22:39:27Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37854831459",
+      "jobs": [
+        {
+          "id": 113576393735,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-08T22:39:26Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37854831459/job/113576393735"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37851498393,
       "attempt": 1,
