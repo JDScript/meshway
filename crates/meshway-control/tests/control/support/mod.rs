@@ -23,6 +23,27 @@ pub fn request() -> RequestId {
     RequestId::new(uuid::Builder::from_random_bytes(bytes).into_uuid()).unwrap()
 }
 impl Server {
+    pub async fn control(
+        &self,
+        owner: &Owner,
+        origin: &str,
+        name: &str,
+        capabilities: std::collections::BTreeMap<String, meshway_model::state::Capability>,
+    ) -> meshway_control::Control {
+        let mut control = meshway_control::Control::open(
+            &self.path(name),
+            origin,
+            meshway_control_client::http_client_builder()
+                .unwrap()
+                .no_proxy(),
+        )
+        .unwrap();
+        self.enroll(owner, &mut control, name).await;
+        control.authenticate().await.unwrap();
+        control.acquire_instance(capabilities).await.unwrap();
+        control
+    }
+
     pub async fn enroll(
         &self,
         owner: &Owner,

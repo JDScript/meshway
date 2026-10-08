@@ -18,27 +18,20 @@ use meshway_protocol::{
 use std::{collections::BTreeMap, time::Duration};
 
 pub(super) async fn control(server: &Server, owner: &Owner, origin: &str, name: &str) -> Control {
-    let mut control = Control::open(
-        &server.path(name),
-        origin,
-        meshway_control_client::http_client_builder()
-            .unwrap()
-            .no_proxy(),
-    )
-    .unwrap();
-    server.enroll(owner, &mut control, name).await;
-    control.authenticate().await.unwrap();
-    control
-        .acquire_instance(BTreeMap::from([(
-            "transport:native_udp".into(),
-            Capability::Transport {
-                roles: vec![TransportRole::Dial, TransportRole::Listen],
-                streams: vec![StreamKind::Udp],
-            },
-        )]))
+    server
+        .control(
+            owner,
+            origin,
+            name,
+            BTreeMap::from([(
+                "transport:native_udp".into(),
+                Capability::Transport {
+                    roles: vec![TransportRole::Dial, TransportRole::Listen],
+                    streams: vec![StreamKind::Udp],
+                },
+            )]),
+        )
         .await
-        .unwrap();
-    control
 }
 
 pub(super) async fn listeners(server: &Server, owner: &Owner) {

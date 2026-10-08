@@ -32,17 +32,9 @@ const RECEIPTS: &str = "/configuration/receipts";
 const STATE: &str = "/agent-api/v1/state";
 
 async fn start_control(server: &Server, owner: &Owner, origin: &str, name: &str) -> Control {
-    let mut control = Control::open(
-        &server.path(name),
-        origin,
-        meshway_control_client::http_client_builder()
-            .unwrap()
-            .no_proxy(),
-    )
-    .unwrap();
-    server.enroll(owner, &mut control, name).await;
-    control.authenticate().await.unwrap();
-    control.acquire_instance(Default::default()).await.unwrap();
+    let mut control = server
+        .control(owner, origin, name, Default::default())
+        .await;
     // Revision progress deliberately retains the revision's initial targets.
     // Publish after acquisition so this fixture's ticket is that exact target,
     // rather than an instance-acquisition refresh of the enrollment revision.
