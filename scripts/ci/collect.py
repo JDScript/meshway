@@ -142,22 +142,35 @@ def build_target(name):
 
 
 def parse_matrix(document, report_id):
-    """CI1 adapter: only this function depends on the matrix.json wire shape."""
+    """CI1 adapter: only this function depends on the matrix.json wire shape.
+
+    matrix.json v1 (scripts/validate_matrix.py): top-level `scope` is
+    `acceptance` or `diagnostic-short`; each row carries `row`, `passed`,
+    `reportId`, `scope`, `elapsedSeconds` and `loadBeforeStart.loadAverage`.
+    The index keeps the compact `short`/`seconds`/`load` form.
+    """
     doc = object_value(document)
-    if type(doc.get("short")) is not bool:
-        raise ValueError("matrix.short must be boolean")
+    if doc.get("version") != 1:
+        raise ValueError("unsupported matrix schema")
+    scope = text(doc.get("scope"))
+    if scope not in ("acceptance", "diagnostic-short"):
+        raise ValueError("matrix.scope must be acceptance or diagnostic-short")
     rows = []
     for value in array(doc.get("rows")):
         row = object_value(value)
         if row.get("passed") is not None and type(row["passed"]) is not bool:
             raise ValueError("matrix row.passed must be boolean or null")
-        load = row.get("load")
-        # CI1 may supply a scalar or before/after structure. Keep display text bounded.
-        load_text = None if load is None else json.dumps(load, ensure_ascii=False, allow_nan=False)[:256]
+        before = row.get("loadBeforeStart")
+        load_text = None
+        if isinstance(before, dict) and isinstance(before.get("loadAverage"), list):
+            load_text = "/".join(f"{number(v):.2f}" for v in before["loadAverage"][:3] if isinstance(v, (int, float)))[:64] or None
+        row_scope = row.get("scope")
+        if row_scope is not None and text(row_scope) not in ("acceptance", "diagnostic-short"):
+            raise ValueError("matrix row.scope must be acceptance or diagnostic-short")
         rows.append({"row": text(row["row"]), "passed": row.get("passed"),
                      "reportId": text(row["reportId"]) if row.get("reportId") is not None else None,
-                     "seconds": number(row.get("seconds")), "load": load_text})
-    return {"reportId": report_id, "short": doc["short"], "rows": rows}
+                     "seconds": number(row.get("elapsedSeconds")), "load": load_text})
+    return {"reportId": report_id, "short": scope == "diagnostic-short", "rows": rows}
 
 
 def parse_perf(document, report_id, kind):

@@ -149,17 +149,23 @@ class CollectorTests(unittest.TestCase):
         self.assertTrue(all(m["value"] is None for m in report["metrics"] if "RTT" in m["label"]))
 
     def test_matrix_adapter_and_boolean_validation(self):
-        document = {"short": True, "rows": [{"row": "nat/off", "passed": False, "reportId": "evidence",
-                                             "seconds": 30.5, "load": {"before": [1, 2, 3]}},
-                                            {"row": "tcp/off", "passed": None}]}
+        document = {"version": 1, "scope": "diagnostic-short", "parallel": 2, "passed": False,
+                    "rows": [{"row": "nat/off", "passed": False, "reportId": "evidence", "scope": "diagnostic-short",
+                              "elapsedSeconds": 30.5, "exitCode": 1,
+                              "loadBeforeStart": {"uptime": "x", "loadAverage": [1.25, 2.5, 3.0]}},
+                             {"row": "tcp/off", "passed": None}]}
         matrix = ci.parse_matrix(document, "matrix-id")
         self.assertTrue(matrix["short"])
         self.assertFalse(matrix["rows"][0]["passed"])
+        self.assertEqual(matrix["rows"][0]["seconds"], 30.5)
+        self.assertEqual(matrix["rows"][0]["load"], "1.25/2.50/3.00")
         self.assertIsNone(matrix["rows"][1]["passed"])
-        self.assertIn("before", matrix["rows"][0]["load"])
+        self.assertIsNone(matrix["rows"][1]["load"])
         document["rows"][0]["passed"] = "false"
         with self.assertRaises(ValueError):
             ci.parse_matrix(document, "bad")
+        with self.assertRaises(ValueError):
+            ci.parse_matrix({"version": 1, "scope": "nightly", "rows": []}, "bad-scope")
 
     def test_zip_binary_hash_and_path_safety(self):
         with tempfile.TemporaryDirectory() as directory:
