@@ -422,10 +422,12 @@ impl IntoResponse for HttpError {
     }
 }
 
-/// Every status/code pair `domain` can produce, from one sample of each
-/// `Error` variant. Operations declare the problem codes they return in their
-/// error response descriptions; a test checks each declared pair against this.
-pub fn problem_table() -> Vec<(u16, String)> {
+/// One sample response per status/code pair the Server produces: every
+/// `Error` variant through `domain`, plus the rejections raised by body
+/// extraction and routing before any use case runs. Operations declare the
+/// codes they return in their error response descriptions; a test checks each
+/// declared pair against this and the contract carries the sample as example.
+pub fn problem_samples() -> Vec<ProblemSample> {
     use crate::error::{StorageCause, Unavailability};
     let samples = [
         Error::InvalidSession,
@@ -482,22 +484,53 @@ pub fn problem_table() -> Vec<(u16, String)> {
         Error::Internal("sample"),
     ];
     let id = RequestId::new(uuid::Uuid::from_u128(1)).expect("nonzero request ID");
-    let mut table: Vec<(u16, String)> = samples
+    let empty = || EmptyParams {};
+    samples
         .into_iter()
-        .map(|error| {
-            let HttpError(response) = HttpError::domain(id, error);
-            let code = serde_json::to_value(&response.problem).expect("problem serializes")["code"]
+        .map(|error| HttpError::domain(id, error))
+        .chain([
+            HttpError::new(
+                id,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Problem::RequestTooLarge {
+                    params: empty(),
+                    message: "Request body exceeds the allowed size.".into(),
+                },
+            ),
+            HttpError::new(
+                id,
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                Problem::UnsupportedMediaType {
+                    params: empty(),
+                    message: "A JSON request body is required.".into(),
+                },
+            ),
+            HttpError::new(
+                id,
+                StatusCode::METHOD_NOT_ALLOWED,
+                Problem::MethodNotAllowed {
+                    params: empty(),
+                    message: "Method not allowed.".into(),
+                },
+            ),
+        ])
+        .map(|HttpError(response)| {
+            let body = serde_json::to_value(&response).expect("error response serializes");
+            let code = body["problem"]["code"]
                 .as_str()
                 .expect("problem code")
                 .to_owned();
-            (response.status, code)
+            ProblemSample {
+                status: response.status,
+                code,
+                body,
+            }
         })
-        .collect();
-    // Produced by body extraction and routing before any use case runs.
-    table.extend([
-        (413, "request_too_large".to_owned()),
-        (415, "unsupported_media_type".to_owned()),
-        (405, "method_not_allowed".to_owned()),
-    ]);
-    table
+        .collect()
+}
+
+pub struct ProblemSample {
+    pub status: u16,
+    pub code: String,
+    pub body: serde_json::Value,
 }

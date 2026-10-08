@@ -552,7 +552,7 @@ fn exported_openapi_is_the_actual_router_contract() {
 #[test]
 fn error_responses_declare_consistent_problem_codes() {
     let spec = serde_json::to_value(http::openapi()).unwrap();
-    let table = http::problem_table();
+    let table = http::problem_samples();
     let codes: std::collections::BTreeSet<String> =
         spec["components"]["schemas"]["Problem"]["oneOf"]
             .as_array()
@@ -582,7 +582,9 @@ fn error_responses_declare_consistent_problem_codes() {
                 for code in description.split(',').map(str::trim) {
                     assert!(codes.contains(code), "{label}: unknown problem code {code}");
                     assert!(
-                        table.iter().any(|(s, c)| *s == status && c == code),
+                        table
+                            .iter()
+                            .any(|sample| sample.status == status && sample.code == code),
                         "{label}: {code} is not produced with this status"
                     );
                     declared += 1;

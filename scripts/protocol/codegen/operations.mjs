@@ -22,7 +22,7 @@ export function operationModel(document) {
   function component(content) {
     keys(content, ["application/json"], "JSON content");
     if (!content["application/json"]) throw new Error("Missing JSON content");
-    keys(content["application/json"], ["schema"], "media");
+    keys(content["application/json"], ["schema", "example"], "media");
     return reference(content["application/json"].schema);
   }
   for (const [path, item] of Object.entries(document.paths)) {
