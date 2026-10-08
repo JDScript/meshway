@@ -1,5 +1,6 @@
 //! One bounded owner of forward facts. Preparation is read-only apart from
 //! expired-entry collection; commit happens only after final guard validation.
+mod exit;
 mod index;
 mod tcp;
 
@@ -103,11 +104,13 @@ struct Flow {
     permit_expires_at_ms: u64,
     guard_expires_at_ms: u64,
     circuit: Option<[u8; 32]>,
+    exit: Option<exit::ExitState>,
 }
 
 impl Flow {
     fn live_at(&self, now: Instant, now_ms: u64) -> bool {
         now < self.expires_at
+            && self.exit.as_ref().is_none_or(|exit| exit.live(now))
             && now_ms < self.permit_expires_at_ms
             && now_ms < self.guard_expires_at_ms
     }
@@ -142,7 +145,12 @@ impl Prepared {
     /// a handshake response, a metadata read, or a failed admission.
     pub fn bind_circuit(&mut self, circuit: [u8; 32]) -> Result<(), Error> {
         match self.direction {
-            Direction::Forward => self.flow.circuit = Some(circuit),
+            Direction::Forward => {
+                if self.flow.exit.is_some() && self.flow.circuit.is_some_and(|old| old != circuit) {
+                    return Err(Error::Flow);
+                }
+                self.flow.circuit = Some(circuit);
+            }
             Direction::Reply if self.flow.circuit != Some(circuit) => return Err(Error::Flow),
             Direction::Reply => {}
         }
@@ -154,6 +162,11 @@ pub(super) struct FlowTable {
     limits: Limits,
     entries: BTreeMap<Key, Flow>,
     index: index::Index,
+    exit_limits: crate::exit::Limits,
+    tombstones: BTreeMap<Tuple, exit::Tombstone>,
+    pending_projections: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    exit_count: usize,
+    retired_circuits_pending: bool,
 }
 
 #[derive(Debug)]
@@ -168,6 +181,11 @@ impl FlowTable {
             limits,
             entries: BTreeMap::new(),
             index: Default::default(),
+            exit_limits: Default::default(),
+            tombstones: Default::default(),
+            pending_projections: Default::default(),
+            exit_count: 0,
+            retired_circuits_pending: false,
         }
     }
     pub fn len(&self) -> usize {
@@ -179,10 +197,20 @@ impl FlowTable {
                 publication = ?self.entries.keys().next().map(|key| key.publication),
                 "Dataplane flow table cleared");
         }
-        self.entries.clear();
+        for flow in self.entries.values() {
+            if let Some(exit) = &flow.exit {
+                exit.cancel();
+            }
+        }
+        let entries = std::mem::take(&mut self.entries);
+        for (key, flow) in entries {
+            self.retire_exit(&key, &flow);
+        }
+        self.exit_count = 0;
         self.index = Default::default();
     }
     pub fn expire(&mut self, now: Instant, now_ms: u64) {
+        self.expire_exits(now);
         while let Some(key) = self.index.expired(now, now_ms).cloned() {
             let flow = self.remove(&key).expect("indexed flow");
             if crate::diagnostics::event() {
@@ -203,12 +231,20 @@ impl FlowTable {
     }
 
     fn insert(&mut self, key: Key, flow: Flow) -> Option<Flow> {
+        self.exit_count += usize::from(flow.exit.is_some());
+        self.exit_count -=
+            usize::from(self.entries.get(&key).is_some_and(|old| old.exit.is_some()));
         self.index.insert(&key, &flow, self.entries.get(&key));
         self.entries.insert(key, flow)
     }
 
     fn remove(&mut self, key: &Key) -> Option<Flow> {
+        if let Some(exit) = &self.entries.get(key)?.exit {
+            exit.cancel();
+        }
         let flow = self.entries.remove(key)?;
+        self.exit_count -= usize::from(flow.exit.is_some());
+        self.retire_exit(key, &flow);
         self.index.remove(key, &flow);
         Some(flow)
     }
@@ -283,8 +319,15 @@ impl FlowTable {
         time: FlowTime,
     ) -> Result<Self, Error> {
         let mut next = Self::new(self.limits);
+        next.exit_limits = self.exit_limits;
+        next.pending_projections = self.pending_projections.clone();
         for (key, flow) in &self.entries {
-            if time.instant >= flow.expires_at
+            if !flow.live_at(time.instant, time.now_ms)
+                || flow
+                    .exit
+                    .as_ref()
+                    .and_then(|exit| exit.gate.as_ref())
+                    .is_some_and(|gate| !gate.acknowledged())
                 || time.now_ms >= flow.permit_expires_at_ms
                 || time.now_ms >= flow.guard_expires_at_ms
                 || key.publication != old.publication
@@ -392,6 +435,21 @@ impl FlowTable {
         } else {
             (self.entries.get(&key), Direction::Forward)
         };
+        if let Some(exit) = existing.and_then(|flow| flow.exit.as_ref()) {
+            if !exit.live(time.instant) {
+                return Err(Error::Expired);
+            }
+            if direction == Direction::Reply
+                && let Some(gate) = &exit.gate
+            {
+                // A pre-ACK kernel packet cannot create or advance reply state.
+                // An invalidated snapshot may be legally handed off; in that
+                // case a fresh projection is required before output instead.
+                if gate.scope.ensure_current().is_ok() {
+                    gate.ready()?;
+                }
+            }
+        }
         let expected_sender = match direction {
             Direction::Forward => path.first(),
             Direction::Reply => path.last(),
@@ -473,6 +531,14 @@ impl FlowTable {
             permit_expires_at_ms,
             guard_expires_at_ms: time.guard_expires_at_ms,
             circuit: existing.and_then(|flow| flow.circuit),
+            exit: self.exit_state(
+                &key,
+                existing,
+                config
+                    .permits
+                    .get(&ingress.demand())
+                    .is_some_and(|permit| permit.exit.is_some()),
+            )?,
         };
         Ok(Prepared {
             key,
@@ -519,9 +585,9 @@ pub(super) fn authorization_unchanged(
     };
     if now_ms >= before.expires_at_ms
         || now_ms >= after.expires_at_ms
-        || meshway_policy::permit_authorization_digest(before).map_err(|_| Error::ExecutionScope)?
-            != meshway_policy::permit_authorization_digest(after)
-                .map_err(|_| Error::ExecutionScope)?
+        || meshway_policy::permit_transition(before, after, now_ms)
+            .map_err(|_| Error::ExecutionScope)?
+            == meshway_policy::PermitTransition::Replacement
         || path.iter().any(|node| {
             *node != old.node_id
                 && (!old.peers.contains_key(node) || old.peers.get(node) != new.peers.get(node))

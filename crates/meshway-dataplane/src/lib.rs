@@ -15,6 +15,7 @@ mod admission;
 mod buffer;
 mod diagnostics;
 mod engine;
+pub mod exit;
 #[cfg(test)]
 mod fixtures;
 mod flow;
@@ -190,6 +191,8 @@ pub enum Error {
     Expired,
     #[error("execution refresh does not match the current control scope")]
     ExecutionScope,
+    #[error("exit projection has not been acknowledged")]
+    ProjectionPending,
 }
 
 /// Owns the action until the same control guard and packet lifetime are checked
@@ -209,6 +212,8 @@ pub(crate) struct PendingRoute {
     facts: PacketFacts,
     cancellation: Option<tokio_util::sync::CancellationToken>,
     section: Option<std::sync::Arc<()>>,
+    flow_cancellation: Option<tokio_util::sync::CancellationToken>,
+    projection: Option<std::sync::Arc<exit::Gate>>,
 }
 
 impl fmt::Debug for PendingRoute {
@@ -242,7 +247,24 @@ impl PendingAction {
     }
 
     pub fn ensure_current(&self) -> Result<(), Error> {
-        self.pending.ensure_current()
+        self.pending.ensure_current()?;
+        if let Some(gate) = &self.pending.projection {
+            gate.ready()?;
+        }
+        Ok(())
+    }
+
+    /// Await the Install/Renew ACK while retaining the original packet guard.
+    /// The host drives `SecureNode::next_exit_projection` independently.
+    pub async fn projection_ready(&self) -> Result<(), Error> {
+        self.pending.ensure_current()?;
+        if let Some(gate) = &self.pending.projection {
+            tokio::select! { biased;
+                _ = self.invalidated() => return Err(Error::Expired),
+                result = gate.wait() => result?,
+            }
+        }
+        self.ensure_current()
     }
 
     /// Invoke the final synchronous sink immediately after validation. The sink
@@ -332,9 +354,13 @@ impl PendingRoute {
 
     pub(crate) fn check_at(&self, reading: &Reading<'_>) -> Result<(), Error> {
         if self
-            .cancellation
+            .flow_cancellation
             .as_ref()
             .is_some_and(|token| token.is_cancelled())
+            || self
+                .cancellation
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
             || reading.instant >= self.expires_at
             || reading.now_ms >= self.permit_expires_at_ms
         {
@@ -351,6 +377,12 @@ impl PendingRoute {
             _ = self.snapshot.invalidated_at(self.permit_expires_at_ms) => {},
             _ = tokio::time::sleep_until(self.expires_at.into()) => {},
             _ = async {
+                match &self.flow_cancellation {
+                    Some(token) => token.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            } => {},
+            _ = async {
                 match &self.cancellation {
                     Some(token) => token.cancelled().await,
                     None => std::future::pending().await,
@@ -365,6 +397,7 @@ impl PendingRoute {
 pub struct Engine {
     snapshot: ExecutionSnapshot,
     flows: FlowTable,
+    exit_counters: exit::Counters,
 }
 
 impl fmt::Debug for Engine {

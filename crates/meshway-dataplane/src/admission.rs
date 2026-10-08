@@ -47,6 +47,16 @@ impl Engine {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("flow.admit");
         let _profile = PROFILE.enter();
+        if reading
+            .configuration
+            .permits
+            .get(&ingress.demand())
+            .is_some_and(|permit| permit.exit.is_some())
+            && (facts.traffic.source.is_ipv6() || facts.traffic.destination.is_ipv6())
+        {
+            self.exit_counters.ipv6_rejected = self.exit_counters.ipv6_rejected.saturating_add(1);
+            return Err(Error::Flow);
+        }
         let mut prepared = self.flows.prepare(
             reading.configuration,
             &ingress,
@@ -55,6 +65,20 @@ impl Engine {
         )?;
         if let Some((circuit, _)) = circuit {
             prepared.bind_circuit(circuit)?;
+        }
+        if prepared.is_exit() {
+            let (_, guard) = circuit.ok_or(Error::Ingress)?;
+            if prepared.hop_is_exit()
+                && reading
+                    .configuration
+                    .exit_role
+                    .as_ref()
+                    .is_none_or(|role| role.instance_id != self.snapshot.instance().instance_id)
+            {
+                return Err(Error::ExecutionScope);
+            }
+            self.flows
+                .prepare_projection(&mut prepared, guard, reading)?;
         }
         tracing::trace!(target: "meshway_dataplane::flow::authority_boundary", operation = "commit",
             "Validating flow admission authority");
@@ -72,6 +96,7 @@ impl Engine {
         }
         let expires_at = prepared.expires_at;
         let permit_expires_at_ms = prepared.permit_expires_at_ms;
+        let (flow_cancellation, projection) = prepared.exit_guards();
         let checked = self.flows.commit(prepared);
         Ok(PendingRoute {
             snapshot: snapshot.clone(),
@@ -81,6 +106,8 @@ impl Engine {
             facts,
             cancellation: None,
             section: circuit.and_then(|(_, guard)| guard.section.clone()),
+            flow_cancellation,
+            projection,
         })
     }
 }

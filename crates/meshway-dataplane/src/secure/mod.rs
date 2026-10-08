@@ -17,6 +17,7 @@ mod authorization;
 mod codec;
 mod crypto;
 mod diagnostics;
+mod exit;
 mod maintenance;
 pub mod pipeline;
 mod probe;
@@ -109,14 +110,43 @@ impl Default for Limits {
 #[derive(Clone)]
 pub(crate) struct Guard {
     snapshot: ExecutionSnapshot,
-    expires_at: Instant,
-    expires_at_ms: u64,
+    pub(crate) expires_at: Instant,
+    pub(crate) expires_at_ms: u64,
     cancellation: CancellationToken,
+    flow_cancellation: Option<CancellationToken>,
+    projection: Option<Arc<crate::exit::Gate>>,
     /// Minted only by this SecureNode for outputs sharing an exact snapshot.
     /// It permits one fresh reading per batch, never across an await or syscall.
     pub(crate) section: Option<Arc<()>>,
 }
 impl Guard {
+    pub(crate) fn successor_projection(
+        &self,
+        snapshot: ExecutionSnapshot,
+        expires_at: Instant,
+        expires_at_ms: u64,
+    ) -> Self {
+        let mut guard = self.clone();
+        guard.snapshot = snapshot;
+        guard.expires_at = expires_at;
+        guard.expires_at_ms = expires_at_ms;
+        guard.projection = None;
+        guard.section = None;
+        guard
+    }
+    pub(crate) fn for_projection(
+        &self,
+        expires_at: Instant,
+        expires_at_ms: u64,
+        cancellation: CancellationToken,
+    ) -> Self {
+        let mut guard = self.clone();
+        guard.expires_at = guard.expires_at.min(expires_at);
+        guard.expires_at_ms = guard.expires_at_ms.min(expires_at_ms);
+        guard.flow_cancellation = Some(cancellation);
+        guard.projection = None;
+        guard
+    }
     pub(crate) fn from_route(route: &PendingRoute) -> Self {
         Self {
             snapshot: route.snapshot.clone(),
@@ -124,6 +154,8 @@ impl Guard {
             expires_at_ms: route.permit_expires_at_ms,
             cancellation: route.cancellation.clone().unwrap_or_default(),
             section: route.section.clone(),
+            flow_cancellation: route.flow_cancellation.clone(),
+            projection: route.projection.clone(),
         }
     }
 
@@ -140,11 +172,17 @@ impl Guard {
             let reading = first.snapshot.reading().map_err(|_| Error::Authority)?;
             for guard in guards {
                 guard.check_at(&reading)?;
+                if let Some(gate) = &guard.projection {
+                    gate.ready().map_err(|_| Error::Expired)?;
+                }
             }
             return Ok(());
         }
         let mut readings: Vec<(usize, Reading<'_>)> = Vec::new();
         for (index, guard) in guards.iter().enumerate() {
+            if let Some(gate) = &guard.projection {
+                gate.ready().map_err(|_| Error::Expired)?;
+            }
             let shared = readings.iter().find(|(first, _)| {
                 guards[*first]
                     .section
@@ -168,7 +206,11 @@ impl Guard {
     // Only for a synchronous section using this owner's entry/final reading.
     // Original queued/recovery scopes must use their own dynamic guard instead.
     pub(crate) fn check_at(&self, reading: &Reading<'_>) -> Result<(), Error> {
-        if self.cancellation.is_cancelled()
+        if self
+            .flow_cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+            || self.cancellation.is_cancelled()
             || reading.instant >= self.expires_at
             || reading.now_ms >= self.expires_at_ms
         {
@@ -188,7 +230,11 @@ impl Guard {
         if self.cancellation.is_cancelled() {
             return Err(Error::Expired);
         }
-        self.finish()
+        self.finish()?;
+        if let Some(gate) = &self.projection {
+            gate.ready().map_err(|_| Error::Expired)?;
+        }
+        Ok(())
     }
     pub(crate) async fn invalidated(&self) {
         if self.ensure_current().is_err() {
@@ -196,6 +242,12 @@ impl Guard {
         }
         tokio::select! { biased;
             _ = self.cancellation.cancelled() => {},
+            _ = async {
+                match &self.flow_cancellation {
+                    Some(token) => token.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            } => {},
             _ = self.snapshot.invalidated_at(self.expires_at_ms) => {},
             _ = tokio::time::sleep_until(self.expires_at.into()) => {},
         }
@@ -255,6 +307,15 @@ impl PendingFrame {
     }
     pub async fn invalidated(&self) {
         self.guard.invalidated().await;
+    }
+    /// A reply which refreshes an exit projection retains its cipher/flow guard
+    /// while the host completes the corresponding Renew operation.
+    pub async fn projection_ready(&self) -> Result<(), Error> {
+        self.guard.finish()?;
+        if let Some(gate) = &self.guard.projection {
+            gate.wait().await.map_err(|_| Error::Expired)?;
+        }
+        self.ensure_current()
     }
     /// Invoke the final synchronous sink, not an asynchronous queue.
     pub fn release<T>(self, sink: impl FnOnce(PacketBuffer) -> T) -> Result<T, Error> {
@@ -398,6 +459,8 @@ impl Circuit {
             snapshot: snapshot.clone(),
             section: None,
             cancellation: self.cancellation.clone(),
+            flow_cancellation: None,
+            projection: None,
             expires_at: if handshake {
                 self.expires_at.min(self.handshake_at)
             } else {
@@ -1382,6 +1445,8 @@ impl SecureNode {
             guard.snapshot = route.snapshot().clone();
             guard.expires_at = guard.expires_at.min(route.expires_at());
             guard.expires_at_ms = guard.expires_at_ms.min(route.permit_expires_at_ms());
+            guard.flow_cancellation = route.flow_cancellation.clone();
+            guard.projection = route.projection.clone();
         }
         guard.check_at(reading)?;
         guard.section = Some(owner.epoch.clone());
@@ -1494,7 +1559,7 @@ impl SecureNode {
             }
         }
         self.probes.reconcile(&self.circuits, snapshot, &current);
-        self.engine.flows = flows;
+        self.engine.flows.replace(flows);
         self.engine.snapshot = snapshot.clone();
         self.identity = identity;
         self.output_epoch = Arc::new(());
@@ -1515,6 +1580,7 @@ impl SecureNode {
     /// Cancel queued wire/plaintext outputs, retire circuit keys and retain the
     /// ID replay tombstone. Other circuits and Control's grant are unaffected.
     pub fn close(&mut self, id: [u8; 32]) {
+        self.engine.flows.retire_exit_circuit(id);
         if let Some(circuit) = self.circuits.get_mut(&id) {
             circuit.retire();
         }

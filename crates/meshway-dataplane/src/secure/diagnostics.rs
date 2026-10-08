@@ -14,5 +14,6 @@ pub(super) fn engine_error(error: &crate::Error) -> &'static str {
         crate::Error::Capacity => "capacity",
         crate::Error::Expired => "expired",
         crate::Error::ExecutionScope => "execution_scope",
+        crate::Error::ProjectionPending => "projection_pending",
     }
 }

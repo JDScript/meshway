@@ -18,6 +18,7 @@ impl Engine {
         Ok(Self {
             snapshot,
             flows: FlowTable::new(limits),
+            exit_counters: Default::default(),
         })
     }
 
@@ -36,7 +37,7 @@ impl Engine {
         let reading = snapshot.reading()?;
         let flows = self.reconciled_flows(&snapshot, &reading)?;
         snapshot.continuation_from(&self.snapshot)?;
-        self.flows = flows;
+        self.flows.replace(flows);
         self.snapshot = snapshot;
         Ok(())
     }
@@ -47,8 +48,11 @@ impl Engine {
         reading: &Reading<'_>,
     ) -> Result<FlowTable, Error> {
         let old = snapshot.continuation_from(&self.snapshot)?;
-        self.flows
-            .reconciled(old, reading.configuration, FlowTime::from(reading))
+        let mut flows =
+            self.flows
+                .reconciled(old, reading.configuration, FlowTime::from(reading))?;
+        flows.project_successor(snapshot, reading);
+        Ok(flows)
     }
 
     pub fn process(&mut self, ingress: Ingress, packet: Packet) -> Result<PendingAction, Error> {

@@ -32,6 +32,7 @@ impl SecureNode {
         reading: &Reading<'_>,
         force: bool,
     ) -> Result<(), Error> {
+        self.collect_exit_flows();
         if !force && !self.maintenance.due(reading) {
             return Ok(());
         }

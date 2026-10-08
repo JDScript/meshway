@@ -39,6 +39,17 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 交接本身保守保留流的旧 idle／permit／快照截止，不凭读状态延长流。只有旧流仍有效时，实际获准包通过同一协议状态机才能刷新其期限；已排队输出继续受原截止与 guard 约束。拒绝包不建立或推进流状态。
 
+### IPv4 出口流与内核投影
+
+出口业务复用同一 `SecureNode`／`FlowTable`：Policy 检查已认证原始源、`sourceAddresses`、精确目的／服务、`ExitPermit.destination` 和完整路径；出口端另外绑定当前 role 的 instance。首版拒绝出口 IPv6 并计数。出口回程由 `exit::ExitReplyIngress` 交给 `SecureNode::exit_reply`，只从已有流选择原 CID，再执行 `admit_reply` 和原路径反向 Noise 保护；未关联包丢弃并计数。
+
+`SecureNode::next_exit_projection` 按需返回一个不透明 `exit::ExitProjection`：`Install`／`Renew` 携带 flow incarnation、原 IPv4 tuple、不可换绑的 `ProjectionScope` 和一次性 ACK；`Retire` 携带原资源绑定与独立清理 ACK。**内核侧由 Underlay 执行，见 [Exit 设计](/v2/node/exit-design#数据路径与唯一-owner)**；daemon 映射类型并驱动事件和 I/O，不增加业务流表。此接口本身不证明 Linux NAT 安装或包流已验收。
+
+首包和触发续期的输出保留原 guard，通过 `PendingAction::projection_ready`／`PendingFrame::projection_ready` 等待 ACK；每次 `release` 仍检查原截止、流／cipher 取消和 ACK。安装失败、丢失 ACK 或等待超时使流不可执行。投影截止取流 idle、permit 和执行／instance 截止交集；续期不会因命令排队重置预算。同授权直接交接只为仍活流发出不超过旧流截止的 `Renew`，实际获准包才刷新流期限。未 ACK 的流不跨交接保留；授权 generation／路径变化结束旧流和 cipher。
+
+退役先取消流 guard，再发布 `Retire`；出口端从内核精确清理成功 ACK 起隔离 tuple 至少 120 秒，源端从退役起计时。清理失败／未知结果保留隔离项，延迟清理不会缩短隔离窗口。关闭 owner 前，宿主调用 `retire_exits` 并排空清理事件。撤回前已通过内核最终过滤的包的边界见 [内核排队](/v2/node/exit-design#生存期撤回与内核排队)。
+
+`SecureNode::with_exit_limits` 注入独立 `exit::Limits`：默认最多 1,024 出口流、128 未完成投影操作、4,096 个活流预留／退役隔离槽，ACK 等待最多 5 秒且不超过原截止，tuple 隔离 120 秒。流仍计入通用流表上限；已交宿主的超时操作在 ACK／drop 前继续占投影槽。批量交接的续期意图保存在对应流中，按空闲投影槽逐项交给宿主；尚未完成续期 ACK 的流不能输出。容量耗尽拒绝新准入。所有数量硬上限为 65,536。
 ## 候选受保护 circuit
 
 逐层图与运行成本见[包流分层与加密讨论](/v2/discussions/packet-layers)，线上字段与规模约束见 [Packet 字节账本](/v2/discussions/packet)。本页定义当前行为；讨论中的候选方案不改变这些约束。
