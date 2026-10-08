@@ -1,8 +1,97 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T08:00:56.179379+00:00",
+  "updatedAt": "2026-10-08T08:16:16.654750+00:00",
   "runs": [
+    {
+      "id": 37747793027,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "8715317a9baf5d3b32448426afece6bb59c94c9f",
+      "message": "test(server): observation flow renews its subscriber past renew_after instead of racing the 30 s lease on slow hosts",
+      "createdAt": "2026-10-08T08:07:45Z",
+      "updatedAt": "2026-10-08T08:14:15Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37747793027",
+      "jobs": [
+        {
+          "id": 113213333056,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T08:07:48Z",
+          "completedAt": "2026-10-08T08:08:10Z",
+          "seconds": 22.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37747793027/job/113213333056"
+        },
+        {
+          "id": 113213478001,
+          "name": "cargo",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-08T08:08:11Z",
+          "completedAt": "2026-10-08T08:14:14Z",
+          "seconds": 363.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37747793027/job/113213478001"
+        },
+        {
+          "id": 113213479552,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-08T08:08:10Z",
+          "completedAt": "2026-10-08T08:08:10Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37747793027/job/113213479552"
+        },
+        {
+          "id": 113213479937,
+          "name": "docs-and-scripts",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-08T08:08:10Z",
+          "completedAt": "2026-10-08T08:08:10Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37747793027/job/113213479937"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37747793015,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "8715317a9baf5d3b32448426afece6bb59c94c9f",
+      "message": "test(server): observation flow renews its subscriber past renew_after instead of racing the 30 s lease on slow hosts",
+      "createdAt": "2026-10-08T08:07:45Z",
+      "updatedAt": "2026-10-08T08:07:48Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37747793015",
+      "jobs": [
+        {
+          "id": 113213332818,
+          "name": "matrix",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-08T08:07:48Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37747793015/job/113213332818"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37745237229,
       "attempt": 1,
