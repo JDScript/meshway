@@ -398,8 +398,9 @@ pub fn caps() -> BTreeMap<String, meshway_model::state::Capability> {
 pub async fn json<T: DeserializeOwned>(request: reqwest::RequestBuilder, status: u16) -> T {
     let response = request.send().await.unwrap();
     let actual = response.status();
+    let url = response.url().clone();
     let body = response.text().await.unwrap();
-    assert_eq!(actual.as_u16(), status, "{body}");
+    assert_eq!(actual.as_u16(), status, "{url} {body}");
     serde_json::from_str(&body).unwrap_or_else(|e| panic!("{e}: {body}"))
 }
 pub async fn status(request: reqwest::RequestBuilder, status: u16) {
