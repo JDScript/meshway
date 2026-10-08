@@ -21,13 +21,13 @@
 | --- | --- | --- | --- | --- | --- |
 | `test:tun:linux` | — | — | — | 真实 TUN 设备创建与双栈包 I/O | 当前 wire 已通过；`20261007T212324Z-904a137e` |
 | `test:packet:linux` | Native TCP | off | — | A→R→B 双栈小包／满 MTU UDP、MTU+1 拒绝、daemon 多 MSS TCP、R 只转发受保护帧、原路径回复 | 当前 wire 已通过；`20261007T212330Z-f7e9a2e9` |
-| `test:runtime:linux` | Native UDP 静态端点 | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 当前 wire 已通过；`20261007T213446Z-7b1b18a3` |
-| `test:runtime:linux` | Native TCP | off | — | daemon 整组：共同场景 | 当前 wire 已通过；`20261007T214309Z-a2b9e93f` |
-| `test:runtime:linux` | Native UDP 静态端点 | resolv-conf | — | 共同场景＋[DNS 场景](#dns-场景) | 未通过；`20261007T215139Z-6b08959d`、`20261007T215819Z-790fc5f7` |
-| `test:runtime:linux` | Native UDP 静态端点 | resolved | — | 共同场景＋DNS 场景 | V1 串行：当前 wire 已通过，`20261007T220446Z-5360cb6e`；Planck：未通过，见[远程矩阵证据](#remote-matrix-evidence) |
-| `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋[穿透场景](#穿透场景) | 未通过；`20261007T221353Z-bd8c8c29`、`20261007T221747Z-6137d668` |
-| `test:runtime:linux --traversal nat --traversal-fallback` | Native UDP＋A–R Native TCP 退路 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋穿透场景＋同路径 TCP 退路 | 未通过；`20261007T222406Z-706619eb`、`20261007T222802Z-896b1580` |
-| `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 端口保持型 SNAT | 整组组合 | 未通过；`20261007T223053Z-6d3d9c48`、`20261007T223451Z-5fe61a8d` |
+| `test:runtime:linux` | Native UDP 静态端点 | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 当前 wire 已通过；Planck `20261008T033613Z-abbd4545` |
+| `test:runtime:linux` | Native TCP | off | — | daemon 整组：共同场景 | 当前 wire 已通过；Planck `20261008T033656Z-7a35b80e` |
+| `test:runtime:linux` | Native UDP 静态端点 | resolv-conf | — | 共同场景＋[DNS 场景](#dns-场景) | 当前 wire 已通过（两次）；Planck `20261008T032749Z-3ba0ca12`、`20261008T050153Z-a1a8eebf` |
+| `test:runtime:linux` | Native UDP 静态端点 | resolved | — | 共同场景＋DNS 场景 | V1 串行：当前 wire 已通过，`20261007T220446Z-5360cb6e`；Planck 旧候选未通过，本轮未重验，见[剩余边界](#remaining-boundaries) |
+| `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋[穿透场景](#穿透场景) | 当前 wire 已通过（两次）；Planck `20261008T032749Z-289b9780`、`20261008T050153Z-3e001994` |
+| `test:runtime:linux --traversal nat --traversal-fallback` | Native UDP＋A–R Native TCP 退路 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋穿透场景＋同路径 TCP 退路 | 当前 wire 已通过（两次）；Planck `20261008T032749Z-4299bfde`、`20261008T050153Z-d30caa20` |
+| `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 端口保持型 SNAT | 整组组合 | 当前 wire 已通过（两次）；Planck `20261008T032749Z-d13bd2a9`、`20261008T050153Z-1978b05b` |
 | [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 未验收（当前整组）；2026-10-07 已有下述 L5 局部证据；共享 bridge 不构成 NAT 证明 |
 
 以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS／Trojan 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、出口转发／NAT、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、整机重启与系统 resolver 服务停机间隙、userspace／SOCKS5。
@@ -38,30 +38,26 @@
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
 
-矩阵报告使用 `3887256b` 的生产源码与 `36a20fa3` 的满 MTU fixture，包含 wire v5、流式流水线、SSE、回执分类、Manager 查询节流／批前缀消费与 ring-only TLS。全部运行严格串行，前一行结束并清理后才启动下一行；失败行保留首跑并独立复跑一次，两次失败才记为未通过。报告记录入口前 `uptime`、1／5／15 分钟 load、耗时、二进制 hash、源码指纹与清理结果；本轮所有入口的 1 分钟 load 均低于 6。更早的重叠 fixture／高负载运行不用于本表结论。
+当前六个 runtime 行的 V2 证据使用候选 `f909e875`（基于 main `a52fb267`），机器为 Planck x86_64、目标 `x86_64-unknown-linux-musl`。四个原失败行均在两个独立完整 run 中通过；静态 UDP/off 与 TCP/off 另完成回归检查。两轮均为 `scope=acceptance`、125 秒持续／纯接收窗口，未使用短模式。入口记录 `uptime` 和 load，不等待负载门槛。
 
-TUN 报告位于 `.meshway/validation/tun/<报告 ID>/report.json`；runtime 位于 `.meshway/validation/runtime/<报告 ID>/report.json`；packet 原始报告位于执行 worktree 下的 `.meshway/validation/packet/<报告 ID>/report.json`，并在仓库同名目录保留副本。入口记录为 `invocationEvidence`；runtime 另记录实际启动前的 `loadBeforeRuntime` 和 `runtimeElapsedSeconds`。packet 的 `daemonReport` 指向整组通过的 `20261007T212412Z-807e82ca`。
+十份 runtime 报告的构建／导入／结束源码指纹均为 `a7b5bd38d268c763badd737a52b3363467f46b7967f9bea5db9d447bd7c6ab34`，二进制 hash 集合一致。所有必需检查通过，Controller／A／R／B 成功退出；每行精确清理与远程 supervisor 的独立容器／网络复核均无遗留。通过结论包含真实 STUN State、完整路径诊断、实际包流、回执、撤销恢复和旧输出拒绝，不能仅由 saved/applied 或候选非空推导。
 
-packet／runtime 各次运行的构建、导入及结束源码指纹一致：`052e82e75417c17457c5e40951e2d1098147e2be56d3156f89a5cf465eb653c6`。TUN 使用较小的专属输入集合，指纹为 `477af3a17bc873c2346314c1dc27145230821df287fb91b22b6995932ce7b066`。入口记录汇总位于 `.meshway/validation/v1/20261007-main-3887256b/`；报告中各 `passed` 原样保留。
+TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产源码与 `36a20fa3` 满 MTU fixture，使用 macOS/OrbStack ARM64 串行执行。其 packet/runtime 指纹为 `052e82e75417c17457c5e40951e2d1098147e2be56d3156f89a5cf465eb653c6`，TUN 专属输入指纹为 `477af3a17bc873c2346314c1dc27145230821df287fb91b22b6995932ce7b066`。汇总位于 `.meshway/validation/v1/20261007-main-3887256b/`；原始通过及失败 verdict 均保留。
 
 ### 远程矩阵证据 {#remote-matrix-evidence}
 
-Planck x86 使用生产基线 `1fb484bf`、工具提交 `8c656007` 的九行矩阵 `20261007T234146Z-c299a3b8`，并发 4，总耗时 872.8 秒（含构建）；TUN、packet、UDP/off、TCP/off 通过，其余五行未通过。每行及远程结束后的容器／网络检查均无本 run 遗留资源。V1 约 70 分钟为串行且包含失败复跑，不能把两次运行的耗时比当作同次数、同通过结果的基准。
+| V2 run | 并发 | 完整行 | 结果 |
+| --- | ---: | --- | --- |
+| `20261008T032743Z-897a549e` | 4 | NAT/off、NAT＋TCP 退路/off、NAT/resolved、UDP/resolv-conf、UDP/off、TCP/off | 六行全部通过；总耗时 1,044.5 秒 |
+| `20261008T050147Z-0c5809cf` | 4 | 前四行独立复跑 | 四行全部通过；总耗时 566.6 秒 |
 
-与 V1 相比，额外未通过的是 UDP/resolved：并行报告出现 `lease-expired` 系统解析断言及缺少 pre-outage execution lease；专用 detached worktree 的串行复跑 `20261008T002050Z-1d853e58`／行报告 `20261008T002332Z-de9c1b24` 仍在 ping 首样本及会合期限检查失败，构建与结束源码指纹一致。不能将其仅归因为并发 4，也不能用 V1 的通过记录覆盖该平台失败。NAT 的 STUN State／ping 检查和 resolv-conf 的 ping 检查仍保留失败结论。
+远程原件位于执行 clone 的 `.meshway/validation/matrix/<run>/`；本地原样归档位于仓库 `.meshway/validation/v2/20261008-nat-regressions/planck/<run>/`。每行路径为 `rows/<row>/<报告 ID>/report.json`，含 JSON、pcap、进程／清理信息与源码指纹；总报告保留 `matrix.json`、`summary.md`、`remote.json`。入口及进度说明见[开发环境](/v2/development#validation-matrix)。
 
-NAT/off 与 NAT＋fallback/off 的短模式矩阵 `20261007T235638Z-8e189afd` 耗时 220.8 秒，均在持续流之前失败。独立 UDP/off 短模式 `20261008T000934Z-930fcb37`／行报告 `20261008T001339Z-1cfc5083` 通过，纯接收窗口为 30,499 ms，未观测到的需求延长为 `laterExpiryMs=null`；它验证短模式工具行为，不构成 125 秒验收。
+### 剩余边界 {#remaining-boundaries}
 
-上述远程原件位于执行 clone 的 `.meshway/validation/matrix/<run>/`；本地副本位于执行工作树 `.meshway/validation/remote/zj2631@ai4ce-planck.dyn.poly.edu-<run>/`。矩阵、每行报告、私有 actor 错误、pcap、源码指纹和远程完成状态一并保留，具体入口见[开发环境](/v2/development#validation-matrix)。
+本轮四个目标行没有剩余必需检查失败。**Planck 的静态 UDP/resolved 单独组合未在 V2 重验**：旧候选矩阵 `20261007T234146Z-c299a3b8` 与串行复跑 `20261008T002050Z-1d853e58`／行报告 `20261008T002332Z-de9c1b24` 曾在系统解析、ping 首样本或会合检查失败，不能由本轮 NAT/resolved 的通过替代。其他未验收范围见矩阵下方列表。
 
-### 未通过边界
-
-- **静态 UDP／resolv-conf**：两次均完成 DNS 启动／重启、双栈满 MTU／大 TCP、125 秒持续及纯接收流、Access 撤销／恢复。失败发生在实际 HTTP 中断之前：A 为 `Outage` ping 等待首个成功样本，准备日志已到 `installed`／`path_handshake`；R 或 B 等待 `http-outage` 的会合期限先到，其他 actor 随后退出。第二次首个 peer 退出后才出现的 `first_hop_channel` 不能作为最初故障原因。没有控制中断与恢复整组通过证据。
-- **NAT／off**：首跑的 hostname／双栈 IP／direct ping 完成，但共享 ping 已确认订阅后反复停在 `path_handshake`，60 秒 setup timeout。复跑共享观察和 125 秒包流完成，随后 `state-traffic-attempt-a.json` 中 A 的已认证、具有业务依赖的 UDP link 对应 `0.0.0.0:35000` socket，但 `endpoints=[]`，未满足有效 STUN 映射 State 证明。
-- **NAT＋TCP 退路／off**：两次均在 Controller 的同一 STUN State 校验失败。首跑为 `state-fallback-attempt-r.json` 中 R 的 socket 候选为空；复跑在首次业务 carrier 检查即出现 B 的 socket 候选为空（`state-initial-carrier-attempt-b.json`）。首跑 Controller 退出后 A 的纯接收流也停止；不能用该后续现象单独判定退路续租的根因，整组退路仍未通过。
-- **NAT／resolved**：首跑共享 ping 经长时间 `path_handshake` 后取得新样本，但首次业务 carrier 校验中 A 的 socket 候选为空（`state-initial-carrier-attempt-a.json`）。复跑 hostname／双栈 IP／direct ping 完成，共享订阅已确认且多次 `installed`，随后持续 `path_handshake`，没有进入 `path_established`，最终 60 秒 setup timeout。共享观察切换缺口仍可复现，卡点已缩小到完整路径握手阶段；尚不能归因为结果发布停滞。
-
-上述候选为空均来自真实 Server State：link 仍为 `authenticated` 且 `businessDependencies > 0`。它不等同于包流从未接通，也不满足完整穿透验收。失败报告保留 controller／A／R／B、准备阶段和 State，穿透报告另保留路由器证据；故障定位不替代修复与重新验收。
+V1 及中间候选的 STUN 候选为空、完整路径握手／状态发布不收敛等失败证据保留在各自原始报告和 V2 私有归档中；它们不被改写为通过。短模式只证明其工具和诊断行为，仍不计入本表完整验收。
 
 ## 入口
 
