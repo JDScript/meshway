@@ -88,7 +88,7 @@ impl Journal {
     /// reboot, so a journal written under another boot id describes nothing
     /// that can still exist or still need cleanup. A same-boot journal from a
     /// different namespace stays a conflict: its resources may live on there.
-    pub fn from_previous_boot(&self, boot: &str) -> bool {
+    pub fn is_from_previous_boot(&self, boot: &str) -> bool {
         self.boot.trim() != boot.trim()
     }
 
@@ -225,7 +225,7 @@ impl Store {
             }
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
             let (boot, _, _) = Journal::identity()?;
-            if journal.from_previous_boot(&boot) {
+            if journal.is_from_previous_boot(&boot) {
                 return Ok(None);
             }
             journal.validate()?;
