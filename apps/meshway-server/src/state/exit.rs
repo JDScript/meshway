@@ -1,5 +1,5 @@
 //! Volatile exit prerequisite projection, fenced by instance and role revision.
-use super::{REPORT_TTL_SECONDS, ReportAdmission};
+use super::{CLOCK_SKEW_SECONDS, REPORT_TTL_SECONDS, ReportAdmission};
 use crate::{error::Error, secrets::Sealer, store::execution};
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{
@@ -21,7 +21,8 @@ fn initialize(tx: &Transaction<'_>) -> Result<(), Error> {
         "CREATE TEMP TABLE IF NOT EXISTS state_exit (
         network_id BLOB NOT NULL, node_id BLOB NOT NULL, instance_id BLOB NOT NULL,
         generation INTEGER NOT NULL, revision INTEGER NOT NULL, expires_at INTEGER NOT NULL,
-        payload BLOB NOT NULL, PRIMARY KEY(network_id,node_id)) STRICT;",
+        payload BLOB NOT NULL, active INTEGER NOT NULL CHECK(active IN(0,1)),
+        PRIMARY KEY(network_id,node_id)) STRICT;",
     )?;
     Ok(())
 }
@@ -37,8 +38,9 @@ pub(super) fn replace(
     let Some(capability) = &report.state.exit_capability else {
         // Reports are complete snapshots: unknown must withdraw a previous
         // readiness observation, rather than silently reusing it until expiry.
+        // Preserve its watermark/budget to reject later replay or clock reset.
         return Ok(tx.execute(
-            "DELETE FROM temp.state_exit WHERE network_id=?1 AND node_id=?2",
+            "UPDATE temp.state_exit SET active=0 WHERE network_id=?1 AND node_id=?2 AND active=1",
             params![
                 admission.network_id.as_uuid().as_bytes(),
                 admission.node_id.as_uuid().as_bytes()
@@ -120,9 +122,9 @@ pub(super) fn replace(
         observed_at: capability.observed_at,
     };
     let payload = execution::bytes(&observation)?;
-    let previous: Option<(Vec<u8>, i64)> = tx
+    let previous: Option<(Vec<u8>, i64, bool)> = tx
         .query_row(
-            "SELECT payload,expires_at FROM temp.state_exit WHERE network_id=?1 AND node_id=?2 AND instance_id=?3 AND generation=?4 AND revision=?5",
+            "SELECT payload,expires_at,active FROM temp.state_exit WHERE network_id=?1 AND node_id=?2 AND instance_id=?3 AND generation=?4 AND revision=?5",
             params![
                 admission.network_id.as_uuid().as_bytes(),
                 admission.node_id.as_uuid().as_bytes(),
@@ -130,17 +132,17 @@ pub(super) fn replace(
                 admission.instance_generation.get() as i64,
                 reference.revision.get() as i64
             ],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?;
     let mut expires = (capability.observed_at + Duration::seconds(REPORT_TTL_SECONDS))
         .min(now + Duration::seconds(REPORT_TTL_SECONDS))
         .min(admission.lease_expires_at)
         .timestamp_millis();
-    if let Some((old, expiry)) = &previous {
+    if let Some((old, expiry, active)) = &previous {
         let old: Observation = execution::json(old)?;
         if observation.observed_at < old.observed_at
-            || observation.observed_at == old.observed_at && observation != old
+            || observation.observed_at == old.observed_at && (observation != old || !active)
         {
             return Err(Error::InvalidRequest);
         }
@@ -152,9 +154,9 @@ pub(super) fn replace(
     // A replay preserves observed_at and therefore cannot manufacture freshness.
     let changed = previous
         .as_ref()
-        .is_none_or(|(old, expiry)| old != &payload || *expiry != expires);
-    tx.execute("INSERT INTO temp.state_exit VALUES(?1,?2,?3,?4,?5,?6,?7)
-        ON CONFLICT(network_id,node_id) DO UPDATE SET instance_id=excluded.instance_id,generation=excluded.generation,revision=excluded.revision,expires_at=excluded.expires_at,payload=excluded.payload",
+        .is_none_or(|(old, expiry, active)| old != &payload || *expiry != expires || !active);
+    tx.execute("INSERT INTO temp.state_exit VALUES(?1,?2,?3,?4,?5,?6,?7,1)
+        ON CONFLICT(network_id,node_id) DO UPDATE SET instance_id=excluded.instance_id,generation=excluded.generation,revision=excluded.revision,expires_at=excluded.expires_at,payload=excluded.payload,active=1",
         params![admission.network_id.as_uuid().as_bytes(), admission.node_id.as_uuid().as_bytes(), admission.instance_id.as_uuid().as_bytes(), admission.instance_generation.get() as i64, reference.revision.get() as i64, expires, payload])?;
     Ok(changed)
 }
@@ -166,6 +168,12 @@ pub(crate) fn inputs(
     now: i64,
 ) -> Result<ExitInputs, Error> {
     initialize(tx)?;
+    // A retired watermark is only needed while its original observation could
+    // still pass freshness checks, including the allowed source clock skew.
+    tx.execute(
+        "DELETE FROM temp.state_exit WHERE expires_at<=?1",
+        [now.saturating_sub((REPORT_TTL_SECONDS + CLOCK_SKEW_SECONDS) * 1000)],
+    )?;
     let mut inputs = ExitInputs::default();
     let mut statement = tx.prepare("SELECT node_id,instance_id FROM node_execution WHERE network_id=?1 AND instance_expires_at>?2 AND instance_id IS NOT NULL")?;
     let mut rows = statement.query(params![network.as_uuid().as_bytes(), now])?;
@@ -184,7 +192,7 @@ pub(crate) fn inputs(
             .insert(execution::id(row.get(0)?)?, row.get::<_, i64>(1)? as u64);
     }
     drop(rows);
-    let mut statement = tx.prepare("SELECT s.node_id,s.payload,min(s.expires_at,e.instance_expires_at) FROM temp.state_exit s JOIN node_execution e ON e.network_id=s.network_id AND e.node_id=s.node_id AND e.instance_id=s.instance_id AND e.generation=s.generation WHERE s.network_id=?1 AND s.revision=?2 AND s.expires_at>?3 AND e.instance_expires_at>?3")?;
+    let mut statement = tx.prepare("SELECT s.node_id,s.payload,min(s.expires_at,e.instance_expires_at) FROM temp.state_exit s JOIN node_execution e ON e.network_id=s.network_id AND e.node_id=s.node_id AND e.instance_id=s.instance_id AND e.generation=s.generation WHERE s.network_id=?1 AND s.revision=?2 AND s.active=1 AND s.expires_at>?3 AND e.instance_expires_at>?3")?;
     let mut rows = statement.query(params![
         network.as_uuid().as_bytes(),
         revision.get() as i64,

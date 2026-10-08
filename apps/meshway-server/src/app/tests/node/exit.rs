@@ -238,7 +238,7 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
             .decision,
         DemandDecision::Permitted { .. }
     ));
-    let mut unknown = ready;
+    let mut unknown = ready.clone();
     unknown.sequence = Sequence::new(3).unwrap();
     unknown.state.exit_capability = None;
     app.node_state_service()
@@ -256,6 +256,35 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
             reason: UnavailableReason::ExitUnavailable
         }
     );
+    let current = service
+        .refresh_configuration(
+            bt.token.expose(),
+            NodeConfigurationRequest {
+                instance: InstanceRequest {
+                    instance_id: bi.instance_id,
+                    generation: bi.generation,
+                },
+                base: None,
+            },
+        )
+        .await
+        .unwrap()
+        .full
+        .unwrap();
+    let mut reintroduced = ready;
+    reintroduced.sequence = Sequence::new(4).unwrap();
+    reintroduced.state.exit_capability.as_mut().unwrap().target = ConfigurationRef {
+        revision: current.configuration.revision,
+        execution_publication: current.configuration.publication,
+        digest: current.digest,
+    };
+    assert!(matches!(
+        app.node_state_service()
+            .unwrap()
+            .accept_report(bt.token.expose().to_owned(), reintroduced)
+            .await,
+        Err(Error::InvalidRequest)
+    ));
     let last = report_current(
         &app,
         bt.token.expose(),
