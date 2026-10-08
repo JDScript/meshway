@@ -1015,7 +1015,8 @@ export const zTopologyRule = z.strictObject({
   ["a"]: z.string(),
   ["action"]: zTopologyAction,
   ["b"]: z.string(),
-  ["remark"]: z.string().exactOptional()
+  ["remark"]: z.string().exactOptional(),
+  ["transports"]: z.array(zTransportProtocol).exactOptional()
 });
 
 export const zProfileAssignment = z.strictObject({

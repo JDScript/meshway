@@ -13519,6 +13519,13 @@ export const schemaDocument = {
           },
           "remark": {
             "type": "string"
+          },
+          "transports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransportProtocol"
+            },
+            "description": "Allowed carriers for this undirected edge; omitted means unrestricted."
           }
         },
         "additionalProperties": false
