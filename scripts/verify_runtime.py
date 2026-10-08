@@ -383,6 +383,40 @@ def main():
             raise RuntimeError("container ownership label changed")
         return inspected
 
+    def prepare_restart():
+        # Unlike each actor's private /state tmpfs, this directory must survive
+        # two containers. Give the empty, run-owned bind the same root ownership;
+        # final export_evidence returns it to the host after both writers join.
+        directory = report / "restart"
+        if (report.is_symlink() or report.stat().st_uid != os.getuid()
+                or directory.is_symlink() or directory.stat().st_uid != os.getuid()
+                or any(directory.iterdir())):
+            raise RuntimeError("restart preparation requires this run's empty owned directory")
+        role = "restart-prepare"
+        command = ["docker", "create", "--pull", "never", "--platform", platform,
+                   "--name", f"meshway-runtime-{identity.lower()}-{role}", "--label", label,
+                   "--network", "none", "--read-only", "--cap-drop", "ALL",
+                   "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE",
+                   "--security-opt", "no-new-privileges", "--cpus", "1", "--memory", "64m",
+                   "--pids-limit", "32", "--entrypoint", "/bin/sh",
+                   "--mount", f"type=bind,source={directory},target=/restart", image,
+                   "-ec", "chown 0:0 /restart && chmod 700 /restart"]
+        identifier = run(*command, capture=True).strip()
+        containers[role] = identifier
+        manifest["resources"].setdefault("commands", {})[role] = command
+        write_json(metadata, manifest)
+        try:
+            result = execute(role)
+            manifest["restartPreparation"] = result
+            if any(result.values()):
+                raise RuntimeError("restart private directory preparation failed")
+        finally:
+            owned_container(identifier)
+            run("docker", "rm", "-f", identifier, capture=True)
+            containers.pop(role)
+            manifest["cleanup"][role] = True
+            write_json(metadata, manifest)
+
     def start_router(actor):
         role = "router-" + actor
         router = routers[actor]
@@ -451,6 +485,7 @@ def main():
 
     failure = None
     try:
+        prepare_restart()
         create("prepare", ["prepare"], private=True, prepare=True)
         preparation = execute("prepare")
         manifest["preparation"] = preparation
