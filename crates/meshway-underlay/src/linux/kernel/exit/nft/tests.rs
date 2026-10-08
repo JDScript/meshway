@@ -100,3 +100,61 @@ async fn elements(commands: &mut Commands, name: &str) -> usize {
         .get("elem")
         .map_or(0, |entries| entries.as_array().unwrap().len())
 }
+
+#[tokio::test]
+#[ignore = "requires isolated Linux namespace, nft and NET_ADMIN"]
+async fn exit_nft_exclusive_create_preserves_colliding_foreign_table() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let mut commands = Commands::default();
+    let name = format!("meshway_probe_sentinel_{}", std::process::id());
+    verify_absent(&mut commands, &name).await.unwrap();
+    submit(
+        &mut commands,
+        &json!({"nftables": [{"create": {"table": {
+            "family": "inet", "name": name, "comment": "external sentinel"
+        }}}]}),
+    )
+    .await
+    .unwrap();
+    let before = table(&mut commands, &name).await;
+    assert!(submit(&mut commands, &probe_batch(&name)).await.is_err());
+    assert_eq!(
+        verify_absent(&mut commands, &name)
+            .await
+            .unwrap_err()
+            .reason,
+        Reason::OwnershipConflict
+    );
+    let after = table(&mut commands, &name).await;
+    // Fixture cleanup is explicit; the production probe never deletes the
+    // colliding resource, even though a later command could address its name.
+    submit(
+        &mut commands,
+        &json!({"nftables": [{"delete": {"table": {"family": "inet", "name": name}}}]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(before, after);
+}
+
+async fn table(commands: &mut Commands, name: &str) -> Value {
+    let output = commands
+        .run(
+            Tool::Nft,
+            vec![
+                "-j".into(),
+                "list".into(),
+                "table".into(),
+                "inet".into(),
+                name.into(),
+            ],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    assert!(output.success);
+    serde_json::from_slice(&output.stdout).unwrap()
+}

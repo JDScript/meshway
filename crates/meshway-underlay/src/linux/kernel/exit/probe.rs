@@ -2,9 +2,7 @@ use super::{
     ExitError,
     command::{Commands, Tool},
 };
-use meshway_model::exit::{
-    ExitCapability, ExitFamily, ExitStatus, ExitUnavailableReason as Reason,
-};
+use meshway_model::exit::{ExitCapability, ExitStatus, ExitUnavailableReason as Reason};
 use meshway_model::{ConfigurationRef, InstanceId};
 use std::{io::Read, time::SystemTime};
 
@@ -39,7 +37,7 @@ impl ExitProbe {
         ExitCapability {
             instance_id,
             target,
-            supported_families: vec![ExitFamily::Ipv4],
+            supported_families: Vec::new(),
             installed_families: Vec::new(),
             status: match result {
                 // Route/rule installation and precise conntrack deletion still
@@ -213,6 +211,7 @@ mod tests {
         assert_eq!(observation.instance_id, instance);
         assert_eq!(observation.target, target);
         assert!(observation.installed_families.is_empty());
+        assert!(observation.supported_families.is_empty());
         let observed: SystemTime = observation.observed_at.into();
         assert!(observed >= before);
         assert!(observed <= SystemTime::now());

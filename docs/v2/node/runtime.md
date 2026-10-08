@@ -71,7 +71,7 @@ Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预�
 
 `ip_forward=0` 返回 `ipForwardDisabled`，读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off。工具不可用分别返回 `nftUnavailable`／`conntrackUnavailable`。观测保留原始 `observedAt`，重试上报不得重新计时。
 
-此前置探测成功仍为 `probing`，`installedFamilies` 为空：route/rule 安装、归属 mark 分配、精确 conntrack 删除、宿主转发与完整出口资源回执尚未完成，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于出口功能已可用。
+此前置探测成功仍为 `probing`，`supportedFamilies`／`installedFamilies` 为空：route/rule 安装、归属 mark 分配、精确 conntrack 删除、宿主转发与完整出口资源回执尚未完成，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于出口功能已可用。
 
 IPC v5 的公开运行状态：
 

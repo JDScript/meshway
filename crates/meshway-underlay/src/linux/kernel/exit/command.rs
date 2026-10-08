@@ -162,4 +162,36 @@ mod tests {
             Err(Failure::Limit)
         ));
     }
+
+    #[tokio::test]
+    #[ignore = "requires isolated Linux namespace, conntrack events and NET_ADMIN"]
+    async fn exit_command_abandoned_waiter_is_still_bounded_and_joined() {
+        assert_eq!(
+            std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+            Ok("1")
+        );
+        let mut commands = Commands::default();
+        let mut waiter = Box::pin(commands.run(
+            Tool::Conntrack,
+            vec!["-E".into(), "-f".into(), "ipv4".into()],
+            Vec::new(),
+        ));
+        assert!(futures_util::poll!(waiter.as_mut()).is_pending());
+        drop(waiter);
+        assert!(commands.pending.is_some());
+        let settled = tokio::time::timeout(BUDGET + Duration::from_secs(3), commands.settle())
+            .await
+            .unwrap();
+        assert!(matches!(settled, Err(Failure::Limit)));
+        assert!(commands.pending.is_none());
+        let output = commands
+            .run(
+                Tool::Nft,
+                vec!["-j".into(), "list".into(), "tables".into()],
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert!(output.success);
+    }
 }
