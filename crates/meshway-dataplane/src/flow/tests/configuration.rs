@@ -6,7 +6,7 @@ use meshway_model::state::{Capability, StreamKind, TransportRole};
 use meshway_model::{BoundNodeKey, KeyAlgorithm, NodePublicKey, Revision, Version};
 use meshway_policy::{
     SubjectContext,
-    compile::{CompilationInput, compile},
+    compile::{CompilationInput, ExitInputs, compile_with_exit},
 };
 use meshway_transport_spec::{Listener, NativeUdpListener, PreparedListener};
 use std::time::Duration;
@@ -85,13 +85,24 @@ impl Scene {
                 TrustedNode {
                     control_key: key(0, KeyAlgorithm::Ed25519),
                     dataplane_key: key(10, KeyAlgorithm::X25519),
-                    capabilities: BTreeMap::from([(
-                        "transport:native_udp".into(),
-                        Capability::Transport {
-                            roles: vec![TransportRole::Dial, TransportRole::Listen],
-                            streams: vec![StreamKind::Udp],
-                        },
-                    )]),
+                    capabilities: {
+                        let mut capabilities = BTreeMap::from([(
+                            "transport:native_udp".into(),
+                            Capability::Transport {
+                                roles: vec![TransportRole::Dial, TransportRole::Listen],
+                                streams: vec![StreamKind::Udp],
+                            },
+                        )]);
+                        if external && i == 3 {
+                            capabilities.insert(
+                                meshway_model::exit::EXIT_IPV4_FEATURE.into(),
+                                Capability::Feature {
+                                    version: meshway_model::exit::EXIT_IPV4_VERSION,
+                                },
+                            );
+                        }
+                        capabilities
+                    },
                 },
             );
         }
@@ -157,19 +168,38 @@ impl Scene {
             profile: "mesh".into(),
             expires_at_ms: 100_000,
         };
-        let publication = compile(CompilationInput {
-            network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
-            revision: Revision::MIN,
-            publication: "00000000-0000-4004-8000-000000000001".parse().unwrap(),
-            configuration: &config,
-            subjects: &SubjectContext::default(),
-            inventory: &inventory,
-            demands: &BTreeMap::from([(request(), demand)]),
-            dns: &[],
-            rule_sets: &BTreeMap::new(),
-            selected_profiles: &BTreeMap::new(),
-            now_ms: 1000,
-        })
+        // The exit terminal's runtime capability is a compile input: without a
+        // ready instance the exit permit is withheld, which is the fail-closed
+        // default of `compile()`.
+        let runtime = if external {
+            ExitInputs {
+                instances: BTreeMap::from([(
+                    node(3),
+                    "00000000-0000-4005-8000-000000000003".parse().unwrap(),
+                )]),
+                ready_until_ms: BTreeMap::from([(node(3), 400_000)]),
+                ..Default::default()
+            }
+        } else {
+            Default::default()
+        };
+        let publication = compile_with_exit(
+            CompilationInput {
+                network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
+                revision: Revision::MIN,
+                publication: "00000000-0000-4004-8000-000000000001".parse().unwrap(),
+                configuration: &config,
+                subjects: &SubjectContext::default(),
+                inventory: &inventory,
+                demands: &BTreeMap::from([(request(), demand)]),
+                dns: &[],
+                rule_sets: &BTreeMap::new(),
+                selected_profiles: &BTreeMap::new(),
+                now_ms: 1000,
+            },
+            &BTreeMap::new(),
+            &runtime,
+        )
         .unwrap();
         let instant = Instant::now();
         Self {
