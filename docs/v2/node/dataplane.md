@@ -198,7 +198,7 @@ capture 使用执行配置中完整的 `meshAddressPools`，其[契约](/v2/conf
 | 显式 down | 停止／join 所属任务，清理可证明所属的规则／路由与 TUN |
 | 外部修改或恢复冲突 | 停止正向 I/O 并保留 journal／负向边界，不 flush 外部资源 |
 
-journal 绑定 namespace／boot 身份，记录有界资源及待完成操作。未知归属、未知／未解决操作、身份不匹配阻断恢复。Linux rule／route 没有 incarnation cookie 或 compare-and-delete：特权主体用完全相同对象替换的 ABA 无法证明，资源归属要求外部不并发修改这些对象。
+journal 绑定 namespace／boot 身份，记录有界资源及待完成操作。过期 namespace 记录先归档，当前 namespace 的未知归属、未知／未解决操作或资源身份不匹配阻断接管；归档与冲突重试规则见[生命周期](/v2/node/runtime#生命周期)。Linux rule／route 没有 incarnation cookie 或 compare-and-delete：特权主体用完全相同对象替换的 ABA 无法证明，资源归属要求外部不并发修改这些对象。
 
 `Options` 默认上限为 64 个池、128 个受保护 socket、16,384 个内核对象，连接超时 10 秒；一部分 socket 预算为 Server bootstrap 保留。网络安装成功不自动表示 DNS、邻接或应用包流成功。
 
