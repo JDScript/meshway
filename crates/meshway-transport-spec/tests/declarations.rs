@@ -33,9 +33,11 @@ fn listener_protocols_have_distinct_closed_field_sets() {
 #[test]
 fn dialer_set_is_closed_and_omission_differs_from_disabled() {
     let d: DialerSet = serde_json::from_str(r#"{"vless":{}}"#).unwrap();
-    assert_eq!(d.vless.unwrap().priority, 300);
+    assert!(d.vless.unwrap().enabled);
+    assert!(d.native_udp.is_none());
     for text in [
         r#"{"vless":null}"#,
+        r#"{"vless":{"priority":300}}"#,
         r#"{"vless":{"type":"vless"}}"#,
         r#"{"native_udp":{"tcp":{}}}"#,
         r#"{"vless":{"streams":["tcp"]}}"#,

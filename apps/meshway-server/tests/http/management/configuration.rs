@@ -29,7 +29,7 @@ async fn nonsecret_defaults_edit_keeps_and_explicitly_clears_websocket_headers()
         .unwrap();
     for (websocket, expected_count) in [(r#"{}"#, 1), (r#"{"headers":{}}"#, 0)] {
         let current = source(&c, &s, n, owner.token.expose()).await;
-        let op = serde_json::from_str(&format!(r#"{{"type":"replaceDefaults","defaults":{{"dialers":{{"vless":{{"priority":17,"websocket":{websocket}}}}}}}}}"#)).unwrap();
+        let op = serde_json::from_str(&format!(r#"{{"type":"replaceDefaults","defaults":{{"dialers":{{"vless":{{"remark":"edge","websocket":{websocket}}}}}}}}}"#)).unwrap();
         let edit = ConfigurationRequest::Operations {
             expected_revision: current.revision,
             request_id: request(),
@@ -58,7 +58,7 @@ async fn nonsecret_defaults_edit_keeps_and_explicitly_clears_websocket_headers()
             .unwrap();
         let saved = source(&c, &s, n, owner.token.expose()).await;
         let vless = saved.configuration.defaults.dialers.vless.unwrap();
-        assert_eq!(vless.priority, 17);
+        assert_eq!(vless.remark, "edge");
         assert_eq!(vless.websocket.unwrap().headers.len(), expected_count);
     }
     s.close().await;

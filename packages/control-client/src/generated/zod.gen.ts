@@ -696,7 +696,6 @@ export const zNativeUdpDialer = z.strictObject({
   ["connectTimeout"]: zPositiveDuration.exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
   ["localAddress"]: z.string().exactOptional(),
-  ["priority"]: z.int().gte(0).lte(2147483647).exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional()
 });
@@ -718,7 +717,6 @@ export const zNativeTcpDialer = z.strictObject({
   ["connectTimeout"]: zPositiveDuration.exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
   ["localAddress"]: z.string().exactOptional(),
-  ["priority"]: z.int().gte(0).lte(2147483647).exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional(),
   ["tcp"]: zTcpOptions.exactOptional()
@@ -737,7 +735,6 @@ export const zVlessDialer = z.strictObject({
   ["connectTimeout"]: zPositiveDuration.exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
   ["localAddress"]: z.string().exactOptional(),
-  ["priority"]: z.int().gte(0).lte(2147483647).exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional(),
   ["stream"]: zDialerStream.exactOptional(),
@@ -761,7 +758,6 @@ export const zTrojanDialer = z.strictObject({
   ["connectTimeout"]: zPositiveDuration.exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
   ["localAddress"]: z.string().exactOptional(),
-  ["priority"]: z.int().gte(0).lte(2147483647).exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional(),
   ["tcp"]: zTcpOptions.exactOptional(),
@@ -1163,7 +1159,6 @@ export const zVlessDialerUpdate = z.strictObject({
   ["connectTimeout"]: zPositiveDuration.exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
   ["localAddress"]: z.string().exactOptional(),
-  ["priority"]: z.int().gte(0).lte(2147483647).exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional(),
   ["stream"]: zDialerStream.exactOptional(),
@@ -1345,7 +1340,6 @@ export const zVlessDialerView = z.strictObject({
   ["connectTimeout"]: zPositiveDuration,
   ["enabled"]: z.boolean(),
   ["localAddress"]: z.string(),
-  ["priority"]: z.int().gte(0).lte(2147483647),
   ["remark"]: z.string(),
   ["socket"]: zSocketOptions,
   ["stream"]: zDialerStream,

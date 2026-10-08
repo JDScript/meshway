@@ -199,7 +199,7 @@ pub struct DialCandidate {
     pub listener_key: String,
     /// Configured then Node-reported endpoints; an empty Native UDP list requires coordinated acquisition.
     pub endpoints: Vec<DialEndpoint>,
-    /// Configured dial preference, with lower values ordered first.
+    /// Rank of this candidate's carrier in the edge's transport order, lower first; endpoints of equal rank are tried by listener key.
     pub priority: u16,
     /// Complete protocol-specific client parameters and required material.
     pub parameters: DialParameters,

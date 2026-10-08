@@ -54,6 +54,25 @@ fn group_expanded_routing_edge_reports_rule_and_pair_in_preview_and_normalizatio
 }
 
 #[test]
+fn repeated_transport_in_an_edge_order_is_reported_at_its_position() {
+    let mut c = constrained_route();
+    c.topology[0].transports = Input::Value(vec![
+        TransportProtocol::NativeTcp,
+        TransportProtocol::NativeUdp,
+        TransportProtocol::NativeTcp,
+    ]);
+    let ConfigurationError::Invalid(issues) = normalize(c, &context()).unwrap_err() else {
+        panic!("expected configuration issue");
+    };
+    let issue = issues
+        .iter()
+        .find(|issue| issue.params.get("reason") == Some(&"repeated_transport".into()))
+        .unwrap();
+    assert_eq!(issue.code, IssueCode::InvalidTransport);
+    assert_eq!(issue.path, "/topology/0/transports/2");
+}
+
+#[test]
 fn retained_transport_loss_is_inert_and_does_not_block_revocation() {
     let c = constrained_route();
     let normalized = normalize_with_dependencies(c.clone(), &context()).unwrap();

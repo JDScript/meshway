@@ -3505,7 +3505,7 @@ export const schemaDocument = {
           "priority": {
             "type": "integer",
             "format": "int32",
-            "description": "Configured dial preference, with lower values ordered first.",
+            "description": "Rank of this candidate's carrier in the edge's transport order, lower first; endpoints of equal rank are tried by listener key.",
             "minimum": 0
           }
         },
@@ -8692,12 +8692,6 @@ export const schemaDocument = {
             "type": "string",
             "description": "Local outgoing IP address; omitted or empty selects automatically, and a Mesh address cannot bypass underlay protection."
           },
-          "priority": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.",
-            "minimum": 0
-          },
           "remark": {
             "type": "string",
             "description": "Descriptive text rather than a resource key; defaults to an empty string."
@@ -8777,12 +8771,6 @@ export const schemaDocument = {
           "localAddress": {
             "type": "string",
             "description": "Local outgoing IP address; omitted or empty selects automatically, and a Mesh address cannot bypass underlay protection."
-          },
-          "priority": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.",
-            "minimum": 0
           },
           "remark": {
             "type": "string",
@@ -16287,7 +16275,7 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/TransportProtocol"
             },
-            "description": "Allowed carriers for this undirected edge; omitted means unrestricted."
+            "description": "Carriers allowed on this undirected edge, in the order they are tried; omitted means unrestricted in the platform order native_udp, native_tcp, vless, trojan, and `[]` leaves the edge without a carrier."
           }
         },
         "additionalProperties": false
@@ -16409,12 +16397,6 @@ export const schemaDocument = {
           "localAddress": {
             "type": "string",
             "description": "Local outgoing IP address; omitted or empty selects automatically, and a Mesh address cannot bypass underlay protection."
-          },
-          "priority": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.",
-            "minimum": 0
           },
           "remark": {
             "type": "string",
@@ -17500,12 +17482,6 @@ export const schemaDocument = {
             "type": "string",
             "description": "Local outgoing IP address; omitted or empty selects automatically, and a Mesh address cannot bypass underlay protection."
           },
-          "priority": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.",
-            "minimum": 0
-          },
           "remark": {
             "type": "string",
             "description": "Descriptive text rather than a resource key; defaults to an empty string."
@@ -17553,12 +17529,6 @@ export const schemaDocument = {
             "type": "string",
             "description": "Local outbound IP address; defaults to an empty string for automatic selection and cannot bypass Mesh address protection."
           },
-          "priority": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Preference in 0–65535, with smaller values preferred; defaults to 300.",
-            "minimum": 0
-          },
           "remark": {
             "type": "string",
             "description": "Free-form description; defaults to an empty string."
@@ -17599,7 +17569,6 @@ export const schemaDocument = {
         "required": [
           "enabled",
           "remark",
-          "priority",
           "connectTimeout",
           "bindInterface",
           "localAddress",
@@ -17624,12 +17593,6 @@ export const schemaDocument = {
           "localAddress": {
             "type": "string",
             "description": "Local outbound IP address; an empty string selects it automatically."
-          },
-          "priority": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Dialing preference in 0–65535, with smaller values preferred.",
-            "minimum": 0
           },
           "remark": {
             "type": "string",

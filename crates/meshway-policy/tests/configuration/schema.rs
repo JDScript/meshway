@@ -110,30 +110,9 @@ fn initial_network_is_complete_deterministic_and_mesh_only() {
             .iter()
             .any(|r| r.dst.contains(&"autogroup:internet".into()))
     );
-    assert_eq!(
-        config
-            .defaults
-            .dialers
-            .native_udp
-            .as_ref()
-            .unwrap()
-            .priority,
-        100
-    );
-    assert_eq!(
-        config
-            .defaults
-            .dialers
-            .native_tcp
-            .as_ref()
-            .unwrap()
-            .priority,
-        200
-    );
-    assert_eq!(
-        config.defaults.dialers.vless.as_ref().unwrap().priority,
-        300
-    );
+    assert!(config.defaults.dialers.native_udp.as_ref().unwrap().enabled);
+    assert!(config.defaults.dialers.native_tcp.as_ref().unwrap().enabled);
+    assert!(config.defaults.dialers.vless.as_ref().unwrap().enabled);
     assert!(config.defaults.dialers.trojan.is_none());
     let json = canonical_json(&config).unwrap();
     let source = format!("// preserve me\n{}\n", json.expose());

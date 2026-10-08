@@ -102,6 +102,34 @@ fn edge_intersection_filters_both_dial_directions_and_leaves_other_edges_unrestr
 }
 
 #[test]
+fn edge_order_ranks_candidates_and_unlisted_edges_use_the_platform_order() {
+    let (mut c, inv) = dual_transport();
+    // 1--2 lists TCP before UDP; 1--3 has no rule, so the platform order applies.
+    c.topology = vec![edge(
+        &format!("node:{}", node(1)),
+        &format!("node:{}", node(2)),
+        &[TransportProtocol::NativeTcp, TransportProtocol::NativeUdp],
+    )];
+    let ds = BTreeMap::from([(request(1), demand(1, 1, 2)), (request(2), demand(2, 1, 3))]);
+    let result = run(&c, &inv, &ds, &[]);
+    let order = |peer: NodeId| {
+        let mut candidates: Vec<_> = result.nodes[&node(1)]
+            .configuration
+            .dialers
+            .values()
+            .filter(|d| d.peer == peer)
+            .collect();
+        candidates.sort_by_key(|d| (d.priority, d.listener_key.clone()));
+        candidates
+            .iter()
+            .map(|d| d.listener_key.as_str())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(node(2)), ["tcp", "udp"]);
+    assert_eq!(order(node(3)), ["udp", "tcp"]);
+}
+
+#[test]
 fn first_allow_controls_transport_set_and_block_wins_in_either_order() {
     let (mut c, inv) = dual_transport();
     c.topology = vec![

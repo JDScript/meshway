@@ -272,7 +272,7 @@ async fn defaults_replay_preserves_other_admin_changes_and_reports_precise_confl
             .unwrap();
     let mut concurrent =
         meshway_configuration::NetworkConfigurationInput::from(&initial.configuration);
-    concurrent.defaults.dialers.vless.as_mut().unwrap().priority = 19;
+    concurrent.defaults.dialers.vless.as_mut().unwrap().remark = "concurrent".into();
     concurrent
         .defaults
         .dialers

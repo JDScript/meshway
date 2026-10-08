@@ -70,12 +70,16 @@ fn historical_dial_endpoints_are_validated_without_becoming_current_candidates()
     value["meshAddressPools"] = json!({"ipv4": ["100.64.0.0/10"], "ipv6": []});
     value["localEgress"] = json!({});
     value["dns"]["egress"] = json!({"type": "noExit"});
+    // demand-6 dialer options carried `priority`, which the current types reject.
     value["dialers"]["peer/udp"] = json!({
         "peer": ID, "listenerKey": "udp", "priority": 100,
         "endpoints": [{"host": "10.0.0.1", "port": 35000}],
-        "parameters": DialParameters::NativeUdp { options: Default::default() }
+        "parameters": {"type": "native_udp", "options": {"enabled": true, "priority": 100}}
     });
     validate(&value.to_string()).unwrap();
+    value["dialers"]["peer/udp"]["parameters"] = json!([]);
+    reject(value.clone(), ObsoleteSliceError::Map);
+    value["dialers"]["peer/udp"]["parameters"] = json!({"type": "native_udp", "options": {}});
     assert!(
         serde_json::from_value::<super::super::DialCandidate>(value["dialers"]["peer/udp"].clone())
             .is_err()
@@ -115,11 +119,40 @@ fn field_set_is_exact_and_current_additions_are_rejected() {
         value.as_object_mut().unwrap().remove(field);
         reject(value, ObsoleteSliceError::Fields);
     }
-    for field in ["unknown", "meshAddressPools", "localEgress"] {
+    for field in [
+        "unknown",
+        "meshAddressPools",
+        "localEgress",
+        "egressCapture",
+        "exitRole",
+    ] {
         let mut value = body();
         value[field] = json!({});
         reject(value, ObsoleteSliceError::Fields);
     }
+    // Exit plans belong to demand-6 bodies only, which also carry capture fields.
+    let mut value = body();
+    value["egressCapture"] = json!({});
+    value["exitRole"] = json!(null);
+    reject(value, ObsoleteSliceError::Fields);
+}
+
+#[test]
+fn demand6_exit_plans_are_typed_within_the_capture_shape() {
+    let mut value = body();
+    value["meshAddressPools"] = json!({"ipv4": ["100.64.0.0/10"], "ipv6": []});
+    value["localEgress"] = json!({});
+    value["dns"]["egress"] = json!({"type": "noExit"});
+    value["egressCapture"] = json!({
+        "generation": "33".repeat(32), "managedIpv4": [], "defaultCapture": false,
+        "directIpv4": [], "unmanagedIpv4": [], "sinkIpv6": [], "unavailable": null
+    });
+    value["exitRole"] = json!(null);
+    validate(&value.to_string()).unwrap();
+    value["egressCapture"] = json!({"generation": "33".repeat(32)});
+    reject(value.clone(), ObsoleteSliceError::Field);
+    value.as_object_mut().unwrap().remove("egressCapture");
+    reject(value, ObsoleteSliceError::Fields);
 }
 
 #[test]

@@ -395,7 +395,7 @@ impl<'de> Deserialize<'de> for Listener {
 }
 
 macro_rules! dialer {
-    ($name:ident, $priority:literal, $value:literal, { $($(#[$attr:meta])* $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)? }) => {
+    ($name:ident, { $($(#[$attr:meta])* $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)? }) => {
         object! {
         /// Outbound carrier selection and connection options; the Server resolves target listener parameters separately.
         pub struct $name {
@@ -403,8 +403,6 @@ macro_rules! dialer {
             #[serde(default = "yes")] pub enabled: bool,
             /// Descriptive text rather than a resource key; defaults to an empty string.
             #[serde(default)] pub remark: String,
-            /// Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.
-            #[serde(default = $priority)] pub priority: u16,
             /// Positive total connection budget including resolution and required handshakes; defaults to `5s` and is limited by the remaining active lease.
             #[serde(default = "five_seconds")] pub connect_timeout: PositiveDuration,
             /// Interface in the current controlled underlay; omitted or empty lets the platform choose.
@@ -416,27 +414,15 @@ macro_rules! dialer {
             $($(#[$attr])* pub $field: $ty $([$($schema)*])?),*
         } }
         impl Default for $name { fn default() -> Self { Self {
-            enabled: true, remark: String::new(), priority: $value,
+            enabled: true, remark: String::new(),
             connect_timeout: five_seconds(), bind_interface: String::new(),
             local_address: String::new(), socket: SocketOptions::default(),
             $($field: Default::default()),*
         } } }
     }
 }
-fn udp_priority() -> u16 {
-    100
-}
-fn tcp_priority() -> u16 {
-    200
-}
-fn vless_priority() -> u16 {
-    300
-}
-fn trojan_priority() -> u16 {
-    400
-}
-dialer!(NativeUdpDialer, "udp_priority", 100, {});
-dialer!(NativeTcpDialer, "tcp_priority", 200, {
+dialer!(NativeUdpDialer, {});
+dialer!(NativeTcpDialer, {
     /// Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings.
     #[serde(default)] tcp: TcpOptions
 });
@@ -464,7 +450,7 @@ impl TryFrom<String> for DialerStream {
         }
     }
 }
-dialer!(VlessDialer, "vless_priority", 300, {
+dialer!(VlessDialer, {
     /// Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings.
     #[serde(default)] tcp: TcpOptions,
     /// Encapsulation selector, `auto`, `tcp`, or `websocket`; defaults to `auto`, while explicit values filter compatible listeners.
@@ -474,7 +460,7 @@ dialer!(VlessDialer, "vless_priority", 300, {
     /// Extra WebSocket client options; omission adds no request headers, tcp selection forbids this field, and null is rejected.
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] websocket: Option<DialerWebSocket> [value_type = DialerWebSocket],
 });
-dialer!(TrojanDialer, "trojan_priority", 400, {
+dialer!(TrojanDialer, {
     /// Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings.
     #[serde(default)] tcp: TcpOptions,
     /// TLS client options; omission uses managed trust, TLS 1.2–1.3, empty ALPN, and a `5s` handshake budget.

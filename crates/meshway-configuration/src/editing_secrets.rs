@@ -16,8 +16,6 @@ pub struct VlessDialerUpdate {
     #[serde(default="enabled")] pub enabled: bool,
     /// Free-form description; defaults to an empty string.
     #[serde(default)] pub remark: String,
-    /// Preference in 0–65535, with smaller values preferred; defaults to 300.
-    #[serde(default="priority")] pub priority: u16,
     /// Positive total resolution, connection and handshake budget; defaults to `5s` and remains bounded by the execution lease.
     #[serde(default="timeout")] pub connect_timeout: PositiveDuration,
     /// Requested underlay interface; defaults to an empty string for platform selection.
@@ -38,9 +36,6 @@ pub struct VlessDialerUpdate {
 } }
 fn enabled() -> bool {
     true
-}
-fn priority() -> u16 {
-    VlessDialer::default().priority
 }
 fn timeout() -> PositiveDuration {
     VlessDialer::default().connect_timeout
@@ -93,7 +88,6 @@ impl DialerSetUpdate {
                     Some(VlessDialer {
                         enabled: v.enabled,
                         remark: v.remark.clone(),
-                        priority: v.priority,
                         connect_timeout: v.connect_timeout.clone(),
                         bind_interface: v.bind_interface.clone(),
                         local_address: v.local_address.clone(),

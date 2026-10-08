@@ -106,7 +106,7 @@ pub struct TopologyRule {
     pub a: String,
     /// The other endpoint selector, with the same syntax and no directional distinction from `a`.
     pub b: String,
-    /// Allowed carriers for this undirected edge; omitted means unrestricted.
+    /// Carriers allowed on this undirected edge, in the order they are tried; omitted means unrestricted in the platform order native_udp, native_tcp, vless, trojan, and `[]` leaves the edge without a carrier.
     #[serde(default, skip_serializing_if = "Input::is_omitted")] pub transports: Input<Vec<TransportProtocol>> [value_type = Vec<TransportProtocol>],
 } }
 fn yes() -> bool {

@@ -107,7 +107,8 @@ fn old_publication(
     (serde_json::to_vec(&fields).unwrap(), references)
 }
 
-/// demand-3/4 use the previous endpoint shape and retain all execution fields.
+/// demand-3/4 use the previous endpoint shape and retain all execution fields;
+/// demand-6 keeps the current field set, differing only in dialer option fields.
 fn same_shape_publication(
     current: &CompiledPublication,
     version: &str,
@@ -117,11 +118,10 @@ fn same_shape_publication(
     let mut nodes = BTreeMap::new();
     let mut references = BTreeMap::new();
     for (node, slice) in &current.nodes {
-        let body = pre_exit_body(slice);
-        let body = if version == "meshway-demand-5" {
-            body
-        } else {
-            body.replace(",\"source\":\"configured\"", "")
+        let body = match version {
+            "meshway-demand-6" => serde_json::to_string(&slice.configuration).unwrap(),
+            "meshway-demand-5" => pre_exit_body(slice),
+            _ => pre_exit_body(slice).replace(",\"source\":\"configured\"", ""),
         };
         let digest = Digest::from_bytes(Sha256::digest(body.as_bytes()).into());
         nodes.insert(
@@ -162,7 +162,7 @@ async fn age(
             params![network.as_uuid().as_bytes().as_slice(), publication.as_uuid().as_bytes().as_slice()], |row| row.get(0)).unwrap();
         let plain = sealer.open_execution(network, publication, &payload).unwrap();
         let compiled: CompiledPublication = serde_json::from_slice(plain.as_bytes()).unwrap();
-        let (old, references) = if matches!(version.as_str(), "meshway-demand-3" | "meshway-demand-4" | "meshway-demand-5") {
+        let (old, references) = if matches!(version.as_str(), "meshway-demand-3" | "meshway-demand-4" | "meshway-demand-5" | "meshway-demand-6") {
             same_shape_publication(&compiled, &version)
         } else {
             old_publication(&compiled, &version)
@@ -222,6 +222,11 @@ async fn startup_retires_demand4_cache_for_endpoint_provenance_without_reenrollm
 #[tokio::test]
 async fn startup_retires_demand5_cache_for_exit_contract_without_reenrollment() {
     startup_retires_previous_cache("meshway-demand-5").await;
+}
+
+#[tokio::test]
+async fn startup_retires_demand6_cache_for_edge_carrier_order_without_reenrollment() {
+    startup_retires_previous_cache("meshway-demand-6").await;
 }
 
 async fn startup_retires_previous_cache(version: &str) {

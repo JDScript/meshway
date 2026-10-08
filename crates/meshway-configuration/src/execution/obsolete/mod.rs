@@ -1,11 +1,11 @@
-//! Integrity checks for historical demand-1 through demand-5 slice bodies.
+//! Integrity checks for historical demand-1 through demand-6 slice bodies.
 use super::{
-    DemandDecision, DiagnosticPermit, DnsExecution, LocalEgressPermit, PathPermit,
-    PeerConfiguration, TrustedDnsAssociation, TrustedNode,
+    DemandDecision, DiagnosticPermit, DnsExecution, EgressCapturePlan, ExitRolePlan,
+    LocalEgressPermit, PathPermit, PeerConfiguration, TrustedDnsAssociation, TrustedNode,
 };
 use crate::{
     AddressPools, DnsConfiguration, NodeAddresses, NodeIdentity,
-    transport::{DialParameters, Endpoint, PreparedListener},
+    transport::{Endpoint, PreparedListener},
 };
 use meshway_model::{Digest, NetworkId, NodeId, ObservationId, PublicationId, RequestId, Revision};
 use serde::{Deserialize, de::DeserializeOwned};
@@ -14,13 +14,21 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 
 // Historical evidence only. Never converted into an executable DialCandidate.
+// Protocol parameters embed dialer options whose field set changed across
+// compiler versions (demand-6 options carried `priority`), so they stay an
+// opaque object here rather than binding history to the current types.
 meshway_serde::object! { pub struct HistoricalDialCandidate {
     pub peer: NodeId,
     pub listener_key: String,
     pub endpoints: Vec<HistoricalEndpoint>,
     pub priority: u16,
-    pub parameters: DialParameters,
+    pub parameters: HistoricalDialParameters,
 } }
+
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(transparent)]
+#[schema(value_type = Object)]
+pub struct HistoricalDialParameters(serde_json::Map<String, serde_json::Value>);
 
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
@@ -97,10 +105,13 @@ pub fn validate_obsolete_slice(
         "exitEnabled",
     ];
     let recent = fields.contains_key("meshAddressPools") && fields.contains_key("localEgress");
+    // demand-6 added the exit plans beside the demand-3..5 capture fields.
+    let exit = recent && fields.contains_key("egressCapture") && fields.contains_key("exitRole");
     if FIELDS.iter().any(|key| !fields.contains_key(*key))
         || fields.keys().any(|key| {
             !FIELDS.contains(&key.as_str())
                 && !(recent && ["meshAddressPools", "localEgress"].contains(&key.as_str()))
+                && !(exit && ["egressCapture", "exitRole"].contains(&key.as_str()))
         })
     {
         return Err(ObsoleteSliceError::Fields);
@@ -155,6 +166,10 @@ fn validate_old_fields(fields: &BTreeMap<String, &RawValue>) -> Result<(), Obsol
     if fields.contains_key("meshAddressPools") {
         field::<AddressPools>(fields, "meshAddressPools")?;
         map::<RequestId, LocalEgressPermit>(fields, "localEgress")?;
+        if fields.contains_key("egressCapture") {
+            field::<EgressCapturePlan>(fields, "egressCapture")?;
+            field::<Option<ExitRolePlan>>(fields, "exitRole")?;
+        }
         return field::<DnsExecution>(fields, "dns");
     }
     let dns: BTreeMap<String, &RawValue> = decode(

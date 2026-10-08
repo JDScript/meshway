@@ -153,8 +153,6 @@ pub struct VlessDialerView {
     pub enabled:bool,
     /// Free-form description, distinct from the protocol key.
     pub remark:String,
-    /// Dialing preference in 0–65535, with smaller values preferred.
-    pub priority:u16,
     /// Positive total connection budget covering resolution, transport and protocol handshakes.
     pub connect_timeout:PositiveDuration,
     /// Requested underlay interface; an empty string leaves selection to the platform.
@@ -193,7 +191,6 @@ impl From<&DialerSet> for DialerSetView {
             vless: d.vless.as_ref().map(|v| VlessDialerView {
                 enabled: v.enabled,
                 remark: v.remark.clone(),
-                priority: v.priority,
                 connect_timeout: v.connect_timeout.clone(),
                 bind_interface: v.bind_interface.clone(),
                 local_address: v.local_address.clone(),

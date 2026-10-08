@@ -208,6 +208,23 @@ pub(super) fn rules(
             &format!("/topology/{i}/b"),
             check,
         );
+        // The list is the edge's carrier order, so a repeat is an authoring error.
+        if let Input::Value(transports) = &rule.transports {
+            for (j, protocol) in transports.iter().enumerate() {
+                if transports[..j].contains(protocol) {
+                    check.issue(
+                        ConfigurationIssue::new(
+                            format!("/topology/{i}/transports/{j}"),
+                            IssueCode::InvalidTransport,
+                        )
+                        .with(
+                            "reason",
+                            meshway_transport_spec::DeclarationError::RepeatedTransport.code(),
+                        ),
+                    );
+                }
+            }
+        }
     }
 }
 

@@ -34,6 +34,19 @@ impl TryFrom<String> for TransportProtocol {
 }
 
 impl TransportProtocol {
+    /// Carrier order tried on an edge whose topology rule lists no order:
+    /// Native UDP, Native TCP, VLESS, Trojan.
+    pub const PLATFORM_ORDER: [Self; 4] =
+        [Self::NativeUdp, Self::NativeTcp, Self::Vless, Self::Trojan];
+
+    /// Position of this protocol in `PLATFORM_ORDER`.
+    pub fn platform_rank(self) -> u16 {
+        Self::PLATFORM_ORDER
+            .iter()
+            .position(|p| *p == self)
+            .map_or(u16::MAX, |i| i as u16)
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NativeUdp => "native_udp",

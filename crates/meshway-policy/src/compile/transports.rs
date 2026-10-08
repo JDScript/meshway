@@ -23,6 +23,16 @@ pub(super) fn candidates(
         return Ok(vec![]);
     };
     let allowed = rule.map(|index| &cfg.topology[index].transports);
+    // A listed edge order is the carrier preference; otherwise the platform order.
+    let rank = |protocol: TransportProtocol| -> u16 {
+        match allowed {
+            Some(Input::Value(protocols)) => protocols
+                .iter()
+                .position(|p| *p == protocol)
+                .map_or(u16::MAX, |i| i as u16),
+            _ => protocol.platform_rank(),
+        }
+    };
     let set = match &source.dialers {
         Input::Value(d) => d,
         Input::Omitted => &cfg.defaults.dialers,
@@ -44,14 +54,14 @@ pub(super) fn candidates(
         if !compatible(set, l.declaration()) {
             continue;
         }
-        let (endpoints, priority, parameters) = match l.declaration() {
+        let priority = rank(protocol);
+        let (endpoints, parameters) = match l.declaration() {
             Listener::NativeUdp(l) if l.enabled && capable("native_udp", StreamKind::Udp) => {
                 let Some(d) = set.native_udp.as_ref().filter(|d| d.enabled) else {
                     continue;
                 };
                 (
                     &l.endpoints,
-                    d.priority,
                     DialParameters::NativeUdp { options: d.clone() },
                 )
             }
@@ -61,7 +71,6 @@ pub(super) fn candidates(
                 };
                 (
                     &l.endpoints,
-                    d.priority,
                     DialParameters::NativeTcp { options: d.clone() },
                 )
             }
@@ -83,7 +92,6 @@ pub(super) fn candidates(
                 let tls = tls(&l.tls, &d.tls)?;
                 (
                     &l.endpoints,
-                    d.priority,
                     DialParameters::Vless {
                         options: d.clone(),
                         stream: l.stream,
@@ -102,7 +110,6 @@ pub(super) fn candidates(
                 let tls = tls(&l.tls, &d.tls)?;
                 (
                     &l.endpoints,
-                    d.priority,
                     DialParameters::Trojan {
                         options: d.clone(),
                         password,

@@ -25,6 +25,8 @@ pub enum DeclarationError {
     InvalidVlessUuid,
     #[error("TCP stream cannot use websocket")]
     TcpStreamWebsocket,
+    #[error("transport listed more than once")]
+    RepeatedTransport,
     #[error("WebSocket requires HTTP/1.1 ALPN")]
     WebsocketAlpn,
     #[error("empty Trojan password")]
@@ -46,6 +48,7 @@ impl DeclarationError {
             Self::VlessFlow => "vless_flow",
             Self::InvalidVlessUuid => "invalid_vless_uuid",
             Self::TcpStreamWebsocket => "tcp_stream_websocket",
+            Self::RepeatedTransport => "repeated_transport",
             Self::WebsocketAlpn => "websocket_alpn",
             Self::EmptyTrojanPassword => "empty_trojan_password",
             Self::MaterialRequired => "material_required",
