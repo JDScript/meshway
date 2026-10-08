@@ -1,6 +1,7 @@
 //! Own durable intent and coordinate the IPC service and Server control task.
 mod control;
 mod intent;
+mod local_endpoints;
 mod network;
 mod ping;
 mod status;

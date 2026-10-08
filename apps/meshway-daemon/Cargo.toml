@@ -13,6 +13,8 @@ path = "src/main.rs"
 meshway-authority = { path = "../../crates/meshway-authority" }
 chrono.workspace = true
 getrandom.workspace = true
+ipnet.workspace = true
+nix = { version = "=0.31.3", default-features = false, features = ["net"] }
 clap = { workspace = true, features = ["env"] }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-control = { path = "../../crates/meshway-control" }

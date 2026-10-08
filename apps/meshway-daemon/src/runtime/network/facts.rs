@@ -77,6 +77,7 @@ impl Report {
             state.sockets.insert(
                 socket.reference.socket_id.clone(),
                 SocketState {
+                    local_endpoints: None,
                     resource: socket.reference.resource.clone(),
                     configuration: Some(socket.reference.configuration.clone()),
                     generation: socket.reference.socket_generation,
@@ -89,6 +90,7 @@ impl Report {
         for listener in &facts.listeners {
             let id = socket_key(&listener.socket_id);
             state.sockets.entry(id.clone()).or_insert(SocketState {
+                local_endpoints: None,
                 resource: ResourceRef::Listener {
                     key: listener.key.clone(),
                 },
@@ -140,6 +142,7 @@ impl Report {
                 .sockets
                 .entry(socket_id.clone())
                 .or_insert(SocketState {
+                    local_endpoints: None,
                     resource,
                     configuration: Some(target.clone()),
                     generation: self.generation,
@@ -148,6 +151,7 @@ impl Report {
                     endpoints: Vec::new(),
                 });
             state.links.entry(link.peer).or_default().push(LinkState {
+                acquisition: Some(link.acquisition.clone()),
                 link_id: id.clone(),
                 socket_id,
                 transport: link.carrier.protocol.as_str().to_owned(),

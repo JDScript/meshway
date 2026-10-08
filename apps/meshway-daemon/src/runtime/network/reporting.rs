@@ -284,7 +284,12 @@ impl super::Handle {
         let facts = sample
             .as_ref()
             .map_or_else(Report::stopped, |sample| sample.report.clone());
-        let state = facts.state(control, settings);
+        let mut state = facts.state(control, settings);
+        if let Some(guard) = &facts.guard
+            && let Ok(configuration) = guard.configuration()
+        {
+            crate::runtime::local_endpoints::sample(&mut state, configuration);
+        }
         // Guard changes between sampling and projection must not acknowledge
         // the earlier positive observation with a now-empty outgoing report.
         let mark = sample
