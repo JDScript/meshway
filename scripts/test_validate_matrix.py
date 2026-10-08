@@ -210,6 +210,14 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(result["status"], "unsupported")
             self.assertIn("pending-x2-x5", result["expectation"])
 
+    def test_exit_dns_and_fallback_are_rejected_before_docker(self):
+        for options in (("--dns-backend", "resolved"), ("--traversal-fallback",)):
+            result = subprocess.run([sys.executable, str(matrix.ROOT / "scripts/verify_runtime.py"),
+                                     "--transport", "native-udp", "--traversal", "exit", *options],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("requires", result.stderr)
+
     def test_wrong_source_artifact_rejected_before_copy(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

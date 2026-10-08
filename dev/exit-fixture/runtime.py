@@ -68,15 +68,17 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                           "addresses": command(role, "ip", "-j", "address"),
                           "routes": command(role, "ip", "-j", "route", "show", "table", "all"),
                           "rules": command(role, "ip", "-j", "rule")}
-        data["e"]["nftCounters"] = command("e", "/usr/sbin/nft", "-j", "list", "ruleset")
+        data["e"]["nftCounters"] = command("e", "/usr/sbin/nft", "-j", "list", "ruleset", required=False)
         data["e"]["forwarding"] = command("e", "cat", "/proc/sys/net/ipv4/ip_forward")
         data["e"]["conntrack"] = {
             link: command("e", "/usr/sbin/conntrack", "-L", "-f", "ipv4", "-d", addresses[link][link],
                           "-o", "extended", required=False) for link in ("external", "lan")}
+        write(report / (stage + ".json"), data)
+        if data["e"]["nftCounters"]["exitCode"] or data["e"]["forwarding"]["stdout"].strip() != "1":
+            raise RuntimeError("E nft/forwarding precondition unavailable")
         # Preserve an empty table as observed emptiness, not a fabricated NAT tuple.
         if any(item["exitCode"] != 0 for item in data["e"]["conntrack"].values()):
             raise RuntimeError("filtered conntrack read failed")
-        write(report / (stage + ".json"), data)
 
     def stop_captures():
         errors = []
@@ -184,6 +186,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             target = addresses[link][link]
             request = ("curl", "--noproxy", "*", "--fail", "--silent", "--show-error", "--connect-timeout", "1", "--max-time", "2", f"http://{target}:8080/")
             probes[link] = {role: command(role, *request, required=False) for role in ("e", "a", "r", "controller")}
+            write(report / "infrastructure-probes.json", probes)
             if probes[link]["e"]["exitCode"] or any(probes[link][role]["exitCode"] == 0 for role in ("a", "r", "controller")):
                 raise RuntimeError("external/LAN reachability is not E-only")
             interface = interfaces["e"][addresses[link]["e"]]
@@ -193,6 +196,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             finally:
                 probes[link]["restore"] = command("e", "ip", "link", "set", "dev", interface, "up")
             probes[link]["eRestored"] = command("e", *request, required=False)
+            write(report / "infrastructure-probes.json", probes)
             if probes[link]["eBlocked"]["exitCode"] == 0 or probes[link]["eRestored"]["exitCode"]:
                 raise RuntimeError("E-only infrastructure block/restore control failed")
         write(report / "infrastructure-probes.json", probes)
