@@ -38,6 +38,7 @@ fn facts(node: &Control) -> NodeState {
         sockets: BTreeMap::from([(
             "runtime-udp".into(),
             SocketState {
+                local_endpoints: None,
                 resource: ResourceRef::Listener { key: "udp".into() },
                 configuration: Some(reference),
                 generation: Sequence::new(1).unwrap(),
@@ -49,6 +50,7 @@ fn facts(node: &Control) -> NodeState {
         links: BTreeMap::from([(
             peer,
             vec![LinkState {
+                acquisition: None,
                 link_id: "observed-link".into(),
                 transport: "native_udp".into(),
                 initiator_node_id: peer,

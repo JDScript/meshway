@@ -80,6 +80,7 @@ impl Fixture {
                 resource: ResourceRef::Listener { key: "tcp".into() },
             };
             let physical = SocketState {
+                local_endpoints: None,
                 resource: reference.resource.clone(),
                 configuration: Some(cfg(101)),
                 generation: reference.socket_generation,
@@ -250,6 +251,7 @@ impl Fixture {
                 report.links.insert(
                     id(other),
                     vec![LinkState {
+                        acquisition: None,
                         link_id: installation.channel.link_id.to_string(),
                         socket_id: installation.channel.socket_id.to_string(),
                         transport: offer.carrier.protocol.as_str().into(),

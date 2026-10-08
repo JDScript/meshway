@@ -117,7 +117,7 @@ pub(super) fn candidates(
         out.push(DialCandidate {
             peer: b,
             listener_key: key.clone(),
-            endpoints: endpoints.clone(),
+            endpoints: endpoints.iter().cloned().map(Into::into).collect(),
             priority,
             parameters,
         });

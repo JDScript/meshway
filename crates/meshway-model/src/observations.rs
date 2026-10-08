@@ -26,6 +26,8 @@ meshway_serde::tagged! {
 pub enum LinkAcquisition {
     /// The channel was acquired by dialing a published endpoint.
     PublishedEndpoint,
+    /// The channel was acquired by dialing an endpoint the peer Node reported from its own interfaces.
+    LocalEndpoint,
     /// The channel was acquired by accepting an inbound connection.
     AcceptedInbound,
     /// The UDP channel was acquired through a coordinated traversal attempt.

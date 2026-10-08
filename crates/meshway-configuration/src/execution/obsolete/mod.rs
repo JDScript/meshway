@@ -1,14 +1,26 @@
-//! Integrity checks for historical demand-1/demand-2 slice bodies.
+//! Integrity checks for historical demand-1 through demand-4 slice bodies.
 use super::{
-    DemandDecision, DiagnosticPermit, DialCandidate, PathPermit, PeerConfiguration,
-    TrustedDnsAssociation, TrustedNode,
+    DemandDecision, DiagnosticPermit, DnsExecution, LocalEgressPermit, PathPermit,
+    PeerConfiguration, TrustedDnsAssociation, TrustedNode,
 };
-use crate::{DnsConfiguration, NodeAddresses, NodeIdentity, transport::PreparedListener};
+use crate::{
+    AddressPools, DnsConfiguration, NodeAddresses, NodeIdentity,
+    transport::{DialParameters, Endpoint, PreparedListener},
+};
 use meshway_model::{Digest, NetworkId, NodeId, ObservationId, PublicationId, RequestId, Revision};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::value::RawValue;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
+
+// Historical evidence only. Never converted into an executable DialCandidate.
+meshway_serde::object! { pub struct HistoricalDialCandidate {
+    pub peer: NodeId,
+    pub listener_key: String,
+    pub endpoints: Vec<Endpoint>,
+    pub priority: u16,
+    pub parameters: DialParameters,
+} }
 
 /// Format failures, separate from the caller's publication or enrollment binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -77,8 +89,12 @@ pub fn validate_obsolete_slice(
         "dns",
         "exitEnabled",
     ];
+    let recent = fields.contains_key("meshAddressPools") && fields.contains_key("localEgress");
     if FIELDS.iter().any(|key| !fields.contains_key(*key))
-        || fields.keys().any(|key| !FIELDS.contains(&key.as_str()))
+        || fields.keys().any(|key| {
+            !FIELDS.contains(&key.as_str())
+                && !(recent && ["meshAddressPools", "localEgress"].contains(&key.as_str()))
+        })
     {
         return Err(ObsoleteSliceError::Fields);
     }
@@ -123,12 +139,17 @@ fn validate_old_fields(fields: &BTreeMap<String, &RawValue>) -> Result<(), Obsol
     field::<NodeIdentity>(fields, "identity")?;
     field::<NodeAddresses>(fields, "addresses")?;
     map::<String, PreparedListener>(fields, "listeners")?;
-    map::<String, DialCandidate>(fields, "dialers")?;
+    map::<String, HistoricalDialCandidate>(fields, "dialers")?;
     map::<NodeId, PeerConfiguration>(fields, "peers")?;
     map::<RequestId, PathPermit>(fields, "permits")?;
     map::<ObservationId, DiagnosticPermit>(fields, "diagnostics")?;
     map::<RequestId, DemandDecision>(fields, "decisions")?;
     field::<bool>(fields, "exitEnabled")?;
+    if fields.contains_key("meshAddressPools") {
+        field::<AddressPools>(fields, "meshAddressPools")?;
+        map::<RequestId, LocalEgressPermit>(fields, "localEgress")?;
+        return field::<DnsExecution>(fields, "dns");
+    }
     let dns: BTreeMap<String, &RawValue> = decode(
         fields
             .get("dns")

@@ -25,7 +25,7 @@ pub use secret::EnrollmentKey;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-pub const VERSION: u16 = 4;
+pub const VERSION: u16 = 5;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 

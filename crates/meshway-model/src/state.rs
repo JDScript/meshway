@@ -175,6 +175,26 @@ meshway_serde::object! {
     pub expires_at: DateTime<Utc>,
 } }
 
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+/// Provenance of an endpoint the Node reported for one of its own listeners.
+pub enum LocalEndpointSource {
+    /// Enumerated from the Node's own network interfaces at report time.
+    Local,
+}
+}
+meshway_serde::object! {
+/// Dialable address the Node reported for a listener socket, derived from its own interfaces.
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct LocalEndpoint {
+    /// Interface address and the listener's bound port.
+    pub address: SocketAddr [value_type = String],
+    /// Where the address came from.
+    pub source: LocalEndpointSource,
+} }
+/// Upper bound of reported local endpoints per listener socket.
+pub const MAX_LOCAL_ENDPOINTS: usize = 8;
+
 meshway_serde::object! {
 /// Actual outer socket reported by the Node and indexed by its instance-local socket ID.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct SocketState {
@@ -191,6 +211,9 @@ meshway_serde::object! {
     pub bound_address: SocketAddr [value_type = String],
     /// Candidates associated with this socket, retaining their original observation deadlines.
     pub endpoints: Vec<EndpointCandidate>,
+    /// Omitted when not sampled; empty means enumeration found no usable address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_endpoints: Option<Vec<LocalEndpoint>> [max_items = 8],
 } }
 
 meshway_serde::string_enum! {
@@ -263,6 +286,7 @@ meshway_serde::object! {
     pub expires_at: DateTime<Utc>,
     /// Known UTC start of the reported state, or null when unknown.
     pub since: Option<DateTime<Utc>>,
+    pub acquisition: Option<crate::observations::LinkAcquisition>,
 } }
 
 meshway_serde::string_enum! {

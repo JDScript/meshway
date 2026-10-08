@@ -150,6 +150,44 @@ pub struct PeerConfiguration {
     /// Peer X25519 key binding used for end-to-end protection.
     pub dataplane_key: BoundNodeKey,
 } }
+meshway_serde::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+/// Where a dial endpoint came from; configured endpoints are tried before Node-reported ones.
+pub enum DialEndpointSource {
+    /// Declared by the administrator on the peer listener.
+    Configured,
+    /// Reported by the peer Node from its own interfaces in State.
+    Local,
+}
+}
+object! {
+/// One dialable address of a peer listener together with its provenance.
+pub struct DialEndpoint {
+    /// Host name or IP address.
+    pub host: String,
+    /// Listener port.
+    pub port: Port,
+    /// Provenance deciding the dial order.
+    pub source: DialEndpointSource,
+} }
+impl DialEndpoint {
+    pub fn endpoint(&self) -> Endpoint {
+        Endpoint {
+            host: self.host.clone(),
+            port: self.port,
+        }
+    }
+}
+impl From<Endpoint> for DialEndpoint {
+    fn from(endpoint: Endpoint) -> Self {
+        Self {
+            host: endpoint.host,
+            port: endpoint.port,
+            source: DialEndpointSource::Configured,
+        }
+    }
+}
 object! {
 /// Server-compiled outbound candidate with resolved peer listener parameters and material.
 pub struct DialCandidate {
@@ -157,8 +195,8 @@ pub struct DialCandidate {
     pub peer: NodeId,
     /// Configuration key of the peer listener.
     pub listener_key: String,
-    /// Explicitly published listener endpoints; an empty Native UDP list requires coordinated acquisition.
-    pub endpoints: Vec<Endpoint>,
+    /// Configured then Node-reported endpoints; an empty Native UDP list requires coordinated acquisition.
+    pub endpoints: Vec<DialEndpoint>,
     /// Configured dial preference, with lower values ordered first.
     pub priority: u16,
     /// Complete protocol-specific client parameters and required material.

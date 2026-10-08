@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 pub(super) const LIMIT: usize = 16 * 1024 * 1024;
 const RECORD: &str = "control.json";
 const MARKER: &[u8] = b"meshway-control/1\n";
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 
 fn marker(directory: &meshway_private_storage::Directory) -> Result<bool, Error> {
     let file = directory
@@ -128,8 +128,9 @@ impl Record {
         if envelope.origin != origin {
             return Err(Error::Record);
         }
-        let upgrading = match envelope.version {
-            1 => true,
+        let previous_version = envelope.version;
+        let upgrading = match previous_version {
+            1 | 2 => true,
             VERSION => false,
             _ => return Err(Error::Record),
         };
@@ -137,7 +138,11 @@ impl Record {
             // The old cache is inspected only for integrity and binding. It is
             // never deserialized as, or defaulted into, current authority.
             if let Some(saved) = envelope.saved {
-                validate_obsolete(saved, envelope.binding.as_ref().ok_or(Error::Record)?)?;
+                validate_obsolete(
+                    saved,
+                    envelope.binding.as_ref().ok_or(Error::Record)?,
+                    previous_version,
+                )?;
             }
             Self {
                 version: VERSION,
@@ -154,7 +159,7 @@ impl Record {
         };
         record.validate()?;
         if upgrading {
-            archive(directory, &bytes)?;
+            archive(directory, previous_version, &bytes)?;
             let mut buffer = Buffer(Zeroizing::new(Vec::with_capacity(LIMIT)));
             serde_json::to_writer(&mut buffer, &record).map_err(|_| Error::Record)?;
             // The lock remains held and both writes are synchronous and durable.
@@ -207,7 +212,11 @@ fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
 /// Only record v1 may contain this opaque derived body. MapOnly recursively
 /// rejects duplicate keys, including inside fields that are not execution inputs
 /// anymore. Header values retain their original strong types.
-fn validate_obsolete(raw: &RawValue, binding: &EnrollmentResponse) -> Result<(), Error> {
+fn validate_obsolete(
+    raw: &RawValue,
+    binding: &EnrollmentResponse,
+    version: u8,
+) -> Result<(), Error> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Slice<'a> {
@@ -216,6 +225,11 @@ fn validate_obsolete(raw: &RawValue, binding: &EnrollmentResponse) -> Result<(),
         configuration: &'a RawValue,
     }
     let slice: Slice<'_> = decode(raw.get().as_bytes())?;
+    let fields: std::collections::BTreeMap<String, &RawValue> =
+        decode(slice.configuration.get().as_bytes())?;
+    if fields.contains_key("meshAddressPools") != (version == 2) {
+        return Err(Error::Record);
+    }
     let header =
         validate_obsolete_slice(slice.configuration, slice.digest).map_err(|_| Error::Record)?;
     if header.network_id != binding.network_id
@@ -228,9 +242,13 @@ fn validate_obsolete(raw: &RawValue, binding: &EnrollmentResponse) -> Result<(),
     Ok(())
 }
 
-fn archive(directory: &meshway_private_storage::Directory, bytes: &[u8]) -> Result<(), Error> {
+fn archive(
+    directory: &meshway_private_storage::Directory,
+    version: u8,
+    bytes: &[u8],
+) -> Result<(), Error> {
     let digest = meshway_model::Digest::from_bytes(Sha256::digest(bytes).into());
-    let name = format!("control-v1-{digest}.json");
+    let name = format!("control-v{version}-{digest}.json");
     if let Some(file) = directory.file(&name, false)? {
         let mut existing = Zeroizing::new(Vec::new());
         file.take((LIMIT + 1) as u64)

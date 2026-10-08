@@ -15,7 +15,7 @@ use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
 pub use plan::{PlanDestination, PlanRequest, plan};
 use std::collections::BTreeMap;
 
-pub const COMPILER_VERSION: &str = "meshway-demand-4";
+pub const COMPILER_VERSION: &str = "meshway-demand-5";
 pub const MAX_DEMANDS: usize = 256;
 pub const MAX_PATHS: usize = 4;
 /// Ordered exit candidates have a separate budget from alternatives per exit.

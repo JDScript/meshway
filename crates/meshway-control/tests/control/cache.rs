@@ -10,6 +10,7 @@ fn old_slice(current: &CompiledNode) -> String {
     // compiler output by removing only the three new derived contract fields.
     let cfg = &current.configuration;
     let mut body = serde_json::to_string(cfg).unwrap();
+    body = body.replace(",\"source\":\"configured\"", "");
     for (name, value) in [
         (
             "meshAddressPools",
@@ -55,6 +56,15 @@ fn altered_old_slice(old: &str, change: impl FnOnce(String) -> String) -> String
 
 #[tokio::test]
 async fn known_old_cache_retires_without_reenrollment_and_archives_exact_private_record() {
+    upgrade(1).await;
+}
+
+#[tokio::test]
+async fn v2_cache_retires_without_reenrollment_for_endpoint_source_upgrade() {
+    upgrade(2).await;
+}
+
+async fn upgrade(version: u8) {
     let server = Server::start().await;
     let owner = server.owner().await;
     let path = server.path("cache-upgrade");
@@ -71,10 +81,18 @@ async fn known_old_cache_retires_without_reenrollment_and_archives_exact_private
     let first = control.acquire_instance(BTreeMap::new()).await.unwrap();
     control.sync_configuration().await.unwrap();
     control.acknowledge_saved().await.unwrap();
-    let old = old_slice(control.cached_target().unwrap());
+    let old = if version == 1 {
+        old_slice(control.cached_target().unwrap())
+    } else {
+        let body = serde_json::to_string(&control.cached_target().unwrap().configuration)
+            .unwrap()
+            .replace(",\"source\":\"configured\"", "");
+        let digest = meshway_model::Digest::from_bytes(Sha256::digest(body.as_bytes()).into());
+        format!(r#"{{"digest":"{digest}","configuration":{body}}}"#)
+    };
     control.shutdown().await.unwrap();
     let current = fs::read(path.join("control.json")).unwrap();
-    let bytes = record(&current, 1, Some(old));
+    let bytes = record(&current, version, Some(old));
     fs::write(path.join("control.json"), &bytes).unwrap();
     let intent = server.path("daemon-up-intent");
     fs::write(&intent, b"retained host intent evidence").unwrap();
@@ -98,12 +116,12 @@ async fn known_old_cache_retires_without_reenrollment_and_archives_exact_private
     for field in ["origin", "keys", "enrollment", "binding"] {
         assert_eq!(upgraded[field], original[field]);
     }
-    assert_eq!(upgraded["version"], 2);
+    assert_eq!(upgraded["version"], 3);
     assert!(upgraded["saved"].is_null());
     assert_eq!(fs::read(path.join("node-control.lock")).unwrap(), marker);
     assert_eq!(fs::read(&intent).unwrap(), b"retained host intent evidence");
     let hash = meshway_model::Digest::from_bytes(Sha256::digest(&bytes).into());
-    let archive = path.join(format!("control-v1-{hash}.json"));
+    let archive = path.join(format!("control-v{version}-{hash}.json"));
     assert_eq!(fs::read(&archive).unwrap(), bytes);
     assert_eq!(
         fs::metadata(&archive).unwrap().permissions().mode() & 0o777,
@@ -192,7 +210,8 @@ async fn unknown_corrupt_and_misbound_cache_records_are_retained_byte_for_byte()
     for invalid in [
         record(&current, 99, Some(old.clone())),
         serde_json::to_vec(&corrupt_current).unwrap(),
-        record(&current, 2, Some(old.clone())), // malformed CURRENT never means obsolete
+        record(&current, 3, Some(old.clone())), // malformed CURRENT never means obsolete
+        record(&current, 2, Some(old.clone())), // v2 cannot contain a v1 slice shape
         record(
             &current,
             1,
