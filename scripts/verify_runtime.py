@@ -606,8 +606,16 @@ def main():
         manifest["underlay6"] = addresses6
         create("underlay-peer", ["underlay-peer", "--ipv4", addresses["underlay-peer"], "--ipv6", addresses6["underlay-peer"]],
                address=addresses["underlay-peer"], address6=addresses6["underlay-peer"])
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             peer = executor.submit(execute, "underlay-peer")
+            restart = None
+            def kernel_result(role, result):
+                passed = (not result["attachExit"] and not result["exitCode"] and not result["oomKilled"] and not result["running"]
+                          and "test result: ok. 1 passed; 0 failed; 0 ignored;" in (report / f"{role}.log").read_text())
+                manifest["tests"][role] = {"test": KERNEL_TESTS[role], "passed": passed, **result}
+                write_json(metadata, manifest)
+                if not passed:
+                    raise RuntimeError("production underlay kernel conformance failed")
             try:
                 deadline = time.monotonic() + 30
                 ready = report / "signals/underlay-peer-ready.json"
@@ -631,16 +639,27 @@ def main():
                            address=addresses[role], address6=addresses6[role], admin=not role.startswith("underlay-journal-"),
                            tun=role == "underlay-local-conflict",
                            executable=KERNEL_BINARY, environment=environment)
-                    result = execute(role)
-                    passed = (not result["attachExit"] and not result["exitCode"] and not result["oomKilled"] and not result["running"]
-                              and "test result: ok. 1 passed; 0 failed; 0 ignored;" in (report / f"{role}.log").read_text())
-                    manifest["tests"][role] = {"test": test, "passed": passed, **result}
-                    write_json(metadata, manifest)
-                    if not passed:
-                        raise RuntimeError("production underlay kernel conformance failed")
+                    if role == "underlay-restart-a":
+                        restart = executor.submit(execute, role)
+                        deadline = time.monotonic() + 30
+                        while not (report / "signals/underlay-restart-ready.json").exists():
+                            if restart.done() or time.monotonic() >= deadline:
+                                raise RuntimeError("restart namespace pin did not become ready")
+                            time.sleep(0.1)
+                        continue
+                    try:
+                        result = execute(role)
+                    finally:
+                        if role == "underlay-restart-b":
+                            write_json(report / "signals/underlay-restart-stop.json", {"kind": "ready"})
+                            kernel_result("underlay-restart-a", restart.result())
+                    kernel_result(role, result)
             finally:
+                write_json(report / "signals/underlay-restart-stop.json", {"kind": "ready"})
                 write_json(report / "signals/underlay-peer-stop.json", {"kind": "ready"})
                 manifest["underlayPeer"] = peer.result()
+                if restart is not None:
+                    restart.result()
                 write_json(metadata, manifest)
         if any(manifest["underlayPeer"].values()):
             raise RuntimeError("remote underlay peer did not stop cleanly")

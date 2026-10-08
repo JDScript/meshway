@@ -1,13 +1,18 @@
 use super::*;
 
 #[tokio::test]
-#[ignore = "two isolated Linux namespaces sharing a private journal directory and NET_ADMIN"]
+#[ignore = "two live isolated Linux namespaces sharing journal/signals and NET_ADMIN"]
 async fn container_restart_archives_previous_namespace_journal() {
     assert_eq!(
         std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
         Ok("1")
     );
     let phase = std::env::var("MESHWAY_RESTART_PHASE").unwrap();
+    std::fs::write(
+        format!("/restart/identity-{phase}.json"),
+        serde_json::to_vec(&Journal::identity().unwrap()).unwrap(),
+    )
+    .unwrap();
     let directory =
         Arc::new(Directory::open(std::path::Path::new("/restart/node"), "fixture.lock").unwrap());
     let previous = if phase == "b" {
@@ -52,4 +57,22 @@ async fn container_restart_archives_previous_namespace_journal() {
     kernel.settle().await.unwrap();
     drop(kernel);
     tasks.shutdown().await.unwrap();
+    drop(directory);
+    if phase == "a" {
+        // Release every journal/task owner but pin this namespace while B is
+        // created. nsfs inode numbers may be reused after namespace destruction;
+        // this test specifically exercises two different namespace identities.
+        std::fs::write(
+            "/signals/underlay-restart-ready.json",
+            b"{\"kind\":\"ready\"}",
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(90), async {
+            while !std::path::Path::new("/signals/underlay-restart-stop.json").exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
 }
