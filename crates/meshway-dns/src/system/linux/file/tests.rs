@@ -12,7 +12,9 @@ fn trusted_tempdir() -> tempfile::TempDir {
         .collect();
     candidates.push(std::env::current_dir().unwrap());
     for candidate in &candidates {
-        let Ok(root) = tempfile::tempdir_in(candidate) else { continue };
+        let Ok(root) = tempfile::tempdir_in(candidate) else {
+            continue;
+        };
         // tempfile honours the umask; the backend requires owner-only parents.
         std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let probe = root.path().join("probe");
@@ -23,7 +25,9 @@ fn trusted_tempdir() -> tempfile::TempDir {
             return root;
         }
     }
-    panic!("no trusted temporary directory: tried {candidates:?}; set TMPDIR to a 0700 directory with root/owner-only ancestors");
+    panic!(
+        "no trusted temporary directory: tried {candidates:?}; set TMPDIR to a 0700 directory with root/owner-only ancestors"
+    );
 }
 
 struct Fixture {
