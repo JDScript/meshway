@@ -129,16 +129,23 @@ pub(super) async fn run(
                 {
                     Ok(handle) => network = Some(handle),
                     Err(problem) => {
+                        let delay =
+                            (problem == Problem::Underlay).then_some(Duration::from_secs(backoff));
                         publish(
                             &reported,
                             &plan,
                             None,
-                            Phase::Blocked,
+                            if delay.is_some() {
+                                Phase::Retrying
+                            } else {
+                                Phase::Blocked
+                            },
                             None,
                             Some(problem),
-                            None,
+                            delay,
                         );
-                        wait_change(&mut desired, &plan, None).await;
+                        backoff = (backoff * 2).min(30);
+                        wait_change(&mut desired, &plan, delay).await;
                         plan = desired.borrow_and_update().clone();
                         reset = plan.retry_enrollment;
                         continue;

@@ -1,5 +1,7 @@
 use super::*;
 
+mod restart;
+
 #[test]
 fn dns_anchor_address_conflicts_with_specific_routes_but_not_the_default_route() {
     use rtnetlink::packet_route::route::{RouteAddress, RouteAttribute};

@@ -27,6 +27,18 @@ use meshway_protocol::{DemandRequest, RenewDemandRequest, execution::ApplyFailur
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
 
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn startup_problem(error: &meshway_underlay::Error) -> Problem {
+    use meshway_underlay::Error;
+    match error {
+        Error::Storage(meshway_private_storage::Error::InUse) => Problem::Underlay,
+        Error::Journal | Error::Storage(_) => Problem::Storage,
+        Error::Unsupported => Problem::UnsupportedMode,
+        Error::Options | Error::Origin | Error::Resolver => Problem::Configuration,
+        _ => Problem::Underlay,
+    }
+}
+
 pub(super) fn capabilities() -> std::collections::BTreeMap<String, meshway_model::state::Capability>
 {
     let mut capabilities = meshway_connectivity::capabilities();
@@ -382,14 +394,14 @@ impl Handle {
                 .await
                 .map_err(|error| {
                     tracing::warn!(%error, "Underlay startup failed");
-                    Problem::Underlay
+                    startup_problem(&error)
                 })?;
             if let Err(error) = host.attach_control(origin).await {
                 tracing::warn!(%error, "Underlay Control attachment failed");
                 if let Err(error) = host.shutdown(true).await {
                     tracing::warn!(%error, "Underlay startup cleanup failed");
                 }
-                return Err(Problem::Underlay);
+                return Err(startup_problem(&error));
             }
             let (commands, received) = mpsc::channel(4);
             let (diagnostic_paused, paused) = watch::channel(Default::default());

@@ -84,12 +84,12 @@ impl Journal {
         Ok((boot, namespace.dev(), namespace.ino()))
     }
 
-    /// Kernel rules, routes, TUN devices and DNS anchors never survive a
-    /// reboot, so a journal written under another boot id describes nothing
-    /// that can still exist or still need cleanup. A same-boot journal from a
-    /// different namespace stays a conflict: its resources may live on there.
-    pub fn is_from_previous_boot(&self, boot: &str) -> bool {
+    /// Resources in another kernel or network namespace cannot be adopted or
+    /// cleaned up here. Preserve their evidence and allocate in this namespace.
+    pub fn is_stale(&self, boot: &str, device: u64, inode: u64) -> bool {
         self.boot.trim() != boot.trim()
+            || self.namespace_device != device
+            || self.namespace_inode != inode
     }
 
     fn validate(&self) -> Result<()> {
@@ -224,8 +224,24 @@ impl Store {
                 return Err(Error::Journal);
             }
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
-            let (boot, _, _) = Journal::identity()?;
-            if journal.is_from_previous_boot(&boot) {
+            let (boot, device, inode) = Journal::identity()?;
+            if journal.is_stale(&boot, device, inode) {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| Error::Journal)?
+                    .as_nanos();
+                let archive = format!("{FILE}.stale-{timestamp}");
+                // Checked descriptor-relative, durable NOREPLACE rename. A
+                // failed archive never permits a fresh allocation/overwrite.
+                worker_directory.publish_once(&archive, FILE, None)?;
+                tracing::info!(
+                    old_boot = journal.boot.trim(),
+                    old_namespace_device = journal.namespace_device,
+                    old_namespace_inode = journal.namespace_inode,
+                    namespace_inode = inode,
+                    archive,
+                    "Archived stale Underlay journal"
+                );
                 return Ok(None);
             }
             journal.validate()?;
@@ -309,9 +325,51 @@ mod tests {
             .unwrap();
         let (_, previous) = Store::open(directory.clone()).await.unwrap();
         assert!(previous.is_none());
+        assert!(directory.file(FILE, false).unwrap().is_none());
 
         let (boot, _, _) = Journal::identity().unwrap();
         directory.replace(FILE, &journal(&boot)).unwrap();
         assert!(matches!(Store::open(directory).await, Err(Error::Journal)));
+    }
+
+    #[test]
+    fn journal_classifies_same_namespace_changed_namespace_and_changed_boot() {
+        let (boot, device, inode) = Journal::identity().unwrap();
+        let journal: Journal = serde_json::from_slice(&journal(&boot)).unwrap();
+        assert!(!journal.is_stale(&boot, device, inode));
+        assert!(journal.is_stale(&boot, device, inode + 1));
+        assert!(journal.is_stale("another-boot", device, inode));
+        assert!(journal.is_stale(&boot, device + 1, inode));
+    }
+
+    #[tokio::test]
+    async fn changed_namespace_archives_exact_journal_and_same_namespace_recovers() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = Arc::new(Directory::open(&temp.path().join("node"), "node.lock").unwrap());
+        let (boot, _, _) = Journal::identity().unwrap();
+        let mut journal: Journal = serde_json::from_slice(&journal(&boot)).unwrap();
+        journal.pending = None;
+        directory
+            .replace(FILE, &serde_json::to_vec(&journal).unwrap())
+            .unwrap();
+        assert!(Store::open(directory.clone()).await.unwrap().1.is_some());
+        journal.namespace_inode += 1;
+        let bytes = serde_json::to_vec(&journal).unwrap();
+        directory.replace(FILE, &bytes).unwrap();
+        assert!(Store::open(directory.clone()).await.unwrap().1.is_none());
+        assert!(directory.file(FILE, false).unwrap().is_none());
+        let archives: Vec<_> = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("underlay.json.stale-")
+            })
+            .collect();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(std::fs::read(&archives[0]).unwrap(), bytes);
+        assert!(Store::open(directory).await.unwrap().1.is_none());
     }
 }

@@ -4,6 +4,136 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "requires an isolated Linux network namespace, TUN and NET_ADMIN"]
+async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let fixture = crate::runtime::ping::integration::Fixture::open().await;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let owner_directory = Arc::new(
+        meshway_private_storage::Directory::open(&root.join("owner"), "owner.lock").unwrap(),
+    );
+    let options = meshway_underlay::Options {
+        bootstrap_nameservers: Some(vec!["192.0.2.53:53".parse().unwrap()]),
+        ..Default::default()
+    };
+    let mut owner = meshway_underlay::Host::open(owner_directory.clone(), options.clone())
+        .await
+        .unwrap();
+    owner
+        .install(fixture.controls[0].execution_snapshot().unwrap())
+        .await
+        .unwrap();
+    let tun_index = owner.tun().unwrap().if_index().unwrap();
+    let directory = Arc::new(
+        meshway_private_storage::Directory::open(&root.join("restart"), "restart.lock").unwrap(),
+    );
+    // The restarting process has the old journal while its previous owner is
+    // still alive. It must not adopt/delete that owner's TUN or positive routes.
+    directory
+        .replace(
+            "underlay.json",
+            &std::fs::read(owner_directory.path().join("underlay.json")).unwrap(),
+        )
+        .unwrap();
+    assert!(matches!(
+        meshway_underlay::Host::open(directory.clone(), options.clone()).await,
+        Err(meshway_underlay::Error::Conflict)
+    ));
+    let revision = meshway_model::Version::MIN;
+    let (desired, desired_rx) = watch::channel(Desired {
+        revision,
+        up: true,
+        shutdown: false,
+        retry_enrollment: false,
+        enrollment_key: None,
+        rotation: None,
+    });
+    let (reported, mut report) = watch::channel(Report::initial(revision));
+    let (network_reported, _) = watch::channel(network::Report::stopped());
+    let (_pings, pings) = tokio::sync::mpsc::channel(1);
+    let (events, _) = watch::channel(events::EventStatus::default());
+    let mut settings = Settings::new(
+        directory.path().to_owned(),
+        "http://127.0.0.1:9",
+        Some("restart"),
+    )
+    .unwrap();
+    settings.underlay = options;
+    let settings = Arc::new(settings);
+    let driver = tokio::spawn(run(
+        settings,
+        desired_rx,
+        reported,
+        directory,
+        network_reported,
+        pings,
+        events,
+    ));
+    let first = tokio::time::timeout(
+        Duration::from_secs(10),
+        report.wait_for(|r| r.problem == Some(Problem::Underlay)),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .clone();
+    assert_eq!(first.phase, Phase::Retrying);
+    assert!(first.retry_at.is_some());
+    let second = tokio::time::timeout(
+        Duration::from_secs(5),
+        report.wait_for(|r| r.retry_at > first.retry_at),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .clone();
+    assert_eq!(second.problem, Some(Problem::Underlay));
+    assert_eq!(owner.tun().unwrap().if_index().unwrap(), tun_index);
+    owner.shutdown(true).await.unwrap();
+    // The same control task gets through bootstrap after the owner releases;
+    // unreachable HTTP is now the error, without any operator revision change.
+    let recovered = tokio::time::timeout(
+        Duration::from_secs(10),
+        report.wait_for(|r| r.problem == Some(Problem::Network)),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .clone();
+    assert_eq!(recovered.revision, revision);
+    assert!(recovered.retry_at.is_some());
+    desired.send_modify(|d| {
+        d.up = false;
+        d.shutdown = true;
+    });
+    driver.await.unwrap().unwrap();
+    fixture.close().await;
+}
+
+#[test]
+fn corrupt_underlay_journal_is_storage_but_live_conflict_is_retryable_underlay() {
+    assert_eq!(
+        network::startup_problem(&meshway_underlay::Error::Journal),
+        Problem::Storage
+    );
+    assert_eq!(
+        network::startup_problem(&meshway_underlay::Error::Conflict),
+        Problem::Underlay
+    );
+    assert_eq!(
+        network::startup_problem(&meshway_underlay::Error::Storage(
+            meshway_private_storage::Error::InUse
+        )),
+        Problem::Underlay
+    );
+}
+
 #[tokio::test]
 async fn cancelled_queued_demand_does_not_fence_an_unrelated_live_instance() {
     use crate::runtime::ping::integration::Fixture;

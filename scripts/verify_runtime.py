@@ -25,11 +25,14 @@ KERNEL_BINARY = "meshway-underlay-kernel-tests"
 BOOTSTRAP_BINARY = "meshway-underlay-bootstrap-tests"
 LIFECYCLE_BINARY = "meshway-daemon-lifecycle-tests"
 LIFECYCLE_TEST = "cleanup::blocked_down_retries_real_dns_reservation_cleanup_without_going_online"
+OWNER_CONFLICT_TEST = "runtime::control::tests::live_tun_owner_conflict_retries_and_recovers_without_new_up"
 PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests"),
                      "platform-daemon": ("meshway_daemon", "meshway-daemon-platform-tests")}
 ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
 KERNEL_TESTS = {
+    "underlay-restart-a": "linux::kernel::tests::restart::container_restart_archives_previous_namespace_journal",
+    "underlay-restart-b": "linux::kernel::tests::restart::container_restart_archives_previous_namespace_journal",
     "underlay-negative": "linux::kernel::tests::negative_capture_marked_bypass_recovery_and_exact_down",
     "underlay-foreign": "linux::kernel::tests::foreign_same_priority_is_retained_and_blocks_cleanup",
     "underlay-datagram": "linux::datagram::tests::actual_udp_mark_truncation_and_unpolled_owner_release",
@@ -187,7 +190,7 @@ def main():
     report = report_directory("runtime", args.report_dir)
     identity = report.name
     for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES,
-                  "underlay-peer", "bootstrap", "daemon-cleanup", *KERNEL_TESTS, *PLATFORM_BINARIES):
+                  "underlay-peer", "bootstrap", "daemon-cleanup", "daemon-owner-conflict", "restart", *KERNEL_TESTS, *PLATFORM_BINARIES):
         (report / name).mkdir(parents=True, exist_ok=True)
     source = fingerprint()
     # One source/cache owner per invocation; never leak the lock FD to Cargo,
@@ -336,6 +339,8 @@ def main():
             mounts.append(("dns-support", "/dns-fixture", True))
         if not prepare:
             mounts.append((role, "/evidence", False))
+        if role in ("underlay-restart-a", "underlay-restart-b"):
+            mounts.append(("restart", "/restart", False))
         for source_name, destination, readonly in mounts:
             command.extend(["--mount", f"type=bind,source={report / source_name},target={destination}" + (",readonly" if readonly else "")])
         if tun or admin:
@@ -459,7 +464,7 @@ def main():
         if not passed:
             raise RuntimeError("Linux daemon blocked-down cleanup retry failed")
         for role, (_, binary) in PLATFORM_BINARIES.items():
-            create(role, ["--include-ignored", "--nocapture", "--test-threads=4"], executable=binary,
+            create(role, ["--include-ignored", "--skip", OWNER_CONFLICT_TEST, "--nocapture", "--test-threads=4"], executable=binary,
                    environment={"MESHWAY_DNS_ISOLATED": "1", "MESHWAY_DNS_BIND_MOUNT_FILE": "/etc/resolv.conf"})
             result = execute(role)
             passed = not any(result.values()) and "test result: ok." in (report / f"{role}.log").read_text()
@@ -467,6 +472,15 @@ def main():
             write_json(metadata, manifest)
             if not passed:
                 raise RuntimeError("Linux DNS/daemon platform tests failed: " + role)
+        create("daemon-owner-conflict", ["--ignored", "--exact", OWNER_CONFLICT_TEST, "--nocapture", "--test-threads=1"],
+               executable=PLATFORM_BINARIES["platform-daemon"][1], tun=True,
+               environment={"MESHWAY_UNDERLAY_ISOLATED": "1"})
+        result = execute("daemon-owner-conflict")
+        passed = not any(result.values()) and "test result: ok. 1 passed; 0 failed; 0 ignored;" in (report / "daemon-owner-conflict.log").read_text()
+        manifest["ownerConflictTest"] = {"passed": passed, "test": OWNER_CONFLICT_TEST, **result}
+        write_json(metadata, manifest)
+        if not passed:
+            raise RuntimeError("live TUN owner conflict retry failed")
         random = uuid.uuid4().hex
         ipv6_requested = ipaddress.ip_network(f"2001:db8:{random[:4]}:{random[4:8]}::/64")
         network = run("docker", "network", "create", "--internal", "--ipv6", "--subnet", str(ipv6_requested), "--label", label,
@@ -562,6 +576,8 @@ def main():
                     raise RuntimeError("invalid remote underlay peer readiness")
                 for role, test in KERNEL_TESTS.items():
                     environment = {"MESHWAY_UNDERLAY_ISOLATED": "1", "MESHWAY_DNS_ISOLATED": "1"}
+                    if role in ("underlay-restart-a", "underlay-restart-b"):
+                        environment["MESHWAY_RESTART_PHASE"] = role[-1]
                     if role == "underlay-negative":
                         environment.update(MESHWAY_UNDERLAY_PEER4=addresses["underlay-peer"] + ":42427",
                                            MESHWAY_UNDERLAY_PEER6="[" + addresses6["underlay-peer"] + "]:42427")
