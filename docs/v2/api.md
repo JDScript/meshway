@@ -26,6 +26,7 @@
 | 诊断任务、续租、结果与历史 | [Realtime Observation](/v2/state-reference/realtime) |
 | schema、承载目录、数据集 | [Transport](/v2/configuration-reference/transports) · [Rule Sets](/v2/configuration-reference/rule-sets) |
 | 操作提示与错误 | [Actions 与 Problem](/v2/api/problems) |
+| 每个操作与类型的完整字段（由契约生成） | [API 参考](/v2/reference/) · [Console API](/v2/reference/console) · [Node API](/v2/reference/agent) |
 
 ## 共同规则
 

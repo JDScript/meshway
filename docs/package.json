@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vitepress dev . --host 127.0.0.1 --port 5173",
-    "build": "vitepress build .",
+    "reference": "node scripts/generate-reference.mjs",
+    "dev": "pnpm run reference && vitepress dev . --host 127.0.0.1 --port 5173",
+    "build": "pnpm run reference && vitepress build .",
     "check": "pnpm run build && python3 scripts/check-links.py && node scripts/check-examples.mjs",
     "preview": "vitepress preview . --host 127.0.0.1 --port 5173"
   },

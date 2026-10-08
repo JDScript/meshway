@@ -260,6 +260,55 @@ pub fn openapi() -> OpenApi {
     )
     .expect("registered node stream");
     spec.info.title = "Meshway Server".into();
+    spec.info.description = Some(
+        "Console API under /api/v1 (user sessions) and Node API under /agent-api/v1 \
+         (node sessions), generated from the actual routes."
+            .into(),
+    );
+    spec.info.contact = None;
+    spec.info.license = None;
+    spec.tags = Some(
+        [
+            ("auth", "Registration, login and sessions"),
+            (
+                "account",
+                "The signed-in account, its sessions and activity",
+            ),
+            ("networks", "Networks and membership listing"),
+            (
+                "members",
+                "Membership roles, join links, removal and leaving",
+            ),
+            (
+                "configuration",
+                "Network configuration: read, validate, apply, evaluate, history",
+            ),
+            (
+                "nodes",
+                "Node inventory, settings, keys and deployment progress",
+            ),
+            ("enrollment", "Device authorization and enrollment keys"),
+            ("state", "Network State projections for users and Nodes"),
+            ("events", "SSE streams"),
+            ("resources", "Rule sets"),
+            ("history", "Activity and observation history"),
+            ("observations", "Realtime observations"),
+            (
+                "execution",
+                "Node execution: instances, demands, receipts, publications",
+            ),
+            ("node", "Node authentication and key rotation"),
+            ("connectivity", "UDP traversal coordination"),
+        ]
+        .into_iter()
+        .map(|(name, description)| {
+            utoipa::openapi::tag::TagBuilder::new()
+                .name(name)
+                .description(Some(description))
+                .build()
+        })
+        .collect(),
+    );
     spec.components
         .get_or_insert_with(Default::default)
         .add_security_scheme(

@@ -2,15 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Meshway Server",
-    "description": "Utoipa's axum bindings for seamless integration for the two",
-    "contact": {
-      "name": "Juha Kukkonen",
-      "email": "juha7kukkonen@gmail.com"
-    },
-    "license": {
-      "name": "MIT OR Apache-2.0",
-      "identifier": "MIT OR Apache-2.0"
-    },
+    "description": "Console API under /api/v1 (user sessions) and Node API under /agent-api/v1 (node sessions), generated from the actual routes.",
     "version": "0.1.0"
   },
   "paths": {
@@ -23451,5 +23443,67 @@
         "scheme": "bearer"
       }
     }
-  }
+  },
+  "tags": [
+    {
+      "name": "auth",
+      "description": "Registration, login and sessions"
+    },
+    {
+      "name": "account",
+      "description": "The signed-in account, its sessions and activity"
+    },
+    {
+      "name": "networks",
+      "description": "Networks and membership listing"
+    },
+    {
+      "name": "members",
+      "description": "Membership roles, join links, removal and leaving"
+    },
+    {
+      "name": "configuration",
+      "description": "Network configuration: read, validate, apply, evaluate, history"
+    },
+    {
+      "name": "nodes",
+      "description": "Node inventory, settings, keys and deployment progress"
+    },
+    {
+      "name": "enrollment",
+      "description": "Device authorization and enrollment keys"
+    },
+    {
+      "name": "state",
+      "description": "Network State projections for users and Nodes"
+    },
+    {
+      "name": "events",
+      "description": "SSE streams"
+    },
+    {
+      "name": "resources",
+      "description": "Rule sets"
+    },
+    {
+      "name": "history",
+      "description": "Activity and observation history"
+    },
+    {
+      "name": "observations",
+      "description": "Realtime observations"
+    },
+    {
+      "name": "execution",
+      "description": "Node execution: instances, demands, receipts, publications"
+    },
+    {
+      "name": "node",
+      "description": "Node authentication and key rotation"
+    },
+    {
+      "name": "connectivity",
+      "description": "UDP traversal coordination"
+    }
+  ]
 }

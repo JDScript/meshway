@@ -13,6 +13,8 @@
 !.env.example
 /.meshway/
 /docs/public/status/index.json
+# Rendered from packages/protocol/openapi.json on every docs build.
+/docs/v2/reference/
 
 # Independent upstream checkouts; retain the reproducible research index.
 /references/*

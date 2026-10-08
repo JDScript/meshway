@@ -27,6 +27,19 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "SSE 与初始同步", link: "/v2/api/events" },
       { text: "版本与操作历史", link: "/v2/api/history" },
       { text: "Actions 与 Problem", link: "/v2/api/problems" },
+      {
+        text: "API 参考（生成）",
+        collapsed: true,
+        items: [
+          { text: "总览", link: "/v2/reference/" },
+          { text: "Console API", link: "/v2/reference/console" },
+          { text: "Node API", link: "/v2/reference/agent" },
+          { text: "Schemas A–C", link: "/v2/reference/schemas-a-c" },
+          { text: "Schemas D–L", link: "/v2/reference/schemas-d-l" },
+          { text: "Schemas M–P", link: "/v2/reference/schemas-m-p" },
+          { text: "Schemas Q–Z", link: "/v2/reference/schemas-q-z" },
+        ],
+      },
       { text: "存储与查询", link: "/v2/storage" },
       {
         text: "存储字段参考",
