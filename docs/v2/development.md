@@ -199,6 +199,8 @@ mise run validate:remote --attach 20261007T232151Z-35296f56
 
 远程 supervisor 使用独立 session，记录 `.meshway/validation/jobs/<run>/` 下的请求、PID、实际 worktree、日志及最终状态；工作树操作锁从 fetch／checkout 持有到矩阵及其子进程全部结束，第二个远程任务不会切换专用 worktree 中的源码。SSH 断连不停止已启动任务。`--timeout` 是本地等待期限（默认 14400 秒），到期退出 2 后可用启动时打印的 `--attach <run>` 续等，不能用 attach 改变参数。任一行失败或本 run 带标签的容器／网络仍有遗留均返回非零；其他工作流的容器不纳入该 run 清理。
 
+本地每 15 秒读取一次远程进度；行状态或实际 fixture 阶段变化时立即显示，阶段不变时每分钟显示一次经过时间。进度只投影排队／运行／通过／失败和结构化 `phase`，不打印私有错误正文，也不把读取进度记为新的验收样本。
+
 远程结果拉回工作树 `.meshway/validation/remote/<host>-<run>/` 后打印 `summary.md`；包含矩阵、各行原始日志／JSON／pcap、远程状态与 supervisor 日志，不复制构建目录及大体积可执行文件，原二进制与 hash 清单保留在远程。目标已存在时拒绝覆盖；下载中断将部分目录另存为 `*-partial-<id>`，再次 attach 使用新的完整目标。
 
 ## 数据、报告与回收

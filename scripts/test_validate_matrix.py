@@ -13,6 +13,7 @@ from unittest.mock import patch
 import validate_matrix as matrix
 import validate_remote as remote
 import validation_support as support
+import validation_progress as progress
 from validation_support import import_artifact
 
 
@@ -32,6 +33,28 @@ class MatrixTests(unittest.TestCase):
             self.assertIn("error.txt", excerpt)
             self.assertIn("path_handshake", excerpt)
             self.assertNotIn("must-stay-private", excerpt)
+
+    def test_remote_progress_reports_live_phase_and_completed_rows_without_private_details(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            identity = "20261008T010000Z-progress"
+            directory = root / "matrix" / identity
+            report = directory / "rows/nat-off/report"
+            report.mkdir(parents=True)
+            (directory / "matrix.json").write_text(json.dumps({
+                "status": "running", "selectedRows": ["nat/off", "tcp/off", "udp/off"],
+                "rows": [{"row": "tcp/off", "passed": True, "failureExcerpt": "secret"}],
+            }))
+            (report / "a.log").write_text(json.dumps({"timestamp": "2026-10-08T01:01:00Z", "fields": {
+                "phase": "persistent-traffic", "detail": "secret", "message": "secret",
+            }}) + "\n")
+            (report / "error.txt").write_text("secret")
+            state = progress.snapshot(root, identity)["progress"]
+            rendered = progress.display(state)
+            self.assertIn("nat/off=a:persistent-traffic", rendered)
+            self.assertIn("tcp/off=passed", rendered)
+            self.assertIn("udp/off=queued", rendered)
+            self.assertNotIn("secret", rendered)
 
     def test_imported_binaries_share_only_frozen_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:

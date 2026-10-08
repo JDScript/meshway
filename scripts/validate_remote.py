@@ -12,6 +12,7 @@ import time
 
 from node_lab import ROOT
 from validation_support import run_id
+from validation_progress import display as progress_display
 
 DEFAULT_HOST = "zj2631@ai4ce-planck.dyn.poly.edu"
 
@@ -169,9 +170,21 @@ def main(argv=None):
         # Launch returns immediately; all long-lived descriptors belong to the remote session.
         ssh(args.host, ["python3", "-c", LAUNCH, json.dumps(payload), WORKER])
     started = time.monotonic()
+    last_progress = None
+    progress_reader = Path(__file__).with_name("validation_progress.py").read_text()
     while True:
         try:
-            result = json.loads(ssh(args.host, ["cat", job + "/result.json"]))
+            snapshot = json.loads(ssh(args.host, ["python3", "-c", progress_reader,
+                                                  args.path + "/.meshway/validation", identity]))
+            result = snapshot.get("result") or {}
+            progress = snapshot.get("progress")
+            if progress is not None:
+                elapsed = progress.get("elapsedSeconds")
+                marker = (progress.get("status"), json.dumps(progress.get("rows")),
+                          None if elapsed is None else elapsed // 60)
+                if marker != last_progress:
+                    print(progress_display(progress), flush=True)
+                    last_progress = marker
             if result.get("status") == "complete":
                 break
         except (subprocess.SubprocessError, json.JSONDecodeError) as error:
@@ -180,6 +193,7 @@ def main(argv=None):
             print("Local wait timed out. Remote job continues; use the --attach command above.", file=sys.stderr)
             return 2
         time.sleep(15)
+    print("Remote execution finished; retrieving private evidence...", flush=True)
     destination.mkdir(parents=True)
     # Evidence and hashes are retained; multi-GiB executable copies stay on the remote host.
     command = ["rsync", "-a", "--exclude=bin/", "--exclude=linux-tun-tests", "--exclude=builds/",
