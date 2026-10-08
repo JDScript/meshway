@@ -4,6 +4,7 @@ struct PausedMetadata {
     inner: Arc<Gateway>,
     paused: AtomicBool,
     blocked: AtomicUsize,
+    first_context_expires: Mutex<Option<std::time::Instant>>,
 }
 
 impl TraversalGateway for PausedMetadata {
@@ -13,7 +14,15 @@ impl TraversalGateway for PausedMetadata {
                 self.blocked.fetch_add(1, Ordering::SeqCst);
                 return std::future::pending().await;
             }
-            self.inner.request(operation).await
+            let reply = self.inner.request(operation).await?;
+            if let Reply::Query(meshway_control::connectivity::Outcome::Current(discovery)) = &reply
+            {
+                self.first_context_expires
+                    .lock()
+                    .unwrap()
+                    .get_or_insert(discovery.context.expires_at());
+            }
+            Ok(reply)
         })
     }
 
@@ -46,6 +55,7 @@ async fn live_discovery_context_refreshes_same_socket_without_another_metadata_r
         inner: Gateway::applied(fixture.controls.remove(0), None).await,
         paused: AtomicBool::new(false),
         blocked: AtomicUsize::new(0),
+        first_context_expires: Mutex::new(None),
     });
     let mut manager = fixture
         .manager(0, factory)
@@ -77,6 +87,22 @@ async fn live_discovery_context_refreshes_same_socket_without_another_metadata_r
         }
     })
     .await;
+    let renewed_before_expiry = if refreshed.is_ok() {
+        // Reuse must not defer necessary metadata renewal until the original
+        // context has already expired, creating a periodic observation gap.
+        let expires = gateway.first_context_expires.lock().unwrap().unwrap();
+        let queries = gateway.inner.queries.load(Ordering::SeqCst);
+        gateway.paused.store(false, Ordering::SeqCst);
+        tokio::time::timeout_at((expires - Duration::from_secs(1)).into(), async {
+            while gateway.inner.queries.load(Ordering::SeqCst) == queries {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok()
+    } else {
+        false
+    };
     // Always stop and join the real socket/service owners, including the red
     // case where an unnecessary metadata request blocked a usable context.
     manager.shutdown().await.unwrap();
@@ -98,4 +124,8 @@ async fn live_discovery_context_refreshes_same_socket_without_another_metadata_r
     assert_eq!(refreshed.reference, original.reference);
     assert_eq!(refreshed.bound_address, original.bound_address);
     assert_eq!(blocked, 0);
+    assert!(
+        renewed_before_expiry,
+        "renew metadata before the original context deadline"
+    );
 }

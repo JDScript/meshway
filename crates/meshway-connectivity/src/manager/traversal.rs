@@ -82,6 +82,7 @@ const QUERY_INTERVAL: Duration = Duration::from_millis(250);
 // Successful observations below still refresh at eight seconds; an unavailable
 // metadata response must not spend an eight-second successful-observation slot.
 const OBSERVATION_QUERY_INTERVAL: Duration = Duration::from_secs(2);
+const OBSERVATION_REFRESH_MS: u64 = 8_000;
 
 struct QuerySchedule {
     next: Instant,
@@ -210,9 +211,9 @@ fn observation_due(shared: &Shared, id: &[u8; 32]) -> bool {
                 candidate.origin,
                 meshway_model::state::EndpointSource::Stun { .. }
             ) && u64::try_from(candidate.observed_at.timestamp_millis())
-                .is_ok_and(|at| now < at.saturating_add(8_000))
+                .is_ok_and(|at| now < at.saturating_add(OBSERVATION_REFRESH_MS))
                 && u64::try_from(candidate.expires_at.timestamp_millis())
-                    .is_ok_and(|at| now.saturating_add(8_000) < at)
+                    .is_ok_and(|at| now.saturating_add(OBSERVATION_REFRESH_MS) < at)
         })
     })
 }
@@ -316,13 +317,15 @@ async fn run_epoch(
             // A live discovery context already authorizes same-socket STUN.
             // Do not put another metadata RPC (and its control-owner queue)
             // ahead of refresh when no adjacency acquisition needs that query.
-            // Epoch/resource handoff drops this context; expiry still requires
-            // fresh metadata under the unchanged query admission budget.
+            // Renew metadata within the observation refresh horizon rather
+            // than waiting for a periodic expiry gap. Epoch/resource handoff
+            // drops this context; query admission keeps its original budget.
             let observation_query = observation
                 && (acquisition
-                    || context
-                        .as_ref()
-                        .is_none_or(|context| context.ensure_current().is_err()));
+                    || context.as_ref().is_none_or(|context| {
+                        context.ensure_current().is_err()
+                            || now.saturating_add(OBSERVATION_REFRESH_MS) >= context.expires_at_ms()
+                    }));
             if queries.admit(Instant::now(), acquisition, observation_query) {
                 let query = gateway
                     .request(Operation::Query(Box::new(
