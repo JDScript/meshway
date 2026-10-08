@@ -437,7 +437,13 @@ class LocalServices:
                 break
             if pid not in current["processes"] or pid not in identities:
                 continue
-            if process_identity(pid, self.root) != identities[pid]:
+            try:
+                identity = process_identity(pid, self.root)
+            except DevError:
+                if pid in process_table(self.root):
+                    raise
+                continue
+            if identity != identities[pid]:
                 raise DevError(service + ": process identity changed before signal")
             try:
                 os.kill(pid, signal.SIGINT)
