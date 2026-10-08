@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T21:41:30.600305+00:00",
+  "updatedAt": "2026-10-08T21:44:29.264178+00:00",
   "runs": [
     {
       "id": 37847258482,
@@ -136,9 +136,9 @@
       "commit": "7225ebe73081fea4d0f0472ec933f3b820a91f48",
       "message": "feat(site): tried responses as annotated trees; try the event stream in its own panel",
       "createdAt": "2026-10-08T21:30:27Z",
-      "updatedAt": "2026-10-08T21:38:06Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-08T21:42:38Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/37847258322",
       "jobs": [
         {
@@ -156,11 +156,11 @@
           "id": 113551213726,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-08T21:30:44Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-08T21:42:37Z",
+          "seconds": 713.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37847258322/job/113551213726"
         },
         {
