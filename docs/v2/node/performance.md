@@ -280,6 +280,14 @@ OrbStack aarch64、每节点0.5 CPU／384 MiB、iperf3 3.16、TCP `-t6 -O1`、UD
 
 等待180秒仍未达到1分钟load<2.5，三次样本首尾load **7.10–7.36**；原始等待历史、客户端／接收端JSON及PID／hash在报告中。本工作包测量时未运行构建。UDP按server `end.sum_received`计量：342,717,600 B＝(312,736−27,138)×1200。相对于上方Native UDP的1321／1525 Mbps、RTT8.2／6.6 ms与475 Mbps／4.9%丢包，这组数据受不同宿主负载与旧版流式续接行为影响，不能归因成VLESS单独开销。
 
+部署 main `11d65768`（含 W2 续接修复，daemon `f04dd1ce…`）后在 revision 10 重做同一布局：
+
+| 场景 | 实测 | 范围 |
+| --- | --- | --- |
+| sha→lax VLESS TCP/TLS，lax→nyc Native UDP | TCP 接收 **1266／1304 Mbps**，重传218／285，sender RTT12.0／17.6 ms；UDP 500M 接收 **453 Mbps**、丢包9.3%；测后诊断5/5 via lax | `20261008T071549Z-main-11d65768-2cpu-vless`；入口1分钟load 3.16（等待3分钟未低于2.5，无构建） |
+
+持续业务下连续 7 次 State 采样（3 分 7 秒，跨越至少三次 60 秒执行续租）VLESS link ID 保持 `834a83a5…` 不变，lax↔nyc UDP link ID 同样不变；业务停止后链路按既有规则释放，新需求再建立新 link ID。与同机 Native UDP 边的 1321／1525 Mbps 相比，TCP 低约 5–15%、RTT 高约 4–11 ms、UDP 丢包 4.9%→9.3%；内层 UDP 跨 TCP 承载的队头阻塞是预期行为，但两组入口负载不同，不是配对 A/B。
+
 revision 7 的State实际认证通道为sha↔lax `vless`、lax↔nyc `native_udp`，两个方向的`meshway ping`各5/5，回复沿完整via lax路径。刷新publication时VLESS link ID改变、随后短暂消失，UDP link ID保持；`1271be5d`的`renew_link`只保留Native TCP／UDP，尚未部署W2修复。因此本轮不构成流式长时连续性验收，实验后已回滚到revision 8（等价于原revision 6）。日志、State序列、材料约定及进程内复现索引位于私有`.meshway/w3-lab-vless/`；当前布局见[lab](/v2/node/docker-lab#混合承载配置)。
 
 ### 有界输出队列实测

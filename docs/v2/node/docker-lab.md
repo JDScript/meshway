@@ -65,7 +65,7 @@ Ubuntu 的 resolved 后端承担实际系统 DNS 安装。Server 提供 STUN 发
 
 ### 混合承载配置
 
-当前常驻 lab 为 **revision 8、三节点 Native UDP**，等价于 W3 前的 revision 6；保留 sha→lax→nyc 与 nyc→lax→sha 两条必经路由。实际 daemon 仍为 `1271be5d`，未包含 W2 的流式承载续接修复；W3 在 revision 7 验证混合承载及短窗口业务后，因执行刷新时 VLESS 通道被重建而回滚。源码合入不代表已部署，重新启用混合承载前需核对真实 daemon 版本与对应验收。
+当前常驻 lab 为 main `11d65768` 的 release（daemon `f04dd1ce…`，含 W2 流式承载续接修复），**revision 10、混合承载**：sha 只启用 `vless` dialer 且禁用 `lab-udp` listener，lax 持有 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告 `192.168.97.2:35443`）与 `lab-udp`，nyc 保持 Native UDP；保留 sha→lax→nyc 与 nyc→lax→sha 两条必经路由。持续业务下 VLESS link 跨多次执行续租保持同一 link ID，见 [L5](/v2/node/performance#l5-常驻-lab-实测)。源码合入不代表已部署；W3 第一轮在 `1271be5d` 上观察到的流式通道重建由该修复消除。
 
 VLESS 边的配置方式是：sha 只启用 `vless` dialer，并禁用其 `lab-udp` listener；lax 增加 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告本容器 bridge 地址），lax 与 nyc 保留 Native UDP。仅改变 sha 的 dialers 不足以限定该边：lax 仍可反向拨入 sha 的 UDP listener，见[承载交集](/v2/node/carriers#承载交集)。
 
