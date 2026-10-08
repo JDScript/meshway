@@ -572,11 +572,10 @@ async fn wait_work(
     let mut window = scheduling::Window::new(delay);
     let mut local_at = Instant::now() + Duration::from_secs(1);
     let mut event_maintenance_at = Instant::now() + Duration::from_secs(1);
-    // Interest already filters ordinary peer State/observation projections.
-    // An actual local target/key change must converge before the next short
-    // publication window; coalesce its hints without adding five seconds to
-    // every completed control cycle.
-    let event_refresh_at = Instant::now() + Duration::from_secs(1);
+    // A projection invalidation is not an urgent new grant. Keep the previous
+    // five-second refresh admission bound under a continuous SSE publication
+    // burst; an idle connection can still wake before the periodic fallback.
+    let event_refresh_at = Instant::now() + Duration::from_secs(5);
     let mut event_refresh_pending = false;
     let mut event_budget = 32;
     loop {
