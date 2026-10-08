@@ -31,6 +31,9 @@ PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests
 ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
 KERNEL_TESTS = {
+    "underlay-journal-classification": "linux::kernel::journal::tests::journal_classifies_same_namespace_changed_namespace_and_changed_boot",
+    "underlay-journal-archive": "linux::kernel::journal::tests::changed_namespace_archives_exact_journal_and_same_namespace_recovers",
+    "underlay-journal-boot": "linux::kernel::journal::tests::previous_boot_journal_is_not_a_conflict_or_a_recovery",
     "underlay-restart-a": "linux::kernel::tests::restart::container_restart_archives_previous_namespace_journal",
     "underlay-restart-b": "linux::kernel::tests::restart::container_restart_archives_previous_namespace_journal",
     "underlay-negative": "linux::kernel::tests::negative_capture_marked_bypass_recovery_and_exact_down",
@@ -581,8 +584,8 @@ def main():
                     if role == "underlay-negative":
                         environment.update(MESHWAY_UNDERLAY_PEER4=addresses["underlay-peer"] + ":42427",
                                            MESHWAY_UNDERLAY_PEER6="[" + addresses6["underlay-peer"] + "]:42427")
-                    create(role, ["--ignored", "--exact", test, "--nocapture", "--test-threads=1"],
-                           address=addresses[role], address6=addresses6[role], admin=True,
+                    create(role, ["--include-ignored", "--exact", test, "--nocapture", "--test-threads=1"],
+                           address=addresses[role], address6=addresses6[role], admin=not role.startswith("underlay-journal-"),
                            tun=role == "underlay-local-conflict",
                            executable=KERNEL_BINARY, environment=environment)
                     result = execute(role)
