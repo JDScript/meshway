@@ -1101,7 +1101,7 @@ async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing
 }
 
 #[tokio::test]
-async fn healthy_complete_adjacency_suppresses_queries_while_missing_peers_remain_bounded() {
+async fn healthy_adjacency_keeps_nat_observations_fresh_without_reacquisition() {
     exercise_traversal(true).await;
 }
 
@@ -1329,6 +1329,10 @@ async fn exercise_traversal(healthy_only: bool) {
     .expect("actual candidate acknowledgements must keep running during acquisition");
     let a_link = a.snapshot().unwrap().links[0].clone();
     let b_link = b.snapshot().unwrap().links[0].clone();
+    let observed_before: Vec<_> = [&a, &b]
+        .into_iter()
+        .map(|manager| listener_socket(manager).endpoints)
+        .collect();
     let queries: Vec<_> = gateways
         .iter()
         .map(|gateway| gateway.queries.load(Ordering::SeqCst))
@@ -1337,9 +1341,12 @@ async fn exercise_traversal(healthy_only: bool) {
     for (gateway, before) in gateways.iter().zip(queries) {
         let count = gateway.queries.load(Ordering::SeqCst) - before;
         if healthy_only {
-            assert_eq!(count, 0, "all admitted adjacencies have healthy channels");
+            assert!(
+                count <= 2,
+                "only the independent NAT observation query budget is available"
+            );
         } else {
-            assert!(count <= 2, "offline alternate peer keeps bounded discovery");
+            assert!(count <= 10, "offline alternate peer keeps paced discovery");
         }
     }
     if healthy_only {
@@ -1370,11 +1377,32 @@ async fn exercise_traversal(healthy_only: bool) {
             assert_eq!(b.snapshot().unwrap().links[0].id, b_link.id);
         }
         for (gateway, count) in gateways.iter().zip(before) {
-            assert_eq!(
-                gateway.queries.load(Ordering::SeqCst),
-                count,
-                "execution handoff is not candidate discovery"
+            assert!(
+                gateway.queries.load(Ordering::SeqCst) - count <= 4,
+                "execution handoffs do not reset the NAT refresh budget"
             );
+        }
+        // Span the original observations' 20-second maximum lifetime. Healthy
+        // retained channels must still have genuinely new socket observations,
+        // without obtaining a replacement adjacency or retimestamping old State.
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        for ((manager, original), link) in [&a, &b]
+            .into_iter()
+            .zip(observed_before)
+            .zip([&a_link, &b_link])
+        {
+            let fact = listener_socket(manager);
+            assert!(
+                !fact.endpoints.is_empty(),
+                "healthy NAT socket remains observable"
+            );
+            assert!(fact.endpoints.iter().all(|endpoint| {
+                endpoint.expires_at > chrono::Utc::now()
+                    && original
+                        .iter()
+                        .all(|old| endpoint.observed_at > old.observed_at)
+            }));
+            assert_eq!(manager.snapshot().unwrap().links[0].id, link.id);
         }
         stop.cancel();
         service.await.unwrap();

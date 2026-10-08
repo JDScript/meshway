@@ -36,7 +36,8 @@ impl Audit {
             passed: bool,
             minutes: BTreeMap<u64, BTreeMap<&'static str, u64>>,
         }
-        // Three Managers at 30/minute plus startup/restart boundary allowance.
+        // Three Managers at (30 acquisition + 30 observation)/minute plus the
+        // unchanged 30-request startup/restart boundary allowance.
         // This catches the previous unconditional ~360/minute loop while all
         // startup, revocation, outage and recovery stages remain in the sample.
         let minutes = self
@@ -46,10 +47,10 @@ impl Audit {
             .clone();
         let report = Report {
             elapsed_seconds: self.started.elapsed().as_secs(),
-            query_limit_per_minute: 120,
+            query_limit_per_minute: 210,
             passed: minutes
                 .values()
-                .all(|counts| counts.get("udp/query").copied().unwrap_or(0) <= 120),
+                .all(|counts| counts.get("udp/query").copied().unwrap_or(0) <= 210),
             minutes,
         };
         tokio::fs::write(

@@ -61,18 +61,50 @@ struct Pending {
     offer: ValidatedOffer,
     endpoint: [u8; 32],
     active: bool,
+    accept_at: Instant,
 }
 
 // Retained across execution/resource handoffs: churn cannot reset admission.
-// Two seconds leaves multiple bilateral polls within a ten-second offer.
-const QUERY_INTERVAL: Duration = Duration::from_secs(2);
+// Acquisition can use a short publication overlap immediately, without an
+// unbounded poll loop: 30 starts in any half-open minute, paced at 250 ms.
+const QUERY_INTERVAL: Duration = Duration::from_millis(250);
+// Mapping observations expire after at most 20 seconds. Their refresh budget is
+// independent of missing-adjacency acquisition, but coalesced metadata queries
+// have their own two-second retry budget even if acquisition used its minute.
+// Successful observations below still refresh at eight seconds; an unavailable
+// metadata response must not spend an eight-second successful-observation slot.
+const OBSERVATION_QUERY_INTERVAL: Duration = Duration::from_secs(2);
 
 struct QuerySchedule {
     next: Instant,
+    observation_at: Instant,
+    acquisitions: std::collections::VecDeque<Instant>,
 }
 impl QuerySchedule {
-    fn admit(&mut self, now: Instant, needed: bool) -> bool {
-        if !needed || now < self.next {
+    fn new(now: Instant) -> Self {
+        Self {
+            next: now,
+            observation_at: now,
+            acquisitions: std::collections::VecDeque::with_capacity(30),
+        }
+    }
+
+    fn admit(&mut self, now: Instant, acquisition: bool, observation: bool) -> bool {
+        if now < self.next {
+            return false;
+        }
+        while self
+            .acquisitions
+            .front()
+            .is_some_and(|at| now.duration_since(*at) >= Duration::from_secs(60))
+        {
+            self.acquisitions.pop_front();
+        }
+        if observation && now >= self.observation_at {
+            self.observation_at = now + OBSERVATION_QUERY_INTERVAL;
+        } else if acquisition && self.acquisitions.len() < 30 {
+            self.acquisitions.push_back(now);
+        } else {
             return false;
         }
         self.next = now + QUERY_INTERVAL;
@@ -80,7 +112,7 @@ impl QuerySchedule {
     }
 }
 
-fn needs_acquisition(shared: &Shared) -> bool {
+fn needs_acquisition(shared: &Shared, pending: &BTreeMap<UdpTraversalId, Pending>) -> bool {
     let Ok(cfg) = shared.identity.snapshot().configuration() else {
         return false;
     };
@@ -96,6 +128,15 @@ fn needs_acquisition(shared: &Shared) -> bool {
         // prepare() must wait for that same owner too. Querying during this gap
         // would turn every normal execution refresh into candidate acquisition.
         if links.contains_key(peer) {
+            return false;
+        }
+        // The exact admitted offer already supplies this peer's acquisition
+        // context. Accept rechecks its authority; another metadata query must
+        // not sit ahead of the final bilateral acceptance in a short window.
+        if pending
+            .values()
+            .any(|value| value.offer.peer().candidate.socket.node_id == *peer)
+        {
             return false;
         }
         cfg.dialers.values().any(|dial| {
@@ -133,15 +174,45 @@ fn needs_acquisition(shared: &Shared) -> bool {
     })
 }
 
+fn needs_observation(shared: &Shared) -> bool {
+    let Ok(cfg) = shared.identity.snapshot().configuration() else {
+        return false;
+    };
+    cfg.dialers.values().any(|dial| {
+        dial.parameters.transport() == TransportProtocol::NativeUdp && dial.endpoints.is_empty()
+    }) || cfg.listeners.values().any(|listener| {
+        matches!(listener.declaration(), meshway_transport_spec::Listener::NativeUdp(udp)
+            if udp.enabled && udp.endpoints.is_empty())
+    })
+}
+
+fn observation_due(shared: &Shared, id: &[u8; 32]) -> bool {
+    let Ok(now) = shared.identity.snapshot().now_ms() else {
+        return false;
+    };
+    let Ok(sockets) = shared.sockets.lock() else {
+        return false;
+    };
+    sockets.get(id).is_some_and(|socket| {
+        !socket.endpoints.iter().any(|candidate| {
+            matches!(
+                candidate.origin,
+                meshway_model::state::EndpointSource::Stun { .. }
+            ) && u64::try_from(candidate.observed_at.timestamp_millis())
+                .is_ok_and(|at| now < at.saturating_add(8_000))
+                && u64::try_from(candidate.expires_at.timestamp_millis())
+                    .is_ok_and(|at| now.saturating_add(8_000) < at)
+        })
+    })
+}
+
 pub(super) async fn run(mut shared: Arc<Shared>, gateway: Arc<dyn TraversalGateway>) {
     let mut updates = shared.epochs.subscribe();
     let mut resources = shared.resource_changes.subscribe();
     let mut discover_at = Instant::now();
     let mut after_peer = None;
     let mut previous_endpoints = Vec::new();
-    let mut queries = QuerySchedule {
-        next: Instant::now(),
-    };
+    let mut queries = QuerySchedule::new(Instant::now());
     loop {
         let endpoints = match shared.traversal_endpoints.lock() {
             Ok(endpoints) => endpoints.clone(),
@@ -185,6 +256,7 @@ async fn run_epoch(
     let mut pending: BTreeMap<UdpTraversalId, Pending> = BTreeMap::new();
     let mut retired: BTreeMap<UdpTraversalId, u64> = BTreeMap::new();
     let mut prepare_at = Instant::now();
+    let mut context: Option<DiscoveryContext> = None;
     let work = async {
         loop {
             if shared.epoch_changed() {
@@ -206,80 +278,117 @@ async fn run_epoch(
                 }
                 false
             });
+            // Finish issued control work before unrelated discovery HTTP.
+            for value in pending.values_mut() {
+                if !shared.links.lock().is_ok_and(|links| {
+                    links.contains_key(&value.offer.peer().candidate.socket.node_id)
+                }) {
+                    accept(gateway, endpoints, value).await;
+                }
+            }
             // A successful independently authenticated channel also supersedes
             // waiting offers for that peer (for example another address family).
             // Their original slots expire normally; they cannot keep polling a
             // healthy selected link merely because their phase is still Waiting.
-            let needed = !endpoints.is_empty() && needs_acquisition(&shared);
-            if !queries.admit(Instant::now(), needed) {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                continue;
-            }
-            let query = gateway
-                .request(Operation::Query(Box::new(
-                    shared.identity.snapshot().clone(),
-                )))
-                .await;
-            if let Ok(Reply::Query(Outcome::Current(discovery))) = query {
-                let context = discovery.context;
-                let visible: Vec<_> = discovery
-                    .attempts
-                    .iter()
-                    .map(|attempt| match attempt {
-                        AttemptView::Waiting(offer) => offer.offer().attempt_id,
-                        AttemptView::Active(scope) => scope.validated_offer().offer().attempt_id,
-                    })
-                    .collect();
-                pending.retain(|id, value| {
-                    let keep = visible.contains(id) && value.offer.ensure_current().is_ok();
-                    if !keep {
-                        retired.insert(*id, value.offer.offer().expires_at_ms);
-                        value.offer.cancel();
-                        if let Some(endpoint) = endpoints.get(&value.endpoint) {
-                            let _ = endpoint.commands.try_send(Command::Cancel(*id));
+            // A selected channel suppresses acquisition, not observation of its
+            // actual NAT socket. Refresh even while its physical owner hands
+            // off publication scope; the Discover command still carries only
+            // the new, independently checked authority.
+            let acquisition = !endpoints.is_empty() && needs_acquisition(&shared, &pending);
+            let observation = needs_observation(&shared)
+                && endpoints.keys().any(|id| observation_due(&shared, id));
+            if queries.admit(Instant::now(), acquisition, observation) {
+                let query = gateway
+                    .request(Operation::Query(Box::new(
+                        shared.identity.snapshot().clone(),
+                    )))
+                    .await;
+                if let Ok(Reply::Query(Outcome::Current(discovery))) = query {
+                    context = Some(discovery.context);
+                    let visible: Vec<_> = discovery
+                        .attempts
+                        .iter()
+                        .map(|attempt| match attempt {
+                            AttemptView::Waiting(offer) => offer.offer().attempt_id,
+                            AttemptView::Active(scope) => {
+                                scope.validated_offer().offer().attempt_id
+                            }
+                        })
+                        .collect();
+                    pending.retain(|id, value| {
+                        let keep = visible.contains(id) && value.offer.ensure_current().is_ok();
+                        if !keep {
+                            retired.insert(*id, value.offer.offer().expires_at_ms);
+                            value.offer.cancel();
+                            if let Some(endpoint) = endpoints.get(&value.endpoint) {
+                                let _ = endpoint.commands.try_send(Command::Cancel(*id));
+                            }
                         }
-                    }
-                    keep
-                });
-                // Owner slots retain their ORIGINAL offered guard. A later read
-                // of the same offer never replaces a guard or extends a deadline.
-                for attempt in discovery.attempts {
-                    let offer = match attempt {
-                        AttemptView::Waiting(offer) => offer,
-                        AttemptView::Active(scope) => scope.validated_offer().clone(),
-                    };
-                    let id = offer.offer().attempt_id;
-                    if pending.contains_key(&id)
-                        || retired.contains_key(&id)
-                        || pending.len() >= 8
-                        || retired.len() >= 128
-                    {
-                        continue;
-                    }
-                    if gateway.published(&offer.local().candidate)
-                        && let Some(endpoint) = matching_endpoint(&shared, &offer)
-                        && reserve(endpoints, endpoint, &offer).await.is_ok()
-                    {
-                        pending.insert(
-                            id,
-                            Pending {
+                        keep
+                    });
+                    // Owner slots retain their ORIGINAL offered guard. A later read
+                    // of the same offer never replaces a guard or extends a deadline.
+                    for attempt in discovery.attempts {
+                        let offer = match attempt {
+                            AttemptView::Waiting(offer) => offer,
+                            AttemptView::Active(scope) => scope.validated_offer().clone(),
+                        };
+                        let id = offer.offer().attempt_id;
+                        if pending.contains_key(&id)
+                            || retired.contains_key(&id)
+                            || pending.len() >= 8
+                            || retired.len() >= 128
+                        {
+                            continue;
+                        }
+                        if gateway.published(&offer.local().candidate)
+                            && let Some(endpoint) = matching_endpoint(&shared, &offer)
+                            && reserve(endpoints, endpoint, &offer).await.is_ok()
+                        {
+                            let value = pending.entry(id).or_insert(Pending {
                                 offer,
                                 endpoint,
                                 active: false,
-                            },
-                        );
+                                accept_at: Instant::now(),
+                            });
+                            accept(gateway, endpoints, value).await;
+                        }
+                    }
+                } else if matches!(query, Ok(Reply::Query(Outcome::Unavailable(_)))) {
+                    context = None;
+                    for (id, value) in std::mem::take(&mut pending) {
+                        value.offer.cancel();
+                        retired.insert(id, value.offer.offer().expires_at_ms);
+                        if let Some(endpoint) = endpoints.get(&value.endpoint) {
+                            let _ = endpoint.commands.try_send(Command::Cancel(id));
+                        }
                     }
                 }
-                for value in pending.values_mut() {
-                    accept(gateway, endpoints, value).await;
-                }
-                if Instant::now() >= *discover_at {
-                    *discover_at = Instant::now() + Duration::from_secs(8);
-                    for endpoint in endpoints.values() {
+            }
+            // Query admission is not the clock for an already issued offer or
+            // discovery authority. Advance the original bounded operations in
+            // their short shared-publication window without issuing another
+            // metadata query, replacing guards, or extending any deadline.
+            if let Some(context) = context
+                .as_ref()
+                .filter(|context| context.ensure_current().is_ok())
+            {
+                if (acquisition || observation)
+                    && endpoints.keys().any(|id| observation_due(&shared, id))
+                    && Instant::now() >= *discover_at
+                {
+                    // A cancelled enqueue is not a mapping observation. Pace
+                    // retries independently, and schedule the normal refresh
+                    // from actual validated observation timestamps above.
+                    *discover_at = Instant::now() + Duration::from_secs(2);
+                    for (id, endpoint) in endpoints {
+                        if !observation_due(&shared, id) {
+                            continue;
+                        }
                         for server in context.servers() {
                             let resolved = tokio::select! { biased;
                                 _ = context.invalidated() => break,
-                                result = endpoint.authorization.authorize_stun(&context, &server.id) => result,
+                                result = endpoint.authorization.authorize_stun(context, &server.id) => result,
                             };
                             if let Ok(targets) = resolved {
                                 let _ = endpoint.commands.try_send(Command::Discover {
@@ -297,19 +406,11 @@ async fn run_epoch(
                         &shared,
                         gateway,
                         endpoints,
-                        &context,
+                        context,
                         &mut pending,
                         after_peer,
                     )
                     .await;
-                }
-            } else if matches!(query, Ok(Reply::Query(Outcome::Unavailable(_)))) {
-                for (id, value) in std::mem::take(&mut pending) {
-                    value.offer.cancel();
-                    retired.insert(id, value.offer.offer().expires_at_ms);
-                    if let Some(endpoint) = endpoints.get(&value.endpoint) {
-                        let _ = endpoint.commands.try_send(Command::Cancel(id));
-                    }
                 }
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -436,9 +537,13 @@ async fn accept(
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
     pending: &mut Pending,
 ) {
-    if pending.active || pending.offer.ensure_current().is_err() {
+    if pending.active
+        || pending.offer.ensure_current().is_err()
+        || Instant::now() < pending.accept_at
+    {
         return;
     }
+    pending.accept_at = Instant::now() + Duration::from_millis(500);
     match gateway
         .request(Operation::Accept(pending.offer.clone()))
         .await
@@ -631,6 +736,7 @@ async fn prepare(
                     offer,
                     endpoint,
                     active: false,
+                    accept_at: Instant::now(),
                 });
                 accept(gateway, endpoints, value).await;
             } else {
@@ -647,19 +753,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn healthy_channels_suppress_queries_and_churn_cannot_reset_the_budget() {
+    fn unneeded_queries_are_suppressed_and_churn_cannot_reset_the_budget() {
         let start = Instant::now();
-        let mut schedule = QuerySchedule { next: start };
+        let mut schedule = QuerySchedule::new(start);
         let mut queries = 0;
         for tick in 0..2400 {
             let now = start + Duration::from_millis(tick * 250);
-            assert!(!schedule.admit(now, false), "healthy selected channels");
+            assert!(
+                !schedule.admit(now, false, false),
+                "neither acquisition nor observation due"
+            );
             // Epoch/resource changes share this schedule, including a retry
             // immediately after a previous request failed or was cancelled.
-            queries += usize::from(schedule.admit(now, true));
-            assert!(!schedule.admit(now, true));
+            queries += usize::from(schedule.admit(now, true, false));
+            assert!(!schedule.admit(now, true, false));
         }
         assert_eq!(queries, 300, "at most 30 requests/minute for ten minutes");
+    }
+
+    #[test]
+    fn observation_budget_survives_saturated_acquisition_and_publication_churn() {
+        let start = Instant::now();
+        let mut schedule = QuerySchedule::new(start);
+        for tick in 0..30 {
+            assert!(schedule.admit(start + Duration::from_millis(tick * 250), true, false));
+        }
+        let due = start + Duration::from_secs(8);
+        assert!(!schedule.admit(due, true, false));
+        assert!(schedule.admit(due, false, true));
+        assert!(!schedule.admit(due + Duration::from_secs(1), true, true));
+        assert!(schedule.admit(due + OBSERVATION_QUERY_INTERVAL, false, true));
+        assert!(schedule.admit(start + Duration::from_secs(60), true, false));
     }
 
     #[test]

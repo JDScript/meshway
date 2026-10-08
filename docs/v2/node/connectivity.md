@@ -70,11 +70,15 @@ Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分�
 
 Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发送，由唯一 receiver 分流响应。候选的真实 State 上报获确认后，才参与 offer。双方 Active 后从同一 socket 发包，签名握手额外绑定 offer 的 nonce／digest；接入前再次验证原尝试与接收槽，旧尝试不能借新 channel scope 延期。获取成功后，通道由当前执行许可和认证健康检查维持，不依赖过期的 STUN 观测续命。
 
-候选协调由 Manager 按需调度：有实际 UDP endpoint，且存在当前获准 UDP 邻接缺少健康的选定通道时才查询，包括原 offer 等待双边接受的阶段。健康的 Native UDP／TCP 选定通道抑制重复查询与 STUN 获取；其他地址族的等待 offer 和旧候选过期不会替换健康通道。失联后的下一次获取重新读取候选和期限。当前事件契约没有独立的穿透查询通知，普通 State／观察事件不触发候选 HTTP。
+候选协调由 Manager 按需调度：有实际 UDP endpoint，且存在当前获准 UDP 邻接缺少健康的选定通道时查询，包括原 offer 等待双边接受的阶段。健康的 Native UDP／TCP 选定通道抑制重复邻接获取；其他地址族的等待 offer 和旧候选过期不会替换健康通道。配置依赖协调端点（Native UDP listener 或拨号候选没有公告端点）时，实际 socket 的 STUN 观测继续独立刷新并经 State 发布，包含健康选链及合法物理交接期间。失联后的下一次获取重新读取候选和期限。当前事件契约没有独立的穿透查询通知，普通 State／观察事件不触发候选 HTTP。
 
-每个 Manager 的 `queryUdpTraversal` 发起至少相隔 **2 秒（任意半开 60 秒窗口最多 30 次）**，失败、取消、publication／资源交接也不重置该预算；未连通时保留十秒 offer 内的双边查询机会。轮询准入与控制周期分开，不因 SSE 重连重复执行。STUN 仅在需要获取时按既有 8 秒间隔发现，查询、prepare 和候选观测均不延长原授权。
+每个 Manager 的邻接获取查询在**任意半开 60 秒窗口最多 30 次**，发起至少相隔 250 ms，可在双方 publication 同时有效的短窗口使用已有预算。STUN 观测另保留至少相隔 **2 秒**的元数据查询重试预算（任意半开 60 秒窗口最多 30 次），与邻接获取共用同一次 `queryUdpTraversal` 时只消费一个预算；总上限为每分钟 60 次。失败、取消、publication／资源交接不重置预算，健康选链不消耗或抑制 STUN 刷新机会。轮询准入与控制周期分开，不因 SSE 重连重复执行。
 
-选定通道的健康失效与合法交接由同一物理 owner 完成。旧 scope 在 publication 交接时被撤回，不代表物理选链已空缺；候选查询与 prepare 都等待原 owner 续接或退役。该等待不允许旧 scope 继续发送，也不延长通道的健康／执行期限。
+STUN 刷新以实际验证的观测时间和到期时间为依据：通常观测满 8 秒或距离到期不足 8 秒时刷新；观测最多有效 20 秒。原上下文中的失败或取消不算取得观测，实际 socket 命令按至少 2 秒间隔有界重试。查询、prepare 和候选观测均不延长原授权。
+
+已取得且仍有效的 discovery context 不必等待下一次元数据查询才准备候选对；缺失邻接的 prepare 至少相隔 1 秒。已经预留的同一 offer 按至少 500 ms 间隔重试双边接受，最多运行至原 offer 截止；接受成功后停止重试。context／offer 在执行交接、撤回或期限结束后立即失效，旧操作不换绑到新上下文。
+
+选定通道的健康失效与合法交接由同一物理 owner 完成。旧 scope 在 publication 交接时被撤回，不代表物理选链已空缺；邻接获取与 prepare 等待原 owner 续接或退役，STUN 刷新仍检查新上下文与实际 socket 的绑定。该等待不允许旧 scope 继续发送，也不延长通道的健康／执行期限。
 
 ### UDP 控制消息预算
 
