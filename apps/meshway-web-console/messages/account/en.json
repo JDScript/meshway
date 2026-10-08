@@ -49,5 +49,6 @@
   "account_debug_mode": "Debug mode",
   "account_geo": "Node locations",
   "account_geo_lookup": "Look up node locations with geojs.io",
-  "account_geo_lookup_note": "Nodes' public addresses are sent to geojs.io. What it returns is kept in this browser for 7 days and cleared when you sign out."
+  "account_geo_lookup_note": "Nodes' public addresses are sent to geojs.io. What it returns is kept in this browser for 7 days and cleared when you sign out.",
+  "account_session_delegated": "Authorized for {client}"
 }

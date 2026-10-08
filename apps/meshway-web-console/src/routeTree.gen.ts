@@ -16,6 +16,7 @@ import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ResetPasswordRouteRouteImport } from './routes/reset-password/route'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthorizeDeviceRequestRouteImport } from './routes/authorize-device/$request'
+import { Route as AuthorizeSiteIndexRouteImport } from './routes/authorize-site/index'
 import { Route as AuthedNetworksNetworkRouteRouteImport } from './routes/_authed/networks/$network/route'
 import { Route as AuthedNetworksNetworkIndexRouteImport } from './routes/_authed/networks/$network/index'
 import { Route as AuthedNetworksNetworkAccountRouteRouteImport } from './routes/_authed/networks/$network/account/route'
@@ -66,6 +67,11 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
 const AuthorizeDeviceRequestRoute = AuthorizeDeviceRequestRouteImport.update({
   id: '/authorize-device/$request',
   path: '/authorize-device/$request',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthorizeSiteIndexRoute = AuthorizeSiteIndexRouteImport.update({
+  id: '/authorize-site/',
+  path: '/authorize-site/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthedNetworksNetworkRouteRoute =
@@ -178,6 +184,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/authorize-device/$request': typeof AuthorizeDeviceRequestRoute
+  '/authorize-site/': typeof AuthorizeSiteIndexRoute
   '/networks/$network': typeof AuthedNetworksNetworkRouteRouteWithChildren
   '/networks/$network/account': typeof AuthedNetworksNetworkAccountRouteRoute
   '/networks/$network/configuration': typeof AuthedNetworksNetworkConfigurationRouteRouteWithChildren
@@ -203,6 +210,7 @@ export interface FileRoutesByTo {
   '/register': typeof RegisterRoute
   '/authorize-device/$request': typeof AuthorizeDeviceRequestRoute
   '/': typeof AuthedIndexRoute
+  '/authorize-site': typeof AuthorizeSiteIndexRoute
   '/networks/$network/account': typeof AuthedNetworksNetworkAccountRouteRoute
   '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRouteRoute
   '/networks/$network': typeof AuthedNetworksNetworkIndexRoute
@@ -225,6 +233,7 @@ export interface FileRoutesById {
   '/register': typeof RegisterRoute
   '/authorize-device/$request': typeof AuthorizeDeviceRequestRoute
   '/_authed/': typeof AuthedIndexRoute
+  '/authorize-site/': typeof AuthorizeSiteIndexRoute
   '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteRouteWithChildren
   '/_authed/networks/$network/account': typeof AuthedNetworksNetworkAccountRouteRoute
   '/_authed/networks/$network/configuration': typeof AuthedNetworksNetworkConfigurationRouteRouteWithChildren
@@ -252,6 +261,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/register'
     | '/authorize-device/$request'
+    | '/authorize-site/'
     | '/networks/$network'
     | '/networks/$network/account'
     | '/networks/$network/configuration'
@@ -277,6 +287,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/authorize-device/$request'
     | '/'
+    | '/authorize-site'
     | '/networks/$network/account'
     | '/networks/$network/overview'
     | '/networks/$network'
@@ -298,6 +309,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/authorize-device/$request'
     | '/_authed/'
+    | '/authorize-site/'
     | '/_authed/networks/$network'
     | '/_authed/networks/$network/account'
     | '/_authed/networks/$network/configuration'
@@ -324,6 +336,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   RegisterRoute: typeof RegisterRoute
   AuthorizeDeviceRequestRoute: typeof AuthorizeDeviceRequestRoute
+  AuthorizeSiteIndexRoute: typeof AuthorizeSiteIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -375,6 +388,13 @@ declare module '@tanstack/react-router' {
       path: '/authorize-device/$request'
       fullPath: '/authorize-device/$request'
       preLoaderRoute: typeof AuthorizeDeviceRequestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/authorize-site/': {
+      id: '/authorize-site/'
+      path: '/authorize-site'
+      fullPath: '/authorize-site/'
+      preLoaderRoute: typeof AuthorizeSiteIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authed/networks/$network': {
@@ -626,6 +646,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   RegisterRoute: RegisterRoute,
   AuthorizeDeviceRequestRoute: AuthorizeDeviceRequestRoute,
+  AuthorizeSiteIndexRoute: AuthorizeSiteIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

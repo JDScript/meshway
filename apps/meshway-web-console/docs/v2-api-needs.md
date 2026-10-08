@@ -51,7 +51,7 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `8ca49b0f`）
+## 接入状态（后端 `69110045`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
@@ -66,10 +66,11 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；管理者的配置快照按 GET 响应写入缓存；续传不重发初始批次，console 以 SDK 的 `onOpen`（连接被接受）确认服务端接受了 cursor；
 - 规则集（刷新带 `requestId`：结果未知时再刷新沿用同一 ID，服务端返回当前视图、不再下载）；
 - 路径检测（`evaluateConfiguration`）：节点的“路径”标签（D6），当前版本和草稿并排，不同的部分标出；规则按 pointer 命名，当前版本的可以打开到源文件。需要 `readConfiguration`，成员看不到这个标签；
+- 站点的委托登录（`createDelegation`）：同意页 `/authorize-site`，授权后跳回站点地址并带上 `code` 和站点的 `state`；会话列表按 `delegationClient` 标出授权给哪个站点。站点用 `exchangeDelegation` 换到 1 小时的会话，在 API 参考里试用（只放内存，写操作先确认）。8420 以 `--delegation-client docs=http://localhost:3002` 启动，在 8420 上走通了授权、读、写操作取消后不发送和确认后发送、会话列表、结束试用；委托会话改邮箱等被拒（403）没有单独验证；
 - 观测历史；
 - 主动路径观察。
 
-8420 运行 `8ca49b0f`：在 `233a8233` 时重新初始化过（旧库移入 `.meshway/backups/server-20261008T020616Z-88335cb8bb8b/`），三个 Docker 节点用新身份重新接入并应用了 lab 配置；之后原地更新，不需要重建库。
+8420 运行 `69110045`：委托登录给 schema 加了表和列，已重新初始化（旧库在 `.meshway/backups/server-20261008T204720Z-38ebdc460d40/`），三个 Docker 节点用新身份重新接入并应用了 lab 配置。
 
 撤销已失效的加入链接、接入密钥，以及重复吊销节点密钥时的 409 `state_conflict`，console 提示"这次没有撤销"并重读列表。
 
@@ -81,7 +82,6 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
 - 安装脚本和 Agent 发布。
 - 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
-- ~~**对外站点的委托登录**~~：已提供，按下面提议的形态，见 authentication.md「委托登录」。`POST /api/v1/auth/delegations`（`createDelegation`，用户会话；`{ client, redirectUri, codeChallenge, codeChallengeMethod: "S256" }` → 201 `{ requestId, code, expiresAt }`，state 不经过服务端，console 自己拼到 redirectUri 上）；`POST /api/v1/auth/delegations/token`（`exchangeDelegation`，无会话；`{ client, code, codeVerifier, redirectUri }` → `{ requestId, token, user, session: { id, createdAt, expiresAt }, client, server }`）。code 60 秒、一次性、绑定签发会话——签发会话登出后 code 作废。与提议的差别：(1) 启动参数是 `--delegation-client <name>=<origin>`（可重复），name 就是请求里的 `client`，origin 既是 redirectUri 白名单也是 CORS 白名单——比单独的 `--site-origin` 少一处对不上的配置；`--public-origin` 给出 `server`。(2) 兑换失败是 400 `invalid_delegation`（不是 `invalid_request`），同样不区分原因；授权阶段的非法输入才是 `invalid_request`。(3) 会话列表字段叫 `delegationClient`（required nullable），避免和已有的 `clientLabel` 混淆。(4) 新活动 `session.delegate`。CORS 按提议：只对配置的 origin、只对 `/api/v1`（含 SSE），允许 Authorization/Content-Type/Last-Event-ID，暴露 x-request-id 与 Date，无 cookie，预检缓存 600 秒。**console 需要**：同意页 `/authorize-site`，调 `createDelegation` 后跳 `redirectUri?code=…&state=…`；会话列表显示 `delegationClient`（`invalid_delegation`、`session.delegate` 的本地化已最小补上）。schema 新增表和列，dev 库要重初始化。
 - **API 参考需要的契约内容**（站点从 `openapi.json` 生成参考页）：
   - 示例：现在没有任何请求／响应示例。建议放成 fixture，由生成器的测试用 zod 校验后写进 OpenAPI。
   - 每个操作可能返回的 problem code：现在只有 HTTP 状态码，读者看不出 409 是 `revision_conflict` 还是 `state_conflict`。

@@ -49,5 +49,6 @@
   "account_debug_mode": "调试模式",
   "account_geo": "节点位置",
   "account_geo_lookup": "用 geojs.io 查询节点位置",
-  "account_geo_lookup_note": "节点的公网地址会发给 geojs.io。查到的结果在本浏览器保存 7 天，退出登录时清除。"
+  "account_geo_lookup_note": "节点的公网地址会发给 geojs.io。查到的结果在本浏览器保存 7 天，退出登录时清除。",
+  "account_session_delegated": "授权给{client}"
 }

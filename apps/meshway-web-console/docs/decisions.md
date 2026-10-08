@@ -34,7 +34,7 @@ its generated client only, and only what the controller delivers:
   editable when `actions.rename`; the ID, creation date and role; leaving)
   and `activity` (for `manageMembers`), and the account (email and ID,
   changing the email and the password, the sessions with ending one, the
-  others or all, the account's activity, whether this browser looks up
+  others or all (a session delegated to a site says which), the account's activity, whether this browser looks up
   node locations). `/join` accepts a join link;
   `/reset-password` takes a reset link the controller's host issued. The
   network menu switches networks (a page at a time) and creates one.
@@ -251,6 +251,18 @@ its generated client only, and only what the controller delivers:
   approver withdraws it (`denyDeviceAuthorization`) before the device
   redeems it. `withdrawn` and `cancelled` are told apart; a
   `state_conflict` reads the request again.
+- `/authorize-site?client=&redirect_uri=&code_challenge=&code_challenge_method=S256&state=`
+  lets a site act for the account (`createDelegation`; the public site's
+  API reference tries operations this way). It signs in in place as
+  `/authorize-device` does and shows the site (by name where the console
+  knows it, `docs` is Meshway 文档), the host it returns to, one hour not
+  renewed, and the account; what it may do is said once. Authorizing has
+  the server issue a one-time code bound to this sign-in and replaces the
+  page with the site's address carrying `code` and the site's `state`.
+  The server decides whether the client and its address are allowed
+  (`invalid_request` is said as such); refusing goes nowhere, since the
+  address is only the site's claim until then. A malformed request is
+  invalid before anything is asked.
 - The event stream (`watchNetwork`, `api/live/`): SSE first, GET as
   the fallback. Each tab keeps one stream for the network it has open, from
   its pages' mount until the network changes or the sign-in ends. The
@@ -520,7 +532,8 @@ controller supports today; the rest of each row is the target design.
 Outside the shell, one card over the globe like the sign-in: `/login`,
 `/register` (offered only while the controller publishes registration as
 open), `/` with no network (creating the first), a network not found,
-`/join`, `/reset-password` and `/authorize-device/<id>`.
+`/join`, `/reset-password`, `/authorize-device/<id>` and
+`/authorize-site`.
 
 Where a page cannot be, the same card says so (`components/entry/fallback.tsx`,
 the router's defaults), centred below the globe, which comes to the middle

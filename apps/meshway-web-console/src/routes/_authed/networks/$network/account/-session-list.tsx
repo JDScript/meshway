@@ -27,6 +27,7 @@ import { useNow } from "@/hooks/use-now"
 import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { useSignOut } from "@/hooks/use-sign-out"
 import { endsThisTab, pagedCount, type Revocation } from "@/lib/account"
+import { delegationClientName } from "@/lib/delegation"
 import { agoTime, dateTime, relativeTime, shortId } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 import { currentSession } from "@/state/session"
@@ -244,6 +245,13 @@ function SessionRow({
           {session.current ? (
             <span className="shrink-0 rounded-full bg-fill-raised px-1.5 text-meta font-medium text-muted-foreground">
               {m.account_session_this()}
+            </span>
+          ) : null}
+          {session.delegationClient !== null ? (
+            <span className="shrink-0 rounded-full bg-fill-raised px-1.5 text-meta font-medium text-muted-foreground">
+              {m.account_session_delegated({
+                client: delegationClientName(session.delegationClient),
+              })}
             </span>
           ) : null}
         </span>
