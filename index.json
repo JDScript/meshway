@@ -1,8 +1,97 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T10:14:45.923220+00:00",
+  "updatedAt": "2026-10-08T10:26:58.504607+00:00",
   "runs": [
+    {
+      "id": 37762142636,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "03f4461fd8329f613a2d429949a16315fb8eb9b7",
+      "message": "ci(validate): retain the eight most recent evidence directories on the runner",
+      "createdAt": "2026-10-08T10:14:18Z",
+      "updatedAt": "2026-10-08T10:25:28Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37762142636",
+      "jobs": [
+        {
+          "id": 113260899040,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T10:14:20Z",
+          "completedAt": "2026-10-08T10:14:24Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37762142636/job/113260899040"
+        },
+        {
+          "id": 113260935407,
+          "name": "docs-and-scripts",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T10:14:27Z",
+          "completedAt": "2026-10-08T10:15:42Z",
+          "seconds": 75.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37762142636/job/113260935407"
+        },
+        {
+          "id": 113260935492,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T10:14:57Z",
+          "completedAt": "2026-10-08T10:25:27Z",
+          "seconds": 630.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37762142636/job/113260935492"
+        },
+        {
+          "id": 113260935592,
+          "name": "console",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T10:15:45Z",
+          "completedAt": "2026-10-08T10:18:33Z",
+          "seconds": 168.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37762142636/job/113260935592"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37762142607,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "03f4461fd8329f613a2d429949a16315fb8eb9b7",
+      "message": "ci(validate): retain the eight most recent evidence directories on the runner",
+      "createdAt": "2026-10-08T10:14:18Z",
+      "updatedAt": "2026-10-08T10:14:25Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37762142607",
+      "jobs": [
+        {
+          "id": 113260899101,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-08T10:14:25Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37762142607/job/113260899101"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37758684978,
       "attempt": 1,
