@@ -28,14 +28,11 @@ pub async fn serve(router: axum::Router, budget: usize) -> (Client, Server) {
 }
 
 pub async fn controller(registration: bool) -> (App, Client, Server, tempfile::TempDir) {
-    let parent = std::env::temp_dir().join("opencode");
-    std::fs::create_dir_all(&parent).unwrap();
-    let parent = std::fs::canonicalize(parent).unwrap();
     let directory = tempfile::Builder::new()
         .prefix("meshway-sdk-")
-        .tempdir_in(parent)
+        .tempdir()
         .unwrap();
-    let mut settings = Settings::new(directory.path().join("instance"));
+    let mut settings = Settings::new(directory.path().canonicalize().unwrap().join("instance"));
     settings.registration_enabled = registration;
     let app = App::open(settings).await.unwrap();
     let (client, server) = serve(http::router(&app), 1024 * 1024).await;
