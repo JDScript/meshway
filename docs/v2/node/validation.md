@@ -23,8 +23,8 @@
 | `test:packet:linux` | Native TCP | off | — | A→R→B 双栈小包／满 MTU UDP、MTU+1 拒绝、daemon 多 MSS TCP、R 只转发受保护帧、原路径回复 | 当前 wire 已通过；`20261007T212330Z-f7e9a2e9` |
 | `test:runtime:linux` | Native UDP 静态端点 | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 当前 wire 已通过；Planck `20261008T033613Z-abbd4545` |
 | `test:runtime:linux` | Native TCP | off | — | daemon 整组：共同场景 | 当前 wire 已通过；Planck `20261008T033656Z-7a35b80e` |
-| `test:runtime:linux --transport vless` | VLESS TCP/TLS | off | — | 共同场景；仅 R listener、A/B 拨入，精确叶证书验证 | 未验收 |
-| `test:runtime:linux --transport trojan` | Trojan TCP/TLS | off | — | 共同场景；仅 R listener、A/B 拨入，精确叶证书验证 | 未验收 |
+| `test:runtime:linux --transport vless` | VLESS TCP/TLS | off | — | 共同场景；仅 R listener、A/B 拨入，精确叶证书验证 | 当前 wire 已通过（两次）；Planck `20261008T060730Z-28cbd781`、`20261008T061612Z-8b60c1ec` |
+| `test:runtime:linux --transport trojan` | Trojan TCP/TLS | off | — | 共同场景；仅 R listener、A/B 拨入，精确叶证书验证 | 当前 wire 已通过（两次）；Planck `20261008T060730Z-58ae84d3`、`20261008T061612Z-c9edd384` |
 | `test:runtime:linux` | Native UDP 静态端点 | resolv-conf | — | 共同场景＋[DNS 场景](#dns-场景) | 当前 wire 已通过（两次）；Planck `20261008T032749Z-3ba0ca12`、`20261008T050153Z-a1a8eebf` |
 | `test:runtime:linux` | Native UDP 静态端点 | resolved | — | 共同场景＋DNS 场景 | V1 串行：当前 wire 已通过，`20261007T220446Z-5360cb6e`；Planck 旧候选未通过，本轮未重验，见[剩余边界](#remaining-boundaries) |
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋[穿透场景](#穿透场景) | 当前 wire 已通过（两次）；Planck `20261008T032749Z-289b9780`、`20261008T050153Z-3e001994` |
@@ -32,7 +32,7 @@
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 端口保持型 SNAT | 整组组合 | 当前 wire 已通过（两次）；Planck `20261008T032749Z-d13bd2a9`、`20261008T050153Z-1978b05b` |
 | [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 未验收（当前整组）；2026-10-07 已有下述 L5 局部证据；共享 bridge 不构成 NAT 证明 |
 
-以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS／Trojan 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、出口转发／NAT、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、整机重启与系统 resolver 服务停机间隙、userspace／SOCKS5。
+以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、出口转发／NAT、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、整机重启与系统 resolver 服务停机间隙、userspace／SOCKS5。
 
 常驻 lab 的 L5 原始证据目录为 `.meshway/perf/l5/20261007T162418Z-main-f39ba2b6-2cpu/`。该目录的两次 TCP 接收吞吐分别约 318／364 Mbps；协调者另报告空闲宿主复测 1,367 Mbps，独立报告路径待补，不能把该数值归入前述目录或用吞吐局部证据替代整组验收。
 
@@ -54,6 +54,14 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 | `20261008T050147Z-0c5809cf` | 4 | 前四行独立复跑 | 四行全部通过；总耗时 566.6 秒 |
 
 远程原件位于执行 clone 的 `.meshway/validation/matrix/<run>/`；本地原样归档位于仓库 `.meshway/validation/v2/20261008-nat-regressions/planck/<run>/`。每行路径为 `rows/<row>/<报告 ID>/report.json`，含 JSON、pcap、进程／清理信息与源码指纹；总报告保留 `matrix.json`、`summary.md`、`remote.json`。入口及进度说明见[开发环境](/v2/development#validation-matrix)。
+
+### VLESS／Trojan TCP/TLS 证据
+
+W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）在 Planck x86_64／`x86_64-unknown-linux-musl` 完成两轮独立全长运行：矩阵 `20261008T060724Z-15ece3bb`（495.7 秒）与 `20261008T061606Z-9875d228`（489.6 秒）。两轮各只选择 `vless/off`、`trojan/off`，并发上限为 4；四份行报告均为 `scope=acceptance`、125 秒持续／纯接收窗口，且必需检查全部通过。
+
+四份报告的构建／导入／结束源码指纹一致：`e1ae2b2cba515e96db89569be6c881234a00f2de2961465c01bb0fc021728d6c`；`meshwayd` SHA-256 为 `4a2b7edced885f2266bf579de01c3ea92ff7f4ef6f2f323e2cc4cbcbbb338cd2`，完整二进制摘要集合也一致。Controller／A／R／B 均成功退出，R 的 TUN 明文交付为零，行清理及远程 supervisor 独立容器／网络复核均无遗留。配置证据确认 A/B 没有 listener、dialers 仅含所选协议，R 只有对应 listener 且 dialers 为空；相同材料的执行续接、HTTP 中断恢复、Access 撤销恢复、lease 失效及离线清理均经过共同场景。
+
+四行短模式门槛（上述两行及 NAT/off、NAT＋TCP 退路/off）在矩阵 `20261008T055845Z-1b1b90ca` 全部通过，只作为诊断证据。W2 原始远程副本已归档至仓库根 `.meshway/w2-streaming/planck/<矩阵 ID>/`；远端保留 `/mnt/data/Meshway/src/.meshway/validation/matrix/<矩阵 ID>/` 的原件与二进制。TCP/TLS 的通过不扩展到 VLESS WS/TLS daemon 整组、TLS／WS 材料轮换或多路径切换。
 
 ### 剩余边界 {#remaining-boundaries}
 

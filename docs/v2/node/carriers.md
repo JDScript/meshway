@@ -176,5 +176,5 @@ CN 的业务包经这条 TCP/TLS 会话到达 LAX。LAX 的回复沿同一条 VL
 - **穿透只限 UDP**：协调端点只用于 Native UDP。Native TCP／VLESS／Trojan 必须一方提供 listener、另一方拨号，不实现 TCP simultaneous-open；双方都没有可达 listener 时，这条边不能使用 TCP 系承载。
 - **固定端点需要公告**：TCP 系承载只拨号执行配置中公告的 `endpoints`，不从 State 候选推导目标地址。
 - **MASQUE 未实现**：MASQUE／HTTP/3 需要明确的 client/server 角色，属于规划项，见[规划：MASQUE](/v2/node/connectivity#规划-masque)。
-- **验收状态**：VLESS／Trojan 承载上的 daemon 整组包流验收状态以[验收范围](/v2/node/validation)为准，当前为未验收。
+- **验收状态**：VLESS／Trojan 各 stream 类型上的 daemon 整组包流验收状态以[验收范围](/v2/node/validation)为准。
 - **双向承载不等于双向业务授权**：邻接会话双向收发只说明数据可以双向流动；新业务流的发起资格仍由 Access 和 Routing 判定，回复只匹配已建立的正向流。
