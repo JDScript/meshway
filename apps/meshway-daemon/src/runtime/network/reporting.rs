@@ -271,8 +271,16 @@ impl super::Handle {
                 }
             }
         }
-        let receipt = self.reporting.receipt.clone();
         let sample = self.sample().await.ok();
+        // Sampling also orders a pending target installation before this
+        // report. Its completion can therefore arrive after cycle.finish();
+        // settle that exact completion before advertising applied State.
+        if sample.as_ref().is_some_and(|sample| {
+            sample.report.current(&control.status()) && sample.report.completion == Some(Ok(()))
+        }) {
+            self.finish(control).await?;
+        }
+        let receipt = self.reporting.receipt.clone();
         let facts = sample
             .as_ref()
             .map_or_else(Report::stopped, |sample| sample.report.clone());

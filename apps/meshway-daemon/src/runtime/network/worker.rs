@@ -62,6 +62,7 @@ pub(super) async fn run(
     let mut preparing: Option<(Target, tokio::time::Instant)> = None;
     let mut dns_failed = false;
     let mut sample_at = None;
+    let mut deferred_sample: Option<tokio::sync::oneshot::Sender<super::reporting::Sample>> = None;
     loop {
         meshway_logging::profile::report();
         if let Some(completion) = pending_completion.take() {
@@ -77,6 +78,13 @@ pub(super) async fn run(
                     return host.shutdown(true).await.map_err(|_| Problem::Underlay);
                 }
             }
+        }
+        if let Some(reply) = deferred_sample.take()
+            && !reply.is_closed()
+        {
+            let report = sample(&installed, reports.borrow().clone());
+            let _ = reply.send(reports.sample(report));
+            sample_at = None;
         }
         enum Work {
             ObservationPlan,
@@ -154,6 +162,18 @@ pub(super) async fn run(
                     else => std::future::pending().await,
                 }
             } => work,
+        };
+        // A sample queued immediately after publication must observe that
+        // target, not win the command-priority branch and return its fenced
+        // predecessor. Lifecycle commands keep their existing priority.
+        let work = match work {
+            Work::Command(Some(Command::Sample(reply)))
+                if pending_completion.is_none() && targets.has_changed().unwrap_or(false) =>
+            {
+                deferred_sample = Some(reply);
+                Work::Target
+            }
+            work => work,
         };
         let structural = matches!(&work, Work::Target | Work::DnsTimeout)
             || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
