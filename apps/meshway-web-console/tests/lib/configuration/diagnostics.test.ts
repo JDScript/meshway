@@ -65,6 +65,23 @@ test("reasons are worded when known, and left out when not", () => {
     issueText(issue("invalid_transport", { reason: "new_reason" }), node),
     "传输设置无效"
   )
+  // An edge a Mesh route needs, with no transport either way: its ends by hostname.
+  const edge = { reason: "edge_transport_unavailable", a: EDGE, b: "c4334046" }
+  assert.equal(
+    issueText(
+      issue(
+        "invalid_transport",
+        { ...edge, routingRule: "/routing/mesh/1" },
+        "/topology/0/transports"
+      ),
+      node
+    ),
+    "Mesh 路由 2 要经过 sgp-edge 与 c4334046 的直接连接，但这条边两个方向都没有可用的承载"
+  )
+  assert.equal(
+    issueText(issue("invalid_transport", edge, "/topology/0/transports"), node),
+    "sgp-edge 与 c4334046 之间两个方向都没有可用的承载"
+  )
   assert.equal(
     issueText(
       issue("rule_set_unavailable", { reason: "download_failed" }),

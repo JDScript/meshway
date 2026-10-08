@@ -7,6 +7,7 @@ import type {
 import { m } from "@/paraglide/messages.js"
 
 import type { Checked } from "./draft-state"
+import { pointerSegments } from "./jsonc"
 import { requirementText } from "./preparation"
 
 // What the controller says about a configuration, in words: an issue by
@@ -137,7 +138,17 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
   duplicate_hostname: (p) =>
     m.configuration_issue_duplicate_hostname({ hostname: p.hostname ?? "?" }),
   empty_listener_key: () => m.configuration_issue_empty_listener_key(),
-  invalid_transport: (p) => {
+  invalid_transport: (p, node) => {
+    if (p.reason === "edge_transport_unavailable") {
+      const [section, kind, index] = pointerSegments(p.routingRule ?? "") ?? []
+      const ends = { a: node(p.a ?? "?"), b: node(p.b ?? "?") }
+      return section === "routing" && kind === "mesh" && index !== undefined
+        ? m.configuration_issue_edge_transport_unavailable({
+            ...ends,
+            index: ordinal(index),
+          })
+        : m.configuration_issue_edge_transport_unavailable_edge(ends)
+    }
     const reason =
       p.reason !== undefined && Object.hasOwn(TRANSPORT_REASON, p.reason)
         ? TRANSPORT_REASON[p.reason]

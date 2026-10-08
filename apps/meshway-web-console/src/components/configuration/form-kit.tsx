@@ -391,7 +391,9 @@ function fieldOf(path: string): string | null {
       ? m.configuration_topology_a()
       : rulePart === "b"
         ? m.configuration_topology_b()
-        : null
+        : rulePart === "transports"
+          ? m.configuration_topology_transports()
+          : null
   if (section === "addressPools")
     return entry === "ipv4"
       ? m.configuration_pool_ipv4()
@@ -525,11 +527,14 @@ export function RuleRow({
   label,
   children,
   end,
+  detail,
   notes,
 }: {
   label: string
   children: ReactNode
   end: ReactNode
+  /** A further line of the rule, under its first. */
+  detail?: ReactNode
   notes: readonly Note[]
 }) {
   return (
@@ -545,6 +550,7 @@ export function RuleRow({
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">{end}</div>
       </div>
+      {detail}
       <Notes notes={notes} className="px-1.5 pb-0.5" />
     </div>
   )

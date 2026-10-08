@@ -17,7 +17,8 @@ import {
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
-const dialerProtocolLabel: Record<DialerProtocol, () => string> = {
+/** A transport protocol's name, wherever one is chosen (dialers, an edge's transports). */
+export const protocolLabel: Record<DialerProtocol, () => string> = {
   native_udp: () => m.configuration_dialer_native_udp(),
   native_tcp: () => m.configuration_dialer_native_tcp(),
   vless: () => m.configuration_dialer_vless(),
@@ -69,14 +70,12 @@ export function DialerSetForm({
           <div
             key={row.protocol}
             role="group"
-            aria-label={dialerProtocolLabel[row.protocol]()}
+            aria-label={protocolLabel[row.protocol]()}
             data-invalid={refused.has(row.protocol) || undefined}
             className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5 data-invalid:ring-1 data-invalid:ring-destructive/50"
           >
             <span className="flex min-w-0 flex-[1_1_8rem] items-center gap-2 text-row font-medium">
-              <span className="truncate">
-                {dialerProtocolLabel[row.protocol]()}
-              </span>
+              <span className="truncate">{protocolLabel[row.protocol]()}</span>
               {row.enabled ? null : (
                 <span className="shrink-0 rounded-full bg-fill-raised px-1.5 text-meta font-normal text-muted-foreground">
                   {m.configuration_dialer_off()}
@@ -204,7 +203,7 @@ export function DialerSetForm({
                 )}
                 <Switch
                   aria-label={m.configuration_dialer_use({
-                    protocol: dialerProtocolLabel[row.protocol](),
+                    protocol: protocolLabel[row.protocol](),
                   })}
                   checked
                   onCheckedChange={() =>
@@ -224,11 +223,11 @@ export function DialerSetForm({
                 "flex h-12 items-center justify-between gap-3 rounded-tile border border-dashed border-divider pr-2 pl-3.5 text-row text-muted-foreground"
               )}
             >
-              {dialerProtocolLabel[protocol]()}
+              {protocolLabel[protocol]()}
               <Switch
                 className="data-unchecked:bg-foreground/20"
                 aria-label={m.configuration_dialer_use({
-                  protocol: dialerProtocolLabel[protocol](),
+                  protocol: protocolLabel[protocol](),
                 })}
                 checked={false}
                 onCheckedChange={() =>

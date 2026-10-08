@@ -51,14 +51,14 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `233a8233`）
+## 接入状态（后端 `8ca49b0f`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
 - 账户、会话和账户活动（邮箱修改显示原邮箱）；
 - 网络、成员（改角色前确认要撤销的加入链接）、加入链接（签发人、使用者）和网络活动；
-- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
-- 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
+- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同；组网的允许规则可以限制承载 `transports`：不限即省略，指定为 UDP／TCP／VLESS／Trojan 中的几种，一个不选是 `[]`，阻断规则不设置）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值；`edge_transport_unavailable` 说明哪条 Mesh 路由要经过哪两端之间的边，挂在 `/topology/<i>/transports` 的承载上），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
 - 地点与 ASN：console 不再读服务端的 GeoIP 结果（`derived.location.data`、`datasetId`、`ipInfo` 的查询结果），只用 `derived.location` 的地址和 `derived.ipInfo` 的键（`notApplicable` 视为非公网，不发出），向 geojs.io 查询。在服务端按下面"请后端调整"改完之前，`derived.location` 只在服务端自己的 GeoIP 有结果时才出现，没有数据集的部署里节点仍然没有位置。8420 的三个节点还没有上报 endpoint，地球上暂时没有节点。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
 - 接入密钥和设备授权（`authorizationUrl` 打开的就是 console 的授权页）；
@@ -69,7 +69,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 观测历史；
 - 主动路径观察。
 
-8420 已在 `233a8233` 上重新初始化（旧库移入 `.meshway/backups/server-20261008T020616Z-88335cb8bb8b/`），三个 Docker 节点用新身份重新接入并应用了 lab 配置。
+8420 运行 `8ca49b0f`：在 `233a8233` 时重新初始化过（旧库移入 `.meshway/backups/server-20261008T020616Z-88335cb8bb8b/`），三个 Docker 节点用新身份重新接入并应用了 lab 配置；之后原地更新，不需要重建库。
 
 撤销已失效的加入链接、接入密钥，以及重复吊销节点密钥时的 409 `state_conflict`，console 提示"这次没有撤销"并重读列表。
 
@@ -84,7 +84,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ## 待处理的问题
 
-以下按 `01da4515` 核对（`233a8233` 的路径检测另在 8420 上用 console 检测过节点、域名、公网目的地和草稿并排）：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
+以下按 `01da4515` 核对（`233a8233` 的路径检测另在 8420 上用 console 检测过节点、域名、公网目的地和草稿并排；`8ca49b0f` 的组网承载在 8420 上用表单检查过：`[]` 加一条必经路由被拒，问题挂在承载上并按两端主机名说明）：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
 
 **已修复并已验证**（不再跟踪）：
 
@@ -140,6 +140,8 @@ console 已接入 `/api/v1` 下全部 Console 操作：
   - `derived.ipInfo` 换成只标明是否公网的映射，例如 `addressScope: { [ip]: "public" | "nonPublic" | "mesh" }`，仍只含调用者可见的 endpoint IP。console 只把 `public` 的地址发给 geojs。
   - `ip-datasets` 和数据集保留给自动方案；`docs/v2/state-reference/ip-info.md`、`endpoints.md` 的 GeoIP 段落和开发环境的数据集说明随之改写。
   - console 的读取集中在 `src/lib/geo.ts` 的 `nodeAddresses`，改完后只需调整这一处和缺失原因的文案。
+- **`edge_transport_unavailable` 一次只报一条**：同一条组网规则让几条 Mesh 路由都走不通时，validate 只返回其中一条路由和一条边（8420 上 3 条必经路由都经过 `transports: []` 的边，只报了 `/routing/mesh/1` 的 lax–nyc）。改完一条再检查才看到下一条；如果是有意合并，请在 problems.md 里写明。
+- **阻断规则带 `transports`**：服务端照收，但阻断总是阻断整条边，这个字段不起作用。建议 validate 给一条 warning 或直接拒绝；console 现在只在规则下注明"阻断规则的承载设置不起作用"，把规则改成阻断时去掉它。
 
 ### 需要真实 Node 复核
 

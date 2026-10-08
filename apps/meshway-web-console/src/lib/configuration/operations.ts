@@ -19,8 +19,9 @@ import { sameRuleSets, writtenRuleSet, type RuleSetMap } from "./rule-sets"
 // part, holding that part's final value (`replaceAccess` with every rule,
 // not one per click). Editing a part again replaces its operation; a value
 // equal to the base drops it. Values are compared the way the controller
-// reads them: access sets and group members are sets; omitted remarks and
-// directions are their defaults.
+// reads them: access sets, group members and an edge's transports are sets;
+// omitted remarks and directions are their defaults. Omitted transports
+// (any) and none (`[]`) are two values.
 
 export type GroupMap = Record<string, string[]>
 
@@ -103,6 +104,7 @@ const sameAccessRule = (a: AccessRule, b: AccessRule) =>
 function topologyRule(rule: TopologyRule): TopologyRule {
   const out: TopologyRule = { action: rule.action, a: rule.a, b: rule.b }
   if (rule.remark) out.remark = rule.remark
+  if (rule.transports) out.transports = rule.transports
   return out
 }
 
@@ -110,7 +112,10 @@ const sameTopologyRule = (a: TopologyRule, b: TopologyRule) =>
   (a.remark ?? "") === (b.remark ?? "") &&
   a.action === b.action &&
   a.a === b.a &&
-  a.b === b.b
+  a.b === b.b &&
+  (a.transports && b.transports
+    ? sameSet(a.transports, b.transports)
+    : a.transports === b.transports)
 
 const sameRules =
   <R>(same: (a: R, b: R) => boolean) =>

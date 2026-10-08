@@ -89,6 +89,41 @@ test("rules are written without their default remark and direction", () => {
   })
 })
 
+test("an edge's transports are kept; any and none are two values", () => {
+  const rule = { action: "allow" as const, a: "*", b: "tag:relay" }
+  const limited = {
+    ...VIEW,
+    topology: [
+      { ...rule, transports: ["vless" as const, "native_tcp" as const] },
+    ],
+  }
+  // The same set in another order is no change.
+  assert.deepEqual(
+    withValue([], limited, "topology", [
+      { ...rule, transports: ["native_tcp", "vless"] },
+    ]),
+    []
+  )
+  const [none] = withValue([], limited, "topology", [
+    { ...rule, transports: [] },
+  ])
+  assert.deepEqual(none, {
+    type: "replaceTopology",
+    topology: [{ ...rule, transports: [] }],
+  })
+  // Any (omitted) is not none, and an edit elsewhere keeps the transports.
+  assert.equal(withValue([], limited, "topology", [rule]).length, 1)
+  const [remarked] = withValue([], limited, "topology", [
+    { ...rule, remark: "relay", transports: ["vless", "native_tcp"] },
+  ])
+  assert.deepEqual(remarked, {
+    type: "replaceTopology",
+    topology: [
+      { ...rule, remark: "relay", transports: ["vless", "native_tcp"] },
+    ],
+  })
+})
+
 test("one operation per part, in a fixed order whatever the editing order", () => {
   let ops = withValue([], VIEW, "addressPools", {
     ipv4: ["100.80.0.0/16"],

@@ -72,7 +72,13 @@ its generated client only, and only what the controller delivers:
   topology (with `defaults.topology`), traffic routing, rule sets, groups,
   tag owners, DNS, address pools and the defaults (access, topology,
   dialers); "nodes" lists each node's settings and opens its workspace,
-  where they are edited. One
+  where they are edited. A topology allow rule may limit the transports
+  of its edge: any (omitted, protocols added later included) or only the
+  ones chosen of UDP, TCP, VLESS and Trojan, none chosen being `[]` (the
+  two ends cannot connect directly); the first matching allow decides and
+  later ones are not merged in. A block rule has none to set: making a
+  rule a block drops them, and ones the source gives a block rule are said
+  to have no effect. One
   draft per sign-in and network (`state/configuration-draft.ts`), kept
   across the network's pages, in memory only (the source holds secrets:
   never storage, the URL or the query cache), dropped when the sign-in
