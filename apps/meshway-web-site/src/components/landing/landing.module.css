@@ -1,0 +1,670 @@
+.landing {
+  width: min(100% - 96px, 1160px);
+  margin-inline: auto;
+  color: var(--foreground);
+}
+
+.landing h2 {
+  font-size: clamp(26px, 2.5vw, 34px);
+  line-height: 1.3;
+  letter-spacing: -0.045em;
+  font-weight: 550;
+  text-wrap: balance;
+}
+
+.landing h3 {
+  font-size: 19px;
+  line-height: 1.4;
+  font-weight: 550;
+  letter-spacing: -0.025em;
+}
+
+.landing p {
+  text-wrap: pretty;
+}
+
+.eyebrow {
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 550;
+  letter-spacing: 0.12em;
+  color: var(--muted-foreground);
+  margin-bottom: 20px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.04fr 1fr;
+  align-items: center;
+  gap: 12px;
+  min-height: 650px;
+  padding-block: 70px 80px;
+}
+
+.heroTitle {
+  font-size: clamp(36px, 3.65vw, 52px);
+  font-weight: 570;
+  line-height: 1.22;
+  letter-spacing: -0.055em;
+}
+
+.heroTitle span {
+  color: var(--muted-foreground);
+}
+
+.intro {
+  max-width: 440px;
+  margin-top: 26px;
+  color: var(--muted-foreground);
+  font-size: 16px;
+  line-height: 1.85;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.heroNote {
+  margin-top: 24px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted-foreground);
+}
+
+.mesh {
+  min-width: 0;
+  padding-top: 18px;
+}
+
+.diagramCaption {
+  padding-left: 34px;
+  font-size: 10px;
+  letter-spacing: 0.11em;
+  color: var(--muted-foreground);
+}
+
+.meshCanvas {
+  position: relative;
+  background: radial-gradient(ellipse, var(--fill-subtle), transparent 68%);
+}
+
+.meshCanvas > svg {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 560 / 390;
+}
+
+.meshGrid {
+  stroke: var(--divider);
+  stroke-width: 0.65;
+  opacity: 0.6;
+}
+
+.secondaryEdges {
+  stroke: var(--divider);
+  stroke-width: 1;
+}
+
+.protectedArc {
+  stroke: var(--muted-foreground);
+  stroke-width: 1;
+  stroke-dasharray: 3 6;
+  opacity: 0.55;
+}
+
+.primaryEdge {
+  stroke: var(--brand);
+  stroke-width: 1.8;
+}
+
+.quietNode {
+  fill: var(--background);
+  stroke: var(--muted-foreground);
+  stroke-width: 1;
+}
+
+.nodeHalo {
+  fill: var(--fill-selected);
+}
+
+.nodeRing {
+  fill: var(--background);
+  stroke: var(--brand);
+  stroke-width: 1.5;
+}
+
+.nodeCore {
+  fill: var(--brand);
+}
+
+.nodeLabel {
+  fill: var(--muted-foreground);
+  font-size: 13px;
+  text-anchor: middle;
+}
+
+.protection {
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border-radius: var(--radius-tile);
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.protection span {
+  border-left: 1px solid var(--divider);
+  padding-left: 7px;
+  color: var(--muted-foreground);
+}
+
+.routeNote {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: -6px 24px 0;
+  padding: 18px 20px;
+  border-radius: var(--radius-surface);
+}
+
+.routeGlyph {
+  display: flex;
+  gap: 9px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.routeGlyph span {
+  color: var(--muted-foreground);
+}
+
+.routeNote p {
+  border-left: 1px solid var(--divider);
+  padding-left: 18px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.rules {
+  border-top: 1px solid var(--divider);
+  padding-block: 64px 60px;
+}
+
+.sectionHeading {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: end;
+  gap: 80px;
+}
+
+.sectionHeading > p {
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.85;
+  max-width: 460px;
+}
+
+.ruleGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 48px;
+}
+
+.rule {
+  padding-right: 36px;
+}
+
+.rule + .rule {
+  border-left: 1px solid var(--divider);
+  padding-left: 36px;
+}
+
+.rule:last-child {
+  padding-right: 0;
+}
+
+.ruleTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.ruleTop span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.rule p,
+.feature > p:not(.eyebrow) {
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.85;
+  margin-top: 12px;
+}
+
+.featureGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.feature {
+  position: relative;
+  overflow: hidden;
+  padding: 36px 36px 30px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sheet);
+  background: linear-gradient(145deg, var(--fill-subtle), transparent);
+}
+
+.feature h2 {
+  font-size: 26px;
+}
+
+.feature .eyebrow {
+  margin-bottom: 16px;
+}
+
+.transports {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 30px;
+}
+
+.transports span {
+  position: relative;
+  z-index: 1;
+  border: 1px solid var(--divider);
+  border-radius: 9px;
+  background: var(--background);
+  padding: 9px 2px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.transportLines {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  height: 56px;
+  margin: 0 12%;
+  position: relative;
+}
+
+.transportLines i {
+  border-left: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  height: 26px;
+}
+
+.transportLines i:last-of-type {
+  border-right: 1px solid var(--divider);
+}
+
+.transportLines span {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-tile);
+  background: var(--background);
+}
+
+.transportLines svg {
+  width: 20px;
+  height: 20px;
+}
+
+.terminal {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 30px;
+  border-radius: var(--radius-row);
+  padding: 19px 20px;
+}
+
+.terminal > svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.terminal code {
+  font-size: 13px;
+}
+
+.cursor {
+  width: 6px;
+  height: 14px;
+  margin-left: auto;
+  background: var(--divider);
+}
+
+.feature > .commandNote {
+  font-size: 11px;
+}
+
+.observation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 70px;
+  align-items: center;
+  padding-block: 100px;
+}
+
+.networkFigure {
+  position: relative;
+  background: radial-gradient(ellipse, var(--fill-subtle), transparent 68%);
+}
+
+.networkLabels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  padding-inline: 20px;
+}
+
+.networkFigure > svg {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 520 / 420;
+}
+
+.globeGrid {
+  stroke: var(--divider);
+  stroke-width: 1;
+}
+
+.globeRoutes {
+  stroke: var(--brand);
+  stroke-width: 1.3;
+  opacity: 0.75;
+}
+
+.networkFigure figcaption {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.observationIntro {
+  margin-top: 16px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.85;
+}
+
+.observationList {
+  margin-top: 28px;
+}
+
+.observationList article {
+  display: flex;
+  gap: 18px;
+  padding-block: 18px;
+  border-top: 1px solid var(--divider);
+}
+
+.observationList article > span {
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  padding-top: 3px;
+}
+
+.observationList h3 {
+  font-size: 14px;
+}
+
+.observationList p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--muted-foreground);
+  margin-top: 6px;
+}
+
+.closing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  border-block: 1px solid var(--divider);
+  padding: 60px 24px 64px;
+  background: radial-gradient(
+    ellipse at 50% 100%,
+    var(--fill-subtle),
+    transparent 70%
+  );
+}
+
+.closing h2 {
+  margin-top: 24px;
+}
+
+.closing p {
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--muted-foreground);
+  margin-top: 16px;
+}
+
+.closing .actions {
+  justify-content: center;
+  margin-top: 26px;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding-block: 26px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+@media (max-width: 1000px) {
+  .landing {
+    width: calc(100% - 56px);
+  }
+
+  .hero {
+    min-height: 580px;
+  }
+
+  .heroTitle {
+    font-size: 36px;
+  }
+
+  .sectionHeading,
+  .observation {
+    gap: 36px;
+  }
+
+  .feature {
+    padding: 28px 24px;
+  }
+
+  .routeNote {
+    flex-direction: column;
+    gap: 8px;
+    text-align: center;
+    padding: 14px;
+  }
+
+  .routeNote p {
+    border: 0;
+    padding: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .landing {
+    width: calc(100% - 40px);
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+    gap: 42px;
+    padding-block: 60px 48px;
+  }
+
+  .heroTitle {
+    font-size: clamp(32px, 5.8vw, 43px);
+  }
+
+  .intro {
+    font-size: 15px;
+    margin-top: 22px;
+  }
+
+  .heroNote {
+    font-size: 10px;
+    margin-top: 20px;
+  }
+
+  .actions {
+    gap: 10px;
+    margin-top: 26px;
+  }
+
+  .actions > a {
+    padding-inline: 15px;
+    font-size: 12px;
+    gap: 8px;
+  }
+
+  .mesh {
+    max-width: 520px;
+    width: 100%;
+    margin-inline: auto;
+    padding-top: 0;
+  }
+
+  .diagramCaption {
+    padding-left: 0;
+  }
+
+  .routeNote {
+    margin-inline: 0;
+    flex-direction: row;
+    gap: 16px;
+    text-align: left;
+    padding: 16px;
+  }
+
+  .routeNote p {
+    padding-left: 16px;
+    border-left: 1px solid var(--divider);
+    font-size: 10px;
+  }
+
+  .protection {
+    font-size: 10px;
+    padding: 7px 9px;
+  }
+
+  .sectionHeading,
+  .ruleGrid,
+  .featureGrid,
+  .observation {
+    grid-template-columns: 1fr;
+  }
+
+  .rules {
+    padding-block: 44px 40px;
+  }
+
+  .sectionHeading {
+    gap: 20px;
+  }
+
+  .ruleGrid {
+    margin-top: 32px;
+    gap: 28px;
+  }
+
+  .rule,
+  .rule + .rule {
+    padding: 0;
+    border: 0;
+  }
+
+  .ruleTop {
+    margin-bottom: 14px;
+  }
+
+  .rule p {
+    margin-top: 8px;
+  }
+
+  .featureGrid {
+    gap: 16px;
+  }
+
+  .feature {
+    padding: 28px 22px;
+  }
+
+  .feature h2 {
+    font-size: 24px;
+    text-wrap: pretty;
+  }
+
+  .transports {
+    gap: 5px;
+  }
+
+  .transports span {
+    font-size: 10px;
+  }
+
+  .terminal {
+    padding: 17px 14px;
+    gap: 10px;
+  }
+
+  .terminal code {
+    font-size: 12px;
+  }
+
+  .observation {
+    padding-block: 56px;
+    gap: 40px;
+  }
+
+  .observationCopy {
+    grid-row: 1;
+  }
+
+  .networkFigure {
+    max-width: 450px;
+    width: 100%;
+    margin-inline: auto;
+  }
+
+  .closing {
+    padding: 44px 0;
+  }
+
+  .footer {
+    font-size: 10px;
+    padding-block: 24px;
+  }
+}
