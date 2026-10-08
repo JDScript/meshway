@@ -77,20 +77,25 @@ async fn exercise(
         return Err("invalid HTTP outage boundary".into());
     };
     let fresh = command(cli, "status").await?;
-    let lease = fresh
-        .instance
-        .as_ref()
-        .or(before.instance.as_ref())
-        .ok_or("no pre-outage lease")?;
-    let execution_expiry = lease
-        .execution_expires_at_ms
-        .ok_or("no pre-outage execution lease")?
-        .min(lease.expires_at_ms);
-    let mut instance_expiry = lease.expires_at_ms;
+    let lease = before.instance.as_ref().ok_or("no pre-outage lease")?;
+    let (mut instance_expiry, execution_expiry) =
+        crate::recovery::outage_deadlines(lease, fresh.instance.as_ref())?;
     if instance_expiry <= closed_at_ms || instance_expiry.saturating_sub(closed_at_ms) > 130_000 {
         return Err("unexpected actual instance deadline at HTTP outage".into());
     }
     save(cli, "lease-at-outage", &fresh).await?;
+    tracing::info!(
+        phase = "outage-deadlines",
+        role = role.name(),
+        instance_expiry,
+        execution_expiry,
+        current_execution_observed = fresh
+            .instance
+            .as_ref()
+            .and_then(|lease| lease.execution_expires_at_ms)
+            .is_some(),
+        "Retained observed deadlines across the HTTP boundary"
+    );
     let old_sockets = traffic.as_ref().map(Traffic::sockets).transpose()?;
     let path = crate::fallback::original_path(signals).await?;
     let old_circuits = if role == Role::A {
@@ -103,7 +108,15 @@ async fn exercise(
         return Err("execution expiry exceeds fixture deadline".into());
     }
     tokio::time::sleep(wait).await;
-    let suspended = wait_status(cli, |status| {
+    // A publication may have hidden its successor's execution deadline while
+    // retaining the instance. Observe actual suspension within the independently
+    // bounded instance horizon, rather than inventing an execution lease.
+    let suspension_budget = Duration::from_millis(
+        closed_at_ms
+            .saturating_add(130_000)
+            .saturating_sub(now_ms()?),
+    );
+    let suspended = wait_status_for(cli, suspension_budget, |status| {
         status.data_plane == DataPlane::Suspended && status.desired_up
     })
     .await?;
@@ -113,12 +126,22 @@ async fn exercise(
     }
     route_proof(cli, &addresses[&Role::B], old_tun, true, "suspended").await?;
     let old_traffic_blocked = if let Some(traffic) = traffic.as_mut() {
+        tracing::info!(
+            phase = "expired-business-block",
+            role = role.name(),
+            "Checking old Mesh business sockets"
+        );
         traffic.blocked().await?;
         Some(true)
     } else {
         None
     };
     application::underlay_probe(signals::underlay(cli).await?.actors[&Role::B]).await?;
+    tracing::info!(
+        phase = "expired-echo-check",
+        role = role.name(),
+        "Checking existing application workers"
+    );
     echo.check()?;
 
     // Keep sampling real status during the closed gate: an admitted refresh

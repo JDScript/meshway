@@ -36,6 +36,9 @@ pub(super) struct Expected {
     pub events: VecDeque<Event>,
     pub pools: Vec<ipnet::IpNet>,
     pub tun: Option<(u32, String, usize, Vec<std::net::IpAddr>)>,
+    // Observation-only tombstone, retained until the synchronous TUN close's
+    // notifications have drained. It grants no capture/ownership exception.
+    pub retiring_tun: Option<u32>,
     pub anchor: Option<super::anchor::Record>,
     pub anchor_deleting: bool,
     pub changing: bool,
@@ -519,7 +522,10 @@ async fn monitor(
                 }
                 offset += (length + 3) & !3;
                 if changed {
-                    changes.send_modify(|epoch| *epoch = epoch.wrapping_add(1));
+                    changes.send_modify(|epoch| {
+                        *epoch = epoch.wrapping_add(1);
+                        tracing::debug!(network_epoch = *epoch, "External network change observed");
+                    });
                 }
             }
             // Every received datagram is finite; cooperate even during event floods.
@@ -531,6 +537,7 @@ async fn monitor(
 fn network_changed(state: &Expected, payload: &NetlinkPayload<RouteNetlinkMessage>) -> bool {
     let external = |index| {
         index != 1
+            && state.retiring_tun != Some(index)
             && state
                 .tun
                 .as_ref()

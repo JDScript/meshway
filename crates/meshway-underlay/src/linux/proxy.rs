@@ -131,7 +131,10 @@ async fn relay(
 ) -> Result<()> {
     let mut changes = shared.network_changes.subscribe();
     tokio::select! { biased;
-        _ = changes.changed() => Ok(()),
+        _ = changes.changed() => {
+            tracing::debug!("Closing control connection after external network change");
+            Ok(())
+        },
         result = relay_current(local, host, port, shared, resolver, timeout) => result,
     }
 }

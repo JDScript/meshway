@@ -1,5 +1,6 @@
 use super::*;
 
+mod network_changes;
 mod restart;
 
 #[test]

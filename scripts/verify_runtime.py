@@ -31,6 +31,7 @@ PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests
 ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
 KERNEL_TESTS = {
+    "underlay-suspend-notification": "linux::kernel::tests::network_changes::owned_suspend_keeps_control_connection_and_reports_no_network_change",
     "underlay-interface-multicast": "linux::tests::userspace_multicast_cannot_poison_kernel_monitor_or_control_proxy",
     "underlay-journal-classification": "linux::kernel::journal::tests::journal_classifies_same_namespace_changed_namespace_and_changed_boot",
     "underlay-journal-archive": "linux::kernel::journal::tests::changed_namespace_archives_exact_journal_and_same_namespace_recovers",
@@ -301,6 +302,10 @@ def main():
             # baseline to this one disposable namespace, never a host sysctl.
             attachment = (f"name={attachment},driver-opt=com.docker.network.endpoint.sysctls="
                           "net.ipv4.conf.IFNAME.rp_filter=0")
+        if role == "underlay-suspend-notification":
+            # Loopback-only control isolates owned route/TUN events from host
+            # address acquisition. This regression also requires real TUN I/O.
+            attachment, address, address6 = "none", None, None
         command = ["docker", "create", "--pull", "never", "--name", f"meshway-runtime-{identity.lower()}-{role}",
                    "--entrypoint", "",
                    "--label", label, "--platform", platform, "--read-only", "--cap-drop", "ALL",
@@ -637,7 +642,7 @@ def main():
                                            MESHWAY_UNDERLAY_PEER6="[" + addresses6["underlay-peer"] + "]:42427")
                     create(role, ["--include-ignored", "--exact", test, "--nocapture", "--test-threads=1"],
                            address=addresses[role], address6=addresses6[role], admin=not role.startswith("underlay-journal-"),
-                           tun=role == "underlay-local-conflict",
+                            tun=role in ("underlay-local-conflict", "underlay-suspend-notification"),
                            executable=KERNEL_BINARY, environment=environment)
                     if role == "underlay-restart-a":
                         restart = executor.submit(execute, role)

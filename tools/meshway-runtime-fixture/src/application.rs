@@ -430,8 +430,12 @@ fn wall_ms() -> Result<u64> {
 }
 
 pub async fn underlay_probe(address: std::net::Ipv4Addr) -> Result<()> {
+    tracing::info!(phase = "underlay-bypass-connect", %address, port = 42426, "Connecting ordinary underlay TCP bypass probe");
     let mut stream = tokio::time::timeout(IO, TcpStream::connect((address, 42426))).await??;
-    tcp_exchange(&mut stream, &[0x33; FRAME]).await
+    tracing::info!(phase = "underlay-bypass-echo", %address, port = 42426, "Underlay TCP connected; checking echo");
+    tcp_exchange(&mut stream, &[0x33; FRAME]).await?;
+    tracing::info!(phase = "underlay-bypass-complete", %address, "Ordinary underlay remains usable");
+    Ok(())
 }
 
 async fn tcp_echo(

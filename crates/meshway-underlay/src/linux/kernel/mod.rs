@@ -344,11 +344,7 @@ impl Kernel {
             }
             // Descriptor ownership makes dropping this new device safe even if
             // an interrupted netlink operation has an uncertain outcome.
-            if let Ok(mut expected) = self.expected.lock() {
-                expected.tun = None;
-                expected.changing = false;
-            }
-            self.tun.take();
+            self.drop_owned_tun();
         }
         outcome
     }
@@ -662,14 +658,31 @@ impl Kernel {
     pub async fn suspend(&mut self) -> Result<()> {
         self.shared.suspend()?;
         let result = self.remove_live().await;
+        self.drop_owned_tun();
+        // Closing the owned descriptor emits address/link notifications after
+        // its positive capture exception has been removed. Drain with the
+        // observation tombstone still present, including cancellation retries.
+        let drained = self.quiesce().await;
+        if drained.is_ok() {
+            self.expected
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .retiring_tun = None;
+        }
+        result?;
+        drained?;
+        self.journal.tun = None;
+        self.store.persist(&self.journal).await
+    }
+
+    fn drop_owned_tun(&mut self) {
         if let Ok(mut expected) = self.expected.lock() {
-            expected.tun = None;
+            if let Some((index, _, _, _)) = expected.tun.take() {
+                expected.retiring_tun = Some(index);
+            }
             expected.changing = false;
         }
         self.tun.take();
-        result?;
-        self.journal.tun = None;
-        self.store.persist(&self.journal).await
     }
 
     async fn remove_live(&mut self) -> Result<()> {

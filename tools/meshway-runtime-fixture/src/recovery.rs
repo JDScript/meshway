@@ -261,6 +261,32 @@ pub fn now_ms() -> Result<u64> {
         .try_into()?)
 }
 
+/// Observed deadlines only: never fills in the latest status's missing execution
+/// lease or treats a publication handoff as a new runtime instance.
+pub(super) fn outage_deadlines(
+    before: &meshway_protocol::InstanceLease,
+    latest: Option<&meshway_protocol::InstanceLease>,
+) -> Result<(u64, u64)> {
+    if latest.is_some_and(|lease| {
+        lease.instance_id != before.instance_id || lease.generation != before.generation
+    }) {
+        return Err("pre-outage instance changed while sampling deadlines".into());
+    }
+    let instance_expiry = latest.map_or(before.expires_at_ms, |lease| {
+        lease.expires_at_ms.max(before.expires_at_ms)
+    });
+    let execution_expiry = std::iter::once(before)
+        .chain(latest)
+        .filter_map(|lease| {
+            lease
+                .execution_expires_at_ms
+                .map(|at| at.min(lease.expires_at_ms))
+        })
+        .max()
+        .ok_or("no observed pre-outage execution lease")?;
+    Ok((instance_expiry, execution_expiry))
+}
+
 pub async fn circuit_ids(
     cli: &crate::Cli,
     path: &[meshway_model::NodeId],
@@ -291,6 +317,42 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         sync::oneshot,
     };
+
+    #[test]
+    fn publication_gap_retains_observed_deadlines_without_granting_execution() {
+        let before = meshway_protocol::InstanceLease {
+            instance_id: meshway_model::InstanceId::new(uuid::Uuid::from_u128(1)).unwrap(),
+            generation: meshway_model::Version::MIN,
+            expires_at_ms: 120_000,
+            execution_expires_at_ms: Some(60_000),
+            target: None,
+        };
+        let latest = meshway_protocol::InstanceLease {
+            expires_at_ms: 140_000,
+            execution_expires_at_ms: None,
+            ..before.clone()
+        };
+        assert_eq!(
+            outage_deadlines(&before, Some(&latest)).unwrap(),
+            (140_000, 60_000)
+        );
+        assert_eq!(latest.execution_expires_at_ms, None);
+        let extended = meshway_protocol::InstanceLease {
+            execution_expires_at_ms: Some(80_000),
+            ..latest.clone()
+        };
+        assert_eq!(
+            outage_deadlines(&before, Some(&extended)).unwrap(),
+            (140_000, 80_000)
+        );
+        assert_eq!(outage_deadlines(&before, None).unwrap(), (120_000, 60_000));
+        let replaced = meshway_protocol::InstanceLease {
+            instance_id: meshway_model::InstanceId::new(uuid::Uuid::from_u128(2)).unwrap(),
+            ..latest.clone()
+        };
+        assert!(outage_deadlines(&before, Some(&replaced)).is_err());
+        assert!(outage_deadlines(&latest, None).is_err());
+    }
 
     async fn request(address: std::net::SocketAddr, path: &str) -> String {
         tokio::time::timeout(std::time::Duration::from_secs(3), async {

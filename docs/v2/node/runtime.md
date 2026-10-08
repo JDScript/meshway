@@ -175,6 +175,8 @@ Underlay 启动时当前 namespace 的资源归属或路由保护冲突仍拒绝
 
 `state_scope_changed` 丢弃当前报告，1 秒后刷新并重新采样；publication、execution lease、saved 前置条件或回执内容冲突按[回执分类](/v2/api/problems#node-配置回执冲突)退役精确回执，1 秒后刷新并重新 apply 当前目标。两者均不 reset instance 或主动 suspend／删除 TUN。实际执行截止、撤回和连续性交接检查独立生效；旧回执、输出与报告不换绑新目标。
 
+自有负向规则、私有表路由以及 TUN 的创建／退役不会作为外部网络变化通知。TUN 关闭产生的延后地址／链路事件保留精确接口索引至事件排空，仅用于抑制自触发通知，不形成额外的资源归属或捕获豁免。suspended 期间的 Mesh `EHOSTUNREACH`／`ENETUNREACH` 是负向边界的实际结果，不触发控制连接重建或端点重枚举。
+
 ## 持久与重建
 
 | 私有保存 | 重新建立 |

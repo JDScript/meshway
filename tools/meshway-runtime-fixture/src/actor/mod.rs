@@ -99,7 +99,7 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
 
 fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result<Child> {
     let mut daemon_command = Command::new(cli.binaries.join("meshwayd"));
-    let filter = "info,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug,meshway_daemon::runtime::network::circuit_packet=debug";
+    let filter = "info,meshway_underlay=debug,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug,meshway_daemon::runtime::network::circuit_packet=debug";
     if cli.dns_backend.enabled() {
         daemon_command.args([
             "--dns-backend",
@@ -808,7 +808,15 @@ async fn wait_ipc(cli: &Cli, daemon: &mut Child) -> Result<()> {
 }
 
 async fn wait_status(cli: &Cli, predicate: impl Fn(&Status) -> bool) -> Result<Status> {
-    let deadline = Instant::now() + crate::remaining(STARTUP)?;
+    wait_status_for(cli, STARTUP, predicate).await
+}
+
+async fn wait_status_for(
+    cli: &Cli,
+    budget: Duration,
+    predicate: impl Fn(&Status) -> bool,
+) -> Result<Status> {
+    let deadline = Instant::now() + crate::remaining(budget)?;
     loop {
         let status = command(cli, "status").await?;
         if predicate(&status) {
