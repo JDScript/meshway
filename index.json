@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T18:03:45.727995+00:00",
+  "updatedAt": "2026-10-08T18:07:12.749035+00:00",
   "runs": [
     {
       "id": 37819749149,
@@ -12,20 +12,20 @@
       "commit": "1274d6117bb2001db3eda2fa6f4994f66bd9cb73",
       "message": "check: macOS gates also run strict Clippy for the Linux musl target",
       "createdAt": "2026-10-08T17:51:11Z",
-      "updatedAt": "2026-10-08T17:58:08Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-08T18:05:35Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/37819749149",
       "jobs": [
         {
           "id": 113457424882,
           "name": "node-linux (aarch64-unknown-linux-musl)",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-08T17:58:07Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-08T18:05:34Z",
+          "seconds": 447.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37819749149/job/113457424882"
         },
         {
@@ -66,6 +66,34 @@
               "binary": "meshway",
               "bytes": 1833296,
               "sha256": "ce68cc79b4e206e3c9eecfcca52ef40494156c100b127a94bf888cf2b60b853c"
+            }
+          ]
+        },
+        {
+          "id": 11569422203,
+          "name": "node-aarch64-unknown-linux-musl-1274d6117bb2001db3eda2fa6f4994f66bd9cb73",
+          "bytes": 7510646,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37819749149/artifacts/11569422203",
+          "jobId": 113457424882,
+          "runner": "mars-epyc7543",
+          "seconds": 447.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 12893496,
+              "sha256": "f62d5f225442402e6bef982ef8790f21db32a745763554473835bad2f507aaea"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1618104,
+              "sha256": "7311b8d1431911086c8bac2dde32baaaedceb4abfac06c564250a7b1bdfafc4b"
             }
           ]
         }
