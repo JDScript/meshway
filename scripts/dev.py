@@ -422,12 +422,20 @@ class LocalServices:
         if fresh is None or fresh["pid"] != pane["pid"] or fresh["pane"] != pane["pane"]:
             raise DevError(service + ": ownership changed before stop")
         pids = fresh["processes"]
-        identities = {pid: process_identity(pid, self.root) for pid in pids}
+        # Short-lived children (build steps, bundler workers) may exit between
+        # the snapshot and this check; a process that is gone is not foreign.
+        identities = {}
+        for pid in pids:
+            try:
+                identities[pid] = process_identity(pid, self.root)
+            except DevError:
+                if pid in process_table(self.root):
+                    raise
         for pid in sorted(pids - {fresh["pid"]}) + [fresh["pid"]]:
             current = self.pane(service)
             if current is None:
                 break
-            if pid not in current["processes"]:
+            if pid not in current["processes"] or pid not in identities:
                 continue
             if process_identity(pid, self.root) != identities[pid]:
                 raise DevError(service + ": process identity changed before signal")
