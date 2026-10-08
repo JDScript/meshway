@@ -26,6 +26,8 @@ SERVICES = {"server": (8420, "/api/v1/auth/options"), "docs": (5173, "/v2/")}
 CONSOLE_ORIGIN = "http://127.0.0.1:3001"
 SERVER_ORIGIN = "https://meshway-dev-api.jdscript.dev"
 STUN_SERVER = "dev-public=stun.l.google.com:19302"
+# The public site (`mise run dev:site`), which tries the API with a session the Console delegates.
+SITE_CLIENT = "docs=http://localhost:3002"
 MAX_DATASET_BYTES = 128 * 1024 * 1024
 
 
@@ -84,7 +86,7 @@ def run(args, *, cwd=ROOT, check=True, timeout=30, env=None):
 
 def command(service, root):
     if service == "server":
-        return [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server"), "--console-origin", CONSOLE_ORIGIN, "--stun-server", STUN_SERVER]
+        return [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server"), "--console-origin", CONSOLE_ORIGIN, "--stun-server", STUN_SERVER, "--delegation-client", SITE_CLIENT]
     return ["pnpm", "--filter", "@meshway/docs", "dev"]
 
 

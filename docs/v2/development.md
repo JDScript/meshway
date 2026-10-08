@@ -57,7 +57,7 @@ mise run services update server
 mise run services stop docs
 ```
 
-`services` 支持 `start|status|stop|restart|update [server|docs|all]`，以及显式的 `reset server`。省略服务选择时是 `all`，reset 必须写出 `server`。Server 本机地址为 `http://127.0.0.1:8420`，对外为 `https://meshway-dev-api.jdscript.dev`；Console 为 `http://127.0.0.1:3001`，docs 为 `http://127.0.0.1:5173/v2/`。Server 以 `--console-origin http://127.0.0.1:3001` 启动，设备批准链接指向本机 Console。健康检查和开发 seed 直接访问 loopback，不经过外部隧道。
+`services` 支持 `start|status|stop|restart|update [server|docs|all]`，以及显式的 `reset server`。省略服务选择时是 `all`，reset 必须写出 `server`。Server 本机地址为 `http://127.0.0.1:8420`，对外为 `https://meshway-dev-api.jdscript.dev`；Console 为 `http://127.0.0.1:3001`，docs 为 `http://127.0.0.1:5173/v2/`。Server 以 `--console-origin http://127.0.0.1:3001` 启动，设备批准链接指向本机 Console；`--delegation-client docs=http://localhost:3002` 让本机站点（`mise run dev:site`）经 Console 授权后在 API 参考里试用。健康检查和开发 seed 直接访问 loopback，不经过外部隧道。
 
 Console 使用其所属任务运行：
 
