@@ -65,7 +65,7 @@ Ubuntu 的 resolved 后端承担实际系统 DNS 安装。Server 提供 STUN 发
 
 ### 混合承载配置
 
-当前常驻 lab 为 main `3b088dd7` 的 release（含 W2 流式续接、V3 中继交接、V4 重启自愈），**revision 14、混合承载**：sha 只启用 `vless` dialer 且禁用 `lab-udp` listener，lax 持有 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告 `192.168.97.2:35443`）与 `lab-udp`，nyc 保持 Native UDP；保留 sha→lax→nyc 与 nyc→lax→sha 两条必经路由。持续业务下 VLESS link 跨多次执行续租保持同一 link ID，见 [L5](/v2/node/performance#l5-常驻-lab-实测)。源码合入不代表已部署；W3 第一轮在 `1271be5d` 上观察到的流式通道重建由该修复消除。
+当前常驻 lab 为 main `1ef05ee5` 的 release（含 W2 流式续接、V3 中继交接、V4 重启自愈、W5 节点自报端点、V5 运行中接口变化），网络 `543881a0`（2026-10-08 20:47Z 重置后重新接入），**revision 7、混合承载、零配置端点**：sha 只启用 `vless` dialer 且禁用 `lab-udp` listener，lax 持有 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告 `192.168.97.2:35443`）与 `lab-udp`，nyc 保持 Native UDP；保留 sha→lax→nyc 与 nyc→lax→sha 两条必经路由。持续业务下 VLESS link 跨多次执行续租保持同一 link ID，见 [L5](/v2/node/performance#l5-常驻-lab-实测)。源码合入不代表已部署；W3 第一轮在 `1271be5d` 上观察到的流式通道重建由该修复消除。
 
 VLESS 边的配置方式是：sha 只启用 `vless` dialer，并禁用其 `lab-udp` listener；lax 增加 `lab-vless`（TCP/TLS，`0.0.0.0:35443`，公告本容器 bridge 地址），lax 与 nyc 保留 Native UDP。仅改变 sha 的 dialers 不足以限定该边：lax 仍可反向拨入 sha 的 UDP listener，见[承载交集](/v2/node/carriers#承载交集)。
 
@@ -75,7 +75,7 @@ TLS 使用仅限本 lab 的 provided P-256 证书／私钥，SAN 为 `meshway-la
 
 `node:lab configure` 会恢复三节点 Native UDP 默认配置；混合承载实验需按当前 revision 核对。VLESS listener 同样可省略额外 endpoints，由 Node 上报本机地址。
 
-容器重启／重建（新 network namespace、同 boot）不再需要人工处理：daemon 启动时把旧 journal 归档为 `underlay.json.stale-*` 并重新建立 Underlay（2026-10-08 `docker restart meshway-lax` 后 5 秒内 `running／ready／applied`，sha→nyc via lax 立即可达）。Docker 重新分配 bridge 地址时，配置里公告的 `endpoints` 仍会过期，需重新 `configure`／更新端点——这是 W5（节点自报端点）要消除的最后一处人工步骤。
+容器重启／重建（新 network namespace、同 boot）不再需要人工处理：daemon 启动时把旧 journal 归档为 `underlay.json.stale-*` 并重新建立 Underlay（2026-10-08 `docker restart meshway-lax` 后 5 秒内 `running／ready／applied`，sha→nyc via lax 立即可达）。Docker 重新分配 bridge 地址不再需要人工处理：listener 的 `endpoints` 留空，节点在 State 上报本机地址，peer 按 configured→local 候选拨号。2026-10-08 实测：三容器同时重启 5 秒内全部 `running／ready`；lax 换成从未配置过的地址后重启 11 秒内可达；lax **运行中** `docker network disconnect／connect` 换接口（.4→.9，不重启进程）8 秒内 control 保持连接、State 上报新地址、sha→nyc via lax 可达。DNS 锚点与 TUN 的地址不出现在上报端点中。
 
 也可以进入容器使用同一 CLI：
 
