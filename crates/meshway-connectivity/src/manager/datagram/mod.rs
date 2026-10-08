@@ -56,6 +56,7 @@ struct ClientAttempt {
 struct Outbound {
     peer: NodeId,
     carrier: Carrier,
+    acquisition: LinkAcquisition,
     attempts: BTreeMap<SocketAddr, ClientAttempt>,
     scope: Scope,
     capacity: Option<OwnedSemaphorePermit>,
@@ -1041,7 +1042,7 @@ impl Owner {
                 carrier: outbound.carrier.clone(),
                 local: self.local,
                 remote,
-                acquisition: LinkAcquisition::PublishedEndpoint,
+                acquisition: outbound.acquisition.clone(),
             };
             if self
                 .shared
@@ -1089,6 +1090,7 @@ impl Owner {
         outbound.established = true;
         outbound.attempts.clear();
         let deadline = outbound.scope.deadline;
+        let acquisition = outbound.acquisition.clone();
         if !self.promote(
             peer,
             carrier,
@@ -1097,7 +1099,7 @@ impl Owner {
             capacity,
             deadline,
             Replacement::Ranked,
-            LinkAcquisition::PublishedEndpoint,
+            acquisition,
         )? {
             return Err(Error::Unavailable);
         }
@@ -1287,6 +1289,7 @@ impl Owner {
         let peer = channel.fact.peer;
         let carrier = channel.fact.carrier.clone();
         let old_id = channel.fact.id;
+        let acquisition = channel.fact.acquisition.clone();
         let recovery = self
             .channels
             .get_mut(&remote)
@@ -1302,7 +1305,7 @@ impl Owner {
             recovery.capacity,
             recovery.scope.deadline,
             Replacement::Channel(old_id),
-            LinkAcquisition::PublishedEndpoint,
+            acquisition,
         )?;
         recovery.scope.cancellation.cancel();
         Ok(())
@@ -1459,6 +1462,18 @@ pub(super) async fn dial(
     // Both address families use the SAME original resolution/handshake budget.
     // A blackholed v4 address must not prevent trying a configured v6 address.
     let mut attempts = JoinSet::new();
+    let acquisition = workers::acquisition(
+        shared
+            .identity
+            .snapshot()
+            .configuration()
+            .map_err(|_| Error::Authority)?
+            .dialers
+            .get(key)
+            .and_then(|candidate| candidate.endpoints.get(endpoint))
+            .ok_or(Error::Configuration)?
+            .source,
+    );
     for socket in endpoints {
         let scope = Scope {
             cancellation: scope.cancellation.child_token(),
@@ -1470,6 +1485,7 @@ pub(super) async fn dial(
             peer,
             carrier.clone(),
             scope,
+            acquisition.clone(),
         ));
     }
     let mut failed = false;
@@ -1491,6 +1507,7 @@ async fn dial_endpoint(
     peer: NodeId,
     carrier: Carrier,
     scope: Scope,
+    acquisition: LinkAcquisition,
 ) -> Result<(), Error> {
     let DatagramSocket { endpoint, targets } = socket;
     if targets.is_empty() || targets.len() > 16 {
@@ -1542,6 +1559,7 @@ async fn dial_endpoint(
     owner.outbound = Some(Outbound {
         peer,
         carrier,
+        acquisition,
         attempts,
         scope,
         capacity: Some(capacity),

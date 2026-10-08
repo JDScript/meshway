@@ -4,7 +4,7 @@ use crate::ListenerSocket;
 pub(super) struct Candidate {
     key: String,
     carrier: Carrier,
-    endpoints: usize,
+    endpoints: Vec<LinkAcquisition>,
     driver: Driver,
     priority: u16,
     timeout: std::time::Duration,
@@ -61,7 +61,11 @@ pub(super) fn plans(
         plans.entry(candidate.peer).or_default().push(Candidate {
             key: key.clone(),
             carrier,
-            endpoints: candidate.endpoints.len(),
+            endpoints: candidate
+                .endpoints
+                .iter()
+                .map(|endpoint| acquisition(endpoint.source))
+                .collect(),
             driver,
             priority: candidate.priority,
             timeout,
@@ -114,7 +118,7 @@ async fn dial_epoch(
             continue;
         }
         'candidates: for candidate in candidates.iter() {
-            for endpoint in 0..candidate.endpoints {
+            for (endpoint, acquisition) in candidate.endpoints.iter().enumerate() {
                 if shared
                     .links
                     .lock()
@@ -174,7 +178,7 @@ async fn dial_epoch(
                             carrier: candidate.carrier.clone(),
                             local: socket.local,
                             remote: socket.peer,
-                            acquisition: LinkAcquisition::PublishedEndpoint,
+                            acquisition: acquisition.clone(),
                         },
                         opening,
                     ))
@@ -202,6 +206,19 @@ async fn dial_epoch(
         }
         if backoff(&shared, &lifetime, &mut updates).await.is_err() {
             return;
+        }
+    }
+}
+
+pub(super) fn acquisition(
+    source: meshway_configuration::execution::DialEndpointSource,
+) -> LinkAcquisition {
+    match source {
+        meshway_configuration::execution::DialEndpointSource::Configured => {
+            LinkAcquisition::PublishedEndpoint
+        }
+        meshway_configuration::execution::DialEndpointSource::Local => {
+            LinkAcquisition::LocalEndpoint
         }
     }
 }

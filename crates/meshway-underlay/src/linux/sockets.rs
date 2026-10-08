@@ -227,7 +227,7 @@ impl SocketFactory {
             .endpoints
             .get(endpoint_index)
             .ok_or(Error::Target)?
-            .clone();
+            .endpoint();
         Ok(CandidateHandle {
             scope,
             local: cfg.node_id,

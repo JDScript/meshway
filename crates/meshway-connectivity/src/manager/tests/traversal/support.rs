@@ -409,6 +409,7 @@ impl Gateway {
             state.sockets.insert(
                 socket.reference.socket_id,
                 SocketState {
+                    local_endpoints: None,
                     resource: socket.reference.resource,
                     configuration: Some(socket.reference.configuration),
                     generation: socket.reference.socket_generation,

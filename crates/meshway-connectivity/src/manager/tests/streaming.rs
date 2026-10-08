@@ -14,7 +14,7 @@ pub(super) fn listener_address(listener: &Listener) -> Result<SocketAddr, Error>
     Ok(SocketAddr::new(ip, port.get()))
 }
 
-async fn fixture(protocol: TransportProtocol) -> support::Fixture {
+pub(super) async fn fixture(protocol: TransportProtocol) -> support::Fixture {
     let mut fixture = support::Fixture::new(true, false).await;
     fixture
         .configure(|cfg| {

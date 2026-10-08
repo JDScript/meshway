@@ -187,7 +187,10 @@ fn needs_observation(shared: &Shared) -> bool {
         return false;
     };
     cfg.dialers.values().any(|dial| {
-        dial.parameters.transport() == TransportProtocol::NativeUdp && dial.endpoints.is_empty()
+        dial.parameters.transport() == TransportProtocol::NativeUdp
+            && !dial.endpoints.iter().any(|endpoint| {
+                endpoint.source == meshway_configuration::execution::DialEndpointSource::Configured
+            })
     }) || cfg.listeners.values().any(|listener| {
         matches!(listener.declaration(), meshway_transport_spec::Listener::NativeUdp(udp)
             if udp.enabled && udp.endpoints.is_empty())

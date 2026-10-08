@@ -88,6 +88,7 @@ fn diagnostic_link(
         let reference = scope.snapshot.reference();
         let (acquisition, attempt_id, endpoint_source) = match &fact.acquisition {
             LinkAcquisition::PublishedEndpoint => ("publishedEndpoint", String::new(), ""),
+            LinkAcquisition::LocalEndpoint => ("localEndpoint", String::new(), ""),
             LinkAcquisition::AcceptedInbound => ("acceptedInbound", String::new(), ""),
             LinkAcquisition::CoordinatedUdp {
                 attempt_id,
