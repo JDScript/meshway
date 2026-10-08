@@ -159,7 +159,9 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
     let second_publication = second.publication.unwrap();
     let second_id = second.artifact.unwrap().id;
     assert_ne!(first_id, second_id);
-    assert_eq!(
+    // Even the isolated node must receive the expanded common capture range;
+    // lack of a usable path cannot leave the added range locally unmanaged.
+    assert_ne!(
         execution_facts(&s, network, c.node_id).await,
         unrelated_facts
     );
@@ -188,14 +190,21 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
     );
     assert!(matches!(
         configuration.decisions[&demand_id],
-        DemandDecision::Permitted { .. }
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::ExitUnavailable
+        }
     ));
-    assert!(configuration.permits.values().any(|permit| {
-        permit
-            .paths
+    assert!(configuration.permits.is_empty());
+    assert!(
+        configuration
+            .egress_capture
+            .managed_ipv4
             .iter()
-            .any(|path| path.nodes == vec![a.node_id, b.node_id])
-    }));
+            .any(|prefix| prefix
+                .parse::<ipnet::IpNet>()
+                .unwrap()
+                .contains(&"8.8.8.200".parse::<std::net::IpAddr>().unwrap()))
+    );
     assert_eq!(
         publication_bindings(&s, network, configuration.publication).await["remote"],
         second_id
@@ -398,10 +407,14 @@ async fn evaluation_plans_current_and_draft_configurations_with_bound_rule_sets(
     );
     assert_eq!(route.targets, vec![b.node_id]);
     assert!(e.access.allowed);
-    assert_eq!(e.outcome, EvaluationOutcome::Permitted);
-    assert_eq!(e.paths.len(), 1);
-    assert_eq!(e.paths[0].nodes, vec![a.node_id, b.node_id]);
-    assert_eq!(e.targets[0].problem, None);
+    assert_eq!(
+        e.outcome,
+        EvaluationOutcome::Unavailable {
+            reason: UnavailableReason::ExitUnavailable
+        }
+    );
+    assert!(e.paths.is_empty());
+    assert_eq!(e.targets[0].problem, Some(TargetProblem::ExitUnavailable));
     // A Mesh peer by address: the template Access rule, automatic routing.
     let b_address = s.source(token, network).await.configuration.nodes[&b.node_id]
         .addresses

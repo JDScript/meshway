@@ -237,8 +237,14 @@ impl Configurations {
                 };
                 let context =
                     crate::store::execution::compilation_context(tx, network, &cfg, &bindings)?;
-                let evaluation =
-                    meshway_policy::compile::plan(meshway_policy::compile::PlanRequest {
+                let exit_inputs = crate::state::exit::inputs(
+                    tx,
+                    network,
+                    revision,
+                    chrono::Utc::now().timestamp_millis(),
+                )?;
+                let evaluation = meshway_policy::compile::plan_with_exit(
+                    meshway_policy::compile::PlanRequest {
                         topology: meshway_policy::compile::Topology {
                             configuration: &cfg,
                             subjects: &context.subjects,
@@ -249,13 +255,16 @@ impl Configurations {
                         source,
                         destination,
                         profile: profile.as_deref(),
-                    })
-                    .map_err(|error| match error {
-                        CompileError::InvalidInput => Error::InvalidRequest,
-                        CompileError::Budget => Error::StateLimit,
-                        error @ CompileError::EdgeTransportUnavailable { .. } => Error::from(error),
-                        _ => Error::DependencyUnavailable,
-                    })?;
+                    },
+                    &exit_inputs,
+                    chrono::Utc::now().timestamp_millis() as u64,
+                )
+                .map_err(|error| match error {
+                    CompileError::InvalidInput => Error::InvalidRequest,
+                    CompileError::Budget => Error::StateLimit,
+                    error @ CompileError::EdgeTransportUnavailable { .. } => Error::from(error),
+                    _ => Error::DependencyUnavailable,
+                })?;
                 Ok(EvaluationResponse {
                     request_id: id,
                     revision,

@@ -598,7 +598,7 @@ async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_d
         )
         .await
         .unwrap();
-    service
+    let bi = service
         .acquire(
             bt.token.expose(),
             AcquireInstanceRequest {
@@ -608,6 +608,14 @@ async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_d
         )
         .await
         .unwrap();
+    super::exit::report_current(
+        &app,
+        bt.token.expose(),
+        &bi,
+        1,
+        meshway_model::exit::ExitStatus::Ready,
+    )
+    .await;
     let request = DemandRequest {
         instance: InstanceRequest {
             instance_id: ai.instance_id,
@@ -639,7 +647,7 @@ async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_d
             vec![ConfigurationOperation::ReplaceAccess {
                 access: config.access.clone(),
             }],
-            None,
+            Some(UnavailableReason::ExitUnavailable),
         ),
         (
             vec![ConfigurationOperation::SetNodeSettings {
@@ -666,7 +674,7 @@ async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_d
             .validate(owner.token.expose(), network, update(), rid())
             .await
             .unwrap();
-        if reason.is_some() {
+        if reason.is_some_and(|reason| reason != UnavailableReason::ExitUnavailable) {
             assert!(!preview.unavailable_dependencies.is_empty());
         }
         revision = app

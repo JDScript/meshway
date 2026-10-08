@@ -118,7 +118,9 @@ async fn configuration_prepares_new_and_replaced_references_in_one_cas_without_p
     let target = target(&s, &at, &ai).await.full.unwrap().configuration;
     assert!(matches!(
         target.decisions[&demand_id],
-        DemandDecision::Permitted { .. }
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::ExitUnavailable
+        }
     ));
     assert_eq!(
         publication_bindings(&s, network, target.publication).await["remote"],

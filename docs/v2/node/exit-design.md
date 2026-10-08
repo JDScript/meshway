@@ -188,6 +188,17 @@ Noise 证明回答来自出口，不证明出口上报的域名／地址自然�
 
 ## 协议与模型建议
 
+### X1 接口冻结
+
+真实类型以 `crates/meshway-model/src/exit.rs`（`ExitCapability`、`ExitStatus`、`ExitUnavailableReason`、`ExitFamily`）、`crates/meshway-configuration/src/execution/exit.rs`（`EgressCapturePlan`、`ExitRolePlan`、`ExitPermit`、`ExitDestinationScope`、`ExitNat`）和 `execution/mod.rs`（`NodeConfiguration`、`PathPermit`）为准。HTTP 使用这些类型生成同一 OpenAPI／SDK；规范 camelCase 错误名由 enum 序列化给出。
+
+- X2 消费 `PathPermit.exit`、精确 target／sourceAddresses／服务／paths／expiresAt，并使用 Policy 准入与 `permit_authorization_digest`／`permit_transition`。公网边界唯一实现为 `meshway_policy::is_internet_address`。
+- X3 消费 `NodeConfiguration.egressCapture` 与 `exitRole`；职责只准许准备资源，实际 NAT 投影仍需 X2 的活 flow 与 guard。IPv6 受管范围必须 sink。
+- X4 把真实探测写入 `NodeState.exitCapability`，携带 instanceId、精确 target、supportedFamilies、installedFamilies、status 与原始 observedAt；报告失败不要求 applied。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1。没有观测保持省略，不补 ready。
+- X5 复用 capture generation 与角色绑定处理 DNS 撤回；可执行出口 DNS service permit／resolver plan 仍须由 X5 与契约 owner 联合补齐，现有 `DnsEgress::Unavailable/ExitPlanRequired` 保持阻断。
+
+Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择版本与新鲜能力预算由 Server 当前事务提供。旧 demand-5 派生缓存经原始摘要／身份检查后退役，不解码成当前执行权限。此段冻结类型不代表 X2–X5 的运行安装或 T2 已验收。
+
 下列名称是草案字段，不是当前可提交 JSON；最终类型由所属 crate 定义并生成 OpenAPI／SDK。
 
 | 面 | 建议变化／约束 |

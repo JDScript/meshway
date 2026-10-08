@@ -328,8 +328,14 @@ impl<P: StateProvider> StateService<P> {
                 let admission = provider.report(tx, &authorization, now)?;
                 let runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let accepted = runtime.hub.check_report(&admission, &report, now)?;
-                let changed = !accepted.duplicate
-                    && super::local_endpoints::replace(tx, &sealer, &admission, &report, now)?;
+                let changed = if accepted.duplicate {
+                    false
+                } else {
+                    let endpoints =
+                        super::local_endpoints::replace(tx, &sealer, &admission, &report, now)?;
+                    let exit = super::exit::replace(tx, &sealer, &admission, &report, now)?;
+                    endpoints || exit
+                };
                 let network_id = admission.network_id;
                 let mut effects = vec![Effect::AcceptedState {
                     admission: Box::new(admission),

@@ -92,6 +92,7 @@ fn report(target: &CompiledNode, instance: &InstanceRequest, address: &str) -> S
         sequence: Sequence::MIN,
         observed_at: now,
         state: NodeState {
+            exit_capability: None,
             system: SystemState {
                 hostname: "reported-fact".into(),
                 os: "linux".into(),

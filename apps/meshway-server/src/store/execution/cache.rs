@@ -160,7 +160,11 @@ pub(super) fn read(
     }
     if !matches!(
         envelope.compiler_version.as_str(),
-        "meshway-demand-1" | "meshway-demand-2" | "meshway-demand-3" | "meshway-demand-4"
+        "meshway-demand-1"
+            | "meshway-demand-2"
+            | "meshway-demand-3"
+            | "meshway-demand-4"
+            | "meshway-demand-5"
     ) {
         return Err(Error::decode("execution cache version"));
     }
@@ -191,7 +195,7 @@ fn validate_obsolete(
     if fields.contains_key("meshAddressPools")
         != matches!(
             envelope.compiler_version.as_str(),
-            "meshway-demand-3" | "meshway-demand-4"
+            "meshway-demand-3" | "meshway-demand-4" | "meshway-demand-5"
         )
     {
         return Err(Error::decode("obsolete execution cache version shape"));

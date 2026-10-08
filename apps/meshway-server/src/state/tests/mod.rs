@@ -65,6 +65,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         sequence: Sequence::new(1).unwrap(),
         observed_at: now,
         state: NodeState {
+            exit_capability: None,
             system: SystemState {
                 hostname: "host".into(),
                 os: "linux".into(),

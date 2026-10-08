@@ -173,6 +173,10 @@ pub(super) async fn session(
 pub(super) fn caps() -> BTreeMap<String, Capability> {
     BTreeMap::from([
         (
+            "feature:exit-ipv4".into(),
+            Capability::Feature { version: 1 },
+        ),
+        (
             "feature:path-observation".into(),
             Capability::Feature { version: 1 },
         ),
@@ -273,6 +277,7 @@ async fn try_enroll_user_node(
 
 mod demands;
 mod edge_transports;
+mod exit;
 
 mod enrollment_http;
 

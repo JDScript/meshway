@@ -24,6 +24,7 @@ fn report(target: &CompiledNode, instance_id: InstanceId, sequence: u64) -> Stat
         sequence: Sequence::new(sequence).unwrap(),
         observed_at: now,
         state: NodeState {
+            exit_capability: None,
             system: SystemState {
                 hostname: "fixture".into(),
                 os: "linux".into(),

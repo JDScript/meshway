@@ -213,6 +213,7 @@ fn report(lease: &InstanceLease, sequence: u64) -> StateReport {
         sequence: Sequence::new(sequence).unwrap(),
         observed_at: chrono::Utc::now(),
         state: NodeState {
+            exit_capability: None,
             system: SystemState {
                 hostname: "reported-host".into(),
                 os: "linux".into(),

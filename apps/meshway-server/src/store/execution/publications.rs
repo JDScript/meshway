@@ -260,8 +260,9 @@ pub(crate) fn publish_with_rule_sets(
     let publication =
         PublicationId::new(uuid()?).map_err(|_| Error::Internal("generated publication ID"))?;
     let mut diagnostics = crate::execution::diagnostics::collect(tx, network, now)?;
+    let exit_inputs = crate::state::exit::inputs(tx, network, revision, now)?;
     let compile_diagnostics = |diagnostics: &BTreeMap<_, _>| {
-        compile::compile_with_diagnostics(
+        compile::compile_with_exit(
             CompilationInput {
                 network,
                 revision,
@@ -276,6 +277,7 @@ pub(crate) fn publish_with_rule_sets(
                 now_ms: now as u64,
             },
             diagnostics,
+            &exit_inputs,
         )
     };
     let mut compiled = compile_diagnostics(&diagnostics)?;

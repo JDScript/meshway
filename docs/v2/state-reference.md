@@ -40,6 +40,22 @@ Config 定义期望和许可，State 定义当前事实。上报 State 不会修
 
 运行时选择／使用的业务路径，保留源、结果、时间和配置引用。routing 中的规划不是实测 trace；一条 link 可承载多个获准路径。详见[资源与连接](/v2/state-reference/resources#paths)。
 
+## exitCapability
+
+`NodeState.exitCapability` 是可省略的出口前置条件／安装事实；省略为未知。`exitEnabled` 仍只由管理员配置决定。
+
+| 字段 | 含义 |
+| --- | --- |
+| `instanceId`／`target` | 实际探测实例和完整 `ConfigurationRef`；必须属于当前职责 |
+| `supportedFamilies` | 后端支持的内层地址族，`ipv4`／`ipv6`；首版执行仅 IPv4 |
+| `installedFamilies` | 实际已安装地址族；不得把支持能力填成安装成功，非空须绑定当前 applied |
+| `status` | `{status: "notRequested"}`、`{status: "probing"}`、`{status: "ready"}` 或 `{status: "unavailable", reason: ...}` |
+| `observedAt` | 原始探测时间；重放不刷新样本 |
+
+原因枚举：`ipForwardDisabled`、`forwardingProbeFailed`、`netAdminMissing`、`nftUnavailable`、`conntrackUnavailable`、`reversePathFilterConflict`、`tunUnavailable`、`firewallConflict`、`routeConflict`、`dnsUnavailable`、`unsupportedFamily`、`ownershipConflict`。HTTP 使用同一模型的 camelCase 名称。
+
+Server 在 applied 前接纳当前 role 的探测与失败；`ready` 还要求 acquire 声明 `feature:exit-ipv4` version 1。能力投影最多存活至原观察后 60 秒与当前 instance lease 截止的交集，绑定同一源 revision／角色；未知、过期、旧实例或旧职责不授予出口可用资格。重启不恢复为 ready。路径检测显示 `exitUnavailable` 与新鲜具体原因，业务许可到期不长于能力预算；拒绝／不可用仍保留源端 capture。职责、capture 和业务许可见[出口联合许可](/v2/configuration-reference/routing#执行捕获与精确许可)。
+
 ## Reference
 
 - [NodeState 字段](/v2/state-reference/node)

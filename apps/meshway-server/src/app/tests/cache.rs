@@ -44,7 +44,7 @@ async fn acquire(app: &App, token: &NodeSessionResponse) -> InstanceLease {
 
 fn old_slice(current: &CompiledNode) -> (String, ConfigurationRef) {
     let cfg = &current.configuration;
-    let mut body = serde_json::to_string(cfg).unwrap();
+    let mut body = pre_exit_body(current);
     body = body.replace(",\"source\":\"configured\"", "");
     for (name, value) in [
         (
@@ -70,6 +70,17 @@ fn old_slice(current: &CompiledNode) -> (String, ConfigurationRef) {
             digest,
         },
     )
+}
+
+fn pre_exit_body(current: &CompiledNode) -> String {
+    let mut fields: BTreeMap<String, Box<RawValue>> =
+        serde_json::from_str(&serde_json::to_string(&current.configuration).unwrap()).unwrap();
+    fields.remove("egressCapture").unwrap();
+    fields.remove("exitRole");
+    // These fixtures carry only Mesh permits; remove the newly explicit null.
+    serde_json::to_string(&fields)
+        .unwrap()
+        .replace(",\"exit\":null", "")
 }
 
 fn old_publication(
@@ -106,9 +117,12 @@ fn same_shape_publication(
     let mut nodes = BTreeMap::new();
     let mut references = BTreeMap::new();
     for (node, slice) in &current.nodes {
-        let body = serde_json::to_string(&slice.configuration)
-            .unwrap()
-            .replace(",\"source\":\"configured\"", "");
+        let body = pre_exit_body(slice);
+        let body = if version == "meshway-demand-5" {
+            body
+        } else {
+            body.replace(",\"source\":\"configured\"", "")
+        };
         let digest = Digest::from_bytes(Sha256::digest(body.as_bytes()).into());
         nodes.insert(
             *node,
@@ -148,7 +162,7 @@ async fn age(
             params![network.as_uuid().as_bytes().as_slice(), publication.as_uuid().as_bytes().as_slice()], |row| row.get(0)).unwrap();
         let plain = sealer.open_execution(network, publication, &payload).unwrap();
         let compiled: CompiledPublication = serde_json::from_slice(plain.as_bytes()).unwrap();
-        let (old, references) = if matches!(version.as_str(), "meshway-demand-3" | "meshway-demand-4") {
+        let (old, references) = if matches!(version.as_str(), "meshway-demand-3" | "meshway-demand-4" | "meshway-demand-5") {
             same_shape_publication(&compiled, &version)
         } else {
             old_publication(&compiled, &version)
@@ -203,6 +217,11 @@ async fn startup_retires_only_old_cache_preserves_history_and_reauthenticates_sa
 #[tokio::test]
 async fn startup_retires_demand4_cache_for_endpoint_provenance_without_reenrollment() {
     startup_retires_previous_cache("meshway-demand-4").await;
+}
+
+#[tokio::test]
+async fn startup_retires_demand5_cache_for_exit_contract_without_reenrollment() {
+    startup_retires_previous_cache("meshway-demand-5").await;
 }
 
 async fn startup_retires_previous_cache(version: &str) {
