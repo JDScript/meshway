@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T08:16:16.654750+00:00",
+  "updatedAt": "2026-10-08T08:30:22.740234+00:00",
   "runs": [
+    {
+      "id": 37748728195,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "ff040e5cb2fe6fe82e38250def346b6c722dd8b4",
+      "message": "protocol: codegen temporaries live directly under the OS tmpdir",
+      "createdAt": "2026-10-08T08:16:16Z",
+      "updatedAt": "2026-10-08T08:28:27Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37748728195",
+      "jobs": [
+        {
+          "id": 113216404439,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T08:16:18Z",
+          "completedAt": "2026-10-08T08:16:23Z",
+          "seconds": 5.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37748728195/job/113216404439"
+        },
+        {
+          "id": 113216444396,
+          "name": "cargo",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-08T08:16:27Z",
+          "completedAt": "2026-10-08T08:28:26Z",
+          "seconds": 719.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37748728195/job/113216444396"
+        },
+        {
+          "id": 113216444441,
+          "name": "docs-and-scripts",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T08:16:25Z",
+          "completedAt": "2026-10-08T08:16:38Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37748728195/job/113216444441"
+        },
+        {
+          "id": 113216444678,
+          "name": "console",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T08:16:39Z",
+          "completedAt": "2026-10-08T08:17:20Z",
+          "seconds": 41.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37748728195/job/113216444678"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37747793027,
       "attempt": 1,
