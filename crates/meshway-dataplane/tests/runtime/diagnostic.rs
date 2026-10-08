@@ -488,13 +488,43 @@ async fn retained_relay_delivers_inflight_diagnostic_and_business_reply_exactly_
             .send(business, datagram(&fixture.mesh, false, true))
             .unwrap(),
     );
-    let snapshot = fixture.mesh.r.sync_current().await;
+    let SecureMesh {
+        mut mesh,
+        a,
+        mut r,
+        b,
+        ar,
+        rb,
+    } = fixture;
+    let (gate, arrived, resume) = super::authority_race::boundary(
+        "meshway_dataplane::secure::authority_boundary",
+        "probe_maintenance",
+    );
+    let worker = tokio::task::spawn_blocking(move || {
+        let _ = tracing::subscriber::with_default(gate, || r.maintain());
+        r
+    });
+    tokio::time::timeout(Duration::from_secs(10), arrived)
+        .await
+        .unwrap()
+        .unwrap();
+    // Publication arrives after maintenance's entry authority check, but
+    // before it examines the already-committed relay correlation.
+    let snapshot = mesh.r.sync_current().await;
     assert_ne!(old.reference(), snapshot.reference());
     assert!(old.ensure_current().is_err());
-    fixture
-        .r
-        .reconcile(fixture.mesh.r.control.dataplane_identity(snapshot).unwrap())
+    resume.send(()).unwrap();
+    let mut r = worker.await.unwrap();
+    r.reconcile(mesh.r.control.dataplane_identity(snapshot).unwrap())
         .unwrap();
+    let mut fixture = SecureMesh {
+        mesh,
+        a,
+        r,
+        b,
+        ar,
+        rb,
+    };
     // Explicit maintenance must preserve eligible relay correlation state too.
     fixture.r.maintain().unwrap();
     let reply = forward(

@@ -22,7 +22,7 @@ use tracing::{
     span::{Attributes, Id, Record},
 };
 
-struct Boundary {
+pub(super) struct Boundary {
     target: &'static str,
     operation: &'static str,
     entered: Mutex<Option<oneshot::Sender<()>>>,
@@ -73,7 +73,7 @@ impl Subscriber for Boundary {
     }
 }
 
-fn boundary(
+pub(super) fn boundary(
     target: &'static str,
     operation: &'static str,
 ) -> (Boundary, oneshot::Receiver<()>, mpsc::Sender<()>) {

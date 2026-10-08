@@ -69,8 +69,19 @@ impl Probes {
     }
 
     pub(super) fn maintain(&mut self, reading: &Reading<'_>) {
-        self.pending
-            .retain(|_, request| request.guard.ensure_current().is_ok());
+        tracing::trace!(target: "meshway_dataplane::secure::authority_boundary", operation = "probe_maintenance",
+            "Validating probe correlation lifetime");
+        self.pending.retain(|_, request| {
+            if request.challenge.is_none() {
+                // Publication can change after the owner's entry check. Keep
+                // passive relay state until its original bounds or circuit
+                // cancellation; only reconcile can authorize its successor.
+                request.guard.check_at(reading).is_ok()
+                    && request.guard.snapshot.retention_deadline().is_ok()
+            } else {
+                request.guard.ensure_current().is_ok()
+            }
+        });
         self.maintain_rates(reading.instant);
     }
 
