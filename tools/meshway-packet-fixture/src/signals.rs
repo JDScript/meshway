@@ -4,25 +4,7 @@ use meshway_model::{EnrollmentRequestId, NodeId};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, clap::ValueEnum, Serialize, Deserialize,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    A,
-    R,
-    B,
-}
-impl Role {
-    pub const ALL: [Self; 3] = [Self::A, Self::R, Self::B];
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::A => "a",
-            Self::R => "r",
-            Self::B => "b",
-        }
-    }
-}
+pub use meshway_packet_fixture::rendezvous::Role;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
@@ -55,20 +37,7 @@ impl Signals {
         Self(path.into())
     }
     pub async fn write(&self, name: &str, value: Signal) -> Result<()> {
-        let destination = self.0.join(format!("{name}.json"));
-        let temporary = self.0.join(format!(".{name}.{}.tmp", std::process::id()));
-        let bytes = serde_json::to_vec(&value)?;
-        use tokio::io::AsyncWriteExt;
-        let mut file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .await?;
-        file.write_all(&bytes).await?;
-        file.sync_all().await?;
-        drop(file);
-        tokio::fs::rename(temporary, destination).await?;
-        Ok(())
+        meshway_packet_fixture::rendezvous::write(&self.0, name, &value).await
     }
     pub async fn read(&self, name: &str) -> Result<Option<Signal>> {
         let file = self.0.join(format!("{name}.json"));
