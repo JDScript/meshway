@@ -25,6 +25,15 @@ T1 的 Rust 行为测试由 `mise run test:rust` 使用 nextest 跨测试二进�
 
 验收矩阵的任何一行从通过变为失败即阻断合入；不能用单行 `native-udp/off` 代替相关行。
 
+## 整组验收的使用方式
+
+T2 的每一行都受生产时间常量约束（60 秒 execution lease、续租、退避、125 秒持续流），单行约 8 分钟，不以测试刻度改变生产代码。因此：
+
+- **异步执行，不等待**：整组运行提交到测量机（`validate:remote`）或由 Actions 触发后立即返回，结果经 `--attach`、状态页或 PR 检查送达；任何人／agent 都不在会话里阻塞等待一行跑完。
+- **失败靠证据定位，不靠重跑观察**：每次失败都保留 a／r／b／controller 日志、阶段标记与 pcap；先从证据定位到所属 crate，写进程内复现（虚拟时间或共享 Server fixture 的 Rust 测试，秒级），对着它修复，整组只做最后一次确认。
+- **二分并行**：需要二分时在测量机上同时跑多个提交的同一行，一轮得到多个点。
+- 验收状态只由全长行更新；`--short` 只用于诊断。
+
 ## 工作包流程
 
 1. **开工**：`git worktree add .worktree/<topic> -b <type>/<topic> main`，`type` 取 `feat`／`fix`／`perf`／`docs`／`test`／`tooling`／`cleanup`／`build`。一个工作包一个分支一个 worktree；并行工作包先划定文件归属，manifest／lock／生成链由协调者改。
