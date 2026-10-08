@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T07:22:20.627589+00:00",
+  "updatedAt": "2026-10-08T07:25:56.664724+00:00",
   "runs": [
+    {
+      "id": 37743069864,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "143ec1a917a743c836d094542a599f81ce1652bc",
+      "message": "ci(collect): retry dropped API connections",
+      "createdAt": "2026-10-08T07:22:52Z",
+      "updatedAt": "2026-10-08T07:24:32Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37743069864",
+      "jobs": [
+        {
+          "id": 113198498894,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T07:24:12Z",
+          "completedAt": "2026-10-08T07:24:16Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37743069864/job/113198498894"
+        },
+        {
+          "id": 113198525736,
+          "name": "docs-and-scripts",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T07:24:17Z",
+          "completedAt": "2026-10-08T07:24:31Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37743069864/job/113198525736"
+        },
+        {
+          "id": 113198528085,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-08T07:24:16Z",
+          "completedAt": "2026-10-08T07:24:16Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37743069864/job/113198528085"
+        },
+        {
+          "id": 113198528376,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-08T07:24:16Z",
+          "completedAt": "2026-10-08T07:24:16Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37743069864/job/113198528376"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37742817257,
       "attempt": 1,
@@ -12,9 +73,9 @@
       "commit": "da40b74d45d116f37a0d38c5b72d2e85bf357014",
       "message": "docs(lab): mixed VLESS/UDP carriers deployed on main 11d65768; L5 remeasured with stable streaming links",
       "createdAt": "2026-10-08T07:20:24Z",
-      "updatedAt": "2026-10-08T07:21:51Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-08T07:24:11Z",
+      "status": "completed",
+      "conclusion": "cancelled",
       "url": "https://github.com/JDScript/meshway/actions/runs/37742817257",
       "jobs": [
         {
@@ -32,11 +93,11 @@
           "id": 113197343850,
           "name": "console",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "cancelled",
           "startedAt": "2026-10-08T07:21:50Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-08T07:24:10Z",
+          "seconds": 140.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37742817257/job/113197343850"
         },
         {
