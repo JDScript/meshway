@@ -19,6 +19,7 @@ SOURCE_FILES.append(ROOT / "dev/dns-fixture/build.py")
 
 # Rootless or multi-engine hosts select the Docker context explicitly; the
 # CLI default is kept so a desktop machine never builds through a stray context.
+# buildx names each context's built-in docker-driver builder after the context.
 CONTEXT = os.environ.get("DOCKER_CONTEXT", "default")
 
 
@@ -46,7 +47,7 @@ def build(output, platform):
         ["docker", "--context", CONTEXT, "info", "--format", "{{json .}}"], text=True, timeout=45))
     if default_info["ID"] != info["ID"]:
         raise RuntimeError("The default builder must use the selected Docker engine.")
-    builder = subprocess.check_output(["docker", "--context", CONTEXT, "buildx", "inspect", "default"], text=True, timeout=45)
+    builder = subprocess.check_output(["docker", "--context", CONTEXT, "buildx", "inspect", CONTEXT], text=True, timeout=45)
     if not re.search(r"^Driver:\s+docker$", builder, re.MULTILINE):
         raise RuntimeError("Image build requires the ordinary default Docker builder.")
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -91,7 +92,7 @@ def build(output, platform):
     (context / "packages.json").write_text(json.dumps(packages, indent=2) + "\n")
     if source_digest() != before:
         raise RuntimeError("Image sources changed during download; retry with current sources.")
-    command = ["docker", "--context", CONTEXT, "buildx", "build", "--builder", "default", "--load", "--network", "none",
+    command = ["docker", "--context", CONTEXT, "buildx", "build", "--builder", CONTEXT, "--load", "--network", "none",
                "--platform", platform, "--build-arg", "BASE=" + lock["base"],
                "--build-arg", "SOURCE_DIGEST=" + before, "--iidfile", str(output / "image.id"), str(context)]
     record = {"sourceDigest": before, "platform": platform, "base": lock["base"], "packages": packages,
