@@ -4,6 +4,7 @@ import argparse
 from collections import defaultdict
 from datetime import datetime, timezone
 import hashlib
+import http.client
 import json
 import shutil
 import urllib.error
@@ -15,6 +16,7 @@ import re
 import statistics
 import subprocess
 import tempfile
+import time
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -110,11 +112,24 @@ class GitHub:
             raise RuntimeError("GitHub API failed") from None
 
     def request(self, endpoint, output=None):
-        with self._open(self.API + self.prefix + endpoint, authenticated=True) as response:
-            if output is None:
-                return json.loads(response.read())
-            shutil.copyfileobj(response, output, 1 << 20)
-            return None
+        url = self.API + self.prefix + endpoint
+        for attempt in range(3):
+            try:
+                with self._open(url, authenticated=True) as response:
+                    if output is None:
+                        return json.loads(response.read())
+                    shutil.copyfileobj(response, output, 1 << 20)
+                    return None
+            except (ConnectionError, TimeoutError, http.client.HTTPException) as error:
+                # Dropped connections from the API edge are transient; HTTP
+                # status failures are raised as RuntimeError by _open and not retried.
+                if attempt == 2:
+                    raise RuntimeError("GitHub API failed") from None
+                if output is not None:
+                    output.seek(0)
+                    output.truncate()
+                time.sleep(2 * (attempt + 1))
+        return None
 
     def pages(self, endpoint, key, limit=None):
         rows = []
