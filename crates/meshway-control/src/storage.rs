@@ -130,7 +130,7 @@ impl Record {
         }
         let previous_version = envelope.version;
         let upgrading = match previous_version {
-            1 | 2 | 3 => true,
+            1..=3 => true,
             VERSION => false,
             _ => return Err(Error::Record),
         };
