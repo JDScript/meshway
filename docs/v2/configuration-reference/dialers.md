@@ -41,6 +41,6 @@ Server 根据 access、topology、routing 和对端 listener，生成具体出�
 
 ## Defaults
 
-继承／覆盖只定义一套规则，见[字段复用与默认继承](/v2/configuration-reference/inheritance)。优先级越小越优先；同优先级按协议 key 稳定排序，不做权重负载均衡。
+继承／覆盖只定义一套规则，见[字段复用与默认继承](/v2/configuration-reference/inheritance)。相同端点来源内，priority 越小越优先，同优先级按候选 key 稳定排序；同一 peer 的 configured 地址整体先于 local 地址，不做权重负载均衡。
 
 出站参数与实际通道状态分开。允许某种协议不表示已拨通，也不产生反向新流授权。承载交集、急切拨号与限定单条边协议的写法及限制见[承载与邻接模型](/v2/node/carriers)。

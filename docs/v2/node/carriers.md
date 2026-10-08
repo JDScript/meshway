@@ -83,13 +83,13 @@ DialCandidate 包含 `peer`、`listenerKey`、`endpoints`、`priority` 与已解
 3. 拨号方具有该协议的 Dial 能力，监听方具有 Listen 能力；
 4. TLS 版本范围有交集（VLESS／Trojan）。
 
-两个方向都没有候选时，这条边不能进入完整路径。Node 的 Manager 只在发布的候选内选择，按 `priority` 再按 key 稳定排序；不存在于候选中的协议即使双方都已编译该 provider 也不会被使用。
+两个方向都没有候选时，这条边不能进入完整路径。Node 的 Manager 只在发布的候选内选择，同一 peer 先尝试所有 `configured` 地址，再尝试 `local`；同来源按 `priority`、key 和端点顺序稳定排序。不存在于候选中的协议即使双方都已编译该 provider 也不会被使用。
 
 ### 拨号与接受
 
 Node 应用执行配置后，Manager 为执行配置 `dialers` 中出现的每个 peer 启动一个拨号 owner。拨号是**急切**的：配置生效即开始，不等待首个业务包；该 peer 已有选定通道时，拨号 owner 只做退避等待，失联后重新按候选顺序拨号。
 
-- 拨号只使用 Server 执行发布的 `endpoints`：同一 listener 中先按管理员顺序尝试 `configured`，再尝试去重后的 `local`；每个 listener 最多八个本机地址。Native UDP 另保留协调穿透。候选均为空时流式承载等待后续发布。
+- 拨号只使用 Server 执行发布的 `endpoints`：configured 的优先级跨 listener／承载生效，避免本机 UDP 地址的超时阻挡已配置的 TCP 退路；每个 listener 最多八个本机地址。Native UDP 另保留协调穿透。候选均为空时流式承载等待后续发布。
 - 本机地址变化经既有 State 上报、Server 发布与 SSE／刷新路径更新 peer 候选；不需要管理员修改配置。State 只补充拨号地址，不创建 listener、不改变 Access／Topology／Routing 或边级承载交集。
 - 已启用的 listener 在执行配置生效时创建，接受获准 peer 拨入。监听方用本节点许可中路径的 `dialCandidates` 校验拨入的 Carrier，不在本机保存对端的拨号参数。
 - 每个 peer 同时只有一条选定通道。已有不同协议的健康通道时，新建立的通道不替换它。

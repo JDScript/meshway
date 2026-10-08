@@ -237,3 +237,42 @@ async fn stale_configured_endpoints_fall_through_to_local_udp_and_vless() {
     connect(TransportProtocol::NativeUdp, true).await;
     connect(TransportProtocol::Vless, true).await;
 }
+
+#[tokio::test]
+async fn configured_tcp_precedes_higher_protocol_priority_local_udp() {
+    let mut fixture = support::Fixture::new(true, false).await;
+    let peer = fixture.ids()[1];
+    fixture
+        .configure(|cfg| {
+            for listener in cfg.nodes.get_mut(&peer).unwrap().listeners.values_mut() {
+                if let Listener::NativeUdp(listener) = listener {
+                    listener.endpoints.clear();
+                }
+            }
+        })
+        .await;
+    for index in 0..3 {
+        fixture.refresh(index).await;
+    }
+    let faults = Arc::new(Faults::default());
+    faults.blackhole.store(true, Ordering::SeqCst);
+    let factory = Factory::new(&mut fixture, faults);
+    let mut b = fixture.manager(1, factory.clone()).start().await;
+    report_listener(&mut fixture, TransportProtocol::NativeUdp).await;
+    fixture.refresh(0).await;
+    let mut a = fixture.manager(0, factory.clone()).start().await;
+    linked(&a, 1, TransportProtocol::NativeTcp).await;
+    linked(&b, 1, TransportProtocol::NativeTcp).await;
+    assert_eq!(
+        factory.acquisitions.load(Ordering::SeqCst),
+        1,
+        "local UDP must not precede the configured TCP fallback"
+    );
+    assert_eq!(
+        a.snapshot().unwrap().links[0].acquisition,
+        LinkAcquisition::PublishedEndpoint
+    );
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}

@@ -117,90 +117,103 @@ async fn dial_epoch(
             }
             continue;
         }
-        'candidates: for candidate in candidates.iter() {
-            for (endpoint, acquisition) in candidate.endpoints.iter().enumerate() {
-                if shared
-                    .links
-                    .lock()
-                    .is_ok_and(|links| links.contains_key(&peer))
+        // Provenance is the first priority across all of this peer's carriers.
+        // In particular, an unreachable local UDP address must not delay an
+        // explicitly configured TCP fallback after a coordinated link fails.
+        'candidates: for source in [
+            LinkAcquisition::PublishedEndpoint,
+            LinkAcquisition::LocalEndpoint,
+        ] {
+            for candidate in candidates.iter() {
+                for (endpoint, acquisition) in candidate
+                    .endpoints
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, acquisition)| **acquisition == source)
                 {
-                    break 'candidates;
-                }
-                if matches!(&candidate.driver, Driver::Datagram) {
-                    let _ = datagram::dial(
-                        shared.clone(),
-                        factory.clone(),
-                        peer,
-                        &candidate.key,
-                        &candidate.carrier,
-                        endpoint,
-                        candidate.timeout,
-                    )
-                    .await;
+                    if shared
+                        .links
+                        .lock()
+                        .is_ok_and(|links| links.contains_key(&peer))
+                    {
+                        break 'candidates;
+                    }
+                    if matches!(&candidate.driver, Driver::Datagram) {
+                        let _ = datagram::dial(
+                            shared.clone(),
+                            factory.clone(),
+                            peer,
+                            &candidate.key,
+                            &candidate.carrier,
+                            endpoint,
+                            candidate.timeout,
+                        )
+                        .await;
+                        if lifetime.check().is_err() {
+                            return;
+                        }
+                        if backoff(&shared, &lifetime, &mut updates).await.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    let scope = shared.scope(Some((peer, candidate.carrier.clone())), true);
+                    if scope.check().is_err() {
+                        continue;
+                    }
+                    let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
+                        break;
+                    };
+                    let attempt = async {
+                        let opening = Arc::new(scope::Opening::new(scope.clone()));
+                        let socket = factory
+                            .connect(shared.identity.snapshot(), &candidate.key, endpoint)
+                            .await?;
+                        let raw = Box::new(scope::Stream {
+                            inner: socket.stream,
+                            scope: shared.physical()?,
+                            opening: Some(opening.clone()),
+                        });
+                        let Driver::Stream(connector) = &candidate.driver else {
+                            return Err(Error::Configuration);
+                        };
+                        let stream = connector.connect(raw).await?;
+                        let (stream, id) =
+                            adjacency::dial(&shared.identity, &scope, stream, &candidate.carrier)
+                                .await?;
+                        Ok((
+                            stream,
+                            LinkFact {
+                                id,
+                                socket_id: id,
+                                peer,
+                                carrier: candidate.carrier.clone(),
+                                local: socket.local,
+                                remote: socket.peer,
+                                acquisition: acquisition.clone(),
+                            },
+                            opening,
+                        ))
+                    };
+                    let result = tokio::select! { biased;
+                        _ = updates.changed() => {
+                            scope.cancellation.cancel();
+                            return;
+                        },
+                        result = scope.run(attempt) => result,
+                    };
+                    if let Ok((stream, fact, opening)) = result {
+                        let _ = connected(shared.clone(), stream, fact, opening).await;
+                    }
+                    drop(capacity);
                     if lifetime.check().is_err() {
                         return;
                     }
+                    // Every failure/rejected duplicate is paced; no immediate
+                    // failed-dial loop, including single-candidate publications.
                     if backoff(&shared, &lifetime, &mut updates).await.is_err() {
                         return;
                     }
-                    continue;
-                }
-                let scope = shared.scope(Some((peer, candidate.carrier.clone())), true);
-                if scope.check().is_err() {
-                    continue;
-                }
-                let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
-                    break;
-                };
-                let attempt = async {
-                    let opening = Arc::new(scope::Opening::new(scope.clone()));
-                    let socket = factory
-                        .connect(shared.identity.snapshot(), &candidate.key, endpoint)
-                        .await?;
-                    let raw = Box::new(scope::Stream {
-                        inner: socket.stream,
-                        scope: shared.physical()?,
-                        opening: Some(opening.clone()),
-                    });
-                    let Driver::Stream(connector) = &candidate.driver else {
-                        return Err(Error::Configuration);
-                    };
-                    let stream = connector.connect(raw).await?;
-                    let (stream, id) =
-                        adjacency::dial(&shared.identity, &scope, stream, &candidate.carrier)
-                            .await?;
-                    Ok((
-                        stream,
-                        LinkFact {
-                            id,
-                            socket_id: id,
-                            peer,
-                            carrier: candidate.carrier.clone(),
-                            local: socket.local,
-                            remote: socket.peer,
-                            acquisition: acquisition.clone(),
-                        },
-                        opening,
-                    ))
-                };
-                let result = tokio::select! { biased;
-                    _ = updates.changed() => {
-                        scope.cancellation.cancel();
-                        return;
-                    },
-                    result = scope.run(attempt) => result,
-                };
-                if let Ok((stream, fact, opening)) = result {
-                    let _ = connected(shared.clone(), stream, fact, opening).await;
-                }
-                drop(capacity);
-                if lifetime.check().is_err() {
-                    return;
-                }
-                // Every failure/rejected duplicate is paced; no immediate
-                // failed-dial loop, including single-candidate publications.
-                if backoff(&shared, &lifetime, &mut updates).await.is_err() {
-                    return;
                 }
             }
         }
