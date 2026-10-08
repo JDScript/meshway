@@ -142,9 +142,17 @@ impl FromRef<HttpState> for crate::history::History {
 
 fn routes() -> OpenApiRouter<HttpState> {
     let mut schema_registry = schema::Registry::default();
+    // Each expansion builds its operations and schemas in its own frame.
+    // Inlined into `routes()`, the temporaries of every route would share one
+    // frame, which debug builds do not reuse; that frame outgrew a 2 MiB test
+    // thread stack.
+    #[inline(never)]
+    fn framed<T>(build: impl FnOnce() -> T) -> T {
+        build()
+    }
     macro_rules! routes {
         ($($handler:tt)*) => {{
-            let route = utoipa_axum::routes!($($handler)*);
+            let route = framed(|| utoipa_axum::routes!($($handler)*));
             schema_registry.add(route.0.iter().map(|(name, schema)| (name, schema)));
             route
         }};
