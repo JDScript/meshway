@@ -26,6 +26,35 @@ fn slice(target: NodeConfigurationResponse) -> NodeConfiguration {
     target.full.expect("full target required").configuration
 }
 
+/// A real subscriber renews once `renew_after` has passed. The subscriber
+/// lease is 30 s and a loaded CI host can spend longer than that inside one
+/// flow; the flow asserts cancellation isolation, not lease expiry.
+async fn keep_alive(
+    server: &Server,
+    user: &meshway_protocol::SessionIssuedResponse,
+    endpoint: &str,
+    task: ObservationTask,
+) -> ObservationTask {
+    if chrono::Utc::now() < task.renew_after {
+        return task;
+    }
+    let subscription = task.subscription_id.unwrap();
+    let renewed: ObservationList = json(
+        server.post(
+            &format!("{endpoint}/{subscription}/renew"),
+            user.token.expose(),
+            &(),
+        ),
+        200,
+    )
+    .await;
+    renewed
+        .items
+        .into_iter()
+        .find(|item| item.subscription_id == Some(subscription))
+        .unwrap_or(task)
+}
+
 #[tokio::test]
 async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_source_events() {
     let server = Server::new().await;
@@ -182,6 +211,7 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
             .collect()
     );
     drop(events);
+    let shared = keep_alive(&server, &user, &endpoint, shared).await;
     assert!(accepted.latest.as_ref().unwrap().traffic.is_none());
     let _: ObservationTask = json(server.post(&result_path, a.token.expose(), &result), 200).await;
     let mut wrong_instance = result.clone();
@@ -243,6 +273,7 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         204,
     )
     .await;
+    keep_alive(&server, &user, &endpoint, shared).await;
     server.target(&a).await;
     let tasks: ObservationList =
         json(server.get("/agent-api/v1/tasks", a.token.expose()), 200).await;
