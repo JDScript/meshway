@@ -46,8 +46,9 @@ run = [
 ]
 
 [tasks."check:rust"]
-description = "Check Rust formatting and strict Clippy for every target/feature"
+description = "Check test file bounds, Rust formatting and strict Clippy for every target/feature"
 run = [
+  "python3 scripts/check_test_files.py",
   "cargo fmt --all --check",
   "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
 ]
@@ -62,7 +63,9 @@ run = [
 [tasks."test:fast"]
 description = "nextest `fast` profile: all tests except the measured >=5 s real-time contracts"
 env = { RUST_MIN_STACK = "8388608" }
-run = "umask 077; cargo nextest run --workspace --all-targets --all-features --locked --profile fast"
+# This virtual workspace defaults to all members. Forcing --workspace would
+# override the documented `-- -p <crate>` package selection during iteration.
+run = "umask 077; cargo nextest run --all-targets --all-features --locked --profile fast"
 
 [tasks."test:rust"]
 description = "Test every Rust target/feature with nextest, then Rust doctests"
