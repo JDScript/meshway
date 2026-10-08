@@ -54,11 +54,11 @@ Configuration{
 }}}
 
 macro_rules! actions {
-    ($($variant:ident = $wire:literal),* $(,)?) => {
+    ($($(#[doc = $doc:literal])* $variant:ident = $wire:literal),* $(,)?) => {
         #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq)]
         #[serde(try_from = "String")]
         /// Completed account or network management action recorded in the same transaction as its effects.
-        pub enum ActivityAction { $(#[serde(rename = $wire)] $variant),* }
+        pub enum ActivityAction { $($(#[doc = $doc])* #[serde(rename = $wire)] $variant),* }
         impl TryFrom<String> for ActivityAction {
             type Error = &'static str;
             fn try_from(value: String) -> Result<Self, Self::Error> {
@@ -73,7 +73,15 @@ macro_rules! actions {
                 use utoipa::openapi::schema::{ObjectBuilder, Type};
                 // The wire spelling is the authority for both Serde and Schema;
                 // schema derives do not reliably see macro-interpolated renames.
+                // A string enum has no per-value description slot: list the
+                // variants' doc comments in the type description instead.
+                let description = [$(concat!("`", $wire, "`: ", $($doc,)* "")),*]
+                    .iter()
+                    .map(|line| line.trim_end_matches([':', ' ']).trim().replace(":  ", ": "))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 ObjectBuilder::new().schema_type(Type::String)
+                    .description(Some(description))
                     .enum_values(Some([$($wire),*])).into()
             }
         }

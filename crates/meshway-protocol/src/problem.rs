@@ -25,12 +25,12 @@ wire_object! {
 // utoipa's tagged enum derive does not close each variant object for
 // serde(deny_unknown_fields). Keep the wire enum and closed schema in one list.
 macro_rules! problems {
-    ($($variant:ident($params:ty) = $code:literal),+ $(,)?) => {
+    ($($(#[doc = $doc:literal])* $variant:ident($params:ty) = $code:literal),+ $(,)?) => {
         /// Closed error variants; code determines the exact params type.
         #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
         #[serde(tag = "code", deny_unknown_fields)]
         pub enum Problem {
-            $(#[serde(rename = $code)] $variant {
+            $($(#[doc = $doc])* #[serde(rename = $code)] $variant {
                 /// Structured context defined by this problem code, or an empty object when none is exposed.
                 params: $params,
                 /// Safe fallback text. Clients branch on code.
@@ -54,8 +54,10 @@ macro_rules! problems {
         impl PartialSchema for Problem {
             fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
                 use utoipa::openapi::{Ref, schema::{AdditionalProperties, ObjectBuilder, OneOfBuilder, Type}};
+                // Each variant's doc comment describes its code in the contract.
                 OneOfBuilder::new()
                     $(.item(ObjectBuilder::new()
+                        .description(Some(concat!($($doc, "\n"),*).trim()).filter(|text| !text.is_empty()))
                         .property("code", ObjectBuilder::new().schema_type(Type::String).enum_values(Some([$code])))
                         .property("params", Ref::from_schema_name(<$params>::name()))
                         .property("message", ObjectBuilder::new().schema_type(Type::String))

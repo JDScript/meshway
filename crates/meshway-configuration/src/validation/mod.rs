@@ -129,6 +129,11 @@ impl utoipa::PartialSchema for PreparationKind {
             Self::RuleSetContent,
         ];
         OneOfBuilder::new()
+            .description(Some(
+                "What a draft still needs before it can be applied: an address pool or \
+                 address allocation, a device identity proof, remote rule-set content, or \
+                 `{ material }` naming a listener credential or TLS material to generate or verify.",
+            ))
             .item(
                 ObjectBuilder::new()
                     .schema_type(Type::String)

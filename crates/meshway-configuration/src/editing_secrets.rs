@@ -287,7 +287,11 @@ impl utoipa::PartialSchema for ListenerUpdate {
         };
         // Serde flattens a tagged newtype variant; build each closed variant
         // object with its own `type` discriminator.
-        let mut union = OneOfBuilder::new();
+        let mut union = OneOfBuilder::new().description(Some(
+            "A listener edit keyed by the listener's name: `type` selects the carrier; omitted \
+             VLESS secrets, TLS materials, WebSocket block and response headers keep the \
+             saved values of the same listener.",
+        ));
         for (tag, schema) in [
             ("native_udp", NativeUdpListener::schema()),
             ("native_tcp", NativeTcpListener::schema()),

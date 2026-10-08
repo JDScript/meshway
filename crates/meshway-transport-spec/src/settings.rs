@@ -258,7 +258,13 @@ pub(crate) fn listener_schema(
             schema::{ObjectBuilder, OneOfBuilder, Schema, Type},
         },
     };
-    let mut union = OneOfBuilder::new();
+    let mut union = OneOfBuilder::new().description(Some(if prepared {
+        "An inbound listener as saved: `type` selects the carrier, and credential \
+         and TLS materials are complete. Returned by configuration reads."
+    } else {
+        "An inbound listener as declared: `type` selects the carrier; credential \
+         and TLS materials may be omitted for the Server to generate."
+    }));
     for (tag, schema, credential) in [
         ("native_udp", NativeUdpListener::schema(), None),
         ("native_tcp", NativeTcpListener::schema(), None),
