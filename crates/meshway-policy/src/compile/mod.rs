@@ -467,7 +467,6 @@ fn evaluate_with_local(
             continue;
         }
         if external {
-            let ready = runtime.ready_until_ms.get(&target).copied().unwrap_or(0);
             let role = exit::role(input, runtime, target)?;
             if !exit::available(input.topology(), runtime, target, input.now_ms) || role.is_none() {
                 reason = UnavailableReason::ExitUnavailable;
@@ -476,12 +475,16 @@ fn evaluate_with_local(
             if let Some(role) = role {
                 roles.insert(target, role);
             }
-            capability_expiry = capability_expiry.min(ready);
         }
         // Each ordered exit owns a bounded search. An invalid route produces
         // no permission, without blocking revocation/publication for other demands.
         match graph.paths(demand.source, target, via.as_deref(), MAX_PATHS) {
-            Ok(paths) => candidates.extend(paths),
+            Ok(paths) => {
+                if external && !paths.is_empty() {
+                    capability_expiry = capability_expiry.min(runtime.ready_until_ms[&target]);
+                }
+                candidates.extend(paths);
+            }
             Err(routing::PathError::Cycle) => reason = UnavailableReason::RoutingCycle,
             Err(routing::PathError::Limit) => reason = UnavailableReason::RoutingLimit,
             Err(routing::PathError::Compile(CompileError::EdgeTransportUnavailable { .. })) => {}

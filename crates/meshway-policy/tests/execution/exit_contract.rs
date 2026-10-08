@@ -300,6 +300,37 @@ fn missing_capability_withdraws_permit_but_keeps_role_and_capture() {
 }
 
 #[test]
+fn unreachable_primary_capability_deadline_cannot_shorten_a_valid_backup_permit() {
+    let (mut cfg, d, mut runtime) = setup();
+    cfg.nodes.get_mut(&node(2)).unwrap().exit_enabled = true;
+    cfg.routing
+        .egress
+        .profiles
+        .get_mut("exit")
+        .unwrap()
+        .fallback = RouteAction::Exit {
+        nodes: vec![format!("node:{}", node(2)), format!("node:{}", node(4))],
+        via: vec![format!("node:{}", node(3))],
+    };
+    cfg.topology.push(TopologyRule {
+        remark: String::new(),
+        action: TopologyAction::Block,
+        a: format!("node:{}", node(2)),
+        b: "*".into(),
+        transports: Input::Omitted,
+    });
+    runtime
+        .instances
+        .insert(node(2), node(2).to_string().parse().unwrap());
+    runtime.ready_until_ms.insert(node(2), 1001);
+    let result = compiled(&cfg, &d, &runtime);
+    let permit = permit(&result);
+    assert_eq!(permit.expires_at_ms, 100_000);
+    assert!(!permit.exit.as_ref().unwrap().roles.contains_key(&node(2)));
+    assert!(permit.exit.as_ref().unwrap().roles.contains_key(&node(4)));
+}
+
+#[test]
 fn path_evaluation_projects_fresh_exit_failure_without_direct_fallback() {
     use meshway_configuration::evaluation::{EvaluationOutcome, TargetProblem};
     let (cfg, _, mut runtime) = setup();
