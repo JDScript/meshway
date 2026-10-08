@@ -168,7 +168,7 @@ mise run validate:matrix --parallel 4
 mise run validate:matrix --parallel 2 --short --rows nat/off nat+fallback/off
 ```
 
-`scripts/validate_matrix.py` 的 `ROWS` 是可执行行的唯一声明，与[验收矩阵](/v2/node/validation#验收矩阵)的九个隔离入口对应。`--rows` 使用行 ID，省略时运行全部；重复 ID 只执行一次。runtime 构建一次，七个 runtime 行和 packet 的内嵌 daemon 检查都使用同一 `--artifacts`；packet／TUN 各构建一次。三个入口共享 `target/node-kernel-tests/build.lock`，只在构建及复制产物阶段持锁；导入已经冻结且逐文件校验的产物与执行阶段不持构建锁。
+`scripts/validate_matrix.py` 的 `ROWS` 是可执行行的唯一声明，与[验收矩阵](/v2/node/validation#验收矩阵)的十一个隔离入口对应。`--rows` 使用行 ID，省略时运行全部；重复 ID 只执行一次。runtime 构建一次，九个 runtime 行和 packet 的内嵌 daemon 检查都使用同一 `--artifacts`；packet／TUN 各构建一次。三个入口共享 `target/node-kernel-tests/build.lock`，只在构建及复制产物阶段持锁；导入已经冻结且逐文件校验的产物与执行阶段不持构建锁。
 
 构建阶段从可变 Cargo target 复制并冻结产物。导入阶段仍校验源码／目标／二进制摘要，同一文件系统以硬链接共享只读可执行文件，避免每行复制多 GiB 的 debug 程序；跨文件系统才复制。容器对程序目录只读挂载，可写的外来产物不作为冻结输入接受。
 

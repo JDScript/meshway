@@ -54,9 +54,9 @@ UDP 通道使用新鲜 nonce 的认证 Ping／Pong 检查存活，默认间隔 2
 
 默认预算为 64 连接、16 listener、128 候选；事件的帧／容量双重上限与批次语义见[UDP 控制消息预算](/v2/node/connectivity#udp-控制消息预算)。握手期限 5 秒，重试退避 1 秒。事件与 snapshot 来自真实 listener／link 生命周期，不制造 RTT／丢包数据。停止取消并 join 任务，guard 在阻塞 I/O 中持续检查。
 
-Control 认可的直接 publication／续租交接可保留 Native TCP／UDP 的实际 socket、Session、channel ID 与认证 transcript。交接要求资源声明及原绑定可保留，并逐 peer 重验当前邻接权限、注册材料与原健康期限；失去资格的 peer 退休。socket ID／generation 随实际描述符生命周期变化，配置引用随获准交接更新；原 STUN 观测不重新计时。
+Control 认可的直接 publication／续租交接可保留 Native TCP／UDP 及材料未变化的 VLESS／Trojan TCP/TLS 的实际 socket、Session、channel ID 与认证 transcript。交接要求资源声明及原绑定可保留，并逐 peer 重验当前邻接权限、注册材料与原健康期限；失去资格的 peer 退休。socket ID／generation 随实际描述符生命周期变化，配置引用随获准交接更新；原 STUN 观测不重新计时。
 
-Underlay 按 descriptor 的实际资源／参数绑定保留或不可逆取消 token，Manager 差量停止并 join 变化项、新增资源；移除无关 B 不拆除仍获准的 A–R 通道。共享 UDP descriptor 仍被其他合法通道使用时继续保留。原 opening、discovery、attempt 和排队输出各自保留旧 guard，不能借 descriptor 续接获得新权限。source bind、listener 参数、材料或其他不可保留的绑定变化要求对应资源重建；新增必需资源失败仍阻断整体 applied。活动 VLESS／Trojan 的内部缓冲写入交接尚未支持。
+Underlay 按 descriptor 的实际资源／参数绑定保留或不可逆取消 token，Manager 差量停止并 join 变化项、新增资源；移除无关 B 不拆除仍获准的 A–R 通道。共享 UDP descriptor 仍被其他合法通道使用时继续保留。原 opening、discovery、attempt 和排队输出各自保留旧 guard，不能借 descriptor 续接获得新权限。VLESS／Trojan 的 TLS、凭据与 WS 参数参与精确资源比较，内部缓冲写入仍受下文[取消与关闭](#取消与关闭)的冻结输出 scope 约束。source bind、listener 参数、材料或其他不可保留的绑定变化要求对应资源重建；新增必需资源失败仍阻断整体 applied。TLS／WS 材料轮换的整组行为仍未验收，见[验收范围](/v2/node/validation)。
 
 物理 gate 与每次操作的冻结 scope 分离：无当前权限时只在原期限内保留失活资源，不能执行 I/O；只有合法后继可恢复未来操作。旧 packet、health、STUN 或 READY 输出仍按原 scope 失效，进行中的穿透授权不跨 publication 续命。SecureNode 的流／circuit 继续使用独立的[连续性规则](/v2/node/dataplane#候选受保护-circuit)。TCP 建连与重连、Native UDP 静态端点均不构成打洞证明；协调穿透范围与验收见[连接获取](/v2/node/connectivity)。
 

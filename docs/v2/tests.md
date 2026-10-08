@@ -55,8 +55,9 @@ fast profile 排除的 45 个测试都是**真实时间合同**（lease 到期�
 | `test:tun:linux` | tun | 秒级 | 真实 TUN 设备、双栈包 I/O、GSO/GRO 能力 |
 | `test:packet:linux` | packet | ~9 分钟 | A→R→B 受保护包流：小包、满 MTU、MTU+1 拒绝、多 MSS TCP、原路径回复、内嵌真实 daemon 整组 |
 | `test:runtime:linux` | udp/off、tcp/off、udp/resolv-conf、udp/resolved、nat/off、nat+fallback/off、nat/resolved | 各 ~8 分钟（NAT 行失败时更短） | 真实 meshwayd／CLI＋Server：接入、续租、125 秒流、HTTP 中断恢复、Access 撤销恢复、lease 失效、离线清理；DNS 行加系统解析；NAT 行加双路由器穿透与 pcap 证据 |
+| `test:runtime:linux` | vless/off、trojan/off | 各 ~8 分钟 | 同一 daemon 共同场景；A/B 只经所选 TCP/TLS 承载拨入 R，SecureNode 包流与原路径回复；独立 TLS 材料与精确叶证书验证 |
 
-9 行由 `validate:matrix` 统一定义；planck 并行 4 约 14.5 分钟；`--short` 把流缩到约 30 秒只作诊断。当前每行状态见[验收范围](/v2/node/validation)。
+11 行由 `validate:matrix` 统一定义；原九行矩阵 planck 并行 4 约 14.5 分钟；`--short` 把流缩到约 30 秒只作诊断。当前每行状态见[验收范围](/v2/node/validation)。
 
 ## Fixture 与工具
 
