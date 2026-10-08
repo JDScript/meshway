@@ -1,3 +1,4 @@
+import { cn } from "@meshway/ui/cn"
 import { ChevronDownIcon } from "lucide-react"
 import { useState, type ReactNode } from "react"
 
@@ -15,7 +16,6 @@ import {
   type ListenerFields,
   type ListenerProblem,
 } from "@/lib/nodes/listener-model"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 export const fieldLabelClass = cn(

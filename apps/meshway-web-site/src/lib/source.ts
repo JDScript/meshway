@@ -1,0 +1,18 @@
+import { loader } from "fumadocs-core/source"
+import { metaSchema, pageSchema } from "fumadocs-core/source/schema"
+import { defineDocs } from "fumadocs-mdx/macro"
+
+import { i18n } from "./i18n"
+
+const docs = defineDocs({
+  dir: "content/docs",
+  docs: { schema: pageSchema },
+  meta: { schema: metaSchema },
+})
+
+/** The user docs, in both languages (`/docs`, `/en/docs`). */
+export const source = loader({
+  baseUrl: "/docs",
+  i18n,
+  source: docs.toFumadocsSource(),
+})

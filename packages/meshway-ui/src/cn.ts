@@ -1,9 +1,10 @@
 import { createCn } from "cn/config"
 
 /**
- * The theme's own scales (`@theme` in index.css). Class merging must know
+ * The theme's own scales (`@theme` in theme.css). Class merging must know
  * them: unknown, `text-meta` would count as a colour and lose to
- * `text-muted-foreground`. `tests/styles.test.ts` keeps this list in step.
+ * `text-muted-foreground`. The console's `tests/styles.test.ts` keeps this
+ * list in step.
  */
 const THEME_SCALES = {
   text: ["meta", "row", "lead", "display"],

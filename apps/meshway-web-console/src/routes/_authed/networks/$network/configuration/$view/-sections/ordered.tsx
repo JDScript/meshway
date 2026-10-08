@@ -1,8 +1,8 @@
+import { Button } from "@meshway/ui/button"
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import { useState, type KeyboardEvent, type ReactNode } from "react"
 
-import { Button } from "@/components/ui/button"
 import { moved } from "@/lib/configuration/routing"
 import { SPRING_LAYOUT } from "@/lib/ease"
 import { m } from "@/paraglide/messages.js"

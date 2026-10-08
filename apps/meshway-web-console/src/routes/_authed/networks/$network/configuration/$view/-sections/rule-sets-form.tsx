@@ -3,6 +3,8 @@ import type {
   RuleSetFormat,
   RuleSetView,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { CircleAlertIcon, CircleCheckIcon, RefreshCwIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
@@ -23,7 +25,6 @@ import {
   setRefusal,
   type Note,
 } from "@/components/configuration/form-kit"
-import { Button } from "@/components/ui/button"
 import { useNow } from "@/hooks/use-now"
 import { RESOURCE_PROBLEM } from "@/lib/configuration/diagnostics"
 import { pointerOf } from "@/lib/configuration/jsonc"
@@ -40,7 +41,6 @@ import {
   type RuleSetMap,
 } from "@/lib/configuration/rule-sets"
 import { agoTime, dateTime } from "@/lib/format"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { AddKey, KeyInput, type KeyRule } from "./keyed-form"

@@ -6,6 +6,7 @@ import {
   type NodeInventoryResponse,
   type NodeInventoryView,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { BanIcon, Trash2Icon, Undo2Icon } from "lucide-react"
 import { useState } from "react"
@@ -23,7 +24,6 @@ import { CopyButton } from "@/components/chrome/copy-button"
 import { ConfirmDialog } from "@/components/chrome/glass-dialog"
 import { DangerRow, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
-import { Button } from "@/components/ui/button"
 import {
   holdsDocument,
   holdsOperations,

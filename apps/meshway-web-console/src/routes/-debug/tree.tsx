@@ -1,7 +1,7 @@
+import { cn } from "@meshway/ui/cn"
 import { ChevronRightIcon } from "lucide-react"
 import { useState } from "react"
 
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 // Decoded data as a tree that opens a level at a time: only what is open

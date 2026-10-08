@@ -1,4 +1,5 @@
 import type { NodeInventoryView, StateView } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { ArrowUpRightIcon } from "lucide-react"
 
@@ -7,7 +8,6 @@ import { useAddressGeo } from "@/api/queries/ip-geo"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
-import { Button } from "@/components/ui/button"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
 import {

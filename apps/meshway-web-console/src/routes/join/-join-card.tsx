@@ -4,6 +4,7 @@ import {
   redeemJoinLink,
   type JoinLinkInspection,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState, type FormEvent } from "react"
@@ -26,7 +27,6 @@ import {
   InlineSignIn,
   type InlineEntry,
 } from "@/components/entry/inline-sign-in"
-import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
 import { Skeleton } from "@/components/ui/skeleton"
 import { dateTime } from "@/lib/format"

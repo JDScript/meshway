@@ -6,6 +6,8 @@ import {
   type NetworkSummary,
   type NodeInventoryResponse,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { Fragment, useId, useRef, useState, type FormEvent } from "react"
@@ -18,7 +20,6 @@ import { BusyLabel } from "@/components/chrome/busy-label"
 import { FieldInput } from "@/components/chrome/form"
 import { Section } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { profileText } from "@/lib/configuration/diagnostics"
 import { isDirty, type DraftInput } from "@/lib/configuration/draft-state"
@@ -28,7 +29,6 @@ import {
   targetOf,
 } from "@/lib/configuration/evaluation"
 import { shortId } from "@/lib/format"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 

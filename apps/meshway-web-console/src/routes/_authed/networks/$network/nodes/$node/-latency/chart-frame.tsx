@@ -1,6 +1,5 @@
+import { cn } from "@meshway/ui/cn"
 import type { PointerEvent, ReactNode } from "react"
-
-import { cn } from "@/lib/utils"
 
 // The frame both latency charts draw in: a line above naming the scale's
 // top and what the pointer is on, the plot over a strip of marks, and the

@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils"
+import { cn } from "@meshway/ui/cn"
 
 export type DotShape = "live" | "solid" | "hollow"
 

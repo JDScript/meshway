@@ -4,6 +4,7 @@ import type {
   ListenerView,
   NodeState,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { useQuery } from "@tanstack/react-query"
 import { PencilIcon, PlusIcon, Trash2Icon, Undo2Icon } from "lucide-react"
 import { useState, type ReactNode } from "react"
@@ -43,7 +44,6 @@ import {
   type Preset,
 } from "@/lib/nodes/listener-model"
 import { listenerRuntime } from "@/lib/nodes/state-model"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { useNodeConfiguration } from "../-draft"

@@ -1,4 +1,5 @@
 import { changeAccountEmail } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQueryClient } from "@tanstack/react-query"
 import { useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
@@ -8,7 +9,6 @@ import { failureText } from "@/api/failure"
 import { BusyLabel } from "@/components/chrome/busy-label"
 import { TextField } from "@/components/chrome/form"
 import { Section } from "@/components/chrome/section"
-import { Button } from "@/components/ui/button"
 import { formText } from "@/lib/form"
 import { m } from "@/paraglide/messages.js"
 

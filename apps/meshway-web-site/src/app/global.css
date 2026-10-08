@@ -1,0 +1,19 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/shadcn.css";
+@import "fumadocs-ui/css/preset.css";
+@import "@meshway/ui/theme.css";
+
+/* Fumadocs' callout colours from the shared palette (shadcn.css maps the rest). */
+@theme inline {
+  --color-fd-success: var(--success);
+  --color-fd-warning: var(--warning);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}

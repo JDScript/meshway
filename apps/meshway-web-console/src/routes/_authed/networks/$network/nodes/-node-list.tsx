@@ -1,4 +1,5 @@
 import type { NodeInventoryResponse, StateView } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { PlusIcon, SearchIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -25,7 +26,6 @@ import { editsNode, isDeleted } from "@/lib/configuration/node-operations"
 import { shownNodes } from "@/lib/nodes/model"
 import { fullReport, stateOf } from "@/lib/nodes/state-model"
 import { lastSeen, nodeStatus } from "@/lib/nodes/status"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 

@@ -1,10 +1,10 @@
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { useEffect, type ComponentProps, type ReactNode } from "react"
 
 import { Brand } from "@/components/chrome/brand"
 import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
-import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { cn } from "@/lib/utils"
 import { showWelcomeGlobe } from "@/state/globe"
 
 /** How long a card takes to dissolve before the page it hands over to is opened. */

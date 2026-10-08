@@ -1,4 +1,5 @@
 import type { DialerSetUpdate, DialerStream } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 
 import { FieldOption, FieldSelect } from "@/components/chrome/field-select"
 import { FieldInput } from "@/components/chrome/form"
@@ -14,7 +15,6 @@ import {
   withProtocol,
   type DialerProtocol,
 } from "@/lib/configuration/dialer-model"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 /** A transport protocol's name, wherever one is chosen (dialers, an edge's transports). */

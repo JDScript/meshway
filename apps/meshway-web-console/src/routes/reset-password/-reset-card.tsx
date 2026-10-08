@@ -2,6 +2,7 @@ import {
   inspectPasswordReset,
   redeemPasswordReset,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState, type FormEvent } from "react"
@@ -19,7 +20,6 @@ import {
   EntrySubmit,
   HANDOFF_MS,
 } from "@/components/entry/frame"
-import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
 import {
   passwordRefusalText,

@@ -2,6 +2,7 @@ import {
   createNetwork,
   type CreateNetworkRequest,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQueryClient } from "@tanstack/react-query"
 import { useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
@@ -12,7 +13,6 @@ import { networkQuery, networksQuery } from "@/api/queries/network"
 import { BusyLabel } from "@/components/chrome/busy-label"
 import { TextField, type FieldSize } from "@/components/chrome/form"
 import { GlassDialog } from "@/components/chrome/glass-dialog"
-import { Button } from "@/components/ui/button"
 import { useNetworkNameCheck } from "@/hooks/use-network-name-check"
 import { formText } from "@/lib/form"
 import { m } from "@/paraglide/messages.js"

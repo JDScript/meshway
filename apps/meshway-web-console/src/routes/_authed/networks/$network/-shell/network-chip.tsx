@@ -1,9 +1,9 @@
 import type { NetworkSummary } from "@meshway/control-client"
+import { BrandMark } from "@meshway/ui/brand"
 import { useNavigate } from "@tanstack/react-router"
 import { ChevronsUpDownIcon } from "lucide-react"
 import { useState } from "react"
 
-import { BrandMark } from "@/components/chrome/brand"
 import { CreateNetworkDialog } from "@/components/network/create-network"
 import {
   DropdownMenu,

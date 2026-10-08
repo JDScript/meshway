@@ -1,8 +1,8 @@
+import { cn } from "@meshway/ui/cn"
 import type { CSSProperties, ReactNode } from "react"
 
 import { Drawer, DrawerContent } from "@/components/ui/drawer"
 import { useKeptWhile } from "@/hooks/use-kept"
-import { cn } from "@/lib/utils"
 
 import {
   MOBILE_EDGE,

@@ -1,10 +1,10 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
+import { cn } from "@meshway/ui/cn"
 import { CheckIcon, ChevronRightIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import * as React from "react"
 
 import { SPRING_LAYOUT } from "@/lib/ease"
-import { cn } from "@/lib/utils"
 
 // Menus on glass. The highlighted item (pointer or keyboard) has a soft
 // pill that glides from item to item, AgentUI's pattern as in the dock;

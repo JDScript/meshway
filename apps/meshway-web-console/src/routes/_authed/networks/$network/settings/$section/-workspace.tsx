@@ -1,4 +1,5 @@
 import type { NetworkSummary } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { LogOutIcon } from "lucide-react"
 import { useState } from "react"
 
@@ -11,7 +12,6 @@ import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
 import { LeaveNetworkDialog } from "@/components/network/removal"
 import { surfaceTitleId } from "@/components/surface/page-frame"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { calendarDate } from "@/lib/format"
 import { trimWhiteSpace } from "@/lib/network-name"

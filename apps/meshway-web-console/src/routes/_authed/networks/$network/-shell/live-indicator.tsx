@@ -1,11 +1,12 @@
-import { Button } from "@/components/ui/button"
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
+
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { connectionWords } from "@/lib/live-labels"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useConnection, type Connection } from "@/state/live"
 

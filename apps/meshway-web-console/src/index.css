@@ -1,110 +1,29 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/inter";
-
-@custom-variant dark (&:is(.dark *));
+@import "@meshway/ui/theme.css";
 
 /*
- * Meshway's tokens beyond shadcn's. Surfaces float over the globe; anything
- * set close inside one follows its corner (inner radius = outer − inset).
- * Geometry (edges, panel sizes) is not here: it is shared with the globe and
- * lives in components/surface/layout.ts, which publishes it as CSS variables.
+ * The console's own tokens over the shared look (@meshway/ui/theme.css).
+ * Surfaces float over the globe; anything set close inside one follows its
+ * corner (inner radius = outer − inset). Geometry (edges, panel sizes) is
+ * not here: it is shared with the globe and lives in
+ * components/surface/layout.ts, which publishes it as CSS variables.
  */
 @theme static {
-  /* Page panels and popovers over the globe. */
-  --radius-surface: 22px;
-  /* Workspaces and the sign-in card. */
-  --radius-sheet: 28px;
-  /* Rows 8px inside a 22px surface (22 − 8). */
-  --radius-row: 14px;
-  /* Tiles and buttons 16px inside a 28px sheet (28 − 16). */
-  --radius-tile: 12px;
-
   /* The measure of a form-like workspace (a tag, a member, adding a node, the account); data-dense views (a node's tabs) take the full width. */
   --container-workspace: 40rem;
-
-  /* Type roles Tailwind's scale lacks. */
-  --text-meta: 11px;
-  --text-meta--line-height: 16px;
-  --text-row: 13px;
-  --text-row--line-height: 18px;
-  --text-lead: 15px;
-  --text-lead--line-height: 20px;
-  --text-display: 26px;
-  --text-display--line-height: 32px;
-
-  /* Motion: panels settle softly; first entrances are longer (AgentUI's EASE_OUT); leaving is quick. The one spring lives in lib/ease.ts. */
-  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-leave: cubic-bezier(0.4, 0, 1, 1);
 }
 
 @theme inline {
-  /* Fills on glass: a resting inset, a hovered row, the current row. */
-  --color-fill-subtle: var(--fill-subtle);
-  --color-fill-hover: var(--fill-hover);
-  --color-fill-selected: var(--fill-selected);
-  --color-fill-raised: var(--fill-raised);
-  --color-divider: var(--divider);
-}
-
-@theme inline {
-  --font-heading: var(--font-sans);
-  --font-sans:
-    "Inter Variable", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    sans-serif;
-  --font-mono:
-    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-  --color-success: var(--success);
-  --color-warning: var(--warning);
+  /* Unsaved edits, wherever they are marked. */
   --color-draft: var(--draft);
-  --color-brand: var(--brand);
-  --color-field: var(--field);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-foreground: var(--foreground);
-  --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 /*
- * Meshway palette: cool neutrals; one signal colour carries live state,
- * focus and the primary accent. The globe reads every --globe-* / --link-* token
- * at runtime (globe/colors.ts).
+ * The console's palette over the shared one: drafts, node statuses, the
+ * globe and its links. The globe reads every --globe-* / --link-* token at
+ * runtime (globe/colors.ts).
  */
 /* How far a scrolled body's top edge fades (see .scroll-edge). */
 @property --scroll-edge-fade {
@@ -115,76 +34,13 @@
 :root {
   --scroll-edge-depth: 16px;
   --grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-  --signal: oklch(0.27 0.012 270);
-  --signal-glow: oklch(0.22 0.012 270);
-
-  --background: oklch(0.984 0.002 270);
-  --foreground: oklch(0.2 0.01 270);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.01 270);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.01 270);
-  --primary: oklch(0.22 0.01 270);
-  --primary-foreground: oklch(0.985 0.002 270);
-  --secondary: oklch(0.955 0.003 270);
-  --secondary-foreground: oklch(0.22 0.01 270);
-  --muted: oklch(0.955 0.003 270);
-  --muted-foreground: oklch(0.52 0.01 270);
-  --accent: oklch(0.955 0.003 270);
-  --accent-foreground: oklch(0.22 0.01 270);
-  --destructive: oklch(0.58 0.22 25);
-  --border: oklch(0.91 0.004 270);
-  --input: oklch(0.89 0.005 270);
-  --ring: color-mix(in oklab, var(--signal) 70%, transparent);
-  --chart-1: var(--signal);
-  --chart-2: oklch(0.6 0.14 160);
-  --chart-3: oklch(0.7 0.15 65);
-  --chart-4: oklch(0.58 0.22 25);
-  --chart-5: oklch(0.55 0.01 270);
-  --radius: 0.75rem;
-  --sidebar: oklch(0.975 0.003 270);
-  --sidebar-foreground: oklch(0.2 0.01 270);
-  --sidebar-primary: oklch(0.22 0.01 270);
-  --sidebar-primary-foreground: oklch(0.985 0.002 270);
-  --sidebar-accent: oklch(0.94 0.004 270);
-  --sidebar-accent-foreground: oklch(0.22 0.01 270);
-  --sidebar-border: oklch(0.91 0.004 270);
-  --sidebar-ring: var(--ring);
-
-  --brand: var(--signal);
-  --success: oklch(0.6 0.14 160);
-  --warning: oklch(0.7 0.15 65);
   /* Unsaved edits, wherever they are marked (a dot, the word, the draft's revision). */
   --draft: var(--warning);
-  /* A field is recessed into the glass: a touch deeper than a tile (fill-subtle). */
-  --field: color-mix(in oklab, var(--foreground) 6%, transparent);
-
-  --glass-top: oklch(1 0 0 / 0.86);
-  --glass-bottom: oklch(0.985 0.002 270 / 0.76);
-  --glass-highlight: oklch(1 0 0 / 0.95);
-  --glass-edge-strong: oklch(1 0 0 / 0.95);
-  --glass-edge-weak: oklch(0.25 0.01 270 / 0.14);
-  /* Light glass also takes a hairline: on a pale canvas the lit edge alone barely separates it. */
-  --glass-shadow:
-    0 0 0 1px oklch(0.25 0.01 270 / 0.05),
-    0 28px 70px -28px oklch(0.25 0.02 270 / 0.32),
-    0 2px 8px -2px oklch(0.25 0.02 270 / 0.1);
-
-  --fill-subtle: color-mix(in oklab, var(--foreground) 4%, transparent);
-  /* Pointing at a row is a faint step; the chosen row is clearly more, and stays so under the pointer. */
-  --fill-hover: color-mix(in oklab, var(--foreground) 5%, transparent);
-  /* Pointing at something already filled: laid over its fill. */
-  --fill-tint: color-mix(in oklab, var(--foreground) 3%, transparent);
-  --fill-selected: color-mix(in oklab, var(--foreground) 10%, transparent);
-  --divider: color-mix(in oklab, var(--foreground) 12%, transparent);
-  /* A chosen segment, raised off its track. */
-  --fill-raised: var(--background);
   /* A node's status: online, needs a look, gone, off (shapes differ too, see .status-dot). */
   --status-online: var(--success);
   --status-attention: var(--warning);
   --status-offline: var(--destructive);
   --status-inactive: oklch(0.7 0.008 270);
-
   --globe-surface: oklch(0.997 0.001 270);
   --globe-rim: color-mix(in oklab, var(--signal) 10%, oklch(0.86 0.006 270));
   --globe-land: oklch(0.52 0.012 270);
@@ -214,54 +70,7 @@
 }
 
 .dark {
-  --signal: oklch(0.94 0.01 270);
-  --signal-glow: oklch(1 0 0);
-
-  --background: oklch(0.125 0.006 270);
-  --foreground: oklch(0.955 0.004 270);
-  --card: oklch(0.165 0.007 270);
-  --card-foreground: oklch(0.955 0.004 270);
-  --popover: oklch(0.18 0.008 270);
-  --popover-foreground: oklch(0.955 0.004 270);
-  --primary: oklch(0.95 0.004 270);
-  --primary-foreground: oklch(0.17 0.007 270);
-  --secondary: oklch(0.22 0.008 270);
-  --secondary-foreground: oklch(0.955 0.004 270);
-  --muted: oklch(0.22 0.008 270);
-  --muted-foreground: oklch(0.7 0.01 270);
-  --accent: oklch(0.24 0.009 270);
-  --accent-foreground: oklch(0.955 0.004 270);
-  --destructive: oklch(0.68 0.2 22);
-  --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 13%);
-  --chart-2: oklch(0.76 0.14 165);
-  --chart-3: oklch(0.8 0.15 75);
-  --chart-4: oklch(0.68 0.2 22);
-  --chart-5: oklch(0.6 0.01 270);
-  --sidebar: oklch(0.15 0.007 270);
-  --sidebar-foreground: oklch(0.955 0.004 270);
-  --sidebar-primary: var(--signal);
-  --sidebar-primary-foreground: oklch(0.15 0.007 270);
-  --sidebar-accent: oklch(0.22 0.008 270);
-  --sidebar-accent-foreground: oklch(0.955 0.004 270);
-  --sidebar-border: oklch(1 0 0 / 9%);
-
-  --success: oklch(0.76 0.14 165);
-  --warning: oklch(0.8 0.15 75);
-  --fill-raised: oklch(0.32 0.009 270);
-  /* A light ink on dark glass reads stronger: the chosen row needs a wider step over hover. */
-  --fill-selected: color-mix(in oklab, var(--foreground) 14%, transparent);
   --status-inactive: oklch(0.5 0.01 270);
-  --field: oklch(1 0 0 / 0.045);
-
-  --glass-top: oklch(0.24 0.008 270 / 0.8);
-  --glass-bottom: oklch(0.18 0.007 270 / 0.72);
-  --glass-highlight: oklch(1 0 0 / 0.12);
-  --glass-edge-strong: oklch(1 0 0 / 0.2);
-  --glass-edge-weak: oklch(1 0 0 / 0.05);
-  --glass-shadow:
-    0 36px 90px -30px oklch(0 0 0 / 0.75), 0 2px 10px -2px oklch(0 0 0 / 0.35);
-
   --globe-surface: oklch(0.3 0.03 250);
   --globe-rim: color-mix(in oklab, var(--signal) 22%, oklch(0.32 0.01 270));
   --globe-land: oklch(0.72 0.01 270);
@@ -353,60 +162,7 @@
   --link-pulse: oklch(0.9 0.1 350);
 }
 
-@layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
-  button:not(:disabled),
-  [role="button"]:not(:disabled) {
-    cursor: pointer;
-  }
-  html {
-    @apply font-sans;
-  }
-  /* Thin scrollbars that take the glass's ink, wherever something scrolls. */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent)
-      transparent;
-  }
-}
 @layer components {
-  /*
-   * Floating glass: a translucent gradient fill, a strong blur, a lit top
-   * edge and a gradient hairline border. Every floating surface uses it. The
-   * fill, blur and shadow are set unlayered (end of file) so a component's
-   * own background or ring utilities never show through the glass.
-   */
-  .glass {
-    position: relative;
-    isolation: isolate;
-  }
-  .glass::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    padding: 1px;
-    border-radius: inherit;
-    background: linear-gradient(
-      165deg,
-      var(--glass-edge-strong),
-      var(--glass-edge-weak) 38%,
-      var(--glass-edge-weak) 70%,
-      var(--glass-edge-strong)
-    );
-    -webkit-mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
-  }
-
   /*
    * The space behind the globe. Dark: a deep vignette (stars come from the
    * globe itself). Light: soft daylight from two corners. Both carry a fine
@@ -1097,14 +853,6 @@
 }
 
 /* Unlayered, so it wins over a component's own fill, ring and shadow utilities. */
-.glass {
-  background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
-  -webkit-backdrop-filter: blur(36px) saturate(1.6);
-  backdrop-filter: blur(36px) saturate(1.6);
-  box-shadow:
-    inset 0 1px 0 0 var(--glass-highlight),
-    var(--glass-shadow);
-}
 /* shadcn's Drawer popup, wearing the glass: no edge line, one corner radius (a sheet's unless `--drawer-radius` says otherwise). */
 [data-slot="drawer-popup"].glass {
   border: 0;

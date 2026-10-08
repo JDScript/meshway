@@ -1,4 +1,5 @@
 import type { NetworkSummary } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { useEffect, useMemo } from "react"
 
 import { GlassToolbar } from "@/components/chrome/glass-toolbar"
@@ -15,7 +16,6 @@ import {
 } from "@/components/surface/pages"
 import { useIsMobile } from "@/hooks/use-media-query"
 import { useViewportHeight } from "@/hooks/use-viewport"
-import { cn } from "@/lib/utils"
 import { useBooted } from "@/state/boot"
 import { setGlobe } from "@/state/globe"
 

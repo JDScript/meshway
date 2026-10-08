@@ -2,6 +2,7 @@ import type {
   ConfigurationOperation,
   ConfigurationView,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { useNavigate } from "@tanstack/react-router"
 import { TagIcon, UserIcon } from "lucide-react"
 
@@ -19,7 +20,6 @@ import {
   settingsOf,
   tagsOf,
 } from "@/lib/configuration/node-operations"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 /**

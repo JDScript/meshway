@@ -1,4 +1,5 @@
 // From AgentUI (https://www.agentui.pro, registry source `components/motion/shared-layout-bg.tsx`); only formatted to this project's style.
+import { cn } from "@meshway/ui/cn"
 import {
   AnimatePresence,
   motion,
@@ -21,7 +22,6 @@ import {
 } from "react"
 
 import { SPRING_LAYOUT } from "@/lib/ease"
-import { cn } from "@/lib/utils"
 
 interface SharedLayoutBgProps extends Omit<
   HTMLAttributes<HTMLElement>,

@@ -2,6 +2,8 @@ import type {
   ConfigurationRevisionSummary,
   NetworkSummary,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { ArrowLeftIcon, RotateCcwIcon } from "lucide-react"
 import { useMemo, useState } from "react"
@@ -29,13 +31,11 @@ import { Tile } from "@/components/chrome/tile"
 import { ChangeList, JsonBlock } from "@/components/configuration/change-list"
 import { causeLabel } from "@/components/configuration/labels"
 import { surfaceTitleId } from "@/components/surface/page-frame"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { useIsMobile } from "@/hooks/use-media-query"
 import { ACTOR_WORDS, actorText } from "@/lib/activity"
 import { dateTime } from "@/lib/format"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import type { HistorySelection } from "../../-navigation"

@@ -1,4 +1,5 @@
 import type { RouteAction, RuleAction } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import {
   AtSignIcon,
   EqualIcon,
@@ -36,7 +37,6 @@ import {
   SET_PREFIX,
   type ProfileChoice,
 } from "@/lib/configuration/routing"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { MoveButtons } from "./ordered"

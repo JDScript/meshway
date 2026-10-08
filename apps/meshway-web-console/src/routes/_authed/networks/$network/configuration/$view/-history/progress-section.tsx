@@ -3,6 +3,7 @@ import type {
   ConfigurationNodeProgress,
   ReceiptFreshness,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 
@@ -17,7 +18,6 @@ import { StatusDot, type DotShape } from "@/components/chrome/status-dot"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
 import { clockTime, dateTime } from "@/lib/format"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 const phaseLabel: Record<ApplicationPhase, () => string> = {

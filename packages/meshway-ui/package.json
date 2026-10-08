@@ -1,0 +1,42 @@
+{
+  "name": "@meshway/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./theme.css": "./src/theme.css",
+    "./cn": "./src/cn.ts",
+    "./button": "./src/button.tsx",
+    "./brand": "./src/brand.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint --max-warnings=0 --cache --cache-location node_modules/.cache/eslint/ .",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
+    "format": "prettier --write \"**/*.{ts,tsx,css,json}\"",
+    "format:check": "prettier --check --cache \"**/*.{ts,tsx,css,json}\""
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.8.0",
+    "@fontsource-variable/inter": "^5.3.0",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.4.0"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10",
+    "@ianvs/prettier-plugin-sort-imports": "^4.7.1",
+    "@types/react": "^19",
+    "eslint": "^10",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17",
+    "prettier": "^3.9.9",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "react": "^19.2.8",
+    "tailwindcss": "^4",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8"
+  }
+}

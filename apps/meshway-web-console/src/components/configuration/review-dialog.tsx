@@ -5,6 +5,7 @@ import type {
   PreparationRequirement,
   PreparedRuleSet,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { CircleAlertIcon } from "lucide-react"
@@ -13,7 +14,6 @@ import { configurationQuery, revisionQuery } from "@/api/queries/configuration"
 import { GlassDialog } from "@/components/chrome/glass-dialog"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
-import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import {
   issueText,

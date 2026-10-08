@@ -4,6 +4,7 @@ import {
   type NetworkMembersResponse,
   type NetworkSummary,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import type {
   InfiniteData,
   UseInfiniteQueryResult,
@@ -21,7 +22,6 @@ import {
   RemoveMemberDialog,
 } from "@/components/network/removal"
 import { surfaceTitleId } from "@/components/surface/page-frame"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { calendarDate } from "@/lib/format"
 import { roleLabel, ROLES } from "@/lib/roles"

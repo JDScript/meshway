@@ -36,11 +36,13 @@ run = [
 ]
 
 [tasks."check:web"]
-description = "Web Console checks, tests and build, scripts tests and docs in order (no Cargo)"
+description = "Shared UI, Web Console and site checks, tests and builds, scripts tests and docs in order (no Cargo)"
 run = [
+  { task = "check:ui" },
   { task = "check:console" },
   { task = "test:console" },
   { task = "build:console" },
+  { task = "check:site" },
   { task = "test:scripts" },
   { task = "check:docs" },
 ]
@@ -181,6 +183,21 @@ run = "pnpm --filter @meshway/web-console test"
 description = "Build the Web Console SPA"
 run = "pnpm --filter @meshway/web-console build"
 
+[tasks."check:ui"]
+description = "Check the shared UI package's types, lint and formatting"
+run = "pnpm --filter @meshway/ui check"
+
+[tasks."check:site"]
+description = "Check the site's types, lint and formatting, then build it against the local Console"
+run = [
+  "pnpm --filter @meshway/web-site check",
+  "NEXT_PUBLIC_MESHWAY_CONSOLE_URL=http://127.0.0.1:3001 pnpm --filter @meshway/web-site build",
+]
+
+[tasks."build:site"]
+description = "Build the static site (landing, docs, API reference); requires NEXT_PUBLIC_MESHWAY_CONSOLE_URL"
+run = "pnpm --filter @meshway/web-site build"
+
 [tasks."check:docs"]
 description = "Build docs and check links, anchors, contracts and examples"
 run = "pnpm --filter @meshway/docs check"
@@ -202,6 +219,10 @@ run = [
 [tasks."dev:console"]
 description = "Run Web Console; requires MESHWAY_CONTROLLER_URL"
 run = "pnpm --filter @meshway/web-console dev"
+
+[tasks."dev:site"]
+description = "Run the site on port 3002; its sign-in links go to NEXT_PUBLIC_MESHWAY_CONSOLE_URL, else the local Console"
+run = "NEXT_PUBLIC_MESHWAY_CONSOLE_URL=${NEXT_PUBLIC_MESHWAY_CONSOLE_URL:-http://127.0.0.1:3001} pnpm --filter @meshway/web-site dev"
 
 [tasks."dev:docs"]
 description = "Run the documentation dev server in the foreground"

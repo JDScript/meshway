@@ -4,6 +4,7 @@ import {
   revokeOtherAccountSessions,
   type AccountSessionView,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 import { LogOutIcon, MonitorSmartphoneIcon } from "lucide-react"
 import { useState } from "react"
@@ -19,7 +20,6 @@ import { ConfirmDialog } from "@/components/chrome/glass-dialog"
 import { IconAction } from "@/components/chrome/icon-action"
 import { RefList, RefRow, RefStateHeading } from "@/components/chrome/ref-row"
 import { DangerRow, EmptyLine, Section } from "@/components/chrome/section"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useHandOver } from "@/hooks/use-hand-over"
 import { useLoadMore } from "@/hooks/use-load-more"

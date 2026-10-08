@@ -1,4 +1,6 @@
 import type { ConfigurationView } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import {
   AsteriskIcon,
@@ -18,7 +20,6 @@ import { useMemo, type ReactNode } from "react"
 
 import { membersQuery } from "@/api/queries/members"
 import { FieldInput } from "@/components/chrome/form"
-import { Button } from "@/components/ui/button"
 import type { Said, Severity } from "@/lib/configuration/diagnostics"
 import {
   within,
@@ -36,7 +37,6 @@ import {
   type Family,
   type SelectorKind,
 } from "@/lib/configuration/selectors"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import type { ChipKind, ChipOption, SetRefusal, Shown } from "./chips"

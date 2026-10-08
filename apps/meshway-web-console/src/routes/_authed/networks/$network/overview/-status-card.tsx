@@ -1,4 +1,5 @@
 import type { AggregatedLink, StateView } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { ChevronDownIcon } from "lucide-react"
 import { useState } from "react"
 
@@ -17,7 +18,6 @@ import {
 } from "@/lib/network-map"
 import { STATUS_ORDER } from "@/lib/nodes/status"
 import { evidenceLabel, linkPhaseLabel, statusLabel } from "@/lib/state-labels"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useGlobeAvailable } from "@/state/boot"
 import { highlightOnGlobe } from "@/state/globe"

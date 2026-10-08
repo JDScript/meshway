@@ -1,6 +1,5 @@
+import { cn } from "@meshway/ui/cn"
 import type { ReactNode } from "react"
-
-import { cn } from "@/lib/utils"
 
 /**
  * A titled part of a workspace (a group of fields, a tab's list): the

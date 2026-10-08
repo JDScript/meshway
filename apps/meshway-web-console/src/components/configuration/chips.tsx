@@ -1,3 +1,4 @@
+import { cn } from "@meshway/ui/cn"
 import { CheckIcon, PlusIcon, XIcon, type LucideIcon } from "lucide-react"
 import {
   useId,
@@ -13,7 +14,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 // Values as chips: a set (an access rule's sources, a group's members, a

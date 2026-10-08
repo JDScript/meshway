@@ -1,7 +1,7 @@
+import { Button } from "@meshway/ui/button"
 import { CheckIcon, CopyIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import { Button } from "@/components/ui/button"
 import { m } from "@/paraglide/messages.js"
 
 export function CopyButton({ value, label }: { value: string; label: string }) {

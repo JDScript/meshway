@@ -3,6 +3,7 @@ import {
   type CreateObservation,
   type ObservationServiceScope,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQueryClient } from "@tanstack/react-query"
 import { useId, useState, type FormEvent, type ReactNode } from "react"
 
@@ -13,7 +14,6 @@ import { BusyLabel } from "@/components/chrome/busy-label"
 import { FieldOption, FieldSelect } from "@/components/chrome/field-select"
 import { FieldInput } from "@/components/chrome/form"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
-import { Button } from "@/components/ui/button"
 import { parsePort } from "@/lib/ip"
 import { m } from "@/paraglide/messages.js"
 import { attempts } from "@/state/attempts"

@@ -2,6 +2,7 @@ import type {
   EgressRouting,
   RoutingConfiguration,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { ListIcon } from "lucide-react"
 
 import { Section } from "@/components/chrome/section"
@@ -10,7 +11,6 @@ import {
   type Names,
   type Note,
 } from "@/components/configuration/form-kit"
-import { Button } from "@/components/ui/button"
 import { pointerSegments } from "@/lib/configuration/jsonc"
 import { profileChoices } from "@/lib/configuration/routing"
 import { m } from "@/paraglide/messages.js"

@@ -1,3 +1,4 @@
+import { Button } from "@meshway/ui/button"
 import { useQuery } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
 
@@ -13,7 +14,6 @@ import {
   WindowChoices,
   WindowRange,
 } from "@/components/history/window-control"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { millis, percent, span } from "@/lib/history/format"
 import { bucketSeries, unansweredRate, type Series } from "@/lib/history/series"

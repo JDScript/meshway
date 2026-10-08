@@ -1,8 +1,7 @@
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { ArrowUpRightIcon } from "lucide-react"
 import type { ReactNode } from "react"
-
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
 
 // A row inside a workspace that names something with a page of its own (a
 // node, a network): a 16px lead mark, the name (and a line under it), a

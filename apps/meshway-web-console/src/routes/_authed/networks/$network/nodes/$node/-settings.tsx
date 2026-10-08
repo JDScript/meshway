@@ -4,6 +4,7 @@ import type {
   NetworkSummary,
   NodeIdentity,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { useQuery } from "@tanstack/react-query"
 import { CheckIcon } from "lucide-react"
 import type { ReactNode } from "react"
@@ -44,7 +45,6 @@ import {
   type NodeSettingsValue,
 } from "@/lib/configuration/node-operations"
 import { dialerUpdate, valueOf } from "@/lib/configuration/operations"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { useNodeConfiguration } from "./-draft"

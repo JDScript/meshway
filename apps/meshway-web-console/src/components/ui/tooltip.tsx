@@ -1,8 +1,7 @@
 "use client"
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip"
-
-import { cn } from "@/lib/utils"
+import { cn } from "@meshway/ui/cn"
 
 function TooltipProvider({
   // A moment before the first one; the next ones in the same pass open at once.

@@ -1,7 +1,7 @@
+import { Button } from "@meshway/ui/button"
 import { XIcon } from "lucide-react"
 import type { ComponentProps } from "react"
 
-import { Button } from "@/components/ui/button"
 import { m } from "@/paraglide/messages.js"
 
 /** The close control of a surface's header. Usable as a Base UI `render` target. */

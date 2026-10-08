@@ -1,3 +1,4 @@
+import { cn } from "@meshway/ui/cn"
 import { useState } from "react"
 
 import { EmptyLine, Section } from "@/components/chrome/section"
@@ -6,7 +7,6 @@ import { Tile } from "@/components/chrome/tile"
 import { useNow } from "@/hooks/use-now"
 import { agoTime } from "@/lib/format"
 import { connectionWords } from "@/lib/live-labels"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import {
   useStreamTrace,

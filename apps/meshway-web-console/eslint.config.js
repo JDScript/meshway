@@ -27,15 +27,11 @@ export default defineConfig([
             {
               name: "cn",
               message:
-                "Import cn from @/lib/utils: it knows the theme's own scales.",
+                "Import cn from @meshway/ui/cn: it knows the theme's own scales.",
             },
           ],
         },
       ],
     },
-  },
-  {
-    files: ["src/lib/utils.ts"],
-    rules: { "no-restricted-imports": "off" },
   },
 ])

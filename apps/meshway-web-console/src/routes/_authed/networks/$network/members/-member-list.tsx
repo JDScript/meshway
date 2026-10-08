@@ -5,6 +5,7 @@ import {
   type MembershipRole,
   type NetworkMembersResponse,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import {
   useMutation,
   useQueryClient,
@@ -34,7 +35,6 @@ import {
   SegmentedControl,
 } from "@/components/chrome/segmented-control"
 import { surfaceTitleId } from "@/components/surface/page-frame"
-import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { useLoadMore } from "@/hooks/use-load-more"
 import { calendarDate, dateTime } from "@/lib/format"

@@ -5,6 +5,7 @@ import {
   type NetworkSummary,
   type NodeInventoryResponse,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { CheckIcon } from "lucide-react"
@@ -23,7 +24,6 @@ import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
 import { surfaceTitleId } from "@/components/surface/page-frame"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useSecretMutation } from "@/hooks/use-secret-mutation"
 import { dateTime } from "@/lib/format"

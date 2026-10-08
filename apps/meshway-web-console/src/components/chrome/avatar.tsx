@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils"
+import { cn } from "@meshway/ui/cn"
 
 const SIZE = {
   /** In a list row's lead slot. */

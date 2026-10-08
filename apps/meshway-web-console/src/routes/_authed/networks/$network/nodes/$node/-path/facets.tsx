@@ -1,4 +1,5 @@
 import type { Evaluation } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import type { ReactNode } from "react"
 
 import { profileText, type NodeNamer } from "@/lib/configuration/diagnostics"
@@ -9,7 +10,6 @@ import {
   UNAVAILABLE_REASON,
 } from "@/lib/configuration/evaluation"
 import { canonical } from "@/lib/configuration/operations"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 // One evaluation, part by part, for the path tab's rows. Each part is

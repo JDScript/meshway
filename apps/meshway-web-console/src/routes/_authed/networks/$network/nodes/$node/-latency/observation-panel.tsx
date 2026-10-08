@@ -2,6 +2,7 @@ import {
   cancelObservation,
   type ObservationTask,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
 
@@ -13,7 +14,6 @@ import { nodesQuery } from "@/api/queries/nodes"
 import { observationListQuery } from "@/api/queries/observation"
 import { networkStateQuery } from "@/api/queries/state"
 import { EmptyLine, Section } from "@/components/chrome/section"
-import { Button } from "@/components/ui/button"
 import { useNow } from "@/hooks/use-now"
 import { relativeTime } from "@/lib/format"
 import { canObserveFrom, pathChoices } from "@/lib/observation/choices"

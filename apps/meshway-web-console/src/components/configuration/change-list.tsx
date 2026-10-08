@@ -2,6 +2,7 @@ import type {
   ConfigurationChange,
   ConfigurationView,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -11,7 +12,6 @@ import {
   valueAt,
   type Found,
 } from "@/lib/configuration/changes"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { bindingLabel, changeKindLabel, sectionName } from "./labels"

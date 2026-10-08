@@ -1,4 +1,5 @@
 import type { ActivityEvent } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { HistoryIcon } from "lucide-react"
 
@@ -6,7 +7,6 @@ import { failureText } from "@/api/failure"
 import { accountActivityQuery } from "@/api/queries/account"
 import { RefList, RefRow } from "@/components/chrome/ref-row"
 import { EmptyLine, Section } from "@/components/chrome/section"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLoadMore } from "@/hooks/use-load-more"
 import { useReadFailureToast } from "@/hooks/use-read-failure-toast"

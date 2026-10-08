@@ -1,9 +1,10 @@
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import type { ReactNode } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
-import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -19,7 +20,6 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { useKeptWhile } from "@/hooks/use-kept"
 import { useIsMobile } from "@/hooks/use-media-query"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 // Dialogs are for three things only: confirming what cannot be undone,

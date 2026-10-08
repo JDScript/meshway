@@ -1,10 +1,15 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
+import { cn } from "@meshway/ui/cn"
 import { test } from "vitest"
 
-import { cn } from "@/lib/utils"
-
-const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8")
+// The console's stylesheet over the shared theme it imports.
+const css = [
+  new URL("../../../packages/meshway-ui/src/theme.css", import.meta.url),
+  new URL("../src/index.css", import.meta.url),
+]
+  .map((file) => readFileSync(file, "utf8"))
+  .join("\n")
 
 test("no custom property refers to itself (that silently invalidates every rule using it)", () => {
   for (const [, name, value] of css.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {

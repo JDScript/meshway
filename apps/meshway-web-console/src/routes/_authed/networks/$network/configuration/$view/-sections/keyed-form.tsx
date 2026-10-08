@@ -1,11 +1,11 @@
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { useState, type ReactNode } from "react"
 import { toast } from "sonner"
 
 import { FieldInput } from "@/components/chrome/form"
 import { NoneLine } from "@/components/configuration/form-kit"
-import { Button } from "@/components/ui/button"
 import { keyProblem, type KeyProblem } from "@/lib/configuration/keyed"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 const TOAST = "configuration-key"

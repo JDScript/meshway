@@ -1,3 +1,4 @@
+import { cn } from "@meshway/ui/cn"
 import { Link, type HistoryState } from "@tanstack/react-router"
 import { GlobeIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
@@ -25,7 +26,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { SPRING_LAYOUT } from "@/lib/ease"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useDraftHeld } from "@/state/configuration-draft"
 

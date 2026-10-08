@@ -1,7 +1,7 @@
+import { Button } from "@meshway/ui/button"
 import { LanguagesIcon } from "lucide-react"
 import { useId } from "react"
 
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,

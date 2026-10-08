@@ -6,6 +6,7 @@ import {
   type JoinLinkView,
   type MembershipRole,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   useEffect,
@@ -22,7 +23,6 @@ import { BusyLabel } from "@/components/chrome/busy-label"
 import { GlassDialog, SecretField } from "@/components/chrome/glass-dialog"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { Tile } from "@/components/chrome/tile"
-import { Button } from "@/components/ui/button"
 import { useUnmountAfter } from "@/hooks/use-kept"
 import { useSecretMutation } from "@/hooks/use-secret-mutation"
 import { dateTime } from "@/lib/format"

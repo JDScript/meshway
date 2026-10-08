@@ -1,7 +1,6 @@
+import { cn } from "@meshway/ui/cn"
 import { ChevronDownIcon } from "lucide-react"
 import { useState, type ReactNode } from "react"
-
-import { cn } from "@/lib/utils"
 
 /** A titled part of the card that folds. */
 export function Group({

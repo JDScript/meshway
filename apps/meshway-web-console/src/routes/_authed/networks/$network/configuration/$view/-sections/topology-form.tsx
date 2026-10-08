@@ -4,6 +4,7 @@ import type {
   TopologyRule,
   TransportProtocol,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { ArrowLeftRightIcon } from "lucide-react"
 
 import { Section } from "@/components/chrome/section"
@@ -24,7 +25,6 @@ import {
 } from "@/components/configuration/form-kit"
 import { DIALER_PROTOCOLS } from "@/lib/configuration/dialer-model"
 import { pointerOf } from "@/lib/configuration/jsonc"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { Hint } from "./route-kit"

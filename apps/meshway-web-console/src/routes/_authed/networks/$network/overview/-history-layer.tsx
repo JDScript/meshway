@@ -1,3 +1,5 @@
+import { Button } from "@meshway/ui/button"
+
 import { failureText } from "@/api/failure"
 import { historyFailureText } from "@/api/queries/history"
 import { itemCount, type useHistory } from "@/api/queries/use-history"
@@ -6,7 +8,6 @@ import {
   WindowChoices,
   WindowRange,
 } from "@/components/history/window-control"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { dateTime } from "@/lib/format"
 import type { HistoryWindow, WindowChoice } from "@/lib/history/window"

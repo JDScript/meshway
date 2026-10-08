@@ -1,4 +1,5 @@
 import type { EndpointCandidate, SocketState } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 
 import { agoTime, relativeTime } from "@/lib/format"
 import { asnText, geoText, hostOf, shortGeoText, type GeoOf } from "@/lib/geo"
@@ -8,7 +9,6 @@ import {
   listenerPhaseLabel,
   problemText,
 } from "@/lib/state-labels"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 export function Runtime({

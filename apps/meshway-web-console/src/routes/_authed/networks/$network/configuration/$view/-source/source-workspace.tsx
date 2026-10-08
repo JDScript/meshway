@@ -1,4 +1,6 @@
 import type { NetworkSummary } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { useQuery } from "@tanstack/react-query"
 import {
   ChevronDownIcon,
@@ -24,7 +26,6 @@ import { EmptyLine } from "@/components/chrome/section"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { DraftNotice } from "@/components/configuration/notice"
 import { surfaceTitleId } from "@/components/surface/page-frame"
-import { Button } from "@/components/ui/button"
 import {
   Popover,
   PopoverContent,
@@ -45,7 +46,6 @@ import {
   spanOfPointer,
 } from "@/lib/configuration/jsonc"
 import { readSource, type SourceProblem } from "@/lib/configuration/problems"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 

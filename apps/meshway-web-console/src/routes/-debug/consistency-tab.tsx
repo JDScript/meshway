@@ -1,13 +1,13 @@
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { toast } from "sonner"
 
 import { BusyLabel } from "@/components/chrome/busy-label"
 import { EmptyLine, Section } from "@/components/chrome/section"
-import { Button } from "@/components/ui/button"
 import { useNow } from "@/hooks/use-now"
 import { agoTime } from "@/lib/format"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { checkConsistency, type Check, type Resource } from "./consistency"

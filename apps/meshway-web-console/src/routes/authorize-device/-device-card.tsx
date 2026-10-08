@@ -10,6 +10,7 @@ import {
   type EnrollmentReturnMethod,
   type NetworkSummary,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import {
@@ -38,7 +39,6 @@ import {
   InlineSignIn,
   type InlineEntry,
 } from "@/components/entry/inline-sign-in"
-import { Button } from "@/components/ui/button"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Skeleton } from "@/components/ui/skeleton"
 import {

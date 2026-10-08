@@ -1,6 +1,5 @@
+import { cn } from "@meshway/ui/cn"
 import type { ReactNode } from "react"
-
-import { cn } from "@/lib/utils"
 
 const TITLE = { md: "text-xl", lg: "text-display" } as const
 

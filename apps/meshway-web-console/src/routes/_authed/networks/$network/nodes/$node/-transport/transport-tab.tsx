@@ -4,6 +4,7 @@ import type {
   NodeState,
   StateView,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { type UseQueryResult } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useMemo } from "react"
@@ -36,7 +37,6 @@ import {
   reporterRoleLabel,
   resourceText,
 } from "@/lib/state-labels"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { useNodeConfiguration } from "../-draft"

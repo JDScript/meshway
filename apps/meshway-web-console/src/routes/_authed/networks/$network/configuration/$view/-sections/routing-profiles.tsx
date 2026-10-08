@@ -5,6 +5,8 @@ import type {
   RoutingConfiguration,
   RoutingProfile,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { ArrowRightIcon, LockIcon, LockOpenIcon } from "lucide-react"
 import { useId } from "react"
 
@@ -25,7 +27,6 @@ import {
   type Names,
   type Note,
 } from "@/components/configuration/form-kit"
-import { Button } from "@/components/ui/button"
 import { within } from "@/lib/configuration/form-problems"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { without } from "@/lib/configuration/keyed"
@@ -35,7 +36,6 @@ import {
   renameProfile,
   type ProfileChoice,
 } from "@/lib/configuration/routing"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { AddKey, KeyInput, type KeyRule } from "./keyed-form"

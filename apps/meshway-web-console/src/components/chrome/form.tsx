@@ -1,9 +1,9 @@
+import { cn } from "@meshway/ui/cn"
 import type { ComponentProps } from "react"
 
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { cn } from "@/lib/utils"
 
 // Form pieces on glass. Fields are real inputs (named, labelled, Enter
 // submits their form); a field that is not valid is marked in place (its

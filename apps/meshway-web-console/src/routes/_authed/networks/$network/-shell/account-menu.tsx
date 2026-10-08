@@ -1,3 +1,4 @@
+import { Button } from "@meshway/ui/button"
 import { useQuery } from "@tanstack/react-query"
 import { useParams } from "@tanstack/react-router"
 import { LogOutIcon, SunMoonIcon, UserRoundIcon } from "lucide-react"
@@ -5,7 +6,6 @@ import { LogOutIcon, SunMoonIcon, UserRoundIcon } from "lucide-react"
 import { sessionQuery } from "@/api/queries/auth"
 import { InitialAvatar } from "@/components/chrome/avatar"
 import { ThemeChoice } from "@/components/chrome/preferences"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,

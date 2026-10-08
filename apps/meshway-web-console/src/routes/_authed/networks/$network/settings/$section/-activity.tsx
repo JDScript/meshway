@@ -1,4 +1,5 @@
 import type { ActivityEvent, NetworkSummary } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 
 import { failureText } from "@/api/failure"
@@ -6,7 +7,6 @@ import { sessionQuery } from "@/api/queries/auth"
 import { membersQuery } from "@/api/queries/members"
 import { networkActivityQuery } from "@/api/queries/network"
 import { EmptyLine } from "@/components/chrome/section"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { useLoadMore } from "@/hooks/use-load-more"

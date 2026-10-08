@@ -2,6 +2,8 @@ import {
   cancelObservation,
   type ObservationTask,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import { useMutation } from "@tanstack/react-query"
 
 import { authed, client } from "@/api/client"
@@ -10,7 +12,6 @@ import { BusyLabel } from "@/components/chrome/busy-label"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { EmptyLine } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { relativeTime } from "@/lib/format"
 import { millis, percent } from "@/lib/history/format"
@@ -21,7 +22,6 @@ import {
   totals,
   unansweredRate,
 } from "@/lib/observation/series"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { ChartLegend } from "./chart-frame"

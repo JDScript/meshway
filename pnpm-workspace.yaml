@@ -1,7 +1,10 @@
 packages:
   - apps/meshway-web-console
+  - apps/meshway-web-site
   - docs
   - packages/*
 
 allowBuilds:
   esbuild: true
+  # Prebuilt bindings come as optional dependencies; its build script is not needed.
+  unrs-resolver: false

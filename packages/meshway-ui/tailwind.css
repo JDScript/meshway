@@ -1,0 +1,3 @@
+/* For editor and formatter tooling: the theme over Tailwind, as an app imports it. */
+@import "tailwindcss";
+@import "./src/theme.css";

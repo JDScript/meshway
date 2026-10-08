@@ -1,3 +1,4 @@
+import { Button } from "@meshway/ui/button"
 import { useQuery } from "@tanstack/react-query"
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router"
 import { useState, type ReactNode } from "react"
@@ -13,7 +14,6 @@ import {
   EntryPage,
   HANDOFF_MS,
 } from "@/components/entry/frame"
-import { Button } from "@/components/ui/button"
 import { m } from "@/paraglide/messages.js"
 import { currentSession } from "@/state/session"
 

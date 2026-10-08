@@ -3,6 +3,7 @@ import type {
   DnsServer,
   DnsTransport,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import { useId, useState } from "react"
 import { toast } from "sonner"
 
@@ -25,7 +26,6 @@ import { Switch } from "@/components/ui/switch"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { renamed, withEntry, without } from "@/lib/configuration/keyed"
 import { parsePort } from "@/lib/ip"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { AddKey, KeyedRows, KeyInput, type KeyRule } from "./keyed-form"

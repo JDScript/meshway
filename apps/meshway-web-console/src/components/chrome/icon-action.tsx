@@ -1,12 +1,12 @@
+import { Button } from "@meshway/ui/button"
+import { cn } from "@meshway/ui/cn"
 import type { LucideIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
 
 /** An action as a round icon, named by its tooltip (and for assistive tech by the same label). */
 export function IconAction({
