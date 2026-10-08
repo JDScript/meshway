@@ -11,7 +11,7 @@ const RECOVERY: Duration = Duration::from_secs(3);
 use super::support as fixture;
 mod support;
 use support::*;
-pub(super) use support::{exchange, packet, packet_between};
+pub(super) use support::{exchange, handshake, packet, packet_between, secure};
 mod publication;
 mod recovery;
 mod supersession;

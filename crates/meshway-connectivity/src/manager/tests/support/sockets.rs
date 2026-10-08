@@ -135,9 +135,9 @@ impl SocketFactory for Factory {
             if self.blocked_dialers.lock().unwrap().contains(&cfg.node_id) {
                 return Err(Error::Unavailable);
             }
-            assert!(matches!(
+            assert!(!matches!(
                 candidate.parameters,
-                DialParameters::NativeTcp { .. }
+                DialParameters::NativeUdp { .. }
             ));
             let endpoint = &candidate.endpoints[index];
             let stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port.get())).await?;
@@ -155,16 +155,14 @@ impl SocketFactory for Factory {
     ) -> BoxFuture<'a, Result<Box<dyn ListenerSocket>, Error>> {
         Box::pin(async move {
             let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
-            let Listener::NativeTcp(listener) = cfg.listeners[key].declaration() else {
-                return Err(Error::Configuration);
-            };
-            let address = SocketAddr::new(listener.listen, listener.listen_port.get());
+            let address =
+                super::super::streaming::listener_address(cfg.listeners[key].declaration())?;
             let reserved = self.tcp.lock().unwrap().remove(&address);
             let socket = match reserved {
                 Some(socket) => socket,
                 None => TcpListener::bind(address).await?,
             };
-            assert_eq!(socket.local_addr()?.port(), listener.listen_port.get());
+            assert_eq!(socket.local_addr()?.port(), address.port());
             Ok(Box::new(StreamListener(socket)) as Box<dyn ListenerSocket>)
         })
     }
