@@ -24,6 +24,8 @@ use meshway_transport_spec::{
 use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 use tokio::{net::TcpListener, sync::watch, task::JoinSet};
 
+mod streaming;
+
 pub async fn run(cli: &Cli) -> Result<()> {
     let dns = crate::dns::Upstream::start(cli).await?;
     let result = run_server(cli).await;
@@ -327,6 +329,18 @@ async fn coordinate(
             vless: None,
             trojan: None,
         },
+        crate::CarrierMode::Vless => DialerSet {
+            native_udp: None,
+            native_tcp: None,
+            vless: Some(Default::default()),
+            trojan: None,
+        },
+        crate::CarrierMode::Trojan => DialerSet {
+            native_udp: None,
+            native_tcp: None,
+            vless: None,
+            trojan: Some(Default::default()),
+        },
     };
     apply(&client, network, token, original.revision, &input).await?;
     signals.write("enroll", &Signal::Ready).await?;
@@ -423,40 +437,52 @@ async fn coordinate(
             .nodes
             .get_mut(&nodes[&role])
             .ok_or("missing enrolled node")?;
-        node.listeners = BTreeMap::from([(
-            "tcp".into(),
-            match cli.transport {
-                crate::CarrierMode::NativeTcp => Listener::NativeTcp(NativeTcpListener {
-                    enabled: true,
-                    remark: String::new(),
-                    listen: "0.0.0.0".parse()?,
-                    listen_port: 35000.try_into()?,
-                    endpoints: vec![Endpoint {
-                        host: underlay.actors[&role].to_string(),
-                        port: 35000.try_into()?,
-                    }],
-                    bind_interface: String::new(),
-                    socket: Default::default(),
-                    tcp: Default::default(),
-                }),
-                crate::CarrierMode::NativeUdp => Listener::NativeUdp(NativeUdpListener {
-                    enabled: true,
-                    remark: String::new(),
-                    listen: "0.0.0.0".parse()?,
-                    listen_port: 35000.try_into()?,
-                    endpoints: if cli.traversal == crate::TraversalMode::Nat {
-                        vec![]
-                    } else {
-                        vec![Endpoint {
+        node.listeners = if cli.transport.streaming() {
+            if role == Role::R {
+                BTreeMap::from([(
+                    "stream".into(),
+                    streaming::listener(cli, underlay.actors[&role].to_string()).await?,
+                )])
+            } else {
+                BTreeMap::new()
+            }
+        } else {
+            BTreeMap::from([(
+                "tcp".into(),
+                match cli.transport {
+                    crate::CarrierMode::NativeTcp => Listener::NativeTcp(NativeTcpListener {
+                        enabled: true,
+                        remark: String::new(),
+                        listen: "0.0.0.0".parse()?,
+                        listen_port: 35000.try_into()?,
+                        endpoints: vec![Endpoint {
                             host: underlay.actors[&role].to_string(),
                             port: 35000.try_into()?,
-                        }]
-                    },
-                    bind_interface: String::new(),
-                    socket: Default::default(),
-                }),
-            },
-        )]);
+                        }],
+                        bind_interface: String::new(),
+                        socket: Default::default(),
+                        tcp: Default::default(),
+                    }),
+                    crate::CarrierMode::NativeUdp => Listener::NativeUdp(NativeUdpListener {
+                        enabled: true,
+                        remark: String::new(),
+                        listen: "0.0.0.0".parse()?,
+                        listen_port: 35000.try_into()?,
+                        endpoints: if cli.traversal == crate::TraversalMode::Nat {
+                            vec![]
+                        } else {
+                            vec![Endpoint {
+                                host: underlay.actors[&role].to_string(),
+                                port: 35000.try_into()?,
+                            }]
+                        },
+                        bind_interface: String::new(),
+                        socket: Default::default(),
+                    }),
+                    crate::CarrierMode::Vless | crate::CarrierMode::Trojan => unreachable!(),
+                },
+            )])
+        };
         if cli.traversal_fallback && role == Role::R {
             node.listeners.insert(
                 "fallback-tcp".into(),
@@ -475,7 +501,14 @@ async fn coordinate(
                 }),
             );
         }
-        node.dialers = if cli.traversal_fallback && role == Role::A {
+        node.dialers = if cli.transport.streaming() {
+            let mut dialers = input.defaults.dialers.clone();
+            if role == Role::R {
+                dialers.vless = None;
+                dialers.trojan = None;
+            }
+            Input::Value(dialers)
+        } else if cli.traversal_fallback && role == Role::A {
             // Only A-R owns the TCP alternative. A globally inherited TCP
             // dialer would also let B choose R's newly reachable listener after
             // withdrawal/recovery, defeating this fixture's R-B UDP constraint.
@@ -527,6 +560,23 @@ async fn coordinate(
             .nodes
             .get(&nodes[&role])
             .ok_or("committed node missing")?;
+        if cli.transport.streaming() {
+            let Input::Value(dialers) = &node.dialers else {
+                return Err("streaming dialers must be explicit".into());
+            };
+            if dialers.native_udp.is_some()
+                || dialers.native_tcp.is_some()
+                || dialers.vless.is_some()
+                    != (role != Role::R && matches!(cli.transport, crate::CarrierMode::Vless))
+                || dialers.trojan.is_some()
+                    != (role != Role::R && matches!(cli.transport, crate::CarrierMode::Trojan))
+                || node.listeners.len() != usize::from(role == Role::R)
+            {
+                return Err(
+                    "streaming fixture must use only A/B dialing R on the chosen carrier".into(),
+                );
+            }
+        }
         if cli.traversal_fallback {
             let dialers = match &node.dialers {
                 Input::Value(dialers) => dialers,
@@ -566,6 +616,13 @@ async fn coordinate(
     if cli.traversal == crate::TraversalMode::Nat {
         tokio::fs::write(
             cli.evidence.join("configuration-traversal.json"),
+            serde_json::to_vec_pretty(&committed)?,
+        )
+        .await?;
+    }
+    if cli.transport.streaming() {
+        tokio::fs::write(
+            cli.evidence.join("configuration-streaming.json"),
             serde_json::to_vec_pretty(&committed)?,
         )
         .await?;

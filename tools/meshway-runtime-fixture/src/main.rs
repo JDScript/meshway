@@ -120,6 +120,8 @@ impl DnsBackend {
 enum CarrierMode {
     NativeTcp,
     NativeUdp,
+    Vless,
+    Trojan,
 }
 
 impl CarrierMode {
@@ -127,7 +129,13 @@ impl CarrierMode {
         match self {
             Self::NativeTcp => meshway_transport_spec::TransportProtocol::NativeTcp,
             Self::NativeUdp => meshway_transport_spec::TransportProtocol::NativeUdp,
+            Self::Vless => meshway_transport_spec::TransportProtocol::Vless,
+            Self::Trojan => meshway_transport_spec::TransportProtocol::Trojan,
         }
+    }
+
+    fn streaming(self) -> bool {
+        matches!(self, Self::Vless | Self::Trojan)
     }
 }
 
@@ -164,7 +172,7 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     let result = match cli.command {
-        Command::Prepare => meshway_packet_fixture::prepare_tls(&cli.public, &cli.private).await,
+        Command::Prepare => prepare(&cli).await,
         Command::Controller => controller::run(&cli).await,
         Command::Actor { role } => actor::run(&cli, role).await,
         Command::UnderlayPeer { ipv4, ipv6 } => peer::run(&cli, ipv4, ipv6).await,
@@ -189,6 +197,18 @@ async fn main() -> std::process::ExitCode {
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+async fn prepare(cli: &Cli) -> Result<()> {
+    meshway_packet_fixture::prepare_tls(&cli.public, &cli.private).await?;
+    if cli.transport.streaming() {
+        meshway_packet_fixture::prepare_tls(
+            &cli.public.join("carrier"),
+            &cli.private.join("carrier"),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 fn request() -> Result<meshway_model::RequestId> {

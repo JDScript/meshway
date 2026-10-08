@@ -161,7 +161,7 @@ def main():
     parser.add_argument("--short", action="store_true", help="30-second diagnostic traffic; not acceptance")
     parser.add_argument("--runtime-image-manifest", type=Path, help="explicit locked node-lab OS image")
     parser.add_argument("--artifacts", type=Path, help="reuse a --build-only bin directory with matching source manifest")
-    parser.add_argument("--transport", choices=("native-tcp", "native-udp"), default="native-tcp",
+    parser.add_argument("--transport", choices=("native-tcp", "native-udp", "vless", "trojan"), default="native-tcp",
                         help="Server-configured outer carrier; never a daemon-local policy override")
     parser.add_argument("--dns-backend", choices=("off", "resolv-conf", "resolved"), default="off",
                         help="real libc DNS conformance in an owned private mount namespace")
