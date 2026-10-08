@@ -49,4 +49,5 @@
 | W4 边级承载 | `cd536833`…`8ca49b0f` | `topology[].transports`、双向拨号交集、`edge_transport_unavailable` 定位规则／边、执行候选过滤、OpenAPI／SDK | policy `tests/execution/topology.rs`、`tests/configuration/topology.rs`；`.meshway/w4-edge-transports/` |
 | W3 lab VLESS 边 | 本提交 | lab revision 7 验证 sha→lax VLESS TCP/TLS、双向原路径诊断与高负载 L5；部署版 `1271be5d` 缺 W2 续接修复导致流式链路重建，回滚 revision 8 | L5 `20261008T063234Z-main-1271be5d-2cpu-vless`；`.meshway/w3-lab-vless/`；复现分支已打包归档 |
 | V3 中继交接丢回复 | `6af24659`…`c31541bd` | retained 执行交接时中继保留诊断请求关联与原期限；maintenance 保留有界待交接关联；重放保护与旧 scope 失效不变 | CI 证据 `37762142607` `udp/resolved` 首探测超时；复现 `retained_relay_delivers_inflight_diagnostic_and_business_reply_exactly_once`；planck `20261008T170200Z-bbdb811a` 三行通过；`.meshway/validation/v3/` |
+| V4 重启不卡死 | `fix/underlay-restart-journal` 系列 | journal 的 boot／netns 与当前不一致时原子归档为 `underlay.json.stale-*` 并按无 journal 启动；当前 netns 内活 owner 冲突仍拒绝但有 1–30 s 退避；损坏 journal 归 Storage | 现场 `.meshway/w3-lab-vless/incident-20261008T1655/`；隔离测试 `container_restart_archives_previous_namespace_journal`、`live_tun_owner_conflict_retries_and_recovers_without_new_up`；planck `20261008T183321Z-9b32fb72` 两行通过；`.meshway/validation/v4/` |
 
