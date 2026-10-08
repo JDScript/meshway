@@ -143,10 +143,14 @@ fn prepared_dial_schemas_keep_names_references_and_nullable_fields() {
         vless["properties"]["tls"]["$ref"],
         "#/components/schemas/ClientTls"
     );
+    // The nullable reference may describe itself; the target stays the same.
+    let websocket = vless["properties"]["websocket"]["oneOf"]
+        .as_array()
+        .unwrap();
+    assert_eq!(websocket.len(), 2);
     assert_eq!(
-        vless["properties"]["websocket"]["oneOf"],
-        json!([
-            {"$ref": "#/components/schemas/ListenerWebSocket"}, {"type": "null"}
-        ])
+        websocket[0]["$ref"],
+        "#/components/schemas/ListenerWebSocket"
     );
+    assert_eq!(websocket[1], json!({"type": "null"}));
 }

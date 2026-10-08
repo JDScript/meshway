@@ -6,15 +6,24 @@ use crate::{
 };
 use meshway_model::{ChallengeId, KeyId};
 
-wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct NodeChallengeIntent {
+wire_object! {
+/// Node-signed challenge application binding the pinned Server, registered identity and requested operation.
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct NodeChallengeIntent {
+    /// Client-generated challenge identifier reused unchanged when retrying the same application.
     pub id: ChallengeId,
+    /// Durable Server installation identity pinned alongside the HTTPS origin at enrollment.
     pub controller_id: KeyId,
+    /// Registered identity, operation and typed intent digest to bind into the challenge.
     pub request: NodeChallengeRequest,
+    /// Requested deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and limited to 60 seconds after Server admission.
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
     pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
 
-wire_object! { pub struct SignedNodeChallengeRequest {
+wire_object! {
+/// Proof of the current control key authorizing challenge allocation before a Node session exists.
+pub struct SignedNodeChallengeRequest {
+    /// Exact application covered by the separate challenge-request signature transcript.
     pub intent: NodeChallengeIntent,
     /// 64-byte Ed25519 signature encoded in unpadded base64url.
     pub signature: WireSecret,

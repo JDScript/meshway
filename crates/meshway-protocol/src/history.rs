@@ -89,23 +89,41 @@ macro_rules! actions {
     };
 }
 actions! {
+    /// Records completed account registration with an account target carrying userId and null previousEmail.
     AccountRegister = "account.register",
+    /// Records successful sign-in with a session target carrying the newly created sessionId.
     SessionLogin = "session.login",
+    /// Records completed sign-out with a session target carrying the revoked sessionId.
     SessionLogout = "session.logout",
+    /// Records explicit revocation of one session with a session target carrying its sessionId.
     SessionRevoke = "session.revoke",
+    /// Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.
     SessionRevokeOthers = "session.revokeOthers",
+    /// Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.
     SessionRevokeAll = "session.revokeAll",
+    /// Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.
     AccountPassword = "account.password",
+    /// Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.
     AccountPasswordReset = "account.passwordReset",
+    /// Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.
     AccountResetIssued = "account.resetIssued",
+    /// Records an email change with an account target carrying userId and previousEmail set to the address before the change.
     AccountEmail = "account.email",
+    /// Records completed network creation with a network target carrying networkId.
     NetworkCreate = "network.create",
+    /// Records a network name change with a network target carrying networkId.
     NetworkRename = "network.rename",
+    /// Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.
     ConfigurationApply = "configuration.apply",
+    /// Records a member's role change with a membership target carrying membershipId.
     MembershipRole = "membership.role",
+    /// Records a completed network join with a membership target carrying the new membershipId.
     MembershipJoin = "membership.join",
+    /// Records a completed membership removal with a membership target carrying membershipId.
     MembershipRemove = "membership.remove",
+    /// Records creation of a join link with a joinLink target carrying linkId.
     JoinLinkCreate = "joinLink.create",
+    /// Records revocation of a join link with a joinLink target carrying linkId.
     JoinLinkRevoke = "joinLink.revoke",
 }
 

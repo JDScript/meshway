@@ -11,7 +11,14 @@ pub enum DeltaError {
 }
 macro_rules! map_delta {
     ($name:ident,$key:ty,$value:ty) => {
-        object! { pub struct $name {pub remove:Vec<$key>,pub upsert:BTreeMap<$key,$value>} }
+        object! {
+        /// Server-computed keyed changes between two complete execution targets.
+        pub struct $name {
+            /// Keys present in the base that must be removed from the reconstructed target.
+            pub remove:Vec<$key>,
+            /// Complete values to insert or replace; keys cannot also occur in remove.
+            pub upsert:BTreeMap<$key,$value>
+        } }
     };
 }
 map_delta!(ListenerDelta, String, PreparedListener);
@@ -25,15 +32,48 @@ map_delta!(
     DiagnosticPermit
 );
 map_delta!(DecisionDelta, RequestId, DemandDecision);
-object! { pub struct NodeConfigurationDelta {
-    pub network_id:NetworkId,pub node_id:NodeId,pub base:ConfigurationRef,pub target:ConfigurationRef,
+object! {
+/// Server-computed execution delta reconstructed in a temporary complete target and verified against its digest before installation.
+pub struct NodeConfigurationDelta {
+    /// Network shared by the base and target configurations.
+    pub network_id:NetworkId,
+    /// Only Node to which this delta applies.
+    pub node_id:NodeId,
+    /// Exact saved configuration required as the reconstruction base.
+    pub base:ConfigurationRef,
+    /// Exact reconstructed target reference, including the digest to verify.
+    pub target:ConfigurationRef,
+    /// Replacement digest of the target's trusted compilation dependencies.
     pub dependency_digest:Digest,
-    pub enabled:bool,pub hostname:String,pub identity:NodeIdentity,pub addresses:NodeAddresses,
-    pub self_keys:TrustedNode,pub exit_enabled:bool,pub dns:DnsExecution,
+    /// Target's configured business execution enablement.
+    pub enabled:bool,
+    /// Target's configured canonical hostname.
+    pub hostname:String,
+    /// Target's complete User or Tag authorization identity.
+    pub identity:NodeIdentity,
+    /// Target's complete configured Mesh address assignment.
+    pub addresses:NodeAddresses,
+    /// Target's trusted local public key bindings and authenticated capabilities.
+    pub self_keys:TrustedNode,
+    /// Target's configured exit eligibility, gated by Node enablement.
+    pub exit_enabled:bool,
+    /// Complete replacement DNS execution content.
+    pub dns:DnsExecution,
+    /// Complete replacement Mesh capture pools, without granting business access.
     pub mesh_address_pools:AddressPools,
-    pub listeners:ListenerDelta,pub dialers:DialerDelta,pub peers:PeerDelta,
-    pub permits:PermitDelta,pub decisions:DecisionDelta,
+    /// Local listener removals and complete replacements.
+    pub listeners:ListenerDelta,
+    /// Outbound candidate removals and complete replacements.
+    pub dialers:DialerDelta,
+    /// Trusted peer removals and complete replacements.
+    pub peers:PeerDelta,
+    /// Business path permit removals and complete replacements.
+    pub permits:PermitDelta,
+    /// Source demand decision removals and complete replacements.
+    pub decisions:DecisionDelta,
+    /// Source-only local egress permit removals and complete replacements.
     pub local_egress:LocalEgressDelta,
+    /// Independent diagnostic permit removals and complete replacements.
     pub diagnostics:DiagnosticDelta,
 } }
 fn difference<K: Clone + Ord, V: Clone + PartialEq>(

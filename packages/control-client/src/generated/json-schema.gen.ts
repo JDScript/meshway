@@ -8,13 +8,15 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "The caller accepted and the other participant has not yet accepted.",
             "required": [
               "offer",
               "status"
             ],
             "properties": {
               "offer": {
-                "$ref": "#/components/schemas/UdpTraversalOffer"
+                "$ref": "#/components/schemas/UdpTraversalOffer",
+                "description": "Unchanged offer awaiting the peer's acceptance before its deadline."
               },
               "status": {
                 "type": "string",
@@ -27,13 +29,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Both participants accepted, allowing bounded acquisition under the original offer.",
             "required": [
               "offer",
               "status"
             ],
             "properties": {
               "offer": {
-                "$ref": "#/components/schemas/UdpTraversalOffer"
+                "$ref": "#/components/schemas/UdpTraversalOffer",
+                "description": "Unchanged offer whose bindings and deadline constrain acquisition probes."
               },
               "status": {
                 "type": "string",
@@ -46,13 +50,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "The offer cannot be accepted under its current bindings or lifecycle.",
             "required": [
               "reason",
               "status"
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UdpTraversalUnavailableReason"
+                "$ref": "#/components/schemas/UdpTraversalUnavailableReason",
+                "description": "Closed coordination condition that prevented acceptance."
               },
               "status": {
                 "type": "string",
@@ -63,7 +69,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Server result of accepting the exact offer after the caller reserves its actual UDP receiver slot."
       },
       "AccessDefault": {
         "type": "string",
@@ -271,6 +278,7 @@ export const schemaDocument = {
       },
       "AcquireInstanceRequest": {
         "type": "object",
+        "description": "Authenticated Node request to acquire its runtime instance with actual build capabilities.",
         "required": [
           "instanceId",
           "capabilities"
@@ -278,6 +286,7 @@ export const schemaDocument = {
         "properties": {
           "capabilities": {
             "type": "object",
+            "description": "Actual supported capabilities fixed by authenticated acquisition rather than ordinary State reports.",
             "additionalProperties": {
               "$ref": "#/components/schemas/Capability"
             },
@@ -286,13 +295,15 @@ export const schemaDocument = {
             }
           },
           "instanceId": {
-            "$ref": "#/components/schemas/InstanceId"
+            "$ref": "#/components/schemas/InstanceId",
+            "description": "Node-generated identifier reused only for an uncertain acquisition of the same still-valid instance."
           }
         },
         "additionalProperties": false
       },
       "ActivityAction": {
         "type": "string",
+        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.",
         "enum": [
           "account.register",
           "session.login",
@@ -788,6 +799,7 @@ export const schemaDocument = {
       },
       "ApplyFailure": {
         "type": "string",
+        "description": "Node-reported step responsible for a failed configuration attempt.",
         "enum": [
           "validation",
           "storage",
@@ -965,6 +977,7 @@ export const schemaDocument = {
       },
       "BusinessProtocol": {
         "type": "string",
+        "description": "Inner business protocol whose access scope the Server evaluates.",
         "enum": [
           "tcp",
           "udp",
@@ -975,13 +988,15 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Address a registered Mesh Node.",
             "required": [
               "node",
               "type"
             ],
             "properties": {
               "node": {
-                "$ref": "#/components/schemas/NodeId"
+                "$ref": "#/components/schemas/NodeId",
+                "description": "Destination Node in the demand's network."
               },
               "type": {
                 "type": "string",
@@ -994,13 +1009,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Address a numeric destination, classified against the configured Mesh pools.",
             "required": [
               "address",
               "type"
             ],
             "properties": {
               "address": {
-                "$ref": "#/components/schemas/ExecutionAddress"
+                "$ref": "#/components/schemas/ExecutionAddress",
+                "description": "Exact destination IP address."
               },
               "type": {
                 "type": "string",
@@ -1013,6 +1030,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Address a domain through an IP association that must have a current trusted DNS input.",
             "required": [
               "name",
               "address",
@@ -1020,10 +1038,12 @@ export const schemaDocument = {
             ],
             "properties": {
               "address": {
-                "$ref": "#/components/schemas/ExecutionAddress"
+                "$ref": "#/components/schemas/ExecutionAddress",
+                "description": "Destination IP that must belong to that association."
               },
               "name": {
-                "type": "string"
+                "type": "string",
+                "description": "Domain name checked against the source's trusted DNS association."
               },
               "type": {
                 "type": "string",
@@ -1034,20 +1054,24 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Exact business destination submitted in a demand and bound into its compiled permit."
       },
       "CancelDemandRequest": {
         "type": "object",
+        "description": "Node request to cancel an existing demand owned by its current instance.",
         "required": [
           "instance",
           "requestId"
         ],
         "properties": {
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current source instance required to cancel the demand."
           },
           "requestId": {
-            "$ref": "#/components/schemas/RequestId"
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Existing demand identifier to cancel."
           }
         },
         "additionalProperties": false
@@ -1056,6 +1080,7 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "The unfinished acquisition is cancelled, including an identical cancellation retry.",
             "required": [
               "status"
             ],
@@ -1071,13 +1096,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "The attempt could not be cancelled under the supplied current bindings.",
             "required": [
               "reason",
               "status"
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UdpTraversalUnavailableReason"
+                "$ref": "#/components/schemas/UdpTraversalUnavailableReason",
+                "description": "Closed coordination condition that prevented cancellation."
               },
               "status": {
                 "type": "string",
@@ -1093,16 +1120,19 @@ export const schemaDocument = {
       },
       "CandidateReference": {
         "type": "object",
+        "description": "Immutable reference to an original State-owned endpoint observation without disclosing its private source details.",
         "required": [
           "socket",
           "observationDigest"
         ],
         "properties": {
           "observationDigest": {
-            "$ref": "#/components/schemas/Digest"
+            "$ref": "#/components/schemas/Digest",
+            "description": "Digest of the original address, source, observation lifetime and socket binding, excluding report sequence and receipt time."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketReference"
+            "$ref": "#/components/schemas/SocketReference",
+            "description": "Exact socket that produced and will use the candidate."
           }
         },
         "additionalProperties": false
@@ -1187,16 +1217,20 @@ export const schemaDocument = {
         ],
         "properties": {
           "dialer": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Node that initiates the underlying connection."
           },
           "listener": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Node that accepts the underlying connection."
           },
           "listenerKey": {
-            "type": "string"
+            "type": "string",
+            "description": "Configuration key of the accepting Node's listener."
           },
           "protocol": {
-            "$ref": "#/components/schemas/TransportProtocol"
+            "$ref": "#/components/schemas/TransportProtocol",
+            "description": "Protocol encapsulation authorized for this adjacency."
           }
         },
         "additionalProperties": false
@@ -1277,6 +1311,7 @@ export const schemaDocument = {
       },
       "ClientTls": {
         "type": "object",
+        "description": "Target-bound TLS verification material and client options resolved from the selected listener and dialer.",
         "required": [
           "serverName",
           "certificateChain",
@@ -1284,13 +1319,16 @@ export const schemaDocument = {
         ],
         "properties": {
           "certificateChain": {
-            "$ref": "#/components/schemas/SecretString"
+            "$ref": "#/components/schemas/SecretString",
+            "description": "Target listener's PEM certificate chain, leaf first, used for trust roots and exact leaf-certificate verification."
           },
           "options": {
-            "$ref": "#/components/schemas/DialerTls"
+            "$ref": "#/components/schemas/DialerTls",
+            "description": "Selected dialer's TLS version, ALPN, trust, and handshake-budget options."
           },
           "serverName": {
-            "type": "string"
+            "type": "string",
+            "description": "TLS verification name supplied by the target listener, distinct from its endpoint host and WebSocket Host."
           }
         },
         "additionalProperties": false
@@ -1337,16 +1375,19 @@ export const schemaDocument = {
       },
       "CompiledNode": {
         "type": "object",
+        "description": "Complete Server-compiled Node target paired with the digest checked before persistence and installation.",
         "required": [
           "digest",
           "configuration"
         ],
         "properties": {
           "configuration": {
-            "$ref": "#/components/schemas/NodeConfiguration"
+            "$ref": "#/components/schemas/NodeConfiguration",
+            "description": "Immutable execution content whose digest is supplied."
           },
           "digest": {
-            "$ref": "#/components/schemas/Digest"
+            "$ref": "#/components/schemas/Digest",
+            "description": "Digest of the complete configuration value."
           }
         },
         "additionalProperties": false
@@ -2798,6 +2839,7 @@ export const schemaDocument = {
       },
       "CreateNodeObservation": {
         "type": "object",
+        "description": "Node request for an independently leased diagnostic subscription sourced from its authenticated runtime instance.",
         "required": [
           "instance",
           "subscriptionId",
@@ -2809,11 +2851,13 @@ export const schemaDocument = {
         ],
         "properties": {
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current source runtime instance to which the subscription is bound."
           },
           "intervalMs": {
             "type": "integer",
             "format": "int32",
+            "description": "Requested sampling interval in milliseconds, from 1000 through 30000 and subject to execution budgets.",
             "maximum": 30000,
             "minimum": 1000
           },
@@ -2821,19 +2865,24 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricKind"
-            }
+            },
+            "description": "Requested measurement kinds; unsupported kinds are reported explicitly by the task."
           },
           "selection": {
-            "$ref": "#/components/schemas/ObservationPath"
+            "$ref": "#/components/schemas/ObservationPath",
+            "description": "Automatic authorized path selection or a fixed complete ordered path."
           },
           "service": {
-            "$ref": "#/components/schemas/ObservationServiceScope"
+            "$ref": "#/components/schemas/ObservationServiceScope",
+            "description": "Exact TCP, UDP or ICMP scope checked by Access and complete-path routing."
           },
           "subscriptionId": {
-            "$ref": "#/components/schemas/ObservationSubscriptionId"
+            "$ref": "#/components/schemas/ObservationSubscriptionId",
+            "description": "Independent subscription identifier reused with the same intent on creation retries."
           },
           "target": {
-            "$ref": "#/components/schemas/NodeObservationTarget"
+            "$ref": "#/components/schemas/NodeObservationTarget",
+            "description": "Configured Node name or exact Mesh IP to resolve under current permissions."
           }
         },
         "additionalProperties": false
@@ -2890,6 +2939,7 @@ export const schemaDocument = {
       },
       "DecisionDelta": {
         "type": "object",
+        "description": "Server-computed keyed changes between two complete execution targets.",
         "required": [
           "remove",
           "upsert"
@@ -2899,10 +2949,12 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RequestId"
-            }
+            },
+            "description": "Keys present in the base that must be removed from the reconstructed target."
           },
           "upsert": {
             "type": "object",
+            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
             "additionalProperties": {
               "$ref": "#/components/schemas/DemandDecision"
             },
@@ -3003,13 +3055,15 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "The demand has authorized complete Mesh paths.",
             "required": [
               "permit",
               "type"
             ],
             "properties": {
               "permit": {
-                "$ref": "#/components/schemas/PathPermit"
+                "$ref": "#/components/schemas/PathPermit",
+                "description": "Exact business scope and allowed paths compiled for the demand."
               },
               "type": {
                 "type": "string",
@@ -3022,6 +3076,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Routing selected direct local egress, whose execution requires the matching local-egress permit.",
             "required": [
               "type"
             ],
@@ -3037,6 +3092,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Routing selected unmanaged local egress, whose execution requires the matching local-egress permit.",
             "required": [
               "type"
             ],
@@ -3052,13 +3108,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Compilation could not produce executable authority for this demand.",
             "required": [
               "reason",
               "type"
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UnavailableReason"
+                "$ref": "#/components/schemas/UnavailableReason",
+                "description": "Authorization or dependency condition preventing execution."
               },
               "type": {
                 "type": "string",
@@ -3069,10 +3127,12 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Server compilation result for a business demand; feedback alone does not authorize socket I/O."
       },
       "DemandRequest": {
         "type": "object",
+        "description": "Node request for business execution, with the source and network supplied by its authenticated session.",
         "required": [
           "instance",
           "requestId",
@@ -3085,15 +3145,18 @@ export const schemaDocument = {
           "durationSeconds": {
             "type": "integer",
             "format": "int32",
+            "description": "Requested demand lifetime in seconds, from 1 through 300; creation replay does not extend it.",
             "minimum": 0
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current source runtime instance to which the demand is bound."
           },
           "port": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "TCP or UDP destination port; null or omission is required for ICMP echo."
               },
               {
                 "type": "null"
@@ -3101,32 +3164,39 @@ export const schemaDocument = {
             ]
           },
           "profile": {
-            "type": "string"
+            "type": "string",
+            "description": "Authorized routing profile matching the source's current selection."
           },
           "protocol": {
-            "$ref": "#/components/schemas/BusinessProtocol"
+            "$ref": "#/components/schemas/BusinessProtocol",
+            "description": "Inner business protocol to authorize."
           },
           "requestId": {
-            "$ref": "#/components/schemas/RequestId"
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Stable demand identifier reused with identical content on creation retries."
           },
           "target": {
-            "$ref": "#/components/schemas/BusinessTarget"
+            "$ref": "#/components/schemas/BusinessTarget",
+            "description": "Exact requested business destination."
           }
         },
         "additionalProperties": false
       },
       "DemandResponse": {
         "type": "object",
+        "description": "Server compilation feedback requiring configuration synchronization before execution.",
         "required": [
           "publication",
           "decision"
         ],
         "properties": {
           "decision": {
-            "$ref": "#/components/schemas/DemandDecision"
+            "$ref": "#/components/schemas/DemandDecision",
+            "description": "Current authorization and path result, independent of actual Node installation."
           },
           "publication": {
-            "$ref": "#/components/schemas/PublicationId"
+            "$ref": "#/components/schemas/PublicationId",
+            "description": "Execution publication associated with the evaluated demand."
           }
         },
         "additionalProperties": false
@@ -3201,6 +3271,7 @@ export const schemaDocument = {
       },
       "DiagnosticDelta": {
         "type": "object",
+        "description": "Server-computed keyed changes between two complete execution targets.",
         "required": [
           "remove",
           "upsert"
@@ -3210,10 +3281,12 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ObservationId"
-            }
+            },
+            "description": "Keys present in the base that must be removed from the reconstructed target."
           },
           "upsert": {
             "type": "object",
+            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
             "additionalProperties": {
               "$ref": "#/components/schemas/DiagnosticPermit"
             },
@@ -3231,6 +3304,7 @@ export const schemaDocument = {
       },
       "DiagnosticPermit": {
         "type": "object",
+        "description": "Server-compiled short-lived measurement authority shared by all Nodes on its allowed complete paths.",
         "required": [
           "observationId",
           "source",
@@ -3243,44 +3317,53 @@ export const schemaDocument = {
         ],
         "properties": {
           "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Permit deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339; ordinary instance renewal does not extend it."
           },
           "instanceId": {
-            "$ref": "#/components/schemas/InstanceId"
+            "$ref": "#/components/schemas/InstanceId",
+            "description": "Exact source runtime instance authorized to execute the observation."
           },
           "observationId": {
-            "$ref": "#/components/schemas/ObservationId"
+            "$ref": "#/components/schemas/ObservationId",
+            "description": "Observation task authorized by this permit."
           },
           "paths": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/LogicalPath"
-            }
+            },
+            "description": "Complete authorized measurement paths preserving every required intermediate Node."
           },
           "replies": {
-            "$ref": "#/components/schemas/DiagnosticReplyPolicy"
+            "$ref": "#/components/schemas/DiagnosticReplyPolicy",
+            "description": "Authentication and path constraint for diagnostic replies."
           },
           "service": {
             "$ref": "#/components/schemas/ObservationServiceScope",
             "description": "Exact authorized traffic counting scope; diagnostic frames are separate\nfrom TCP/UDP/ICMP business packets and create no business flow authority."
           },
           "source": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Only Node authorized to originate the diagnostic requests."
           },
           "target": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Terminal Node authorized to answer the diagnostic requests."
           }
         },
         "additionalProperties": false
       },
       "DiagnosticReplyPolicy": {
         "type": "string",
+        "description": "Reply constraint for authenticated diagnostic request and response correlation.",
         "enum": [
           "authenticatedExactReversePath"
         ]
       },
       "DialCandidate": {
         "type": "object",
+        "description": "Server-compiled outbound candidate with resolved peer listener parameters and material.",
         "required": [
           "peer",
           "listenerKey",
@@ -3293,20 +3376,25 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Endpoint"
-            }
+            },
+            "description": "Explicitly published listener endpoints; an empty Native UDP list requires coordinated acquisition."
           },
           "listenerKey": {
-            "type": "string"
+            "type": "string",
+            "description": "Configuration key of the peer listener."
           },
           "parameters": {
-            "$ref": "#/components/schemas/DialParameters"
+            "$ref": "#/components/schemas/DialParameters",
+            "description": "Complete protocol-specific client parameters and required material."
           },
           "peer": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Peer accepting this candidate's underlying connection."
           },
           "priority": {
             "type": "integer",
             "format": "int32",
+            "description": "Configured dial preference, with lower values ordered first.",
             "minimum": 0
           }
         },
@@ -3316,13 +3404,15 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Native UDP connection settings.",
             "required": [
               "options",
               "type"
             ],
             "properties": {
               "options": {
-                "$ref": "#/components/schemas/NativeUdpDialer"
+                "$ref": "#/components/schemas/NativeUdpDialer",
+                "description": "Selected source node's Native UDP dialer options."
               },
               "type": {
                 "type": "string",
@@ -3335,13 +3425,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Native TCP connection settings.",
             "required": [
               "options",
               "type"
             ],
             "properties": {
               "options": {
-                "$ref": "#/components/schemas/NativeTcpDialer"
+                "$ref": "#/components/schemas/NativeTcpDialer",
+                "description": "Selected source node's Native TCP dialer options."
               },
               "type": {
                 "type": "string",
@@ -3354,6 +3446,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "VLESS connection settings with the target's credential and encapsulation.",
             "required": [
               "options",
               "stream",
@@ -3364,16 +3457,20 @@ export const schemaDocument = {
             ],
             "properties": {
               "flow": {
-                "type": "string"
+                "type": "string",
+                "description": "Target listener's VLESS flow; only the empty string is supported."
               },
               "options": {
-                "$ref": "#/components/schemas/VlessDialer"
+                "$ref": "#/components/schemas/VlessDialer",
+                "description": "Selected source node's VLESS dialer options, including any additional WebSocket request headers."
               },
               "stream": {
-                "$ref": "#/components/schemas/VlessStream"
+                "$ref": "#/components/schemas/VlessStream",
+                "description": "Concrete target listener encapsulation, `tcp` or `websocket`, after dialer compatibility selection."
               },
               "tls": {
-                "$ref": "#/components/schemas/ClientTls"
+                "$ref": "#/components/schemas/ClientTls",
+                "description": "Target-bound TLS verification material and selected client options."
               },
               "type": {
                 "type": "string",
@@ -3382,12 +3479,14 @@ export const schemaDocument = {
                 ]
               },
               "uuid": {
-                "$ref": "#/components/schemas/SecretString"
+                "$ref": "#/components/schemas/SecretString",
+                "description": "Target listener's explicit or Server-generated, saved UUID credential."
               },
               "websocket": {
                 "oneOf": [
                   {
-                    "$ref": "#/components/schemas/ListenerWebSocket"
+                    "$ref": "#/components/schemas/ListenerWebSocket",
+                    "description": "Target listener's resolved WebSocket path, Host, and response headers; null or omission indicates no WebSocket parameters."
                   },
                   {
                     "type": "null"
@@ -3399,6 +3498,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Trojan TCP CONNECT settings with the target's password and TLS verification material.",
             "required": [
               "options",
               "password",
@@ -3407,13 +3507,16 @@ export const schemaDocument = {
             ],
             "properties": {
               "options": {
-                "$ref": "#/components/schemas/TrojanDialer"
+                "$ref": "#/components/schemas/TrojanDialer",
+                "description": "Selected source node's Trojan dialer options."
               },
               "password": {
-                "$ref": "#/components/schemas/SecretString"
+                "$ref": "#/components/schemas/SecretString",
+                "description": "Target listener's explicit or Server-generated, saved password, preserved without trimming or case normalization."
               },
               "tls": {
-                "$ref": "#/components/schemas/ClientTls"
+                "$ref": "#/components/schemas/ClientTls",
+                "description": "Target-bound TLS verification material and selected client options."
               },
               "type": {
                 "type": "string",
@@ -3424,10 +3527,12 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Protocol-specific connection inputs resolved by the Server for a selected target listener."
       },
       "DialerDelta": {
         "type": "object",
+        "description": "Server-computed keyed changes between two complete execution targets.",
         "required": [
           "remove",
           "upsert"
@@ -3437,10 +3542,12 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Keys present in the base that must be removed from the reconstructed target."
           },
           "upsert": {
             "type": "object",
+            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
             "additionalProperties": {
               "$ref": "#/components/schemas/DialCandidate"
             },
@@ -3453,18 +3560,23 @@ export const schemaDocument = {
       },
       "DialerSet": {
         "type": "object",
+        "description": "Protocol-keyed outbound selection; an explicit empty object disables active dialing, and a node's explicit set replaces the whole network default set.",
         "properties": {
           "native_tcp": {
-            "$ref": "#/components/schemas/NativeTcpDialer"
+            "$ref": "#/components/schemas/NativeTcpDialer",
+            "description": "Native TCP options; omission excludes this protocol from the selected set, an empty object enables defaults, and null is rejected."
           },
           "native_udp": {
-            "$ref": "#/components/schemas/NativeUdpDialer"
+            "$ref": "#/components/schemas/NativeUdpDialer",
+            "description": "Native UDP options; omission excludes this protocol from the selected set, an empty object enables defaults, and null is rejected."
           },
           "trojan": {
-            "$ref": "#/components/schemas/TrojanDialer"
+            "$ref": "#/components/schemas/TrojanDialer",
+            "description": "Trojan options; omission excludes this protocol from the selected set, an empty object enables defaults, and null is rejected."
           },
           "vless": {
-            "$ref": "#/components/schemas/VlessDialer"
+            "$ref": "#/components/schemas/VlessDialer",
+            "description": "VLESS options; omission excludes this protocol from the selected set, an empty object enables defaults, and null is rejected."
           }
         },
         "additionalProperties": false
@@ -3545,6 +3657,7 @@ export const schemaDocument = {
       },
       "DialerStream": {
         "type": "string",
+        "description": "VLESS target encapsulation selector; defaults to `auto` to use the listener's encapsulation.",
         "enum": [
           "auto",
           "tcp",
@@ -3553,33 +3666,41 @@ export const schemaDocument = {
       },
       "DialerTls": {
         "type": "object",
+        "description": "TLS client verification and negotiation options for a target selected by the Server.",
         "properties": {
           "alpn": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Ordered ALPN names of 1–255 bytes without control characters; defaults to empty, and WebSocket permits only `http/1.1` entries."
           },
           "handshakeTimeout": {
-            "$ref": "#/components/schemas/PositiveDuration"
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive TLS handshake budget; defaults to `5s` and cannot extend the overall connection or remaining lease budget."
           },
           "maxVersion": {
-            "$ref": "#/components/schemas/TlsVersion"
+            "$ref": "#/components/schemas/TlsVersion",
+            "description": "Maximum accepted TLS version, `1.2` or `1.3`; defaults to `1.3` and must not precede minVersion."
           },
           "minVersion": {
-            "$ref": "#/components/schemas/TlsVersion"
+            "$ref": "#/components/schemas/TlsVersion",
+            "description": "Minimum accepted TLS version, `1.2` or `1.3`; defaults to `1.2` and must not exceed maxVersion."
           },
           "trust": {
-            "$ref": "#/components/schemas/TlsTrust"
+            "$ref": "#/components/schemas/TlsTrust",
+            "description": "Target-bound TLS verification policy; defaults to `managed`, the only accepted value."
           }
         },
         "additionalProperties": false
       },
       "DialerWebSocket": {
         "type": "object",
+        "description": "Additional WebSocket client options; the target listener supplies the path and Host.",
         "properties": {
           "headers": {
-            "$ref": "#/components/schemas/WebSocketHeaders"
+            "$ref": "#/components/schemas/WebSocketHeaders",
+            "description": "Additional request headers, excluding reserved handshake and framing names; defaults to an empty object."
           }
         },
         "additionalProperties": false
@@ -3665,6 +3786,7 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Compilation proved that the DNS selection has no exit possibility.",
             "required": [
               "type"
             ],
@@ -3680,13 +3802,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "DNS egress lacks a required executable plan.",
             "required": [
               "reason",
               "type"
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/DnsEgressUnavailable"
+                "$ref": "#/components/schemas/DnsEgressUnavailable",
+                "description": "Condition preventing DNS egress execution."
               },
               "type": {
                 "type": "string",
@@ -3697,16 +3821,19 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Server evaluation of whether DNS routing requires an explicit exit plan."
       },
       "DnsEgressUnavailable": {
         "type": "string",
+        "description": "Missing execution dependency for DNS egress.",
         "enum": [
           "exitPlanRequired"
         ]
       },
       "DnsExecution": {
         "type": "object",
+        "description": "DNS settings and trusted name bindings compiled for one Node's execution target.",
         "required": [
           "settings",
           "meshHosts",
@@ -3719,7 +3846,8 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TrustedDnsAssociation"
-            }
+            },
+            "description": "Current trusted DNS associations included for this source's domain demands."
           },
           "egress": {
             "$ref": "#/components/schemas/DnsEgress",
@@ -3727,6 +3855,7 @@ export const schemaDocument = {
           },
           "meshHosts": {
             "type": "object",
+            "description": "Configured Mesh names and addresses filtered by this Node's source Access permissions.",
             "additionalProperties": {
               "$ref": "#/components/schemas/NodeAddresses"
             },
@@ -3739,7 +3868,8 @@ export const schemaDocument = {
             "description": "Regular resolution follows this selection; explicit resolver exceptions retain useWithExit."
           },
           "settings": {
-            "$ref": "#/components/schemas/DnsConfiguration"
+            "$ref": "#/components/schemas/DnsConfiguration",
+            "description": "DNS configuration copied from the publication's source revision."
           }
         },
         "additionalProperties": false
@@ -3844,16 +3974,19 @@ export const schemaDocument = {
       },
       "Endpoint": {
         "type": "object",
+        "description": "A host and port identifying a transport endpoint, without asserting reachability.",
         "required": [
           "host",
           "port"
         ],
         "properties": {
           "host": {
-            "type": "string"
+            "type": "string",
+            "description": "IP address or DNS name, without a URL scheme, path, or port suffix."
           },
           "port": {
-            "$ref": "#/components/schemas/Port"
+            "$ref": "#/components/schemas/Port",
+            "description": "Endpoint port in the range 1–65535."
           }
         },
         "additionalProperties": false
@@ -4974,7 +5107,8 @@ export const schemaDocument = {
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
       },
       "ExecutionAddress": {
-        "type": "string"
+        "type": "string",
+        "description": "Numeric IPv4 or IPv6 business destination used in an execution binding."
       },
       "ExistingNodeBinding": {
         "type": "object",
@@ -5699,6 +5833,7 @@ export const schemaDocument = {
       },
       "InstanceLease": {
         "type": "object",
+        "description": "Server-issued runtime qualification with separate instance and execution deadlines.",
         "required": [
           "instanceId",
           "generation",
@@ -5709,7 +5844,8 @@ export const schemaDocument = {
           "executionExpiresAt": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Timestamp"
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "Execution deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339; null means no execution lease is granted."
               },
               {
                 "type": "null"
@@ -5717,18 +5853,22 @@ export const schemaDocument = {
             ]
           },
           "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Instance deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339."
           },
           "generation": {
-            "$ref": "#/components/schemas/Version"
+            "$ref": "#/components/schemas/Version",
+            "description": "Server-issued generation fencing replaced instances."
           },
           "instanceId": {
-            "$ref": "#/components/schemas/InstanceId"
+            "$ref": "#/components/schemas/InstanceId",
+            "description": "Acquired Node runtime instance."
           },
           "target": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ConfigurationRef"
+                "$ref": "#/components/schemas/ConfigurationRef",
+                "description": "Exact current execution target, or null when no target is available; its presence alone does not grant execution."
               },
               {
                 "type": "null"
@@ -6328,34 +6468,42 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "type"
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "type": {
                 "type": "string",
@@ -6368,37 +6516,46 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "type"
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "tcp": {
-                "$ref": "#/components/schemas/TcpOptions"
+                "$ref": "#/components/schemas/TcpOptions",
+                "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
               },
               "type": {
                 "type": "string",
@@ -6411,6 +6568,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "tls",
@@ -6418,40 +6576,51 @@ export const schemaDocument = {
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "flow": {
-                "type": "string"
+                "type": "string",
+                "description": "VLESS flow selection; only the empty string is accepted and omission defaults to it."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "stream": {
-                "$ref": "#/components/schemas/VlessStream"
+                "$ref": "#/components/schemas/VlessStream",
+                "description": "VLESS encapsulation, `tcp` or `websocket`, both over TLS; defaults to `tcp`."
               },
               "tcp": {
-                "$ref": "#/components/schemas/TcpOptions"
+                "$ref": "#/components/schemas/TcpOptions",
+                "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
               },
               "tls": {
-                "$ref": "#/components/schemas/ListenerTls"
+                "$ref": "#/components/schemas/ListenerTls",
+                "description": "Required TLS server settings, including the certificate verification name and material source."
               },
               "type": {
                 "type": "string",
@@ -6460,16 +6629,19 @@ export const schemaDocument = {
                 ]
               },
               "uuid": {
-                "$ref": "#/components/schemas/SecretString"
+                "$ref": "#/components/schemas/SecretString",
+                "description": "Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected."
               },
               "websocket": {
-                "$ref": "#/components/schemas/ListenerWebSocket"
+                "$ref": "#/components/schemas/ListenerWebSocket",
+                "description": "WebSocket Upgrade settings; omission uses defaults for a websocket stream, while a tcp stream forbids this field and null is rejected."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "tls",
@@ -6477,40 +6649,51 @@ export const schemaDocument = {
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "password": {
-                "$ref": "#/components/schemas/SecretString"
+                "$ref": "#/components/schemas/SecretString",
+                "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "stream": {
-                "$ref": "#/components/schemas/TrojanStream"
+                "$ref": "#/components/schemas/TrojanStream",
+                "description": "Trojan encapsulation; only `tcp` is accepted and omission defaults to it."
               },
               "tcp": {
-                "$ref": "#/components/schemas/TcpOptions"
+                "$ref": "#/components/schemas/TcpOptions",
+                "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
               },
               "tls": {
-                "$ref": "#/components/schemas/ListenerTls"
+                "$ref": "#/components/schemas/ListenerTls",
+                "description": "Required TLS server settings, including the certificate verification name and material source."
               },
               "type": {
                 "type": "string",
@@ -6521,7 +6704,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "An inbound listener as declared: `type` selects the carrier; credential and TLS materials may be omitted for the Server to generate."
       },
       "ListenerChange": {
         "type": "object",
@@ -6549,6 +6733,7 @@ export const schemaDocument = {
       },
       "ListenerDelta": {
         "type": "object",
+        "description": "Server-computed keyed changes between two complete execution targets.",
         "required": [
           "remove",
           "upsert"
@@ -6558,10 +6743,12 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Keys present in the base that must be removed from the reconstructed target."
           },
           "upsert": {
             "type": "object",
+            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
             "additionalProperties": {
               "$ref": "#/components/schemas/PreparedListener"
             },
@@ -6639,6 +6826,7 @@ export const schemaDocument = {
       },
       "ListenerTls": {
         "type": "object",
+        "description": "TLS server parameters and certificate material for a VLESS or Trojan listener.",
         "required": [
           "serverName"
         ],
@@ -6647,28 +6835,36 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Ordered ALPN names of 1–255 bytes without control characters; defaults to empty, and WebSocket permits only `http/1.1` entries."
           },
           "certificate": {
-            "$ref": "#/components/schemas/SecretString"
+            "$ref": "#/components/schemas/SecretString",
+            "description": "Nonempty PEM certificate chain, leaf first; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
           },
           "handshakeTimeout": {
-            "$ref": "#/components/schemas/PositiveDuration"
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive TLS handshake budget; defaults to `5s` and cannot extend the overall connection or remaining lease budget."
           },
           "maxVersion": {
-            "$ref": "#/components/schemas/TlsVersion"
+            "$ref": "#/components/schemas/TlsVersion",
+            "description": "Maximum accepted TLS version, `1.2` or `1.3`; defaults to `1.3` and must not precede minVersion."
           },
           "minVersion": {
-            "$ref": "#/components/schemas/TlsVersion"
+            "$ref": "#/components/schemas/TlsVersion",
+            "description": "Minimum accepted TLS version, `1.2` or `1.3`; defaults to `1.2` and must not exceed maxVersion."
           },
           "mode": {
-            "$ref": "#/components/schemas/TlsMode"
+            "$ref": "#/components/schemas/TlsMode",
+            "description": "Certificate-material source; defaults to `managed`, while `provided` requires both certificate and private key."
           },
           "privateKey": {
-            "$ref": "#/components/schemas/SecretString"
+            "$ref": "#/components/schemas/SecretString",
+            "description": "Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
           },
           "serverName": {
-            "type": "string"
+            "type": "string",
+            "description": "Required TLS host name or IP address used for certificate identity and the dialer's verification name."
           }
         },
         "additionalProperties": false
@@ -6729,34 +6925,42 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "type"
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "type": {
                 "type": "string",
@@ -6769,37 +6973,46 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "type"
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "tcp": {
-                "$ref": "#/components/schemas/TcpOptions"
+                "$ref": "#/components/schemas/TcpOptions",
+                "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
               },
               "type": {
                 "type": "string",
@@ -6892,6 +7105,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "tls",
@@ -6899,40 +7113,51 @@ export const schemaDocument = {
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "password": {
-                "$ref": "#/components/schemas/SecretString"
+                "$ref": "#/components/schemas/SecretString",
+                "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "stream": {
-                "$ref": "#/components/schemas/TrojanStream"
+                "$ref": "#/components/schemas/TrojanStream",
+                "description": "Trojan encapsulation; only `tcp` is accepted and omission defaults to it."
               },
               "tcp": {
-                "$ref": "#/components/schemas/TcpOptions"
+                "$ref": "#/components/schemas/TcpOptions",
+                "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
               },
               "tls": {
-                "$ref": "#/components/schemas/ListenerTls"
+                "$ref": "#/components/schemas/ListenerTls",
+                "description": "Required TLS server settings, including the certificate verification name and material source."
               },
               "type": {
                 "type": "string",
@@ -6943,7 +7168,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "A listener edit keyed by the listener's name: `type` selects the carrier; omitted VLESS secrets, TLS materials, WebSocket block and response headers keep the saved values of the same listener."
       },
       "ListenerView": {
         "type": "object",
@@ -7057,15 +7283,19 @@ export const schemaDocument = {
       },
       "ListenerWebSocket": {
         "type": "object",
+        "description": "HTTP/1.1 WebSocket Upgrade parameters supplied by the target VLESS listener.",
         "properties": {
           "host": {
-            "type": "string"
+            "type": "string",
+            "description": "Exact WebSocket Host name or IP address; omission uses TLS serverName, while null is rejected."
           },
           "path": {
-            "$ref": "#/components/schemas/WebSocketPath"
+            "$ref": "#/components/schemas/WebSocketPath",
+            "description": "Exact path beginning with `/`, without query, fragment, whitespace, or control characters; defaults to `/meshway`."
           },
           "responseHeaders": {
-            "$ref": "#/components/schemas/WebSocketHeaders"
+            "$ref": "#/components/schemas/WebSocketHeaders",
+            "description": "Additional response headers, excluding reserved handshake and framing names; defaults to an empty object."
           }
         },
         "additionalProperties": false
@@ -7120,6 +7350,7 @@ export const schemaDocument = {
       },
       "LocalEgressAction": {
         "type": "string",
+        "description": "Local egress selection bound into a source-only execution permit.",
         "enum": [
           "direct",
           "unmanaged"
@@ -7127,6 +7358,7 @@ export const schemaDocument = {
       },
       "LocalEgressDelta": {
         "type": "object",
+        "description": "Server-computed keyed changes between two complete execution targets.",
         "required": [
           "remove",
           "upsert"
@@ -7136,10 +7368,12 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RequestId"
-            }
+            },
+            "description": "Keys present in the base that must be removed from the reconstructed target."
           },
           "upsert": {
             "type": "object",
+            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
             "additionalProperties": {
               "$ref": "#/components/schemas/LocalEgressPermit"
             },
@@ -7157,6 +7391,7 @@ export const schemaDocument = {
       },
       "LocalEgressPermit": {
         "type": "object",
+        "description": "Server-compiled exact local egress binding published only to the business source.",
         "required": [
           "demandId",
           "source",
@@ -7168,18 +7403,22 @@ export const schemaDocument = {
         ],
         "properties": {
           "action": {
-            "$ref": "#/components/schemas/LocalEgressAction"
+            "$ref": "#/components/schemas/LocalEgressAction",
+            "description": "Selected local routing action, without Mesh relay or exit admission."
           },
           "demandId": {
-            "$ref": "#/components/schemas/RequestId"
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Demand authorizing this local execution binding."
           },
           "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Local permit deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and bounded by its dependencies."
           },
           "port": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Exact TCP or UDP destination port; null or omitted only for ICMP echo."
               },
               {
                 "type": "null"
@@ -7187,16 +7426,20 @@ export const schemaDocument = {
             ]
           },
           "profile": {
-            "type": "string"
+            "type": "string",
+            "description": "Routing profile under which the local action was selected."
           },
           "protocol": {
-            "$ref": "#/components/schemas/BusinessProtocol"
+            "$ref": "#/components/schemas/BusinessProtocol",
+            "description": "Authorized inner business protocol."
           },
           "source": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Only Node allowed to consume the local binding."
           },
           "target": {
-            "$ref": "#/components/schemas/BusinessTarget"
+            "$ref": "#/components/schemas/BusinessTarget",
+            "description": "Exact destination covered by the local route."
           }
         },
         "additionalProperties": false
@@ -7223,6 +7466,7 @@ export const schemaDocument = {
       },
       "LogicalPath": {
         "type": "object",
+        "description": "Complete ordered path authorized by Server compilation, including all required intermediate Nodes.",
         "required": [
           "nodes",
           "dialCandidates"
@@ -7250,7 +7494,8 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/NodeId"
-            }
+            },
+            "description": "Ordered source, intermediate Nodes and terminal Node or exit."
           }
         },
         "additionalProperties": false
@@ -7740,130 +7985,164 @@ export const schemaDocument = {
       },
       "NativeTcpDialer": {
         "type": "object",
+        "description": "Outbound carrier selection and connection options; the Server resolves target listener parameters separately.",
         "properties": {
           "bindInterface": {
-            "type": "string"
+            "type": "string",
+            "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
           },
           "connectTimeout": {
-            "$ref": "#/components/schemas/PositiveDuration"
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive total connection budget including resolution and required handshakes; defaults to `5s` and is limited by the remaining active lease."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether this dialer may be used for outgoing connections; defaults to true."
           },
           "localAddress": {
-            "type": "string"
+            "type": "string",
+            "description": "Local outgoing IP address; omitted or empty selects automatically, and a Mesh address cannot bypass underlay protection."
           },
           "priority": {
             "type": "integer",
             "format": "int32",
+            "description": "Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.",
             "minimum": 0
           },
           "remark": {
-            "type": "string"
+            "type": "string",
+            "description": "Descriptive text rather than a resource key; defaults to an empty string."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketOptions"
+            "$ref": "#/components/schemas/SocketOptions",
+            "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
           },
           "tcp": {
-            "$ref": "#/components/schemas/TcpOptions"
+            "$ref": "#/components/schemas/TcpOptions",
+            "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
           }
         },
         "additionalProperties": false
       },
       "NativeTcpListener": {
         "type": "object",
+        "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
         "required": [
           "listenPort"
         ],
         "properties": {
           "bindInterface": {
-            "type": "string"
+            "type": "string",
+            "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
           },
           "endpoints": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Endpoint"
-            }
+            },
+            "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
           },
           "listen": {
-            "type": "string"
+            "type": "string",
+            "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
           },
           "listenPort": {
-            "$ref": "#/components/schemas/Port"
+            "$ref": "#/components/schemas/Port",
+            "description": "Required local listening port in the range 1–65535."
           },
           "remark": {
-            "type": "string"
+            "type": "string",
+            "description": "Descriptive text; defaults to an empty string and cannot be null."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketOptions"
+            "$ref": "#/components/schemas/SocketOptions",
+            "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
           },
           "tcp": {
-            "$ref": "#/components/schemas/TcpOptions"
+            "$ref": "#/components/schemas/TcpOptions",
+            "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
           }
         },
         "additionalProperties": false
       },
       "NativeUdpDialer": {
         "type": "object",
+        "description": "Outbound carrier selection and connection options; the Server resolves target listener parameters separately.",
         "properties": {
           "bindInterface": {
-            "type": "string"
+            "type": "string",
+            "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
           },
           "connectTimeout": {
-            "$ref": "#/components/schemas/PositiveDuration"
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive total connection budget including resolution and required handshakes; defaults to `5s` and is limited by the remaining active lease."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether this dialer may be used for outgoing connections; defaults to true."
           },
           "localAddress": {
-            "type": "string"
+            "type": "string",
+            "description": "Local outgoing IP address; omitted or empty selects automatically, and a Mesh address cannot bypass underlay protection."
           },
           "priority": {
             "type": "integer",
             "format": "int32",
+            "description": "Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.",
             "minimum": 0
           },
           "remark": {
-            "type": "string"
+            "type": "string",
+            "description": "Descriptive text rather than a resource key; defaults to an empty string."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketOptions"
+            "$ref": "#/components/schemas/SocketOptions",
+            "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
           }
         },
         "additionalProperties": false
       },
       "NativeUdpListener": {
         "type": "object",
+        "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
         "required": [
           "listenPort"
         ],
         "properties": {
           "bindInterface": {
-            "type": "string"
+            "type": "string",
+            "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
           },
           "endpoints": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Endpoint"
-            }
+            },
+            "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
           },
           "listen": {
-            "type": "string"
+            "type": "string",
+            "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
           },
           "listenPort": {
-            "$ref": "#/components/schemas/Port"
+            "$ref": "#/components/schemas/Port",
+            "description": "Required local listening port in the range 1–65535."
           },
           "remark": {
-            "type": "string"
+            "type": "string",
+            "description": "Descriptive text; defaults to an empty string and cannot be null."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketOptions"
+            "$ref": "#/components/schemas/SocketOptions",
+            "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
           }
         },
         "additionalProperties": false
@@ -8310,6 +8589,7 @@ export const schemaDocument = {
       },
       "NodeChallengeIntent": {
         "type": "object",
+        "description": "Node-signed challenge application binding the pinned Server, registered identity and requested operation.",
         "required": [
           "id",
           "controllerId",
@@ -8318,16 +8598,20 @@ export const schemaDocument = {
         ],
         "properties": {
           "controllerId": {
-            "$ref": "#/components/schemas/KeyId"
+            "$ref": "#/components/schemas/KeyId",
+            "description": "Durable Server installation identity pinned alongside the HTTPS origin at enrollment."
           },
           "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Requested deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and limited to 60 seconds after Server admission."
           },
           "id": {
-            "$ref": "#/components/schemas/ChallengeId"
+            "$ref": "#/components/schemas/ChallengeId",
+            "description": "Client-generated challenge identifier reused unchanged when retrying the same application."
           },
           "request": {
-            "$ref": "#/components/schemas/NodeChallengeRequest"
+            "$ref": "#/components/schemas/NodeChallengeRequest",
+            "description": "Registered identity, operation and typed intent digest to bind into the challenge."
           }
         },
         "additionalProperties": false
@@ -8368,6 +8652,7 @@ export const schemaDocument = {
       },
       "NodeConfiguration": {
         "type": "object",
+        "description": "Complete private execution target compiled by the Server for one Node; installation also requires a matching valid lease.",
         "required": [
           "networkId",
           "nodeId",
@@ -8392,10 +8677,12 @@ export const schemaDocument = {
         ],
         "properties": {
           "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses"
+            "$ref": "#/components/schemas/NodeAddresses",
+            "description": "Configured Mesh addresses used consistently by DNS and packet admission."
           },
           "decisions": {
             "type": "object",
+            "description": "Server compilation results for this Node's live business demands.",
             "additionalProperties": {
               "$ref": "#/components/schemas/DemandDecision"
             },
@@ -8409,7 +8696,8 @@ export const schemaDocument = {
             }
           },
           "dependencyDigest": {
-            "$ref": "#/components/schemas/Digest"
+            "$ref": "#/components/schemas/Digest",
+            "description": "Digest of the trusted compilation inputs, including demand and identity dependencies."
           },
           "diagnostics": {
             "type": "object",
@@ -8428,6 +8716,7 @@ export const schemaDocument = {
           },
           "dialers": {
             "type": "object",
+            "description": "Authorized outbound candidates indexed by Server-compiled candidate key.",
             "additionalProperties": {
               "$ref": "#/components/schemas/DialCandidate"
             },
@@ -8436,22 +8725,28 @@ export const schemaDocument = {
             }
           },
           "dns": {
-            "$ref": "#/components/schemas/DnsExecution"
+            "$ref": "#/components/schemas/DnsExecution",
+            "description": "Compiled DNS settings, visible Mesh names and trusted associations."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the source configuration enables this Node's business execution."
           },
           "exitEnabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Configured exit eligibility gated by Node enablement, not proof of installed forwarding."
           },
           "hostname": {
-            "type": "string"
+            "type": "string",
+            "description": "Configured canonical hostname, independent of the reported OS hostname."
           },
           "identity": {
-            "$ref": "#/components/schemas/NodeIdentity"
+            "$ref": "#/components/schemas/NodeIdentity",
+            "description": "Configured User or Tag identity used for authorization."
           },
           "listeners": {
             "type": "object",
+            "description": "Complete local listener parameters and material indexed by configuration key.",
             "additionalProperties": {
               "$ref": "#/components/schemas/PreparedListener"
             },
@@ -8479,13 +8774,16 @@ export const schemaDocument = {
             "description": "Complete managed capture ranges, never peer inventory or business authority."
           },
           "networkId": {
-            "$ref": "#/components/schemas/NetworkId"
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network for which this target was compiled."
           },
           "nodeId": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Only Node intended to install this target."
           },
           "peers": {
             "type": "object",
+            "description": "Trusted identities and addresses of required execution peers.",
             "additionalProperties": {
               "$ref": "#/components/schemas/PeerConfiguration"
             },
@@ -8514,19 +8812,23 @@ export const schemaDocument = {
             }
           },
           "publication": {
-            "$ref": "#/components/schemas/PublicationId"
+            "$ref": "#/components/schemas/PublicationId",
+            "description": "Execution publication that fixes this target and its dependencies."
           },
           "revision": {
-            "$ref": "#/components/schemas/Revision"
+            "$ref": "#/components/schemas/Revision",
+            "description": "Source configuration revision fixed by this publication."
           },
           "selfKeys": {
-            "$ref": "#/components/schemas/TrustedNode"
+            "$ref": "#/components/schemas/TrustedNode",
+            "description": "This Node's trusted public key bindings and authenticated capabilities."
           }
         },
         "additionalProperties": false
       },
       "NodeConfigurationDelta": {
         "type": "object",
+        "description": "Server-computed execution delta reconstructed in a temporary complete target and verified against its digest before installation.",
         "required": [
           "networkId",
           "nodeId",
@@ -8551,70 +8853,91 @@ export const schemaDocument = {
         ],
         "properties": {
           "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses"
+            "$ref": "#/components/schemas/NodeAddresses",
+            "description": "Target's complete configured Mesh address assignment."
           },
           "base": {
-            "$ref": "#/components/schemas/ConfigurationRef"
+            "$ref": "#/components/schemas/ConfigurationRef",
+            "description": "Exact saved configuration required as the reconstruction base."
           },
           "decisions": {
-            "$ref": "#/components/schemas/DecisionDelta"
+            "$ref": "#/components/schemas/DecisionDelta",
+            "description": "Source demand decision removals and complete replacements."
           },
           "dependencyDigest": {
-            "$ref": "#/components/schemas/Digest"
+            "$ref": "#/components/schemas/Digest",
+            "description": "Replacement digest of the target's trusted compilation dependencies."
           },
           "diagnostics": {
-            "$ref": "#/components/schemas/DiagnosticDelta"
+            "$ref": "#/components/schemas/DiagnosticDelta",
+            "description": "Independent diagnostic permit removals and complete replacements."
           },
           "dialers": {
-            "$ref": "#/components/schemas/DialerDelta"
+            "$ref": "#/components/schemas/DialerDelta",
+            "description": "Outbound candidate removals and complete replacements."
           },
           "dns": {
-            "$ref": "#/components/schemas/DnsExecution"
+            "$ref": "#/components/schemas/DnsExecution",
+            "description": "Complete replacement DNS execution content."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Target's configured business execution enablement."
           },
           "exitEnabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Target's configured exit eligibility, gated by Node enablement."
           },
           "hostname": {
-            "type": "string"
+            "type": "string",
+            "description": "Target's configured canonical hostname."
           },
           "identity": {
-            "$ref": "#/components/schemas/NodeIdentity"
+            "$ref": "#/components/schemas/NodeIdentity",
+            "description": "Target's complete User or Tag authorization identity."
           },
           "listeners": {
-            "$ref": "#/components/schemas/ListenerDelta"
+            "$ref": "#/components/schemas/ListenerDelta",
+            "description": "Local listener removals and complete replacements."
           },
           "localEgress": {
-            "$ref": "#/components/schemas/LocalEgressDelta"
+            "$ref": "#/components/schemas/LocalEgressDelta",
+            "description": "Source-only local egress permit removals and complete replacements."
           },
           "meshAddressPools": {
-            "$ref": "#/components/schemas/AddressPools"
+            "$ref": "#/components/schemas/AddressPools",
+            "description": "Complete replacement Mesh capture pools, without granting business access."
           },
           "networkId": {
-            "$ref": "#/components/schemas/NetworkId"
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network shared by the base and target configurations."
           },
           "nodeId": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Only Node to which this delta applies."
           },
           "peers": {
-            "$ref": "#/components/schemas/PeerDelta"
+            "$ref": "#/components/schemas/PeerDelta",
+            "description": "Trusted peer removals and complete replacements."
           },
           "permits": {
-            "$ref": "#/components/schemas/PermitDelta"
+            "$ref": "#/components/schemas/PermitDelta",
+            "description": "Business path permit removals and complete replacements."
           },
           "selfKeys": {
-            "$ref": "#/components/schemas/TrustedNode"
+            "$ref": "#/components/schemas/TrustedNode",
+            "description": "Target's trusted local public key bindings and authenticated capabilities."
           },
           "target": {
-            "$ref": "#/components/schemas/ConfigurationRef"
+            "$ref": "#/components/schemas/ConfigurationRef",
+            "description": "Exact reconstructed target reference, including the digest to verify."
           }
         },
         "additionalProperties": false
       },
       "NodeConfigurationRequest": {
         "type": "object",
+        "description": "Instance-bound request to synchronize a complete execution target or explicitly refresh its lease.",
         "required": [
           "instance"
         ],
@@ -8622,7 +8945,8 @@ export const schemaDocument = {
           "base": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ConfigurationRef"
+                "$ref": "#/components/schemas/ConfigurationRef",
+                "description": "Exact locally saved base for delta or unchanged detection; null or omission requests a full target when available."
               },
               {
                 "type": "null"
@@ -8630,13 +8954,15 @@ export const schemaDocument = {
             ]
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current runtime instance receiving the target."
           }
         },
         "additionalProperties": false
       },
       "NodeConfigurationResponse": {
         "type": "object",
+        "description": "Consistent Server snapshot of the instance lease and its full, delta or unchanged execution target.",
         "required": [
           "lease"
         ],
@@ -8644,7 +8970,8 @@ export const schemaDocument = {
           "delta": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/NodeConfigurationDelta"
+                "$ref": "#/components/schemas/NodeConfigurationDelta",
+                "description": "Delta from a retained matching base; null when returning a full target, an unchanged target or no target."
               },
               {
                 "type": "null"
@@ -8663,7 +8990,8 @@ export const schemaDocument = {
             ]
           },
           "lease": {
-            "$ref": "#/components/schemas/InstanceLease"
+            "$ref": "#/components/schemas/InstanceLease",
+            "description": "Qualification for the exact response target; only explicit renewal operations extend its deadlines."
           }
         },
         "additionalProperties": false
@@ -9529,6 +9857,7 @@ export const schemaDocument = {
       },
       "NodeObservationCancelled": {
         "type": "object",
+        "description": "Server cancellation result indicating whether another subscriber still requires the shared source task.",
         "required": [
           "task"
         ],
@@ -9549,32 +9878,38 @@ export const schemaDocument = {
       },
       "NodeObservationQuery": {
         "type": "object",
+        "description": "Instance qualification required when reading a Node-owned observation subscription.",
         "required": [
           "instanceId",
           "generation"
         ],
         "properties": {
           "generation": {
-            "$ref": "#/components/schemas/Version"
+            "$ref": "#/components/schemas/Version",
+            "description": "Server-issued instance generation checked to reject replaced callers."
           },
           "instanceId": {
-            "$ref": "#/components/schemas/InstanceId"
+            "$ref": "#/components/schemas/InstanceId",
+            "description": "Current source runtime instance owning the subscription."
           }
         },
         "additionalProperties": false
       },
       "NodeObservationResponse": {
         "type": "object",
+        "description": "Server projection of the caller's diagnostic subscription and its resolved configured target.",
         "required": [
           "task",
           "target"
         ],
         "properties": {
           "target": {
-            "$ref": "#/components/schemas/NodeObservationTargetView"
+            "$ref": "#/components/schemas/NodeObservationTargetView",
+            "description": "Configured target resolved and authorized by the Server."
           },
           "task": {
-            "$ref": "#/components/schemas/ObservationTask"
+            "$ref": "#/components/schemas/ObservationTask",
+            "description": "Shared observation task projected with this subscription's independent deadline and identifier."
           }
         },
         "additionalProperties": false
@@ -9583,6 +9918,7 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Select a Node by configured hostname or Mesh FQDN.",
             "required": [
               "name",
               "type"
@@ -9590,6 +9926,7 @@ export const schemaDocument = {
             "properties": {
               "name": {
                 "type": "string",
+                "description": "Requested hostname or network FQDN, limited to 253 characters before resolution.",
                 "maxLength": 253
               },
               "type": {
@@ -9603,6 +9940,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Select the Node assigned an exact Mesh IP address.",
             "required": [
               "address",
               "type"
@@ -9610,6 +9948,7 @@ export const schemaDocument = {
             "properties": {
               "address": {
                 "type": "string",
+                "description": "Requested numeric Mesh IP, limited to 64 characters and not an outer transport-family constraint.",
                 "maxLength": 64
               },
               "type": {
@@ -9621,10 +9960,12 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Target selector resolved by the Server within the authenticated Node's network and diagnostic permissions."
       },
       "NodeObservationTargetView": {
         "type": "object",
+        "description": "Server-resolved configured target returned with an authorized Node observation subscription.",
         "required": [
           "nodeId",
           "hostname",
@@ -9632,13 +9973,16 @@ export const schemaDocument = {
         ],
         "properties": {
           "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses"
+            "$ref": "#/components/schemas/NodeAddresses",
+            "description": "Target's configured Mesh addresses from the authorized configuration."
           },
           "hostname": {
-            "type": "string"
+            "type": "string",
+            "description": "Target's canonical configured hostname."
           },
           "nodeId": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Registered Node selected by the requested name or Mesh IP."
           }
         },
         "additionalProperties": false
@@ -10633,13 +10977,15 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Diagnose a path authorized for a specific TCP service.",
             "required": [
               "port",
               "type"
             ],
             "properties": {
               "port": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "TCP destination port used for service authorization."
               },
               "type": {
                 "type": "string",
@@ -10652,13 +10998,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Diagnose a path authorized for a specific UDP service.",
             "required": [
               "port",
               "type"
             ],
             "properties": {
               "port": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "UDP destination port used for service authorization."
               },
               "type": {
                 "type": "string",
@@ -10671,6 +11019,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Diagnose a path authorized for ICMP echo without a transport port.",
             "required": [
               "type"
             ],
@@ -10684,7 +11033,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Exact service scope checked by Access and routing when compiling an independent diagnostic permit."
       },
       "ObservationSubscriptionId": {
         "type": "string",
@@ -11007,6 +11357,7 @@ export const schemaDocument = {
       },
       "PathPermit": {
         "type": "object",
+        "description": "Server-compiled business authority shared by the source, relays and terminal of each allowed complete path.",
         "required": [
           "demandId",
           "source",
@@ -11020,21 +11371,25 @@ export const schemaDocument = {
         ],
         "properties": {
           "demandId": {
-            "$ref": "#/components/schemas/RequestId"
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Business demand for which this permit was compiled."
           },
           "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Permit deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and bounded by demand and dependency deadlines."
           },
           "paths": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/LogicalPath"
-            }
+            },
+            "description": "Allowed complete paths; a flow retains its established path."
           },
           "port": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Exact TCP or UDP destination port; null or omitted only for ICMP echo."
               },
               {
                 "type": "null"
@@ -11042,23 +11397,28 @@ export const schemaDocument = {
             ]
           },
           "profile": {
-            "type": "string"
+            "type": "string",
+            "description": "Source routing profile used to compile the permit."
           },
           "protocol": {
-            "$ref": "#/components/schemas/BusinessProtocol"
+            "$ref": "#/components/schemas/BusinessProtocol",
+            "description": "Authorized inner business protocol."
           },
           "replies": {
             "$ref": "#/components/schemas/ReplyPolicy",
             "description": "Always reverse the established complete path, never evaluate reverse routing for replies."
           },
           "source": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Authenticated original business source, unchanged across path segments."
           },
           "sourceAddresses": {
-            "$ref": "#/components/schemas/NodeAddresses"
+            "$ref": "#/components/schemas/NodeAddresses",
+            "description": "Configured source Mesh addresses checked during packet admission."
           },
           "target": {
-            "$ref": "#/components/schemas/BusinessTarget"
+            "$ref": "#/components/schemas/BusinessTarget",
+            "description": "Authorized business destination after Mesh address classification."
           }
         },
         "additionalProperties": false
@@ -11140,6 +11500,7 @@ export const schemaDocument = {
       },
       "PeerConfiguration": {
         "type": "object",
+        "description": "Trusted identity and addresses of a peer required by the compiled execution paths.",
         "required": [
           "identity",
           "addresses",
@@ -11148,22 +11509,27 @@ export const schemaDocument = {
         ],
         "properties": {
           "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses"
+            "$ref": "#/components/schemas/NodeAddresses",
+            "description": "Peer Mesh addresses used by path and packet admission."
           },
           "controlKey": {
-            "$ref": "#/components/schemas/BoundNodeKey"
+            "$ref": "#/components/schemas/BoundNodeKey",
+            "description": "Peer Ed25519 key binding used for control identity proofs."
           },
           "dataplaneKey": {
-            "$ref": "#/components/schemas/BoundNodeKey"
+            "$ref": "#/components/schemas/BoundNodeKey",
+            "description": "Peer X25519 key binding used for end-to-end protection."
           },
           "identity": {
-            "$ref": "#/components/schemas/NodeIdentity"
+            "$ref": "#/components/schemas/NodeIdentity",
+            "description": "Peer authorization identity from the same source configuration."
           }
         },
         "additionalProperties": false
       },
       "PeerDelta": {
         "type": "object",
+        "description": "Server-computed keyed changes between two complete execution targets.",
         "required": [
           "remove",
           "upsert"
@@ -11173,10 +11539,12 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/NodeId"
-            }
+            },
+            "description": "Keys present in the base that must be removed from the reconstructed target."
           },
           "upsert": {
             "type": "object",
+            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
             "additionalProperties": {
               "$ref": "#/components/schemas/PeerConfiguration"
             },
@@ -11266,6 +11634,7 @@ export const schemaDocument = {
       },
       "PermitDelta": {
         "type": "object",
+        "description": "Server-computed keyed changes between two complete execution targets.",
         "required": [
           "remove",
           "upsert"
@@ -11275,10 +11644,12 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RequestId"
-            }
+            },
+            "description": "Keys present in the base that must be removed from the reconstructed target."
           },
           "upsert": {
             "type": "object",
+            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
             "additionalProperties": {
               "$ref": "#/components/schemas/PathPermit"
             },
@@ -11382,7 +11753,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "What a draft still needs before it can be applied: an address pool or address allocation, a device identity proof, remote rule-set content, or `{ material }` naming a listener credential or TLS material to generate or verify."
       },
       "PreparationRequirement": {
         "type": "object",
@@ -11405,6 +11777,7 @@ export const schemaDocument = {
       },
       "PrepareUdpTraversalRequest": {
         "type": "object",
+        "description": "Node request for an immutable short-lived offer bound to an exact authorized UDP carrier and candidate pair.",
         "required": [
           "instance",
           "configuration",
@@ -11418,32 +11791,40 @@ export const schemaDocument = {
         ],
         "properties": {
           "carrier": {
-            "$ref": "#/components/schemas/Carrier"
+            "$ref": "#/components/schemas/Carrier",
+            "description": "Exact Native UDP carrier authorized by both participants' complete-path permits."
           },
           "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef"
+            "$ref": "#/components/schemas/ConfigurationRef",
+            "description": "Source's exact current execution target."
           },
           "expiresAt": {
             "$ref": "#/components/schemas/Timestamp",
             "description": "Absolute requested deadline, unchanged on retry, never a duration."
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current source runtime instance preparing the attempt."
           },
           "localCandidate": {
-            "$ref": "#/components/schemas/CandidateReference"
+            "$ref": "#/components/schemas/CandidateReference",
+            "description": "Original State-owned candidate from the preparing Node's actual socket."
           },
           "peerCandidate": {
-            "$ref": "#/components/schemas/CandidateReference"
+            "$ref": "#/components/schemas/CandidateReference",
+            "description": "Original State-owned candidate from the peer's actual socket."
           },
           "peerId": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Adjacent peer participating in the authorized UDP acquisition."
           },
           "requestId": {
-            "$ref": "#/components/schemas/RequestId"
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Stable identifier reused with identical immutable input when retrying preparation."
           },
           "stateEpoch": {
-            "$ref": "#/components/schemas/StateEpoch"
+            "$ref": "#/components/schemas/StateEpoch",
+            "description": "State epoch obtained from current coordination metadata."
           }
         },
         "additionalProperties": false
@@ -11452,13 +11833,15 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "A fixed offer is available for bilateral acceptance.",
             "required": [
               "offer",
               "status"
             ],
             "properties": {
               "offer": {
-                "$ref": "#/components/schemas/UdpTraversalOffer"
+                "$ref": "#/components/schemas/UdpTraversalOffer",
+                "description": "Original offer, including its unchanged deadline on an identical retry."
               },
               "status": {
                 "type": "string",
@@ -11471,13 +11854,15 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Acquisition cannot be prepared under the supplied bindings or current limits.",
             "required": [
               "reason",
               "status"
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UdpTraversalUnavailableReason"
+                "$ref": "#/components/schemas/UdpTraversalUnavailableReason",
+                "description": "Closed coordination condition that prevented preparation."
               },
               "status": {
                 "type": "string",
@@ -11488,40 +11873,49 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "Server result of preparing or recovering an immutable UDP acquisition offer."
       },
       "PreparedListener": {
         "oneOf": [
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "type"
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "type": {
                 "type": "string",
@@ -11534,37 +11928,46 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "type"
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "tcp": {
-                "$ref": "#/components/schemas/TcpOptions"
+                "$ref": "#/components/schemas/TcpOptions",
+                "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
               },
               "type": {
                 "type": "string",
@@ -11577,6 +11980,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "tls",
@@ -11585,40 +11989,51 @@ export const schemaDocument = {
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "flow": {
-                "type": "string"
+                "type": "string",
+                "description": "VLESS flow selection; only the empty string is accepted and omission defaults to it."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "stream": {
-                "$ref": "#/components/schemas/VlessStream"
+                "$ref": "#/components/schemas/VlessStream",
+                "description": "VLESS encapsulation, `tcp` or `websocket`, both over TLS; defaults to `tcp`."
               },
               "tcp": {
-                "$ref": "#/components/schemas/TcpOptions"
+                "$ref": "#/components/schemas/TcpOptions",
+                "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
               },
               "tls": {
                 "type": "object",
+                "description": "TLS server parameters and certificate material for a VLESS or Trojan listener.",
                 "required": [
                   "serverName",
                   "certificate",
@@ -11629,28 +12044,36 @@ export const schemaDocument = {
                     "type": "array",
                     "items": {
                       "type": "string"
-                    }
+                    },
+                    "description": "Ordered ALPN names of 1–255 bytes without control characters; defaults to empty, and WebSocket permits only `http/1.1` entries."
                   },
                   "certificate": {
-                    "$ref": "#/components/schemas/SecretString"
+                    "$ref": "#/components/schemas/SecretString",
+                    "description": "Nonempty PEM certificate chain, leaf first; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
                   },
                   "handshakeTimeout": {
-                    "$ref": "#/components/schemas/PositiveDuration"
+                    "$ref": "#/components/schemas/PositiveDuration",
+                    "description": "Positive TLS handshake budget; defaults to `5s` and cannot extend the overall connection or remaining lease budget."
                   },
                   "maxVersion": {
-                    "$ref": "#/components/schemas/TlsVersion"
+                    "$ref": "#/components/schemas/TlsVersion",
+                    "description": "Maximum accepted TLS version, `1.2` or `1.3`; defaults to `1.3` and must not precede minVersion."
                   },
                   "minVersion": {
-                    "$ref": "#/components/schemas/TlsVersion"
+                    "$ref": "#/components/schemas/TlsVersion",
+                    "description": "Minimum accepted TLS version, `1.2` or `1.3`; defaults to `1.2` and must not exceed maxVersion."
                   },
                   "mode": {
-                    "$ref": "#/components/schemas/TlsMode"
+                    "$ref": "#/components/schemas/TlsMode",
+                    "description": "Certificate-material source; defaults to `managed`, while `provided` requires both certificate and private key."
                   },
                   "privateKey": {
-                    "$ref": "#/components/schemas/SecretString"
+                    "$ref": "#/components/schemas/SecretString",
+                    "description": "Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
                   },
                   "serverName": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Required TLS host name or IP address used for certificate identity and the dialer's verification name."
                   }
                 },
                 "additionalProperties": false
@@ -11662,16 +12085,19 @@ export const schemaDocument = {
                 ]
               },
               "uuid": {
-                "$ref": "#/components/schemas/SecretString"
+                "$ref": "#/components/schemas/SecretString",
+                "description": "Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected."
               },
               "websocket": {
-                "$ref": "#/components/schemas/ListenerWebSocket"
+                "$ref": "#/components/schemas/ListenerWebSocket",
+                "description": "WebSocket Upgrade settings; omission uses defaults for a websocket stream, while a tcp stream forbids this field and null is rejected."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
             "required": [
               "listenPort",
               "tls",
@@ -11680,40 +12106,51 @@ export const schemaDocument = {
             ],
             "properties": {
               "bindInterface": {
-                "type": "string"
+                "type": "string",
+                "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
               },
               "endpoints": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/Endpoint"
-                }
+                },
+                "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
               },
               "listen": {
-                "type": "string"
+                "type": "string",
+                "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
               },
               "listenPort": {
-                "$ref": "#/components/schemas/Port"
+                "$ref": "#/components/schemas/Port",
+                "description": "Required local listening port in the range 1–65535."
               },
               "password": {
-                "$ref": "#/components/schemas/SecretString"
+                "$ref": "#/components/schemas/SecretString",
+                "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected."
               },
               "remark": {
-                "type": "string"
+                "type": "string",
+                "description": "Descriptive text; defaults to an empty string and cannot be null."
               },
               "socket": {
-                "$ref": "#/components/schemas/SocketOptions"
+                "$ref": "#/components/schemas/SocketOptions",
+                "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
               },
               "stream": {
-                "$ref": "#/components/schemas/TrojanStream"
+                "$ref": "#/components/schemas/TrojanStream",
+                "description": "Trojan encapsulation; only `tcp` is accepted and omission defaults to it."
               },
               "tcp": {
-                "$ref": "#/components/schemas/TcpOptions"
+                "$ref": "#/components/schemas/TcpOptions",
+                "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
               },
               "tls": {
                 "type": "object",
+                "description": "TLS server parameters and certificate material for a VLESS or Trojan listener.",
                 "required": [
                   "serverName",
                   "certificate",
@@ -11724,28 +12161,36 @@ export const schemaDocument = {
                     "type": "array",
                     "items": {
                       "type": "string"
-                    }
+                    },
+                    "description": "Ordered ALPN names of 1–255 bytes without control characters; defaults to empty, and WebSocket permits only `http/1.1` entries."
                   },
                   "certificate": {
-                    "$ref": "#/components/schemas/SecretString"
+                    "$ref": "#/components/schemas/SecretString",
+                    "description": "Nonempty PEM certificate chain, leaf first; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
                   },
                   "handshakeTimeout": {
-                    "$ref": "#/components/schemas/PositiveDuration"
+                    "$ref": "#/components/schemas/PositiveDuration",
+                    "description": "Positive TLS handshake budget; defaults to `5s` and cannot extend the overall connection or remaining lease budget."
                   },
                   "maxVersion": {
-                    "$ref": "#/components/schemas/TlsVersion"
+                    "$ref": "#/components/schemas/TlsVersion",
+                    "description": "Maximum accepted TLS version, `1.2` or `1.3`; defaults to `1.3` and must not precede minVersion."
                   },
                   "minVersion": {
-                    "$ref": "#/components/schemas/TlsVersion"
+                    "$ref": "#/components/schemas/TlsVersion",
+                    "description": "Minimum accepted TLS version, `1.2` or `1.3`; defaults to `1.2` and must not exceed maxVersion."
                   },
                   "mode": {
-                    "$ref": "#/components/schemas/TlsMode"
+                    "$ref": "#/components/schemas/TlsMode",
+                    "description": "Certificate-material source; defaults to `managed`, while `provided` requires both certificate and private key."
                   },
                   "privateKey": {
-                    "$ref": "#/components/schemas/SecretString"
+                    "$ref": "#/components/schemas/SecretString",
+                    "description": "Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
                   },
                   "serverName": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Required TLS host name or IP address used for certificate identity and the dialer's verification name."
                   }
                 },
                 "additionalProperties": false
@@ -11759,7 +12204,8 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
-        ]
+        ],
+        "description": "An inbound listener as saved: `type` selects the carrier, and credential and TLS materials are complete. Returned by configuration reads."
       },
       "PreparedRuleSet": {
         "type": "object",
@@ -12000,6 +12446,7 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "The supplied login or Node credentials fail authentication; returns HTTP 401 without disclosing credential details.",
             "required": [
               "code",
               "params",
@@ -12013,16 +12460,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The supplied current password is incorrect; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12036,16 +12486,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The password recovery credential is invalid or no longer usable; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12059,16 +12512,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The verified password recovery credential has already been consumed; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12082,16 +12538,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The verified password recovery credential has reached its expiry time; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12105,16 +12564,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The verified password recovery credential was superseded or its account credential version changed; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12128,16 +12590,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The session token is missing, unknown, expired, revoked, or otherwise invalid; returns HTTP 401 and requires signing in again.",
             "required": [
               "code",
               "params",
@@ -12151,16 +12616,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "Public account creation is disabled by the Server; returns HTTP 403.",
             "required": [
               "code",
               "params",
@@ -12174,16 +12642,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The requested email address is already registered; returns HTTP 409 without disclosing account details.",
             "required": [
               "code",
               "params",
@@ -12197,16 +12668,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The proposed password fails the published rules; returns HTTP 422 with PasswordRules in params.",
             "required": [
               "code",
               "params",
@@ -12220,16 +12694,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/PasswordRules"
+                "$ref": "#/components/schemas/PasswordRules",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The request JSON, parameters, or input values are invalid; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12243,16 +12720,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The request body exceeds the allowed size; returns HTTP 413.",
             "required": [
               "code",
               "params",
@@ -12266,16 +12746,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The request does not supply the required JSON content type; returns HTTP 415.",
             "required": [
               "code",
               "params",
@@ -12289,16 +12772,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The Server cannot admit work within its current computation budget; returns HTTP 503 with Retry-After: 1, so retry later.",
             "required": [
               "code",
               "params",
@@ -12312,16 +12798,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "A required dependency, runtime, storage operation, or internal Server operation is unavailable or failed; returns HTTP 503.",
             "required": [
               "code",
               "params",
@@ -12335,16 +12824,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The requested resource or route cannot be found; returns HTTP 404.",
             "required": [
               "code",
               "params",
@@ -12358,16 +12850,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The requested HTTP method is not supported by the route; returns HTTP 405.",
             "required": [
               "code",
               "params",
@@ -12381,16 +12876,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The authenticated principal lacks permission for the requested operation; returns HTTP 403.",
             "required": [
               "code",
               "params",
@@ -12404,16 +12902,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "A request ID was already used with different input; returns HTTP 409 independently of generation, binding, or revision conflicts.",
             "required": [
               "code",
               "params",
@@ -12427,16 +12928,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The request does not match the current generation or binding; returns HTTP 409 rather than indicating request-ID reuse.",
             "required": [
               "code",
               "params",
@@ -12450,16 +12954,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The receipt's instance, generation, Server boot, or instance deadline no longer matches; returns HTTP 409 and requires fencing before obtaining valid eligibility again.",
             "required": [
               "code",
               "params",
@@ -12473,16 +12980,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The receipt target is neither current nor a valid historical reference held by this Node; returns HTTP 409 and requires fencing and entering the blocked state.",
             "required": [
               "code",
               "params",
@@ -12496,16 +13006,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The current publication's execution eligibility was withdrawn or changed; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and create a new installation attempt on the same instance.",
             "required": [
               "code",
               "params",
@@ -12519,16 +13032,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "An applied receipt for the current enabled target lacks an unexpired execution lease; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and create a new installation attempt without extending the old lease.",
             "required": [
               "code",
               "params",
@@ -12542,16 +13058,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The receipt observation time is out of bounds or applied lacks an earlier matching saved receipt; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and confirm saved again in a new installation attempt.",
             "required": [
               "code",
               "params",
@@ -12565,16 +13084,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "A receipt reuses an instance/publication/attempt/sequence identity with different content or has incompatible phase and failure values; returns HTTP 409. Discard it without rewriting the conflicting receipt, retry control refresh after one second, and create a new installation attempt.",
             "required": [
               "code",
               "params",
@@ -12588,16 +13110,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The resource name changed since the client read it; returns HTTP 409, so reload before retrying.",
             "required": [
               "code",
               "params",
@@ -12611,16 +13136,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The pagination cursor is invalid or expired; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12634,16 +13162,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The resource version changed since the client read it; returns HTTP 409, so reload before retrying.",
             "required": [
               "code",
               "params",
@@ -12657,16 +13188,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The operation would remove or demote the network's last Owner; returns HTTP 409.",
             "required": [
               "code",
               "params",
@@ -12680,16 +13214,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The user attempting to join already belongs to the network; returns HTTP 409.",
             "required": [
               "code",
               "params",
@@ -12703,16 +13240,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The join token is invalid or no longer usable; returns HTTP 400 without exposing unverified link details.",
             "required": [
               "code",
               "params",
@@ -12726,16 +13266,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The verified join token has reached its expiry time; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12749,16 +13292,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The verified one-time join token has already been consumed; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12772,16 +13318,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The verified join token was revoked; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12795,16 +13344,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The verified join token's issuer is no longer authorized to grant membership; returns HTTP 400.",
             "required": [
               "code",
               "params",
@@ -12818,16 +13370,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The expected configuration revision no longer matches the current revision; returns HTTP 409, so re-read the baseline and revalidate the preserved draft before applying again.",
             "required": [
               "code",
               "params",
@@ -12841,16 +13396,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "Configuration validation fails or required preparation is incomplete; returns HTTP 422 with ConfigurationValidationParams containing issues and requirements.",
             "required": [
               "code",
               "params",
@@ -12864,16 +13422,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/ConfigurationValidationParams"
+                "$ref": "#/components/schemas/ConfigurationValidationParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The current lifecycle state or sequence does not permit the operation; returns HTTP 409.",
             "required": [
               "code",
               "params",
@@ -12887,16 +13448,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The State report's execution scope changed; returns HTTP 409, so refresh the scope and observe again.",
             "required": [
               "code",
               "params",
@@ -12910,16 +13474,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The operation exceeds the State resource budget; returns HTTP 429.",
             "required": [
               "code",
               "params",
@@ -12933,16 +13500,19 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "The operation exceeds the observation budget; returns HTTP 429.",
             "required": [
               "code",
               "params",
@@ -12956,10 +13526,12 @@ export const schemaDocument = {
                 ]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
               },
               "params": {
-                "$ref": "#/components/schemas/EmptyParams"
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
               }
             },
             "additionalProperties": false
@@ -13116,16 +13688,19 @@ export const schemaDocument = {
       },
       "QueryUdpTraversalRequest": {
         "type": "object",
+        "description": "Node query for current STUN metadata and its own valid UDP acquisition attempts without renewing them.",
         "required": [
           "instance",
           "configuration"
         ],
         "properties": {
           "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef"
+            "$ref": "#/components/schemas/ConfigurationRef",
+            "description": "Exact current execution target against which acquisition scope is checked."
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current runtime instance making the query."
           }
         },
         "additionalProperties": false
@@ -13134,6 +13709,7 @@ export const schemaDocument = {
         "oneOf": [
           {
             "type": "object",
+            "description": "Current coordination metadata under the caller's checked execution scope.",
             "required": [
               "stateEpoch",
               "asOf",
@@ -13144,16 +13720,20 @@ export const schemaDocument = {
             ],
             "properties": {
               "asOf": {
-                "$ref": "#/components/schemas/Timestamp"
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "Server evaluation time in milliseconds since the Unix epoch, serialized as UTC RFC 3339."
               },
               "attempts": {
-                "$ref": "#/components/schemas/UdpTraversalAttempts"
+                "$ref": "#/components/schemas/UdpTraversalAttempts",
+                "description": "Valid nonterminal attempts involving the authenticated Node."
               },
               "expiresAt": {
-                "$ref": "#/components/schemas/Timestamp"
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "Metadata deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and bounded by current authority and 30 seconds."
               },
               "stateEpoch": {
-                "$ref": "#/components/schemas/StateEpoch"
+                "$ref": "#/components/schemas/StateEpoch",
+                "description": "State continuity epoch required by subsequent prepare, accept and cancel requests."
               },
               "status": {
                 "type": "string",
@@ -13162,20 +13742,23 @@ export const schemaDocument = {
                 ]
               },
               "stunServers": {
-                "$ref": "#/components/schemas/StunServers"
+                "$ref": "#/components/schemas/StunServers",
+                "description": "Explicitly configured STUN endpoints; an empty list supplies no discovery server."
               }
             },
             "additionalProperties": false
           },
           {
             "type": "object",
+            "description": "Current scope or coordination availability prevents returning usable metadata.",
             "required": [
               "reason",
               "status"
             ],
             "properties": {
               "reason": {
-                "$ref": "#/components/schemas/UdpTraversalUnavailableReason"
+                "$ref": "#/components/schemas/UdpTraversalUnavailableReason",
+                "description": "Closed coordination outcome requiring the caller to reevaluate acquisition."
               },
               "status": {
                 "type": "string",
@@ -13201,6 +13784,7 @@ export const schemaDocument = {
       },
       "ReceiptPhase": {
         "type": "string",
+        "description": "Durable save or installation outcome reported by the Node for an exact execution target.",
         "enum": [
           "saved",
           "applied",
@@ -13209,6 +13793,7 @@ export const schemaDocument = {
       },
       "ReceiptRequest": {
         "type": "object",
+        "description": "Node-reported durable result ordered by instance, target, attempt and sequence rather than HTTP arrival.",
         "required": [
           "instance",
           "target",
@@ -13225,7 +13810,8 @@ export const schemaDocument = {
           "failure": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ApplyFailure"
+                "$ref": "#/components/schemas/ApplyFailure",
+                "description": "Failed step required for the failed phase; null or omitted for saved and applied."
               },
               {
                 "type": "null"
@@ -13233,20 +13819,24 @@ export const schemaDocument = {
             ]
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Runtime instance and generation that performed this attempt."
           },
           "phase": {
-            "$ref": "#/components/schemas/ReceiptPhase"
+            "$ref": "#/components/schemas/ReceiptPhase",
+            "description": "Actual durable save or installation result."
           },
           "reportedAt": {
-            "$ref": "#/components/schemas/Timestamp"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Original Node result time in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and preserved on retry."
           },
           "sequence": {
             "$ref": "#/components/schemas/Sequence",
             "description": "Increasing result sequence within the attempt; delivery retries reuse it."
           },
           "target": {
-            "$ref": "#/components/schemas/ConfigurationRef"
+            "$ref": "#/components/schemas/ConfigurationRef",
+            "description": "Exact complete target saved or installed by the attempt."
           }
         },
         "additionalProperties": false
@@ -13432,6 +14022,7 @@ export const schemaDocument = {
       },
       "RenewDemandRequest": {
         "type": "object",
+        "description": "Explicit renewal of a live demand without changing its original business intent.",
         "required": [
           "instance",
           "requestId",
@@ -13443,32 +14034,38 @@ export const schemaDocument = {
             "description": "Absolute desired deadline of the existing demand; replay never adds duration."
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current source instance that owns the existing demand."
           },
           "requestId": {
-            "$ref": "#/components/schemas/RequestId"
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Existing demand identifier, not a new renewal request identifier."
           }
         },
         "additionalProperties": false
       },
       "RenewNodeObservation": {
         "type": "object",
+        "description": "Explicit renewal of the caller's existing Node observation subscription under current permissions.",
         "required": [
           "instance",
           "expiresAt"
         ],
         "properties": {
           "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Requested absolute subscription deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and subject to lease bounds."
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current source instance that owns the subscription."
           }
         },
         "additionalProperties": false
       },
       "ReplyPolicy": {
         "type": "string",
+        "description": "Reply-path constraint attached to a compiled business permit.",
         "enum": [
           "statefulExactReversePath"
         ]
@@ -13906,6 +14503,7 @@ export const schemaDocument = {
       },
       "RoutingSelectionRequest": {
         "type": "object",
+        "description": "Node request to select an authorized routing profile using compare-and-swap against its current selection.",
         "required": [
           "instance",
           "profile"
@@ -13914,7 +14512,8 @@ export const schemaDocument = {
           "expectedVersion": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Version"
+                "$ref": "#/components/schemas/Version",
+                "description": "Existing selection version to replace; null or omission requires that no selection record exists."
               },
               {
                 "type": "null"
@@ -13922,16 +14521,19 @@ export const schemaDocument = {
             ]
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current runtime instance authorized to change the selection."
           },
           "profile": {
-            "type": "string"
+            "type": "string",
+            "description": "Allowed routing profile to select for subsequent demands and DNS execution."
           }
         },
         "additionalProperties": false
       },
       "RoutingSelectionResponse": {
         "type": "object",
+        "description": "Server-committed routing selection and the execution publication produced by the change.",
         "required": [
           "version",
           "profile",
@@ -13939,13 +14541,16 @@ export const schemaDocument = {
         ],
         "properties": {
           "profile": {
-            "type": "string"
+            "type": "string",
+            "description": "Profile selected by the accepted request."
           },
           "publication": {
-            "$ref": "#/components/schemas/PublicationId"
+            "$ref": "#/components/schemas/PublicationId",
+            "description": "Execution publication produced after cancelling the source's prior demands."
           },
           "version": {
-            "$ref": "#/components/schemas/Version"
+            "$ref": "#/components/schemas/Version",
+            "description": "New selection version required by the next compare-and-swap update."
           }
         },
         "additionalProperties": false
@@ -14295,13 +14900,15 @@ export const schemaDocument = {
       },
       "SignedNodeChallengeRequest": {
         "type": "object",
+        "description": "Proof of the current control key authorizing challenge allocation before a Node session exists.",
         "required": [
           "intent",
           "signature"
         ],
         "properties": {
           "intent": {
-            "$ref": "#/components/schemas/NodeChallengeIntent"
+            "$ref": "#/components/schemas/NodeChallengeIntent",
+            "description": "Exact application covered by the separate challenge-request signature transcript."
           },
           "signature": {
             "$ref": "#/components/schemas/WireSecret",
@@ -14325,15 +14932,18 @@ export const schemaDocument = {
       },
       "SocketOptions": {
         "type": "object",
+        "description": "Requested socket buffer sizes, subject to provider defaults and platform resource limits.",
         "properties": {
           "receiveBuffer": {
             "type": "integer",
             "format": "int32",
+            "description": "Receive buffer size in bytes; omitted or zero uses the provider default.",
             "minimum": 0
           },
           "sendBuffer": {
             "type": "integer",
             "format": "int32",
+            "description": "Send buffer size in bytes; omitted or zero uses the provider default, and the kernel may limit the requested size.",
             "minimum": 0
           }
         },
@@ -14341,6 +14951,7 @@ export const schemaDocument = {
       },
       "SocketReference": {
         "type": "object",
+        "description": "Exact Node-reported socket binding checked against the current instance and execution target.",
         "required": [
           "nodeId",
           "instance",
@@ -14351,22 +14962,28 @@ export const schemaDocument = {
         ],
         "properties": {
           "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef"
+            "$ref": "#/components/schemas/ConfigurationRef",
+            "description": "Exact installed execution target associated with the socket."
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Owning runtime instance and its Server-issued generation."
           },
           "nodeId": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Node that owns and reports the actual socket."
           },
           "resource": {
-            "$ref": "#/components/schemas/ResourceRef"
+            "$ref": "#/components/schemas/ResourceRef",
+            "description": "Configured resource for which this socket was created."
           },
           "socketGeneration": {
-            "$ref": "#/components/schemas/Sequence"
+            "$ref": "#/components/schemas/Sequence",
+            "description": "Socket incarnation within the runtime instance, preventing reuse of stale references."
           },
           "socketId": {
             "type": "string",
+            "description": "Node-assigned socket identifier of 1–256 printable non-space ASCII bytes.",
             "maxLength": 256,
             "minLength": 1,
             "pattern": "^[!-~]{1,256}(?![\\s\\S])"
@@ -14668,6 +15285,7 @@ export const schemaDocument = {
         "type": "array",
         "items": {
           "type": "object",
+          "description": "Explicit STUN discovery endpoint published by the Server operator.",
           "required": [
             "id",
             "endpoint"
@@ -14679,6 +15297,7 @@ export const schemaDocument = {
             },
             "id": {
               "type": "string",
+              "description": "Operator metadata identifier containing 1–64 ASCII letters, digits, underscores or hyphens.",
               "maxLength": 64,
               "minLength": 1,
               "pattern": "^[A-Za-z0-9_-]{1,64}(?![\\s\\S])"
@@ -14763,32 +15382,40 @@ export const schemaDocument = {
       },
       "TcpKeepAlive": {
         "type": "object",
+        "description": "Operating-system TCP keepalive settings, independent of Meshway authorization and lease checks.",
         "properties": {
           "count": {
             "type": "integer",
             "format": "int32",
+            "description": "Number of keepalive probes; must be greater than zero and defaults to 3.",
             "minimum": 0
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether to enable operating-system TCP keepalive; defaults to true."
           },
           "idle": {
-            "$ref": "#/components/schemas/PositiveDuration"
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive idle duration before the first keepalive probe; defaults to `5m`."
           },
           "interval": {
-            "$ref": "#/components/schemas/PositiveDuration"
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive duration between keepalive probes; defaults to `75s`."
           }
         },
         "additionalProperties": false
       },
       "TcpOptions": {
         "type": "object",
+        "description": "Socket settings shared by carriers with an outer TCP connection.",
         "properties": {
           "keepAlive": {
-            "$ref": "#/components/schemas/TcpKeepAlive"
+            "$ref": "#/components/schemas/TcpKeepAlive",
+            "description": "Operating-system keepalive settings; omission enables probes after `5m`, every `75s`, with a count of 3."
           },
           "noDelay": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether to enable TCP_NODELAY; defaults to true."
           }
         },
         "additionalProperties": false
@@ -14800,6 +15427,7 @@ export const schemaDocument = {
       },
       "TlsMode": {
         "type": "string",
+        "description": "Source of listener TLS certificate and private-key material; defaults to `managed`.",
         "enum": [
           "managed",
           "provided"
@@ -14807,12 +15435,14 @@ export const schemaDocument = {
       },
       "TlsTrust": {
         "type": "string",
+        "description": "TLS trust selection for a dialer; only `managed` is accepted.",
         "enum": [
           "managed"
         ]
       },
       "TlsVersion": {
         "type": "string",
+        "description": "Supported TLS protocol version bound, encoded as `1.2` or `1.3`.",
         "enum": [
           "1.2",
           "1.3"
@@ -14969,93 +15599,117 @@ export const schemaDocument = {
       },
       "TrojanDialer": {
         "type": "object",
+        "description": "Outbound carrier selection and connection options; the Server resolves target listener parameters separately.",
         "properties": {
           "bindInterface": {
-            "type": "string"
+            "type": "string",
+            "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
           },
           "connectTimeout": {
-            "$ref": "#/components/schemas/PositiveDuration"
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive total connection budget including resolution and required handshakes; defaults to `5s` and is limited by the remaining active lease."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether this dialer may be used for outgoing connections; defaults to true."
           },
           "localAddress": {
-            "type": "string"
+            "type": "string",
+            "description": "Local outgoing IP address; omitted or empty selects automatically, and a Mesh address cannot bypass underlay protection."
           },
           "priority": {
             "type": "integer",
             "format": "int32",
+            "description": "Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.",
             "minimum": 0
           },
           "remark": {
-            "type": "string"
+            "type": "string",
+            "description": "Descriptive text rather than a resource key; defaults to an empty string."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketOptions"
+            "$ref": "#/components/schemas/SocketOptions",
+            "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
           },
           "tcp": {
-            "$ref": "#/components/schemas/TcpOptions"
+            "$ref": "#/components/schemas/TcpOptions",
+            "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
           },
           "tls": {
-            "$ref": "#/components/schemas/DialerTls"
+            "$ref": "#/components/schemas/DialerTls",
+            "description": "TLS client options; omission uses managed trust, TLS 1.2–1.3, empty ALPN, and a `5s` handshake budget."
           }
         },
         "additionalProperties": false
       },
       "TrojanListener": {
         "type": "object",
+        "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
         "required": [
           "listenPort",
           "tls"
         ],
         "properties": {
           "bindInterface": {
-            "type": "string"
+            "type": "string",
+            "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
           },
           "endpoints": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Endpoint"
-            }
+            },
+            "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
           },
           "listen": {
-            "type": "string"
+            "type": "string",
+            "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
           },
           "listenPort": {
-            "$ref": "#/components/schemas/Port"
+            "$ref": "#/components/schemas/Port",
+            "description": "Required local listening port in the range 1–65535."
           },
           "password": {
-            "$ref": "#/components/schemas/SecretString"
+            "$ref": "#/components/schemas/SecretString",
+            "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected."
           },
           "remark": {
-            "type": "string"
+            "type": "string",
+            "description": "Descriptive text; defaults to an empty string and cannot be null."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketOptions"
+            "$ref": "#/components/schemas/SocketOptions",
+            "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
           },
           "stream": {
-            "$ref": "#/components/schemas/TrojanStream"
+            "$ref": "#/components/schemas/TrojanStream",
+            "description": "Trojan encapsulation; only `tcp` is accepted and omission defaults to it."
           },
           "tcp": {
-            "$ref": "#/components/schemas/TcpOptions"
+            "$ref": "#/components/schemas/TcpOptions",
+            "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
           },
           "tls": {
-            "$ref": "#/components/schemas/ListenerTls"
+            "$ref": "#/components/schemas/ListenerTls",
+            "description": "Required TLS server settings, including the certificate verification name and material source."
           }
         },
         "additionalProperties": false
       },
       "TrojanStream": {
         "type": "string",
+        "description": "Trojan stream encapsulation; only `tcp` is accepted and is the default.",
         "enum": [
           "tcp"
         ]
       },
       "TrustedDnsAssociation": {
         "type": "object",
+        "description": "Trusted source-scoped DNS input used by compilation to bind a domain to destination addresses.",
         "required": [
           "networkId",
           "configurationRevision",
@@ -15070,34 +15724,42 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ExecutionAddress"
-            }
+            },
+            "description": "Destination addresses supported by this resolution result."
           },
           "cnameChain": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "CNAME chain retained with the trusted resolution result."
           },
           "configurationRevision": {
-            "$ref": "#/components/schemas/Revision"
+            "$ref": "#/components/schemas/Revision",
+            "description": "Exact source configuration revision under which the association was obtained."
           },
           "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Association deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339; dependent permits cannot outlive it."
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Resolved domain name matched by the demand."
           },
           "networkId": {
-            "$ref": "#/components/schemas/NetworkId"
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network to which this DNS input belongs."
           },
           "source": {
-            "$ref": "#/components/schemas/NodeId"
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Node whose domain demand may use the association."
           }
         },
         "additionalProperties": false
       },
       "TrustedNode": {
         "type": "object",
+        "description": "Authenticated key and capability inventory supplied to Server compilation.",
         "required": [
           "controlKey",
           "dataplaneKey",
@@ -15115,10 +15777,12 @@ export const schemaDocument = {
             }
           },
           "controlKey": {
-            "$ref": "#/components/schemas/BoundNodeKey"
+            "$ref": "#/components/schemas/BoundNodeKey",
+            "description": "Current bound Ed25519 control public key and generation."
           },
           "dataplaneKey": {
-            "$ref": "#/components/schemas/BoundNodeKey"
+            "$ref": "#/components/schemas/BoundNodeKey",
+            "description": "Current bound X25519 data-plane public key and generation."
           }
         },
         "additionalProperties": false
@@ -15135,19 +15799,24 @@ export const schemaDocument = {
         ],
         "properties": {
           "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef"
+            "$ref": "#/components/schemas/ConfigurationRef",
+            "description": "Participant's exact current execution target, matching its offer socket binding."
           },
           "digest": {
-            "$ref": "#/components/schemas/Digest"
+            "$ref": "#/components/schemas/Digest",
+            "description": "Immutable offer digest required by the compare-and-swap check."
           },
           "instance": {
-            "$ref": "#/components/schemas/InstanceRequest"
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current participant runtime instance performing the operation."
           },
           "stateEpoch": {
-            "$ref": "#/components/schemas/StateEpoch"
+            "$ref": "#/components/schemas/StateEpoch",
+            "description": "State epoch in which the offer was prepared."
           },
           "version": {
-            "$ref": "#/components/schemas/Version"
+            "$ref": "#/components/schemas/Version",
+            "description": "Immutable offer version required by the compare-and-swap check."
           }
         },
         "additionalProperties": false
@@ -15156,13 +15825,15 @@ export const schemaDocument = {
         "type": "array",
         "items": {
           "type": "object",
+          "description": "Current acceptance state paired with the attempt's unchanged Server-issued offer.",
           "required": [
             "offer",
             "phase"
           ],
           "properties": {
             "offer": {
-              "$ref": "#/components/schemas/UdpTraversalOffer"
+              "$ref": "#/components/schemas/UdpTraversalOffer",
+              "description": "Immutable candidate pair, authority binding and original acquisition deadline."
             },
             "phase": {
               "$ref": "#/components/schemas/UdpTraversalPhase",
@@ -15183,6 +15854,7 @@ export const schemaDocument = {
       },
       "UdpTraversalOffer": {
         "type": "object",
+        "description": "Server-issued immutable candidate pair for bounded UDP acquisition, valid only until its original deadline.",
         "required": [
           "attemptId",
           "requestId",
@@ -15198,13 +15870,16 @@ export const schemaDocument = {
         ],
         "properties": {
           "attemptId": {
-            "$ref": "#/components/schemas/UdpTraversalId"
+            "$ref": "#/components/schemas/UdpTraversalId",
+            "description": "Server-assigned acquisition attempt identifier used by accept and cancel."
           },
           "carrier": {
-            "$ref": "#/components/schemas/Carrier"
+            "$ref": "#/components/schemas/Carrier",
+            "description": "Exact authorized Native UDP adjacency, independent of which participant prepared the offer."
           },
           "digest": {
-            "$ref": "#/components/schemas/Digest"
+            "$ref": "#/components/schemas/Digest",
+            "description": "Domain-separated digest committing every immutable offer field except this digest itself."
           },
           "expiresAt": {
             "$ref": "#/components/schemas/Timestamp",
@@ -15215,20 +15890,24 @@ export const schemaDocument = {
             "description": "Prepare caller orientation, identical for both recipients."
           },
           "networkId": {
-            "$ref": "#/components/schemas/NetworkId"
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network containing both authenticated participants."
           },
           "nonce": {
             "$ref": "#/components/schemas/Digest",
             "description": "Random 32 bytes, public attempt separation, never a credential."
           },
           "peer": {
-            "$ref": "#/components/schemas/UdpTraversalParticipant"
+            "$ref": "#/components/schemas/UdpTraversalParticipant",
+            "description": "Remote participant relative to the original prepare caller, unchanged for both recipients."
           },
           "requestId": {
-            "$ref": "#/components/schemas/RequestId"
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Original preparation request identifier retained for idempotent retries."
           },
           "stateEpoch": {
-            "$ref": "#/components/schemas/StateEpoch"
+            "$ref": "#/components/schemas/StateEpoch",
+            "description": "State continuity epoch under which the original candidates were selected."
           },
           "version": {
             "$ref": "#/components/schemas/Version",
@@ -15239,6 +15918,7 @@ export const schemaDocument = {
       },
       "UdpTraversalParticipant": {
         "type": "object",
+        "description": "Server projection of one offer participant's fixed candidate and numeric probe destination.",
         "required": [
           "candidate",
           "address",
@@ -15250,7 +15930,8 @@ export const schemaDocument = {
             "description": "Original State address, copied without origin/observer/interface disclosure.\nServer and Node must validate a numeric, eligible unicast UDP target."
           },
           "candidate": {
-            "$ref": "#/components/schemas/CandidateReference"
+            "$ref": "#/components/schemas/CandidateReference",
+            "description": "Exact State observation and socket binding committed by the offer."
           },
           "source": {
             "$ref": "#/components/schemas/EndpointKind",
@@ -15261,6 +15942,7 @@ export const schemaDocument = {
       },
       "UdpTraversalPhase": {
         "type": "string",
+        "description": "Server-recorded bilateral acceptance phase, distinct from an authenticated channel being established.",
         "enum": [
           "waiting",
           "active"
@@ -15281,6 +15963,7 @@ export const schemaDocument = {
       },
       "UnavailableReason": {
         "type": "string",
+        "description": "Condition preventing Server compilation from granting the requested business execution.",
         "enum": [
           "unauthorized",
           "noPath",
@@ -16003,41 +16686,53 @@ export const schemaDocument = {
       },
       "VlessDialer": {
         "type": "object",
+        "description": "Outbound carrier selection and connection options; the Server resolves target listener parameters separately.",
         "properties": {
           "bindInterface": {
-            "type": "string"
+            "type": "string",
+            "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
           },
           "connectTimeout": {
-            "$ref": "#/components/schemas/PositiveDuration"
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive total connection budget including resolution and required handshakes; defaults to `5s` and is limited by the remaining active lease."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether this dialer may be used for outgoing connections; defaults to true."
           },
           "localAddress": {
-            "type": "string"
+            "type": "string",
+            "description": "Local outgoing IP address; omitted or empty selects automatically, and a Mesh address cannot bypass underlay protection."
           },
           "priority": {
             "type": "integer",
             "format": "int32",
+            "description": "Preference from 0–65535, lower first; defaults to 100 for native_udp, 200 for native_tcp, 300 for vless, or 400 for trojan.",
             "minimum": 0
           },
           "remark": {
-            "type": "string"
+            "type": "string",
+            "description": "Descriptive text rather than a resource key; defaults to an empty string."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketOptions"
+            "$ref": "#/components/schemas/SocketOptions",
+            "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
           },
           "stream": {
-            "$ref": "#/components/schemas/DialerStream"
+            "$ref": "#/components/schemas/DialerStream",
+            "description": "Encapsulation selector, `auto`, `tcp`, or `websocket`; defaults to `auto`, while explicit values filter compatible listeners."
           },
           "tcp": {
-            "$ref": "#/components/schemas/TcpOptions"
+            "$ref": "#/components/schemas/TcpOptions",
+            "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
           },
           "tls": {
-            "$ref": "#/components/schemas/DialerTls"
+            "$ref": "#/components/schemas/DialerTls",
+            "description": "TLS client options; omission uses managed trust, TLS 1.2–1.3, empty ALPN, and a `5s` handshake budget."
           },
           "websocket": {
-            "$ref": "#/components/schemas/DialerWebSocket"
+            "$ref": "#/components/schemas/DialerWebSocket",
+            "description": "Extra WebSocket client options; omission adds no request headers, tcp selection forbids this field, and null is rejected."
           }
         },
         "additionalProperties": false
@@ -16175,52 +16870,66 @@ export const schemaDocument = {
       },
       "VlessListener": {
         "type": "object",
+        "description": "Declared inbound carrier settings for a fixed listening resource, with protocol-specific parameters.",
         "required": [
           "listenPort",
           "tls"
         ],
         "properties": {
           "bindInterface": {
-            "type": "string"
+            "type": "string",
+            "description": "Interface in the current controlled underlay; omitted or empty lets the platform choose."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether to create this listening resource; defaults to true, while false retains configuration without executing it."
           },
           "endpoints": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Endpoint"
-            }
+            },
+            "description": "Explicitly advertised external addresses, which may differ from the bind address; omitted or empty advertises none."
           },
           "flow": {
-            "type": "string"
+            "type": "string",
+            "description": "VLESS flow selection; only the empty string is accepted and omission defaults to it."
           },
           "listen": {
-            "type": "string"
+            "type": "string",
+            "description": "Local IPv4 or IPv6 bind address; defaults to `0.0.0.0` and cannot be a DNS name."
           },
           "listenPort": {
-            "$ref": "#/components/schemas/Port"
+            "$ref": "#/components/schemas/Port",
+            "description": "Required local listening port in the range 1–65535."
           },
           "remark": {
-            "type": "string"
+            "type": "string",
+            "description": "Descriptive text; defaults to an empty string and cannot be null."
           },
           "socket": {
-            "$ref": "#/components/schemas/SocketOptions"
+            "$ref": "#/components/schemas/SocketOptions",
+            "description": "Socket buffer requests; omission uses provider defaults for both receive and send buffers."
           },
           "stream": {
-            "$ref": "#/components/schemas/VlessStream"
+            "$ref": "#/components/schemas/VlessStream",
+            "description": "VLESS encapsulation, `tcp` or `websocket`, both over TLS; defaults to `tcp`."
           },
           "tcp": {
-            "$ref": "#/components/schemas/TcpOptions"
+            "$ref": "#/components/schemas/TcpOptions",
+            "description": "Outer TCP socket settings; omission uses TCP_NODELAY and the default enabled keepalive settings."
           },
           "tls": {
-            "$ref": "#/components/schemas/ListenerTls"
+            "$ref": "#/components/schemas/ListenerTls",
+            "description": "Required TLS server settings, including the certificate verification name and material source."
           },
           "uuid": {
-            "$ref": "#/components/schemas/SecretString"
+            "$ref": "#/components/schemas/SecretString",
+            "description": "Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected."
           },
           "websocket": {
-            "$ref": "#/components/schemas/ListenerWebSocket"
+            "$ref": "#/components/schemas/ListenerWebSocket",
+            "description": "WebSocket Upgrade settings; omission uses defaults for a websocket stream, while a tcp stream forbids this field and null is rejected."
           }
         },
         "additionalProperties": false

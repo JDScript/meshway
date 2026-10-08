@@ -9,7 +9,8 @@ use meshway_model::{RequestId, UdpTraversalId};
 use meshway_protocol::{ErrorResponse, connectivity::*};
 
 macro_rules! query_route {
-    ($method:ident, $path:literal, $operation:literal, $request:ty, $response:ty) => {
+    ($(#[$doc:meta])* $method:ident, $path:literal, $operation:literal, $request:ty, $response:ty) => {
+        $(#[$doc])*
         #[utoipa::path(post,path=$path,operation_id=$operation,tag="connectivity",security(("nodeSession"=[])),request_body=$request,responses((status=200,body=$response),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=503,body=ErrorResponse)))]
         pub(super) async fn $method(State(service): State<Connectivity>, Extension(id): Extension<RequestId>, headers: HeaderMap, body: Result<Json<$request>, JsonRejection>) -> Result<Json<$response>, HttpError> {
             let token = bearer(&headers, id)?;
@@ -19,6 +20,10 @@ macro_rules! query_route {
     };
 }
 query_route!(
+    /// Query current STUN metadata and the Node's valid UDP acquisition attempts.
+    ///
+    /// Requires a Node session and exact current instance and execution target.
+    /// The query preserves original candidate and attempt deadlines.
     query,
     "/agent-api/v1/connectivity/udp/query",
     "queryUdpTraversal",
@@ -26,6 +31,10 @@ query_route!(
     QueryUdpTraversalResponse
 );
 query_route!(
+    /// Prepare an immutable UDP acquisition offer for an authorized adjacent peer.
+    ///
+    /// Requires a Node session, current execution scope and exact State-owned candidates from both participants.
+    /// Identical requestId retries preserve the offer and deadline; changed input returns unavailable with requestChanged.
     prepare,
     "/agent-api/v1/connectivity/udp/attempts",
     "prepareUdpTraversal",
@@ -34,7 +43,8 @@ query_route!(
 );
 
 macro_rules! attempt_route {
-    ($method:ident, $path:literal, $operation:literal, $response:ty) => {
+    ($(#[$doc:meta])* $method:ident, $path:literal, $operation:literal, $response:ty) => {
+        $(#[$doc])*
         #[utoipa::path(post,path=$path,operation_id=$operation,tag="connectivity",security(("nodeSession"=[])),params(("attemptId"=UdpTraversalId,Path)),request_body=UdpTraversalAttemptRequest,responses((status=200,body=$response),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=503,body=ErrorResponse)))]
         pub(super) async fn $method(State(service): State<Connectivity>, Extension(id): Extension<RequestId>, TypedPath(attempt): TypedPath<UdpTraversalId>, headers: HeaderMap, body: Result<Json<UdpTraversalAttemptRequest>, JsonRejection>) -> Result<Json<$response>, HttpError> {
             let token = bearer(&headers, id)?;
@@ -44,12 +54,20 @@ macro_rules! attempt_route {
     };
 }
 attempt_route!(
+    /// Accept an exact UDP offer after reserving the actual receiver slot.
+    ///
+    /// Requires a participant's Node session and matching instance, configuration, State epoch, offer version and digest.
+    /// Active is returned only after both participants accept; it permits bounded acquisition under the original deadline.
     accept,
     "/agent-api/v1/connectivity/udp/attempts/{attemptId}/accept",
     "acceptUdpTraversal",
     AcceptUdpTraversalResponse
 );
 attempt_route!(
+    /// Cancel an unfinished UDP acquisition attempt idempotently.
+    ///
+    /// Requires a participant's Node session and the offer's exact CAS bindings.
+    /// Cancellation ends acquisition without withdrawing an independently authenticated business channel.
     cancel,
     "/agent-api/v1/connectivity/udp/attempts/{attemptId}/cancel",
     "cancelUdpTraversal",

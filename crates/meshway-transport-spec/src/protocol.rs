@@ -9,9 +9,13 @@ use crate::ValidationError;
 )]
 #[serde(rename_all = "snake_case", try_from = "String")]
 pub enum TransportProtocol {
+    /// Native Meshway datagrams over an outer UDP socket.
     NativeUdp,
+    /// Native Meshway byte stream over an outer TCP socket.
     NativeTcp,
+    /// VLESS TCP CONNECT over TCP/TLS or WebSocket/TLS.
     Vless,
+    /// Trojan TCP CONNECT over TLS.
     Trojan,
 }
 
@@ -53,7 +57,9 @@ impl TransportProtocol {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "camelCase", try_from = "String")]
 pub enum OuterSocket {
+    /// UDP datagram socket used by the outer carrier.
     Udp,
+    /// TCP stream socket used by the outer carrier.
     Tcp,
 }
 
@@ -74,7 +80,9 @@ impl TryFrom<String> for OuterSocket {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "camelCase", try_from = "String")]
 pub enum VlessStream {
+    /// VLESS byte stream directly over TCP/TLS.
     Tcp,
+    /// VLESS byte stream wrapped in HTTP/1.1 WebSocket over TCP/TLS.
     #[serde(rename = "websocket")]
     WebSocket,
 }

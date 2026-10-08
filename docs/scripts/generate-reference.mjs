@@ -83,12 +83,23 @@ function constraints(schema) {
   return out.join(", ");
 }
 
+// utoipa places a nullable reference's description on the referenced branch
+// of its `oneOf`; read it from there when the property itself has none.
+function describe(schema) {
+  if (schema.description) return schema.description;
+  for (const variant of schema.oneOf ?? schema.anyOf ?? []) {
+    if (variant.description) return variant.description;
+  }
+  return undefined;
+}
+
 function propertyRows(object) {
   const required = new Set(object.required ?? []);
   const rows = [];
   for (const [name, schema] of Object.entries(object.properties ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
     const notes = [];
-    if (schema.description) notes.push(escapeCell(schema.description));
+    const description = describe(schema);
+    if (description) notes.push(escapeCell(description));
     const limits = constraints(schema);
     if (limits) notes.push(limits);
     if (schema.default !== undefined) notes.push(`default ${code(JSON.stringify(schema.default))}`);

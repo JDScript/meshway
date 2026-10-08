@@ -3,13 +3,16 @@ use utoipa::ToSchema;
 
 use crate::ValidationError;
 
+/// Supported TLS protocol version bound, encoded as `1.2` or `1.3`.
 #[derive(
     Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash, ToSchema,
 )]
 #[serde(try_from = "String")]
 pub enum TlsVersion {
+    /// Permit TLS 1.2 at this version bound.
     #[serde(rename = "1.2")]
     Tls12,
+    /// Permit TLS 1.3 at this version bound.
     #[serde(rename = "1.3")]
     Tls13,
 }
