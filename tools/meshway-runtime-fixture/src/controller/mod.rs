@@ -526,6 +526,7 @@ async fn coordinate(
             action: TopologyAction::Allow,
             a: format!("node:{}", nodes[&a]),
             b: format!("node:{}", nodes[&b]),
+            transports: meshway_configuration::Input::Omitted,
         })
         .collect();
     input.access = vec![AccessRule {

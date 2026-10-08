@@ -82,12 +82,14 @@ fn block_wins_reverse_dial_and_expired_demand_removes_permissions() {
             action: TopologyAction::Block,
             a: format!("node:{}", node(1)),
             b: "*".into(),
+            transports: Input::Omitted,
         },
         TopologyRule {
             remark: String::new(),
             action: TopologyAction::Allow,
             a: "*".into(),
             b: "*".into(),
+            transports: Input::Omitted,
         },
     ];
     let r = run(&c, &inventory(), &ds, &[]);
@@ -109,6 +111,7 @@ fn neighbor_probe_projection_is_not_a_business_path_or_grant() {
             action: TopologyAction::Allow,
             a: format!("node:{}", node(a)),
             b: format!("node:{}", node(b)),
+            transports: Input::Omitted,
         })
         .collect();
     c.defaults.topology = TopologyDefault::Deny;
@@ -256,6 +259,7 @@ fn stable_membership_controls_user_groups_topology_and_routing() {
         action: TopologyAction::Block,
         a: "group:team".into(),
         b: "*".into(),
+        transports: Input::Omitted,
     });
     assert!(matches!(
         run_with_subjects(&c, &inventory(), &ds, &[], &subjects).nodes[&node(1)]

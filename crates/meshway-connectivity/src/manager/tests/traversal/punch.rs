@@ -21,6 +21,7 @@ pub(super) async fn exercise_traversal(healthy_only: bool) {
                     action: meshway_configuration::TopologyAction::Allow,
                     a: format!("node:{}", ids[0]),
                     b: format!("node:{}", ids[1]),
+                    transports: meshway_configuration::Input::Omitted,
                 }];
             })
             .await;

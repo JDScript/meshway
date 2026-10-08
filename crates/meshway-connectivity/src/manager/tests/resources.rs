@@ -37,6 +37,7 @@ pub(super) async fn setup(protocol: TransportProtocol) -> support::Fixture {
                     action: meshway_configuration::TopologyAction::Allow,
                     a: format!("node:{}", ids[index]),
                     b: format!("node:{}", ids[2]),
+                    transports: meshway_configuration::Input::Omitted,
                 })
                 .collect();
             if stream {
