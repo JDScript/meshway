@@ -190,11 +190,12 @@ pub(super) async fn cycle(
     // A real scope race still goes through the ordinary atomic refresh below.
     let settled_report = if let Some(network) = network.as_deref_mut()
         && network.diagnostics_ready(control)
-        && !network.can_report_inline(control)
     {
-        stage("settle_current_application", network.finish(control))
-            .await
-            .map_err(|error| failure::at("finish_application", error, false))?;
+        if !network.can_report_inline(control) {
+            stage("settle_current_application", network.finish(control))
+                .await
+                .map_err(|error| failure::at("finish_application", error, false))?;
+        }
         if network.can_report_inline(control) {
             match stage(
                 "report_current_application",
