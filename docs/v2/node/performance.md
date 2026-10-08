@@ -51,7 +51,7 @@ mise run perf:crypto:l0 -- --environment host
 
 `CARGO_PROFILE_RELEASE_STRIP=none mise run perf:crypto:l0 -- --environment host`（或 `linux`）对正式 `meshway-circuit-perf` 做独立 release 构建。脚本设置 `CARGO_PROFILE_RELEASE_DEBUG=1`，调用时的 `STRIP=none` 覆盖普通 release 的 strip 设置，保留函数调试信息；只设置 debug 不会抵消显式 strip。固定 2／3 节点、1280B、1000 轮 warmup，分别保存 profile 关闭和 `MESHWAY_PROFILE=128` 的三次重复。macOS 另用用户安装的 `samply` 记录每拓扑 500,000 轮的 1 kHz 调用栈；Linux 复用锁定 node-lab image、zigbuild、无网络／只读容器和 2 CPU quota，镜像缺少 perf 时使用现有日志插桩。二进制、命令、原始 stdout／stderr、采样文件与 `results.json`／`summary.md` 位于 `.meshway/perf/crypto/<run>-l0-<environment>/`。
 
-`crypto_analysis.py` 从 samply sidecar 排除主线程最初 200 ms／最后 100 ms，以 thread CPU delta 加权；原生 self-time 比例乘同轮未插桩总 CPU，按 AEAD、含 key schedule 的 HMAC、codec、其它 SHA、flow／replay／guard、缓冲／复制与其它分类，保存所有叶函数和 top 15。inclusive 父子项不可相加；未解析叶保留父级归因。日志 scope 没有覆盖每次 map／validate／memcpy，不能伪造函数细分；采样估计含 observer、内联与窗口误差，不能用 macOS 占比代替 Linux。
+`mise run perf:crypto:attribute -- --crypto <run>… --host-l0 <run> --linux-l0 <run> --output <file>`（`scripts/perf/crypto_analysis.py`）从 samply sidecar 排除主线程最初 200 ms／最后 100 ms，以 thread CPU delta 加权；原生 self-time 比例乘同轮未插桩总 CPU，按 AEAD、含 key schedule 的 HMAC、codec、其它 SHA、flow／replay／guard、缓冲／复制与其它分类，保存所有叶函数和 top 15。inclusive 父子项不可相加；未解析叶保留父级归因。日志 scope 没有覆盖每次 map／validate／memcpy，不能伪造函数细分；采样估计含 observer、内联与窗口误差，不能用 macOS 占比代替 Linux。
 
 ### 原语微基准
 

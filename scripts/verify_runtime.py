@@ -44,19 +44,22 @@ def fingerprint():
 
 
 def wait_for_idle():
-    """Record host load and gate each isolated Linux group, including nested runs."""
+    """Record host load for the report. Waiting for an idle host is opt-in
+    (MESHWAY_WAIT_IDLE=1): the fixture itself never stalls a CI runner, and the
+    matrix runner owns parallelism instead."""
     started = time.monotonic()
     while True:
         load = os.getloadavg()
         uptime = run("uptime", capture=True).strip()
         print(uptime, flush=True)
         waited = time.monotonic() - started
+        record = {"uptime": uptime, "loadAverage": list(load), "waitSeconds": waited}
         if os.environ.get("MESHWAY_MATRIX_RUN"):
-            return {"uptime": uptime, "loadAverage": list(load), "waitSeconds": waited,
-                    "policy": "matrix bounded parallelism", "matrixRun": os.environ["MESHWAY_MATRIX_RUN"]}
+            return {**record, "policy": "matrix bounded parallelism", "matrixRun": os.environ["MESHWAY_MATRIX_RUN"]}
+        if os.environ.get("MESHWAY_WAIT_IDLE") != "1":
+            return {**record, "policy": "recorded only"}
         if load[0] <= 6 or (waited >= 600 and load[0] < 8):
-            return {"uptime": uptime, "loadAverage": list(load), "waitSeconds": waited,
-                    "relaxedAfterTenMinutes": load[0] > 6}
+            return {**record, "policy": "waited for idle host", "relaxedAfterTenMinutes": load[0] > 6}
         time.sleep(30)
 
 

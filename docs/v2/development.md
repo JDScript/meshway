@@ -172,7 +172,7 @@ mise run validate:matrix --parallel 2 --short --rows nat/off nat+fallback/off
 
 构建阶段从可变 Cargo target 复制并冻结产物。导入阶段仍校验源码／目标／二进制摘要，同一文件系统以硬链接共享只读可执行文件，避免每行复制多 GiB 的 debug 程序；跨文件系统才复制。容器对程序目录只读挂载，可写的外来产物不作为冻结输入接受。
 
-`--parallel N` 默认是可用 CPU 数除以 8 向下取整、最少 1。依据是每个 runtime 行的 controller／A／R／B 各限制 2 CPU；NAT 行另外包含两个轻量路由器，需为宿主及路由器留出余量。并发不改变 fixture 的进程内期限，不保证高负载下仍通过。每行记录启动 `uptime`、1／5／15 分钟 load、耗时、报告 ID、失败阶段摘录和遗留资源；矩阵显式使用有界并发替代 standalone runtime／packet 的串行低负载门槛。与历史串行数据比较时应同时读取负载和源码指纹。
+`--parallel N` 默认是可用 CPU 数除以 8 向下取整、最少 1。依据是每个 runtime 行的 controller／A／R／B 各限制 2 CPU；NAT 行另外包含两个轻量路由器，需为宿主及路由器留出余量。并发不改变 fixture 的进程内期限，不保证高负载下仍通过。每行记录启动 `uptime`、1／5／15 分钟 load、耗时、报告 ID、失败阶段摘录和遗留资源；standalone 的 `verify_runtime.py`／`verify_packet.py` 只记录负载，不等待空闲；需要本机串行低负载门槛时设置 `MESHWAY_WAIT_IDLE=1`（1 分钟 load ≤ 6，最多等待 10 分钟后放宽到 < 8）。矩阵用有界并发替代该门槛。与历史串行数据比较时应同时读取负载和源码指纹。
 
 各行、packet 内嵌 daemon、容器、bridge、挂载目录、私有 D-Bus／DNS 都有独立 run ID／namespace；固定监听端口只存在于各自 namespace，不发布宿主端口。IPv4 地址由 Docker IPAM 分配，IPv6 为每个 bridge 的随机 documentation prefix；共享 `/dev/net/tun` 不共享接口。实际并发受 CPU／内存、Docker 地址池剩余 bridge 数及 IO 影响；单个 NAT 行最多三个 bridge。失败不取消其他行，退出码表示全部选中行及清理是否通过。
 

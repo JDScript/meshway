@@ -105,6 +105,10 @@ description = "Explicit release L0 CPU profiling using samply or existing instru
 tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
 run = "python3 scripts/perf/crypto_l0.py"
 
+[tasks."perf:crypto:attribute"]
+description = "Combine perf:crypto and host/linux perf:crypto:l0 runs into the L0 CPU attribution report"
+run = "python3 scripts/perf/crypto_analysis.py"
+
 [tasks."perf:dataplane"]
 description = "Explicit isolated Linux raw/plain TUN dataplane measurements"
 tools = { zig = "0.17.0", "github:rust-cross/cargo-zigbuild" = "0.23.4" }
