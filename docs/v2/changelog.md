@@ -32,3 +32,9 @@
 | 流程／CI | `4385a0c9`…`60e966a3` | process.md、changelog、workflow 拆分、四台 runner | — |
 
 未合入：AB `perf/daemon-dataplane-runtime`（专用数据面运行时，无吞吐收益，分支已打包归档）。
+
+## 待合入工作包
+
+| 工作包 | 候选提交 | 内容 | 证据 |
+| --- | --- | --- | --- |
+| TD 测试整理 | `4a8ba975`、`704b2bd3`、`376c9176`、`52a1ac78`（`cleanup/test-dedup`） | Server 两条重复测试及重复 HTTP 断言／样板收敛；Server／transport 测试文件 ≤800 行；可执行上限检查；修复 State provider 重复关闭钩子的强引用保留与 fast 包选择。Server 物理测试行数 −1.6%，未达到 −30%；Clock 完整传播范围超过 15 文件，按边界仅完成评估。 | `.meshway/td/`：覆盖对照、Clock 评估、provider 生命周期红／绿回归、T1 `check.log`；热构建 `test:rust` 990 → 988 条，墙钟 114.7 → 128.3 s（单次观测，无提速结论）。 |
