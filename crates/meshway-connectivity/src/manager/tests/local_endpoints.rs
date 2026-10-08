@@ -122,7 +122,7 @@ async fn report_listener(fixture: &mut support::Fixture, protocol: TransportProt
             SocketState {
                 resource: ResourceRef::Listener { key: key.clone() },
                 configuration: Some(reference),
-                generation: meshway_model::Sequence::MIN,
+                generation: meshway_model::Sequence::new(1).unwrap(),
                 network: if protocol == TransportProtocol::NativeUdp {
                     SocketNetwork::Udp
                 } else {

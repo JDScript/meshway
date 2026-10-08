@@ -508,6 +508,17 @@ async fn coordinate(
                 dialers.trojan = None;
             }
             Input::Value(dialers)
+        } else if cli.traversal == crate::TraversalMode::Nat && role == Role::R {
+            // Both tested carriers must enter R's private NAT. Otherwise R
+            // could now dial B's reported public-side interface directly and
+            // correctly avoid the bilateral STUN path this fixture proves.
+            // Business still follows A-R-B over the bidirectional channels.
+            Input::Value(meshway_transport_spec::DialerSet {
+                native_udp: None,
+                native_tcp: None,
+                vless: None,
+                trojan: None,
+            })
         } else if cli.traversal_fallback && role == Role::A {
             // Only A-R owns the TCP alternative. A globally inherited TCP
             // dialer would also let B choose R's newly reachable listener after

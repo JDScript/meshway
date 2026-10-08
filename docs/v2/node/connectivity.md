@@ -112,6 +112,8 @@ Manager→SecureNode owner 的 circuit 控制／诊断帧和 lifecycle 事件另
 
 穿透、NAT 与 TCP 退路的验收状态见[验收范围](/v2/node/validation)。
 
+隔离双 NAT fixture 的 R 使用空 dialers，A 与 B 分别向 R 的私网 listener 获取通道；两条边仍要求原始 STUN offer、双边接受及真实安装／包流证据。这样不会因 B 的公网侧 local 候选可达而把普通拨号误当作穿透验收；业务和回复仍沿完整 A→R→B 路径。
+
 ## 规划：MASQUE
 
 MASQUE 尚未实现。后续优先评估 CONNECT-UDP 与现有 datagram 会话的衔接，再决定 CONNECT-IP 的必要范围；HTTP/3 DATAGRAM 与 TCP 上的 Capsule 承载分别报告，经代理传输不标记为 P2P 直连。HTTP/3 不承诺与浏览器流量不可区分，代理／CDN 的支持需真实互通验证；QUIC 或代理 TLS 不替代 Mesh 的端到端保护与业务授权。

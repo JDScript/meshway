@@ -81,6 +81,7 @@ struct Fields {
 #[serde(rename_all = "camelCase")]
 enum Acquisition {
     PublishedEndpoint,
+    LocalEndpoint,
     AcceptedInbound,
     CoordinatedUdp,
 }
@@ -129,6 +130,7 @@ pub(super) fn decode(event: &serde_json::Value) -> Result<Option<Installation>> 
             }
             match kind {
                 Acquisition::PublishedEndpoint => LinkAcquisition::PublishedEndpoint,
+                Acquisition::LocalEndpoint => LinkAcquisition::LocalEndpoint,
                 Acquisition::AcceptedInbound => LinkAcquisition::AcceptedInbound,
                 Acquisition::CoordinatedUdp => unreachable!(),
             }
