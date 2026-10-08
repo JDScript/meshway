@@ -1,8 +1,85 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T07:42:12.696278+00:00",
+  "updatedAt": "2026-10-08T07:45:24.371848+00:00",
   "runs": [
+    {
+      "id": 37745237229,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "workflow_dispatch",
+      "branch": "main",
+      "commit": "94b2bc6982b5b46afc214237ba4b5270ce8c17c9",
+      "message": "ci: allow manual workflow dispatch",
+      "createdAt": "2026-10-08T07:43:48Z",
+      "updatedAt": "2026-10-08T07:44:41Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37745237229",
+      "jobs": [
+        {
+          "id": 113205246369,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T07:44:27Z",
+          "completedAt": "2026-10-08T07:44:40Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37745237229/job/113205246369"
+        },
+        {
+          "id": 113205336966,
+          "name": "cargo",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-08T07:44:43Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37745237229/job/113205336966"
+        },
+        {
+          "id": 113205337013,
+          "name": "docs-and-scripts",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-08T07:44:42Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37745237229/job/113205337013"
+        },
+        {
+          "id": 113205337038,
+          "name": "console",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-08T07:44:41Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37745237229/job/113205337038"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37745186771,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "94b2bc6982b5b46afc214237ba4b5270ce8c17c9",
+      "message": "ci: allow manual workflow dispatch",
+      "createdAt": "2026-10-08T07:43:18Z",
+      "updatedAt": "2026-10-08T07:43:50Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37745186771",
+      "jobs": [],
+      "artifacts": []
+    },
     {
       "id": 37743069864,
       "attempt": 1,
@@ -351,20 +428,31 @@
     },
     {
       "id": 37740531075,
-      "attempt": 1,
+      "attempt": 2,
       "workflow": "Check",
       "event": "push",
       "branch": "main",
       "commit": "11d657685745ee0845817358a0c6b09871349ee3",
       "message": "docs(changelog): record the 2026-10-08 merges",
       "createdAt": "2026-10-08T06:57:32Z",
-      "updatedAt": "2026-10-08T07:09:01Z",
+      "updatedAt": "2026-10-08T07:44:25Z",
       "status": "completed",
-      "conclusion": "failure",
+      "conclusion": "cancelled",
       "url": "https://github.com/JDScript/meshway/actions/runs/37740531075",
       "jobs": [
         {
-          "id": 113189959101,
+          "id": 113204848399,
+          "name": "cargo",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-08T07:43:17Z",
+          "completedAt": "2026-10-08T07:44:24Z",
+          "seconds": 67.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37740531075/job/113204848399"
+        },
+        {
+          "id": 113204848681,
           "name": "changes",
           "runner": "mars-14900k",
           "status": "completed",
@@ -372,21 +460,10 @@
           "startedAt": "2026-10-08T06:57:35Z",
           "completedAt": "2026-10-08T06:57:48Z",
           "seconds": 13.0,
-          "url": "https://github.com/JDScript/meshway/actions/runs/37740531075/job/113189959101"
+          "url": "https://github.com/JDScript/meshway/actions/runs/37740531075/job/113204848681"
         },
         {
-          "id": 113190036882,
-          "name": "docs-and-scripts",
-          "runner": "mars-14900k",
-          "status": "completed",
-          "conclusion": "success",
-          "startedAt": "2026-10-08T07:01:01Z",
-          "completedAt": "2026-10-08T07:01:55Z",
-          "seconds": 54.0,
-          "url": "https://github.com/JDScript/meshway/actions/runs/37740531075/job/113190036882"
-        },
-        {
-          "id": 113190036893,
+          "id": 113204849349,
           "name": "console",
           "runner": "mars-14900k",
           "status": "completed",
@@ -394,18 +471,18 @@
           "startedAt": "2026-10-08T06:59:20Z",
           "completedAt": "2026-10-08T07:00:58Z",
           "seconds": 98.0,
-          "url": "https://github.com/JDScript/meshway/actions/runs/37740531075/job/113190036893"
+          "url": "https://github.com/JDScript/meshway/actions/runs/37740531075/job/113204849349"
         },
         {
-          "id": 113190036937,
-          "name": "cargo",
+          "id": 113204879482,
+          "name": "docs-and-scripts",
           "runner": "mars-14900k",
           "status": "completed",
-          "conclusion": "failure",
-          "startedAt": "2026-10-08T07:01:57Z",
-          "completedAt": "2026-10-08T07:09:01Z",
-          "seconds": 424.0,
-          "url": "https://github.com/JDScript/meshway/actions/runs/37740531075/job/113190036937"
+          "conclusion": "success",
+          "startedAt": "2026-10-08T07:01:01Z",
+          "completedAt": "2026-10-08T07:01:55Z",
+          "seconds": 54.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37740531075/job/113204879482"
         }
       ],
       "artifacts": []
