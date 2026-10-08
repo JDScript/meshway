@@ -7,6 +7,9 @@ use std::{
 
 pub(super) const BUDGET: Duration = Duration::from_secs(2);
 const LIMIT: usize = 2 * 1024 * 1024;
+// The worker owns this permit, so dropping and recreating a probe cannot bypass
+// the process limit while an abandoned blocking operation is still being reaped.
+static PROCESS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 #[derive(Clone, Copy)]
 pub(super) enum Tool {
@@ -67,7 +70,9 @@ impl Commands {
         if self.pending.is_some() || input.len() > LIMIT || arguments.len() > 64 {
             return Err(Failure::Limit);
         }
+        let permit = PROCESS.try_acquire().map_err(|_| Failure::Limit)?;
         self.pending = Some(tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             execute(tool, &arguments, &input)
         }));
         self.settle().await?.ok_or(Failure::Worker)
@@ -179,6 +184,17 @@ mod tests {
         assert!(futures_util::poll!(waiter.as_mut()).is_pending());
         drop(waiter);
         assert!(commands.pending.is_some());
+        let mut competing = Commands::default();
+        assert!(matches!(
+            competing
+                .run(
+                    Tool::Nft,
+                    vec!["-j".into(), "list".into(), "tables".into()],
+                    Vec::new()
+                )
+                .await,
+            Err(Failure::Limit)
+        ));
         let settled = tokio::time::timeout(BUDGET + Duration::from_secs(3), commands.settle())
             .await
             .unwrap();
