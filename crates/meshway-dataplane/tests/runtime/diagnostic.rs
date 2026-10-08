@@ -573,7 +573,10 @@ async fn retained_relay_correlation_never_renews_probe_deadline_or_source_scope(
     for refresh_source in [false, true] {
         let (mut fixture, task) = setup().await;
         let circuit = handshake(&mut fixture, &task).await;
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // Scope invalidation is checked before expiry, independently of the
+        // real HTTP handoff's scheduling under the full workspace test load.
+        let lifetime = if refresh_source { 10 } else { 2 };
+        let deadline = Instant::now() + Duration::from_secs(lifetime);
         let request = fixture
             .a
             .probe(
@@ -590,6 +593,7 @@ async fn retained_relay_correlation_never_renews_probe_deadline_or_source_scope(
         fixture.renew().await;
         if refresh_source {
             assert!(old.ensure_current().is_err());
+            assert!(Instant::now() < deadline, "check scope before probe expiry");
             let reply = forward(fixture.r.receive(&fixture.rb.carrier, reply));
             assert!(fixture.a.receive(&fixture.ar.carrier, wire(reply)).is_err());
         } else {
