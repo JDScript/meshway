@@ -444,6 +444,9 @@ meshway_serde::object! {
     #[serde(deserialize_with="meshway_serde::unique_map")] pub capabilities: BTreeMap<String, Capability>,
     /// Independently reported saved target, applied target and installation progress.
     pub configuration: ConfigurationState,
+    /// Target-bound exit prerequisite facts; omitted means unknown, never ready.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_capability: Option<crate::exit::ExitCapability>,
     /// Complete listener inventory indexed by configured listener key.
     #[serde(deserialize_with="meshway_serde::unique_map")] pub listeners: BTreeMap<String, ListenerState>,
     /// Complete outer socket inventory indexed by instance-local socket ID.

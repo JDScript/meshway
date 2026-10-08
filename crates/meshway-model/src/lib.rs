@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod digest;
+pub mod exit;
 mod ids;
 mod membership;
 mod node;
