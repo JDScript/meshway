@@ -24,6 +24,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = {"server": (8420, "/api/v1/auth/options"), "docs": (5173, "/v2/")}
 CONSOLE_ORIGIN = "http://127.0.0.1:3001"
+# The docs dev server proxies API calls from the API Explorer to the local Server.
+SERVER_ORIGIN = "http://127.0.0.1:8420"
 SERVER_ORIGIN = "https://meshway-dev-api.jdscript.dev"
 STUN_SERVER = "dev-public=stun.l.google.com:19302"
 MAX_DATASET_BYTES = 128 * 1024 * 1024
@@ -379,7 +381,10 @@ class LocalServices:
             shell = "exec " + shlex.join(launch) + " >>" + shlex.quote(str(log)) + " 2>&1"
             # tmux may predate the current mise environment; new services must
             # resolve tools from this invocation rather than its global PATH.
-            created = run(["tmux", "new-session", "-d", "-P", "-F", "#{pane_id}\t#{pane_pid}", "-s", "meshway-" + service, "-c", str(self.root), "-e", "PATH=" + os.environ["PATH"], shell], cwd=self.root)
+            environment = ["-e", "PATH=" + os.environ["PATH"]]
+            if service == "docs":
+                environment += ["-e", "MESHWAY_CONTROLLER_URL=" + SERVER_ORIGIN]
+            created = run(["tmux", "new-session", "-d", "-P", "-F", "#{pane_id}\t#{pane_pid}", "-s", "meshway-" + service, "-c", str(self.root), *environment, shell], cwd=self.root)
             fields = created.stdout.strip().split("\t")
             if len(fields) != 2 or not fields[0].startswith("%") or not fields[1].isdigit():
                 raise DevError(service + ": launch identity unavailable; inspect tmux manually")
