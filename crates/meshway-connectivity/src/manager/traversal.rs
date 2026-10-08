@@ -313,7 +313,17 @@ async fn run_epoch(
                         Instant::now() >= known.expires || known.endpoints.contains(id)
                     }) && observation_due(&shared, id)
                 });
-            if queries.admit(Instant::now(), acquisition, observation) {
+            // A live discovery context already authorizes same-socket STUN.
+            // Do not put another metadata RPC (and its control-owner queue)
+            // ahead of refresh when no adjacency acquisition needs that query.
+            // Epoch/resource handoff drops this context; expiry still requires
+            // fresh metadata under the unchanged query admission budget.
+            let observation_query = observation
+                && (acquisition
+                    || context
+                        .as_ref()
+                        .is_none_or(|context| context.ensure_current().is_err()));
+            if queries.admit(Instant::now(), acquisition, observation_query) {
                 let query = gateway
                     .request(Operation::Query(Box::new(
                         shared.identity.snapshot().clone(),

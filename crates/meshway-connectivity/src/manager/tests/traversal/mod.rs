@@ -18,6 +18,7 @@ use support::*;
 mod nat;
 use nat::NatFactory;
 mod acceptance;
+mod observation;
 mod resources;
 use acceptance::accept_scheduling;
 mod punch;
