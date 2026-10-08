@@ -5,6 +5,26 @@ use std::{
 };
 
 #[tokio::test]
+async fn ready_report_settles_receipt_without_refreshing_acquisition_authority() {
+    use crate::runtime::{network::testing::Worker, ping::integration::Fixture};
+    let mut fixture = Fixture::open().await;
+    let mut worker = Worker::new();
+    let ticket = fixture.controls[0].begin_application().await.unwrap();
+    let guard = fixture.controls[0].execution_snapshot().unwrap();
+    worker.complete(ticket, guard.clone());
+    assert!(worker.handle.diagnostics_ready(&fixture.controls[0]));
+    assert!(!worker.handle.can_report_inline(&fixture.controls[0]));
+    settle_report(&mut worker.handle, &mut fixture.controls[0])
+        .await
+        .unwrap();
+    assert!(worker.handle.can_report_inline(&fixture.controls[0]));
+    guard.ensure_current().unwrap();
+    worker.no_commands();
+    worker.close().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn receipt_http_conflicts_preserve_installation_until_binding_requires_suspend() {
     use crate::runtime::{network::testing::Worker, ping::integration::Fixture};
     for (code, refresh) in [

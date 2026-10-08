@@ -77,8 +77,38 @@ struct Intent {
     request: DemandRequest,
     created: bool,
     renewal: Option<RenewDemandRequest>,
+    // Scheduling acknowledgement only; the installed permit remains the sole
+    // DNS I/O authority. Older snapshots cannot undo a completed renewal RPC.
+    renewed_until: u64,
     expires_at_ms: u64,
     retry: Instant,
+}
+
+impl Intent {
+    fn prepare_renewal(&mut self, now_ms: u64, instance_expiry: u64) {
+        if !self.created || self.renewal.is_some() {
+            return;
+        }
+        let known_expiry = self.expires_at_ms.max(self.renewed_until);
+        if known_expiry > now_ms.saturating_add(40_000) {
+            return;
+        }
+        let expires_at_ms = now_ms.saturating_add(120_000).min(instance_expiry);
+        if expires_at_ms > known_expiry {
+            self.renewal = Some(RenewDemandRequest {
+                instance: self.request.instance.clone(),
+                request_id: self.request.request_id,
+                expires_at_ms,
+            });
+        }
+    }
+
+    fn acknowledged(&mut self) {
+        self.created = true;
+        if let Some(renewal) = self.renewal.take() {
+            self.renewed_until = renewal.expires_at_ms;
+        }
+    }
 }
 
 /// Inert owner-created metadata retained only until its original bounded
@@ -114,7 +144,8 @@ impl From<Intent> for Retired {
                 .as_ref()
                 .map_or(intent.expires_at_ms, |renewal| {
                     renewal.expires_at_ms.max(intent.expires_at_ms)
-                }),
+                })
+                .max(intent.renewed_until),
             request: intent.request,
         }
     }
@@ -194,6 +225,7 @@ impl Registry {
                 },
                 created: false,
                 renewal: None,
+                renewed_until: 0,
                 expires_at_ms: now_ms.saturating_add(120_000).min(instance_expiry),
                 retry: Instant::now(),
             });
@@ -222,29 +254,16 @@ impl Registry {
             if let Some(permit) = cfg.local_egress.get(&intent.request.request_id) {
                 intent.expires_at_ms = permit.expires_at_ms;
             }
-            if now_ms >= intent.expires_at_ms {
+            if now_ms >= intent.expires_at_ms.max(intent.renewed_until) {
                 self.failed = true;
                 break;
             }
             if budget == 0 || Instant::now() < intent.retry {
                 continue;
             }
-            if intent.created
-                && intent.renewal.is_none()
-                && intent.expires_at_ms > now_ms.saturating_add(40_000)
-            {
-                continue;
-            }
+            intent.prepare_renewal(now_ms, instance.expires_at_ms);
             if intent.created && intent.renewal.is_none() {
-                let expires_at_ms = now_ms.saturating_add(120_000).min(instance.expires_at_ms);
-                if expires_at_ms <= intent.expires_at_ms {
-                    continue;
-                }
-                intent.renewal = Some(RenewDemandRequest {
-                    instance: intent.request.instance.clone(),
-                    request_id: intent.request.request_id,
-                    expires_at_ms,
-                });
+                continue;
             }
             budget -= 1;
             intent.retry = Instant::now() + Duration::from_secs(2);
@@ -260,10 +279,7 @@ impl Registry {
             })
             .await;
             if matches!(result, Ok(Ok(()))) {
-                intent.created = true;
-                if let Some(renewal) = intent.renewal.take() {
-                    intent.expires_at_ms = renewal.expires_at_ms;
-                }
+                intent.acknowledged();
             }
         }
         let waiting = self
@@ -367,6 +383,29 @@ mod tests {
         assert_eq!(registry.retired.len(), 1);
         assert_eq!(registry.retired[0].expires_at_ms, 90_000);
         assert_eq!(registry.retired[0].request.request_id, id);
+    }
+
+    #[test]
+    fn acknowledged_renewal_is_not_reissued_while_its_publication_is_pending() {
+        let plan = plan();
+        let mut registry = Registry::default();
+        registry.reconcile(&plan, 1_000, 90_000);
+        let intent = &mut registry.intents[0];
+        intent.acknowledged();
+        intent.prepare_renewal(60_000, 180_000);
+        let renewal = intent.renewal.clone().unwrap();
+        assert_eq!(renewal.expires_at_ms, 180_000);
+        intent.acknowledged();
+        // publish_after_finish sees the same original execution permit. That
+        // must neither extend its authority nor send another renewal HTTP.
+        assert_eq!(intent.expires_at_ms, 90_000);
+        intent.prepare_renewal(65_000, 185_000);
+        assert!(intent.renewal.is_none());
+        intent.expires_at_ms = 180_000;
+        intent.prepare_renewal(145_000, 265_000);
+        let next = intent.renewal.as_ref().unwrap();
+        assert_eq!(next.request_id, renewal.request_id);
+        assert_eq!(next.expires_at_ms, 265_000);
     }
 
     #[test]

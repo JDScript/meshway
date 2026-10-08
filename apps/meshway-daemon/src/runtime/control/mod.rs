@@ -548,6 +548,13 @@ enum Waiting {
     Request(network::Request),
     Ping(super::PingSession),
 }
+
+async fn settle_report(network: &mut network::Handle, control: &mut Control) -> Result<(), Error> {
+    if network.diagnostics_ready(control) && !network.can_report_inline(control) {
+        network.finish(control).await?;
+    }
+    Ok(())
+}
 #[allow(clippy::too_many_arguments)]
 async fn wait_work(
     desired: &mut watch::Receiver<Desired>,
@@ -625,6 +632,46 @@ async fn wait_work(
             scheduling::Wake::Work(work) => match work {
                 Some(network::Work::Request(request)) => Waiting::Request(request),
                 Some(network::Work::Report) => {
+                    // A completed local installation is already the exact
+                    // current target. Settle its receipt in this idle window;
+                    // refreshing first needlessly consumes the short bilateral
+                    // acquisition window and can cancel newly prepared offers.
+                    if control.as_deref().zip(network.as_deref()).is_some_and(
+                        |(control, network)| {
+                            network.diagnostics_ready(control)
+                                && !network.can_report_inline(control)
+                        },
+                    ) {
+                        let settled = window
+                            .serve(
+                                async {
+                                    let _ = desired
+                                        .wait_for(|next| {
+                                            next.shutdown || next.revision != plan.revision
+                                        })
+                                        .await;
+                                },
+                                settle_report(
+                                    network.as_deref_mut().expect("current network"),
+                                    control.as_deref_mut().expect("current Control"),
+                                ),
+                            )
+                            .await;
+                        match settled {
+                            scheduling::Wake::Changed => return Waiting::Change,
+                            scheduling::Wake::Work(Err(error)) => {
+                                return Waiting::Failed(failure::at(
+                                    "finish_application",
+                                    error,
+                                    false,
+                                ));
+                            }
+                            scheduling::Wake::Work(Ok(())) => {}
+                            scheduling::Wake::Due => {
+                                unreachable!("admitted receipt retains its deadline")
+                            }
+                        }
+                    }
                     let ready = control
                         .as_deref()
                         .zip(network.as_deref())
