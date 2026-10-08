@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T07:47:18.741111+00:00",
+  "updatedAt": "2026-10-08T08:00:56.179379+00:00",
   "runs": [
     {
       "id": 37745237229,
@@ -12,9 +12,9 @@
       "commit": "94b2bc6982b5b46afc214237ba4b5270ce8c17c9",
       "message": "ci: allow manual workflow dispatch",
       "createdAt": "2026-10-08T07:43:48Z",
-      "updatedAt": "2026-10-08T07:44:57Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-08T07:59:01Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/37745237229",
       "jobs": [
         {
@@ -32,11 +32,11 @@
           "id": 113205336966,
           "name": "cargo",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-08T07:44:43Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-08T07:59:01Z",
+          "seconds": 858.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37745237229/job/113205336966"
         },
         {
