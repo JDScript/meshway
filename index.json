@@ -1,8 +1,97 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T08:40:29.173504+00:00",
+  "updatedAt": "2026-10-08T08:56:07.573358+00:00",
   "runs": [
+    {
+      "id": 37751513072,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "c90857fa4111c911115d074a5339698bed635fd1",
+      "message": "test(server): renew the surviving observation subscriber only after the last node result; name the URL in status assertions",
+      "createdAt": "2026-10-08T08:41:30Z",
+      "updatedAt": "2026-10-08T08:41:33Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37751513072",
+      "jobs": [
+        {
+          "id": 113225618652,
+          "name": "matrix",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-08T08:41:33Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37751513072/job/113225618652"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37751512780,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "c90857fa4111c911115d074a5339698bed635fd1",
+      "message": "test(server): renew the surviving observation subscriber only after the last node result; name the URL in status assertions",
+      "createdAt": "2026-10-08T08:41:30Z",
+      "updatedAt": "2026-10-08T08:55:39Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37751512780",
+      "jobs": [
+        {
+          "id": 113225617735,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T08:41:31Z",
+          "completedAt": "2026-10-08T08:41:34Z",
+          "seconds": 3.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37751512780/job/113225617735"
+        },
+        {
+          "id": 113225647175,
+          "name": "cargo",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T08:41:37Z",
+          "completedAt": "2026-10-08T08:55:38Z",
+          "seconds": 841.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37751512780/job/113225647175"
+        },
+        {
+          "id": 113225648544,
+          "name": "docs-and-scripts",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-08T08:41:35Z",
+          "completedAt": "2026-10-08T08:41:35Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37751512780/job/113225648544"
+        },
+        {
+          "id": 113225649694,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-08T08:41:35Z",
+          "completedAt": "2026-10-08T08:41:35Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37751512780/job/113225649694"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37748728195,
       "attempt": 1,
