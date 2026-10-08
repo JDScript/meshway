@@ -71,14 +71,29 @@ jobs:
       - name: Dispatched matrix
         if: github.event_name == 'workflow_dispatch'
         run: mise run validate:matrix -- ${{ inputs.short && '--short' || '' }} ${{ inputs.rows && format('--rows {0}', inputs.rows) || '' }}
-      - name: Publish summary
+      - name: Publish summary and keep the evidence outside the checkout
         if: always()
         run: |
           latest=$(find .meshway/validation/matrix -mindepth 1 -maxdepth 1 -type d | sort -r | head -1)
           cat "$latest/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          # The next checkout on this runner runs `git clean -ffdx`; full row
+          # evidence (logs, pcap, reports) survives only here. Private key
+          # material stays runner-local and is never uploaded.
+          keep="$HOME/meshway-ci-evidence/validate/${{ github.run_id }}-$(basename "$latest")"
+          mkdir -p "$(dirname "$keep")"
+          cp -a "$latest" "$keep"
+          echo "Evidence: $(hostname):$keep" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validate-matrix-${{ github.run_id }}
-          path: .meshway/validation/matrix/*/matrix.json
+          path: |
+            .meshway/validation/matrix/*/matrix.json
+            .meshway/validation/matrix/*/summary.md
+            .meshway/validation/matrix/*/rows/**/report.json
+            .meshway/validation/matrix/*/rows/**/*.log
+            .meshway/validation/matrix/*/rows/**/error.txt
+            !**/private/**
+            !**/*.pcap
+            !**/*.pem
           if-no-files-found: ignore
