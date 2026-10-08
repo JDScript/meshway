@@ -5,7 +5,7 @@ use meshway_model::state::{
     LocalEndpoint, LocalEndpointSource, MAX_LOCAL_ENDPOINTS, NodeState, ResourceRef,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     net::{IpAddr, SocketAddr},
 };
 
@@ -28,6 +28,7 @@ pub(super) fn sample(state: &mut NodeState, configuration: &NodeConfiguration) {
     let Ok(pools) = pools else {
         return;
     };
+    let mut counts = BTreeMap::new();
     for (id, socket) in &mut state.sockets {
         let ResourceRef::Listener { key } = &socket.resource else {
             continue;
@@ -50,12 +51,11 @@ pub(super) fn sample(state: &mut NodeState, configuration: &NodeConfiguration) {
             Listener::Vless(listener) => &listener.bind_interface,
             Listener::Trojan(listener) => &listener.bind_interface,
         };
-        socket.local_endpoints = Some(candidates(
-            socket.bound_address,
-            interface,
-            &interfaces,
-            &pools,
-        ));
+        let mut local = candidates(socket.bound_address, interface, &interfaces, &pools);
+        let count = counts.entry(key).or_insert(0);
+        local.truncate(MAX_LOCAL_ENDPOINTS - *count);
+        *count += local.len();
+        socket.local_endpoints = Some(local);
     }
 }
 
@@ -143,9 +143,14 @@ mod tests {
             interface("eth0", "192.168.1.2"),
             interface("eth1", "10.0.0.2"),
             interface("eth0", "fe80::1"),
+            interface("tun", "fd00::1"),
+            interface("eth0", "::ffff:192.168.1.2"),
             interface("eth0", "2001:db8::2"),
         ];
-        let pools = ["100.64.0.0/10".parse().unwrap()];
+        let pools = [
+            "100.64.0.0/10".parse().unwrap(),
+            "fd00::/64".parse().unwrap(),
+        ];
         let v4 = candidates("0.0.0.0:35000".parse().unwrap(), "", &interfaces, &pools);
         assert_eq!(
             v4.iter()

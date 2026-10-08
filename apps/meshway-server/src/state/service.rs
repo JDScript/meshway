@@ -330,8 +330,9 @@ impl<P: StateProvider> StateService<P> {
                 let accepted = runtime.hub.check_report(&admission, &report, now)?;
                 let changed = !accepted.duplicate
                     && super::local_endpoints::replace(tx, &sealer, &admission, &report, now)?;
+                let network_id = admission.network_id;
                 let mut effects = vec![Effect::AcceptedState {
-                    admission: Box::new(admission.clone()),
+                    admission: Box::new(admission),
                     report: Box::new(report),
                     observed_at: now,
                 }];
@@ -339,13 +340,11 @@ impl<P: StateProvider> StateService<P> {
                     crate::store::execution::publish(
                         tx,
                         &sealer,
-                        admission.network_id,
+                        network_id,
                         "refresh",
                         now.timestamp_millis(),
                     )?;
-                    effects.push(Effect::Progress {
-                        network_id: admission.network_id,
-                    });
+                    effects.push(Effect::Progress { network_id });
                 }
                 Ok((accepted, effects))
             })

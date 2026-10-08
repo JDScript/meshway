@@ -253,7 +253,7 @@ impl StateHub {
     ) -> Result<StateAccepted, Error> {
         validation::report(admission, report, now)?;
         let key = (admission.network_id, admission.node_id);
-        let report_bytes = serde_json::to_vec(&report)
+        let report_bytes = serde_json::to_vec(report)
             .map_err(|_| Error::encode("state report"))?
             .len();
         if let Some(previous) = self.reports.get(&key)
