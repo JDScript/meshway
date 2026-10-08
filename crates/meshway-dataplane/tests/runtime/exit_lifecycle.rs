@@ -96,6 +96,22 @@ async fn exit_flow_and_reserved_tombstone_capacity_block_new_tuples() {
     let next = f.handshake().await;
     assert!(f.a.send(next, udp(&f, false, 41000)).is_err());
     assert!(f.a.send(next, udp(&f, false, 41001)).is_err());
+    // A source process can lose its own tombstones. Recreate only that owner
+    // from the same real Control identity: E must independently reject both
+    // same-tuple reuse and a different tuple while its quarantine is full.
+    f.a = meshway_dataplane::secure::SecureNode::new(
+        f.mesh
+            .a
+            .control
+            .dataplane_identity(f.mesh.a.control.execution_snapshot().unwrap())
+            .unwrap(),
+        Default::default(),
+        std::collections::BTreeMap::from([(f.mesh.r.id, f.ar.carrier.clone())]),
+    )
+    .unwrap();
+    let restarted = f.handshake().await;
+    rejected_forward(&mut f, restarted, 41000);
+    rejected_forward(&mut f, restarted, 41001);
     assert!(
         f.b.exit_reply(ExitReplyIngress::new(udp(&f, true, 41000)))
             .is_err()
