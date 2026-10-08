@@ -32,7 +32,8 @@ pub use challenge_request::{
 pub use configuration::{
     CompareConfigurationRequest, ConfigurationAppliedResponse, ConfigurationComparison,
     ConfigurationPreviewResponse, ConfigurationRequest, ConfigurationResponse,
-    ConfigurationSchemaResponse, ConfigurationSourceResponse, TransportCatalogResponse,
+    ConfigurationSchemaResponse, ConfigurationSourceResponse, EvaluateConfigurationRequest,
+    EvaluationConfiguration, EvaluationResponse, EvaluationTarget, TransportCatalogResponse,
 };
 pub use connectivity::{
     AcceptUdpTraversalResponse, CancelUdpTraversalResponse, CandidateReference,

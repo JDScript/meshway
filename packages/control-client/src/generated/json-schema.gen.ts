@@ -71,6 +71,56 @@ export const schemaDocument = {
           "deny"
         ]
       },
+      "AccessEvaluation": {
+        "type": "object",
+        "required": [
+          "allowed",
+          "grants"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "description": "Some grant authorizes the destination independently of resolution."
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccessGrantEvaluation"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccessGrantEvaluation": {
+        "type": "object",
+        "required": [
+          "rule",
+          "traffic",
+          "reverse",
+          "resolutionDependent"
+        ],
+        "properties": {
+          "resolutionDependent": {
+            "type": "boolean",
+            "description": "Authorizes only for some resolutions: an address grant for a domain, a\ndomain grant for an address."
+          },
+          "reverse": {
+            "type": "boolean",
+            "description": "Matched through `bidirectional` from the destination side."
+          },
+          "rule": {
+            "type": "string",
+            "description": "`/access/<index>`."
+          },
+          "traffic": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "AccessRule": {
         "type": "object",
         "required": [
@@ -519,6 +569,14 @@ export const schemaDocument = {
             },
             "additionalProperties": false
           }
+        ]
+      },
+      "AddressClass": {
+        "type": "string",
+        "enum": [
+          "mesh",
+          "private",
+          "public"
         ]
       },
       "AddressPools": {
@@ -3963,6 +4021,404 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "EvaluateConfigurationRequest": {
+        "type": "object",
+        "required": [
+          "configuration",
+          "source",
+          "target"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/EvaluationConfiguration"
+          },
+          "profile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omitted: the source's current selection or default."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "target": {
+            "$ref": "#/components/schemas/EvaluationTarget"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvaluatedDestination": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "node"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "address",
+              "class",
+              "type"
+            ],
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "class": {
+                "$ref": "#/components/schemas/AddressClass"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "address"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "type"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "domain"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "internet"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Evaluation": {
+        "type": "object",
+        "required": [
+          "source",
+          "destination",
+          "profile",
+          "access",
+          "route",
+          "targets",
+          "paths",
+          "outcome"
+        ],
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/AccessEvaluation"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/EvaluatedDestination"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/EvaluationOutcome"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedPath"
+            }
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ProfileEvaluation"
+          },
+          "route": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RouteEvaluation",
+                "description": "Null when no route decision applies: an unassigned Mesh address, or a\nremote rule set whose content is not available yet."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TargetEvaluation"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvaluationConfiguration": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "current"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "expectedRevision",
+              "sourceJsonc",
+              "type"
+            ],
+            "properties": {
+              "expectedRevision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "sourceJsonc": {
+                "$ref": "#/components/schemas/WireSecret"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "document"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "expectedRevision",
+              "ops",
+              "type"
+            ],
+            "properties": {
+              "expectedRevision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "ops": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConfigurationOperation"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "operations"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EvaluationOutcome": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "permitted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "direct"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unmanaged"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/UnavailableReason"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EvaluationResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "revision",
+          "draft",
+          "evaluation"
+        ],
+        "properties": {
+          "draft": {
+            "type": "boolean"
+          },
+          "evaluation": {
+            "$ref": "#/components/schemas/Evaluation"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision",
+            "description": "The current version the plan is based on; a draft is evaluated as a\nchange to it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvaluationTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "node"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "address",
+              "type"
+            ],
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "address"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "type"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "domain"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "internet"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "EventActor": {
         "oneOf": [
@@ -9721,6 +10177,52 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "PlannedEdge": {
+        "type": "object",
+        "required": [
+          "a",
+          "b",
+          "topology"
+        ],
+        "properties": {
+          "a": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "b": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "topology": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`/topology/<index>` of the allowing rule, null for `defaults.topology`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PlannedPath": {
+        "type": "object",
+        "required": [
+          "nodes",
+          "edges"
+        ],
+        "properties": {
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedEdge"
+            }
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "Port": {
         "type": "integer",
         "format": "int32",
@@ -11337,6 +11839,42 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ProfileEvaluation": {
+        "type": "object",
+        "required": [
+          "name",
+          "assignment",
+          "allowed",
+          "locked",
+          "requested"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "assignment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The assignment whose default applies, or null for the built-in `mesh`."
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requested": {
+            "type": "boolean",
+            "description": "Whether the request named this profile (true) or it is the source's\ncurrent selection / default (false)."
+          }
+        },
+        "additionalProperties": false
+      },
       "ProgressScope": {
         "type": "string",
         "enum": [
@@ -11984,6 +12522,78 @@ export const schemaDocument = {
           }
         ]
       },
+      "RouteEvaluation": {
+        "type": "object",
+        "required": [
+          "kind",
+          "rule",
+          "profile",
+          "ruleSet",
+          "targets",
+          "via",
+          "resolutionDependent"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RouteKind"
+          },
+          "profile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The profile whose rules decided, after `auto` resolution; null for a\npublic rule or a Mesh destination."
+          },
+          "resolutionDependent": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Earlier rules that were not judged because they match the other kind of\ndestination (by address for a domain, by name for an address)."
+          },
+          "rule": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The deciding element: an egress rule, a profile `fallback`, or a Mesh\nroute. Null when implicit: automatic Mesh routing, the built-in `mesh`\nprofile leaving external traffic unmanaged, or a `global:` profile."
+          },
+          "ruleSet": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetMatch",
+                "description": "The rule-set entry through which the rule matched, when it did."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Ordered exit candidates of an exit decision; the Mesh destination itself otherwise."
+          },
+          "via": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RouteKind": {
+        "type": "string",
+        "enum": [
+          "mesh",
+          "exit",
+          "direct",
+          "unmanaged"
+        ]
+      },
       "RouteMatch": {
         "type": "object",
         "properties": {
@@ -12222,6 +12832,22 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/RuleSetView"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetMatch": {
+        "type": "object",
+        "required": [
+          "key",
+          "entry"
+        ],
+        "properties": {
+          "entry": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -12762,6 +13388,46 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "TargetEvaluation": {
+        "type": "object",
+        "required": [
+          "nodeId",
+          "problem",
+          "paths"
+        ],
+        "properties": {
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "paths": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "problem": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TargetProblem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TargetProblem": {
+        "type": "string",
+        "enum": [
+          "disabled",
+          "exitDisabled",
+          "notEnrolled",
+          "noPath",
+          "routingCycle",
+          "routingLimit"
+        ]
       },
       "TcpKeepAlive": {
         "type": "object",

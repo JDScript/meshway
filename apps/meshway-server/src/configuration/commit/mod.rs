@@ -93,6 +93,11 @@ impl Draft {
     }
 }
 
+pub(crate) struct EvaluationDraft {
+    pub(crate) prepared: PreparedConfiguration,
+    pub(crate) rule_set_contents: BTreeMap<String, meshway_model::resources::RuleSetData>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Commit,
@@ -161,6 +166,37 @@ impl Committer {
         };
         let (draft, context) = self.materials(tx, &current, &intent, draft, Mode::Preview)?;
         super::preview::build(&current, draft, context, resources, id)
+    }
+
+    /// The configuration a draft would become, with the rule-set content it
+    /// would bind, for evaluation only: nothing is generated or persisted.
+    /// Missing listener materials are reported as preparation requirements.
+    pub(crate) fn draft(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        intent: Intent<'_>,
+    ) -> Result<(Arc<Snapshot>, EvaluationDraft), Error> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let current = self.current(tx, network)?;
+        self.authorize(tx, &current, &intent, now)?;
+        let draft = self.author(tx, &current, &intent, Mode::Preview)?;
+        let (draft, context) = self.materials(tx, &current, &intent, draft, Mode::Preview)?;
+        let Draft {
+            input,
+            source,
+            rule_sets,
+            rule_set_contents,
+            ..
+        } = draft;
+        let prepared = prepare(input, source, &current, &context, rule_sets)?;
+        Ok((
+            current,
+            EvaluationDraft {
+                prepared,
+                rule_set_contents,
+            },
+        ))
     }
 
     fn authorize(

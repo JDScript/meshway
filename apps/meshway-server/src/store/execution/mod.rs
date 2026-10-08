@@ -21,8 +21,9 @@ use meshway_configuration::{NetworkConfiguration, NodeIdentity};
 use meshway_model::*;
 pub(crate) use publications::{
     apply_configuration_effects, cancel_demand, check_diagnostic_compilation, check_publication,
-    configuration_targets, demand, publish, publish_with_rule_sets, receipt_history_targets,
-    recent_targets_for_node, renew_demand, retire_node_sessions, select_profile, target_for_node,
+    compilation_context, configuration_targets, demand, publish, publish_with_rule_sets,
+    receipt_history_targets, recent_targets_for_node, renew_demand, retire_node_sessions,
+    select_profile, target_for_node,
 };
 use rusqlite::{Transaction, params};
 

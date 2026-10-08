@@ -147,4 +147,4 @@ Server 为最终出口生成绑定 origin、实际目的范围、出口和完整
 
 域名授权采用地址集合语义；同 IP 服务隔离限制见 [Access](/v2/configuration-reference/access#domains)。域名/IP 规则混合时须保留正常客户端的域名上下文和 first-match，无法确定相容动作时报告冲突／不可执行，不静默选更宽路径。
 
-配置与执行载荷见[生成契约](/v2/contracts/openapi.json)，运行范围见 [Node](/v2/node)。
+要查看某个来源到某个目的地实际由哪条规则决定、走哪条路径，用[路径检测](/v2/configuration-reference/evaluation)。配置与执行载荷见[生成契约](/v2/contracts/openapi.json)，运行范围见 [Node](/v2/node)。

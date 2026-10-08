@@ -508,7 +508,7 @@ fn exported_openapi_is_the_actual_router_contract() {
     );
     assert_eq!(spec["openapi"], "3.1.0");
     let paths = spec["paths"].as_object().unwrap();
-    assert_eq!(paths.len(), 94);
+    assert_eq!(paths.len(), 95);
     for (path, method, operation, status, component) in [
         (
             "options",

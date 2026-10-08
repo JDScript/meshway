@@ -108,6 +108,163 @@ impl Configurations {
             })
             .await
     }
+    /// Plans one source/target over the current version or a draft. A draft
+    /// goes through the same preparation as validate, including remote rule-set
+    /// downloads, and is evaluated as a change to the current version.
+    pub(crate) async fn evaluate(
+        &self,
+        token: &str,
+        network: NetworkId,
+        request: EvaluateConfigurationRequest,
+        id: RequestId,
+    ) -> Result<EvaluationResponse, Error> {
+        let digest = token_digest(token)?;
+        let destination = match &request.target {
+            EvaluationTarget::Node { node_id } => {
+                meshway_policy::compile::PlanDestination::Node(*node_id)
+            }
+            EvaluationTarget::Address { address } => {
+                meshway_policy::compile::PlanDestination::Address(
+                    address.parse().map_err(|_| Error::InvalidRequest)?,
+                )
+            }
+            EvaluationTarget::Domain { name } => {
+                if name.len() > meshway_configuration::MAX_DNS_NAME_INPUT_BYTES {
+                    return Err(Error::InvalidRequest);
+                }
+                meshway_policy::compile::PlanDestination::Domain(name.clone())
+            }
+            EvaluationTarget::Internet => meshway_policy::compile::PlanDestination::Internet,
+        };
+        if request
+            .profile
+            .as_ref()
+            .is_some_and(|p| p.is_empty() || p.len() > 128)
+        {
+            return Err(Error::InvalidRequest);
+        }
+        let draft = match request.configuration {
+            EvaluationConfiguration::Current => None,
+            EvaluationConfiguration::Document {
+                expected_revision,
+                source_jsonc,
+            } => Some(ConfigurationRequest::Document {
+                expected_revision,
+                request_id: id,
+                source_jsonc,
+            }),
+            EvaluationConfiguration::Operations {
+                expected_revision,
+                ops,
+            } => Some(ConfigurationRequest::Operations {
+                expected_revision,
+                request_id: id,
+                ops,
+            }),
+        };
+        let permit = PREPARATIONS
+            .try_acquire()
+            .map_err(|_| Error::DependencyUnavailable)?;
+        let prepared = match draft {
+            Some(draft) => Some(
+                self.prepare_resources(digest, network, draft, false)
+                    .await?,
+            ),
+            None => None,
+        };
+        let service = self.clone();
+        let (source, profile) = (request.source, request.profile);
+        self.handle
+            .read(move |tx| {
+                let _permit = permit;
+                service.authorize(tx, &digest, network)?;
+                let (revision, cfg, bindings, rule_sets, is_draft) = match prepared {
+                    None => {
+                        let current = service.committer.current(tx, network)?;
+                        let selected = crate::resources::bindings::at_revision(
+                            tx,
+                            network,
+                            current.revision,
+                            &current.bindings.rule_sets,
+                        )?;
+                        let rule_sets = crate::resources::bindings::compilation_contents(
+                            tx, network, &selected,
+                        )?;
+                        (
+                            current.revision,
+                            current.document.configuration.clone(),
+                            current.bindings.clone(),
+                            rule_sets,
+                            false,
+                        )
+                    }
+                    Some((draft, resources)) => {
+                        let (current, evaluation) = service.committer.draft(
+                            tx,
+                            network,
+                            Intent::Edit {
+                                session: digest,
+                                request: &draft,
+                                resources: resources.as_ref(),
+                            },
+                        )?;
+                        let rule_sets = evaluation
+                            .rule_set_contents
+                            .into_iter()
+                            .filter_map(|(key, data)| {
+                                let artifact = *evaluation.prepared.bindings.rule_sets.get(&key)?;
+                                Some((
+                                    key,
+                                    meshway_configuration::execution::RuleSetContent {
+                                        network_id: network,
+                                        artifact,
+                                        ip_cidr: data.ip_cidr,
+                                        domain_suffix: data.domain_suffix,
+                                        domain: data.domain,
+                                    },
+                                ))
+                            })
+                            .collect();
+                        (
+                            current.revision,
+                            evaluation.prepared.document.configuration,
+                            evaluation.prepared.bindings,
+                            rule_sets,
+                            true,
+                        )
+                    }
+                };
+                let context =
+                    crate::store::execution::compilation_context(tx, network, &cfg, &bindings)?;
+                let evaluation =
+                    meshway_policy::compile::plan(meshway_policy::compile::PlanRequest {
+                        topology: meshway_policy::compile::Topology {
+                            configuration: &cfg,
+                            subjects: &context.subjects,
+                            inventory: &context.inventory,
+                        },
+                        rule_sets: &rule_sets,
+                        selected_profiles: &context.selected_profiles,
+                        source,
+                        destination,
+                        profile: profile.as_deref(),
+                    })
+                    .map_err(|error| match error {
+                        meshway_policy::compile::CompileError::InvalidInput => {
+                            Error::InvalidRequest
+                        }
+                        meshway_policy::compile::CompileError::Budget => Error::StateLimit,
+                        _ => Error::DependencyUnavailable,
+                    })?;
+                Ok(EvaluationResponse {
+                    request_id: id,
+                    revision,
+                    draft: is_draft,
+                    evaluation,
+                })
+            })
+            .await
+    }
     pub(crate) async fn apply(
         &self,
         token: &str,

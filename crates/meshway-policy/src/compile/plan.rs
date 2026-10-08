@@ -248,7 +248,13 @@ fn selector_covers(selector: &str, destination: &EvaluatedDestination) -> Option
             if let Some(suffix) = domain {
                 return crate::domain_suffix_matches(name, suffix).then_some(true);
             }
-            (internet || net.is_some()).then_some(false)
+            // Address-set semantics, as validation accepts it: a public
+            // resolution is inside the Internet grant; a CIDR may or may not
+            // contain what the name resolves to.
+            if internet {
+                return Some(true);
+            }
+            net.map(|_| false)
         }
         EvaluatedDestination::Internet => {
             if internet {

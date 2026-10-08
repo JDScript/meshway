@@ -197,6 +197,18 @@ export const zAcceptUdpTraversalResponse = z.union([z.strictObject({
 
 export const zAccessDefault = z.enum(["deny"]);
 
+export const zAccessGrantEvaluation = z.strictObject({
+  ["resolutionDependent"]: z.boolean(),
+  ["reverse"]: z.boolean(),
+  ["rule"]: z.string(),
+  ["traffic"]: z.array(z.string())
+});
+
+export const zAccessEvaluation = z.strictObject({
+  ["allowed"]: z.boolean(),
+  ["grants"]: z.array(zAccessGrantEvaluation)
+});
+
 export const zAccessRule = z.strictObject({
   ["bidirectional"]: z.boolean().exactOptional(),
   ["dst"]: z.array(z.string()),
@@ -312,6 +324,8 @@ export const zActivityResponse = z.strictObject({
   ["activity"]: zActivityEvent,
   ["requestId"]: zRequestId
 });
+
+export const zAddressClass = z.enum(["mesh","private","public"]);
 
 export const zAddressPools = z.strictObject({
   ["ipv4"]: z.array(z.string()),
@@ -2059,6 +2073,129 @@ export const zErrorResponse = z.strictObject({
   ["problem"]: zProblem,
   ["requestId"]: zRequestId.nullable(),
   ["status"]: z.int().gte(0).lte(65535)
+});
+
+export const zEvaluateConfigurationPath = z.strictObject({
+  ["networkId"]: zNetworkId
+});
+
+export const zEvaluationConfiguration = z.union([z.strictObject({
+  ["type"]: z.enum(["current"])
+}), z.strictObject({
+  ["expectedRevision"]: zRevision,
+  ["sourceJsonc"]: zWireSecret,
+  ["type"]: z.enum(["document"])
+}), z.strictObject({
+  ["expectedRevision"]: zRevision,
+  ["ops"]: z.array(zConfigurationOperation),
+  ["type"]: z.enum(["operations"])
+})]);
+
+export const zEvaluationTarget = z.union([z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["type"]: z.enum(["node"])
+}), z.strictObject({
+  ["address"]: z.string(),
+  ["type"]: z.enum(["address"])
+}), z.strictObject({
+  ["name"]: z.string(),
+  ["type"]: z.enum(["domain"])
+}), z.strictObject({
+  ["type"]: z.enum(["internet"])
+})]);
+
+export const zEvaluateConfigurationRequest = z.strictObject({
+  ["configuration"]: zEvaluationConfiguration,
+  ["profile"]: z.string().nullable().exactOptional(),
+  ["source"]: zNodeId,
+  ["target"]: zEvaluationTarget
+});
+
+export const zEvaluatedDestination = z.union([z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["type"]: z.enum(["node"])
+}), z.strictObject({
+  ["address"]: z.string(),
+  ["class"]: zAddressClass,
+  ["type"]: z.enum(["address"])
+}), z.strictObject({
+  ["name"]: z.string(),
+  ["type"]: z.enum(["domain"])
+}), z.strictObject({
+  ["type"]: z.enum(["internet"])
+})]);
+
+export const zEvaluationOutcome = z.union([z.strictObject({
+  ["type"]: z.enum(["permitted"])
+}), z.strictObject({
+  ["type"]: z.enum(["direct"])
+}), z.strictObject({
+  ["type"]: z.enum(["unmanaged"])
+}), z.strictObject({
+  ["reason"]: zUnavailableReason,
+  ["type"]: z.enum(["unavailable"])
+})]);
+
+export const zPlannedEdge = z.strictObject({
+  ["a"]: zNodeId,
+  ["b"]: zNodeId,
+  ["topology"]: z.string().nullable()
+});
+
+export const zPlannedPath = z.strictObject({
+  ["edges"]: z.array(zPlannedEdge),
+  ["nodes"]: z.array(zNodeId)
+});
+
+export const zProfileEvaluation = z.strictObject({
+  ["allowed"]: z.array(z.string()),
+  ["assignment"]: z.string().nullable(),
+  ["locked"]: z.boolean(),
+  ["name"]: z.string(),
+  ["requested"]: z.boolean()
+});
+
+export const zRouteKind = z.enum(["mesh","exit","direct","unmanaged"]);
+
+export const zRuleSetMatch = z.strictObject({
+  ["entry"]: z.string(),
+  ["key"]: z.string()
+});
+
+export const zRouteEvaluation = z.strictObject({
+  ["kind"]: zRouteKind,
+  ["profile"]: z.string().nullable(),
+  ["resolutionDependent"]: z.array(z.string()),
+  ["rule"]: z.string().nullable(),
+  ["ruleSet"]: zRuleSetMatch.nullable(),
+  ["targets"]: z.array(zNodeId),
+  ["via"]: z.array(zNodeId)
+});
+
+export const zTargetProblem = z.enum(["disabled","exitDisabled","notEnrolled","noPath","routingCycle","routingLimit"]);
+
+export const zTargetEvaluation = z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["paths"]: z.int().gte(0).lte(2147483647),
+  ["problem"]: zTargetProblem.nullable()
+});
+
+export const zEvaluation = z.strictObject({
+  ["access"]: zAccessEvaluation,
+  ["destination"]: zEvaluatedDestination,
+  ["outcome"]: zEvaluationOutcome,
+  ["paths"]: z.array(zPlannedPath),
+  ["profile"]: zProfileEvaluation,
+  ["route"]: zRouteEvaluation.nullable(),
+  ["source"]: zNodeId,
+  ["targets"]: z.array(zTargetEvaluation)
+});
+
+export const zEvaluationResponse = z.strictObject({
+  ["draft"]: z.boolean(),
+  ["evaluation"]: zEvaluation,
+  ["requestId"]: zRequestId,
+  ["revision"]: zRevision
 });
 
 export const zEventActor = z.union([z.strictObject({

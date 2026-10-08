@@ -185,6 +185,7 @@ fn routes() -> OpenApiRouter<HttpState> {
             OpenApiRouter::new()
                 .routes(routes!(configuration::get, configuration::apply))
                 .routes(routes!(configuration::validate))
+                .routes(routes!(configuration::evaluate))
                 .layer(DefaultBodyLimit::max(MAX_CONFIGURATION_BODY_BYTES)),
         )
         .routes(routes!(configuration::revision))

@@ -92,6 +92,23 @@ pub(super) async fn source(
         .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(crate::configuration::source_response(&snapshot, id)))
 }
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/evaluate",operation_id="evaluateConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=EvaluateConfigurationRequest,responses((status=200,body=EvaluationResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=429,body=ErrorResponse),(status=503,body=ErrorResponse)))]
+pub(super) async fn evaluate(
+    State(service): State<Configurations>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    path: Result<Path<NetworkId>, PathRejection>,
+    body: Result<Json<EvaluateConfigurationRequest>, JsonRejection>,
+) -> Result<Json<EvaluationResponse>, HttpError> {
+    let Path(network) = path.map_err(|_| HttpError::invalid_request(id))?;
+    let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
+    Ok(Json(
+        service
+            .evaluate(bearer(&headers, id)?, network, body, id)
+            .await
+            .map_err(|e| HttpError::domain(id, e))?,
+    ))
+}
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/configuration/validate",operation_id="validateConfiguration",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),request_body=ConfigurationRequest,responses((status=200,body=ConfigurationPreviewResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=422,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn validate(
     State(service): State<Configurations>,

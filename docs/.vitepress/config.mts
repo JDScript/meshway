@@ -115,6 +115,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       },
       { text: "DNS", link: "/v2/configuration-reference/dns" },
       { text: "Rule Sets", link: "/v2/configuration-reference/rule-sets" },
+      { text: "路径检测", link: "/v2/configuration-reference/evaluation" },
     ],
   },
   {

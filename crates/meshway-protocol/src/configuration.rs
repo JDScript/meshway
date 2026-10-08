@@ -42,6 +42,36 @@ wire_object! {pub struct ConfigurationSourceResponse {pub request_id:RequestId,p
 wire_object! {pub struct ListenerChange {
     pub node_id: NodeId, pub key: String, pub kind: meshway_configuration::ChangeKind,
 } }
+// Which configuration a plan is computed over: the current version, or a
+// draft given exactly as validate takes it (CAS against expectedRevision).
+wire_tagged! { pub enum EvaluationConfiguration {
+    Current,
+    Document {#[serde(rename="expectedRevision")]expected_revision:Revision,#[serde(rename="sourceJsonc")]source_jsonc:WireSecret},
+    Operations {#[serde(rename="expectedRevision")]expected_revision:Revision,ops:Vec<ConfigurationOperation>},
+} }
+// Where traffic from the source would go. A Mesh address resolves to its node;
+// `internet` stands for a public destination no rule names.
+wire_tagged! { #[derive(Clone, Debug, PartialEq, Eq)] pub enum EvaluationTarget {
+    Node {#[serde(rename="nodeId")] node_id: NodeId},
+    Address { address: String },
+    Domain { name: String },
+    Internet,
+} }
+wire_object! {pub struct EvaluateConfigurationRequest {
+    pub configuration: EvaluationConfiguration,
+    pub source: NodeId,
+    pub target: EvaluationTarget,
+    /// Omitted: the source's current selection or default.
+    #[serde(default)] pub profile: Option<String>,
+} }
+wire_object! {pub struct EvaluationResponse {
+    pub request_id: RequestId,
+    /// The current version the plan is based on; a draft is evaluated as a
+    /// change to it.
+    pub revision: Revision,
+    pub draft: bool,
+    pub evaluation: meshway_configuration::evaluation::Evaluation,
+} }
 wire_object! {pub struct ConfigurationPreviewResponse {
     /// Transient canonical content checked by validate; no artifact/version reservation.
     #[serde(deserialize_with="meshway_serde::unique_map")]

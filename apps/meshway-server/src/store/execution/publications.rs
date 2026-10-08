@@ -80,6 +80,45 @@ pub(crate) fn select_profile(
     ))
 }
 
+/// Who the configuration's subjects are, which nodes hold trusted keys, and
+/// which profile each node selected under its current identity: the inputs
+/// compilation and planning share for one configuration and its bindings.
+pub(crate) struct CompilationContext {
+    pub(crate) subjects: meshway_policy::SubjectContext,
+    pub(crate) inventory: BTreeMap<NodeId, TrustedNode>,
+    pub(crate) selected_profiles: BTreeMap<NodeId, String>,
+}
+pub(crate) fn compilation_context(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    cfg: &NetworkConfiguration,
+    bindings: &ConfigurationBindings,
+) -> Result<CompilationContext, Error> {
+    let mut selected_profiles = BTreeMap::new();
+    let mut statement = tx.prepare(
+        "SELECT node_id,identity_digest,profile FROM routing_selections WHERE network_id=?1",
+    )?;
+    let mut rows = statement.query([network.as_uuid().as_bytes().as_slice()])?;
+    while let Some(row) = rows.next()? {
+        let node: NodeId = id(row.get(0)?)?;
+        let stored: Vec<u8> = row.get(1)?;
+        if cfg.nodes.contains_key(&node) {
+            let digest = identity_digest(cfg, bindings, node)?;
+            if stored == digest.as_bytes() {
+                selected_profiles.insert(node, row.get::<_, String>(2)?);
+            }
+        }
+    }
+    drop(rows);
+    drop(statement);
+    let subjects = subjects(tx, network, bindings)?;
+    let inventory = trusted_inventory(tx, network, cfg, &subjects)?;
+    Ok(CompilationContext {
+        subjects,
+        inventory,
+        selected_profiles,
+    })
+}
 fn trusted_inventory(
     tx: &Transaction<'_>,
     network: NetworkId,
@@ -200,25 +239,11 @@ pub(crate) fn publish_with_rule_sets(
     let (revision, cfg, bindings) = current_configuration(tx, sealer, network)?;
     let rule_sets =
         crate::resources::bindings::compilation_contents(tx, network, rule_set_bindings)?;
-    let mut selected_profiles = BTreeMap::new();
-    let mut statement = tx.prepare(
-        "SELECT node_id,identity_digest,profile FROM routing_selections WHERE network_id=?1",
-    )?;
-    let mut rows = statement.query([network.as_uuid().as_bytes().as_slice()])?;
-    while let Some(row) = rows.next()? {
-        let node: NodeId = id(row.get(0)?)?;
-        let stored: Vec<u8> = row.get(1)?;
-        if cfg.nodes.contains_key(&node) {
-            let digest = identity_digest(&cfg, &bindings, node)?;
-            if stored == digest.as_bytes() {
-                selected_profiles.insert(node, row.get::<_, String>(2)?);
-            }
-        }
-    }
-    drop(rows);
-    drop(statement);
-    let subjects = subjects(tx, network, &bindings)?;
-    let inventory = trusted_inventory(tx, network, &cfg, &subjects)?;
+    let CompilationContext {
+        subjects,
+        inventory,
+        selected_profiles,
+    } = compilation_context(tx, network, &cfg, &bindings)?;
     let mut stmt = tx.prepare(
         "SELECT payload FROM execution_demands WHERE network_id=?1 AND expires_at>?2 AND cancelled_at IS NULL ORDER BY id",
     )?;

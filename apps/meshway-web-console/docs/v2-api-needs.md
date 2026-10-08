@@ -73,23 +73,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 ## 尚未提供的接口
 
 - 删除网络（含删除时节点凭据的处理和保留期）。
-- **路径检测 `configuration/evaluate`**：console 的"路径"标签（D6）只依赖它，是下一个要做的页面。
-  - 输入：
-    - 配置：当前 revision，或与 validate 相同的草稿输入（document／operations + expectedRevision）。
-    - 来源：NodeId。
-    - 目的：节点（NodeId）、IP 地址、域名，或"未命中任何规则的公网目的地"。Mesh 地址由服务端解析为对应节点。
-    - 不带协议和端口。出口方案可选，省略时按来源的默认方案（用户当前选择的方案现在读不到）。
-  - 输出（规则一律用 revision + JSON Pointer 定位）：
-    - 解析后的目的：节点；或地址类别（Mesh、私网、公网）；或域名。
-    - 访问：来源到目的允许的协议和端口集合，每项带授权它的 access 规则；没有授权时注明按 `defaults.access`。
-    - 走向：
-      - `mesh`：命中的 Mesh 路由，或自动选路；
-      - `exit`：命中的公共规则或方案规则、方案名及决定方案的 assignment、命中的规则集 key 和具体条目（例如 `geosite-telegram` 里的 `telegram.org`）、主备出口和 via，或方案 fallback；
-      - `direct`、`unmanaged`；
-      - `denied`，附类型化原因。
-    - 规划路径：主路径和备用路径的每一跳，以及每条边的组网判定（命中的 topology 规则，或默认）。不可用时给类型化原因，例如边被阻断、出口没有 `exitEnabled`、节点停用、凭据已吊销、出口目的不在访问授权内。
-    - 目的是域名、而前面有按 IP 匹配的规则时，说明结果取决于解析，并列出没有参与判定的规则。
-  - 权限：需要 `readConfiguration`。成员从自己设备出发能否检测以后再定，在此之前成员看不到这个标签。
+- ~~**路径检测 `configuration/evaluate`**~~：已提供 `POST configuration/evaluate`（`evaluateConfiguration`），见 [evaluation.md](../../../docs/v2/configuration-reference/evaluation.md)。与上面提的输入一致（`current`／`document`／`operations`，source，`target` 为 node／address／domain／internet，可选 `profile`）。输出按字段：`destination`、`profile`（含 assignment pointer）、`access.grants[]`（rule pointer + traffic + reverse + resolutionDependent）、`route`（kind、决定它的 pointer、profile、ruleSet {key, entry}、targets、via、resolutionDependent）、`targets[]`（每个候选的 problem）、`paths[]`（每跳 + 每边 topology pointer）、`outcome`。与原提议的差别：拒绝原因是 `outcome.unavailable.reason`（和执行的 UnavailableReason 同一枚举），不是 route 的一个分支；"取决于解析"按两个方向都列（域名目的地跳过 IP 规则，地址目的地跳过域名规则）；access 不带协议端口，返回每条 grant 的 traffic 列表。成员从自己设备出发暂未开放（仍需 `readConfiguration`）。
 - 成员切换路由方案：`requestedProfile`、`appliedProfile`、允许的方案、`locked` 和自动方案的判断依据。
 - 节点的版本兼容状态 `versionStatus`（current、outdated、unsupported），由服务端按兼容门槛判定。
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。

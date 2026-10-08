@@ -287,6 +287,22 @@ fn external_destinations_report_first_match_rule_sets_and_resolution_dependence(
             entry: "t.me".into()
         })
     );
+    // The Internet grant covers a name by address-set semantics, as validation
+    // accepts it when declaring the exit rule.
+    assert!(e.access.allowed);
+    assert_eq!(e.outcome, EvaluationOutcome::Permitted);
+    // With only a CIDR and an unrelated suffix, authorization depends on what
+    // the name resolves to; paths are still planned so the person sees what
+    // authorization would allow.
+    let mut narrowed = c.clone();
+    narrowed.access[2].dst = vec!["8.8.8.0/24".into(), "domain:example.org".into()];
+    let e = evaluate(
+        &narrowed,
+        &inventory(),
+        &remote,
+        PlanDestination::Domain("t.me".into()),
+        None,
+    );
     assert_eq!(e.access.grants.len(), 1);
     assert!(e.access.grants[0].resolution_dependent);
     assert!(!e.access.allowed);
@@ -296,7 +312,6 @@ fn external_destinations_report_first_match_rule_sets_and_resolution_dependence(
             reason: UnavailableReason::Unauthorized
         }
     );
-    // Paths are still planned so the person sees what authorization would allow.
     assert!(!e.paths.is_empty());
 
     // A private address no rule names: profile fallback, which leaves it alone.
