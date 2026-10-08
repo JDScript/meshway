@@ -128,6 +128,10 @@ impl SecureMesh {
         let caps = || {
             BTreeMap::from([
                 (
+                    "feature:exit-ipv4".into(),
+                    Capability::Feature { version: 1 },
+                ),
+                (
                     "feature:path-observation".into(),
                     Capability::Feature { version: 1 },
                 ),

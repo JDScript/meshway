@@ -8,6 +8,8 @@ mod authority_race;
 mod circuit_binding;
 mod continuity;
 mod diagnostic;
+mod exit;
+mod exit_lifecycle;
 mod handshake_recovery;
 mod icmp;
 mod responder;

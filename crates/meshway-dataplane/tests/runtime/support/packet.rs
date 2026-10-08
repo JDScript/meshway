@@ -49,6 +49,46 @@ pub fn echo(
     datagram(source, destination, protocol, body, 2)
 }
 
+pub fn tcp(
+    source: IpAddr,
+    destination: IpAddr,
+    ports: (u16, u16),
+    sequence: u32,
+    acknowledgement: u32,
+    flags: u8,
+) -> Packet {
+    tcp_with_payload(
+        source,
+        destination,
+        ports,
+        sequence,
+        acknowledgement,
+        flags,
+        &[],
+    )
+}
+
+pub fn tcp_with_payload(
+    source: IpAddr,
+    destination: IpAddr,
+    ports: (u16, u16),
+    sequence: u32,
+    acknowledgement: u32,
+    flags: u8,
+    payload: &[u8],
+) -> Packet {
+    let mut body = vec![0; 20];
+    body[..2].copy_from_slice(&ports.0.to_be_bytes());
+    body[2..4].copy_from_slice(&ports.1.to_be_bytes());
+    body[4..8].copy_from_slice(&sequence.to_be_bytes());
+    body[8..12].copy_from_slice(&acknowledgement.to_be_bytes());
+    body[12] = 0x50;
+    body[13] = flags;
+    body[14..16].copy_from_slice(&65535_u16.to_be_bytes());
+    body.extend(payload);
+    datagram(source, destination, 6, body, 16)
+}
+
 fn datagram(
     source: IpAddr,
     destination: IpAddr,

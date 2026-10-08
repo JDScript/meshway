@@ -279,7 +279,12 @@ impl Server {
                 owner.token.expose(),
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|error| {
+                if let meshway_control_client::ClientError::Http { problem, .. } = &error {
+                    panic!("fixture configuration: {problem:?}");
+                }
+                panic!("fixture configuration: {error:?}");
+            });
     }
 
     pub async fn close(self) {
