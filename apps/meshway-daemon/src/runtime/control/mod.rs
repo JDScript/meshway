@@ -771,7 +771,7 @@ async fn wait_work(
                     scheduling::Wake::Work(result) => result,
                 };
                 if let Err(error) = result {
-                    tracing::debug!(%error, "Acquisition control intent failed");
+                    tracing::debug!(%error, "Inline control intent failed");
                     return Waiting::Timer;
                 }
             }

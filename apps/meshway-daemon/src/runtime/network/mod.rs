@@ -156,18 +156,18 @@ pub(super) enum Request {
 }
 
 impl Request {
-    /// Samples update history, not execution. Preserve their RPC deadline
-    /// without forcing unrelated configuration refresh/application work.
+    /// Discovery reads and samples do not change execution. Preserve their RPC
+    /// deadline without forcing unrelated configuration/application work.
     pub(super) fn inline(&self) -> bool {
-        self.acquisition()
+        self.discovery()
             || matches!(self, Self::ObservationResult { output, .. } if matches!(output.result.result, meshway_protocol::observations::ObservationUpdate::Sample { .. }))
     }
-    /// Traversal mutates only bounded acquisition state, not the compiled
-    /// execution target. Its individual RPCs do not require a full refresh cycle.
-    pub(super) fn acquisition(&self) -> bool {
+    /// DNS reads and bounded traversal coordination do not change the compiled
+    /// target. Neither should replace snapshots after each individual RPC.
+    fn discovery(&self) -> bool {
         #[cfg(target_os = "linux")]
         {
-            matches!(self, Self::Traversal(_))
+            matches!(self, Self::Traversal(_) | Self::Dns { .. })
         }
         #[cfg(not(target_os = "linux"))]
         {
