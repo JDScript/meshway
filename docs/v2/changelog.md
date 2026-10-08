@@ -33,11 +33,19 @@
 
 未合入：AB `perf/daemon-dataplane-runtime`（专用数据面运行时，无吞吐收益，分支已打包归档）。
 
-## 待合入工作包
+## 2026-10-08
 
-| 工作包 | 候选提交 | 内容 | 证据 |
+| 工作包 | 合入提交 | 内容 | 证据 |
 | --- | --- | --- | --- |
-| W4 边级承载 | `f52aec1f`、`f0bd2780`、`3d889b10`、`64410ccc`（`feat/topology-edge-transports`） | `topology[].transports`、双向拨号交集、无可用承载的规则／边定位、执行候选过滤与生成 SDK。 | `.meshway/w4-edge-transports/`；全量 T1 待 W2／TD2 所属 3 处 `TopologyRule` 构造器补齐新增字段。 |
-| W3 常驻 lab VLESS 边 | `docs/lab-vless-edge`；复现分支 `fix/w3-lab-vless-1271-continuity` 的 `706c1806`（复用 W2 修复） | revision 7 验证 sha→lax VLESS TCP/TLS、lax→nyc Native UDP，双向原路径诊断与短窗口 L5；旧 daemon 执行刷新重建流式通道，回滚 revision 8 至原 Native UDP 配置。 | L5 `20261008T063234Z-main-1271be5d-2cpu-vless`，高负载诊断；配置／State／日志／进程内红绿证据 `.meshway/w3-lab-vless/`。不代替 W2 全长矩阵。 |
-| W2 流式承载 | `90bf38e2`、`9aae0c35`、`0593e19b`、`fbde424e`（`feat/runtime-streaming-carriers`） | runtime fixture 与矩阵增加 VLESS／Trojan TCP/TLS；只有 R listener、A/B 使用所选 dialer；相同材料执行交接保留认证通道，旧输出 scope 立即失效。 | 秒级进程内红／绿回归与 T1 已通过；Planck 全长矩阵 `20261008T060724Z-15ece3bb`、`20261008T061606Z-9875d228` 两行各两次通过；短模式四行门槛 `20261008T055845Z-1b1b90ca` 通过。行报告与范围见[验收范围](/v2/node/validation)，私有证据 `.meshway/w2-streaming/`。 |
-| TD 测试整理 | `4a8ba975`、`704b2bd3`、`376c9176`、`52a1ac78`（`cleanup/test-dedup`） | Server 两条重复测试及重复 HTTP 断言／样板收敛；Server／transport 测试文件 ≤800 行；可执行上限检查；修复 State provider 重复关闭钩子的强引用保留与 fast 包选择。Server 物理测试行数 −1.6%，未达到 −30%；Clock 完整传播范围超过 15 文件，按边界仅完成评估。 | `.meshway/td/`：覆盖对照、Clock 评估、provider 生命周期红／绿回归、T1 `check.log`；热构建 `test:rust` 990 → 988 条，墙钟 114.7 → 128.3 s（单次观测，无提速结论）。 |
+| 脚本整理 | `ead029e6` | 删除无引用的 lab OS 检查；fixture 只记录负载不等待空闲；`perf:crypto:attribute` 任务 | — |
+| 流程 | `d91e9ffc`、`a5982814` | 整组验收异步化、靶证据定位；`profile.fast`／`check:fast`；[测试清单](/v2/tests) | M3 fast 945 项 51 s |
+| V2 NAT／resolv-conf 回归 | `da736c2b`…`641c27ca` | STUN 观测刷新与邻接查询分开调度；State 采样先处理排队 target 并确认回执；退役需求取消；fixture 识别 v5 帧 | planck 四行各两次通过 `20261008T032743Z-897a549e`、`20261008T050147Z-0c5809cf`；回归行 `…-abbd4545`、`…-7a35b80e`；`.meshway/validation/v2/20261008-nat-regressions/` |
+| TD 测试整理 | `6371afbc`…`214df852` | Server／transport 测试文件 ≤800 行与可执行上限检查；2 条真重复测试删除；修复 State provider 重复关闭钩子强引用；`test:fast -- -p` 生效 | `.meshway/td/TD-receipt-20261008.md`；Server 测试行 −1.6%（去重假设基本不成立） |
+| main 全矩阵 | `1271be5d` | v5 矩阵首次 9/9 通过（含 `udp/resolved`） | planck `20261008T053753Z-0f9ac9d2`，20.7 分钟 |
+| L5 复测 | `5837bd33` | lab 2 CPU／节点 sha→lax→nyc：TCP 1321／1525 Mbps、UDP 475 Mbps | `.meshway/perf/l5/20261008T055333Z-main-1271be5d-2cpu` |
+| CI runner 可移植 | `49dc2e8e`…`e9c7a376`、`4e8a6f9d`、`5c2a012f` | DNS 文件后端测试自探测可信目录；`DOCKER_CONTEXT`／buildx builder 跟随 context；状态收集器改标准库 HTTP；`MISE_GLOBAL_CONFIG_ROOT` 排除 runner 个人配置 | mars-14900k／jp-tyo 四类失败各一 |
+| W2 流式承载 | `46c65e47`…`36840b3b` | runtime fixture 与矩阵增加 `vless/off`、`trojan/off`；相同材料执行交接保留流式认证通道 | planck 两行各两次通过 `20261008T060724Z-15ece3bb`、`20261008T061606Z-9875d228`；`.meshway/w2-streaming/` |
+| TD2 测试拆分 | `d9baecb0`…`06f33739` | connectivity／policy 六个超限测试文件按行为拆分，共用 harness，白名单清零（271 文件 0 例外） | `.meshway/td2/`；测试数 52／86 不变 |
+| W4 边级承载 | `cd536833`…`8ca49b0f` | `topology[].transports`、双向拨号交集、`edge_transport_unavailable` 定位规则／边、执行候选过滤、OpenAPI／SDK | policy `tests/execution/topology.rs`、`tests/configuration/topology.rs`；`.meshway/w4-edge-transports/` |
+| W3 lab VLESS 边 | 本提交 | lab revision 7 验证 sha→lax VLESS TCP/TLS、双向原路径诊断与高负载 L5；部署版 `1271be5d` 缺 W2 续接修复导致流式链路重建，回滚 revision 8 | L5 `20261008T063234Z-main-1271be5d-2cpu-vless`；`.meshway/w3-lab-vless/`；复现分支已打包归档 |
+
