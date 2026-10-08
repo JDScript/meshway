@@ -80,3 +80,12 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = "debuginfo"
+
+# Real Server fixtures retain the production password work factor. Optimize the
+# KDF implementation in tests rather than weakening authentication or reusing a
+# mutable database between cases. Workspace code retains debug assertions.
+[profile.test.package.argon2]
+opt-level = 3
+
+[profile.test.package.blake2]
+opt-level = 3
