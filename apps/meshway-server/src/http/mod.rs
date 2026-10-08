@@ -253,6 +253,8 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(nodes::progress))
 }
 
+pub use error::problem_table;
+
 pub fn openapi() -> OpenApi {
     use utoipa::OpenApi as _;
     let (_, mut spec) = routes().split_for_parts();

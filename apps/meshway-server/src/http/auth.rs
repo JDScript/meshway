@@ -203,7 +203,7 @@ pub(super) async fn session(
 ///
 /// Requires a valid user session and returns 204 after revocation.
 #[utoipa::path(post, path = "/api/v1/auth/logout", operation_id = "logout", tag = "auth", security(("userSession" = [])),
-    responses((status = 204, description = "Current session revoked"), (status = 401, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+    responses((status = 204, description = "Current session revoked"), (status = 401, body = ErrorResponse, description = "invalid_session"), (status = 503, body = ErrorResponse, description = "service_unavailable, busy")))]
 pub(super) async fn logout(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,

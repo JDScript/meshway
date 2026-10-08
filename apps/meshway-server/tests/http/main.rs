@@ -545,3 +545,45 @@ fn exported_openapi_is_the_actual_router_contract() {
         }
     }
 }
+
+/// Every error response declares the problem codes it can carry, as a
+/// comma-separated list in its description; each must be a code the Server's
+/// error mapping produces with that status, and a known ProblemCode value.
+#[test]
+fn error_responses_declare_consistent_problem_codes() {
+    let spec = serde_json::to_value(http::openapi()).unwrap();
+    let table = http::problem_table();
+    let codes: std::collections::BTreeSet<String> = spec["components"]["schemas"]["Problem"]
+        ["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|variant| variant["properties"]["code"]["enum"][0].as_str().unwrap().to_owned())
+        .collect();
+    let mut declared = 0;
+    for (path, item) in spec["paths"].as_object().unwrap() {
+        for (method, operation) in item.as_object().unwrap() {
+            for (status, response) in operation["responses"].as_object().unwrap() {
+                let is_error = response["content"]["application/json"]["schema"]["$ref"]
+                    == "#/components/schemas/ErrorResponse";
+                if !is_error {
+                    continue;
+                }
+                let label = format!("{method} {path} {status}");
+                let description = response["description"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{label}: error response without problem codes"));
+                let status: u16 = status.parse().unwrap();
+                for code in description.split(',').map(str::trim) {
+                    assert!(codes.contains(code), "{label}: unknown problem code {code}");
+                    assert!(
+                        table.iter().any(|(s, c)| *s == status && c == code),
+                        "{label}: {code} is not produced with this status"
+                    );
+                    declared += 1;
+                }
+            }
+        }
+    }
+    assert!(declared > 0);
+}

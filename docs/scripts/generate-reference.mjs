@@ -207,13 +207,18 @@ function renderOperation(path, method, op) {
   }
   const sse = op["x-meshway-sse"];
   if (sse) lines.push(`Server-sent events; each ${code("data")} line is one ${typeOf(sse.eventSchema)} (${code(sse.format)}).`, "");
-  lines.push("| Status | Response |", "| --- | --- |");
+  lines.push("| Status | Response | Problem codes |", "| --- | --- | --- |");
   for (const [status, response] of Object.entries(op.responses ?? {}).sort(([a], [b]) => Number(a) - Number(b))) {
     const contents = Object.entries(response.content ?? {});
+    const isError = contents.some(([, content]) => content.schema?.$ref === "#/components/schemas/ErrorResponse");
     const text = contents.length
       ? contents.map(([mime, content]) => mime === "application/json" ? typeOf(content.schema) : `${code(mime)}`).join(", ")
       : response.description ? escapeCell(response.description) : "no body";
-    lines.push(`| ${status} | ${text} |`);
+    // An error response's description is its list of problem codes.
+    const codes = isError && response.description
+      ? response.description.split(",").map(c => code(c.trim())).join(", ")
+      : "";
+    lines.push(`| ${status} | ${isError && response.description ? typeOf(contents[0][1].schema) : text} | ${codes} |`);
   }
   lines.push("");
   return lines.join("\n");

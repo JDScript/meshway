@@ -3558,6 +3558,7 @@
             "description": "Current session revoked"
           },
           "401": {
+            "description": "invalid_session",
             "content": {
               "application/json": {
                 "schema": {
@@ -3567,6 +3568,7 @@
             }
           },
           "503": {
+            "description": "service_unavailable, busy",
             "content": {
               "application/json": {
                 "schema": {

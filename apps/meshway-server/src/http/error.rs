@@ -421,3 +421,81 @@ impl IntoResponse for HttpError {
         response
     }
 }
+
+/// Every status/code pair `domain` can produce, from one sample of each
+/// `Error` variant. Operations declare the problem codes they return in their
+/// error response descriptions; a test checks each declared pair against this.
+pub fn problem_table() -> Vec<(u16, String)> {
+    use crate::error::{StorageCause, Unavailability};
+    let samples = [
+        Error::InvalidSession,
+        Error::InvalidCredentials,
+        Error::PermissionDenied,
+        Error::RegistrationDisabled,
+        Error::NotFound,
+        Error::RevisionConflict,
+        Error::RequestConflict,
+        Error::NameConflict,
+        Error::VersionConflict,
+        Error::BindingConflict,
+        Error::ReceiptInstanceMismatch,
+        Error::ReceiptTargetMismatch,
+        Error::ReceiptPublicationSuperseded,
+        Error::ReceiptLeaseExpired,
+        Error::ReceiptPrecondition,
+        Error::ReceiptContentConflict,
+        Error::StateConflict,
+        Error::StateScopeChanged,
+        Error::LastOwner,
+        Error::AlreadyMember,
+        Error::InvalidRequest,
+        Error::InvalidEmail,
+        Error::InvalidPassword(crate::accounts::Options::new(true, std::time::Duration::from_secs(60))
+            .expect("valid options")
+            .password),
+        Error::InvalidCurrentPassword,
+        Error::EmailTaken,
+        Error::InvalidName,
+        Error::InvalidLimit,
+        Error::InvalidCursor,
+        Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(Vec::new())),
+        Error::InvalidReset,
+        Error::InvalidDelegation,
+        Error::ResetUsed,
+        Error::ResetExpired,
+        Error::ResetReplaced,
+        Error::InvalidLink,
+        Error::LinkExpired,
+        Error::LinkUsed,
+        Error::LinkRevoked,
+        Error::LinkIssuerUnavailable,
+        Error::Busy,
+        Error::StateLimit,
+        Error::ObservationLimit,
+        Error::DependencyUnavailable,
+        Error::Unavailable(Unavailability::Closed),
+        Error::Storage(StorageCause::Decode("sample")),
+        Error::Internal("sample"),
+    ];
+    let id = RequestId::new(uuid::Uuid::from_u128(1)).expect("nonzero request ID");
+    let mut table: Vec<(u16, String)> = samples
+        .into_iter()
+        .map(|error| {
+            let HttpError(response) = HttpError::domain(id, error);
+            let code = serde_json::to_value(&response.problem)
+                .expect("problem serializes")["code"]
+                .as_str()
+                .expect("problem code")
+                .to_owned();
+            (response.status, code)
+        })
+        .collect();
+    // Produced by body extraction and routing before any use case runs.
+    table.extend([
+        (413, "request_too_large".to_owned()),
+        (415, "unsupported_media_type".to_owned()),
+        (405, "method_not_allowed".to_owned()),
+    ]);
+    table
+}
+
