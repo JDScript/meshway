@@ -51,10 +51,12 @@ def execute(report, artifacts, runtime_os, platform, short, load):
 
     def command(role, *arguments, required=True):
         owned("container", containers[role])
+        started_at = time.time_ns()
         result = subprocess.run(["docker", "exec", containers[role], *arguments],
                                 text=True, capture_output=True, timeout=15, close_fds=True)
         record = {"command": list(arguments), "exitCode": result.returncode,
-                  "stdout": result.stdout, "stderr": result.stderr}
+                  "stdout": result.stdout, "stderr": result.stderr,
+                  "startedAtUnixNs": started_at, "finishedAtUnixNs": time.time_ns()}
         if required and result.returncode:
             raise RuntimeError("exit fixture command failed: " + arguments[0])
         return record
@@ -78,6 +80,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
 
     def stop_captures():
         errors = []
+        remaining = []
         for role, interface, process, log in captures:
             try:
                 if process.poll() is None:
@@ -87,9 +90,10 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                     raise RuntimeError("tcpdump failed or did not join")
             except Exception as error:
                 errors.append(str(error))
+                remaining.append((role, interface, process, log))
             finally:
                 log.close()
-        captures.clear()
+        captures[:] = remaining
         if errors:
             raise RuntimeError("; ".join(errors))
 
@@ -134,7 +138,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 creation += ["--cap-add", "NET_RAW", "--cap-add", "SETUID", "--cap-add", "SETGID"]
             for source, target, readonly in (("bin", "/fixtures", True), (role, "/evidence", False), ("signals", "/signals", True)):
                 creation += ["--mount", f"type=bind,source={report / source},target={target}" + (",readonly" if readonly else "")]
-            creation += [image, "/fixtures/meshway-runtime-fixture", "--log-format", "json", "--traversal", "exit",
+            creation += [image, "/fixtures/meshway-runtime-fixture", "--log-format", "json", "--transport", "native-udp", "--traversal", "exit",
                          "exit-actor", "--role", role]
             containers[role] = run(*creation, capture=True).strip()
             manifest["resources"].setdefault("commands", {})[role] = creation
@@ -183,11 +187,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             if probes[link]["e"]["exitCode"] or any(probes[link][role]["exitCode"] == 0 for role in ("a", "r", "controller")):
                 raise RuntimeError("external/LAN reachability is not E-only")
             interface = interfaces["e"][addresses[link]["e"]]
-            command("e", "ip", "link", "set", "dev", interface, "down")
+            probes[link]["block"] = command("e", "ip", "link", "set", "dev", interface, "down")
             try:
                 probes[link]["eBlocked"] = command("e", *request, required=False)
             finally:
-                command("e", "ip", "link", "set", "dev", interface, "up")
+                probes[link]["restore"] = command("e", "ip", "link", "set", "dev", interface, "up")
             probes[link]["eRestored"] = command("e", *request, required=False)
             if probes[link]["eBlocked"]["exitCode"] == 0 or probes[link]["eRestored"]["exitCode"]:
                 raise RuntimeError("E-only infrastructure block/restore control failed")
@@ -239,6 +243,15 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 manifest["cleanup"]["network-" + link] = True
             except Exception as error:
                 errors.append(str(error))
+        for _, _, process, log in captures:
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                errors.append("capture attach client required termination")
+            finally:
+                log.close()
         try:
             export_evidence(report, image, platform, "runtime", identity)
             if manifest["status"] == "unsupported":

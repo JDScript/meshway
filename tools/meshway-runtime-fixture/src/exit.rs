@@ -1,7 +1,10 @@
 //! Exit infrastructure rendezvous. No alternate permit issuer, flow table or NAT.
 use crate::{Cli, IO, Result};
 use serde::Serialize;
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::SocketAddr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -48,6 +51,14 @@ struct Report {
     stages: Vec<PendingStage>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Visit {
+    peer: SocketAddr,
+    local: SocketAddr,
+    received_at_unix_ms: u64,
+}
+
 pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     if std::env::var("MESHWAY_EXIT_FIXTURE_OWNED").as_deref() != Ok("1") {
         return Err("exit preparation requires an owned fixture namespace".into());
@@ -90,7 +101,7 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
         "product stages pending-x2-x5"
     );
     let result = tokio::time::timeout(Duration::from_secs(180), async {
-        let mut visits = Vec::<SocketAddr>::new();
+        let mut visits = Vec::<Visit>::new();
         loop {
             if tokio::fs::try_exists(cli.signals.join("exit-stop")).await? {
                 break;
@@ -107,7 +118,11 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
                         if visits.len() >= 256 {
                             return Err("external fixture access-log bound exceeded".into());
                         }
-                        visits.push(peer);
+                        visits.push(Visit {
+                            peer,
+                            local: stream.local_addr()?,
+                            received_at_unix_ms: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().try_into()?,
+                        });
                         tokio::fs::write(cli.evidence.join("access.json"), serde_json::to_vec_pretty(&visits)?).await?;
                         tokio::time::timeout(IO, stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nok\n")).await??;
                         stream.shutdown().await?;
