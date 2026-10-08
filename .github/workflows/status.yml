@@ -8,7 +8,7 @@ on:
 
 # Runners may carry a personal global mise config; the project lockfile is the only tool source.
 env:
-  MISE_GLOBAL_CONFIG_FILE: /nonexistent/mise-global.toml
+  MISE_GLOBAL_CONFIG_ROOT: /nonexistent
 
 permissions:
   actions: read
