@@ -1,0 +1,149 @@
+//! One joinable process operation at a time, including abandoned async waiters.
+use std::{
+    io::{Read, Write},
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
+
+pub(super) const BUDGET: Duration = Duration::from_secs(2);
+const LIMIT: usize = 2 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+pub(super) enum Tool {
+    Nft,
+    Conntrack,
+}
+
+impl Tool {
+    fn path(self) -> &'static str {
+        match self {
+            Self::Nft => "/usr/sbin/nft",
+            Self::Conntrack => "/usr/sbin/conntrack",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum Failure {
+    #[error("kernel tool I/O failed")]
+    Io(#[from] std::io::Error),
+    #[error("kernel tool exceeded its resource budget")]
+    Limit,
+    #[error("kernel tool worker failed")]
+    Worker,
+}
+
+pub(super) struct Output {
+    pub success: bool,
+    pub stdout: Vec<u8>,
+}
+
+#[derive(Default)]
+pub(super) struct Commands {
+    pending: Option<tokio::task::JoinHandle<Result<Output, Failure>>>,
+}
+
+impl Commands {
+    /// An abandoned waiter leaves the join handle here. The owner must settle
+    /// and reconcile its journal before submitting another mutation.
+    pub async fn settle(&mut self) -> Result<Option<Output>, Failure> {
+        let Some(pending) = &mut self.pending else {
+            return Ok(None);
+        };
+        let result = pending.await;
+        self.pending = None;
+        result.map_err(|_| Failure::Worker)?.map(Some)
+    }
+
+    pub async fn run(
+        &mut self,
+        tool: Tool,
+        arguments: Vec<String>,
+        input: Vec<u8>,
+    ) -> Result<Output, Failure> {
+        // Never silently discard the result of an abandoned mutation.
+        if self.pending.is_some() || input.len() > LIMIT || arguments.len() > 64 {
+            return Err(Failure::Limit);
+        }
+        self.pending = Some(tokio::task::spawn_blocking(move || {
+            execute(tool, &arguments, &input)
+        }));
+        self.settle().await?.ok_or(Failure::Worker)
+    }
+}
+
+fn read_bounded(reader: impl Read) -> Result<Vec<u8>, Failure> {
+    let mut bytes = Vec::new();
+    reader.take(LIMIT as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > LIMIT {
+        return Err(Failure::Limit);
+    }
+    Ok(bytes)
+}
+
+fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Failure> {
+    let started = Instant::now();
+    let mut child = Command::new(tool.path())
+        .args(arguments)
+        .env_clear()
+        .env("LC_ALL", "C")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdin = child.stdin.take().ok_or(Failure::Worker)?;
+    let stdout = child.stdout.take().ok_or(Failure::Worker)?;
+    let stderr = child.stderr.take().ok_or(Failure::Worker)?;
+    std::thread::scope(|scope| {
+        let writer = scope.spawn(move || {
+            let mut stdin = stdin;
+            stdin.write_all(input)
+        });
+        let reader = scope.spawn(move || read_bounded(stdout));
+        let errors = scope.spawn(move || read_bounded(stderr));
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if started.elapsed() < BUDGET => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                result => {
+                    // An ACK may have been lost. Killing/reaping is not rollback.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break match result {
+                        Err(error) => Err(Failure::Io(error)),
+                        _ => Err(Failure::Limit),
+                    };
+                }
+            }
+        };
+        let written = writer.join().map_err(|_| Failure::Worker)?;
+        let stdout = reader.join().map_err(|_| Failure::Worker)??;
+        let _stderr = errors.join().map_err(|_| Failure::Worker)??;
+        let status = status?;
+        // A command that rejects input may close stdin early; retain its failure
+        // status instead of turning it into an unobservable successful write.
+        if status.success() {
+            written?;
+        }
+        Ok(Output {
+            success: status.success(),
+            stdout,
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kernel_tool_output_is_bounded_before_decode() {
+        assert_eq!(read_bounded(&b"ok"[..]).unwrap(), b"ok");
+        assert!(matches!(
+            read_bounded(std::io::repeat(b'x')),
+            Err(Failure::Limit)
+        ));
+    }
+}

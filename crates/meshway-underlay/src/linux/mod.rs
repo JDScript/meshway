@@ -59,6 +59,11 @@ pub struct Host {
 }
 
 impl Host {
+    /// Construct a joinable pre-install probe, including for hosts where opening
+    /// the protected socket owner fails. Keep it alive through `finish()`.
+    pub fn exit_probe() -> Result<kernel::exit::ExitProbe> {
+        Ok(kernel::exit::ExitProbe::new(HostOwner::acquire()?))
+    }
     /// Open the sole kernel owner and protected socket factory, without contacting
     /// a Server or opening a resolver. Call attach_control for a fixed-origin relay.
     pub async fn open(directory: Arc<Directory>, options: Options) -> Result<Self> {

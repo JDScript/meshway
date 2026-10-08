@@ -1,5 +1,6 @@
 mod anchor;
 mod capture;
+pub(crate) mod exit;
 mod journal;
 mod monitor;
 mod plan;
