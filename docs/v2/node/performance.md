@@ -262,7 +262,17 @@ Y的历史batch1 500M L4/L3为0.844×，2G batch32为0.795×。profile128诊断 
 | `meshway ping` 5次 | 全回复，RTT0.33–0.52 ms via lax | 完整sha→lax→nyc |
 | 内核ping | 首包约1.1 s建circuit；稳态0.5–5 ms | 与独立DiagnosticPermit测量分开 |
 
-OrbStack aarch64、每节点0.5 CPU／384 MiB、iperf3 3.16、TCP `-t6 -O1`、UDP payload1200；源码`4c4e231f`。该报告尚不含随后P的有界输出队列／inline默认；不能用L3/L4推算最新daemon或把构建视为部署。历史v4同路径TCP49 Mbps。当前实际部署／行为验收以[lab](/v2/node/docker-lab)及[矩阵](/v2/node/validation)为准。
+OrbStack aarch64、每节点0.5 CPU／384 MiB、iperf3 3.16、TCP `-t6 -O1`、UDP payload1200；源码`4c4e231f`。该报告尚不含随后P的有界输出队列／inline默认；不能用L3/L4推算最新daemon或把构建视为部署。历史v4同路径TCP49 Mbps。
+
+当前 main（`1271be5d`，含 V2 的 STUN 刷新／State 采样修复）在同一 lab、每节点 **2 CPU／512 MiB**、同路径 sha→lax→nyc 的复测：
+
+| 场景 | 实测 | 范围 |
+| --- | --- | --- |
+| TCP单流，2次 | **1321／1525 Mbps**；重传17／61；RTT8.2／6.6 ms；max cwnd约1.4 MB | `20261008T055333Z-main-1271be5d-2cpu` |
+| UDP 500M | 接收475 Mbps；丢包4.9% | 同报告，`sum_received` 口径 |
+| `meshway ping` 5次 | 全回复，RTT0.29–0.35 ms via lax | 完整sha→lax→nyc |
+
+入口 1 分钟 load 2.29、5 分钟 5.08（无构建，仅有一个休眠的验收编排进程）；daemon 二进制 `6dc10d36…` 经 `node:lab versions` 按 PID／hash 核验。与 `4c4e231f` 行的差异包含 CPU quota 0.5→2 和 M／O／P／Y／PT 的实现变化，不是配对 A/B。当前实际部署／行为验收以[lab](/v2/node/docker-lab)及[矩阵](/v2/node/validation)为准。
 
 ### 有界输出队列实测
 
