@@ -75,7 +75,7 @@ async function main(args: string[]) {
         remark: "Development lab ICMP echo", src: peers, dst: peers, ip: ["icmp:*"], bidirectional: false,
       }] });
     }
-    for (const { name, identity, address } of bindings) {
+    for (const { name, identity } of bindings) {
       const nodeId = identity.nodeId;
       const node = inventory.items.find(node => node.id === nodeId);
       const configuration = source.configuration.nodes[nodeId];
@@ -87,7 +87,7 @@ async function main(args: string[]) {
       ops.push({ type: "setNodeSettings", nodeId, fields: { dialers: { native_udp: {} } } });
       ops.push({ type: "setListener", nodeId, key: "lab-udp", listener: {
         type: "native_udp", enabled: true, remark: "Development UDP carrier", listen: "0.0.0.0", listenPort: 35000,
-        endpoints: [{ host: address, port: 35000 }],
+        endpoints: [],
       } });
     }
     const request = { type: "operations" as const, expectedRevision: source.revision, requestId: randomUUID(), ops };
@@ -97,17 +97,17 @@ async function main(args: string[]) {
     const current = required(await getConfiguration(client, path, auth()));
     if (current.revision !== applied.revision
         || JSON.stringify(current.configuration.dns) !== JSON.stringify(source.configuration.dns)) throw new LabError("Lab configuration DNS intent differs from the original Server plan.");
-    for (const { identity, address } of bindings) {
+    for (const { identity } of bindings) {
       const node = current.configuration.nodes[identity.nodeId];
       const listener = node?.listeners["lab-udp"];
       if (!listener || listener.protocol !== "native_udp" || !listener.enabled || listener.listenPort !== 35000
-          || listener.listen !== "0.0.0.0" || !listener.endpoints.some(endpoint => endpoint.host === address && endpoint.port === 35000)
+          || listener.listen !== "0.0.0.0" || listener.endpoints.length !== 0
           || !node?.dialers?.native_udp) throw new LabError("Lab listener/dialer verification failed.");
     }
     console.log(JSON.stringify({ networkId: path.networkId, revision: applied.revision,
       nodes: bindings.map(binding => ({ name: binding.name, nodeId: binding.identity.nodeId, bridgeAddress: binding.address })),
       dns: { magicDNS: current.configuration.dns.magicDNS, overrideLocal: current.configuration.dns.overrideLocal },
-      scope: "Server-managed DNS; lab-only ICMP echo; bridge UDP endpoints plus same-socket STUN observations" }, null, 2));
+      scope: "Server-managed DNS; lab-only ICMP echo; Node-reported local UDP endpoints plus same-socket STUN observations" }, null, 2));
   } finally {
     required(await logout(client, auth()));
   }
