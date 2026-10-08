@@ -7,8 +7,10 @@ import { createOpenAPIPage, type OpenAPIPageProps } from "fumadocs-openapi/ui"
 import { I18nProvider, useI18n } from "fumadocs-ui/contexts/i18n"
 
 import type { Lang } from "@/lib/i18n"
-import { apiSettings } from "@/lib/openapi-options"
+import { tryItEnabled } from "@/lib/openapi-options"
 import { apiChinese } from "@/lib/openapi-translations"
+
+import { TryIt } from "../try/try-it"
 
 function EventSchema() {
   const { operation } = useOperation()
@@ -61,7 +63,10 @@ function EventSchema() {
 }
 
 const APIPage = createOpenAPIPage({
-  ...apiSettings,
+  playground: {
+    enabled: tryItEnabled,
+    render: (props) => <TryIt {...props} />,
+  },
   codeUsages: createCodeUsageGeneratorRegistry(),
   generateTypeScriptDefinitions: false,
   showResponseSchema: true,

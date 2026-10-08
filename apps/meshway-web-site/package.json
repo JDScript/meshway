@@ -14,6 +14,8 @@
     "format:check": "prettier --check --cache \"**/*.{ts,tsx,mjs,css,json,mdx}\""
   },
   "dependencies": {
+    "@base-ui/react": "^1.8.0",
+    "@meshway/control-client": "workspace:*",
     "@meshway/ui": "workspace:*",
     "flexsearch": "^0.8.212",
     "fumadocs-core": "16.16.2",

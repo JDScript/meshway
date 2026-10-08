@@ -83,3 +83,15 @@ html > body[data-scroll-locked] {
     grid-row: 2;
   }
 }
+
+/*
+ * The playground shows response examples sampled from the schema until a
+ * request is sent ("string", a fixed date). They are not the contract's
+ * and read as a reply, so only a real response shows there
+ * (fumadocs-openapi 12.3's response panel; ours carries data-meshway-result).
+ */
+.\@container
+  > .relative
+  > .flex.min-h-0.flex-1.flex-col:not([data-meshway-result]) {
+  display: none;
+}

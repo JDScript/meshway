@@ -1,2 +1,2 @@
-/** Enable only when delegated sign-in and the server CORS contract are available. */
-export const apiSettings = { playground: { enabled: false } }
+/** Trying operations from the reference (with a delegated session from the console); one switch. */
+export const tryItEnabled = true

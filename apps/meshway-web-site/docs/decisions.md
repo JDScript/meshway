@@ -60,9 +60,25 @@ kebab-case>` (and `/en/…`), generated before `dev`, `build` and
 samples generated from the operation; the user docs link to these pages
 for exact fields instead of restating them. Constraints every ID and
 integer carries (the UUID pattern and length, the JSON-safe maximum) are
-said once on the overview page, not on each field. Trying an operation will take a delegated session from the console
-(authorization code with PKCE: the console asks for consent, the server
-issues a one-hour session that cannot change the password or email, revoke
-sessions or delegate again); writes are confirmed first. That needs the
-server's delegation, token exchange and a CORS allow-list for the site
-(console `docs/v2-api-needs.md`); until then the reference has no try-it.
+said once on the overview page, not on each field.
+
+## Trying operations
+
+Each operation page can send its request as the reader, with a session
+the console delegates (`lib/try-it.ts`): "authorize in the console" goes
+to the console's `/authorize-site` with a PKCE challenge (S256) and a
+state; on consent the console returns to `/auth/callback` (`/en/auth/callback`)
+with a one-time code, which is exchanged once (`exchangeDelegation`) for a
+one-hour session, and the page that started is opened again. The verifier
+and state wait in `sessionStorage` for that round trip only; the token is
+held in memory only, so a reload or a change of language (a full page
+load) drops it and authorizing again is one click while the console is
+signed in. The server knows the site as the client `docs`
+(`--delegation-client docs=<origin>`, which also allows its origin
+cross-origin). Requests go to the console's origin, where the server's API
+is served; the session never becomes a field of Fumadocs' playground (it
+keeps those in localStorage) but is added to each request, a write is
+confirmed before it goes, a 401 drops the session, and "stop trying" ends
+it at the server. The playground's response examples sampled from the
+schema are hidden: only a real response shows. `lib/openapi-options.ts`
+turns trying off.

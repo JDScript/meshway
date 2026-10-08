@@ -162,6 +162,12 @@ importers:
 
   apps/meshway-web-site:
     dependencies:
+      '@base-ui/react':
+        specifier: ^1.8.0
+        version: 1.8.0(@date-fns/tz@1.5.0)(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@meshway/control-client':
+        specifier: workspace:*
+        version: link:../../packages/control-client
       '@meshway/ui':
         specifier: workspace:*
         version: link:../../packages/meshway-ui

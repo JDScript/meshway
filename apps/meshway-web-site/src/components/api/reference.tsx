@@ -1,6 +1,7 @@
 import type { Lang } from "@/lib/i18n"
 import { getReference, operationDocument } from "@/lib/openapi"
 import { codeSamples } from "@/lib/openapi-samples"
+import { consoleUrl } from "@/lib/site"
 
 import { APIReference } from "./page"
 
@@ -35,7 +36,8 @@ export async function OperationReference({
   return (
     <APIReference
       lang={lang}
-      payload={{ bundled }}
+      // Tried requests go where the console is served, which serves the API.
+      payload={{ bundled: { ...bundled, servers: [{ url: consoleUrl }] } }}
       operations={[{ path: entry.path, method: entry.method }]}
       showTitle={false}
       showDescription
