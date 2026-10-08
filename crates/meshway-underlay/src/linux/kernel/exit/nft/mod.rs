@@ -9,6 +9,8 @@ use super::{
 use meshway_model::exit::ExitUnavailableReason as Reason;
 
 pub(super) fn probe_batch(name: &str) -> Value {
+    // nft 1.0.9's JSON parser selects ct_templates by key and ignores `family`.
+    // The explicit typed keys also work without packet protocol inference.
     json!({"nftables": [
         {"create": {"table": {"family": "inet", "name": name}}},
         {"add": {"set": {
@@ -23,8 +25,8 @@ pub(super) fn probe_batch(name: &str) -> Value {
         {"add": {"rule": {"family": "inet", "table": name, "chain": "check", "expr": [
             {"match": {"op": "==", "left": {"ct": {"key": "direction"}}, "right": "original"}},
             {"match": {"op": "==", "left": {"concat": [
-                {"ct": {"key": "saddr", "family": "ip", "dir": "original"}},
-                {"ct": {"key": "daddr", "family": "ip", "dir": "original"}},
+                {"ct": {"key": "ip saddr", "dir": "original"}},
+                {"ct": {"key": "ip daddr", "dir": "original"}},
                 {"ct": {"key": "protocol"}},
                 {"ct": {"key": "proto-src", "dir": "original"}},
                 {"ct": {"key": "proto-dst", "dir": "original"}}
