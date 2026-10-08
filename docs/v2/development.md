@@ -170,9 +170,9 @@ mise run validate:remote --short --rows nat/off nat+fallback/off
 mise run validate:remote --attach 20261007T232151Z-35296f56
 ```
 
-`--host` 默认 `zj2631@ai4ce-planck.dyn.poly.edu`，`--path` 默认 `/mnt/data/Meshway/src`；`--ref` 默认本地 HEAD。入口先用 `git ls-remote planck` 校验 commit 可从已推送 ref 到达，再让远程 clean clone fetch、detached checkout。远程需具备 SSH、Git、Python、mise 锁定工具链、普通 Docker builder 和至少 50 GiB 空闲磁盘；本地使用 rsync 拉回证据。其余参数透传给矩阵。
+`--host` 默认 `zj2631@ai4ce-planck.dyn.poly.edu`，`--path` 默认 `/mnt/data/Meshway/src`；`--ref` 默认本地 HEAD。入口先用 `git ls-remote planck` 校验 commit 可从已推送 ref 到达，再让远程 clean clone fetch，并在其 `.worktree/validation-matrix/` 专用 clean worktree 中 detached checkout。公共 clone 的普通 checkout 不会替换正在验证的源码。该专用 worktree 保留固定 Cargo cache；报告及 OS cache 仍位于 `--path` 下的 `.meshway/validation/`，通过 `MESHWAY_VALIDATION_ROOT` 传给矩阵。远程需具备 SSH、Git、Python、mise 锁定工具链、普通 Docker builder 和至少 50 GiB 空闲磁盘；本地使用 rsync 拉回证据。其余参数透传给矩阵。
 
-远程 supervisor 使用独立 session，记录 `.meshway/validation/jobs/<run>/` 下的请求、PID、日志及最终状态；工作树操作锁从 fetch／checkout 持有到矩阵及其子进程全部结束，第二个远程任务不会切换正在执行的源码。SSH 断连不停止已启动任务。`--timeout` 是本地等待期限（默认 14400 秒），到期退出 2 后可用启动时打印的 `--attach <run>` 续等，不能用 attach 改变参数。任一行失败或本 run 带标签的容器／网络仍有遗留均返回非零；其他工作流的容器不纳入该 run 清理。
+远程 supervisor 使用独立 session，记录 `.meshway/validation/jobs/<run>/` 下的请求、PID、实际 worktree、日志及最终状态；工作树操作锁从 fetch／checkout 持有到矩阵及其子进程全部结束，第二个远程任务不会切换专用 worktree 中的源码。SSH 断连不停止已启动任务。`--timeout` 是本地等待期限（默认 14400 秒），到期退出 2 后可用启动时打印的 `--attach <run>` 续等，不能用 attach 改变参数。任一行失败或本 run 带标签的容器／网络仍有遗留均返回非零；其他工作流的容器不纳入该 run 清理。
 
 远程结果拉回工作树 `.meshway/validation/remote/<host>-<run>/` 后打印 `summary.md`；包含矩阵、各行原始日志／JSON／pcap、远程状态与 supervisor 日志，不复制构建目录及大体积可执行文件，原二进制与 hash 清单保留在远程。目标已存在时拒绝覆盖；下载中断将部分目录另存为 `*-partial-<id>`，再次 attach 使用新的完整目标。
 

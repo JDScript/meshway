@@ -17,6 +17,12 @@ from validation_support import import_artifact
 
 
 class MatrixTests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("MESHWAY_VALIDATION_ROOT", None)
+
     def test_failure_summary_keeps_private_error_details_out_of_stdout(self):
         with tempfile.TemporaryDirectory() as temporary:
             report = Path(temporary)
@@ -149,12 +155,12 @@ class RemoteTests(unittest.TestCase):
             binaries = root / ".local/bin"
             binaries.mkdir(parents=True)
             programs = {
-                "git": "import pathlib,sys\nprint('dirty' if sys.argv[1] == 'status' and pathlib.Path('dirty').exists() else '')\n",
+                "git": "import pathlib,sys\nif sys.argv[1:3] == ['worktree', 'add']: pathlib.Path(sys.argv[-2]).mkdir(parents=True)\nprint('dirty' if sys.argv[1] == 'status' and pathlib.Path('dirty').exists() else '')\n",
                 "uptime": "print('fixture uptime')\n",
-                "docker": "import pathlib\nprint('owned-leftover' if pathlib.Path('leftover').exists() else '')\n",
-                "mise": '''import json,pathlib,sys
+                "docker": "import pathlib\nprint('owned-leftover' if (pathlib.Path.home() / 'leftover').exists() else '')\n",
+                "mise": '''import json,pathlib,sys,os
 run = sys.argv[sys.argv.index('--run') + 1]
-directory = pathlib.Path('.meshway/validation/matrix') / run
+directory = pathlib.Path(os.environ['MESHWAY_VALIDATION_ROOT']) / 'matrix' / run
 directory.mkdir(parents=True)
 data = dict(status='complete', passed=True, rows=[dict(row='udp/off', report='rows/udp-off/actor/report.json', reportId='actor')])
 (directory / 'matrix.json').write_text(json.dumps(data))
@@ -186,6 +192,8 @@ data = dict(status='complete', passed=True, rows=[dict(row='udp/off', report='ro
                     self.assertIn("clean", result["error"])
                 elif leftover:
                     self.assertIn("owned-leftover", result["remainingResources"]["containers"])
+                if not dirty:
+                    self.assertEqual(result["workspace"], str(root / ".worktree/validation-matrix"))
 
     def test_forwarding_and_attach_contract(self):
         args, forwarded = remote.parse_args(["--ref", "branch", "--parallel", "4", "--short", "--rows", "nat/off"])

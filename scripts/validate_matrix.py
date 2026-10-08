@@ -30,6 +30,10 @@ ROWS = {
 }
 
 
+def validation_root():
+    return Path(os.environ.get("MESHWAY_VALIDATION_ROOT", str(ROOT / ".meshway/validation")))
+
+
 def positive(value):
     number = int(value)
     if number < 1:
@@ -89,7 +93,7 @@ def prepare_images(args, directory, platform):
         builder = image_builder() if kind == "runtime" else None
         lock = ROOT / f"dev/{kind}-fixture/assets.lock.json"
         digest = builder.source_digest() if builder else sha256(lock)
-        output = ROOT / ".meshway/validation/os" / (kind + "-" + platform.split("/")[1] + "-" + digest)
+        output = validation_root() / "os" / (kind + "-" + platform.split("/")[1] + "-" + digest)
         manifest = output / "image-manifest.json"
         with build_lock():
             if manifest.exists():
@@ -246,12 +250,13 @@ def main(argv=None):
             print(name)
         return 0
     os.umask(0o077)
-    directory = ROOT / ".meshway/validation/matrix" / (args.run or run_id())
+    directory = validation_root() / "matrix" / (args.run or run_id())
     directory.mkdir(parents=True)
     started = time.monotonic()
     report = dict(version=1, run=directory.name, scope="diagnostic-short" if args.short else "acceptance",
                   parallel=args.parallel, loadBeforeStart=load(), rows=[], passed=False, elapsedSeconds=0,
                   revision=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+                  sourceRoot=str(ROOT),
                   selectedRows=args.rows, builds={}, status="preparing")
     write_json(directory / "matrix.json", report)
     print(f"Matrix run: {directory.name}\n{report['loadBeforeStart']['uptime']}", flush=True)

@@ -15,8 +15,8 @@ from validation_support import run_id
 
 DEFAULT_HOST = "zj2631@ai4ce-planck.dyn.poly.edu"
 
-# Runs as a session leader. The clone lock covers fetch/checkout AND all children;
-# an SSH disconnect cannot change the selected source underneath a live matrix.
+# Runs as a session leader. A dedicated worktree keeps ordinary checkouts in the
+# shared clone from replacing live sources. The lock covers our worktree's life.
 WORKER = r'''
 import fcntl, json, os, pathlib, subprocess, sys, time, traceback
 p = json.loads(sys.argv[1])
@@ -41,13 +41,28 @@ try:
         if call(["git", "status", "--porcelain"]):
             raise RuntimeError("remote worktree must be clean")
         call(["git", "fetch", "origin"])
-        call(["git", "checkout", "--detach", p["revision"]])
-        env = dict(os.environ, CARGO_INCREMENTAL="0", MISE_TRUSTED_CONFIG_PATHS=str(root))
+        workspace = root / ".worktree/validation-matrix"
+        ownership = root / ".meshway/validation/workspace.json"
+        expected = {"owner": "meshway-validate-remote", "workspace": str(workspace)}
+        if not workspace.exists():
+            workspace.parent.mkdir(parents=True, exist_ok=True)
+            call(["git", "worktree", "add", "--detach", str(workspace), p["revision"]])
+            ownership.write_text(json.dumps(expected) + "\n")
+        elif not ownership.exists() or json.loads(ownership.read_text()) != expected:
+            raise RuntimeError("dedicated validation worktree has no matching ownership record")
+        if call(["git", "-C", str(workspace), "status", "--porcelain"]):
+            raise RuntimeError("dedicated validation worktree must be clean")
+        call(["git", "-C", str(workspace), "checkout", "--detach", p["revision"]])
+        result["workspace"] = str(workspace)
+        save()
+        env = dict(os.environ, CARGO_INCREMENTAL="0", MISE_TRUSTED_CONFIG_PATHS=str(workspace),
+                   MESHWAY_VALIDATION_ROOT=str(root / ".meshway/validation"))
         temporary = root / ".meshway/validation/tmp"
         temporary.mkdir(exist_ok=True)
         env["TMPDIR"] = str(temporary)
         env["PATH"] = str(pathlib.Path.home() / ".local/bin") + ":" + env["PATH"]
-        result["exitCode"] = subprocess.call(["mise", "run", "validate:matrix", "--run", p["run"], *p["arguments"]], cwd=root, env=env)
+        result["exitCode"] = subprocess.call(["mise", "run", "validate:matrix", "--run", p["run"], *p["arguments"]],
+                                             cwd=workspace, env=env, pass_fds=(lock.fileno(),))
         data = json.loads((matrix / "matrix.json").read_text())
         # Independently query Docker after the matrix ends, including nested packet runtime.
         remaining = {"containers": [], "networks": []}
