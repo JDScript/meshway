@@ -8,6 +8,17 @@ impl Report {
     pub fn state(&self, control: &meshway_control::Control, settings: &Settings) -> NodeState {
         let status = control.status();
         let current = self.current(&status);
+        if !current {
+            tracing::debug!(
+                instance_matches = self.same_instance(&status),
+                target_matches = self.bound_to(&status),
+                execution_current = self.guard.as_ref().is_none_or(|guard| guard.ensure_current().is_ok()),
+                dns_current = self.dns_guard.as_ref().is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().is_none()),
+                report_publication = ?self.ticket.as_ref().map(|ticket| ticket.target().execution_publication),
+                control_publication = ?status.instance.as_ref().and_then(|instance| instance.target.as_ref().map(|target| target.execution_publication)),
+                "Runtime State sampled outside current installation"
+            );
+        }
         let applied = current.then(|| self.applied()).flatten();
         let saved = status.cached.filter(|saved| {
             status

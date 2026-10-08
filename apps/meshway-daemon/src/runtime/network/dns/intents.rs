@@ -267,6 +267,12 @@ impl Registry {
             }
             budget -= 1;
             intent.retry = Instant::now() + Duration::from_secs(2);
+            tracing::debug!(request_id = %intent.request.request_id,
+                operation = if intent.created { "renew" } else { "create" },
+                permit_expires_at_ms = intent.expires_at_ms,
+                acknowledged_until_ms = intent.renewed_until,
+                requested_until_ms = intent.renewal.as_ref().map(|renewal| renewal.expires_at_ms),
+                "DNS demand dispatched");
             let result = tokio::time::timeout(Duration::from_secs(5), async {
                 if !intent.created {
                     control.create_demand(&intent.request).await.map(|_| ())
@@ -281,6 +287,9 @@ impl Registry {
             if matches!(result, Ok(Ok(()))) {
                 intent.acknowledged();
             }
+            tracing::debug!(request_id = %intent.request.request_id,
+                accepted = matches!(result, Ok(Ok(()))),
+                "DNS demand completed");
         }
         let waiting = self
             .intents
