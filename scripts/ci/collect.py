@@ -5,6 +5,9 @@ from collections import defaultdict
 from datetime import datetime, timezone
 import hashlib
 import json
+import shutil
+import urllib.error
+import urllib.request
 import math
 import os
 from pathlib import Path, PurePosixPath
@@ -72,23 +75,46 @@ def load_index(data, repo):
     return index
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class GitHub:
+    """Minimal Actions API client: stdlib HTTP, token from GH_TOKEN/GITHUB_TOKEN.
+
+    Artifact downloads redirect to blob storage, which rejects the GitHub
+    bearer token; the redirect is followed manually without credentials.
+    """
+
+    API = "https://api.github.com/"
+
     def __init__(self, repo):
         self.prefix = f"repos/{repo}/actions/"
-        self.env = os.environ.copy()
-        if self.env.get("GITHUB_TOKEN"):
-            self.env.setdefault("GH_TOKEN", self.env["GITHUB_TOKEN"])
+        self.token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+
+    def _open(self, url, authenticated):
+        headers = {"Accept": "application/vnd.github+json", "User-Agent": "meshway-ci-collect",
+                   "X-GitHub-Api-Version": "2022-11-28"}
+        if authenticated and self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        opener = urllib.request.build_opener(_NoRedirect())
+        try:
+            return opener.open(urllib.request.Request(url, headers=headers), timeout=180)
+        except urllib.error.HTTPError as error:
+            if error.code in (301, 302, 303, 307, 308) and error.headers.get("Location"):
+                return self._open(error.headers["Location"], authenticated=False)
+            # Do not persist raw HTTP bodies/redirect URLs or credentials in the index.
+            raise RuntimeError(f"GitHub API failed (HTTP {error.code})") from None
+        except urllib.error.URLError:
+            raise RuntimeError("GitHub API failed") from None
 
     def request(self, endpoint, output=None):
-        result = subprocess.run(
-            ["gh", "api", self.prefix + endpoint], env=self.env,
-            stdout=output or subprocess.PIPE, stderr=subprocess.PIPE, timeout=180,
-        )
-        if result.returncode:
-            # Do not persist raw HTTP bodies/redirect URLs or credentials in the index.
-            match = re.search(rb"HTTP (\d{3})", result.stderr)
-            raise RuntimeError("GitHub API failed" + (f" (HTTP {match[1].decode()})" if match else ""))
-        return None if output else json.loads(result.stdout)
+        with self._open(self.API + self.prefix + endpoint, authenticated=True) as response:
+            if output is None:
+                return json.loads(response.read())
+            shutil.copyfileobj(response, output, 1 << 20)
+            return None
 
     def pages(self, endpoint, key, limit=None):
         rows = []

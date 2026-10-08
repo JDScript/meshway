@@ -1,6 +1,37 @@
 use super::*;
 use meshway_configuration::{DnsConfiguration, execution::DnsEgress};
 
+/// The backend enforces production ownership on every ancestor, so the fixture
+/// must live below a chain that passes `open`: `/tmp` (world-writable) and
+/// shared data disks with group-writable parents both fail by design. Try the
+/// caller's TMPDIR, then a private directory under HOME, then the checkout.
+fn trusted_tempdir() -> tempfile::TempDir {
+    let mut candidates = Vec::new();
+    if let Some(dir) = std::env::var_os("TMPDIR") {
+        candidates.push(PathBuf::from(dir));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let private = PathBuf::from(home).join(".cache/meshway-test");
+        if std::fs::create_dir_all(&private).is_ok()
+            && std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).is_ok()
+        {
+            candidates.push(private);
+        }
+    }
+    candidates.push(std::env::current_dir().unwrap());
+    for candidate in &candidates {
+        let Ok(root) = tempfile::tempdir_in(candidate) else { continue };
+        let probe = root.path().join("probe");
+        std::fs::write(&probe, b"probe\n").unwrap();
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o644)).unwrap();
+        if open(&root.path().canonicalize().unwrap().join("probe")).is_ok() {
+            std::fs::remove_file(&probe).unwrap();
+            return root;
+        }
+    }
+    panic!("no trusted temporary directory: tried {candidates:?}; set TMPDIR to a 0700 directory with root/owner-only ancestors");
+}
+
 struct Fixture {
     _root: tempfile::TempDir,
     directory: Arc<Directory>,
@@ -8,9 +39,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        // The caller selects a trusted TMPDIR. A shared source checkout may
-        // have group-writable ancestors and is not a private data directory.
-        let root = tempfile::tempdir().unwrap();
+        let root = trusted_tempdir();
         let directory = Arc::new(
             Directory::open(
                 &root.path().canonicalize().unwrap().join("private"),
