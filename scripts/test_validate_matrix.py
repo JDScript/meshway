@@ -155,14 +155,14 @@ class RemoteTests(unittest.TestCase):
             binaries = root / ".local/bin"
             binaries.mkdir(parents=True)
             programs = {
-                "git": "import pathlib,sys\nif sys.argv[1:3] == ['worktree', 'add']: pathlib.Path(sys.argv[-2]).mkdir(parents=True)\nprint('dirty' if sys.argv[1] == 'status' and pathlib.Path('dirty').exists() else '')\n",
+                "git": "import pathlib,sys,json\nwith (pathlib.Path.home() / 'git-calls.jsonl').open('a') as log: log.write(json.dumps(sys.argv[1:]) + '\\n')\nif sys.argv[1:3] == ['worktree', 'add']: pathlib.Path(sys.argv[-2]).mkdir(parents=True)\nprint('dirty' if sys.argv[1] == 'status' and pathlib.Path('dirty').exists() else '')\n",
                 "uptime": "print('fixture uptime')\n",
                 "docker": "import pathlib\nprint('owned-leftover' if (pathlib.Path.home() / 'leftover').exists() else '')\n",
                 "mise": '''import json,pathlib,sys,os
 run = sys.argv[sys.argv.index('--run') + 1]
 directory = pathlib.Path(os.environ['MESHWAY_VALIDATION_ROOT']) / 'matrix' / run
 directory.mkdir(parents=True)
-data = dict(status='complete', passed=True, rows=[dict(row='udp/off', report='rows/udp-off/actor/report.json', reportId='actor')])
+data = dict(status='complete', passed=True, sourceRoot=str(pathlib.Path.cwd()), rows=[dict(row='udp/off', report='rows/udp-off/actor/report.json', reportId='actor')])
 (directory / 'matrix.json').write_text(json.dumps(data))
 (directory / 'summary.md').write_text('matrix summary')
 ''',
@@ -194,6 +194,10 @@ data = dict(status='complete', passed=True, rows=[dict(row='udp/off', report='ro
                     self.assertIn("owned-leftover", result["remainingResources"]["containers"])
                 if not dirty:
                     self.assertEqual(result["workspace"], str(root / ".worktree/validation-matrix"))
+                    matrix_data = json.loads((root / ".meshway/validation/matrix" / name / "matrix.json").read_text())
+                    self.assertEqual(Path(matrix_data["sourceRoot"]), Path(result["workspace"]).resolve())
+            calls = [json.loads(line) for line in (root / "git-calls.jsonl").read_text().splitlines()]
+            self.assertFalse(any(call[0] == "checkout" for call in calls), "never switch the shared clone")
 
     def test_forwarding_and_attach_contract(self):
         args, forwarded = remote.parse_args(["--ref", "branch", "--parallel", "4", "--short", "--rows", "nat/off"])
