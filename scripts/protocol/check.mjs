@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,9 +34,7 @@ export async function compareArtifacts(expectedDirectory, actualDirectory, artif
 }
 
 export async function check() {
-  const parent = join(tmpdir(), "opencode");
-  await mkdir(parent, { recursive: true });
-  const temporary = await mkdtemp(join(parent, "meshway-protocol-"));
+  const temporary = await mkdtemp(join(tmpdir(), "meshway-protocol-"));
   try {
     await generate(temporary);
     const stale = await compareArtifacts(temporary, root);

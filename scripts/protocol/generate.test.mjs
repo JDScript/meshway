@@ -47,9 +47,7 @@ function fixture() {
   };
 }
 async function temporary(t) {
-  const parent = join(tmpdir(), "opencode");
-  await mkdir(parent, { recursive: true });
-  const directory = await mkdtemp(join(parent, "meshway-codegen-"));
+  const directory = await mkdtemp(join(tmpdir(), "meshway-codegen-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   return directory;
 }
