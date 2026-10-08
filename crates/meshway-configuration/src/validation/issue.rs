@@ -67,7 +67,8 @@ pub enum IssueCode {
     DuplicateHostname,
     EmptyListenerKey,
     /// A listener or dialer declaration is invalid; params `reason` is the
-    /// transport declaration code.
+    /// transport declaration code. `edge_transport_unavailable` additionally
+    /// carries `a`, `b`, `routingRule`, with the topology transports pointer.
     InvalidTransport,
     /// Listener credentials or TLS certificate, key, name or validity failed
     /// verification.

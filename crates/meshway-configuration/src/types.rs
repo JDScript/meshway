@@ -4,7 +4,9 @@ use crate::{
 };
 use meshway_model::NodeId;
 use meshway_serde::required_nullable as nullable;
-use meshway_transport_spec::{DialerSet, Listener, Port, PositiveDuration, PreparedListener};
+use meshway_transport_spec::{
+    DialerSet, Listener, Port, PositiveDuration, PreparedListener, TransportProtocol,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -50,6 +52,8 @@ object! { pub struct AccessRule {
 object! { pub struct TopologyRule {
     #[serde(default)] pub remark: String,
     pub action: TopologyAction, pub a: String, pub b: String,
+    /// Allowed carriers for this undirected edge; omitted means unrestricted.
+    #[serde(default, skip_serializing_if = "Input::is_omitted")] pub transports: Input<Vec<TransportProtocol>> [value_type = Vec<TransportProtocol>],
 } }
 fn yes() -> bool {
     true
