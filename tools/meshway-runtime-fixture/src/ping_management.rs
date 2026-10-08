@@ -191,14 +191,25 @@ pub async fn initial(
                         });
                     }
                     (
-                        LinkAcquisition::PublishedEndpoint | LinkAcquisition::AcceptedInbound,
+                        LinkAcquisition::PublishedEndpoint
+                        | LinkAcquisition::LocalEndpoint
+                        | LinkAcquisition::AcceptedInbound,
                         crate::TraversalMode::Off,
                     ) => {
                         let underlay = crate::signals::underlay(cli).await?;
                         let remote = channel.remote_address.get();
+                        if cli.reported_endpoints
+                            && matches!(channel.acquisition, LinkAcquisition::PublishedEndpoint)
+                        {
+                            return Err(
+                                "reported-only fixture acquired a configured endpoint".into()
+                            );
+                        }
                         if remote.ip() != std::net::IpAddr::V4(underlay.actors[&Role::R])
-                            || (matches!(channel.acquisition, LinkAcquisition::PublishedEndpoint)
-                                && remote.port() != 35000)
+                            || (matches!(
+                                channel.acquisition,
+                                LinkAcquisition::PublishedEndpoint | LinkAcquisition::LocalEndpoint
+                            ) && remote.port() != 35000)
                         {
                             return Err("CLI static channel remote endpoint mismatch".into());
                         }

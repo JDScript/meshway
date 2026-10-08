@@ -62,6 +62,9 @@ struct Cli {
     traversal: TraversalMode,
     #[arg(long, global = true)]
     traversal_fallback: bool,
+    /// UDP/off fixture with no configured endpoints and no STUN service.
+    #[arg(long, global = true)]
+    reported_endpoints: bool,
     /// Diagnostic traffic window only; does not establish 125-second renewal acceptance.
     #[arg(long, global = true)]
     short: bool,
@@ -159,6 +162,14 @@ enum Command {
 async fn main() -> std::process::ExitCode {
     STARTED.get_or_init(std::time::Instant::now);
     let cli = Cli::parse();
+    if cli.reported_endpoints
+        && (cli.traversal != TraversalMode::Off
+            || !matches!(cli.transport, CarrierMode::NativeUdp)
+            || cli.dns_backend != DnsBackend::Off)
+    {
+        eprintln!("--reported-endpoints requires native-udp with traversal and DNS off");
+        return std::process::ExitCode::FAILURE;
+    }
     if cli.traversal_fallback && cli.traversal != TraversalMode::Nat {
         eprintln!("--traversal-fallback requires --traversal nat");
         return std::process::ExitCode::FAILURE;

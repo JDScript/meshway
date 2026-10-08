@@ -176,10 +176,14 @@ def main():
     parser.add_argument("--traversal", choices=("off", "nat"), default="off",
                         help="real two-router IPv4 NAT acquisition with empty UDP endpoints")
     parser.add_argument("--traversal-fallback", action="store_true",
-                        help="preauthorize TCP on R, then block only A-R UDP during the same 125-second flows")
+                         help="preauthorize TCP on R, then block only A-R UDP during the same 125-second flows")
+    parser.add_argument("--reported-endpoints", action="store_true",
+                        help="UDP/off without configured endpoints or STUN; use actual Node interface reports")
     parser.add_argument("--traversal-image-manifest", type=Path,
                         help="immutable OS manifest built with dev/dns-fixture/build.py --lock-file dev/traversal-fixture/assets.lock.json")
     args = parser.parse_args()
+    if args.reported_endpoints and (args.transport != "native-udp" or args.traversal != "off" or args.dns_backend != "off"):
+        parser.error("--reported-endpoints requires native-udp with traversal and DNS off")
     if not args.build_only and (args.dns_backend != "off") != bool(args.dns_image_manifest):
         parser.error("DNS scenarios require --dns-image-manifest; IP-only runs must omit it")
     if args.traversal == "nat" and args.transport != "native-udp":
@@ -271,6 +275,7 @@ def main():
                   "dnsBackend": args.dns_backend,
                    "dnsOsAssets": dns_assets,
                    "traversal": args.traversal,
+                   "reportedEndpoints": args.reported_endpoints,
                    "traversalOsAssets": traversal_assets,
                    "traversalScope": "outer IPv4, two port-preserving Linux SNATs; optional same-edge TCP fallback; no mapping-rotation claim" if args.traversal == "nat" else None,
                    "traversalFallback": {"status": "notRun"} if args.traversal_fallback else None,
@@ -363,6 +368,8 @@ def main():
                             "--traversal", args.traversal])
             if args.traversal_fallback:
                 command.append("--traversal-fallback")
+            if args.reported_endpoints:
+                command.append("--reported-endpoints")
         command.extend(arguments)
         identifier = run(*command, capture=True).strip()
         containers[role] = identifier

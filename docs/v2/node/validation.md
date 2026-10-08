@@ -21,7 +21,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `test:tun:linux` | — | — | — | 真实 TUN 设备创建与双栈包 I/O | 当前 wire 已通过；`20261007T212324Z-904a137e` |
 | `test:packet:linux` | Native TCP | off | — | A→R→B 双栈小包／满 MTU UDP、MTU+1 拒绝、daemon 多 MSS TCP、R 只转发受保护帧、原路径回复 | 当前 wire 已通过；`20261007T212330Z-f7e9a2e9` |
-| `test:runtime:linux` | Native UDP 静态端点 | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 当前 wire 已通过；Planck `20261008T033613Z-abbd4545` |
+| `test:runtime:linux --reported-endpoints` | Native UDP 本机上报端点（无 configured／STUN） | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | 本机上报变体待全长验收；历史静态端点：Planck `20261008T033613Z-abbd4545` |
 | `test:runtime:linux` | Native TCP | off | — | daemon 整组：共同场景 | 当前 wire 已通过；Planck `20261008T033656Z-7a35b80e` |
 | `test:runtime:linux --transport vless` | VLESS TCP/TLS | off | — | 共同场景；仅 R listener、A/B 拨入，精确叶证书验证 | 当前 wire 已通过（两次）；Planck `20261008T060730Z-28cbd781`、`20261008T061612Z-8b60c1ec` |
 | `test:runtime:linux --transport trojan` | Trojan TCP/TLS | off | — | 共同场景；仅 R listener、A/B 拨入，精确叶证书验证 | 当前 wire 已通过（两次）；Planck `20261008T060730Z-58ae84d3`、`20261008T061612Z-c9edd384` |

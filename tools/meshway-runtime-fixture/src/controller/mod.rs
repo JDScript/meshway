@@ -468,7 +468,9 @@ async fn coordinate(
                         remark: String::new(),
                         listen: "0.0.0.0".parse()?,
                         listen_port: 35000.try_into()?,
-                        endpoints: if cli.traversal == crate::TraversalMode::Nat {
+                        endpoints: if cli.traversal == crate::TraversalMode::Nat
+                            || cli.reported_endpoints
+                        {
                             vec![]
                         } else {
                             vec![Endpoint {
@@ -594,9 +596,15 @@ async fn coordinate(
                 Input::Value(dialers) => dialers,
                 Input::Omitted => &committed.configuration.defaults.dialers,
             };
-            if dialers.native_udp.is_none() || dialers.native_tcp.is_some() != (role == Role::A) {
+            if dialers.native_udp.is_some() != (role != Role::R)
+                || dialers.native_tcp.is_some() != (role == Role::A)
+            {
                 return Err("TCP fallback must be authorized only on the A-R edge".into());
             }
+        }
+        if cli.reported_endpoints && !node.listeners.values().all(|listener|
+            matches!(listener.declaration(), Listener::NativeUdp(listener) if listener.endpoints.is_empty())) {
+            return Err("reported-only fixture must not configure an endpoint".into());
         }
         if cli.traversal == crate::TraversalMode::Nat
             && (node.listeners.len() != if cli.traversal_fallback && role == Role::R { 2 } else { 1 }
@@ -635,6 +643,13 @@ async fn coordinate(
     if cli.transport.streaming() {
         tokio::fs::write(
             cli.evidence.join("configuration-streaming.json"),
+            serde_json::to_vec_pretty(&committed)?,
+        )
+        .await?;
+    }
+    if cli.reported_endpoints {
+        tokio::fs::write(
+            cli.evidence.join("configuration-reported-endpoints.json"),
             serde_json::to_vec_pretty(&committed)?,
         )
         .await?;

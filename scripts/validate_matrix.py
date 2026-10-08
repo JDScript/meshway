@@ -20,7 +20,7 @@ from verify_runtime import write_json
 ROWS = {
     "tun": ("tun", ()),
     "packet": ("packet", ()),
-    "udp/off": ("runtime", ("--transport", "native-udp", "--dns-backend", "off")),
+    "udp/off": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints")),
     "tcp/off": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off")),
     "vless/off": ("runtime", ("--transport", "vless", "--dns-backend", "off")),
     "trojan/off": ("runtime", ("--transport", "trojan", "--dns-backend", "off")),
