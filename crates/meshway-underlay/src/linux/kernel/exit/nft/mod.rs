@@ -23,8 +23,8 @@ pub(super) fn probe_batch(name: &str) -> Value {
         {"add": {"rule": {"family": "inet", "table": name, "chain": "check", "expr": [
             {"match": {"op": "==", "left": {"ct": {"key": "direction"}}, "right": "original"}},
             {"match": {"op": "==", "left": {"concat": [
-                {"ct": {"key": "src", "family": "ip", "dir": "original"}},
-                {"ct": {"key": "dst", "family": "ip", "dir": "original"}},
+                {"ct": {"key": "saddr", "family": "ip", "dir": "original"}},
+                {"ct": {"key": "daddr", "family": "ip", "dir": "original"}},
                 {"ct": {"key": "protocol"}},
                 {"ct": {"key": "proto-src", "dir": "original"}},
                 {"ct": {"key": "proto-dst", "dir": "original"}}

@@ -213,8 +213,9 @@ mod tests {
         assert_eq!(observation.instance_id, instance);
         assert_eq!(observation.target, target);
         assert!(observation.installed_families.is_empty());
-        assert!(observation.observed_at >= before.into());
-        assert!(observation.observed_at <= SystemTime::now().into());
+        let observed: SystemTime = observation.observed_at.into();
+        assert!(observed >= before);
+        assert!(observed <= SystemTime::now());
         let frozen = observation.clone();
         probe.finish().await.unwrap();
         assert_eq!(observation, frozen);
