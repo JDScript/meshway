@@ -297,7 +297,17 @@ class LocalServices:
             raise DevError(service + ": foreign session (cwd/command differs)")
         table = process_table(self.root)
         pid = int(pid)
-        if pid not in table or process_identity(pid, self.root) != saved["processIdentity"]:
+        # A pane whose process has exited (or is a zombie tmux has not reaped
+        # yet) is a session that is ending, not a foreign one.
+        if pid not in table or table[pid][1].startswith("Z"):
+            return None
+        try:
+            identity = process_identity(pid, self.root)
+        except DevError:
+            if pid in process_table(self.root):
+                raise
+            return None
+        if identity != saved["processIdentity"]:
             raise DevError(service + ": process identity differs")
         if (not actual_command(table[pid][2], service, saved["launchCommand"])
                 or saved.get("processCommand", table[pid][2]) != table[pid][2]):
