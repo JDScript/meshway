@@ -208,10 +208,9 @@ impl Shared {
             });
         if previous.peers.get(&fact.peer) != next.peers.get(&fact.peer)
             || !next.peers.contains_key(&fact.peer)
-            || !matches!(
-                fact.carrier.protocol,
-                TransportProtocol::NativeTcp | TransportProtocol::NativeUdp
-            )
+            // Exact resource equality includes TLS, proxy credentials and WS
+            // settings. A provider's buffered writes retain Session's frozen
+            // output scope; changing the physical epoch never renews old I/O.
             || !meshway_underlay::resource_compatible(previous, next, &resource)
             || (fact.carrier.dialer == previous.node_id
                 && !meshway_underlay::resource_compatible(

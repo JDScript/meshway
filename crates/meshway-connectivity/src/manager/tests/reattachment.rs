@@ -351,7 +351,7 @@ async fn converged(a: &Manager, b: &Manager, a_id: NodeId, b_id: NodeId, old: Op
     );
 }
 
-fn secure(identity: &meshway_authority::DataPlaneIdentity, manager: &Manager) -> SecureNode {
+pub(super) fn secure(identity: &DataPlaneIdentity, manager: &Manager) -> SecureNode {
     SecureNode::new(
         identity.clone(),
         Default::default(),
@@ -360,7 +360,7 @@ fn secure(identity: &meshway_authority::DataPlaneIdentity, manager: &Manager) ->
     .unwrap()
 }
 
-async fn handshake(
+pub(super) async fn handshake(
     a: &mut Manager,
     b: &mut Manager,
     sa: &mut SecureNode,
