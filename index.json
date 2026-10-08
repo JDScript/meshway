@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T18:07:12.749035+00:00",
+  "updatedAt": "2026-10-08T18:09:30.492376+00:00",
   "runs": [
     {
       "id": 37819749149,
@@ -230,24 +230,124 @@
       "commit": "a3a988519c132b1feee0151d1948b713e510e599",
       "message": "ci(validate): reclaim root-owned evidence before checkout after a cancelled matrix",
       "createdAt": "2026-10-08T17:38:25Z",
-      "updatedAt": "2026-10-08T17:38:27Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-08T18:07:42Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/37818122837",
       "jobs": [
         {
           "id": 113451899187,
           "name": "matrix",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-08T17:38:26Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-08T18:07:42Z",
+          "seconds": 1756.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37818122837/job/113451899187"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 11569278561,
+          "name": "validate-matrix-37818122837",
+          "bytes": 372917,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37818122837/artifacts/11569278561",
+          "jobId": 113451899187,
+          "runner": "planck",
+          "seconds": 1756.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261008T173833Z-12fdd6b8",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261008T174140Z-e6bb92e5",
+                  "seconds": 0.653,
+                  "load": "3.96/2.73/2.76"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261008T174140Z-ac06e82b",
+                  "seconds": 503.09,
+                  "load": "3.96/2.73/2.76"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261008T174140Z-6590472a",
+                  "seconds": 475.799,
+                  "load": "3.96/2.73/2.76"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261008T174140Z-8771bd57",
+                  "seconds": 476.003,
+                  "load": "3.96/2.73/2.76"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": true,
+                  "reportId": "20261008T174141Z-82fdcf68",
+                  "seconds": 488.2,
+                  "load": "3.96/2.73/2.76"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261008T174936Z-8b15a0dd",
+                  "seconds": 489.825,
+                  "load": "1.65/2.71/2.95"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261008T174936Z-114591f2",
+                  "seconds": 507.116,
+                  "load": "1.65/2.71/2.95"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261008T174949Z-ab22a2cc",
+                  "seconds": 512.381,
+                  "load": "2.17/2.78/2.97"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261008T175003Z-8bcbac07",
+                  "seconds": 537.093,
+                  "load": "3.63/3.07/3.06"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": true,
+                  "reportId": "20261008T175746Z-bb3e48df",
+                  "seconds": 550.306,
+                  "load": "1.77/2.69/2.96"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": true,
+                  "reportId": "20261008T175803Z-4a3ed887",
+                  "seconds": 574.367,
+                  "load": "2.12/2.72/2.97"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
     },
     {
       "id": 37815826326,
