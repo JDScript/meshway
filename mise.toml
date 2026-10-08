@@ -54,8 +54,9 @@ run = [
 
 [tasks."test:rust"]
 description = "Test every Rust target/feature with nextest, then Rust doctests"
+env = { RUST_MIN_STACK = "8388608" }
 run = [
-  "cargo nextest run --workspace --all-targets --all-features --locked --profile \"${NEXTEST_PROFILE:-default}\"",
+  "umask 077; cargo nextest run --workspace --all-targets --all-features --locked --profile \"${NEXTEST_PROFILE:-default}\"",
   "cargo test --workspace --all-features --locked --doc",
 ]
 
