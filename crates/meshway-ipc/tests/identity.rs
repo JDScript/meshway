@@ -2,8 +2,8 @@ use meshway_ipc::{Command, EnrollmentKey, VERSION};
 use serde_json::json;
 
 #[test]
-fn v4_identity_commands_are_typed_optional_and_secret_debug_is_redacted() {
-    assert_eq!(VERSION, 4);
+fn v5_identity_commands_are_typed_optional_and_secret_debug_is_redacted() {
+    assert_eq!(VERSION, 5);
     let old_up: Command =
         serde_json::from_value(json!({"type":"up","expectedRevision":1})).unwrap();
     assert!(matches!(

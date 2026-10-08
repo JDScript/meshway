@@ -65,6 +65,26 @@ fn historical_header_is_typed_but_context_checks_belong_to_callers() {
 }
 
 #[test]
+fn historical_dial_endpoints_are_validated_without_becoming_current_candidates() {
+    let mut value = body();
+    value["meshAddressPools"] = json!({"ipv4": ["100.64.0.0/10"], "ipv6": []});
+    value["localEgress"] = json!({});
+    value["dns"]["egress"] = json!({"type": "noExit"});
+    value["dialers"]["peer/udp"] = json!({
+        "peer": ID, "listenerKey": "udp", "priority": 100,
+        "endpoints": [{"host": "10.0.0.1", "port": 35000}],
+        "parameters": DialParameters::NativeUdp { options: Default::default() }
+    });
+    validate(&value.to_string()).unwrap();
+    assert!(
+        serde_json::from_value::<super::super::DialCandidate>(value["dialers"]["peer/udp"].clone())
+            .is_err()
+    );
+    value["dialers"]["peer/udp"]["endpoints"][0]["source"] = json!("configured");
+    reject(value, ObsoleteSliceError::Map);
+}
+
+#[test]
 fn digest_covers_original_bytes_not_canonical_values() {
     let value = body();
     let pretty = serde_json::to_string_pretty(&value).unwrap();
