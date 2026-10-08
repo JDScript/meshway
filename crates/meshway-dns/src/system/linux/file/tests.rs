@@ -4,20 +4,12 @@ use meshway_configuration::{DnsConfiguration, execution::DnsEgress};
 /// The backend enforces production ownership on every ancestor, so the fixture
 /// must live below a chain that passes `open`: `/tmp` (world-writable) and
 /// shared data disks with group-writable parents both fail by design. Try the
-/// caller's TMPDIR, then a private directory under HOME, then the checkout.
+/// caller's TMPDIR, the per-user runtime directory, HOME, then the checkout.
 fn trusted_tempdir() -> tempfile::TempDir {
-    let mut candidates = Vec::new();
-    if let Some(dir) = std::env::var_os("TMPDIR") {
-        candidates.push(PathBuf::from(dir));
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        let private = PathBuf::from(home).join(".cache/meshway-test");
-        if std::fs::create_dir_all(&private).is_ok()
-            && std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).is_ok()
-        {
-            candidates.push(private);
-        }
-    }
+    let mut candidates: Vec<PathBuf> = ["TMPDIR", "XDG_RUNTIME_DIR", "HOME"]
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(PathBuf::from))
+        .collect();
     candidates.push(std::env::current_dir().unwrap());
     for candidate in &candidates {
         let Ok(root) = tempfile::tempdir_in(candidate) else { continue };
