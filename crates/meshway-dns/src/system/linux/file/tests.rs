@@ -8,11 +8,16 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        // Workspace ancestors satisfy production ownership checks; /tmp's
-        // world-writable ancestor deliberately does not.
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
-        let directory =
-            Arc::new(Directory::open(&root.path().join("private"), "fixture.lock").unwrap());
+        // The caller selects a trusted TMPDIR. A shared source checkout may
+        // have group-writable ancestors and is not a private data directory.
+        let root = tempfile::tempdir().unwrap();
+        let directory = Arc::new(
+            Directory::open(
+                &root.path().canonicalize().unwrap().join("private"),
+                "fixture.lock",
+            )
+            .unwrap(),
+        );
         let path = root.path().join("resolv.conf");
         std::fs::write(
             &path,
