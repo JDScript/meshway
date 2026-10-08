@@ -13,6 +13,8 @@ fn trusted_tempdir() -> tempfile::TempDir {
     candidates.push(std::env::current_dir().unwrap());
     for candidate in &candidates {
         let Ok(root) = tempfile::tempdir_in(candidate) else { continue };
+        // tempfile honours the umask; the backend requires owner-only parents.
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let probe = root.path().join("probe");
         std::fs::write(&probe, b"probe\n").unwrap();
         std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o644)).unwrap();
