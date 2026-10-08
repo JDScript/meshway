@@ -1,8 +1,137 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T17:50:27.093508+00:00",
+  "updatedAt": "2026-10-08T18:03:45.727995+00:00",
   "runs": [
+    {
+      "id": 37819749149,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "1274d6117bb2001db3eda2fa6f4994f66bd9cb73",
+      "message": "check: macOS gates also run strict Clippy for the Linux musl target",
+      "createdAt": "2026-10-08T17:51:11Z",
+      "updatedAt": "2026-10-08T17:58:08Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37819749149",
+      "jobs": [
+        {
+          "id": 113457424882,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-08T17:58:07Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37819749149/job/113457424882"
+        },
+        {
+          "id": 113457425267,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T17:51:14Z",
+          "completedAt": "2026-10-08T17:58:05Z",
+          "seconds": 411.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37819749149/job/113457425267"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11569650334,
+          "name": "node-x86_64-unknown-linux-musl-1274d6117bb2001db3eda2fa6f4994f66bd9cb73",
+          "bytes": 7973396,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37819749149/artifacts/11569650334",
+          "jobId": 113457425267,
+          "runner": "mars-epyc7543",
+          "seconds": 411.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 15437928,
+              "sha256": "6834a0b40e7ec240e321e6b8bedbb1aa87e3f41668636e9585271f86509ffd3a"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1833296,
+              "sha256": "ce68cc79b4e206e3c9eecfcca52ef40494156c100b127a94bf888cf2b60b853c"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 37819749092,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "1274d6117bb2001db3eda2fa6f4994f66bd9cb73",
+      "message": "check: macOS gates also run strict Clippy for the Linux musl target",
+      "createdAt": "2026-10-08T17:51:11Z",
+      "updatedAt": "2026-10-08T18:02:17Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37819749092",
+      "jobs": [
+        {
+          "id": 113457424933,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T17:51:14Z",
+          "completedAt": "2026-10-08T17:51:25Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37819749092/job/113457424933"
+        },
+        {
+          "id": 113457528328,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T17:51:28Z",
+          "completedAt": "2026-10-08T17:52:05Z",
+          "seconds": 37.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37819749092/job/113457528328"
+        },
+        {
+          "id": 113457528424,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T17:52:08Z",
+          "completedAt": "2026-10-08T18:02:16Z",
+          "seconds": 608.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37819749092/job/113457528424"
+        },
+        {
+          "id": 113457530549,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-08T17:51:26Z",
+          "completedAt": "2026-10-08T17:51:26Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37819749092/job/113457530549"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37818122880,
       "attempt": 1,
