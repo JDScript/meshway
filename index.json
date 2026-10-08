@@ -1,8 +1,97 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-08T09:09:31.155708+00:00",
+  "updatedAt": "2026-10-08T09:23:41.963066+00:00",
   "runs": [
+    {
+      "id": 37754929767,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "a438e7bb7559d743b0c3e121cc0b4cb98739e8df",
+      "message": "ci: pin validate to planck; rootless Docker cannot run the NAT and resolv-conf rows",
+      "createdAt": "2026-10-08T09:11:30Z",
+      "updatedAt": "2026-10-08T09:11:37Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37754929767",
+      "jobs": [
+        {
+          "id": 113237032970,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-08T09:11:36Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37754929767/job/113237032970"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37754929530,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "a438e7bb7559d743b0c3e121cc0b4cb98739e8df",
+      "message": "ci: pin validate to planck; rootless Docker cannot run the NAT and resolv-conf rows",
+      "createdAt": "2026-10-08T09:11:30Z",
+      "updatedAt": "2026-10-08T09:22:04Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37754929530",
+      "jobs": [
+        {
+          "id": 113237032367,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T09:11:32Z",
+          "completedAt": "2026-10-08T09:11:35Z",
+          "seconds": 3.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37754929530/job/113237032367"
+        },
+        {
+          "id": 113237064049,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T09:11:38Z",
+          "completedAt": "2026-10-08T09:22:03Z",
+          "seconds": 625.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37754929530/job/113237064049"
+        },
+        {
+          "id": 113237064131,
+          "name": "console",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T09:11:38Z",
+          "completedAt": "2026-10-08T09:14:41Z",
+          "seconds": 183.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37754929530/job/113237064131"
+        },
+        {
+          "id": 113237064294,
+          "name": "docs-and-scripts",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-08T09:14:44Z",
+          "completedAt": "2026-10-08T09:16:05Z",
+          "seconds": 81.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37754929530/job/113237064294"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37751513072,
       "attempt": 1,
