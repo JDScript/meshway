@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+# Runners may carry a personal global mise config; the project lockfile is the only tool source.
+env:
+  MISE_GLOBAL_CONFIG_FILE: /nonexistent/mise-global.toml
+
 concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true

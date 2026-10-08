@@ -13,6 +13,10 @@ on:
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
+# Runners may carry a personal global mise config; the project lockfile is the only tool source.
+env:
+  MISE_GLOBAL_CONFIG_FILE: /nonexistent/mise-global.toml
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true

@@ -32,7 +32,7 @@ mise exec -- cargo nextest run -p meshway-control --test control
 
 `.config/nextest.toml` 的 default／ci profile 均不重试失败，单例运行超过 60 秒时报警；全局并发默认使用可用逻辑 CPU 数。真实 Server／SQLite／HTTP fixture 使用有界 test group，避免跨进程的 KDF、文件同步和后台 worker 同时拥塞。每个测试保留独立临时数据库、网络和 listener，全部自包含；nextest 每个 case 独立进程，进程内 singleton 不构成跨 case 的共享 Server。ci profile 收集全部失败并写入 `target/nextest/ci/junit.xml`。
 
-测试任务为深层异步 fixture 设置 `RUST_MIN_STACK=8388608`，并用 `umask 077` 创建私有测试资源。`TMPDIR` 的祖先也必须符合正式私有存储检查：共享数据盘的 group-writable 目录不可用，可选择权限为 `0700` 的用户私有目录。测试 profile 只优化 Argon2／Blake2 依赖，保留生产 KDF 参数和业务代码的 debug assertions。
+测试任务为深层异步 fixture 设置 `RUST_MIN_STACK=8388608`，并用 `umask 077` 创建私有测试资源。系统 DNS 文件后端的测试要求 fixture 根目录的全部祖先通过正式私有存储检查（owner-only，无 group／world 写位）；fixture 依次探测 `TMPDIR`、`XDG_RUNTIME_DIR`、`HOME` 与当前目录，取第一个通过者，并把自身目录设为 `0700`，不依赖调用方的 umask 或 `/tmp`。测试 profile 只优化 Argon2／Blake2 依赖，保留生产 KDF 参数和业务代码的 debug assertions。
 
 诊断时可回退到 libtest，命令覆盖与 nextest 相同的目标，并保留独立 doctest：
 

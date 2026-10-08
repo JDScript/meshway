@@ -74,8 +74,8 @@ mise run dev:docs
 | runner | 标签 | 机器 | 角色 |
 | --- | --- | --- | --- |
 | `planck` | `self-hosted,linux,x64,docker,cgroup2,planck` | AMD Ryzen 9 9950X，32 线程，Docker，系统 systemd | **T3 x86 固定口径**（唯一性能基准机）；T2 全矩阵；T1 |
-| `mars-14900k` | `self-hosted,linux,x64,docker,cgroup2,mars` | Intel i9-14900K，32 线程，rootless Docker（cgroup v2，容器资源限制有效），工作目录在 `/mnt/SSD-1` | T2、T1 |
+| `mars-14900k` | `self-hosted,linux,x64,docker,cgroup2,mars` | Intel i9-14900K，32 线程，rootless Docker（cgroup v2，容器资源限制有效；runner 服务设置 `DOCKER_CONTEXT=rootless`），工作目录在 `/mnt/SSD-1` | T2、T1 |
 | `mars-epyc7543` | `self-hosted,linux,x64,build,mars` | AMD EPYC 7543，128 线程，503 GB 内存，rootless Docker（cgroup v1，**容器资源限制无效**），工作目录在 `/mnt/SSD-2` | **编译机**：T1、x64／arm64 交叉构建产物；不跑 T2／T3 |
 | `jp-tyo-arm64` | `self-hosted,linux,arm64,docker,jp-tyo` | Ampere Neoverse-N1，4 核，Docker | T3 arm64 原生 L0／原语参照 |
 
-`check` 可在任意 x64 runner 运行；`validate` 只在 `docker,cgroup2` runner 运行（fixture 依赖 `--cpus`／`--memory` 真实生效）；`build` 在 `build` runner 交叉编译两种 Linux 目标并上传产物；`perf` 钉在 `planck`，`perf-arm64` 钉在 `jp-tyo`，保证时间序列同机可比。runner 的工作目录、mise／cargo 缓存均放在各机的大容量数据盘，不占根分区。mars 两台为共享机且无 sudo：用户级 systemd 在该用户最后一个登录会话结束后会停止，需要管理员执行 `loginctl enable-linger siqi` 才能常驻；`validate:remote` 的 ad-hoc 路径仍指向 planck。所有 runner 以普通用户运行同一组 mise 任务，不另维护脚本；job 结束后按 run 标签清理容器与 network，不留宿主改动。
+`check` 可在任意 x64 runner 运行；`validate` 只在 `docker,cgroup2` runner 运行（fixture 依赖 `--cpus`／`--memory` 真实生效）；`build` 在 `build` runner 交叉编译两种 Linux 目标并上传产物；`perf` 钉在 `planck`，`perf-arm64` 钉在 `jp-tyo`，保证时间序列同机可比。runner 的工作目录、mise／cargo 缓存均放在各机的大容量数据盘，不占根分区。mars 两台为共享机且无 sudo：用户级 systemd 在该用户最后一个登录会话结束后会停止，需要管理员执行 `loginctl enable-linger siqi` 才能常驻；`validate:remote` 的 ad-hoc 路径仍指向 planck。所有 runner 以普通用户运行同一组 mise 任务，不另维护脚本；工作流把 `MISE_GLOBAL_CONFIG_FILE` 指向不存在的文件，runner 用户的个人 mise 全局配置不参与工具解析；lab／fixture 的 Docker 调用遵守标准 `DOCKER_CONTEXT`（默认 `default`）；状态页收集器只用标准库 HTTP 与 `GITHUB_TOKEN`，runner 不需要 `gh`；job 结束后按 run 标签清理容器与 network，不留宿主改动。
