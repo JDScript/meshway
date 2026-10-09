@@ -3,6 +3,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpStream, UdpSocket},
 };
+const WARMUP: &[u8] = b"meshway-exit-encrypted-through-r";
 
 pub(super) async fn run(cli: &Cli, topology: &Topology) -> Result<()> {
     let mut tuples = Vec::new();
@@ -10,7 +11,7 @@ pub(super) async fn run(cli: &Cli, topology: &Topology) -> Result<()> {
     for link in ["external", "lan"] {
         let address = topology.addresses[link][link];
         let udp = initial_udp(address, 8080).await?;
-        let payload = b"meshway-exit-encrypted-through-r";
+        let payload = WARMUP;
         let mut received = [0; 2048];
         // Demand creation may hold/drop the initial packet. Retry only initial
         // admission; steady traffic and all later stages have exact deadlines.
@@ -63,11 +64,11 @@ pub(super) async fn run(cli: &Cli, topology: &Topology) -> Result<()> {
     ready(cli, "exit-window-done").await?;
     wait(cli, "exit-flow-withdraw").await?;
     for (_, udp, mut tcp) in flows {
-        udp.send(b"exit-revoked-old-tuple").await?;
         let mut reply = [0; 64];
-        if tokio::time::timeout(Duration::from_secs(2), udp.recv(&mut reply))
-            .await
-            .is_ok_and(|r| r.is_ok())
+        if udp.send(b"exit-revoked-old-tuple").await.is_ok()
+            && tokio::time::timeout(Duration::from_secs(2), udp.recv(&mut reply))
+                .await
+                .is_ok_and(|r| r.is_ok())
         {
             return Err("withdrawn exit UDP flow still replies".into());
         }
@@ -87,23 +88,22 @@ async fn measure(cli: &Cli, (link, udp, tcp): &mut (&str, UdpSocket, TcpStream))
     let std::net::IpAddr::V4(address) = udp.peer_addr()?.ip() else {
         return Err("IPv4 exit required".into());
     };
-    let payload = b"meshway-exit-encrypted-through-r";
-    let mut received = [0; 2048];
     let full = [0x6b; 1338];
     udp.send(&full).await?;
-    let size = tokio::time::timeout(IO, udp.recv(&mut received)).await??;
-    if received[..size] != full {
-        return Err("exit full-MTU UDP mismatch".into());
-    }
+    let skipped = expected_reply(udp, &full).await?;
+    write(
+        &cli.evidence.join(format!("mtu-{link}.json")),
+        &(full.len(), skipped),
+    )
+    .await?;
     let started = std::time::Instant::now();
     let regular = async {
         let mut count = 0_u64;
         while started.elapsed() < cli.traffic_duration() {
-            udp.send(payload).await?;
-            let received_count = tokio::time::timeout(IO, udp.recv(&mut received)).await??;
-            if &received[..received_count] != payload {
-                return Err("exit UDP reply mismatch".into());
-            }
+            let mut payload = b"exit-steady-".to_vec();
+            payload.extend_from_slice(&count.to_be_bytes());
+            udp.send(&payload).await?;
+            expected_reply(udp, &payload).await?;
             let sent = [0x5a; 16384];
             let mut echoed = [0; 16384];
             tokio::time::timeout(IO, async {
@@ -132,6 +132,56 @@ async fn measure(cli: &Cli, (link, udp, tcp): &mut (&str, UdpSocket, TcpStream))
     )
     .await?;
     Ok(())
+}
+
+async fn expected_reply(socket: &UdpSocket, expected: &[u8]) -> Result<u32> {
+    tokio::time::timeout(IO, async {
+        let mut received = [0; 2048];
+        for skipped in 0..64 {
+            let size = socket.recv(&mut received).await?;
+            if &received[..size] == expected {
+                return Ok(skipped);
+            }
+            // Initial admission can queue several distinct warmup sends before
+            // its first reply. They must never satisfy a later MTU/sequence check.
+            if &received[..size] != WARMUP {
+                return Err(format!(
+                    "exit UDP probe mismatch: expected {} bytes, received {} bytes, prefix {:?}",
+                    expected.len(),
+                    size,
+                    &received[..size.min(24)]
+                )
+                .into());
+            }
+        }
+        Err("exit warmup reply bound exceeded".into())
+    })
+    .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn queued_warmup_cannot_satisfy_the_next_udp_probe() {
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.connect(peer.local_addr().unwrap()).await.unwrap();
+        let address = socket.local_addr().unwrap();
+        peer.send_to(WARMUP, address).await.unwrap();
+        peer.send_to(WARMUP, address).await.unwrap();
+        peer.send_to(&[0x6b; 1338], address).await.unwrap();
+        assert_eq!(expected_reply(&socket, &[0x6b; 1338]).await.unwrap(), 2);
+        peer.send_to(b"exit-steady-old-sequence", address)
+            .await
+            .unwrap();
+        assert!(
+            expected_reply(&socket, b"exit-steady-current-sequence")
+                .await
+                .is_err()
+        );
+    }
 }
 
 #[derive(serde::Serialize)]

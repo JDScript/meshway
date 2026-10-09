@@ -8,10 +8,11 @@ def conntrack_flows(text):
     for line in text.splitlines():
         if not line.strip(): continue
         fields = re.findall(r"\b(src|dst|sport|dport)=([^\s]+)", line)
-        if len(fields) != 8 or [key for key, _ in fields] != ["src", "dst", "sport", "dport"] * 2:
+        protocol = re.match(r"(?:ipv4\s+\d+\s+)?(tcp|udp)\s+\d+\s", line)
+        if protocol is None or len(fields) != 8 or [key for key, _ in fields] != ["src", "dst", "sport", "dport"] * 2:
             continue  # ICMP/control entries are not TCP/UDP tuple evidence.
         mark = re.search(r"\bmark=(\d+)", line)
-        flows.append({"protocol": line.split()[0], "original": dict(fields[:4]), "reply": dict(fields[4:]),
+        flows.append({"protocol": protocol.group(1), "original": dict(fields[:4]), "reply": dict(fields[4:]),
                       "mark": int(mark.group(1)) if mark else None})
     return flows
 

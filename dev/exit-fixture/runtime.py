@@ -80,6 +80,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 data[role]["savedExecution"] = command(role, "python3", "-c",
                     "import json; print(json.dumps(json.load(open('/state/node/identity/control.json'))['saved']))", required=False)
                 data[role]["underlayJournal"] = command(role, "cat", "/state/node/underlay.json", required=False)
+                data[role]["exitJournal"] = command(role, "cat", "/state/node/underlay-exit.json", required=False)
                 data[role]["tunCounters"] = command(role, "ip", "-j", "-s", "link")
                 data[role]["tunReceived"] = command(role, "python3", "-c",
                     "import pathlib,json; print(json.dumps({p.parent.name:int((p.parent/'statistics/rx_packets').read_text()) for p in pathlib.Path('/sys/class/net').glob('*/tun_flags')}))")
@@ -124,7 +125,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         (report / "exit-support").mkdir()
         shutil.copyfile(ROOT / "dev/dns-fixture/namespace.sh", report / "exit-support/namespace.sh")
         shutil.copyfile(ROOT / "dev/exit-fixture/forwarding.sh", report / "exit-support/forwarding.sh")
-        write(report / "exit-support/os-packages.tsv", runtime_os)
+        (report / "exit-support/os-packages.tsv").write_text("".join(
+            package["name"] + "\t" + package["version"] + "\t" + package["architecture"] + "\n"
+            for package in runtime_os["packages"]))
         preparation = ["docker", "run", "--rm", "--pull", "never", "--label", label,
                        "--network", "none", "--read-only", "--cap-drop", "ALL", *bind_access_options(),
                        "--security-opt", "no-new-privileges", "--entrypoint", "", "--tmpfs", "/state:mode=700",
@@ -303,6 +306,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             capability = (value.get("exit") or {}).get("capability") or {}
             matched = (capability.get("status") == {"status": "ready"}
                     and capability.get("instanceId") == (value.get("instance") or {}).get("instanceId")
+                    and capability.get("supportedFamilies") == ["ipv4"]
                     and capability.get("installedFamilies") == ["ipv4"]
                     and capability.get("target") == value.get("applied")
                     and bool((value.get("exit") or {}).get("installedRole"))
@@ -372,6 +376,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             ct = after["e"]["conntrack"][link]["stdout"]
             for protocol, local, remote in (("udp", udp_local, udp_remote), ("tcp", tcp_local, tcp_remote)):
                 flow = evidence.nat_tuple(ct, protocol, local, remote, addresses[link]["e"])
+                if flow["mark"] != json.loads(after["e"]["exitJournal"]["stdout"])["program"]["mark"]:
+                    raise RuntimeError("NAT conntrack mark does not belong to the exit journal")
                 visits = json.loads(command(link, "cat", "/evidence/access.json")["stdout"])
                 if not any(v["protocol"] == protocol and v["peer"] == addresses[link]["e"] + ":" + flow["reply"]["dport"] for v in visits):
                     raise RuntimeError("NAT tuple absent from external service log")

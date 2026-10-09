@@ -11,6 +11,7 @@ class ExitEvidenceTests(unittest.TestCase):
     def test_tuple_requires_original_and_reverse_nat_and_owned_mark(self):
         line = "udp 17 29 src=100.64.0.1 dst=11.77.2.3 sport=40000 dport=8080 src=11.77.2.3 dst=11.77.2.2 sport=8080 dport=41000 mark=8 use=1"
         self.assertEqual(evidence.nat_tuple(line, "udp", "100.64.0.1:40000", "11.77.2.3:8080", "11.77.2.2")["reply"]["dport"], "41000")
+        self.assertEqual(evidence.nat_tuple("ipv4     2 " + line, "udp", "100.64.0.1:40000", "11.77.2.3:8080", "11.77.2.2")["mark"], 8)
         for invalid in (line.replace("mark=8", "mark=0"), line.replace("dst=11.77.2.2", "dst=100.64.0.1"),
                         line.replace("sport=40000", "sport=40001"), line + "\n" + line):
             with self.assertRaises(RuntimeError):
