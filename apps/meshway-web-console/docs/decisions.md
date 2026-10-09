@@ -72,10 +72,12 @@ its generated client only, and only what the controller delivers:
   topology (with `defaults.topology`), traffic routing, rule sets, groups,
   tag owners, DNS, address pools and the defaults (access, topology,
   dialers); "nodes" lists each node's settings and opens its workspace,
-  where they are edited. A topology allow rule may limit the transports
-  of its edge: any (omitted, protocols added later included) or only the
-  ones chosen of UDP, TCP, VLESS and Trojan, none chosen being `[]` (the
-  two ends cannot connect directly); the first matching allow decides and
+  where they are edited. A topology allow rule sets its edge's permitted
+  transports and preference order: platform order (omitted, UDP → TCP →
+  VLESS → Trojan) or the chosen ordered list, none chosen being `[]` (the
+  two ends cannot connect directly). Chosen protocols are numbered in their
+  written order and move with arrows or Alt+↑/↓; order-only edits remain in
+  the draft. The first matching allow decides and
   later ones are not merged in. A block rule has none to set: making a
   rule a block drops them, and ones the source gives a block rule are said
   to have no effect. One
@@ -170,7 +172,7 @@ its generated client only, and only what the controller delivers:
     tags becomes a Tag identity; the last tag cannot be taken), Mesh
     addresses within the pools (empty: no address of that family).
   - connection settings (`tab=connection-settings`, under Settings): dialers
-    (inherit the defaults, a set of its own, or none) and configured listeners
+    (inherit the defaults, a set of its own, or none; no priority field) and configured listeners
     together. A listener's protocol, bind, reported phase and problem are
     compact; expansion shows its configuration and what the report says of it
     (phase, problem, loaded certificate, sockets and their endpoint
@@ -529,7 +531,7 @@ states stay distinguishable by stroke and colour.
   `ConfigurationView` (`configurationQuery`, also written by SSE), using its
   nodes, identities, groups, topology and defaults. `lib/configuration/topology-view.ts`
   owns this non-executable display projection. Any matching block wins; otherwise the first
-  matching allow supplies transports; otherwise the default applies. With no
+  matching allow supplies the ordered transports; otherwise the default applies. With no
   rules, allow means the complete permitted graph, deny means no permitted
   edges. State annotates these edges with runtime state and never determines
   whether the configured edge exists. This declaration view does not resolve
@@ -619,7 +621,8 @@ states stay distinguishable by stroke and colour.
   connection state and optional recorded history annotate only declared pairs.
   The source rule/default and transport restriction are available on the edge.
   Visible transport badges use the actual reported protocol when connected;
-  otherwise they say which transports the declaration allows, or Any transport.
+  otherwise they show the configured order with arrows, or Default order.
+  The platform's full order is available in the edge description.
   Historical and in-progress protocols retain their qualifier. Small diagrams
   show badges along the curves with collision avoidance; dense diagrams reveal
   them for hovered, focused or selected-node edges. Full descriptions remain

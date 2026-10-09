@@ -54,7 +54,7 @@ export function mapTransportText(connection: MapConnection): string {
     if (allowed === null) return m.overview_any_transport()
     if (allowed.length === 0) return m.overview_no_transports()
     return m.overview_transport_allowed({
-      value: allowed.map(transportText).join(" / "),
+      value: allowed.map(transportText).join(" → "),
     })
   }
   return mapConnectionText(connection)

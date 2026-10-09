@@ -1,5 +1,6 @@
 import { cn } from "@meshway/ui/cn"
 
+import { DIALER_PROTOCOLS } from "@/lib/configuration/dialer-model"
 import type { MapConnection } from "@/lib/network-map"
 import {
   mapConnectionText,
@@ -58,9 +59,11 @@ export function TopologyEdge({
             ? m.overview_topology_default()
             : m.overview_topology_rule({ number: edge.declaration.rule + 1 })
           : null,
-        edge.transports.length && edge.declaration?.transports?.length
+        edge.declaration && edge.declaration.transports?.length !== 0
           ? m.overview_allowed_transports({
-              value: edge.declaration.transports.map(transportText).join(" / "),
+              value: (edge.declaration.transports ?? DIALER_PROTOCOLS)
+                .map(transportText)
+                .join(" → "),
             })
           : null,
       ].filter(Boolean)

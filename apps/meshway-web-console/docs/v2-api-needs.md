@@ -51,13 +51,13 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `1bb3d137`）
+## 接入状态（契约 `f54a7f69`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
 - 账户、会话和账户活动（邮箱修改显示原邮箱）；
 - 网络、成员（改角色前确认要撤销的加入链接）、加入链接（签发人、使用者）和网络活动；
-- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同；组网的允许规则可以限制承载 `transports`：不限即省略，指定为 UDP／TCP／VLESS／Trojan 中的几种，一个不选是 `[]`，阻断规则不设置）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同；组网允许规则的 `transports` 是有序允许列表，前项优先，可用箭头或 Alt+↑/↓ 调整；省略使用平台顺序 UDP → TCP → VLESS → Trojan，`[]` 没有允许承载，阻断规则不设置）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；顺序变化会保留为草稿修改，dialer 不再有 priority；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
 - 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值；`edge_transport_unavailable` 说明哪条 Mesh 路由要经过哪两端之间的边，挂在 `/topology/<i>/transports` 的承载上），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
 - 地点与 ASN：console 不再读服务端的 GeoIP 结果（`derived.location.data`、`datasetId`、`ipInfo` 的查询结果），只用 `derived.location` 的地址和 `derived.ipInfo` 的键（`notApplicable` 视为非公网，不发出），向 geojs.io 查询。在服务端按下面"请后端调整"改完之前，`derived.location` 只在服务端自己的 GeoIP 有结果时才出现，没有数据集的部署里节点仍然没有位置。8420 的节点通过 STUN 上报了公网映射，地球上已经有节点；三个节点共用宿主出口，同一地址的节点合成一组，没有 STUN 观测的列在「待定位」。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
@@ -136,7 +136,6 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 绑定大规则集（8483 条）后 validate 很慢的问题，在 `70f5e95f` 改为线性覆盖计算。
 - 托管证书改 `serverName` 时重新生成证书；provided 材料仍按省略继承。
 - 规则集检查记录：来源与绑定内容都不变就跨版本延续，包括还没有成功内容的集合。console 报过的 `not_ready`／`checkedAt: null` 后端没有复现，再遇到时补充步骤。
-- 承载选择顺序移到组网规则：console 需要让 `topology[].transports` 编辑器保留并编辑顺序（第一项优先），未指定时平台顺序为 `native_udp → native_tcp → vless → trojan`；dialer 的 priority UI 已移除。validate 可能返回 `invalid_transport` 的 `repeated_transport` 原因，指向 `/topology/<i>/transports/<j>`。
 
 ### 请后端调整
 

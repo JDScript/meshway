@@ -99,6 +99,19 @@ test("the first matching allow supplies the restriction; empty and unrestricted 
       (edge) => edge.rule === null && edge.transports === null
     )
   )
+  input.topology = [
+    {
+      action: "allow",
+      a: "*",
+      b: "*",
+      transports: ["vless", "native_tcp", "native_udp"],
+    },
+  ]
+  assert.deepEqual(configurationTopology(input).edges[0]?.transports, [
+    "vless",
+    "native_tcp",
+    "native_udp",
+  ])
 })
 
 test("configuration edges and nodes survive absent runtime reports and missing listeners", () => {

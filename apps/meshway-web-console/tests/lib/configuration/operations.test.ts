@@ -96,11 +96,22 @@ test("an edge's transports are kept; any and none are two values", () => {
       { ...rule, transports: ["vless" as const, "native_tcp" as const] },
     ],
   }
-  // The same set in another order is no change.
+  // Reordering changes the edge preference and must survive the draft diff.
+  const reordered = withValue([], limited, "topology", [
+    { ...rule, transports: ["native_tcp", "vless"] },
+  ])
+  assert.deepEqual(reordered, [
+    {
+      type: "replaceTopology",
+      topology: [{ ...rule, transports: ["native_tcp", "vless"] }],
+    },
+  ])
+  assert.deepEqual(valueOf(reordered, limited, "topology")[0]?.transports, [
+    "native_tcp",
+    "vless",
+  ])
   assert.deepEqual(
-    withValue([], limited, "topology", [
-      { ...rule, transports: ["native_tcp", "vless"] },
-    ]),
+    withValue(reordered, limited, "topology", limited.topology),
     []
   )
   const [none] = withValue([], limited, "topology", [

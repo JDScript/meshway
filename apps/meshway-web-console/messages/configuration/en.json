@@ -271,10 +271,10 @@
   "configuration_topology_a": "One end",
   "configuration_topology_b": "Other end",
   "configuration_topology_between": "Between",
-  "configuration_topology_hint": "Any matching block rule blocks the direct connection between the two ends; otherwise the first matching allow rule decides which transports it may use, and later allow rules are not merged in. A transport is usable only when both ends' dialers and listeners support it.",
-  "configuration_topology_transports": "Transports",
-  "configuration_topology_transports_any": "Any",
-  "configuration_topology_transports_some": "Only",
+  "configuration_topology_hint": "A matching block wins. Otherwise the first matching allow sets the permitted transports and their order; the first transport is preferred. Both ends must support the transport.",
+  "configuration_topology_transports": "Transport order",
+  "configuration_topology_transports_any": "Default order",
+  "configuration_topology_transports_some": "Custom order",
   "configuration_topology_transports_none": "No transport allowed: the two ends cannot connect directly",
   "configuration_topology_transports_block": "A block rule's transports have no effect",
   "configuration_groups_none": "No groups",
@@ -473,7 +473,7 @@
       }
     }
   ],
-  "configuration_local_dialer": "Priority must be a whole number, timeouts like 5s or 500ms",
+  "configuration_local_dialer": "Use a timeout such as 5s or 500ms",
   "configuration_local_hostname": "A hostname takes lowercase letters, digits and inner hyphens, up to 63 characters",
   "configuration_local_hostname_taken": "Another node uses this hostname",
   "configuration_local_tags": "A Tag identity keeps at least one tag; removing the last takes the device signing in as a user",
