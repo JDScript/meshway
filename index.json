@@ -1,8 +1,97 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T08:17:11.090123+00:00",
+  "updatedAt": "2026-10-09T08:21:02.133905+00:00",
   "runs": [
+    {
+      "id": 37904282074,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "e9f7a47f6151b18541cfaf1cc04f8d020b2993e6",
+      "message": "docs(netmap): record the five product decisions; delta distribution instead of a protocol-level size limit",
+      "createdAt": "2026-10-09T08:19:49Z",
+      "updatedAt": "2026-10-09T08:20:04Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37904282074",
+      "jobs": [
+        {
+          "id": 113733943404,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-09T08:20:03Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37904282074/job/113733943404"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37904158119,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "0018b798e84c121529e421f2055b4264e12e53f6",
+      "message": "docs(netmap): record the five product decisions; delta distribution instead of a protocol-level size limit",
+      "createdAt": "2026-10-09T08:18:34Z",
+      "updatedAt": "2026-10-09T08:20:01Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37904158119",
+      "jobs": [
+        {
+          "id": 113733472828,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T08:18:37Z",
+          "completedAt": "2026-10-09T08:18:48Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37904158119/job/113733472828"
+        },
+        {
+          "id": 113733546584,
+          "name": "docs-and-scripts",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-09T08:18:51Z",
+          "completedAt": "2026-10-09T08:20:00Z",
+          "seconds": 69.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37904158119/job/113733546584"
+        },
+        {
+          "id": 113733548155,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-09T08:18:49Z",
+          "completedAt": "2026-10-09T08:18:48Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37904158119/job/113733548155"
+        },
+        {
+          "id": 113733548373,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-09T08:18:49Z",
+          "completedAt": "2026-10-09T08:18:48Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37904158119/job/113733548373"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37903664309,
       "attempt": 1,
