@@ -24,6 +24,138 @@ fn rejected_forward(f: &mut SecureMesh, id: [u8; 32], port: u16) {
 }
 
 #[tokio::test]
+async fn exit_confirm_failure_isolates_shared_cid_and_survivor_can_renew() {
+    let mut f = fixture(BusinessProtocol::Udp, 120).await;
+    let id = f.handshake().await;
+    let input = udp(&f, false, 41000);
+    let failed_output = forward(&mut f, id, input);
+    let ExitProjection::Install {
+        flow: failed, ack, ..
+    } = f.b.next_exit_projection().unwrap()
+    else {
+        panic!("first install")
+    };
+    ack.complete(true).unwrap();
+    let failed_scope = failed_output.exit_scope().unwrap();
+    let old_cipher =
+        f.b.exit_reply(ExitReplyIngress::new(udp(&f, true, 41000)))
+            .unwrap();
+    let input = udp(&f, false, 41001);
+    let surviving_output = forward(&mut f, id, input);
+    let ExitProjection::Install {
+        flow: survivor,
+        ack,
+        ..
+    } = f.b.next_exit_projection().unwrap()
+    else {
+        panic!("second install")
+    };
+    ack.complete(true).unwrap();
+    assert_ne!(failed, survivor);
+
+    f.b.fail_exit_projection(&failed);
+    assert_eq!(f.b.retained_flows(), 1);
+    assert!(failed_scope.ensure_current().is_err());
+    tokio::time::timeout(Duration::from_secs(1), failed_scope.invalidated())
+        .await
+        .unwrap();
+    assert!(
+        failed_output
+            .release(|_| panic!("failed tuple output"))
+            .is_err()
+    );
+    assert!(
+        old_cipher
+            .release(|_| panic!("failed tuple cipher output"))
+            .is_err()
+    );
+    // This output predates the failure, so preserving only fresh work is insufficient.
+    surviving_output.release(|_| ()).unwrap();
+    assert_eq!(
+        f.b.circuit_info(id).unwrap().unwrap().state,
+        CircuitState::Established
+    );
+    let ExitProjection::Retire { flow, ack, .. } = f.b.next_exit_projection().unwrap() else {
+        panic!("exact retirement")
+    };
+    assert_eq!(flow, failed);
+    ack.complete(true);
+    assert!(f.b.next_exit_projection().is_none());
+    assert!(
+        f.b.exit_reply(ExitReplyIngress::new(udp(&f, true, 41000)))
+            .is_err()
+    );
+    rejected_forward(&mut f, id, 41000);
+    let input = udp(&f, false, 41001);
+    forward(&mut f, id, input).release(|_| ()).unwrap();
+    let reply = udp(&f, true, 41001);
+    deliver_reply(&mut f, id, reply);
+
+    f.renew().await;
+    let ExitProjection::Renew { flow, ack, .. } = f.b.next_exit_projection().unwrap() else {
+        panic!("surviving flow renewal")
+    };
+    assert_eq!(flow, survivor);
+    ack.complete(true).unwrap();
+    assert!(f.b.next_exit_projection().is_none());
+    let input = udp(&f, false, 41001);
+    forward(&mut f, id, input).release(|_| ()).unwrap();
+    let reply = udp(&f, true, 41001);
+    deliver_reply(&mut f, id, reply);
+    assert_eq!(f.b.retained_flows(), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn exit_confirm_failure_of_last_flow_retires_cipher_and_is_idempotent() {
+    let mut f = fixture(BusinessProtocol::Udp, 120).await;
+    let id = f.handshake().await;
+    let input = udp(&f, false, 41000);
+    let queued = forward(&mut f, id, input);
+    let ExitProjection::Install { flow, ack, .. } = f.b.next_exit_projection().unwrap() else {
+        panic!("install")
+    };
+    ack.complete(true).unwrap();
+    let old_cipher =
+        f.b.exit_reply(ExitReplyIngress::new(udp(&f, true, 41000)))
+            .unwrap();
+
+    // The source owns a different incarnation of the same tuple and CID.
+    f.a.fail_exit_projection(&flow);
+    assert_eq!(f.a.retained_flows(), 1);
+    assert!(f.a.next_exit_projection().is_none());
+    assert_eq!(
+        f.a.circuit_info(id).unwrap().unwrap().state,
+        CircuitState::Established
+    );
+    let reply = udp(&f, true, 41000);
+    deliver_reply(&mut f, id, reply);
+
+    f.b.fail_exit_projection(&flow);
+    f.b.fail_exit_projection(&flow);
+    assert_eq!(f.b.retained_flows(), 0);
+    assert_eq!(
+        f.b.circuit_info(id).unwrap().unwrap().state,
+        CircuitState::Closed
+    );
+    assert!(queued.release(|_| panic!("failed output")).is_err());
+    assert!(old_cipher.release(|_| panic!("retired cipher")).is_err());
+    let ExitProjection::Retire {
+        flow: retired, ack, ..
+    } = f.b.next_exit_projection().unwrap()
+    else {
+        panic!("single retirement")
+    };
+    assert_eq!(retired, flow);
+    f.b.fail_exit_projection(&flow);
+    assert!(f.b.next_exit_projection().is_none());
+    ack.complete(true);
+    f.b.fail_exit_projection(&flow);
+    assert!(f.b.next_exit_projection().is_none());
+    f.close().await;
+}
+
+#[tokio::test]
 async fn exit_pending_projection_budget_and_ack_timeout_are_fail_closed() {
     let mut f = fixture_with_limits(
         BusinessProtocol::Udp,

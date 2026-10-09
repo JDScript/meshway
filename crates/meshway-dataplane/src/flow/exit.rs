@@ -388,6 +388,20 @@ impl FlowTable {
         }
     }
 
+    pub fn fail_exit_projection(&mut self, incarnation: &FlowIncarnation) -> bool {
+        let key = self.entries.iter().find_map(|(key, flow)| {
+            flow.exit
+                .as_ref()
+                .is_some_and(|exit| exit.incarnation == *incarnation)
+                .then(|| key.clone())
+        });
+        let Some(key) = key else {
+            return false;
+        };
+        self.remove(&key);
+        true
+    }
+
     pub fn retire_exits(&mut self) {
         let keys: Vec<_> = self
             .entries

@@ -1,5 +1,5 @@
 use super::{Carrier, Error, PendingFrame, SecureNode};
-use crate::exit::{Counters, ExitProjection, ExitReplyIngress, Limits};
+use crate::exit::{Counters, ExitProjection, ExitReplyIngress, FlowIncarnation, Limits};
 use meshway_authority::DataPlaneIdentity;
 use meshway_model::NodeId;
 use std::{collections::BTreeMap, time::Instant};
@@ -59,6 +59,16 @@ impl SecureNode {
     pub fn retire_exits(&mut self) {
         self.engine.flows.retire_exits();
         self.collect_exit_flows();
+    }
+
+    /// Report failure of one exact projection, including confirmation failure
+    /// after a successful ACK. Cancels its queued outputs and exposes Retire.
+    /// A shared cipher stays live until its last flow ends. Unknown or already
+    /// retired incarnations are no-ops.
+    pub fn fail_exit_projection(&mut self, flow: &FlowIncarnation) {
+        if self.engine.flows.fail_exit_projection(flow) {
+            self.collect_exit_flows();
+        }
     }
 
     /// The owned exit TUN's reverse-NAT input. Lookup and reply admission use the
