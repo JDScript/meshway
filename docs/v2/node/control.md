@@ -23,7 +23,11 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `refresh_configuration` | 显式续租并从同一 Server 事务取得精确匹配的 lease 与 full／delta；复用相同校验和持久化入口 |
 | `watch_node`／`receive_event` | 创建单条、无自动重连的类型化 Node 事件流；把同认证上下文的通知映射为既有刷新或失效动作 |
 | `execution_snapshot` | 从当前有效实例、lease 和匹配的已保存目标取得不可变执行快照；不证明 installed／applied |
-| `dataplane_identity` | 验证同执行快照与已登记密钥后，取得受期限约束的 Noise 初始化及包平面签名句柄 |
+| `dataplane_identity` | 验证同执行快照（或同一 netmap 租约的快照）与已登记密钥后，取得受期限约束的 Noise 初始化及包平面签名句柄 |
+| `begin_sync`／`SyncCall::send`／`finish_sync`／`sync` | 一次 netmap 长轮询：持有 driver 准备、释放 driver 发送、再持有 driver 校验并签发；见 [Netmap 快照与续租](#netmap-快照与续租) |
+| `sync_loop` | 以 `tokio::sync::Mutex<Control>` 驱动长轮询直至停止，按结果发布快照 |
+| `netmap_snapshot`／`netmap_reference`／`netmap_lease` | 当前 netmap 快照（有有效实例时附带绑定）、持有的已验证内容引用（下一请求的基准）与当前租约 |
+| `set_sync_transport` | 安装 sync 的 HTTP 交换实现 |
 | `create_demand` | 使用当前 Node 会话提交匹配当前 instance 的类型化需求；调用方保持重试 request ID，随后同步执行目标 |
 | `renew_demand` | 以现有 demand ID 和绝对 expiresAt 请求续租；反馈不更新本机许可，须同步保存并取得新执行快照 |
 | `cancel_demand` | 在 HTTP 发送前使旧快照及连续性失效并清空本机 execution deadline；不确定响应也不复活旧许可 |
@@ -51,7 +55,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 - Ed25519 控制密钥和 X25519 数据面密钥分别生成。签名 transcript／intent digest 与 Server 共用协议实现。
 - Server origin 与已登记的 `controllerId` 固定保存；不同 origin 或不同安装身份的 challenge 不能接管既有密钥。
 - challenge 分配响应不确定时保留同一签名申请；申请已本地到期时使用新申请，session 响应不确定仍保留原 session intent。已本地到期证明遭拒允许重新证明，新鲜证明的凭据拒绝保持终止语义。
-- 短期会话、instance、lease 和上报计数不写入恢复文件；进程重启后重新认证并申请新 instance。
+- 短期会话、instance、lease 和上报计数不写入恢复文件；进程重启后重新认证并申请新 instance。签名的 netmap 及其租约例外，见 [Netmap 快照与续租](#netmap-快照与续租)。
 - `stop` 停用会话的本机使用资格。仍有效的短期凭据可留在当前进程，显式 `authenticate` 后复用，以免反复启停耗尽 Server 的会话额度；它不能恢复已释放的实例。
 - 期限同时受墙上时间和单调时钟约束，延迟响应与时钟回拨不会延长已取得的期限。
 - 已接纳写入即使失去等待者也由阻塞 worker 完成，并持续持有目录锁。结果不确定时返回 `ReloadRequired`，重新打开后才能发起依赖该状态的操作。
@@ -111,6 +115,36 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 
 输出排队时保留快照，在最终 I/O 边界再次检查，并在阻塞期间选择失效通知。替换 publication 会取消旧输出 guard，但允许直接后继按不透明 lineage 比较仍未过期的旧授权。stop、取消需求、失效 barrier、跨 instance 或跳过已观察的 publication 都中断连续性；调用者不能只比较 digest 重新构造交接。旧排队输出永不取得新期限。数据面如何保留流／circuit 见[连续性](/v2/node/dataplane#包与流边界)。
 
+## Netmap 快照与续租
+
+> 组件接口已实现；Server 的 `POST /agent-api/v1/sync` 路由、生成客户端方法与 daemon 接线尚未完成，`SyncTransport` 是两者之间的接口。行为设计见 [Netmap 设计](/v2/node/netmap-design)。
+
+`ExecutionSnapshot::issue_netmap(NetmapIssue)` 绑定已验证的 `CompiledNetmap` 与其 `NetmapLease`，唯一截止是租约 `expiresAt`，在签发者 Clock 上同时受 UTC 高水位与单调时钟约束。session 与 instance 不参与有效性；instance 只作为 State／回执绑定（`instance_binding()`），可为空。生产快照只由 Control 签发。
+
+| 方法 | 行为 |
+| --- | --- |
+| `netmap()`／`netmap_reading()` | 当前内容；reading 在一次租约读取下给出内容、租约与时钟值，`leased()` 直接作为 `meshway_policy::admission::netmap` 的输入 |
+| `netmap_ref()`／`lease()`／`deadline()` | 比较数据，不是授权 |
+| `same_netmap(other)` | 同一内容签发且同一失效代际：两份快照可互换，仅实例绑定可能不同 |
+| `netmap_continuation_from(old)` | 只对 serial 增大定义：同一 lineage、旧租约仍有效、本节点 enabled／identity／地址／keys 不变；返回旧内容供消费者按内容比较，不恢复旧输出权限 |
+
+同一内容的所有快照共享一个租约单元。`NetmapRenewal`（仅签发者持有）续租时提高所有活快照的截止，不取消任何 guard、不换代，新快照与旧快照 `same_netmap`。租约已到期或 guard 已失效后续租失败：过期授权不复活，只能重新签发。新 serial 先取消全部旧 guard（本节点身份变化时同时换 lineage），保存后再签发新快照。
+
+`finish_sync` 依次执行：请求被替换检查 → `SyncResponse::check(request)` → full 验证 digest、delta 以 `apply_netmap_delta` 重建并复核目标 digest、unchanged 匹配持有内容 → 网络／节点／keys 绑定与租约指向 → 拒绝 serial 回退 → 保存 → 签发。结果为：
+
+| `NetmapChange` | 含义 |
+| --- | --- |
+| `New { previous }` | 首次安装或更大 serial；旧 guard 已取消 |
+| `Renewed` | 同内容就地续租 |
+| `Reissued` | 同内容但当前没有有效授权（已到期、已撤销或重启时缓存已过期），重新签发，不与旧快照 `same_netmap` |
+
+在 `finish_sync` 之前已有其他安装、撤销或停止的回复返回 `Pending` 且不改变任何状态。`peerFacts` 在 netmap 部分安装后原样交给 `PeerFactsSink`，不进入快照；消费者拒收时下一请求不带游标、取得完整事实。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 30 秒退避；立即返回且无变化的回复至少间隔 1 秒。
+
+| 事件 | netmap 授权 |
+| --- | --- |
+| Server 不可达、超时、5xx、409、session 过期／401、instance 过期或重新取得 | 保持至租约截止 |
+| sync 返回 403／404、`membership_revoked`、`stop`、开始换钥、身份记录写入、私有写入结果不确定 | 立即取消 |
+
 ## 安装回执与运行报告
 
 `begin_application()` 为当前已保存、instance 目标一致的配置确认 saved 后返回 `ApplicationTicket`。Ticket 绑定 Control owner、instance、target 与 attempt；Clone 不产生新尝试。同一未完成尝试重用原 saved 请求、sequence 和时间；已完成后的重装使用下一 attempt。
@@ -123,11 +157,21 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 
 ## 私有存储与传输
 
-每个控制身份使用独立的绝对私有目录。`control.json` 保存 origin、必要密钥、待完成接入及配置缓存；它包含秘密。目录为 owner-only，文件为 `0600`；读取有大小上限，写入使用临时文件、原子替换与同步。
+每个控制身份使用独立的绝对私有目录。目录为 owner-only，文件为 `0600`；读取有大小上限，写入使用临时文件、原子替换与同步。
+
+| 文件 | 内容 |
+| --- | --- |
+| `control.json` | 身份记录：origin、密钥、待完成接入、身份绑定与换钥状态；包含秘密 |
+| `netmap.json` | `{ format: "meshway-netmap-cache/1", netmap, lease, seal }` |
+| `execution.json` | 旧 publication 目标缓存 `{ format: "meshway-execution-cache/1", saved }`，随旧执行链删除 |
+
+缓存文件缺失、格式未知、损坏或绑定不符时忽略，不阻断身份也不生成授权。
+
+`seal` 为 `{ signer: "node", keyId, keyGeneration, signature }`：本节点已登记控制钥对 `lease_message` 的 Ed25519 签名。transcript 依次为 `meshway/netmap-lease/v1\0`、网络与节点 UUID、revision、serial、内容 digest、`issuedAt`／`expiresAt` 毫秒、signer 类型字节和 key ID／generation（定长大端）。当前 Server 不签名 netmap，seal 证明的是本身份从已认证的 sync 响应接受了该内容。重新打开时依次验证格式、digest、网络／节点／keys 绑定、租约指向与 seal：通过且租约未到期即恢复为执行授权（不联系 Server）；已到期只作 delta 基准，等 sync 续租后重新签发。重启依赖系统 UTC，进程间不保留时钟高水位。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
 
 文件保护原语由 `meshway-private-storage` 提供，Server 与 Node 共用目录、祖先路径、文件类型／权限、锁和原子发布实现；文件名、记录格式和业务恢复仍归各自领域所有。
 
-当前私有记录格式为 3。仅对可识别且完整性／身份绑定有效的格式 1／2 执行升级：先持久备份原记录，再保留 origin、密钥、接入 intent 和身份绑定，清空派生 saved 缓存并原子写入格式 3。旧缓存不补默认字段变成新许可；重启重新同步。未知版本、当前格式损坏或备份失败均报错并保留原数据，不生成替代身份。
+当前身份记录格式为 5，不再包含任何派生缓存，编译器变化不改变身份版本。格式 1–4 的 `saved` 只做完整性与身份绑定检查（4 按当前 demand-7 目标验证）：先持久备份原记录 `control-v<n>-<sha256>.json`，再保留 origin、密钥、接入 intent、身份绑定和换钥状态，原子写入格式 5。旧缓存不补默认字段变成新许可；重启重新同步。未知版本、当前格式损坏或备份失败均报错并保留原数据，不生成替代身份。
 
 远端连接要求 HTTPS；明文 HTTP 仅允许数字 loopback 地址。HTTP builder 由宿主提供并保留其底层 socket／解析保护；生成客户端关闭重定向。原始密钥、兑换码、token、HTTP 响应体和底层错误不会进入组件的普通 Debug／Display 输出。
 
