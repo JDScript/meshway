@@ -90,7 +90,9 @@ impl Engine {
         if let Some((_, guard)) = circuit {
             guard.check_at(&current).map_err(|_| Error::Expired)?;
         }
-        if current.now_ms >= prepared.permit_expires_at_ms || current.instant >= prepared.expires_at
+        if current.now_ms >= prepared.permit_expires_at_ms
+            || current.instant >= prepared.expires_at
+            || !prepared.exit_live_at(current.instant, current.now_ms)
         {
             return Err(Error::Expired);
         }

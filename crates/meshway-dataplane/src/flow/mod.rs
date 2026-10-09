@@ -140,6 +140,7 @@ pub(super) struct Prepared {
     direction: Direction,
     pub expires_at: Instant,
     pub permit_expires_at_ms: u64,
+    previous_deadline: Option<(Instant, u64)>,
 }
 
 impl Prepared {
@@ -561,6 +562,12 @@ impl FlowTable {
             direction,
             expires_at,
             permit_expires_at_ms,
+            previous_deadline: existing.map(|flow| {
+                (
+                    flow.expires_at,
+                    flow.permit_expires_at_ms.min(flow.guard_expires_at_ms),
+                )
+            }),
         })
     }
 

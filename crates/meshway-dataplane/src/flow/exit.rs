@@ -144,10 +144,10 @@ impl FlowTable {
                                 <= renew_after)))
         });
         if renew {
-            let previous_deadline = exit
-                .gate
-                .as_ref()
-                .map(|gate| (gate.scope.deadline(), gate.scope.deadline_ms()));
+            // Reconciliation can shorten retained flow bounds before a lazy
+            // kernel renewal is materialized. Fence against that actual flow,
+            // not merely the older (potentially longer) installed projection.
+            let previous_deadline = prepared.previous_deadline;
             exit.renew = exit.gate.is_some();
             let scope = ProjectionScope::new(guard.for_projection(
                 prepared.expires_at,
@@ -402,6 +402,12 @@ impl FlowTable {
 }
 
 impl Prepared {
+    pub fn exit_live_at(&self, now: Instant, now_ms: u64) -> bool {
+        self.flow
+            .exit
+            .as_ref()
+            .is_none_or(|exit| exit.live(now, now_ms))
+    }
     pub fn exit_incarnation(&self) -> Option<FlowIncarnation> {
         self.flow.exit.as_ref().map(|exit| exit.incarnation)
     }
