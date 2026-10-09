@@ -162,7 +162,8 @@ impl Fixture {
             ip: vec![format!("udp:{}", self.external.port())],
             bidirectional: false,
         }];
-        input.routing.egress.rules = vec![EgressRule {
+        input.routing.egress.rules.clear();
+        let rules = vec![EgressRule {
             remark: String::new(),
             matcher: RouteMatch {
                 ip_cidr: vec![format!("{}/32", self.external.ip())],
@@ -172,6 +173,19 @@ impl Fixture {
                 nodes: vec![format!("node:{}", nodes[2])],
                 via: vec![format!("node:{}", nodes[1])],
             },
+        }];
+        input.routing.egress.profiles.insert(
+            "exit-test".into(),
+            RoutingProfile {
+                rules,
+                fallback: RouteAction::Unmanaged,
+            },
+        );
+        input.routing.egress.assignments = vec![ProfileAssignment {
+            target: vec![format!("node:{}", nodes[0])],
+            allowed: vec!["exit-test".into(), "mesh".into()],
+            default: "exit-test".into(),
+            locked: false,
         }];
         self.client
             .apply_configuration(
@@ -251,7 +265,7 @@ impl Fixture {
                 },
                 protocol: BusinessProtocol::Udp,
                 port: Some(self.external.port().try_into().unwrap()),
-                profile: "mesh".into(),
+                profile: "exit-test".into(),
                 duration_seconds: 30,
             })
             .await

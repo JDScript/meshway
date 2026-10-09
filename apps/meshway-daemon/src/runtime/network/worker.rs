@@ -207,6 +207,24 @@ pub(super) async fn run(
         let structural = matches!(&work, Work::Target | Work::DnsTimeout)
             || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
+            Work::Command(Some(Command::Handoff(snapshot, reply))) => {
+                let applicable = installed.as_ref().is_some_and(|state| {
+                    state.exit.as_ref().is_some_and(|exit| {
+                        snapshot
+                            .configuration()
+                            .is_ok_and(|cfg| cfg.exit_role.as_ref() == Some(&exit.plan))
+                    }) && state
+                        .target
+                        .identity
+                        .as_ref()
+                        .is_some_and(|old| snapshot.continuation_from(old.snapshot()).is_ok())
+                });
+                if applicable {
+                    let _ = install_host(&mut host, snapshot).await;
+                }
+                let _ = reply.send(());
+                continue;
+            }
             Work::NetworkChanged => {
                 network_changes.borrow_and_update();
                 let report = sample_host(&host, &installed, reports.borrow().clone());
@@ -494,9 +512,6 @@ pub(super) async fn run(
                 if pause_until.is_some() {
                     if let Some(state) = &mut installed {
                         state.live = false;
-                        if let Some(exit) = state.exit.take() {
-                            state.cleanup_failed |= exit.stop(&mut state.secure).await.is_err();
-                        }
                     }
                 } else {
                     let _ = close(&mut installed).await;
@@ -802,7 +817,12 @@ async fn install(
         .snapshot()
         .configuration()
         .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
-    let needs_dns = super::requirements::dns_required(&cfg.dns.settings);
+    let needs_dns = super::requirements::dns_required(&cfg.dns.settings)
+        || matches!(
+            cfg.dns.egress,
+            meshway_configuration::execution::DnsEgress::ViaExit { .. }
+                | meshway_configuration::execution::DnsEgress::Unavailable { .. }
+        );
     let exit_dns = !matches!(
         cfg.dns.egress,
         meshway_configuration::execution::DnsEgress::NoExit

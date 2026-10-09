@@ -214,6 +214,7 @@ struct Completion {
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Consumed by the Linux-only worker.
 enum Command {
+    Handoff(ExecutionSnapshot, oneshot::Sender<()>),
     DetachPing(meshway_model::ObservationSubscriptionId),
     AttachPing {
         subscription: meshway_model::ObservationSubscriptionId,
@@ -647,6 +648,10 @@ impl Handle {
         } else {
             self.retry = Retry::default();
         }
+        #[cfg(target_os = "linux")]
+        if let Some(identity) = &identity {
+            self.prepare_exit_handoff(identity.snapshot()).await;
+        }
         self.ticket = Some(control.begin_application().await?);
         self.outcome = None;
         let ticket = self.ticket.as_ref().expect("application begun").clone();
@@ -660,6 +665,38 @@ impl Handle {
             retired_dns,
         }));
         Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn prepare_exit_handoff(&self, next: &ExecutionSnapshot) {
+        let previous = self.report.borrow().guard.clone();
+        let Some(previous) = previous else {
+            return;
+        };
+        let Ok(old) = next.continuation_from(&previous) else {
+            return;
+        };
+        let Ok(cfg) = next.configuration() else {
+            return;
+        };
+        if old.exit_role.is_none()
+            || old.exit_role != cfg.exit_role
+            || next.same_execution(&previous)
+        {
+            return;
+        }
+        // Keep Host's role bound to the real direct successor while Control
+        // waits for its saved/applying HTTP receipts. This prepares resources;
+        // only the subsequently issued ticket can publish an applied result.
+        let (reply, done) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::Handoff(next.clone(), reply))
+            .await
+            .is_ok()
+        {
+            let _ = done.await;
+        }
     }
 
     pub async fn finish(&mut self, control: &mut Control) -> Result<(), meshway_control::Error> {

@@ -121,7 +121,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 客户端先通过 `install_egress_capture` 准备旧／新范围的负向边界，再安装当前快照并 `switch`；任一必需组件失败时 suspend 保留负向边界，显式 down 由同一 Host 精确清理。中继可安装外部 permit，但没有本地 role 就没有出口 writer。
 
-`DnsEgress::ViaExit`／`ServeExitResolver` 的专用 DNS-purpose 适配尚未接通。daemon 不发布这些查询的执行 Scope；配置需要系统 DNS 时，已有 DNS owner 保持负向安装。状态中的 `exit.dnsUnavailable=dnsUnavailable` 与 IPv4 后端能力／角色安装分别显示，缺少 resolver 适配不否定业务 IP 出口；必需的负向 DNS 系统资源安装或健康检查失败仍阻断整体 applied。`exit/off` 使用明确关闭的系统 DNS 设置，不能据其结果宣称出口 DNS 可用。
+`DnsEgress::ViaExit`／`ServeExitResolver` 的专用 DNS-purpose 适配尚未接通。daemon 不发布这些查询的执行 Scope；配置需要系统 DNS 时，已有 DNS owner 保持负向安装。客户端 `ViaExit`／`Unavailable` 计划即使关闭 MagicDNS／overrideLocal，也须安装负向 root DNS，不能恢复本地 fallback。状态中的 `exit.dnsUnavailable=dnsUnavailable` 与 IPv4 后端能力／角色安装分别显示，缺少 resolver 适配不否定业务 IP 出口；必需的负向 DNS 系统资源安装或健康检查失败仍阻断整体 applied。`exit/off` 不测试查询，但客户端仍须提供该负向安装所需的系统后端，不能据其结果宣称出口 DNS 可用。
 
 ### 源端 egress capture 与切换
 
