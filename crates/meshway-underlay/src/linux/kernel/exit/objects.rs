@@ -463,3 +463,78 @@ pub(super) async fn verify(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires isolated Linux NFT/TUN namespace and NET_ADMIN"]
+    async fn exit_nft_high_mark_prefix_preserves_exact_program_ownership() {
+        assert_eq!(
+            std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+            Ok("1")
+        );
+        let tun = meshway_tun::Tun::create(meshway_tun::Options::new(1280).unwrap()).unwrap();
+        let mut nonce = [0; 16];
+        getrandom::fill(&mut nonce).unwrap();
+        let program = Program {
+            legacy: false,
+            installation: nonce.iter().map(|byte| format!("{byte:02x}")).collect(),
+            interface: tun.if_index().unwrap(),
+            interface_name: tun.name().to_owned(),
+            mark: 0x8000_0000,
+            pools: vec!["100.96.0.0/11".parse().unwrap()],
+        };
+        let mut commands = Commands::default();
+        let receipt = mutate(&mut commands, &program.create()).await.unwrap();
+        let result = verify(&mut commands, &program, &receipt).await;
+        mutate(&mut commands, &json!({"nftables": program.tables().into_iter().map(|(family, name)| json!({"delete": {"table": {"family": family, "name": name}}})).collect::<Vec<_>>()})).await.unwrap();
+        assert_eq!(present(&mut commands, &program).await.unwrap(), 0);
+        assert!(
+            result.is_ok(),
+            "high-bit mark must survive actual NFT readback: {result:?}"
+        );
+    }
+
+    fn rule(expression: Value) -> Value {
+        json!({"nftables": [{"rule": {"family": "inet", "table": "owned", "chain": "output", "expr": [expression]}}]})
+    }
+
+    #[test]
+    fn nft_high_mark_prefix_readback_matches_the_owned_bit_test() {
+        for key in [
+            json!({"meta": {"key": "mark"}}),
+            json!({"ct": {"key": "mark"}}),
+        ] {
+            for op in ["==", "!="] {
+                for address in [0, 0x8000_0000u32] {
+                    let intended = rule(
+                        json!({"match": {"left": {"&": [key, 0x8000_0000u32]}, "op": op, "right": address}}),
+                    );
+                    let observed = rule(
+                        json!({"match": {"left": key, "op": op, "right": {"prefix": {"addr": address, "len": 1}}}}),
+                    );
+                    assert_eq!(
+                        decode(&serde_json::to_vec(&intended).unwrap()).unwrap(),
+                        decode(&serde_json::to_vec(&observed).unwrap()).unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mark_prefix_normalization_does_not_hide_changed_ownership_bits() {
+        let intended = rule(
+            json!({"match": {"left": {"&": [{"meta": {"key": "mark"}}, 0x8000_0000u32]}, "op": "!=", "right": 0}}),
+        );
+        let changed = rule(
+            json!({"match": {"left": {"meta": {"key": "mark"}}, "op": "!=", "right": {"prefix": {"addr": 0, "len": 2}}}}),
+        );
+        assert_ne!(
+            decode(&serde_json::to_vec(&intended).unwrap()).unwrap(),
+            decode(&serde_json::to_vec(&changed).unwrap()).unwrap()
+        );
+    }
+}
