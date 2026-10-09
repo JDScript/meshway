@@ -20,6 +20,12 @@ static ENCODE: meshway_logging::profile::Metric =
 static DECODE: meshway_logging::profile::Metric =
     meshway_logging::profile::Metric::new("codec.decode");
 
+/// Scheduling hint for carriers: a well-formed candidate frame that is not a
+/// Data frame. Never an authentication or admission decision.
+pub fn is_control_frame(bytes: &[u8]) -> bool {
+    bytes.get(..8) == Some(MAGIC) && bytes.get(8).is_some_and(|kind| *kind != 3)
+}
+
 /// Fixed session routing prefix only; never an authentication decision.
 pub(super) fn session_id(bytes: &[u8]) -> Result<Option<[u8; 32]>, Error> {
     if bytes.len() > MAX_FRAME || bytes.get(..8) != Some(MAGIC) {

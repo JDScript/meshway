@@ -353,8 +353,7 @@ impl EpochContext {
         match event {
             // Scheduling hint only. SecureNode still authenticates and admits it.
             Event::Frame { frame, .. }
-                if !(frame.payload.starts_with(b"MWCIR\0\0\x05")
-                    && frame.payload.get(8).is_some_and(|kind| *kind != 3)) =>
+                if !meshway_dataplane::secure::is_control_frame(&frame.payload) =>
             {
                 true
             }

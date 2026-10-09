@@ -31,6 +31,7 @@ use crate::{
     authority::{Cap, Lifetime, View},
     flow::{Entry, FlowGrant},
 };
+pub use codec::is_control_frame;
 use codec::{Context, Frame, Kind};
 use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot};
 pub use meshway_configuration::execution::CircuitAuthorization;
