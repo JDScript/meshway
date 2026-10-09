@@ -306,7 +306,7 @@ impl super::super::Kernel {
                                         let (index, name, _, _) = expected.tun.as_ref().ok_or(Error::Expired)?;
                                         Some(Device { index: *index, name: name.clone(), source: cfg.addresses.ipv4.ok_or(Error::Target)? })
                                     };
-                                    backend.apply(plan, mesh, device, || scope.check()).await
+                                    backend.commit_staged(plan, mesh, device, || scope.check()).await
                                 }.await;
                                 (reply, result, true)
                             },

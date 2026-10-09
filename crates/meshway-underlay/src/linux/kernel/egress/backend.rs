@@ -201,7 +201,8 @@ impl Backend {
         self.ledger.pending_gate = None;
         self.store.persist(&self.ledger).await
     }
-    pub async fn apply(
+    /// Commit after the caller staged the negative union and resolved authority.
+    pub async fn commit_staged(
         &mut self,
         plan: EgressCapturePlan,
         mesh: Ranges,
@@ -209,7 +210,6 @@ impl Backend {
         check: impl Fn() -> Result<()>,
     ) -> Result<()> {
         let next = plan::parse(&plan)?;
-        self.stage(plan.clone(), mesh.clone()).await?;
         self.remove_rules().await?;
         self.install_rules(&next).await?;
         if let Some(device) = &device {

@@ -149,8 +149,9 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
         monitored: true,
     };
     backend.initialize().await.unwrap();
+    backend.stage(full.clone(), mesh.clone()).await.unwrap();
     backend
-        .apply(full.clone(), mesh.clone(), Some(device.clone()), || Ok(()))
+        .commit_staged(full.clone(), mesh.clone(), Some(device.clone()), || Ok(()))
         .await
         .unwrap();
     kernel.quiesce().await.unwrap();
@@ -197,8 +198,9 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
     });
     let narrow = narrow(server.ip(), direct.ip());
     for plan in [narrow.clone(), full.clone(), narrow.clone()] {
+        backend.stage(plan.clone(), mesh.clone()).await.unwrap();
         backend
-            .apply(plan, mesh.clone(), Some(device.clone()), || Ok(()))
+            .commit_staged(plan, mesh.clone(), Some(device.clone()), || Ok(()))
             .await
             .unwrap();
     }
@@ -207,8 +209,9 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
     exchange(Some(&kernel), server, b"assert-no-leak").await;
     exchange(None, direct, b"explicit-direct").await;
     if std::env::var("MESHWAY_X3C_CAPTURE_CRASH").as_deref() == Ok("1") {
+        backend.stage(full.clone(), mesh.clone()).await.unwrap();
         backend
-            .apply(full.clone(), mesh.clone(), Some(device.clone()), || Ok(()))
+            .commit_staged(full.clone(), mesh.clone(), Some(device.clone()), || Ok(()))
             .await
             .unwrap();
         std::fs::write(
