@@ -123,6 +123,8 @@ impl Fixture {
 
 #[tokio::test]
 async fn gateway_html_and_stale_instance_recover_without_operator_up() {
+    // C: faults are discovered by real 20 s control cycles and retry timers;
+    // wait on observed phases/receipts while the daemon owns lease renewal.
     let fixture = Fixture::start().await;
     fixture.current_report(&fixture.ready).await;
     for mode in [proxy::GATEWAY, proxy::HTML] {
@@ -165,6 +167,8 @@ async fn gateway_html_and_stale_instance_recover_without_operator_up() {
 
 #[tokio::test]
 async fn server_restart_replaces_stale_session_and_instance_without_operator_up() {
+    // C: the real control poll/retry cycle must discover the new Server epoch;
+    // observed instance replacement, rather than a sleep, completes recovery.
     let mut fixture = Fixture::start().await;
     let original = fixture.ready.instance.as_ref().unwrap().instance_id;
     fixture.proxy.mode(proxy::GATEWAY);
@@ -199,6 +203,8 @@ async fn server_restart_replaces_stale_session_and_instance_without_operator_up(
 
 #[tokio::test]
 async fn revoked_control_key_stays_blocked_after_transport_recovers() {
+    // C: retain a real 6 s window across control's 1 s / 2 s initial backoff;
+    // an immediate Blocked projection alone cannot prove no reauthentication.
     let fixture = Fixture::start().await;
     let binding = fixture.ready.identity.as_ref().unwrap();
     fixture
@@ -231,6 +237,8 @@ async fn revoked_control_key_stays_blocked_after_transport_recovers() {
 
 #[tokio::test]
 async fn wrong_controller_response_is_fatal_not_transient_delivery() {
+    // C: retain a real 6 s window across control's 1 s / 2 s initial backoff;
+    // restoring HTTP must not schedule a new challenge for a fatal binding.
     let fixture = Fixture::start().await;
     fixture.proxy.mode(proxy::WRONG_CONTROLLER);
     fixture

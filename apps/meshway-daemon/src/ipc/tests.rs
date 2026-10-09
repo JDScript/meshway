@@ -159,6 +159,8 @@ async fn full_queue_rejects_without_waiting_and_closed_owner_is_terminal() {
 
 #[tokio::test]
 async fn slow_consumer_has_bounded_queue_write_deadline_and_cancellation() {
+    // C: real WRITE_TIMEOUT on the blocked Unix stream is the behavior under
+    // test; producer completion alone would not prove the write deadline.
     let (_client, ping, _stop, task) = bridge().await;
     let mut event = accepted();
     if let PingEvent::Accepted { target, .. } = &mut event {

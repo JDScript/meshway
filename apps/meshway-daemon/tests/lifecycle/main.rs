@@ -21,6 +21,8 @@ use tokio::time::Instant;
 
 #[tokio::test]
 async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent() {
+    // C: observe the daemon's real RENEW / REPORT / POLL (20 s) cycle. The
+    // daemon owns renewal; the test waits for a newer confirmed lease/report.
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let server = Server::start(root.join("server")).await;
@@ -135,7 +137,11 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
         )
         .await
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(35);
+    // The daemon must confirm renewal before the issued instance deadline;
+    // preceding configuration HTTP work does not consume an invented 35 s cap.
+    let now_ms = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+    let deadline =
+        Instant::now() + Duration::from_millis(first.expires_at_ms.saturating_sub(now_ms));
     loop {
         let view = status(&daemon.socket).await.unwrap();
         if view

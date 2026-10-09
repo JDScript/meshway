@@ -589,6 +589,8 @@ mod tests {
 
     #[tokio::test]
     async fn actual_execution_expiry_rejects_pending_and_new_requests_without_create() {
+        // C: the real issued EXECUTION_TTL (60 s) must expire. sleep_until uses
+        // its absolute deadline, not a duration measured after fixture setup.
         let mut fixture = ping::integration::Fixture::open().await;
         let mut worker = Worker::new();
         let ticket = fixture.controls[0].begin_application().await.unwrap();

@@ -472,6 +472,8 @@ impl Stream {
 
 #[tokio::test]
 async fn blocked_report_and_held_renew_end_at_confirmed_local_lease_with_typed_failure() {
+    // C: the original confirmed OBSERVATION_LEASE_SECONDS (30 s) must expire
+    // even while HTTP is held; a pending renewal is not an extension.
     let mut fixture = Fixture::open().await;
     let original = fixture.lease.expires_at();
     let mut stream = Stream::open(fixture.lease.clone());
@@ -481,8 +483,11 @@ async fn blocked_report_and_held_renew_end_at_confirmed_local_lease_with_typed_f
             break;
         }
     }
-    let start = tokio::time::Instant::now();
-    stream.wait_until(start + Duration::from_secs(10)).await;
+    let renew_at = tokio::time::Instant::now()
+        + (fixture.task.renew_after - chrono::Utc::now())
+            .to_std()
+            .unwrap_or_default();
+    stream.wait_until(renew_at).await;
     let mut shared_request = fixture.request.clone();
     shared_request.subscription_id = id();
     let shared = fixture.controls[0]
@@ -518,7 +523,15 @@ async fn blocked_report_and_held_renew_end_at_confirmed_local_lease_with_typed_f
             .await
             .is_err()
     );
-    stream.wait_until(start + Duration::from_secs(20)).await;
+    // Start the held renewal as soon as the real renewal window opens. The
+    // previous extra ten-second wait aged both subscriptions after setup.
+    assert!(
+        original.saturating_duration_since(std::time::Instant::now())
+            >= Duration::from_secs(
+                u64::try_from(meshway_server::observations::OBSERVATION_LEASE_SECONDS).unwrap() / 2,
+            ),
+        "held-renew preparation must fit inside half the confirmed subscription lease"
+    );
     let renewal = RenewNodeObservation {
         instance: fixture.request.instance.clone(),
         expires_at_ms: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap() + 30_000,
@@ -560,6 +573,8 @@ async fn blocked_report_and_held_renew_end_at_confirmed_local_lease_with_typed_f
 
 #[tokio::test]
 async fn thirty_second_interval_remains_live_without_extra_samples_or_idle_timeout() {
+    // C: cross the configured 30_000 ms sampling interval, renewing the real
+    // subscription meanwhile; a shorter stream cannot prove idle survival.
     let mut fixture = Fixture::open().await;
     assert_eq!(fixture.task.interval_ms, 30_000);
     let mut stream = Stream::open(fixture.lease.clone());
@@ -569,22 +584,34 @@ async fn thirty_second_interval_remains_live_without_extra_samples_or_idle_timeo
             break;
         }
     }
-    let start = tokio::time::Instant::now();
-    stream.wait_until(start + Duration::from_secs(11)).await;
-    let renewal = RenewNodeObservation {
-        instance: fixture.request.instance.clone(),
-        expires_at_ms: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap() + 30_000,
-    };
-    fixture.controls[0]
-        .renew_node_observation(fixture.request.subscription_id, &renewal)
-        .await
-        .unwrap();
-    stream.leases.send_replace(Some(
-        fixture.controls[0]
-            .node_observation_lease(fixture.request.subscription_id)
-            .unwrap(),
-    ));
-    stream.wait_until(start + Duration::from_secs(31)).await;
+    let end =
+        tokio::time::Instant::now() + Duration::from_millis(u64::from(fixture.task.interval_ms));
+    loop {
+        let until_renew = (fixture.task.renew_after - chrono::Utc::now())
+            .to_std()
+            .unwrap_or_default();
+        let renew_at = tokio::time::Instant::now() + until_renew;
+        stream.wait_until(renew_at.min(end)).await;
+        if tokio::time::Instant::now() >= end {
+            break;
+        }
+        let renewal = RenewNodeObservation {
+            instance: fixture.request.instance.clone(),
+            expires_at_ms: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap()
+                + u64::try_from(meshway_server::observations::OBSERVATION_LEASE_SECONDS).unwrap()
+                    * 1000,
+        };
+        fixture.task = fixture.controls[0]
+            .renew_node_observation(fixture.request.subscription_id, &renewal)
+            .await
+            .unwrap()
+            .task;
+        stream.leases.send_replace(Some(
+            fixture.controls[0]
+                .node_observation_lease(fixture.request.subscription_id)
+                .unwrap(),
+        ));
+    }
     stream.input.send(fixture.sample()).await.unwrap();
     loop {
         if matches!(stream.next().await, PingEvent::Sample { .. }) {
