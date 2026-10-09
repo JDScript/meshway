@@ -150,80 +150,64 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_it
     host.install(snapshot.clone()).await.unwrap();
     let role = host.install_netmap_exit_role(&role_plan).await.unwrap();
     let clock = Arc::new(Clock::new().unwrap());
-    let tuple = OriginalTuple {
-        source: "100.64.0.2".parse().unwrap(),
-        destination: "8.8.8.8".parse().unwrap(),
-        transport: ExitTransport::Udp {
-            source_port: 17524,
-            destination_port: 42424,
-        },
-    };
     let scope = ExitScope {
         binding: meshway_model::Digest::from_bytes([72; 32]),
         revoked: CancellationToken::new(),
     };
-    let incarnation = ExitIncarnation::new([221; 32]);
-    // The exit's own decision for source 2 on its netmap admits the tuple
-    // (an Internet destination; no packet is sent);
-    // another source address is not an exit grant.
-    role.install(incarnation, tuple, deadline(&clock, 20_000), scope.clone())
-        .await
-        .unwrap();
-    let forged = OriginalTuple {
-        source: "100.64.0.9".parse().unwrap(),
-        ..tuple
-    };
-    assert!(
+    // One new projection per probe: the exit's own decision for source 2 on
+    // its installed netmap (an Internet destination; no packet is sent).
+    let mut next_port = 17_000u16;
+    let mut project = |source: &str| {
+        next_port += 1;
+        let tuple = OriginalTuple {
+            source: source.parse().unwrap(),
+            destination: "8.8.8.8".parse().unwrap(),
+            transport: ExitTransport::Udp {
+                source_port: next_port,
+                destination_port: 42424,
+            },
+        };
+        let mut id = [0u8; 32];
+        id[..2].copy_from_slice(&next_port.to_be_bytes());
         role.install(
-            ExitIncarnation::new([7; 32]),
-            forged,
+            ExitIncarnation::new(id),
+            tuple,
             deadline(&clock, 20_000),
-            scope.clone()
+            scope.clone(),
         )
-        .await
-        .is_err()
-    );
+    };
+    project("100.64.0.2").await.unwrap();
+    // Another source address is not an exit grant.
+    assert!(project("100.64.0.9").await.is_err());
 
-    // Same content: nothing changes; the new instance-free role is unchanged.
+    // Same content: nothing changes and the instance-free role is unchanged.
     let renewed = sync(&mut control, &script, &first, false, HOUR).await;
     host.install(renewed).await.unwrap();
     assert!(role.is_active());
-    role.renew(incarnation, deadline(&clock, 20_000), scope.clone())
-        .await
-        .unwrap();
+    project("100.64.0.2").await.unwrap();
 
     // A larger serial with the same role: the replaced target mints no
-    // operation, but the role and its projection outlive three maintenance
-    // ticks until the Host accepts the continuation.
+    // operation, but the role outlives three maintenance ticks until the Host
+    // accepts the continuation.
     network.listeners.insert("udp".into(), listener(41003));
     let second = network.compile(Some(&first));
     assert_eq!(second.netmap.exit_role, first.netmap.exit_role);
     let next = sync(&mut control, &script, &second, true, HOUR).await;
     tokio::time::sleep(Duration::from_millis(350)).await;
     assert!(role.is_active());
-    assert!(
-        role.renew(incarnation, deadline(&clock, 20_000), scope.clone())
-            .await
-            .is_err()
-    );
+    assert!(project("100.64.0.2").await.is_err());
     host.install(next).await.unwrap();
     assert!(role.is_active() && host.exit_role().is_some());
-    role.renew(incarnation, deadline(&clock, 20_000), scope.clone())
-        .await
-        .unwrap();
+    project("100.64.0.2").await.unwrap();
 
-    // Revoking the source's Access retires exactly that projection.
+    // Revoking the source's Access: no new projection, the role remains.
     network.access = false;
     let third = network.compile(Some(&second));
     let revoked = sync(&mut control, &script, &third, true, HOUR).await;
     host.install(revoked).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(role.is_active());
-    assert!(
-        role.renew(incarnation, deadline(&clock, 20_000), scope.clone())
-            .await
-            .is_err()
-    );
+    assert!(project("100.64.0.2").await.is_err());
 
     // A short lease: when it ends, the owner stops and cleans up exactly.
     network.access = true;
