@@ -66,7 +66,20 @@ pub(crate) fn collect(
     network: NetworkId,
     now: i64,
 ) -> Result<BTreeMap<ObservationId, DiagnosticDemand>, Error> {
+    #[cfg(test)]
+    PUBLICATIONS.with(|count| count.set(count.get() + 1));
     store::diagnostics::collect(tx, network, now)
+}
+
+// Every publication compiles through `collect`; counted on the SQLite
+// executor thread that runs it.
+#[cfg(test)]
+thread_local! {
+    static PUBLICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(crate) fn take_publications() -> usize {
+    PUBLICATIONS.with(|count| count.replace(0))
 }
 
 impl Execution {

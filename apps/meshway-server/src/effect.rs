@@ -15,6 +15,13 @@ pub enum Effect {
         report: Box<meshway_protocol::state::StateReport>,
         observed_at: chrono::DateTime<chrono::Utc>,
     },
+    /// The reporter's complete current peer facts; None withdraws them. Not
+    /// journaled: Node `sync` reads them from the fact ledger.
+    PeerFacts {
+        network_id: NetworkId,
+        node_id: NodeId,
+        facts: Option<Box<meshway_protocol::netmap::PeerFacts>>,
+    },
     /// Publish only after permanent credential revocation and configuration
     /// removal commit. Frees volatile report storage; SQL retains revocation.
     NodeRetired {
@@ -63,7 +70,9 @@ impl Effect {
             | Self::ObservationSample { network_id, .. }
             | Self::Resource { network_id } => Some(*network_id),
             Self::Configuration { notice } => Some(notice.network_id),
-            Self::SessionRevoked { .. } | Self::AcceptedState { .. } => None,
+            Self::SessionRevoked { .. } | Self::AcceptedState { .. } | Self::PeerFacts { .. } => {
+                None
+            }
         }
     }
 }

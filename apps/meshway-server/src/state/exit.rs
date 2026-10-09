@@ -1,4 +1,7 @@
 //! Volatile exit prerequisite projection, fenced by instance and role revision.
+//! Only the previous publication chain reads `inputs` when another input
+//! compiles; a readiness change never triggers a compilation. In the netmap
+//! chain readiness is a peer fact (`state::facts`), never a compiler input.
 use super::{CLOCK_SKEW_SECONDS, REPORT_TTL_SECONDS, ReportAdmission};
 use crate::{error::Error, secrets::Sealer, store::execution};
 use chrono::{DateTime, Duration, Utc};

@@ -18,6 +18,15 @@ fn locals(node: &mut Node, addresses: &[&str]) {
     );
 }
 
+/// A report never compiles; the previous chain still folds the reported
+/// candidates into the next publication that another stable input causes.
+async fn reported(app: &App, network: NetworkId, a: &Node, b: &mut Node) {
+    let before = target(app, a).await.configuration.publication;
+    b.publish(app).await;
+    assert_eq!(target(app, a).await.configuration.publication, before);
+    crate::app::tests::recompile(app, network).await;
+}
+
 async fn target(app: &App, node: &Node) -> CompiledNode {
     app.execution()
         .configuration(
@@ -35,10 +44,10 @@ async fn target(app: &App, node: &Node) -> CompiledNode {
 
 #[tokio::test]
 async fn local_candidates_publish_union_ip_change_and_withdrawal_without_changing_permissions() {
-    let (_dir, app, _network, a, mut b, _) = setup(true).await;
+    let (_dir, app, network, a, mut b, _) = setup(true).await;
     let before = target(&app, &a).await;
     locals(&mut b, &["10.1.2.3:23456", "10.1.2.4:23456"]);
-    b.publish(&app).await;
+    reported(&app, network, &a, &mut b).await;
     let first = target(&app, &a).await;
     let key = format!("{}/udp", b.id);
     let endpoints = &first.configuration.dialers[&key].endpoints;
@@ -62,7 +71,7 @@ async fn local_candidates_publish_union_ip_change_and_withdrawal_without_changin
         meshway_configuration::digest(&first.configuration).unwrap()
     );
     locals(&mut b, &["10.1.2.99:23456"]);
-    b.publish(&app).await;
+    reported(&app, network, &a, &mut b).await;
     let changed = target(&app, &a).await;
     assert_ne!(
         changed.configuration.publication,
@@ -83,7 +92,7 @@ async fn local_candidates_publish_union_ip_change_and_withdrawal_without_changin
             .any(|endpoint| endpoint.host == "10.1.2.3")
     );
     locals(&mut b, &[]);
-    b.publish(&app).await;
+    reported(&app, network, &a, &mut b).await;
     let empty = target(&app, &a).await;
     assert_eq!(
         empty.configuration.dialers[&key].endpoints,
@@ -95,7 +104,7 @@ async fn local_candidates_publish_union_ip_change_and_withdrawal_without_changin
 #[tokio::test]
 async fn local_candidates_reject_budget_mesh_link_local_wrong_port_and_duplicate_reports_do_not_republish()
  {
-    let (_dir, app, _network, a, mut b, _) = setup(true).await;
+    let (_dir, app, network, a, mut b, _) = setup(true).await;
     for addresses in [
         vec!["169.254.1.1:23456"],
         vec!["127.0.0.1:23456"],
@@ -115,7 +124,7 @@ async fn local_candidates_reject_budget_mesh_link_local_wrong_port_and_duplicate
         );
     }
     locals(&mut b, &["10.1.2.3:23456"]);
-    b.publish(&app).await;
+    reported(&app, network, &a, &mut b).await;
     let first = target(&app, &a).await;
     let accepted = app
         .node_state_service()
@@ -138,7 +147,7 @@ async fn local_candidates_reject_budget_mesh_link_local_wrong_port_and_duplicate
         &mut b,
         &addresses.iter().map(String::as_str).collect::<Vec<_>>(),
     );
-    b.publish(&app).await;
+    reported(&app, network, &a, &mut b).await;
     let bounded = target(&app, &a).await;
     assert_eq!(
         bounded.configuration.dialers[&format!("{}/udp", b.id)]
@@ -153,9 +162,9 @@ async fn local_candidates_reject_budget_mesh_link_local_wrong_port_and_duplicate
 
 #[tokio::test]
 async fn local_candidates_do_not_create_a_missing_authorized_edge() {
-    let (_dir, app, _network, a, mut b, _) = setup(false).await;
+    let (_dir, app, network, a, mut b, _) = setup(false).await;
     locals(&mut b, &["10.1.2.3:23456"]);
-    b.publish(&app).await;
+    reported(&app, network, &a, &mut b).await;
     assert!(target(&app, &a).await.configuration.dialers.is_empty());
     app.shutdown().await.unwrap();
 }
