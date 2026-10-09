@@ -6,7 +6,7 @@ use crate::{Control, Error, Started};
 use meshway_authority::{Deadline, ExecutionSnapshot, NetmapIssue, NetmapRenewal};
 use meshway_configuration::netmap::CompiledNetmap;
 use meshway_model::{NetmapLease, NetmapRef};
-use meshway_protocol::StateCursor;
+use meshway_protocol::{NetmapSignature, StateCursor};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -15,7 +15,6 @@ use tokio_util::sync::CancellationToken;
 
 pub(crate) mod store;
 mod sync;
-pub use store::lease_message;
 pub use sync::{
     FactsRejected, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
     SyncReply, SyncTransport, sync_loop,
@@ -121,19 +120,27 @@ impl Drop for Fuse {
 }
 
 impl Control {
-    /// Restart path: a sealed cache of this identity becomes the delta base;
-    /// when its lease is still live it is execution authority again without
-    /// any Server contact. Expired or unverifiable caches are not loaded.
+    /// Restart path: a verified cache of this identity becomes the delta base;
+    /// when it carries a valid pinned-Server signature and its lease is still
+    /// live it is execution authority again without any Server contact.
     pub(crate) fn load_netmap(&mut self) -> Result<(), Error> {
         let Some(binding) = self.record.binding.as_ref() else {
             return Ok(());
         };
-        let Some((netmap, lease)) = store::load(&self.directory, binding)? else {
+        let Some(store::Loaded {
+            netmap,
+            lease,
+            authority,
+        }) = store::load(&self.directory, binding)?
+        else {
             return Ok(());
         };
         let netmap = Arc::new(netmap);
-        self.netmap.persisted_expiry = Some(lease.expires_at_ms);
         self.netmap.base = Some(Arc::clone(&netmap));
+        if !authority {
+            return Ok(());
+        }
+        self.netmap.persisted_expiry = Some(lease.expires_at_ms);
         if let Ok(deadline) =
             Deadline::from_response(Started::now(&self.clock)?, lease.expires_at_ms)
         {
@@ -179,6 +186,7 @@ impl Control {
         &mut self,
         netmap: Arc<CompiledNetmap>,
         lease: NetmapLease,
+        signature: &NetmapSignature,
         deadline: Deadline,
     ) -> Result<NetmapChange, Error> {
         let reference = netmap.reference();
@@ -212,7 +220,7 @@ impl Control {
                 }
             }
             self.netmap.cancel_guards();
-            self.persist_netmap(&netmap, &lease).await?;
+            self.persist_netmap(&netmap, &lease, signature).await?;
             self.netmap.base = Some(Arc::clone(&netmap));
             self.netmap.installed =
                 Some(self.netmap.issue(&self.clock, netmap, lease, deadline)?);
@@ -225,7 +233,7 @@ impl Control {
                 .is_none_or(|saved| lease.expires_at_ms >= saved.saturating_add(PERSIST_STEP_MS))
         {
             let base = self.netmap.base.clone().ok_or(Error::Lifecycle)?;
-            self.persist_netmap(&base, &lease).await?;
+            self.persist_netmap(&base, &lease, signature).await?;
         }
         self.netmap.epoch = Arc::new(());
         Ok(change)
@@ -238,11 +246,12 @@ impl Control {
         &mut self,
         netmap: &CompiledNetmap,
         lease: &NetmapLease,
+        signature: &NetmapSignature,
     ) -> Result<(), Error> {
         self.ready()?;
         let binding = self.record.binding.as_ref().ok_or(Error::Lifecycle)?;
         let keys = self.record.keys.as_ref().ok_or(Error::Record)?;
-        let bytes = store::encode(netmap, lease, binding, keys)?;
+        let bytes = store::encode(netmap, lease, signature, binding, keys)?;
         if let Some(previous) = self.netmap_write.take() {
             let _ = previous.await;
         }

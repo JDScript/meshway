@@ -70,8 +70,8 @@ pub use management::{
     RemoveMemberRequest, RoleChangeImpactResponse,
 };
 pub use netmap::{
-    PeerExitFacts, PeerFacts, PeerFactsDelta, PeerListenerFacts, StateCursor, SyncNetmap,
-    SyncRequest, SyncResponse,
+    NetmapSignature, NetmapSigner, PeerExitFacts, PeerFacts, PeerFactsDelta, PeerListenerFacts,
+    ServerSigningKey, StateCursor, SyncNetmap, SyncRequest, SyncResponse, netmap_lease_transcript,
 };
 pub use node::{
     DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeDnsQueryRequest,

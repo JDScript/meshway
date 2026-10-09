@@ -130,7 +130,7 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 
 同一内容的所有快照共享一个租约单元。`NetmapRenewal`（仅签发者持有）续租时提高所有活快照的截止，不取消任何 guard、不换代，新快照与旧快照 `same_netmap`。租约已到期或 guard 已失效后续租失败：过期授权不复活，只能重新签发。新 serial 先取消全部旧 guard（本节点身份变化时同时换 lineage），保存后再签发新快照。
 
-`finish_sync` 依次执行：请求被替换检查 → `SyncResponse::check(request)` → full 验证 digest、delta 以 `apply_netmap_delta` 重建并复核目标 digest、unchanged 匹配持有内容 → 网络／节点／keys 绑定与租约指向 → 拒绝 serial 回退 → 保存 → 签发。结果为：
+`finish_sync` 依次执行：请求被替换检查 → `SyncResponse::check(request)` → 以钉住的 Server 钥验证 `signature`（keyId／generation 与钉住钥不符为 `ServerKeyMismatch`，其余失败为 `SignatureInvalid`；均拒绝该回复、不改变状态、不撤销现有授权，`sync_loop` 按网络错误退避）→ full 验证 digest、delta 以 `apply_netmap_delta` 重建并复核目标 digest、unchanged 匹配持有内容 → 网络／节点／keys 绑定与租约指向 → 拒绝 serial 回退 → 保存 → 签发。结果为：
 
 | `NetmapChange` | 含义 |
 | --- | --- |
@@ -162,12 +162,14 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 | 文件 | 内容 |
 | --- | --- |
 | `control.json` | 身份记录：origin、密钥、待完成接入、身份绑定与换钥状态；包含秘密 |
-| `netmap.json` | `{ format: "meshway-netmap-cache/1", netmap, lease, seal }` |
+| `netmap.json` | `{ format: "meshway-netmap-cache/2", netmap, lease, signature, seal }` |
 | `execution.json` | 旧 publication 目标缓存 `{ format: "meshway-execution-cache/1", saved }`，随旧执行链删除 |
 
 缓存文件缺失、格式未知、损坏或绑定不符时忽略，不阻断身份也不生成授权。
 
-`seal` 为 `{ signer: "node", keyId, keyGeneration, signature }`：本节点已登记控制钥对 `lease_message` 的 Ed25519 签名。transcript 依次为 `meshway/netmap-lease/v1\0`、网络与节点 UUID、revision、serial、内容 digest、`issuedAt`／`expiresAt` 毫秒、signer 类型字节和 key ID／generation（定长大端）。当前 Server 不签名 netmap，seal 证明的是本身份从已认证的 sync 响应接受了该内容。重新打开时依次验证格式、digest、网络／节点／keys 绑定、租约指向与 seal：通过且租约未到期即恢复为执行授权（不联系 Server）；已到期只作 delta 基准，等 sync 续租后重新签发。重启依赖系统 UTC，进程间不保留时钟高水位。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
+`signature` 是 Server 对租约的签名（`NetmapSignature`，权威），`seal` 是本节点控制钥对同一租约的签名 `{ signer: "node", keyId, keyGeneration, signature }`，只记录本身份接受了该内容。两者都签 `meshway_protocol::netmap_lease_transcript`：依次为 `meshway/netmap-lease/v1\0`、网络与节点 UUID、revision、serial、内容 digest、`issuedAt`／`expiresAt` 毫秒、signer 类型字节（0 = node，1 = server）和签名钥 key ID／generation，定长大端。digest 覆盖内容，full 与 delta 在重建后核对 digest 等于签名中的引用即被覆盖。
+
+Server 签名钥在接入时随 `EnrollmentResponse.serverSigningKey` 返回，与身份绑定一起保存在 `control.json` 中钉住；为 null 时节点不接受任何 netmap。重新打开时，格式 2 文件须同时满足格式、digest、网络／节点／keys 绑定、租约指向、钉住钥的 Server 签名与本节点 seal 才载入；租约未到期即恢复为执行授权（不联系 Server），已到期只作 delta 基准。格式 1 文件（只有本节点 seal）至多作为 delta 基准，从不恢复授权；首个已验签的 sync 回复把它重写为格式 2。重启依赖系统 UTC，进程间不保留时钟高水位。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
 
 文件保护原语由 `meshway-private-storage` 提供，Server 与 Node 共用目录、祖先路径、文件类型／权限、锁和原子发布实现；文件名、记录格式和业务恢复仍归各自领域所有。
 

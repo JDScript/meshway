@@ -465,6 +465,7 @@ export type SecretDelivery = z.output<typeof schemas.zSecretDelivery>;
 export type SecretString = z.output<typeof schemas.zSecretString>;
 export type SelectionState = z.output<typeof schemas.zSelectionState>;
 export type Sequence = z.output<typeof schemas.zSequence>;
+export type ServerSigningKey = z.output<typeof schemas.zServerSigningKey>;
 export type SessionId = z.output<typeof schemas.zSessionId>;
 export type SessionIssuedResponse = z.output<typeof schemas.zSessionIssuedResponse>;
 export type SessionMetadata = z.output<typeof schemas.zSessionMetadata>;

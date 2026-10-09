@@ -140,7 +140,10 @@ impl Control {
     /// Apply one reply. A reply prepared before any later installation, stop
     /// or revocation is superseded (`Error::Pending`) and changes nothing.
     /// Transport failures, timeouts, 5xx, 401 (session) and 409 keep the
-    /// netmap authority; 403/404 reject this identity and revoke it.
+    /// netmap authority; 403/404 reject this identity and revoke it. A response
+    /// not signed by the pinned Server key is rejected (`SignatureInvalid`,
+    /// `ServerKeyMismatch`) without changing state or revoking the current,
+    /// itself verified, authority.
     pub async fn finish_sync(
         &mut self,
         reply: SyncReply,
@@ -176,6 +179,9 @@ impl Control {
             .check(&reply.request)
             .map_err(|_| Error::Contract)?;
         let binding = self.record.binding.as_ref().ok_or(Error::Lifecycle)?;
+        // Authority first: nothing of an unsigned or foreign-signed response
+        // is decoded into content or changes any state.
+        super::store::verify_server(binding, &response.lease, &response.signature)?;
         let netmap: Arc<CompiledNetmap> = match response.netmap {
             SyncNetmap::Full { netmap } => Arc::new(*netmap),
             SyncNetmap::Delta { delta } => {
@@ -190,7 +196,7 @@ impl Control {
         let deadline = Deadline::from_response(reply.started, response.lease.expires_at_ms)?;
         let reference = netmap.reference();
         let change = self
-            .install_netmap(netmap, response.lease, deadline)
+            .install_netmap(netmap, response.lease, &response.signature, deadline)
             .await?;
         let mut facts = false;
         if let Some(delta) = response.peer_facts {
