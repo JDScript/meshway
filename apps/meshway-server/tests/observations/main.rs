@@ -41,6 +41,13 @@ async fn keep_alive(
         return task;
     }
     let subscription = task.subscription_id.unwrap();
+    eprintln!(
+        "subscriber renewal {subscription}: now={}, renew_after={}, subscriber_expires_at={:?}, phase={:?}",
+        chrono::Utc::now(),
+        task.renew_after,
+        task.subscriber_expires_at,
+        task.phase,
+    );
     let renewed: ObservationList = json(
         server.post(
             &format!("{endpoint}/{subscription}/renew"),
@@ -61,6 +68,7 @@ fn sample_result(
     running: &ObservationTask,
     a: &Node,
     path: Vec<NodeId>,
+    segment: Sequence,
     now: chrono::DateTime<chrono::Utc>,
     event: EventId,
 ) -> ObservationResult {
@@ -69,7 +77,7 @@ fn sample_result(
         configuration: running.configuration.clone(),
         result: ObservationUpdate::Sample {
             path: path.clone(),
-            path_segment: Sequence::new(1).unwrap(),
+            path_segment: segment,
             sample: Box::new(ObservationSample {
                 measurement_id: event,
                 version: Version::MIN,
@@ -102,6 +110,7 @@ async fn fresh_sample(
     endpoint: &str,
     nodes: [&Node; 3],
     mut tabs: [&mut ObservationTask; 2],
+    segment: &mut Sequence,
 ) -> ObservationResult {
     // Each assertion phase receives a NEW measurement after real Console/Node
     // renewal. Never relabel an earlier measurement with a successor binding.
@@ -117,10 +126,14 @@ async fn fresh_sample(
     )
     .await;
     assert_eq!(tasks.items.len(), 1);
+    // The producer owns its monotonic segment across publication resets, even
+    // when the Server's Preparing projection no longer exposes the old segment.
+    *segment = segment.checked_next().unwrap();
     sample_result(
         &tasks.items[0],
         nodes[0],
         nodes.map(|node| node.id).to_vec(),
+        *segment,
         chrono::Utc::now(),
         id(),
     )
@@ -219,13 +232,6 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         204,
     )
     .await;
-    task = keep_alive(&server, &user, &endpoint, task).await;
-    shared = keep_alive(&server, &user, &endpoint, shared).await;
-    server.target(&a).await;
-    let tasks: ObservationList =
-        json(server.get("/agent-api/v1/tasks", a.token.expose()), 200).await;
-    assert_eq!(tasks.items.len(), 1);
-    let running = &tasks.items[0];
     let mut events = Events::open(&server, network.id, user.token.expose()).await;
     loop {
         if let meshway_protocol::StreamEvent::ObservationStatus { observation } =
@@ -235,10 +241,22 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
             break;
         }
     }
-    let now = chrono::Utc::now();
-    let event = id();
-    let result = sample_result(running, &a, vec![a.id, c.id, b.id], now, event);
-    let result_path = format!("/agent-api/v1/tasks/{}/results", running.id);
+    // SSE setup also belongs before the last renewal/configuration fetch.
+    let mut segment = Sequence::MIN;
+    let result = fresh_sample(
+        &server,
+        &user,
+        &endpoint,
+        [&a, &c, &b],
+        [&mut task, &mut shared],
+        &mut segment,
+    )
+    .await;
+    let ObservationUpdate::Sample { sample, .. } = &result.result else {
+        unreachable!()
+    };
+    let (now, event) = (sample.window_end, sample.measurement_id);
+    let result_path = format!("/agent-api/v1/tasks/{}/results", task.id);
     status(server.post(&result_path, b.token.expose(), &result), 401).await;
     let accepted: ObservationTask =
         json(server.post(&result_path, a.token.expose(), &result), 200).await;
@@ -268,6 +286,7 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         &endpoint,
         [&a, &c, &b],
         [&mut task, &mut shared],
+        &mut segment,
     )
     .await;
     wrong_instance.instance_id = id();
@@ -282,6 +301,7 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         &endpoint,
         [&a, &c, &b],
         [&mut task, &mut shared],
+        &mut segment,
     )
     .await;
     if let ObservationUpdate::Sample { path, .. } = &mut bypass.result {
@@ -294,22 +314,16 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         &endpoint,
         [&a, &c, &b],
         [&mut task, &mut shared],
+        &mut segment,
     )
     .await;
     let _: ObservationTask = json(server.post(&result_path, a.token.expose(), &fresh), 200).await;
-    let mut rewritten = fresh;
+    let mut rewritten = fresh.clone();
     if let ObservationUpdate::Sample { sample, .. } = &mut rewritten.result {
         sample.version = Version::new(2).unwrap();
     }
     status(server.post(&result_path, a.token.expose(), &rewritten), 409).await;
-    let mut before_task = fresh_sample(
-        &server,
-        &user,
-        &endpoint,
-        [&a, &c, &b],
-        [&mut task, &mut shared],
-    )
-    .await;
+    let mut before_task = fresh;
     if let ObservationUpdate::Sample { sample, .. } = &mut before_task.result {
         sample.window_start = now - chrono::Duration::minutes(1);
     }
