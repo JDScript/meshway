@@ -189,6 +189,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                     creation += ["--cap-add", capability]
                 creation += ["--mount", f"type=bind,source={report / 'exit-support'},target=/dns-fixture,readonly",
                              "--mount", f"type=bind,source={report / 'exit-support/os-packages.tsv'},target=/usr/share/meshway-dns-packages.tsv,readonly"]
+            if role == "e":
+                creation += ["--sysctl", "net.netfilter.nf_conntrack_acct=0"]
             mounts = [("bin", "/fixtures", True), (role, "/evidence", False), ("signals", "/signals", False), ("public", "/public", True)]
             if role == "controller": mounts.append(("controller", "/controller", True))
             for source, target, readonly in mounts:
@@ -238,7 +240,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         command("e", "/usr/sbin/nft", "add", "table", "inet", "meshway_x7b_sentinel")
         sentinel = command("e", "/usr/sbin/nft", "-j", "list", "table", "inet", "meshway_x7b_sentinel")
         write(report / "foreign-sentinel-before.json", sentinel)
-        snapshot("baseline")
+        baseline = snapshot("baseline")
         (report / "signals/exit-start").touch()
 
         def wait_for(predicate, description, timeout=90):
@@ -258,6 +260,13 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             write(report / role / "observed-status.json", value)
             return value
 
+        def running(value):
+            return (value.get("phase") == "running" and value.get("dataPlane") == "ready"
+                    and value.get("applied") is not None and value["applied"] == value.get("saved")
+                    and (value.get("instance") or {}).get("executionExpiresAt") is not None)
+
+        observations = {}
+
         wait_for(lambda: (report / "signals/exit-configured.json").exists(), "configuration")
         manifest["status"] = "prerequisite"
         save()
@@ -271,12 +280,16 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             if node not in states: return False
             state = states[node]
             reported = ((state.get("report") or {}).get("report") or {}).get("exitCapability")
-            return (capability.get("status") == {"status": "unavailable", "reason": "ipForwardDisabled"}
+            matched = (capability.get("status") == {"status": "unavailable", "reason": "ipForwardDisabled"}
                     and capability.get("installedFamilies") == [] and (value.get("exit") or {}).get("installedRole") is None
                     and value.get("applied") is None and reported == capability and state["freshness"] == "current")
+            if matched:
+                observations["unavailable"] = value
+                write(report / "e/ip-forward-disabled-server-state.json", json.loads(server["stdout"]))
+            return matched
         wait_for(unavailable, "ip_forward=0 fact")
         snapshot("ip-forward-disabled")
-        write(report / "e/ip-forward-disabled-status.json", status("e"))
+        write(report / "e/ip-forward-disabled-status.json", observations["unavailable"])
         manifest["stages"]["2"] = {"status": "passed", "evidence": ["ip-forward-disabled.json", "e/ip-forward-disabled-status.json"]}
         write(report / "forwarding-restored.json", command("e", "/bin/sh", "/dns-fixture/forwarding.sh", "1"))
         if command("e", "cat", "/proc/sys/net/ipv4/ip_forward")["stdout"].strip() != "1":
@@ -288,23 +301,25 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         def installed():
             value = status("e")
             capability = (value.get("exit") or {}).get("capability") or {}
-            return (capability.get("status") == {"status": "ready"}
+            matched = (capability.get("status") == {"status": "ready"}
                     and capability.get("instanceId") == (value.get("instance") or {}).get("instanceId")
                     and capability.get("installedFamilies") == ["ipv4"]
                     and capability.get("target") == value.get("applied")
                     and bool((value.get("exit") or {}).get("installedRole"))
-                    and value.get("applied") is not None and value["applied"] == value.get("saved"))
+                    and running(value))
+            if matched: observations["installed"] = value
+            return matched
         wait_for(installed, "role installed/applied")
         snapshot("installed")
-        write(report / "e/installed-status.json", status("e"))
-        current = status("e")
+        write(report / "e/installed-status.json", observations["installed"])
+        current = observations["installed"]
         acquired = json.loads(command("controller", "cat", "/evidence/acquire-" + current["instance"]["instanceId"] + ".json")["stdout"])
         write(report / "e/acquisition.json", acquired)
         if acquired["capabilities"].get("feature:exit-ipv4") != {"kind": "feature", "version": 1}:
             raise RuntimeError("E did not acquire the executable IPv4 exit capability v1")
         manifest["stages"]["1"] = {"status": "passed", "evidence": ["e/installed-status.json"]}
         manifest["stages"]["3"] = {"status": "passed", "evidence": ["installed.json"]}
-        wait_for(lambda: all((s := status(role)).get("applied") is not None and s["applied"] == s.get("saved") for role in ("a", "r")), "A/R applied")
+        wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "A/R running with execution lease")
         snapshot("capture-before-admission")
         # Actual policy/kernel readback is retained before the first application
         # packet. Egress default capture and the relay's role remain distinct.
@@ -314,11 +329,21 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         write(report / "compiled-plans.json", {"a": a_saved, "r": r_saved})
         if not a_saved["configuration"]["egressCapture"]["defaultCapture"] or r_saved["configuration"]["exitRole"] is not None:
             raise RuntimeError("A default capture/R non-exit role mismatch")
-        capture_route = command("a", "ip", "-j", "route", "get", addresses["external"]["external"])
-        write(report / "capture-route.json", capture_route)
-        tun_names = json.loads(before["a"]["tunReceived"]["stdout"])
-        if not any(route.get("dev") in tun_names for route in json.loads(capture_route["stdout"])):
-            raise RuntimeError("A external route readback does not select the installed TUN")
+        def capture_installed():
+            capture_route = command("a", "ip", "-j", "route", "get", addresses["external"]["external"], required=False)
+            write(report / "capture-route.json", capture_route)
+            if capture_route["exitCode"]: return False
+            tun_names = json.loads(before["a"]["tunReceived"]["stdout"])
+            return any(route.get("dev") in tun_names for route in json.loads(capture_route["stdout"]))
+        wait_for(capture_installed, "default capture readback")
+        bypass = {}
+        for name, address, port in (("controller", addresses["ca"]["controller"], 8443), ("peer", addresses["ar"]["r"], 35000)):
+            bypass[name] = command("a", "python3", "-c", "import socket; socket.create_connection(('" + address + "'," + str(port) + "),2)", required=False)
+            if bypass[name]["exitCode"] == 0: raise RuntimeError("ordinary application borrowed the protected " + name + " bypass")
+        bypass["ipv6"] = command("a", "ip", "-6", "-j", "route", "get", "2001:4860:4860::8888", required=False)
+        if bypass["ipv6"]["exitCode"] == 0 or a_saved["configuration"]["egressCapture"]["sinkIpv6"] != ["::/0"]:
+            raise RuntimeError("source exit IPv6 is not negatively captured")
+        write(report / "capture-bypass.json", bypass)
         manifest["stages"]["4"] = {"status": "passed", "evidence": ["capture-before-admission.json", "compiled-plans.json"]}
         manifest["status"] = "traffic"
         save()
@@ -361,6 +386,10 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         for link in ("external", "lan"):
             target = addresses[link][link]
             controls[link] = {"a": tcp_probe("a", target)}
+            for role in ("e", "r", "controller"):
+                controls[link][role + "Direct"] = tcp_probe(role, target)
+            if controls[link]["eDirect"]["exitCode"] or any(controls[link][role + "Direct"]["exitCode"] == 0 for role in ("r", "controller")):
+                raise RuntimeError("external service infrastructure is not E-only")
             controls[link]["block"] = command("e", "ip", "route", "add", "unreachable", target + "/32")
             try:
                 controls[link]["blocked"] = tcp_probe("a", target)
@@ -408,7 +437,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             raise RuntimeError("instance replacement/identity recovery mismatch")
         write(report / "e/recovered-status.json", recovered)
         snapshot("recovered")
-        wait_for(lambda: all((s := status(role)).get("applied") is not None and s["applied"] == s.get("saved") for role in ("a", "r")), "source/relay automatic recovery")
+        wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "source/relay automatic recovery")
         for link in ("external", "lan"):
             result = tcp_probe("a", addresses[link][link])
             write(report / ("recovered-flow-" + link + ".json"), result)
@@ -429,7 +458,13 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             if old & live: raise RuntimeError("old owned conntrack survived same-namespace journal recovery")
         (report / "signals/exit-down").touch()
         wait_for(lambda: all((report / ("signals/exit-down-" + role)).exists() for role in ("a", "r", "e")), "offline down")
-        evidence.no_owned_exit(snapshot("down"))
+        down = snapshot("down")
+        evidence.no_owned_exit(down)
+        for role in ("a", "r", "e"):
+            for key in ("addresses", "routes", "rules", "routes6", "rules6"):
+                normalize = lambda record: sorted(json.dumps(item, sort_keys=True) for item in json.loads(record["stdout"]))
+                if normalize(baseline[role][key]) != normalize(down[role][key]):
+                    raise RuntimeError("offline down did not restore exact owned namespace baseline: " + role + "/" + key)
         after_sentinel = command("e", "/usr/sbin/nft", "-j", "list", "table", "inet", "meshway_x7b_sentinel")
         write(report / "foreign-sentinel-after.json", after_sentinel)
         if json.loads(after_sentinel["stdout"]) != json.loads(sentinel["stdout"]):

@@ -35,9 +35,15 @@ pub(super) async fn run(cli: &Cli) -> Result<()> {
                     tasks.spawn(async move {
                         let mut buffer = [0; 32768];
                         loop {
-                            let count = tokio::time::timeout(Duration::from_secs(150), stream.read(&mut buffer)).await??;
+                            let count = match tokio::time::timeout(Duration::from_secs(150), stream.read(&mut buffer)).await {
+                                Ok(Ok(count)) => count,
+                                // Revocation/expiry can strand the external TCP
+                                // peer until its idle deadline. Source assertions
+                                // verify success; this service only owns cleanup.
+                                Ok(Err(_)) | Err(_) => break,
+                            };
                             if count == 0 { break; }
-                            tokio::time::timeout(IO, stream.write_all(&buffer[..count])).await??;
+                            if !matches!(tokio::time::timeout(IO, stream.write_all(&buffer[..count])).await, Ok(Ok(()))) { break; }
                         }
                         Ok::<(), crate::Error>(())
                     });
@@ -45,7 +51,7 @@ pub(super) async fn run(cli: &Cli) -> Result<()> {
                 packet = udp.recv_from(&mut buffer) => {
                     let (count, peer) = packet?;
                     visits.push(Visit { protocol: "udp", peer, local: udp.local_addr()?, bytes: count });
-                    udp.send_to(&buffer[..count], peer).await?;
+                    let _ = udp.send_to(&buffer[..count], peer).await;
                 }
                 packet = subscription.recv_from(&mut subscription_buffer) => {
                     let (count, peer) = packet?;
@@ -56,9 +62,10 @@ pub(super) async fn run(cli: &Cli) -> Result<()> {
                 _ = tick.tick(), if subscriber.is_some() => {
                     if let Some((peer, started)) = subscriber {
                         if started.elapsed() < Duration::from_secs(150) {
-                            subscription.send_to(&sent.to_be_bytes(), peer).await?;
-                            sent += 1;
-                            write(&cli.evidence.join("subscription-sent.json"), &sent).await?;
+                            if subscription.send_to(&sent.to_be_bytes(), peer).await.is_ok() {
+                                sent += 1;
+                                write(&cli.evidence.join("subscription-sent.json"), &sent).await?;
+                            }
                         } else { subscriber = None; }
                     }
                 }

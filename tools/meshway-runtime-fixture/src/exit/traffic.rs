@@ -9,15 +9,17 @@ pub(super) async fn run(cli: &Cli, topology: &Topology) -> Result<()> {
     let mut flows = Vec::new();
     for link in ["external", "lan"] {
         let address = topology.addresses[link][link];
-        let udp = UdpSocket::bind("0.0.0.0:0").await?;
-        udp.connect((address, 8080)).await?;
+        let udp = initial_udp(address, 8080).await?;
         let payload = b"meshway-exit-encrypted-through-r";
         let mut received = [0; 2048];
         // Demand creation may hold/drop the initial packet. Retry only initial
         // admission; steady traffic and all later stages have exact deadlines.
         tokio::time::timeout(Duration::from_secs(45), async {
             loop {
-                udp.send(payload).await?;
+                if udp.send(payload).await.is_err() {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
                 if let Ok(Ok(count)) =
                     tokio::time::timeout(Duration::from_secs(1), udp.recv(&mut received)).await
                 {
@@ -30,9 +32,20 @@ pub(super) async fn run(cli: &Cli, topology: &Topology) -> Result<()> {
             Ok::<(), crate::Error>(())
         })
         .await??;
-        let tcp =
-            tokio::time::timeout(Duration::from_secs(45), TcpStream::connect((address, 8080)))
-                .await??;
+        let tcp = tokio::time::timeout(Duration::from_secs(45), async {
+            loop {
+                if let Ok(Ok(stream)) = tokio::time::timeout(
+                    Duration::from_secs(3),
+                    TcpStream::connect((address, 8080)),
+                )
+                .await
+                {
+                    break Ok::<_, crate::Error>(stream);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await??;
         tuples.push((
             link,
             udp.local_addr()?,
@@ -131,12 +144,14 @@ struct ReceiveOnly {
 }
 
 async fn receive_only(address: Ipv4Addr, duration: Duration) -> Result<ReceiveOnly> {
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
-    socket.connect((address, 8081)).await?;
+    let socket = initial_udp(address, 8081).await?;
     let mut bytes = [0; 8];
     tokio::time::timeout(Duration::from_secs(45), async {
         loop {
-            socket.send(b"exit-subscribe").await?;
+            if socket.send(b"exit-subscribe").await.is_err() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
             if tokio::time::timeout(Duration::from_secs(1), socket.recv(&mut bytes))
                 .await
                 .is_ok_and(|r| r.is_ok_and(|count| count == 8))
@@ -165,4 +180,17 @@ async fn receive_only(address: Ipv4Addr, duration: Duration) -> Result<ReceiveOn
         received,
         elapsed_ms: started.elapsed().as_millis().try_into()?,
     })
+}
+
+async fn initial_udp(address: Ipv4Addr, port: u16) -> Result<UdpSocket> {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        loop {
+            let socket = UdpSocket::bind("0.0.0.0:0").await?;
+            if socket.connect((address, port)).await.is_ok() {
+                return Ok(socket);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await?
 }
