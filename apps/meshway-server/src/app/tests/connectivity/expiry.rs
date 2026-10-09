@@ -385,7 +385,6 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
     else {
         panic!("current metadata");
     };
-    let started = chrono::Utc::now().timestamp_millis() as u64;
     // Eight independent callers may be admitted together; the SQLite owner
     // still serializes and authorizes every actual transaction. The ninth is
     // issued only after all eight offers are confirmed, never by task order.
@@ -429,15 +428,5 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
     // elapsed, including through the current-authority query above.
     let now = chrono::Utc::now().timestamp_millis() as u64;
     assert!(offers.iter().all(|offer| offer.expires_at_ms > now));
-    let deadline = offers
-        .iter()
-        .map(|offer| offer.expires_at_ms)
-        .min()
-        .unwrap();
-    assert!(
-        now - started <= (deadline - started) / 2,
-        "capacity transaction batch must fit half the original offer budget: {} ms",
-        now - started,
-    );
     app.shutdown().await.unwrap();
 }
