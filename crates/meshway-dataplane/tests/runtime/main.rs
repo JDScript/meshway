@@ -11,6 +11,8 @@ mod diagnostic;
 mod exit;
 mod handshake_recovery;
 mod icmp;
+mod netmap_diagnostic;
+mod netmap_differential;
 mod netmap_exit;
 mod netmap_flow;
 mod responder;
