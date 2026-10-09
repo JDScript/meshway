@@ -10,7 +10,6 @@ use_community_mirrors = false
 
 [env]
 CARGO_INCREMENTAL = "0"
-CARGO_BUILD_JOBS = "2"
 CARGO_TARGET_DIR = "{{config_root}}/target"
 
 [tasks.setup]
