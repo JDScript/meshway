@@ -105,6 +105,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             try:
                 if process.poll() is None:
                     command(role, "/bin/sh", "-ec", f"kill -INT $(cat /evidence/{interface}.pid)")
+                else:
+                    errors.append("capture ended before the complete lifecycle window: " + role + "/" + interface)
                 code = process.wait(timeout=15)
                 if code:
                     raise RuntimeError("tcpdump failed or did not join")
@@ -223,7 +225,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                     raise RuntimeError("unexpected Docker interface name")
                 log = (report / role / (interface + "-tcpdump.log")).open("w")
                 capture = subprocess.Popen(["docker", "exec", containers[role], "/bin/sh", "-ec",
-                    f"echo $$ > /evidence/{interface}.pid; exec /usr/bin/tcpdump -Z root -U -n -i {interface} -c 4096 -s 256 -w /evidence/{interface}.pcap"],
+                    f"echo $$ > /evidence/{interface}.pid; exec /usr/bin/tcpdump -Z root -U -n -i {interface} -c 65536 -s 256 -w /evidence/{interface}.pcap"],
                     stdout=log, stderr=subprocess.STDOUT, close_fds=True)
                 captures.append((role, interface, capture, log))
         # tcpdump emits its pcap header once capture setup has completed.
@@ -262,8 +264,16 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         def unavailable():
             value = status("e")
             capability = (value.get("exit") or {}).get("capability") or {}
+            server = command("controller", "cat", "/evidence/state-e.json", required=False)
+            if server["exitCode"]: return False
+            states = json.loads(server["stdout"])["nodes"]
+            node = (value.get("identity") or {}).get("nodeId")
+            if node not in states: return False
+            state = states[node]
+            reported = ((state.get("report") or {}).get("report") or {}).get("exitCapability")
             return (capability.get("status") == {"status": "unavailable", "reason": "ipForwardDisabled"}
-                    and capability.get("installedFamilies") == [] and (value.get("exit") or {}).get("installedRole") is None)
+                    and capability.get("installedFamilies") == [] and (value.get("exit") or {}).get("installedRole") is None
+                    and value.get("applied") is None and reported == capability and state["freshness"] == "current")
         wait_for(unavailable, "ip_forward=0 fact")
         snapshot("ip-forward-disabled")
         write(report / "e/ip-forward-disabled-status.json", status("e"))
@@ -281,6 +291,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             return (capability.get("status") == {"status": "ready"}
                     and capability.get("instanceId") == (value.get("instance") or {}).get("instanceId")
                     and capability.get("installedFamilies") == ["ipv4"]
+                    and capability.get("target") == value.get("applied")
                     and bool((value.get("exit") or {}).get("installedRole"))
                     and value.get("applied") is not None and value["applied"] == value.get("saved"))
         wait_for(installed, "role installed/applied")
@@ -325,6 +336,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         if any(json.loads(after["r"]["tunReceived"]["stdout"]).values()):
             raise RuntimeError("relay TUN delivered business plaintext")
         write(report / "original-path.json", {"path": path, "permits": list(permits)})
+        for link in ("external", "lan"):
+            matching = [p for p in permits if p["target"] == {"type": "ip", "address": addresses[link][link]}]
+            expected = {"type": "internet"} if link == "external" else {"type": "cidr", "prefix": lan_subnet}
+            if not matching or any(p["exit"]["destination"] != expected for p in matching):
+                raise RuntimeError("Internet/explicit LAN permit classification mismatch")
         tuples = json.loads(command("a", "cat", "/evidence/original-tuples.json")["stdout"])
         proof = []
         for link, udp_local, udp_remote, tcp_local, tcp_remote in tuples:
@@ -441,6 +457,16 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         manifest["failedAt"] = manifest["status"]
         manifest["status"] = "failed"
         manifest["failure"] = str(error)
+        if "e" in containers:
+            try:
+                write(report / "failure-exit-readback.json", {
+                    "forwarding": command("e", "cat", "/proc/sys/net/ipv4/ip_forward", required=False),
+                    "nft": command("e", "/usr/sbin/nft", "-j", "list", "ruleset", required=False),
+                    "conntrack": command("e", "/usr/sbin/conntrack", "-L", "-f", "ipv4", "-o", "extended", required=False),
+                    "saved": command("e", "python3", "-c", "import json; print(json.dumps(json.load(open('/state/node/identity/control.json'))['saved']))", required=False),
+                })
+            except Exception as readback_error:
+                manifest["failureReadbackError"] = str(readback_error)
     finally:
         errors = []
         try:

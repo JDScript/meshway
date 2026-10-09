@@ -1,110 +1,90 @@
-# Isolated IPv4 exit fixture (preparation)
+# Isolated IPv4 exit acceptance
 
-`exit/off` is explicit-only and **expected to fail with `unsupported`** until
-X2–X5 are connected. It starts six infrastructure actors, not a working exit
-product. Controller/A/R/E currently rendezvous and record pending stages; no
-Server configuration, daemon installation, permit, flow table or NAT is faked.
+`exit/off` runs the real Server, three independent daemons/CLI instances and two
+external application services. It remains **explicit-only until two full runs
+pass**. A short run is diagnostic evidence; a component pass is not a row pass.
+Current acceptance status is defined in `docs/v2/node/validation.md`.
 
 ```text
-             Controller (forwarding=0)
-              |ca      |cr       |ce      (three separate control bridges)
-              A --ar-- R --re-- E
-                               |external -- IPv4 service :8080 (TEST-NET-2)
-                               |lan ------ LAN service :8080 (RFC1918)
+              Controller (forwarding=0)
+               |ca      |cr       |ce
+               A --ar-- R --re-- E
+                                |external -- isolated public-classified service
+                                |lan ------ RFC1918 service
 ```
 
-All seven bridges are run-labelled, internal Docker networks with no published
-ports or Internet route. `ar` and `re` are separate physical adjacencies; A and E
-share neither data nor control bridge. Only E has an interface on each service
-network. Controller/R kernel forwarding is disabled. The future Mesh path is
-A→R→E and the reply must be E→R→A, not newly routed through Controller.
+## Configuration and isolation
 
-## Addresses and classification
+Seven labelled internal bridges have no published ports or Internet route.
+A/E share neither a control nor a data link. Only E attaches to the service
+networks. Six RFC1918 links use Docker IPAM; the external link uses a random
+`11.77.x.0/29` entirely inside its internal bridge. This address is eligible for
+Policy's Internet classification. The accepted permit must explicitly carry
+`ExitDestinationScope::Internet`; TEST-NET/RFC1918 cannot satisfy that assertion.
+Allocation conflicts fail without changing another network.
 
-Docker IPAM allocates six RFC1918 control/data/LAN subnets, checked before use.
-The external link requests a random /29 in `198.51.100.0/24` (TEST-NET-2);
-conflicting allocations fail without touching existing networks. Each link's
-first role in the diagram gets subnet +2, the second +3; Docker reserves its
-gateway separately. `report.json.addresses` records exact per-run assignments.
+`controller/exit.rs` submits configuration through the generated management
+client: only E has `exitEnabled`; only A is assigned the `exit` profile, whose
+fallback is Exit to E via R. R/E keep `mesh`. Access is source A to
+`autogroup:internet` and the exact allocated LAN CIDR, limited to TCP 8080, UDP
+8080/8081 and ICMP. Demand-7 topology permits A–R and R–E with Native UDP/TCP
+declarations. No separate permit issuer or NAT implementation exists here.
 
-RFC1918 echo cannot prove Internet authorization: it is an exit-LAN target and
-requires explicit LAN permission. TEST-NET is **also excluded by the proposed
-production Internet classifier**. Here it provides an isolated non-RFC1918
-external simulation address, not a production classification exception. A
-future IP/CIDR test can use an explicit target permit if supported; an Internet
-grant success still needs a fixture-owned, globally classified address isolated
-from real routing and agreed with X1. No reserved prefix is silently declared
-public and no product allow-list is changed to make this row pass.
+MagicDNS/overrideLocal are false and DNS servers/default/routes/searchDomains
+are empty. Every Node still runs the existing private D-Bus/resolved namespace
+wrapper, since compiled exit DNS can require a negative root installation.
+Actual compiled DNS plans and independent IPC exit/DNS facts are retained.
 
-## Image and invocation
+Containers use the node-lab digest-locked OS image with manifest-checked,
+read-only host-built executables. Each actor has a read-only root, private
+state, 2 CPU/768 MiB/128 PID limits, no-new-privileges and dropped capabilities.
+A/R/E receive TUN/NET_ADMIN plus the existing resolved namespace capabilities.
+No host network, privileged container, Docker socket mount or host VM access
+is used. All local mutations are in fixture-owned namespaces.
 
-The sole image lock is `dev/node-lab/assets.lock.json`: Ubuntu digest, snapshot
-Release/index SHA-256, dependency closure and individual deb SHA-256. It includes
-`nftables`, `conntrack` (conntrack-tools), `tcpdump`, `curl` and `iproute2`.
-`dev/node-lab/build.py` checks required tool packages/paths and the offline image
-build checks installed versions. There is no second exit image lock or Rust
-build in Docker; native host-built manifest-checked binaries are mounted read-only.
+## Invocation
 
 ```sh
-mise run node:lab image-build
-mise run test:runtime:linux --build-only
-mise run test:runtime:linux --artifacts /absolute/private/bin --transport native-udp --dns-backend off --traversal exit
-# Or one build, explicit row (never part of the default matrix):
 mise run validate:matrix --rows exit/off --short
+git push planck feat/exit-acceptance
+mise run validate:remote -- --ref feat/exit-acceptance --rows exit/off
 ```
 
-The matrix selects the same provenance-checked tools image without changing
-the persistent lab selection. Changed image inputs require explicit image-build
-before using an old selected image. No lab deployment is part of preparation.
+The shared runtime build includes the production daemon library test binary.
+`components.py` runs X4's real driver, handoff, role, DNS handoff and
+forwarding-disabled cases in separate namespaces against an isolated UDP echo
+service. Their results are labelled `scope=component`; the main actors still
+must prove their own installation, NAT and traffic lifecycle.
 
-Each actor has a read-only root, private state tmpfs, no-new-privileges, dropped
-capabilities, 2 CPU/256 MiB/64 PID limits and the existing runtime ownership
-label. A/R/E have NET_ADMIN and `/dev/net/tun`; R/E also have NET_RAW and
-SETUID/SETGID for tcpdump's explicit root capture identity in the private bind.
-Only E declares `--sysctl net.ipv4.ip_forward=1`, in its own namespace. All other
-actors declare forwarding=0. No host network, privileged, host sysctl change,
-Docker socket mount or host VM access is used.
+## Assertion and evidence boundaries
 
-## Stage contract
-
-The Rust `exit::Stage` enumeration follows exit-design.md steps 1–8:
-
-| Stage | Required product evidence | Current status |
+| Phase | Assertions | Main evidence |
 | --- | --- | --- |
-| 1 Install | Admin configuration, role, real saved/applied and resources | pending-x2-x5 |
-| 2 IPv4 NAT and reply | TCP/MSS, UDP/MTU, echo, NAT tuple, encrypted R, original reply, 125s renewal | pending-x2-x5 |
-| 3 Denials | Source/port/LAN/public classifier, path, reply, hairpin, IPv6 | pending-x2-x5 |
-| 4 Withdrawal | Access/exit/member/path/profile, precise nft/ct retirement, fresh-only recovery | pending-x2-x5 |
-| 5 Expiry/cancellation | HTTP loss through actual expiry, blocked output/ACK | pending-x2-x5 |
-| 6 Host failures | forwarding/capability/nft/rp_filter/conflict/crash/journal | pending-x2-x5 |
-| 7 Capture/bypass | /0 with protected control/peer and no application bypass, first-match/IPv6 sink | pending-x2-x5 |
-| 8 Offline cleanup | Exact product resources removed, sentinels unchanged, all children joined | pending-x2-x5 |
+| 1 Capability | Accepted acquire declares `feature:exit-ipv4` v1; capability instance equals live instance | `e/acquisition.json`, `e/installed-status.json` |
+| 2 Prerequisite | `ip_forward=0` gives `ipForwardDisabled`, empty installed families and no role; restore reads back 1 | `ip-forward-disabled.json`, `forwarding-restored.json` |
+| 3 Applied | Ready IPv4 role, exact saved/applied reference, real kernel resources | `installed.json`, `e/installed-status.json` |
+| 4 Capture/transit | A default capture routes the external IP to its actual TUN; R remains a non-exit with original external transit permits | `capture-before-admission.json`, `capture-route.json`, `original-path.json` |
+| 5 Projection/NAT | Original and reverse conntrack tuple/owned mark match external service log; exact ACK/first-write/confirmation ordering is checked by the production driver test | `nat-proof.json`, `first-flow.json`, `components/driver.log` |
+| 6 Renewal/failure | Persistent TCP/UDP and receive-only UDP; driver checks original cutoff, ConfirmFailed exact isolation and surviving flow | `a/traffic-*.json`, `a/receive-only-*.json`, `components/{driver,handoff}.log` |
+| 7 Reply/path | Real TCP/UDP/echo, zero R TUN delivery and no payload in R pcap; driver asserts `SecureNode::exit_reply` and original reverse path | `original-path.json`, `r/*.pcap`, `icmp-*.json`, `business-block-control.json` |
+| 8 Drain/recovery | Role withdrawal, old socket refusal, held Node HTTP through instance expiry, fresh instance recovery, SIGKILL/same-netns journal recovery, explicit down and foreign sentinel preservation | `withdrawn.json`, `expired.json`, `*crash*.json`, `down.json`, `foreign-sentinel-*.json` |
 
-Infrastructure cleanup is implemented independently of pending product cleanup.
-Every actor stops on the supervisor marker, returns a nonzero unsupported result,
-and is inspected before exact removal; the matrix independently checks leftovers.
+The source uses a 30-second short window or 125-second full window. Public and
+LAN TCP/UDP windows run concurrently, alongside independent receive-only UDP.
+TCP sends 16 KiB across MSS boundaries; UDP includes 1338-byte IPv4 payload.
+The service keeps bounded peer-address access logs. The supervisor compares
+original and NAT tuples and performs E-only unreachable-route block/restore
+controls from A. Kernel counter dumps retain actual observations: absent
+counters are not manufactured as zero or success.
 
-## Evidence and E-block control
+`forwarding.sh` enters a private mount namespace sharing only E's existing
+network namespace, makes the proc-sys bind writable there, writes the one
+IPv4 forwarding key and requires a readback. Plain `sysctl -w` is insufficient:
+the pinned tool can exit zero after reporting a read-only filesystem error.
 
-- `baseline.json` / `after-probes.json`: namespace IDs, interfaces, routes, RPDB,
-  E forwarding, read-only `nft -j list ruleset` (including counters), and
-  `conntrack -L -f ipv4 -d <external-or-LAN-target> -o extended`. No flush,
-  deletion, masquerade or product nft installation is performed by the collector.
-- R and E capture all non-loopback interfaces separately, covering both mesh
-  adjacencies and each E service egress, with 4096-packet/256-byte snaplen bounds.
-  Capture children are interrupted and joined before decoding `*-tuples.json`.
-  Future NAT proof must correlate the egress source/port with the original and
-  reply conntrack tuples and product rule counters; an empty dump stays empty.
-- External and LAN Rust service actors keep bounded `access.json` peer-address
-  logs. Current probes originate **locally from E**, proving only collector and
-  topology health, never masquerade or A→R→E business success.
-- `infrastructure-probes.json` checks E→service success, A/R/Controller→service
-  failure, then adds an exact fixture-owned unreachable /32 route on E for the
-  service, observes failure, deletes that exact route and observes success. This
-  keeps the egress interface's capture socket alive and never replaces a route.
-  Future business control must repeat the
-  same window with A's live flow, correlate service logs and E's pcap, and verify
-  no fallback on A or shortcut around R. It remains `pending-x2-x5` now.
-- `exit-stages.json`, source/binary hashes, image provenance, Docker inspection,
-  pcap SHA-256 and process results are retained. No IP-check equality, missing
-  sample, local E probe, empty counter or collector completion becomes a pass.
+Every phase begins `notRun`. Errors preserve the failing phase, daemon/CLI and
+controller logs, namespace/RPDB/nft/conntrack snapshots, bounded pcap and source/
+binary/image hashes. Missing phases, unsuccessful actor exits or cleanup errors
+prevent a row pass. Captures and actors are joined before exact labelled
+container/network removal; matrix and remote supervisor independently check
+leftovers. No artifact inspection retroactively changes a run verdict.

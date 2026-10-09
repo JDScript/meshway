@@ -38,13 +38,13 @@ def no_owned_exit(snapshot):
     if any(item.get("table", {}).get("name", "").startswith("meshway_exit") for item in nft["nftables"]):
         raise RuntimeError("owned exit table survived retirement")
     for record in snapshot["e"]["conntrack"].values():
-        if record["exitCode"] or any(flow["mark"] for flow in conntrack_flows(record["stdout"])):
+        if record["exitCode"] or any(int(mark) for mark in re.findall(r"\bmark=(\d+)", record["stdout"])):
             raise RuntimeError("owned conntrack survived retirement")
 
 
 def all_stages_passed(manifest):
     return (set(manifest["stages"]) == {str(i) for i in range(1, 9)}
             and all(stage.get("status") == "passed" for stage in manifest["stages"].values())
-            and bool(manifest.get("processes"))
+            and set(manifest.get("processes", {})) == {"controller", "a", "r", "e", "external", "lan"}
             and all(state["ExitCode"] == 0 and not state["Running"] and not state["OOMKilled"] for state in manifest["processes"].values())
             and not manifest.get("cleanupErrors"))

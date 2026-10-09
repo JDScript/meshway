@@ -17,6 +17,8 @@
 
 可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`vless/off`、`trojan/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表十一个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。
 
+另有显式选择的 `exit/off`：真实 A→R→E 出口验收，当前尚无两次全长通过证据，不加入默认矩阵；详见[出口场景](#exit-scenario)。
+
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | `test:tun:linux` | — | — | — | 真实 TUN 设备创建与双栈包 I/O | 当前 wire 已通过；`20261007T212324Z-904a137e` |
@@ -121,6 +123,19 @@ mise run test:runtime:linux --artifacts /absolute/private/bin --transport native
 ```
 
 覆盖真实 `getaddrinfo`、短名称、可见性 REFUSED、分域 UDP／TCP、系统 UDP→TCP 截断重试、进程重启、长时包流、失效阻断及 DNS／接口恢复。DNS 场景在测试 namespace 内使用私有 mount namespace 与私有 D-Bus／resolver，不改写 Docker 的 resolver bind 源；固定 OS 资产见 `dev/dns-fixture/README.md`。
+
+#### 出口场景 {#exit-scenario}
+
+```sh
+mise run validate:matrix --rows exit/off --short
+mise run validate:remote -- --ref feat/exit-acceptance --rows exit/off
+```
+
+`exit/off` 使用真实 Server／CLI／daemon 和独立身份的 A、R、E，仅 E 启用出口，仅 A 使用 Exit→E via R 的 profile。公网分类目标使用完全隔离 internal bridge 中的 `11.77.x.0/29`，另有显式授权的精确 RFC1918 LAN；不能把 TEST-NET 或 LAN 成功记为 Internet grant。DNS 配置关闭，独立 resolved 后端仍启动以执行编译计划所需的负向安装。
+
+入口收集能力／前置条件、saved／applied、capture、原始与 NAT tuple、nft／conntrack、服务日志、R 密文、E 阻断对照、持续／仅接收窗口、撤回、真实 instance 到期与同 namespace journal 恢复证据。投影 ACK／ConfirmFailed／原截止等内部边界另运行同源码的正式 X4 组件测试；组件通过不能代替独立进程行通过。所有八阶段、进程退出与精确清理通过后该次行才通过；需两次全长独立通过才加入默认矩阵。
+
+当前状态：**未验收**。首轮短模式 `20261009T074812Z-36969f23` 在 forwarding 恢复步骤失败：只读 proc-sys 上的 `sysctl -w` 返回零但实际未写入，属于 fixture 缺陷；真实 NodeState 正确报告 `ipForwardDisabled`、空 installedFamilies 和空 applied。该诊断结果不构成产品转发失败或出口通过证据。
 
 #### 穿透场景
 

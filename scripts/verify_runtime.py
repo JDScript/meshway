@@ -532,7 +532,10 @@ def main():
         if not passed:
             raise RuntimeError("Linux daemon blocked-down cleanup retry failed")
         for role, (_, binary) in PLATFORM_BINARIES.items():
-            create(role, ["--include-ignored", "--skip", OWNER_CONFLICT_TEST, "--nocapture", "--test-threads=4"], executable=binary,
+            # Exit driver cases require their own NET_ADMIN/NAT/service topology
+            # and are run by exit/off, not this no-capability platform check.
+            create(role, ["--include-ignored", "--skip", OWNER_CONFLICT_TEST,
+                          "--skip", "runtime::network::exit::tests::", "--nocapture", "--test-threads=4"], executable=binary,
                    environment={"MESHWAY_DNS_ISOLATED": "1", "MESHWAY_DNS_BIND_MOUNT_FILE": "/etc/resolv.conf"})
             result = execute(role)
             passed = not any(result.values()) and "test result: ok." in (report / f"{role}.log").read_text()
