@@ -831,19 +831,41 @@
     }
   }
 
-  /* Under a workspace the globe dims and keeps turning where it was. */
-  .globe-stage {
-    transition: opacity 600ms ease;
+  /* The two network canvases share one reversible transition. They stay
+   * mounted, so camera, diagram zoom and scroll survive a view change. */
+  .globe-stage,
+  .topology-canvas {
+    --canvas-transition-duration: 560ms;
+    transition:
+      opacity var(--canvas-transition-duration) var(--ease-settle),
+      scale var(--canvas-transition-duration) var(--ease-settle),
+      translate var(--canvas-transition-duration) var(--ease-settle),
+      visibility 0s;
   }
   .globe-stage[data-receded="true"] {
     opacity: 0.4;
+  }
+  .globe-stage[data-view-hidden="true"],
+  .topology-canvas[data-shown="false"] {
+    opacity: 0;
+    visibility: hidden;
+    scale: 0.985;
+    transition-delay: 0s, 0s, 0s, var(--canvas-transition-duration);
+  }
+  .topology-canvas[data-shown="false"] {
+    translate: 0 10px;
   }
 
   @media (prefers-reduced-motion: reduce) {
     .surface,
     .surface[data-shown="false"],
-    .globe-stage {
+    .globe-stage,
+    .globe-stage[data-view-hidden="true"],
+    .topology-canvas,
+    .topology-canvas[data-shown="false"] {
       transition: none;
+      scale: 1;
+      translate: 0 0;
     }
     .launcher-item,
     .swap-in {

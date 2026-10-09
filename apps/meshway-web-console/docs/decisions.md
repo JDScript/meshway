@@ -556,13 +556,23 @@ states stay distinguishable by stroke and colour.
   Counts labelled connected count peers/pairs in that state, not channel IDs
   or report records. The neighbor list can also show known pending/unknown
   peers, with their states explicit; absent node reports do not become zero.
-- Network overview switches between the globe and the topology diagram in the
-  same canvas, remembering the choice. The diagram separates every node,
+- Overview (`/overview`) is the globe; topology (`/topology`) is a separate
+  primary navigation page alongside overview and nodes. Each keeps its own
+  selected node/group in the URL. The diagram separates every node,
   including nodes without a location or a live connection. Configuration and
   runtime counts are labelled separately. A different State configuration
   revision does not annotate the new declaration as current. Node positions stay stable
   across status updates. Original channel evidence remains available in details;
   history remains an explicitly selected layer.
+- Topology uses the existing dock's entry and selection animation. Both network
+  canvases stay mounted and share a reversible 560ms
+  fade/scale transition, preserving the globe camera and diagram zoom/scroll.
+  The outgoing canvas becomes inert immediately and hidden after the fade;
+  reduced motion switches immediately. There is no overview view switch or
+  persisted view preference. Previous `/overview?view=topology` links redirect
+  to the topology page with their node selection. On phones, dismissing a page
+  opened from topology returns to topology; explicit overview navigation still
+  opens the globe.
 - Clicking a node selects a persistent compact card on the right, with its
   name, status, useful addresses, place/network summary and an explicit
   action to open its workspace. Hover is only a brief name/status hint.
@@ -608,6 +618,12 @@ states stay distinguishable by stroke and colour.
   without a surrounding panel. Configuration-only edges are dashed; actual
   connection state and optional recorded history annotate only declared pairs.
   The source rule/default and transport restriction are available on the edge.
+  Visible transport badges use the actual reported protocol when connected;
+  otherwise they say which transports the declaration allows, or Any transport.
+  Historical and in-progress protocols retain their qualifier. Small diagrams
+  show badges along the curves with collision avoidance; dense diagrams reveal
+  them for hovered, focused or selected-node edges. Full descriptions remain
+  available on the edge's wider pointer/keyboard target.
   Names stay legible on small screens, where nodes occupy separate rows.
   Dense drawings have an explicitly labelled 80-node window, retaining the
   selected node; this bounds pair expansion without claiming a partial drawing
@@ -626,7 +642,8 @@ controller supports today; the rest of each row is the target design.
 
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
-| Overview `/overview` | globe / configuration topology with runtime overlay, status corner and optional history; a persistent compact node or cluster card | selected node / cluster | an explicit action opens node details | |
+| Overview `/overview` | globe, status corner and optional history | selected node / cluster | an explicit action opens node details | |
+| Topology `/topology` | configuration topology with runtime overlay and transport badges | selected node | an explicit action opens node details | |
 | Nodes `/nodes?q=` | overview, connections, diagnostics and settings; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=…`, `/nodes/add` | revoke, enrolment key |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |

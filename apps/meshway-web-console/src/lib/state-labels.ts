@@ -38,6 +38,28 @@ export function mapConnectionText(connection: MapConnection): string {
   }
 }
 
+/** A link badge states the source of its protocol: observed, historical, or configured. */
+export function mapTransportText(connection: MapConnection): string {
+  const actual = connection.transports.map(transportText).join(" / ")
+  if (connection.status === "connected" && actual) return actual
+  if (connection.status === "history" && actual)
+    return `${m.overview_history()} · ${actual}`
+  if (
+    (connection.status === "connecting" || connection.status === "failed") &&
+    actual
+  )
+    return `${actual} · ${connectionStatusLabel[connection.status]()}`
+  if (connection.declaration) {
+    const allowed = connection.declaration.transports
+    if (allowed === null) return m.overview_any_transport()
+    if (allowed.length === 0) return m.overview_no_transports()
+    return m.overview_transport_allowed({
+      value: allowed.map(transportText).join(" / "),
+    })
+  }
+  return mapConnectionText(connection)
+}
+
 /** Known carrier names use the same wording as configuration; future providers keep their name. */
 export function transportText(transport: string): string {
   switch (transport) {

@@ -21,7 +21,6 @@ import {
 import { stateOf } from "@/lib/nodes/state-model"
 import { onGlobeSelect, setGlobe } from "@/state/globe"
 import { useHistoryLayer } from "@/state/history-layer"
-import { useOverviewView } from "@/state/overview-view"
 
 import { useNodeNavigation } from "../nodes/-navigation"
 
@@ -57,7 +56,12 @@ export function useNetworkScene(networkId: string) {
     shouldThrow: false,
     select: (match) => match.params.node,
   })
-  const focus = workspaceNode ?? overviewNode
+  const topologyNode = useMatch({
+    from: "/_authed/networks/$network/topology",
+    shouldThrow: false,
+    select: (match) => match.search.node,
+  })
+  const focus = workspaceNode ?? topologyNode ?? overviewNode
   const declared = useMemo(
     () =>
       configured
@@ -160,12 +164,16 @@ export function useNetworkScene(networkId: string) {
  */
 export function useGlobeNetwork(networkId: string) {
   const { scene } = useNetworkScene(networkId)
-  const rememberedView = useOverviewView()
   const navigate = useNavigate()
   const overview = useMatch({
     from: "/_authed/networks/$network/overview",
     shouldThrow: false,
-    select: (match) => ({ node: match.search.node, view: match.search.view }),
+    select: (match) => ({ node: match.search.node }),
+  })
+  const topology = useMatch({
+    from: "/_authed/networks/$network/topology",
+    shouldThrow: false,
+    select: (match) => ({ node: match.search.node }),
   })
   const openNodeId =
     useMatch({
@@ -177,12 +185,10 @@ export function useGlobeNetwork(networkId: string) {
   useEffect(() => {
     setGlobe({
       scene,
-      selectedNodeId: openNodeId ?? overview?.node ?? null,
-      hidden:
-        overview !== undefined &&
-        (overview.view ?? rememberedView) === "topology",
+      selectedNodeId: openNodeId ?? topology?.node ?? overview?.node ?? null,
+      hidden: topology !== undefined,
     })
-  }, [scene, openNodeId, overview, rememberedView])
+  }, [scene, openNodeId, overview, topology])
   useEffect(
     () => () =>
       setGlobe({ scene: EMPTY_SCENE, selectedNodeId: null, hidden: false }),
@@ -198,7 +204,6 @@ export function useGlobeNetwork(networkId: string) {
             to: "/networks/$network/overview",
             params: { network: networkId },
             search: {
-              view: overview.view,
               node:
                 group && group.length > 1 ? undefined : (nodeId ?? undefined),
               group: group && group.length > 1 ? [...group] : undefined,

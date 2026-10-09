@@ -29,7 +29,8 @@ TanStack Router file routes: the folder tree is the URL tree.
 - What only one route uses sits in its folder, in files and folders whose
   names start with `-` (the router ignores them): `nodes/-node-list.tsx`,
   `nodes/$node/-transport/`. What a subtree shares sits at the subtree's
-  root: the network layout's chrome in `networks/$network/-shell/`.
+  root: the network layout's chrome in `networks/$network/-shell/`, and the
+  globe/topology canvases' shared selection, panels and diagram in `-map/`.
 - Another page's typed moves may be used across pages
   (`nodes/-navigation.ts` opens a node from the overview); nothing else
   private to a route is imported from outside it.
@@ -44,7 +45,7 @@ routes/
   _authed/index.tsx          the remembered or first network, or creating one
   _authed/networks/$network/
     route.tsx                the network: its event stream, the shell (-shell/), the globe's scene
-    overview/  nodes/  members/  configuration/  settings/  account/
+    overview/  topology/  nodes/  members/  configuration/  settings/  account/
 ```
 
 ### Shared code, by kind
@@ -72,7 +73,9 @@ routes/
   stream, draws the shell (network card, dock, toolbar), frames the globe
   and puts the network on it (`-shell/network-scene.ts`: scene, focused
   node, a click on a node opens it), and holds the configuration's review
-  dialogs. Its `<Outlet />` is the page.
+   dialogs. Its `<Outlet />` is the page. The persistent topology canvas is
+   mounted before the outlet (`-map/topology-canvas.tsx`) so it can leave behind
+   incoming page surfaces; the topology route owns selection and panels.
 - Each page's route renders the page: its panel and its workspace through
   `PageFrame`. A workspace belongs to a child route (`nodes/$node`,
   `members/$member`, `configuration/$view`, `settings/$section`,
@@ -107,7 +110,7 @@ ends or changes; window listeners are started once by `main.tsx`.
 | `live` | Each network's stream connection (connecting, live, paused, stopped); liveness (reads poll while not live) is derived from it. |
 | `boot` | The first-load sequence. |
 | `globe` | What the globe shows; a click's handler is runtime, not state. |
-| `history-layer` | The overview's chosen history window, per network. |
+| `history-layer` | The globe/topology history window, per network. |
 | `link-secrets` | The join or reset link's secret, taken from the fragment. |
 | `preferences` | Theme and language; `applyPreferences` keeps them on the document. |
 | `debug` | Whether the debug mode is on (localStorage) and this tab shows its panel (sessionStorage); the panel's tab and height. |

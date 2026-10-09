@@ -25,9 +25,9 @@ import { m } from "@/paraglide/messages.js"
 import { useGlobeAvailable } from "@/state/boot"
 import { highlightOnGlobe } from "@/state/globe"
 
-import { Group } from "./-group"
-import { HistoryLayer, type HistoryLayerProps } from "./-history-layer"
-import { lookColor, unlocatedReason } from "./-labels"
+import { Group } from "./group"
+import { HistoryLayer, type HistoryLayerProps } from "./history-layer"
+import { lookColor, unlocatedReason } from "./labels"
 
 /**
  * The overview's corner: the State's time and how it is kept current, the

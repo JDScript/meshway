@@ -120,7 +120,9 @@ export function GlobeStage() {
         aria-label={m.globe_region()}
         data-boot={boot}
         data-receded={state.recede}
-        style={{ visibility: state.hidden ? "hidden" : undefined }}
+        data-view-hidden={state.hidden}
+        aria-hidden={state.hidden}
+        inert={state.hidden}
         className="globe-stage fixed inset-0"
       />
     </>

@@ -5,14 +5,102 @@ import { useEffect, useRef, useState } from "react"
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import type { DeclaredTopology } from "@/lib/configuration/topology-view"
 import type { MapConnection, MapNode } from "@/lib/network-map"
-import {
-  mapConnectionText,
-  statusLabel,
-  transportText,
-} from "@/lib/state-labels"
+import { mapTransportText, statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
-import { lookColor } from "./-labels"
+import {
+  TopologyEdge,
+  type EdgeCaption,
+  type EdgeDrawing,
+  type Point,
+} from "./topology-edge"
+
+type Box = { left: number; right: number; top: number; bottom: number }
+const overlaps = (a: Box, b: Box) =>
+  a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+
+/** Fit compact captions along their own curves. Dense views label incident or
+ * pointed edges; others retain the full, focusable edge description.
+ */
+function captions(
+  drawings: readonly EdgeDrawing[],
+  nodes: Iterable<Point>,
+  selected: string | null,
+  highlighted: string | null,
+  width: number,
+  height: number
+) {
+  const result = new Map<string, EdgeCaption>()
+  const occupied: Box[] = [...nodes].flatMap((point) => [
+    {
+      left: point.x - 29,
+      right: point.x + 29,
+      top: point.y - 29,
+      bottom: point.y + 29,
+    },
+    {
+      left: point.x - 100,
+      right: point.x + 100,
+      top: point.y + 35,
+      bottom: point.y + 64,
+    },
+  ])
+  const candidates = drawings
+    .filter(
+      ({ edge }) =>
+        drawings.length <= 12 ||
+        edge.key === highlighted ||
+        edge.a === selected ||
+        edge.b === selected
+    )
+    .sort(
+      (a, b) =>
+        Number(b.edge.key === highlighted) - Number(a.edge.key === highlighted)
+    )
+  for (const { edge, a, b, control } of candidates) {
+    const text = mapTransportText(edge)
+    const textWidth = Math.min(
+      168,
+      28 +
+        [...text].reduce(
+          (sum, character) =>
+            sum + ((character.codePointAt(0) ?? 0) > 127 ? 12 : 6.5),
+          0
+        )
+    )
+    for (const t of [0.5, 0.62, 0.38, 0.74, 0.26, 0.86, 0.14]) {
+      const point = {
+        x: (1 - t) ** 2 * a.x + 2 * t * (1 - t) * control.x + t * t * b.x,
+        y: (1 - t) ** 2 * a.y + 2 * t * (1 - t) * control.y + t * t * b.y,
+      }
+      const box = {
+        left: point.x - textWidth / 2 - 3,
+        right: point.x + textWidth / 2 + 3,
+        top: point.y - 14,
+        bottom: point.y + 14,
+      }
+      if (
+        box.left < 4 ||
+        box.right > width - 4 ||
+        box.top < 4 ||
+        box.bottom > height - 4 ||
+        occupied.some((other) => overlaps(box, other))
+      )
+        continue
+      result.set(edge.key, { ...point, width: textWidth, text })
+      occupied.push(box)
+      break
+    }
+    if (edge.key === highlighted && !result.has(edge.key))
+      result.set(edge.key, {
+        x: (a.x + 2 * control.x + b.x) / 4,
+        y: (a.y + 2 * control.y + b.y) / 4,
+        width: textWidth,
+        text,
+      })
+  }
+  return result
+}
 
 /** Stable slots depend on node identities, never report time, status or a transient connection. */
 function positions(ids: readonly string[], width: number, height: number) {
@@ -41,7 +129,7 @@ function positions(ids: readonly string[], width: number, height: number) {
   return result
 }
 
-export function Topology({
+export function TopologyDiagram({
   nodes,
   edges,
   declared,
@@ -57,6 +145,9 @@ export function Topology({
   onClear: () => void
 }) {
   const [zoom, setZoom] = useState(1)
+  const [pointedEdge, pointAtEdge] = useState<string | null>(null)
+  const [focusedEdge, focusEdge] = useState<string | null>(null)
+  const highlighted = pointedEdge ?? focusedEdge
   const viewport = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 900, height: 600 })
   useEffect(() => {
@@ -82,6 +173,34 @@ export function Topology({
     ...[...slots.values()].map((point) => point.y + 100)
   )
   const byId = new Map(nodes.map((node) => [node.id, node]))
+  const drawings: EdgeDrawing[] = edges.flatMap((edge) => {
+    const a = slots.get(edge.a),
+      b = slots.get(edge.b)
+    if (!a || !b) return []
+    return [
+      {
+        edge,
+        a,
+        b,
+        control: {
+          x:
+            (a.x + b.x) / 2 +
+            (a.x === b.x
+              ? Math.min(Math.abs(a.y - b.y) * 0.65, width / 2 - 24)
+              : 0),
+          y: (a.y + b.y) / 2,
+        },
+      },
+    ]
+  })
+  const labels = captions(
+    drawings,
+    slots.values(),
+    selected,
+    highlighted,
+    width,
+    height
+  )
   const peers = new Set(
     edges.flatMap((link) =>
       link.a === selected ? [link.b] : link.b === selected ? [link.a] : []
@@ -147,56 +266,27 @@ export function Topology({
             if (event.target === event.currentTarget) onClear()
           }}
         >
-          {edges.map((link) => {
-            const a = slots.get(link.a),
-              b = slots.get(link.b)
-            if (!a || !b) return null
-            const x = (a.x + b.x) / 2 + (a.x === b.x ? 70 : 0)
-            const y = (a.y + b.y) / 2
-            const active =
-              selected === null || link.a === selected || link.b === selected
-            return (
-              <path
-                key={link.key}
-                d={`M ${a.x} ${a.y} Q ${x} ${y} ${b.x} ${b.y}`}
-                fill="none"
-                stroke={lookColor[link.look]}
-                strokeWidth={link.look === "matched" ? 2 : 1.5}
-                strokeDasharray={
-                  link.look === "matched" || link.look === "history"
-                    ? undefined
-                    : "6 6"
-                }
-                opacity={
-                  (link.look === "history" ? 0.25 : 0.8) * (active ? 1 : 0.2)
-                }
-              >
-                <title>
-                  {[
-                    `${byId.get(link.a)?.name} ↔ ${byId.get(link.b)?.name}`,
-                    mapConnectionText(link),
-                    link.transports.map(transportText).join(" / "),
-                    link.declaration
-                      ? link.declaration.rule === null
-                        ? m.overview_topology_default()
-                        : m.overview_topology_rule({
-                            number: link.declaration.rule + 1,
-                          })
-                      : null,
-                    link.declaration?.transports?.length
-                      ? m.overview_allowed_transports({
-                          value: link.declaration.transports
-                            .map(transportText)
-                            .join(" / "),
-                        })
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </title>
-              </path>
-            )
-          })}
+          {drawings.map((drawing) => (
+            <TopologyEdge
+              key={drawing.edge.key}
+              drawing={drawing}
+              caption={labels.get(drawing.edge.key)}
+              names={(id) => byId.get(id)?.name ?? id.slice(0, 8)}
+              active={
+                selected === null ||
+                drawing.edge.a === selected ||
+                drawing.edge.b === selected
+              }
+              highlighted={highlighted === drawing.edge.key}
+              focusable={
+                edges.length <= 12 ||
+                drawing.edge.a === selected ||
+                drawing.edge.b === selected
+              }
+              onPoint={pointAtEdge}
+              onFocus={focusEdge}
+            />
+          ))}
           {nodes.map((node) => {
             const point = slots.get(node.id)
             if (!point) return null

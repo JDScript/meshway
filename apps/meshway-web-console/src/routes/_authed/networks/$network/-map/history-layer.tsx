@@ -15,7 +15,7 @@ import { linkKey, type HistoryLink } from "@/lib/network-map"
 import { transportText } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
-import { Group } from "./-group"
+import { Group } from "./group"
 
 export type HistoryLayerProps = {
   window: HistoryWindow | null
