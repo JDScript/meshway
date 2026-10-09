@@ -3,7 +3,7 @@ import { ArrowUpRightIcon } from "lucide-react"
 
 import { failureText } from "@/api/failure"
 import { CopyButton } from "@/components/chrome/copy-button"
-import { ListNote, ListRow } from "@/components/chrome/list"
+import { ListNote, ListPlaceholders, ListRow } from "@/components/chrome/list"
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -70,8 +70,14 @@ export function NodeLevel({
         onClose={selection.close}
         meta={
           <>
-            <NodeStatusDot status={node.status} size="sm" />
-            <span className="shrink-0">{statusLabel[node.status]()}</span>
+            {scene.stateLoading ? (
+              <Skeleton className="h-3 w-12 rounded-full" />
+            ) : (
+              <>
+                <NodeStatusDot status={node.status} size="sm" />
+                <span className="shrink-0">{statusLabel[node.status]()}</span>
+              </>
+            )}
             {address ? (
               <>
                 <span aria-hidden="true">·</span>
@@ -97,7 +103,20 @@ export function NodeLevel({
         </Button>
       </div>
       <LevelBody>
-        {scene.routes ? (
+        {scene.canRead && !scene.configuration ? (
+          <PanelSection title={m.map_routes()}>
+            {scene.configurationError ? (
+              <p className="px-4 text-row text-muted-foreground">
+                {failureText(scene.configurationError) ??
+                  m.nodes_listeners_failed()}
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-0.5 px-2">
+                <ListPlaceholders rows={3} />
+              </ul>
+            )}
+          </PanelSection>
+        ) : scene.routes ? (
           <PanelSection
             title={m.map_routes()}
             aside={scene.routes.length || undefined}
@@ -136,12 +155,20 @@ export function NodeLevel({
         ) : (
           <PanelSection title={m.map_neighbours()}>
             <ul className="flex flex-col gap-0.5 px-2">
-              <Neighbours
-                node={node}
-                connections={scene.connections}
-                nameOf={scene.nameOf}
-                onLink={selection.selectLink}
-              />
+              {scene.stateLoading ? (
+                <ListPlaceholders rows={2} />
+              ) : scene.state.isError && !scene.state.data ? (
+                <ListNote>
+                  {failureText(scene.state.error) ?? m.nodes_state_failed()}
+                </ListNote>
+              ) : (
+                <Neighbours
+                  node={node}
+                  connections={scene.connections}
+                  nameOf={scene.nameOf}
+                  onLink={selection.selectLink}
+                />
+              )}
             </ul>
           </PanelSection>
         )}

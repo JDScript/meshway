@@ -107,7 +107,7 @@
   "nodes_listener_listen_invalid": "绑定地址须为 IP",
   "nodes_listener_server_name_invalid": "TLS 名称须为域名或 IP",
   "nodes_listener_server_name_missing": "VLESS 需要 TLS 名称或公网地址",
-  "nodes_catalog_failed": "无法读取承载目录",
+  "nodes_catalog_failed": "无法读取可用协议，暂时不能添加",
   "nodes_install": "安装",
   "nodes_install_none": "此服务端尚未提供 Agent 安装。",
   "nodes_key_created": "接入密钥",

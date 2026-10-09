@@ -126,7 +126,11 @@ export function SessionList() {
         sessions.isError ? (
           <EmptyLine>{m.account_sessions_failed()}</EmptyLine>
         ) : (
-          <Skeleton className="h-12 w-full rounded-tile" />
+          <div className="flex flex-col gap-1">
+            {[0, 1, 2].map((row) => (
+              <Skeleton key={row} className="h-12 w-full rounded-tile" />
+            ))}
+          </div>
         )
       ) : (
         <RefList>

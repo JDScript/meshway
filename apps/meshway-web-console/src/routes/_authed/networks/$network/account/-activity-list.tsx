@@ -74,7 +74,11 @@ export function ActivityList() {
         activity.isError ? (
           <EmptyLine>{m.account_activity_failed()}</EmptyLine>
         ) : (
-          <Skeleton className="h-12 w-full rounded-tile" />
+          <div className="flex flex-col gap-1">
+            {[0, 1, 2].map((row) => (
+              <Skeleton key={row} className="h-12 w-full rounded-tile" />
+            ))}
+          </div>
         )
       ) : rows.length === 0 ? (
         <EmptyLine>{m.account_activity_empty()}</EmptyLine>

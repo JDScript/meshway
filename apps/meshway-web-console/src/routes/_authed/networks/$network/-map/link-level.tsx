@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router"
 import { PencilIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 
+import { failureText } from "@/api/failure"
 import { bucketsOf, useHistory } from "@/api/queries/use-history"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
@@ -76,15 +77,28 @@ export function LinkLevel({
         onBack={selection.back}
         onClose={selection.close}
         meta={
-          <>
-            <LinkSwatch look={edge?.look ?? "allowed"} />
-            <span className="truncate">{linkSummary(edge)}</span>
-          </>
+          scene.stateLoading ? (
+            <Skeleton className="h-3 w-32 rounded-full" />
+          ) : (
+            <>
+              <LinkSwatch look={edge?.look ?? "allowed"} />
+              <span className="truncate">{linkSummary(edge)}</span>
+            </>
+          )
         }
       />
       <LevelBody>
         <PanelSection title={m.map_link_runtime()}>
-          {channels.length === 0 ? (
+          {scene.stateLoading ? (
+            <div className="flex flex-col gap-2 px-4 py-1">
+              <Skeleton className="h-3 w-40 rounded-full" />
+              <Skeleton className="h-3 w-28 rounded-full" />
+            </div>
+          ) : scene.state.isError && !scene.state.data ? (
+            <p className="px-4 text-row text-muted-foreground">
+              {failureText(scene.state.error) ?? m.nodes_state_failed()}
+            </p>
+          ) : channels.length === 0 ? (
             <p className="px-4 text-row text-muted-foreground">
               {m.map_link_no_channel()}
             </p>
@@ -103,6 +117,21 @@ export function LinkLevel({
           <Latency networkId={networkId} a={a} b={b} nameOf={scene.nameOf} />
         </PanelSection>
 
+        {scene.canRead && !config ? (
+          <PanelSection title={m.map_link_configuration()}>
+            {scene.configurationError ? (
+              <p className="px-4 text-row text-muted-foreground">
+                {failureText(scene.configurationError) ??
+                  m.nodes_listeners_failed()}
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2 px-4 py-1">
+                <Skeleton className="h-3 w-44 rounded-full" />
+                <Skeleton className="h-3 w-32 rounded-full" />
+              </div>
+            )}
+          </PanelSection>
+        ) : null}
         {config ? (
           <PanelSection title={m.map_link_capability()}>
             <Facts>
@@ -295,7 +324,9 @@ function Direction({
   const series = useMemo(
     () =>
       bucketSeries(bucketsOf(history.pages), window).filter(
-        (item) => item.kind === "neighbor" && item.path.length === 2
+        (item) =>
+          item.path.length === 2 &&
+          (item.kind === "neighbor" || item.kind === "path")
       ),
     [history.pages, window]
   )

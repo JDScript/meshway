@@ -97,6 +97,7 @@ function NodesPage() {
             networkId={networkId}
             nodes={nodes}
             state={state.data}
+            stateFailed={state.isError && state.data === undefined}
             q={route.q}
             openId={route.node}
             canAdd={canAdd}

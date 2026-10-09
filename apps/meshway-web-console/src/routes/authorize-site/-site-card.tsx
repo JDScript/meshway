@@ -94,6 +94,9 @@ function Consent({
   onSignOut: () => Promise<void>
 }) {
   const [email, setEmail] = useState<string | null>(null)
+  /** The account read failed: why, until asked again. */
+  const [unread, setUnread] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const [pending, setPending] = useState(false)
   const [denied, setDenied] = useState(false)
 
@@ -106,14 +109,13 @@ function Consent({
       (error: unknown) => {
         if (!live) return
         if (error instanceof SessionRejected) return onExpired()
-        const text = failureText(error)
-        if (text) toast.error(text, { id: TOAST })
+        setUnread(failureText(error) ?? m.site_account_failed())
       }
     )
     return () => {
       live = false
     }
-  }, [onExpired])
+  }, [onExpired, attempt])
 
   const allow = async () => {
     if (pending) return
@@ -174,6 +176,18 @@ function Consent({
             {email ? (
               <span className="truncate" title={email}>
                 {email}
+              </span>
+            ) : unread !== null ? (
+              <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+                <span className="truncate">{unread}</span>
+                <EntryLink
+                  onClick={() => {
+                    setUnread(null)
+                    setAttempt((value) => value + 1)
+                  }}
+                >
+                  {m.retry()}
+                </EntryLink>
               </span>
             ) : (
               <Skeleton className="h-3 w-28 rounded-full" />

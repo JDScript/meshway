@@ -108,7 +108,14 @@ export function ApplyProgress({
       }
     >
       {progress.isPending ? (
-        <Skeleton className="h-16 w-full rounded-tile" />
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {PHASES.map((phase) => (
+              <Skeleton key={phase} className="h-[4.25rem] rounded-tile" />
+            ))}
+          </div>
+          <Skeleton className="h-3 w-56 rounded-full" />
+        </div>
       ) : !data ? (
         <EmptyLine>
           {isDenied(progress.error)

@@ -153,7 +153,7 @@ export function SectionWorkspace({
       <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-[var(--commit-space,76px)]">
         {isDenied(configuration.error) ? (
           <EmptyLine>{m.configuration_read_denied()}</EmptyLine>
-        ) : configuration.isError && !base ? (
+        ) : configuration.isError && !configuration.data ? (
           <EmptyLine>{m.configuration_read_failed()}</EmptyLine>
         ) : !base || !configuration.data ? (
           <Skeleton className="h-40 w-full rounded-tile" />

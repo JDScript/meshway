@@ -245,8 +245,15 @@ function useSceneModel(networkId: string) {
       ),
     [scene]
   )
+  /** No State yet: runtime facts (status, connections) are not known, not absent. */
+  const stateLoading = state.data === undefined && !state.isError
   return {
     state,
+    stateLoading,
+    /** The node list is not read yet: the configuration's, else the inventory (with State's peers). */
+    nodesLoading: canRead
+      ? waitingForConfiguration
+      : (inventory.data === undefined && !inventory.isError) || stateLoading,
     stateBehind,
     inventory: inventory.data?.items,
     canRead,

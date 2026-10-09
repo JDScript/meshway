@@ -10,8 +10,9 @@ import type {
   UseInfiniteQueryResult,
 } from "@tanstack/react-query"
 import { LogOutIcon, UserMinusIcon } from "lucide-react"
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 
+import { failureText } from "@/api/failure"
 import { CloseButton } from "@/components/chrome/close-button"
 import { DangerRow, Section } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
@@ -56,20 +57,28 @@ export function MemberWorkspace({
     members.data?.pages
       .flatMap((page) => page.items)
       .find((candidate) => candidate.membershipId === membershipId) ?? null
+  // A member on a page not read yet is not missing: read on until found.
+  const { hasNextPage, isFetchingNextPage, isError, fetchNextPage } = members
+  const searching = !member && hasNextPage && !isError
+  useEffect(() => {
+    if (searching && !isFetchingNextPage) void fetchNextPage()
+  }, [searching, isFetchingNextPage, fetchNextPage])
   if (!member)
     return (
       <SurfaceHeader
         size="lg"
         className="px-6 pt-6 pb-4"
         title={(className) =>
-          members.data === undefined && !members.isError ? (
+          (members.data === undefined && !members.isError) || searching ? (
             <Skeleton className="h-6 w-40 flex-1 rounded-full" />
           ) : (
             <h2
               id={surfaceTitleId("members", "workspace")}
               className={className}
             >
-              {m.members_not_found()}
+              {members.isError
+                ? (failureText(members.error) ?? m.members_failed())
+                : m.members_not_found()}
             </h2>
           )
         }

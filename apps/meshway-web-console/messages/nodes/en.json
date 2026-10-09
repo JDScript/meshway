@@ -107,7 +107,7 @@
   "nodes_listener_listen_invalid": "A bind address is an IP",
   "nodes_listener_server_name_invalid": "A TLS name is a domain name or an IP",
   "nodes_listener_server_name_missing": "VLESS needs a TLS name or a public address",
-  "nodes_catalog_failed": "Could not read the transport catalog",
+  "nodes_catalog_failed": "Could not read the available protocols; none can be added now",
   "nodes_install": "Installing",
   "nodes_install_none": "This server does not provide the Agent install yet.",
   "nodes_key_created": "Enrolment key",

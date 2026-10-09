@@ -86,5 +86,6 @@
   "site_back": "Go back",
   "site_refused": "The server does not accept this site or its return address.",
   "site_forbidden": "This sign-in cannot authorize sites.",
-  "site_client_docs": "Meshway docs"
+  "site_client_docs": "Meshway docs",
+  "site_account_failed": "Could not read the account"
 }

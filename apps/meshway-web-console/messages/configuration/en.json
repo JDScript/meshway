@@ -639,5 +639,7 @@
   "configuration_transport_empty_trojan_password": "the Trojan password is empty",
   "configuration_transport_material_required": "the listener's material is not prepared yet",
   "configuration_transport_local_address": "the local address must be an IP or empty",
-  "configuration_transport_repeated_transport": "Transport listed more than once in this rule"
+  "configuration_transport_repeated_transport": "Transport listed more than once in this rule",
+  "configuration_change_unread": "Could not read this version",
+  "configuration_history_count_more": "{count} read, earlier ones not yet"
 }

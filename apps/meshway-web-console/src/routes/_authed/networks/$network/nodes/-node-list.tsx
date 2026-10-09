@@ -20,6 +20,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { operationsOf } from "@/lib/configuration/draft-state"
 import { editsNode, isDeleted } from "@/lib/configuration/node-operations"
@@ -110,6 +111,7 @@ export function NodeList({
   networkId,
   nodes,
   state,
+  stateFailed,
   q,
   openId,
   canAdd,
@@ -120,6 +122,8 @@ export function NodeList({
   networkId: string
   nodes: UseQueryResult<NodeInventoryResponse>
   state: StateView | undefined
+  /** The State failed to read: statuses are unknown, not loading. */
+  stateFailed: boolean
   q: string
   openId: string | null
   canAdd: boolean
@@ -226,9 +230,13 @@ export function NodeList({
                 </>
               }
               trail={
-                state === undefined
-                  ? undefined
-                  : statusText(status, lastSeen(view), now)
+                state !== undefined ? (
+                  statusText(status, lastSeen(view), now)
+                ) : stateFailed ? (
+                  "—"
+                ) : (
+                  <Skeleton className="h-2.5 w-8 rounded-full" />
+                )
               }
             />
           )

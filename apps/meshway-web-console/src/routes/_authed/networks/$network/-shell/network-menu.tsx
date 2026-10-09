@@ -38,9 +38,13 @@ export function NetworkMenuItems({
       <DropdownMenuGroup>
         <DropdownMenuLabel>{m.networks_label()}</DropdownMenuLabel>
         {networks.isPending ? (
-          <div className="flex h-12 items-center px-2">
-            <Skeleton className="h-3 w-32 rounded-full" />
-          </div>
+          <>
+            {[0, 1].map((row) => (
+              <div key={row} className="flex h-12 items-center px-2">
+                <Skeleton className="h-3 w-32 rounded-full" />
+              </div>
+            ))}
+          </>
         ) : null}
         {networks.isError && items.length === 0 ? (
           <DropdownMenuItem

@@ -119,7 +119,13 @@ export function JoinCard({
   )
 }
 
-const unread = <Skeleton className="h-3 w-28 rounded-full" />
+/** A fact still being read; after a failed read, unknown until read again. */
+const unreadFact = (failed: boolean) =>
+  failed ? (
+    <span className="text-muted-foreground">—</span>
+  ) : (
+    <Skeleton className="h-3 w-28 rounded-full" />
+  )
 
 function Accept({
   secret,
@@ -223,14 +229,14 @@ function Accept({
                 {inspection.networkName}
               </span>
             ) : (
-              unread
+              unreadFact(failed)
             )}
           </Fact>
           <Fact label={m.join_role()}>
-            {link ? roleLabel[link.role]() : unread}
+            {link ? roleLabel[link.role]() : unreadFact(failed)}
           </Fact>
           <Fact label={m.join_expires()}>
-            {link ? (dateTime(link.expiresAt) ?? "—") : unread}
+            {link ? (dateTime(link.expiresAt) ?? "—") : unreadFact(failed)}
           </Fact>
           <Fact label={m.join_account()}>
             {email ? (
@@ -238,7 +244,7 @@ function Accept({
                 {email}
               </span>
             ) : (
-              unread
+              unreadFact(failed)
             )}
           </Fact>
           {member ? (

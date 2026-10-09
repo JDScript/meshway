@@ -178,7 +178,13 @@ export function DeviceCard({ requestId }: { requestId: string | null }) {
   )
 }
 
-const unread = <Skeleton className="h-3 w-28 rounded-full" />
+/** A fact still being read; after a failed read, unknown until read again. */
+const unreadFact = (failed: boolean) =>
+  failed ? (
+    <span className="text-muted-foreground">—</span>
+  ) : (
+    <Skeleton className="h-3 w-28 rounded-full" />
+  )
 
 type Account = { id: string; email: string }
 
@@ -583,11 +589,11 @@ function Decide({
                 {request.hostname}
               </span>
             ) : (
-              unread
+              unreadFact(failed)
             )}
           </Fact>
           <Fact label={m.device_status()}>
-            {phase ? phaseLabel[phase]() : unread}
+            {phase ? phaseLabel[phase]() : unreadFact(failed)}
           </Fact>
           {phase === "approved" ||
           (approval !== null && phase !== "pending") ? (
@@ -607,7 +613,9 @@ function Decide({
             </Fact>
           ) : null}
           <Fact label={m.device_expires()}>
-            {request ? (dateTime(request.expiresAt) ?? "—") : unread}
+            {request
+              ? (dateTime(request.expiresAt) ?? "—")
+              : unreadFact(failed)}
           </Fact>
           <Fact label={m.device_account()}>
             {account ? (
@@ -615,7 +623,7 @@ function Decide({
                 {account.email}
               </span>
             ) : (
-              unread
+              unreadFact(failed)
             )}
           </Fact>
           {existing ? (

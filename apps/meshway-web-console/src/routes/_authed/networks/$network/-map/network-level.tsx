@@ -1,11 +1,18 @@
 import { useId, useState } from "react"
 
-import { ListNote, ListRow, PanelList } from "@/components/chrome/list"
+import { failureText } from "@/api/failure"
+import {
+  ListNote,
+  ListPlaceholders,
+  ListRow,
+  PanelList,
+} from "@/components/chrome/list"
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import {
   SegmentCount,
   SegmentedControl,
 } from "@/components/chrome/segmented-control"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
 import { placeText } from "@/lib/geo"
@@ -78,6 +85,11 @@ export function NetworkLevel({
     (edge) => edge.status === "connected"
   ).length
   const declared = scene.declared
+  // The topology's links are the configuration's; the globe's are the State's.
+  const linksLoading =
+    page === "topology" ? scene.nodesLoading : scene.stateLoading
+  const linksFailed =
+    page === "overview" && scene.state.isError && scene.state.data === undefined
 
   return (
     <>
@@ -95,7 +107,10 @@ export function NetworkLevel({
               {
                 value: "links",
                 label: (
-                  <SegmentCount label={m.map_links()} count={links.length} />
+                  <SegmentCount
+                    label={m.map_links()}
+                    count={linksLoading || linksFailed ? null : links.length}
+                  />
                 ),
               },
               {
@@ -103,7 +118,7 @@ export function NetworkLevel({
                 label: (
                   <SegmentCount
                     label={m.overview_nodes()}
-                    count={nodes.length}
+                    count={scene.nodesLoading ? null : nodes.length}
                   />
                 ),
               },
@@ -112,14 +127,22 @@ export function NetworkLevel({
           <span className="flex-1" />
           <HistoryMenu networkId={networkId} window={scene.window} />
         </div>
-        <p className="flex h-5 min-w-0 items-center gap-1.5 text-meta text-muted-foreground tabular-nums">
-          <span className="truncate">
-            {m.map_summary({
-              online: String(online),
-              nodes: String(nodes.length),
-              connected: String(connected),
-            })}
-          </span>
+        <div className="flex h-5 min-w-0 items-center gap-1.5 text-meta text-muted-foreground tabular-nums">
+          {scene.stateLoading || scene.nodesLoading ? (
+            <Skeleton className="h-3 w-36 rounded-full" />
+          ) : state ? (
+            <span className="truncate">
+              {m.map_summary({
+                online: String(online),
+                nodes: String(nodes.length),
+                connected: String(connected),
+              })}
+            </span>
+          ) : (
+            <span className="truncate">
+              {failureText(scene.state.error) ?? m.nodes_state_failed()}
+            </span>
+          )}
           {state ? (
             <span
               className="ml-auto shrink-0"
@@ -129,12 +152,18 @@ export function NetworkLevel({
               {agoTime(state.asOf, now) ?? "—"}
             </span>
           ) : null}
-        </p>
+        </div>
       </header>
 
       <PanelList aria-labelledby={listId} className="flex-initial">
         {list === "links" ? (
-          links.length === 0 ? (
+          linksLoading ? (
+            <ListPlaceholders rows={3} />
+          ) : linksFailed ? (
+            <ListNote>
+              {failureText(scene.state.error) ?? m.nodes_state_failed()}
+            </ListNote>
+          ) : links.length === 0 ? (
             <ListNote>
               {page === "topology" && declared
                 ? m.overview_topology_empty()
@@ -150,11 +179,19 @@ export function NetworkLevel({
                     {scene.nameOf(edge.a)} ↔ {scene.nameOf(edge.b)}
                   </span>
                 }
-                subtitle={<span className="truncate">{linkSummary(edge)}</span>}
+                subtitle={
+                  scene.stateLoading ? (
+                    <Skeleton className="h-2.5 w-24 rounded-full" />
+                  ) : (
+                    <span className="truncate">{linkSummary(edge)}</span>
+                  )
+                }
                 onClick={() => selection.selectLink(edge.a, edge.b)}
               />
             ))
           )
+        ) : scene.nodesLoading ? (
+          <ListPlaceholders rows={3} />
         ) : nodes.length === 0 ? (
           <ListNote>{m.overview_no_nodes()}</ListNote>
         ) : (
@@ -168,7 +205,13 @@ export function NetworkLevel({
                 subtitle={
                   place ? <span className="truncate">{place}</span> : undefined
                 }
-                trail={statusLabel[node.status]()}
+                trail={
+                  scene.stateLoading ? (
+                    <Skeleton className="h-2.5 w-8 rounded-full" />
+                  ) : (
+                    statusLabel[node.status]()
+                  )
+                }
                 onPointerEnter={() => highlightOnGlobe(node.id)}
                 onPointerLeave={() => highlightOnGlobe(null)}
                 onClick={() => selection.selectNode(node.id)}

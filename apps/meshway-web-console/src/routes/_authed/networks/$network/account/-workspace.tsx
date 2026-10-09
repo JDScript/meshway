@@ -4,6 +4,7 @@ import { failureText } from "@/api/failure"
 import { accountQuery } from "@/api/queries/account"
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
+import { EmptyLine } from "@/components/chrome/section"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
 import { surfaceTitleId } from "@/components/surface/page-frame"
@@ -56,6 +57,10 @@ export function AccountWorkspace({ onClose }: { onClose: () => void }) {
                 <span className="font-mono font-normal">{user.id}</span>
               </Tile>
             </div>
+          ) : account.isError ? (
+            <EmptyLine>
+              {failureText(account.error) ?? m.account_failed()}
+            </EmptyLine>
           ) : (
             <div className="grid gap-2">
               <Skeleton className="h-16 w-full rounded-tile" />

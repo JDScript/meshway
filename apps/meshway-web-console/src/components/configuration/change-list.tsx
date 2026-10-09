@@ -40,16 +40,23 @@ function Side({
   label,
   found,
   read,
+  failure,
 }: {
   label: string
   found: Found
   /** The view this side comes from has been read. */
   read: boolean
+  /** Why it will not be read; null while it may still be. */
+  failure: string | null
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
       <span className="text-meta text-muted-foreground">{label}</span>
-      {!read ? (
+      {!read && failure !== null ? (
+        <div className="flex h-9 items-center rounded-tile bg-fill-subtle px-3 text-meta text-muted-foreground">
+          {failure}
+        </div>
+      ) : !read ? (
         <Skeleton className="h-9 w-full rounded-tile" />
       ) : found.found ? (
         <JsonBlock value={found.value} />
@@ -73,6 +80,7 @@ export function ChangeList({
   before,
   after,
   labels,
+  failures,
 }: {
   changes: readonly ConfigurationChange[]
   /** undefined while unread. */
@@ -80,6 +88,8 @@ export function ChangeList({
   after: ConfigurationView | undefined
   /** What each side is (two revisions); "before" and "after" otherwise. */
   labels?: { before: string; after: string }
+  /** A side whose read failed, with what to say instead of its values. */
+  failures?: { before?: string | null; after?: string | null }
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -138,11 +148,13 @@ export function ChangeList({
                         }
                         found={was}
                         read={before !== undefined}
+                        failure={failures?.before ?? null}
                       />
                       <Side
                         label={labels?.after ?? m.configuration_change_after()}
                         found={now}
                         read={after !== undefined}
+                        failure={failures?.after ?? null}
                       />
                     </div>
                   )}
