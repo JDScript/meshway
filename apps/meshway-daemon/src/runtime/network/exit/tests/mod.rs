@@ -7,6 +7,8 @@ use meshway_dataplane::{
 use meshway_underlay::Host;
 use std::{collections::BTreeMap, time::Duration};
 
+mod sampling;
+
 fn isolated() {
     assert_eq!(
         std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
