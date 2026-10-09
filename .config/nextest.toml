@@ -72,11 +72,18 @@ path = "junit.xml"
 max-threads = 12
 
 [[profile.default.overrides]]
+# This explicitly bounded Server/SecureNode scheduling contract includes fsync
+# and cryptography; reserve the runner slots so unrelated fixture CPU contention
+# cannot be mistaken for an inserted preparation timer. The bounds stay fixed.
+filter = 'test(=tests::preparing::ready_channel_and_handshake_events_start_direct_and_relay_probes_without_ticks)'
+threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
 # Start wall-clock expiry contracts first so they overlap the CPU-bound suites.
 filter = 'test(rejected_expired_rotation_rolls_back_only_after_old_key_authentication) | test(background_expiry_and_session_revocation_never_renew_diagnostic_authority) | test(actual_execution_expiry_rejects_pending_and_new_requests_without_create) | test(gateway_html_and_stale_instance_recover_without_operator_up)'
 priority = 100
 test-group = 'server-fixtures'
 
 [[profile.default.overrides]]
-filter = 'package(meshway-server) | package(meshway-control) | package(meshway-control-client) | package(meshway-daemon) | package(meshway-connectivity)'
+filter = 'package(meshway-server) | package(meshway-control) | package(meshway-control-client) | package(meshway-daemon) | package(meshway-connectivity) | package(meshway-diagnostics)'
 test-group = 'server-fixtures'
