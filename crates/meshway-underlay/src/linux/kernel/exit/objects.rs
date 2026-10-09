@@ -332,6 +332,7 @@ fn normalize(value: &mut Value, program: Option<&Program>) -> Result<()> {
                 ct.remove("family");
             }
             if let Some(compare) = values.get_mut("match").and_then(Value::as_object_mut) {
+                normalize_mark_prefix(compare)?;
                 let left = compare.get("left").cloned().ok_or(Error::Journal)?;
                 let right = compare.get_mut("right").ok_or(Error::Journal)?;
                 if let Some(key) = left
@@ -431,6 +432,54 @@ fn normalize(value: &mut Value, program: Option<&Program>) -> Result<()> {
         }
         _ => {}
     }
+    Ok(())
+}
+
+/// nft delinearizes contiguous high mark masks as numeric prefixes. Convert
+/// only exact 32-bit mark equality/inequality forms, preserving the full mask;
+/// IP prefixes and other expressions remain subject to ordinary exact auditing.
+fn normalize_mark_prefix(compare: &mut serde_json::Map<String, Value>) -> Result<()> {
+    if !matches!(compare.get("op").and_then(Value::as_str), Some("==" | "!=")) {
+        return Ok(());
+    }
+    let Some(left) = compare
+        .get("left")
+        .filter(|left| {
+            **left == json!({"meta": {"key": "mark"}}) || **left == json!({"ct": {"key": "mark"}})
+        })
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let Some(right) = compare
+        .get("right")
+        .and_then(Value::as_object)
+        .filter(|right| right.len() == 1)
+    else {
+        return Ok(());
+    };
+    let Some(prefix) = right.get("prefix").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    if prefix.len() != 2 {
+        return Err(Error::Journal);
+    }
+    let address = prefix
+        .get("addr")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or(Error::Journal)?;
+    let length = prefix
+        .get("len")
+        .and_then(Value::as_u64)
+        .filter(|length| *length <= 32)
+        .ok_or(Error::Journal)? as u32;
+    let mask = u32::MAX.checked_shl(32 - length).unwrap_or(0);
+    if address & mask != address {
+        return Err(Error::Journal);
+    }
+    compare.insert("left".into(), json!({"&": [left, mask]}));
+    compare.insert("right".into(), json!(address));
     Ok(())
 }
 
