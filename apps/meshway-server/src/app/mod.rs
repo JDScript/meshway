@@ -312,6 +312,17 @@ impl App {
             .unwrap_or_else(|error| error.into_inner())
             .install_netmaps(netmaps);
     }
+    /// Netmap-chain observation authority: reads the source's netmap only.
+    pub fn netmap_diagnostics(&self) -> crate::execution::NetmapDiagnostics {
+        let netmaps = Arc::clone(
+            &self
+                .state_runtime
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .netmaps,
+        );
+        crate::execution::NetmapDiagnostics::new(self.execution(), netmaps)
+    }
     /// Shared core handles are available before constructing any HTTP provider.
     pub fn state_reader(&self) -> crate::state::service::StateReader {
         crate::state::service::StateReader::new(Arc::clone(&self.state_runtime))

@@ -14,6 +14,8 @@ use meshway_protocol::observations::{CreateObservation, ObservationPath};
 use meshway_protocol::{InstanceRequest, node_observations::*};
 use rusqlite::Transaction;
 use std::collections::BTreeMap;
+mod netmap;
+pub use netmap::{NetmapDiagnostic, NetmapDiagnostics, netmap_diagnostic};
 
 struct DiagnosticSubject {
     principal: SubscriberPrincipal,

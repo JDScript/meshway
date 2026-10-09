@@ -11,7 +11,9 @@ use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netma
 use meshway_protocol::state::StateReport;
 use std::sync::{Arc, Mutex};
 
+mod diagnostics;
 mod facts;
+mod scope;
 
 pub(super) struct StoreNetmaps {
     sealer: Arc<crate::secrets::Sealer>,

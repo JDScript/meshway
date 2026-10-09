@@ -23,6 +23,8 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+mod netmap;
+
 #[cfg(test)]
 thread_local! {
     static STATE_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
@@ -58,7 +60,7 @@ impl Execution {
 
     /// Task polling/results cannot use retained publications. State/history
     /// callers explicitly retain those contexts through the public entrypoint.
-    fn report_with_context(
+    pub(super) fn report_with_context(
         &self,
         tx: &Transaction<'_>,
         token: &str,
@@ -89,53 +91,12 @@ impl Execution {
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<VisibilityScope, Error> {
-        let (network, full, mut expires_at, actor) = match identity {
-            ReadIdentity::Node { authorization } => {
-                #[cfg(test)]
-                STATE_WORK.with(|counts| {
-                    let (checks, history) = counts.get();
-                    counts.set((checks + 1, history));
-                });
-                // A visibility scope uses only the current subject, instance
-                // and deadline. Retained report/history contexts grant no
-                // visibility here and must not be decrypted on every SSE frame.
-                let report = self.report_with_context(tx, authorization, now, false)?;
-                (
-                    report.network_id,
-                    BTreeSet::from([report.node_id]),
-                    report.lease_expires_at,
-                    super::proof::request_digest(&("node", report.node_id))?,
-                )
-            }
-            ReadIdentity::UserSession { digest, network } => {
-                let session = current_session(tx, digest, now.timestamp_millis())?;
-                let (membership, role) =
-                    store::admission::membership_role(tx, *network, session.user.id)?;
-                let (_, cfg, bindings) = store::current_configuration(tx, &self.sealer, *network)?;
-                let manager = matches!(role.as_str(), "owner" | "admin");
-                let full = cfg
-                    .nodes
-                    .keys()
-                    .filter(|node| {
-                        manager
-                            || store::user_binding(&cfg, &bindings, **node)
-                                .is_some_and(|binding| binding.user_id == session.user.id)
-                    })
-                    .copied()
-                    .collect();
-                (
-                    *network,
-                    full,
-                    session.expires_at,
-                    super::proof::request_digest(&(
-                        "user",
-                        session.user.id,
-                        membership.as_uuid().as_bytes().to_vec(),
-                        role,
-                    ))?,
-                )
-            }
-        };
+        let ScopeSubject {
+            network,
+            full,
+            mut expires_at,
+            actor,
+        } = self.scope_subject(tx, identity, now)?;
         let (revision, cfg, _) = store::current_configuration(tx, &self.sealer, network)?;
         let mut visible = full.clone();
         let mut observation_paths = BTreeSet::new();
@@ -180,9 +141,124 @@ impl Execution {
             }
         }
         visible.retain(|node| cfg.nodes.contains_key(node));
+        let (current, bindings) = self.current_nodes(tx, network, &visible, now)?;
+        let endpoint_resources = match identity {
+            ReadIdentity::Node { .. } => {
+                let mut resources = BTreeMap::new();
+                for local in &full {
+                    let disclosure =
+                        self.endpoint_disclosure(tx, network, *local, &visible, now)?;
+                    resources.extend(disclosure.resources);
+                    if let Some(deadline) = disclosure.expires_at {
+                        expires_at = expires_at.min(deadline);
+                    }
+                }
+                Some(resources)
+            }
+            ReadIdentity::UserSession { .. } => None,
+        };
+        let authorization_digest = super::proof::request_digest(&(
+            network,
+            revision,
+            actor,
+            &visible,
+            &full,
+            &bindings,
+            &observation_paths,
+            &endpoint_resources,
+        ))?;
+        Ok(VisibilityScope {
+            network_id: network,
+            configuration_revision: revision,
+            authorization_digest,
+            observation_authorization_digest: super::proof::request_digest(&(
+                network, revision, actor, &full,
+            ))?,
+            hostnames: visible
+                .iter()
+                .filter_map(|node| cfg.nodes.get(node).map(|n| (*node, n.hostname.clone())))
+                .collect(),
+            visible,
+            full,
+            endpoint_resources,
+            observation_paths,
+            expires_at,
+            current,
+            mesh_addresses: cfg
+                .nodes
+                .values()
+                .flat_map(|n| addresses(&n.addresses))
+                .collect(),
+        })
+    }
+
+    /// The authenticated reader and the Nodes it fully owns.
+    fn scope_subject(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        now: DateTime<Utc>,
+    ) -> Result<ScopeSubject, Error> {
+        Ok(match identity {
+            ReadIdentity::Node { authorization } => {
+                #[cfg(test)]
+                STATE_WORK.with(|counts| {
+                    let (checks, history) = counts.get();
+                    counts.set((checks + 1, history));
+                });
+                // A visibility scope uses only the current subject, instance
+                // and deadline. Retained report/history contexts grant no
+                // visibility here and must not be decrypted on every SSE frame.
+                let report = self.report_with_context(tx, authorization, now, false)?;
+                ScopeSubject {
+                    network: report.network_id,
+                    full: BTreeSet::from([report.node_id]),
+                    expires_at: report.lease_expires_at,
+                    actor: super::proof::request_digest(&("node", report.node_id))?,
+                }
+            }
+            ReadIdentity::UserSession { digest, network } => {
+                let session = current_session(tx, digest, now.timestamp_millis())?;
+                let (membership, role) =
+                    store::admission::membership_role(tx, *network, session.user.id)?;
+                let (_, cfg, bindings) = store::current_configuration(tx, &self.sealer, *network)?;
+                let manager = matches!(role.as_str(), "owner" | "admin");
+                let full = cfg
+                    .nodes
+                    .keys()
+                    .filter(|node| {
+                        manager
+                            || store::user_binding(&cfg, &bindings, **node)
+                                .is_some_and(|binding| binding.user_id == session.user.id)
+                    })
+                    .copied()
+                    .collect();
+                ScopeSubject {
+                    network: *network,
+                    full,
+                    expires_at: session.expires_at,
+                    actor: super::proof::request_digest(&(
+                        "user",
+                        session.user.id,
+                        membership.as_uuid().as_bytes().to_vec(),
+                        role,
+                    ))?,
+                }
+            }
+        })
+    }
+
+    /// Current instance, execution and revocation of every visible Node.
+    fn current_nodes(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        visible: &BTreeSet<NodeId>,
+        now: DateTime<Utc>,
+    ) -> Result<(BTreeMap<NodeId, CurrentNode>, NodeBindings), Error> {
         let mut current = BTreeMap::new();
         let mut bindings = BTreeMap::new();
-        for node in &visible {
+        for node in visible {
             let revoked = store::admission::credentials_revoked(tx, network, *node)?;
             let live = store::admission::has_live_instance(
                 tx,
@@ -247,54 +323,7 @@ impl Execution {
                 },
             );
         }
-        let endpoint_resources = match identity {
-            ReadIdentity::Node { .. } => {
-                let mut resources = BTreeMap::new();
-                for local in &full {
-                    let disclosure =
-                        self.endpoint_disclosure(tx, network, *local, &visible, now)?;
-                    resources.extend(disclosure.resources);
-                    if let Some(deadline) = disclosure.expires_at {
-                        expires_at = expires_at.min(deadline);
-                    }
-                }
-                Some(resources)
-            }
-            ReadIdentity::UserSession { .. } => None,
-        };
-        let authorization_digest = super::proof::request_digest(&(
-            network,
-            revision,
-            actor,
-            &visible,
-            &full,
-            &bindings,
-            &observation_paths,
-            &endpoint_resources,
-        ))?;
-        Ok(VisibilityScope {
-            network_id: network,
-            configuration_revision: revision,
-            authorization_digest,
-            observation_authorization_digest: super::proof::request_digest(&(
-                network, revision, actor, &full,
-            ))?,
-            hostnames: visible
-                .iter()
-                .filter_map(|node| cfg.nodes.get(node).map(|n| (*node, n.hostname.clone())))
-                .collect(),
-            visible,
-            full,
-            endpoint_resources,
-            observation_paths,
-            expires_at,
-            current,
-            mesh_addresses: cfg
-                .nodes
-                .values()
-                .flat_map(|n| addresses(&n.addresses))
-                .collect(),
-        })
+        Ok((current, bindings))
     }
 
     /// Current transactional identity/instance/publication admission. Acquisition
@@ -418,6 +447,21 @@ impl Execution {
         Ok(report)
     }
 }
+
+struct ScopeSubject {
+    network: NetworkId,
+    full: BTreeSet<NodeId>,
+    expires_at: DateTime<Utc>,
+    actor: Digest,
+}
+
+type NodeBindings = BTreeMap<
+    NodeId,
+    (
+        bool,
+        Option<(InstanceId, Version, Option<ConfigurationRef>)>,
+    ),
+>;
 
 fn configuration_admission(
     target: &CompiledNode,
@@ -638,6 +682,7 @@ impl crate::observations::service::ObservationProvider for Execution {
         &self,
         tx: &Transaction<'_>,
         subscription: ObservationSubscriptionId,
+        _: &crate::observations::service::StoredSubscription,
         now: DateTime<Utc>,
     ) -> Result<crate::observations::service::NodeObservationAdmission, Error> {
         self.node_diagnostic_admission(tx, subscription, now)

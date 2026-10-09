@@ -62,10 +62,12 @@ pub trait ObservationProvider: Send + Sync + 'static {
     ) -> Result<NodeObservationAdmission, Error> {
         Err(Error::PermissionDenied)
     }
+    /// `stored` is the accepted subscriber's owner and immutable selection.
     fn node_observation(
         &self,
         _: &Transaction<'_>,
         _: ObservationSubscriptionId,
+        _: &StoredSubscription,
         _: DateTime<Utc>,
     ) -> Result<NodeObservationAdmission, Error> {
         Err(Error::PermissionDenied)
@@ -118,6 +120,12 @@ pub trait ObservationProvider: Send + Sync + 'static {
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<SessionId, Error>;
+}
+/// An accepted subscriber as held in RAM, for reauthorization.
+pub struct StoredSubscription {
+    pub(crate) observation: ObservationId,
+    pub(crate) principal: super::SubscriberPrincipal,
+    pub(crate) request: CreateObservation,
 }
 pub struct NodeObservationIdentity {
     pub(crate) principal: super::SubscriberPrincipal,
@@ -535,12 +543,13 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let now = Utc::now();
                 let owner =
                     provider.node_observation_identity(&tx, &authorization, &instance, now)?;
-                let current = provider.node_observation(&tx, subscription, now)?;
+                let mut runtime =
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
+                let stored = stored_request(&runtime, subscription).ok_or(Error::NotFound)?;
+                let current = provider.node_observation(&tx, subscription, &stored, now)?;
                 if !owner.principal.same_owner(&current.admission.principal) {
                     return Err(Error::PermissionDenied);
                 }
-                let mut runtime =
-                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
                 runtime.observations.expire(now);
                 reauthorize_all(
                     &*provider,
@@ -647,7 +656,8 @@ impl<P: ObservationProvider> ObservationService<P> {
                     return Err(Error::PermissionDenied);
                 }
                 if stored.subscribers[&subscription].terminal != Some(ObservationPhase::Cancelled) {
-                    provider.node_observation(&tx, subscription, now)?;
+                    let stored = stored_request(&runtime, subscription).ok_or(Error::NotFound)?;
+                    provider.node_observation(&tx, subscription, &stored, now)?;
                 }
                 let id = stored.task.id;
                 let network = stored.network;
@@ -786,6 +796,31 @@ impl<P: ObservationProvider> ObservationService<P> {
     }
 }
 
+/// The owner and immutable selection of an accepted subscriber.
+fn stored_request(
+    runtime: &Runtime,
+    subscription: ObservationSubscriptionId,
+) -> Option<StoredSubscription> {
+    runtime.observations.tasks.values().find_map(|stored| {
+        stored
+            .subscribers
+            .get(&subscription)
+            .map(|subscriber| StoredSubscription {
+                observation: stored.task.id,
+                principal: subscriber.principal.clone(),
+                request: CreateObservation {
+                    subscription_id: subscription,
+                    source_node_id: stored.task.source_node_id,
+                    target_node_id: stored.task.target_node_id,
+                    service: stored.task.service.clone(),
+                    selection: stored.task.selection.clone(),
+                    metrics: stored.task.metrics.clone(),
+                    interval_ms: stored.task.interval_ms,
+                },
+            })
+    })
+}
+
 async fn wait_deadline(deadline: Option<tokio::time::Instant>) {
     match deadline {
         Some(deadline) => tokio::time::sleep_until(deadline).await,
@@ -839,7 +874,16 @@ fn reauthorize_all<P: ObservationProvider>(
                 provider.observation(tx, identity, &request, now)
             }
             super::SubscriberPrincipal::NodeInstance { .. } => provider
-                .node_observation(tx, subscription, now)
+                .node_observation(
+                    tx,
+                    subscription,
+                    &StoredSubscription {
+                        observation: task,
+                        principal: subscriber.principal.clone(),
+                        request: request.clone(),
+                    },
+                    now,
+                )
                 .map(|value| value.admission),
         };
         let valid =
