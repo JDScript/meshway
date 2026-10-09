@@ -36,12 +36,7 @@ impl Owner {
             Err(crate::RouteError::Expired) => return Begin::Unavailable(Unavailable::Expired),
             Err(_) => return Begin::Unavailable(Unavailable::MissingExitPlan),
         };
-        let ticket = match self.state.insert_pending(
-            query.clone(),
-            String::new(),
-            PendingKind::Upstream,
-            deadline,
-        ) {
+        let ticket = match self.state.insert_pending(query.clone(), deadline) {
             Ok(ticket) => ticket,
             Err(reason) => return Begin::Unavailable(reason),
         };

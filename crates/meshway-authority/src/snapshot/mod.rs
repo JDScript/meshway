@@ -1,81 +1,310 @@
-//! Immutable execution handoff. The issuer supplies every deadline, the shared
-//! invalidation and the private target; nothing here reads saved files or mints
-//! a grant from caller-asserted configuration/expiry.
+//! Immutable execution handoff: a verified netmap bound by its lease alone.
 //!
-//! Two target kinds exist while the Node migrates: the legacy per-publication
-//! `CompiledNode` bound by session/instance/execution deadlines, and a verified
-//! netmap bound by its `NetmapLease` alone (see [`NetmapIssue`]). Legacy
-//! accessors fail or panic on netmap snapshots, as documented on each.
-use crate::{Clock, Deadline, Error, reference};
-use meshway_configuration::execution::{CompiledNode, NodeConfiguration, TrustedNode};
-use meshway_model::{ConfigurationRef, InstanceId, NetworkId, NodeId, Version};
+//! Session and instance deadlines never bound a snapshot. Every snapshot
+//! issued for one netmap content shares a lease cell: a same-content renewal
+//! through [`NetmapRenewal`] raises the deadline of every live clone without
+//! cancelling or replacing any guard. New content is a new issue with a new
+//! cell; the issuer invalidates the old guards and consumers compare the two
+//! contents with [`ExecutionSnapshot::netmap_continuation_from`]. Nothing here
+//! reads saved files or mints a grant from caller-asserted content or expiry.
+use crate::{Clock, Deadline, Error};
+use meshway_configuration::{execution::TrustedNode, netmap::CompiledNetmap};
+use meshway_model::{NetmapLease, NetmapRef, NetworkId, NodeId};
+use meshway_policy::admission::netmap::Leased;
+use meshway_protocol::InstanceRequest;
 use std::{
     fmt,
     sync::{
-        Arc, Weak,
+        Arc, PoisonError, RwLock, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
 
-mod netmap;
-pub use netmap::{NetmapIssue, NetmapReading, NetmapRenewal};
-
-/// Everything an issuer binds into one snapshot. `validity`, `invalidated`,
-/// `clock` and `lineage` are shared with the issuer so that later revocation
-/// reaches every clone; `publication`/`predecessor` identify legal successors.
-pub struct Issue {
-    pub target: Arc<CompiledNode>,
-    pub instance: InstanceId,
-    pub generation: Version,
+/// Everything an issuer binds into the first snapshot of one netmap content.
+/// `deadline` must be the lease's `expiresAt` on the issuer's `clock`, e.g.
+/// `Deadline::from_response(started, lease.expires_at_ms)`.
+pub struct NetmapIssue {
+    /// Verified content; its digest is checked again here.
+    pub netmap: Arc<CompiledNetmap>,
+    /// Lease issued for exactly `netmap`.
+    pub lease: NetmapLease,
+    pub deadline: Deadline,
+    /// State/receipt binding only; never part of validity.
+    pub instance: Option<InstanceRequest>,
     pub validity: Arc<AtomicBool>,
     pub invalidated: CancellationToken,
     pub clock: Arc<Clock>,
-    /// Session, instance and execution deadlines; the earliest one bounds work.
-    pub deadlines: [Deadline; 3],
-    /// Only the issuer holds the strong root. A snapshot must not keep inactive
-    /// descriptors retainable after stop/re-enrollment/fencing.
+    /// Only the issuer holds the strong root.
     pub lineage: Weak<()>,
-    pub publication: Arc<()>,
-    pub predecessor: Option<(Arc<()>, ConfigurationRef)>,
 }
 
-/// The result of one guard evaluation: the configuration it authorizes and the
-/// clock values it was judged at. Borrowed from the snapshot, never stored.
+#[derive(Clone)]
+struct Current {
+    lease: NetmapLease,
+    deadline: Deadline,
+}
+
+struct LeaseCell {
+    current: RwLock<Current>,
+    changed: tokio::sync::Notify,
+}
+
+impl LeaseCell {
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Current> {
+        self.current.read().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+#[derive(Clone)]
+struct Bound {
+    netmap: Arc<CompiledNetmap>,
+    cell: Arc<LeaseCell>,
+    instance: Option<InstanceRequest>,
+}
+
+impl Bound {
+    fn valid_at(&self, now_ms: u64, instant: Instant) -> bool {
+        self.cell.read().deadline.valid_at(now_ms, instant)
+    }
+
+    fn deadline(&self) -> Deadline {
+        self.cell.read().deadline.clone()
+    }
+
+    async fn invalidated_at(&self, snapshot: &ExecutionSnapshot, deadline_ms: u64) {
+        loop {
+            let changed = self.cell.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let Ok(now_ms) = snapshot.current() else {
+                return;
+            };
+            if now_ms >= deadline_ms {
+                return;
+            }
+            let deadline = self.deadline();
+            tokio::select! { biased;
+                _ = &mut changed => {},
+                _ = snapshot.clock.wait_until(
+                    deadline.expires_at(),
+                    deadline_ms.min(deadline.expires_at_ms()),
+                    &snapshot.invalidated,
+                ) => {},
+            }
+        }
+    }
+}
+
+/// Values of one netmap guard evaluation, taken under a single lease read.
+/// Borrowed from the snapshot for one synchronous section of work; never stored.
 #[derive(Clone, Copy, Debug)]
-pub struct Reading<'a> {
-    pub configuration: &'a NodeConfiguration,
+pub struct NetmapReading<'a> {
+    pub netmap: &'a CompiledNetmap,
+    /// Lease current at this reading.
+    pub lease: NetmapLease,
     pub now_ms: u64,
     pub instant: Instant,
-    /// Earliest monotonic/UTC expiry across the snapshot's deadlines.
     pub expires_at: Instant,
     pub expires_at_ms: u64,
 }
 
-#[derive(Clone)]
-struct Legacy {
-    target: Arc<CompiledNode>,
-    instance: InstanceId,
-    generation: Version,
-    deadlines: [Deadline; 3],
-    publication: Arc<()>,
-    predecessor: Option<(Arc<()>, ConfigurationRef)>,
+impl NetmapReading<'_> {
+    /// Input of `meshway_policy::admission::netmap`; pass `now_ms` with it.
+    pub fn leased(&self) -> Leased<'_> {
+        Leased {
+            netmap: &self.netmap.netmap,
+            lease: &self.lease,
+        }
+    }
 }
 
-#[derive(Clone)]
-enum Target {
-    Legacy(Legacy),
-    Netmap(netmap::Bound),
+/// The issuer's handle for one netmap content. Not clonable: only the owner of
+/// the issue may renew its lease or issue further snapshots sharing it.
+pub struct NetmapRenewal {
+    template: ExecutionSnapshot,
 }
 
-/// A private target and its original control deadlines. Cloning or reading the
-/// snapshot never extends them. Hosts must check immediately before admitting
-/// work or releasing an output, and select `invalidated` around blocked I/O.
-/// This is installation input, not proof that any component is applied.
+impl NetmapRenewal {
+    fn bound(&self) -> &Bound {
+        &self.template.target
+    }
+
+    pub fn reference(&self) -> NetmapRef {
+        self.bound().netmap.reference()
+    }
+
+    pub fn netmap(&self) -> &Arc<CompiledNetmap> {
+        &self.bound().netmap
+    }
+
+    pub fn lease(&self) -> NetmapLease {
+        self.bound().cell.read().lease
+    }
+
+    /// Replace the lease of the same content. Every live snapshot sharing it
+    /// observes the new deadline at its next check; nothing is cancelled. The
+    /// lease must be issued no earlier than the current one. Once the current
+    /// lease has expired or the guards were invalidated, renewal fails: an
+    /// expired grant is never revived, the issuer must issue again.
+    pub fn renew(&self, lease: NetmapLease, deadline: Deadline) -> Result<(), Error> {
+        let bound = self.bound();
+        lease.validate().map_err(|_| Error::Contract)?;
+        if lease.netmap != bound.netmap.reference()
+            || !deadline.shares_clock(&self.template.clock)
+            || deadline.expires_at_ms() != lease.expires_at_ms
+        {
+            return Err(Error::Contract);
+        }
+        {
+            let mut current = bound
+                .cell
+                .current
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            self.template.live()?;
+            let (now_ms, instant) = self.template.clock.now_with_instant()?;
+            if !current.deadline.valid_at(now_ms, instant) || !deadline.valid_at(now_ms, instant) {
+                return Err(Error::Expired);
+            }
+            if lease.issued_at_ms < current.lease.issued_at_ms {
+                return Err(Error::Contract);
+            }
+            *current = Current { lease, deadline };
+        }
+        bound.cell.changed.notify_waiters();
+        Ok(())
+    }
+
+    /// Another snapshot of the same content and lease cell, e.g. after a new
+    /// instance was acquired. `same_netmap` holds with every earlier snapshot.
+    pub fn snapshot(&self, instance: Option<InstanceRequest>) -> Result<ExecutionSnapshot, Error> {
+        let mut snapshot = self.template.clone();
+        snapshot.target.instance = instance;
+        snapshot.ensure_current()?;
+        Ok(snapshot)
+    }
+}
+
+impl ExecutionSnapshot {
+    /// Bind a verified netmap and its lease. Fails when the lease is not for
+    /// this exact content, the deadline is not the lease expiry on the issuer
+    /// clock, the content digest does not verify, or it has already expired.
+    pub fn issue_netmap(issue: NetmapIssue) -> Result<(Self, NetmapRenewal), Error> {
+        issue.lease.validate().map_err(|_| Error::Contract)?;
+        if !issue.deadline.shares_clock(&issue.clock)
+            || issue.deadline.expires_at_ms() != issue.lease.expires_at_ms
+            || issue.lease.netmap != issue.netmap.reference()
+            || issue.netmap.verify().is_err()
+        {
+            return Err(Error::Contract);
+        }
+        let snapshot = Self {
+            target: Bound {
+                netmap: issue.netmap,
+                cell: Arc::new(LeaseCell {
+                    current: RwLock::new(Current {
+                        lease: issue.lease,
+                        deadline: issue.deadline,
+                    }),
+                    changed: tokio::sync::Notify::new(),
+                }),
+                instance: issue.instance,
+            },
+            validity: issue.validity,
+            invalidated: issue.invalidated,
+            clock: issue.clock,
+            lineage: issue.lineage,
+        };
+        snapshot.ensure_current()?;
+        Ok((snapshot.clone(), NetmapRenewal { template: snapshot }))
+    }
+
+    /// Verified content while the snapshot is current.
+    pub fn netmap(&self) -> Result<&CompiledNetmap, Error> {
+        self.ensure_current()?;
+        Ok(&self.target.netmap)
+    }
+
+    /// One complete netmap guard evaluation; see [`NetmapReading`].
+    pub fn netmap_reading(&self) -> Result<NetmapReading<'_>, Error> {
+        let bound = &self.target;
+        let current = bound.cell.read();
+        self.live()?;
+        let (now_ms, instant) = self.clock.now_with_instant()?;
+        if !current.deadline.valid_at(now_ms, instant) {
+            return Err(Error::Expired);
+        }
+        Ok(NetmapReading {
+            netmap: &bound.netmap,
+            lease: current.lease,
+            now_ms,
+            instant,
+            expires_at: current.deadline.expires_at(),
+            expires_at_ms: current.deadline.expires_at_ms(),
+        })
+    }
+
+    /// Exact content identity; comparison data, not authority.
+    pub fn reference(&self) -> NetmapRef {
+        self.target.netmap.reference()
+    }
+
+    /// Lease current now; comparison data, not authority.
+    pub fn lease(&self) -> NetmapLease {
+        self.target.cell.read().lease
+    }
+
+    /// Same content issue and same invalidation epoch: the two snapshots are
+    /// interchangeable and only differ in (optional) instance binding. This is
+    /// the O(1) "lease renewal only" test; it implies no continuation check.
+    pub fn same_netmap(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.target.cell, &other.target.cell)
+            && Arc::ptr_eq(&self.validity, &other.validity)
+    }
+
+    /// Validate a newer content issued by the same owner after `old`. Defined
+    /// only for a serial increase: same-content renewal is not a continuation
+    /// (`same_netmap` holds instead). `old`'s guards are already invalidated
+    /// by the issuer, but its lease must still be live: an expired netmap
+    /// terminates everything. The own enablement, network, Node, identity,
+    /// addresses and keys must be unchanged; otherwise this is a hard barrier.
+    /// The returned old content is comparison data for the consumer's own
+    /// per-flow/per-circuit decision on the new content, never authority.
+    pub fn netmap_continuation_from<'a>(&self, old: &'a Self) -> Result<&'a CompiledNetmap, Error> {
+        let (new, previous) = (&self.target, &old.target);
+        self.ensure_current()?;
+        let (now_ms, instant) = old.clock.now_with_instant()?;
+        let (a, b) = (&previous.netmap.netmap, &new.netmap.netmap);
+        if !Weak::ptr_eq(&self.lineage, &old.lineage)
+            || self.lineage.strong_count() == 0
+            || !Arc::ptr_eq(&self.clock, &old.clock)
+            || b.serial <= a.serial
+            || !previous.valid_at(now_ms, instant)
+            || !a.self_.enabled
+            || !b.self_.enabled
+            || a.network_id != b.network_id
+            || a.node_id != b.node_id
+            || a.self_.identity != b.self_.identity
+            || a.self_.addresses != b.self_.addresses
+            || a.self_.self_keys != b.self_.self_keys
+        {
+            return Err(Error::Expired);
+        }
+        self.ensure_current()?;
+        Ok(&previous.netmap)
+    }
+}
+
+
+/// A verified netmap and its lease. Cloning or reading the snapshot never
+/// extends it. Hosts must check immediately before admitting work or
+/// releasing an output, and select `invalidated` around blocked I/O. This is
+/// installation input, not proof that any component is applied.
 #[derive(Clone)]
 pub struct ExecutionSnapshot {
-    target: Target,
+    target: Bound,
     validity: Arc<AtomicBool>,
     invalidated: CancellationToken,
     clock: Arc<Clock>,
@@ -83,73 +312,11 @@ pub struct ExecutionSnapshot {
 }
 
 impl ExecutionSnapshot {
-    /// Bind an issuer's current facts. Fails when any deadline has already
-    /// passed or validity was withdrawn; an expired snapshot is never returned.
-    pub fn issue(issue: Issue) -> Result<Self, Error> {
-        // Every check reads the issuer's clock once and applies it to all three
-        // deadlines; a deadline started on another clock would be misjudged.
-        if !issue
-            .deadlines
-            .iter()
-            .all(|deadline| deadline.shares_clock(&issue.clock))
-        {
-            return Err(Error::Contract);
-        }
-        let snapshot = Self {
-            target: Target::Legacy(Legacy {
-                target: issue.target,
-                instance: issue.instance,
-                generation: issue.generation,
-                deadlines: issue.deadlines,
-                publication: issue.publication,
-                predecessor: issue.predecessor,
-            }),
-            validity: issue.validity,
-            invalidated: issue.invalidated,
-            clock: issue.clock,
-            lineage: issue.lineage,
-        };
-        snapshot.ensure_current()?;
-        Ok(snapshot)
-    }
-
-    fn legacy(&self) -> Result<&Legacy, Error> {
-        match &self.target {
-            Target::Legacy(legacy) => Ok(legacy),
-            Target::Netmap(_) => Err(Error::Contract),
-        }
-    }
-
-    fn legacy_or_panic(&self) -> &Legacy {
-        match &self.target {
-            Target::Legacy(legacy) => legacy,
-            Target::Netmap(_) => {
-                panic!("legacy ExecutionSnapshot accessor called on a netmap snapshot")
-            }
-        }
-    }
-
-    /// Legacy: the instance bound into a publication snapshot.
-    ///
-    /// # Panics
-    /// On a netmap snapshot, whose instance is optional State binding only; use
-    /// [`Self::instance_binding`].
-    pub fn instance(&self) -> meshway_protocol::InstanceRequest {
-        let legacy = self.legacy_or_panic();
-        meshway_protocol::InstanceRequest {
-            instance_id: legacy.instance,
-            generation: legacy.generation,
-        }
-    }
-
     /// Instance qualification for State, receipts and coordination requests.
-    /// It never contributes to validity: a netmap snapshot without an instance
+    /// It never contributes to validity: a snapshot without an instance
     /// (offline restart) or with an expired one remains current until its lease.
-    pub fn instance_binding(&self) -> Option<meshway_protocol::InstanceRequest> {
-        match &self.target {
-            Target::Legacy(_) => Some(self.instance()),
-            Target::Netmap(bound) => bound.instance.clone(),
-        }
+    pub fn instance(&self) -> Option<InstanceRequest> {
+        self.target.instance.clone()
     }
 
     pub fn ensure_current(&self) -> Result<(), Error> {
@@ -175,208 +342,35 @@ impl ExecutionSnapshot {
         let _profile = PROFILE.enter();
         self.live()?;
         let (now_ms, instant) = self.clock.now_with_instant()?;
-        if !self.deadlines_valid_at(now_ms, instant) {
+        if !self.target.valid_at(now_ms, instant) {
             return Err(Error::Expired);
         }
         Ok((now_ms, instant))
     }
 
-    /// Legacy: one complete guard evaluation for one synchronous section of
-    /// work. The caller applies the same configuration and time to every
-    /// decision in that section and still re-checks the snapshot before
-    /// committing state or releasing an output after any await. A reading is
-    /// not transferable authority and must not outlive the section it was
-    /// taken for. Netmap snapshots use [`Self::netmap_reading`].
-    pub fn reading(&self) -> Result<Reading<'_>, Error> {
-        let legacy = self.legacy()?;
-        let (now_ms, instant) = self.guard()?;
-        Ok(Reading {
-            configuration: &legacy.target.configuration,
-            now_ms,
-            instant,
-            expires_at: self.expires_at(),
-            expires_at_ms: self.expires_at_ms(),
-        })
-    }
-
-    fn deadlines_valid_at(&self, now_ms: u64, instant: Instant) -> bool {
-        match &self.target {
-            Target::Legacy(legacy) => legacy
-                .deadlines
-                .iter()
-                .all(|deadline| deadline.valid_at(now_ms, instant)),
-            Target::Netmap(bound) => bound.valid_at(now_ms, instant),
-        }
-    }
-
-    /// Legacy target configuration; `Err(Contract)` on a netmap snapshot.
-    pub fn configuration(&self) -> Result<&NodeConfiguration, Error> {
-        let legacy = self.legacy()?;
-        self.ensure_current()?;
-        Ok(&legacy.target.configuration)
-    }
-
-    /// Legacy publication reference.
-    ///
-    /// # Panics
-    /// On a netmap snapshot; use [`Self::netmap_ref`].
-    pub fn reference(&self) -> ConfigurationRef {
-        reference(&self.legacy_or_panic().target)
-    }
-
-    /// Network, Node and registered keys of the owner, for either target kind.
+    /// Network, Node and registered keys of the owner.
     pub(crate) fn self_binding(&self) -> Result<(NetworkId, NodeId, &TrustedNode), Error> {
         self.ensure_current()?;
-        Ok(match &self.target {
-            Target::Legacy(legacy) => {
-                let cfg = &legacy.target.configuration;
-                (cfg.network_id, cfg.node_id, &cfg.self_keys)
-            }
-            Target::Netmap(bound) => {
-                let netmap = &bound.netmap.netmap;
-                (netmap.network_id, netmap.node_id, &netmap.self_.self_keys)
-            }
-        })
-    }
-
-    /// Compare the local invalidation epoch as well as the Server binding. Used
-    /// for explicit same-target renewal handoff, never to revive invalid state.
-    /// For netmap snapshots this is [`Self::same_netmap`] plus equal instance.
-    pub fn same_execution(&self, other: &Self) -> bool {
-        match (&self.target, &other.target) {
-            (Target::Legacy(a), Target::Legacy(b)) => {
-                Arc::ptr_eq(&self.validity, &other.validity)
-                    && a.instance == b.instance
-                    && a.generation == b.generation
-                    && reference(&a.target) == reference(&b.target)
-                    && a.target.configuration.network_id == b.target.configuration.network_id
-                    && a.target.configuration.node_id == b.target.configuration.node_id
-            }
-            (Target::Netmap(a), Target::Netmap(b)) => {
-                self.same_netmap(other) && a.instance == b.instance
-            }
-            _ => false,
-        }
-    }
-
-    /// Legacy: validate an owner-issued direct successor (or live same-target
-    /// renewal). The returned predecessor is comparison data, never execution
-    /// authority. A publication skipped by the consumer cannot carry state
-    /// across a hidden withdrawal. Old absolute UTC and monotonic deadlines must
-    /// still be live, even though replacement already cancelled its output
-    /// guard. Always `Err` for netmap snapshots; see
-    /// [`Self::netmap_continuation_from`].
-    pub fn continuation_from<'a>(&self, old: &'a Self) -> Result<&'a NodeConfiguration, Error> {
-        let (Target::Legacy(new), Target::Legacy(previous_target)) = (&self.target, &old.target)
-        else {
-            return Err(Error::Expired);
-        };
-        self.ensure_current()?;
-        let previous = &previous_target.target.configuration;
-        let current = &new.target.configuration;
-        let direct = new.predecessor.as_ref().is_some_and(|(epoch, reference)| {
-            Arc::ptr_eq(epoch, &previous_target.publication) && *reference == old.reference()
-        });
-        let same = Arc::ptr_eq(&new.publication, &previous_target.publication)
-            && self.same_execution(old)
-            && old.ensure_current().is_ok();
-        let (now_ms, instant) = old.clock.now_with_instant()?;
-        if !Weak::ptr_eq(&self.lineage, &old.lineage)
-            || !(same || direct)
-            || new.instance != previous_target.instance
-            || new.generation != previous_target.generation
-            || !old.deadlines_valid_at(now_ms, instant)
-            || !previous.enabled
-            || !current.enabled
-            || previous.network_id != current.network_id
-            || previous.node_id != current.node_id
-            || previous.identity != current.identity
-            || previous.addresses != current.addresses
-            || previous.self_keys != current.self_keys
-        {
-            return Err(Error::Expired);
-        }
-        self.ensure_current()?;
-        Ok(previous)
+        let netmap = &self.target.netmap.netmap;
+        Ok((netmap.network_id, netmap.node_id, &netmap.self_.self_keys))
     }
 
     pub fn now_ms(&self) -> Result<u64, Error> {
         self.current()
     }
 
-    /// Legacy: current execution permission for a retained physical adjacency.
-    /// This is not peer authentication; the channel owner must retain that
-    /// evidence. Netmap consumers use `meshway_policy::admission::netmap`.
-    pub fn admit_adjacency(
-        &self,
-        peer: meshway_model::NodeId,
-        carrier: &meshway_configuration::execution::Carrier,
-    ) -> Result<u64, Error> {
-        meshway_policy::admission::admit_adjacency(
-            self.configuration()?,
-            peer,
-            carrier,
-            self.now_ms()?,
-        )
-        .map_err(|_| Error::Expired)
-    }
-
-    /// Inactive-resource retention only, never I/O authority. A publication can
-    /// invalidate this snapshot while its original UTC/monotonic lease bounds
-    /// still allow an owner to await a direct `continuation_from` handoff.
-    pub fn retention_deadline(&self) -> Result<Instant, Error> {
-        let (now_ms, instant) = self.clock.now_with_instant()?;
-        if self.lineage.strong_count() == 0 || !self.deadlines_valid_at(now_ms, instant) {
-            return Err(Error::Expired);
-        }
-        let remaining = self
-            .expires_at_ms()
-            .checked_sub(now_ms)
-            .ok_or(Error::Expired)?;
-        Ok(self.expires_at().min(
-            Instant::now()
-                .checked_add(std::time::Duration::from_millis(remaining))
-                .ok_or(Error::Expired)?,
-        ))
-    }
-
-    /// Current earliest deadline: the netmap lease deadline, or the earliest of
-    /// the legacy session/instance/execution deadlines. A later same-content
-    /// renewal of a netmap snapshot raises it for every clone.
+    /// Current lease deadline. A later same-content renewal raises it for
+    /// every clone.
     pub fn deadline(&self) -> Deadline {
-        match &self.target {
-            Target::Legacy(legacy) => legacy
-                .deadlines
-                .iter()
-                .min_by_key(|deadline| (deadline.expires_at_ms(), deadline.expires_at()))
-                .expect("three deadlines")
-                .clone(),
-            Target::Netmap(bound) => bound.deadline(),
-        }
+        self.target.deadline()
     }
 
     pub fn expires_at(&self) -> Instant {
-        match &self.target {
-            Target::Legacy(legacy) => legacy
-                .deadlines
-                .iter()
-                .map(Deadline::expires_at)
-                .min()
-                .expect("three deadlines"),
-            Target::Netmap(bound) => bound.deadline().expires_at(),
-        }
+        self.target.deadline().expires_at()
     }
 
     pub fn expires_at_ms(&self) -> u64 {
-        match &self.target {
-            Target::Legacy(legacy) => legacy
-                .deadlines
-                .iter()
-                .map(Deadline::expires_at_ms)
-                .min()
-                .expect("three deadlines"),
-            Target::Netmap(bound) => bound.deadline().expires_at_ms(),
-        }
+        self.target.deadline().expires_at_ms()
     }
 
     /// Preserve an admitted operation's absolute UTC and monotonic cutoffs on
@@ -399,50 +393,25 @@ impl ExecutionSnapshot {
         self.invalidated_at(u64::MAX).await;
     }
 
-    /// Also bound work by an immutable permit deadline, using the issuer's same
-    /// clock and notifications. This cannot extend the snapshot. A netmap
-    /// snapshot keeps waiting across same-content renewals.
+    /// Also bound work by an immutable deadline, using the issuer's same
+    /// clock and notifications. This cannot extend the snapshot; it keeps
+    /// waiting across same-content renewals.
     pub async fn invalidated_at(&self, deadline_ms: u64) {
-        match &self.target {
-            Target::Legacy(_) => {
-                if self.ensure_current().is_err() {
-                    return;
-                }
-                self.clock
-                    .wait_until(
-                        self.expires_at(),
-                        deadline_ms.min(self.expires_at_ms()),
-                        &self.invalidated,
-                    )
-                    .await;
-            }
-            Target::Netmap(bound) => {
-                bound.invalidated_at(self, deadline_ms).await;
-            }
-        }
+        self.target.invalidated_at(self, deadline_ms).await;
     }
 }
 
 impl fmt::Debug for ExecutionSnapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.target {
-            Target::Legacy(legacy) => f
-                .debug_struct("ExecutionSnapshot")
-                .field("network", &legacy.target.configuration.network_id)
-                .field("node", &legacy.target.configuration.node_id)
-                .field("instance", &legacy.instance)
-                .field("generation", &legacy.generation)
-                .field("target", &self.reference())
-                .field("current", &self.ensure_current().is_ok())
-                .finish_non_exhaustive(),
-            Target::Netmap(bound) => f
-                .debug_struct("ExecutionSnapshot")
-                .field("network", &bound.netmap.netmap.network_id)
-                .field("node", &bound.netmap.netmap.node_id)
-                .field("netmap", &bound.netmap.reference())
-                .field("instance", &bound.instance)
-                .field("current", &self.ensure_current().is_ok())
-                .finish_non_exhaustive(),
-        }
+        f.debug_struct("ExecutionSnapshot")
+            .field("network", &self.target.netmap.netmap.network_id)
+            .field("node", &self.target.netmap.netmap.node_id)
+            .field("netmap", &self.target.netmap.reference())
+            .field("instance", &self.target.instance)
+            .field("current", &self.ensure_current().is_ok())
+            .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests;

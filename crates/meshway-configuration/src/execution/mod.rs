@@ -8,12 +8,10 @@ use meshway_transport_spec::*;
 pub use meshway_transport_spec::{ClientTls, DialParameters};
 use std::{collections::BTreeMap, net::IpAddr};
 mod admission;
-mod delta;
 mod diagnostics;
 mod exit;
 pub use exit::*;
 mod obsolete;
-pub use delta::*;
 pub use diagnostics::*;
 pub use obsolete::{ObsoleteSliceError, ObsoleteSliceHeader, validate_obsolete_slice};
 
@@ -161,6 +159,8 @@ pub enum DialEndpointSource {
     Configured,
     /// Reported by the peer Node from its own interfaces in State.
     Local,
+    /// A STUN-observed public mapping of the peer's UDP listener socket.
+    Stun,
 }
 }
 object! {

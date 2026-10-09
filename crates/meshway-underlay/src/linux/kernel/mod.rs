@@ -342,8 +342,7 @@ impl Kernel {
             }
             Some(_) => {}
         }
-        if (matches!(view, View::Legacy(_)) && view.exit_enabled() && view.exit_role().is_none())
-            || view
+        if view
                 .egress_capture()
                 .is_some_and(|plan| plan.unavailable.is_some())
         {
@@ -411,7 +410,7 @@ impl Kernel {
     /// Replace the installed snapshot by one of the same netmap content and
     /// rebind every descriptor to it. No kernel object is touched.
     fn renew(&self, snapshot: &ExecutionSnapshot) -> Result<bool> {
-        if !snapshot.is_netmap() || self.tun.is_none() {
+        if self.tun.is_none() {
             return Ok(false);
         }
         let mut active = self.shared.execution.write().map_err(|_| Error::Worker)?;
@@ -969,13 +968,9 @@ fn verify_rules(journal: &Journal, rules: &[RuleMessage]) -> Result<()> {
 /// Control's continuation from the installed `previous` target to `next`, as
 /// a view of the previous content. Comparison data only.
 fn continuation<'a>(next: &ExecutionSnapshot, previous: &'a ExecutionSnapshot) -> Option<View<'a>> {
-    if next.is_netmap() {
-        next.netmap_continuation_from(previous)
-            .ok()
-            .map(|old| View::Netmap(&old.netmap))
-    } else {
-        next.continuation_from(previous).ok().map(View::Legacy)
-    }
+    next.netmap_continuation_from(previous)
+        .ok()
+        .map(|old| View::new(&old.netmap))
 }
 
 fn same_pools(left: &[ipnet::IpNet], right: &[ipnet::IpNet]) -> bool {

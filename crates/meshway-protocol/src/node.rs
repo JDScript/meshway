@@ -147,9 +147,9 @@ wire_object! {
     pub dataplane_key_revoked_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
     /// Whether the current caller may permanently delete this Node.
     pub can_delete: bool,
-    /// Current execution target, not a saved/applied receipt. May be a later refresh than the source apply.
+    /// Current netmap of the Node, not a saved/applied receipt.
     #[serde(deserialize_with="crate::object::required_nullable")]
-    pub desired_execution: Option<ConfigurationRef> [required=true],
+    pub netmap: Option<NetmapRef> [required=true],
     /// Whether the current caller may revoke the displayed control key.
     pub can_revoke_control_key: bool,
     /// Whether the current caller may revoke the displayed data-plane key.

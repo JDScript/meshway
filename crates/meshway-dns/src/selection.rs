@@ -4,7 +4,7 @@ use hickory_proto::{
     rr::{Name, RData, Record, RecordType, rdata},
 };
 use meshway_configuration::{
-    DnsServer, NodeAddresses, execution::DnsExecution, normalize_dns_name,
+    DnsServer, NodeAddresses, normalize_dns_name,
 };
 use std::{collections::BTreeMap, fmt, net::IpAddr};
 
@@ -105,7 +105,6 @@ pub struct PublishedDns {
     default: Vec<String>,
     override_local: bool,
     executable_exit: bool,
-    complete: bool,
 }
 
 impl fmt::Debug for PublishedDns {
@@ -115,18 +114,6 @@ impl fmt::Debug for PublishedDns {
 }
 
 impl PublishedDns {
-    pub fn from_execution(execution: &DnsExecution) -> Result<Self, ConfigurationError> {
-        Self::from_parts(
-            &execution.settings,
-            &execution.mesh_hosts,
-            matches!(
-                execution.egress,
-                meshway_configuration::execution::DnsEgress::ViaExit { .. }
-            ),
-            false,
-        )
-    }
-
     /// A netmap's names are the complete set this Node may discover: itself
     /// and every Node it has Access to. Absence is then authoritative locally.
     pub fn from_netmap(
@@ -139,20 +126,13 @@ impl PublishedDns {
                 netmap.dns.egress,
                 meshway_configuration::netmap::DnsPlan::ViaExit { .. }
             ),
-            true,
         )
-    }
-
-    /// Whether `select`'s `DiscoveryRequired` means "not visible".
-    pub fn complete(&self) -> bool {
-        self.complete
     }
 
     fn from_parts(
         settings: &meshway_configuration::DnsConfiguration,
         mesh_hosts: &BTreeMap<String, NodeAddresses>,
         executable_exit: bool,
-        complete: bool,
     ) -> Result<Self, ConfigurationError> {
         let domain = configuration_name(&settings.domain)?;
         let mut hosts = BTreeMap::new();
@@ -203,7 +183,7 @@ impl PublishedDns {
             default: settings.default.clone(),
             override_local: settings.override_local,
             executable_exit,
-            complete,
+
         })
     }
 

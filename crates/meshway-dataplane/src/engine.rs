@@ -1,7 +1,6 @@
 use crate::{
-    Engine, Error, Ingress, Limits, LocalFlow, Packet, PendingAction,
-    authority::View,
-    flow::{FlowGrant, FlowTable, FlowTime, Keep},
+    Engine, Error, Ingress, Limits, LocalFlow, Packet, PendingAction, authority::View,
+    flow::FlowTable,
 };
 use meshway_authority::ExecutionSnapshot;
 
@@ -22,21 +21,6 @@ impl Engine {
             exit_counters: Default::default(),
             decisions: Default::default(),
         })
-    }
-
-    /// Legacy: install a Control-issued successor publication. Every retained
-    /// flow is judged in place; old queued actions keep their original
-    /// cancelled guard and retained idle time is unchanged.
-    pub fn reconcile(&mut self, snapshot: ExecutionSnapshot) -> Result<(), Error> {
-        let reading = snapshot.reading()?;
-        let old = snapshot.continuation_from(&self.snapshot)?;
-        let new = reading.configuration;
-        let view = View::from(reading);
-        self.flows.retain(&FlowTime::from(&view), |flow| {
-            retain_legacy(old, new, flow, &view)
-        });
-        self.snapshot = snapshot;
-        Ok(())
     }
 
     pub fn process(&mut self, ingress: Ingress, packet: Packet) -> Result<PendingAction, Error> {
@@ -63,12 +47,9 @@ impl Engine {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("flow.lookup");
         let _profile = PROFILE.enter();
-        let found = self.flows.local_flow(
-            reading.node(),
-            reading.legacy(),
-            &packet.facts(),
-            FlowTime::from(reading),
-        )?;
+        let found = self
+            .flows
+            .local_flow(reading.node(), &packet.facts(), reading.into())?;
         let current = View::of(&self.snapshot)?;
         match found {
             Some(found) if !found.cap.live_at(current.instant, current.now_ms) => {
@@ -104,24 +85,5 @@ impl Engine {
     pub async fn invalidated(&mut self) {
         self.snapshot.invalidated().await;
         self.flows.clear();
-    }
-}
-
-/// Legacy flow retention across a publication: the demand's permit and every
-/// path binding must be unchanged; the new permit can only shorten the cap.
-pub(crate) fn retain_legacy(
-    old: &meshway_configuration::execution::NodeConfiguration,
-    new: &meshway_configuration::execution::NodeConfiguration,
-    flow: &crate::flow::Retained<'_>,
-    view: &View<'_>,
-) -> Keep {
-    let FlowGrant::Legacy(demand) = flow.grant else {
-        return Keep::Retire;
-    };
-    match crate::flow::authorization_unchanged(old, new, *demand, flow.path, view.now_ms) {
-        Ok(true) => Keep::Retain(new.permits.get(demand).and_then(|permit| {
-            crate::authority::Cap::until_ms(view.instant, view.now_ms, permit.expires_at_ms)
-        })),
-        _ => Keep::Retire,
     }
 }

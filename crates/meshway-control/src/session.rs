@@ -187,7 +187,6 @@ impl Control {
         {
             self.fence();
         }
-        self.reset_events();
         self.session = Some(Session {
             response,
             deadline,

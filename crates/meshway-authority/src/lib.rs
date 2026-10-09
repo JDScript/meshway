@@ -1,7 +1,7 @@
 //! Execution authority handed from one issuer to Node components.
 //!
-//! The types here carry the exact deadlines, invalidation and private material
-//! of one live execution target. They do not read storage, contact a Server or
+//! The types here carry the lease deadline, invalidation and private material
+//! of one verified netmap. They do not read storage, contact a Server or
 //! decide policy. In production only `meshway-control` issues them; benchmark
 //! and fixture issuers live under `tools/` and must never be assembled into
 //! `meshwayd`. Holding or cloning a value never extends its grant.
@@ -13,10 +13,8 @@ mod snapshot;
 
 pub use clock::{Clock, Deadline, Started};
 pub use identity::{DataPlaneIdentity, packet_proof_message};
-pub use snapshot::{ExecutionSnapshot, Issue, NetmapIssue, NetmapReading, NetmapRenewal, Reading};
+pub use snapshot::{ExecutionSnapshot, NetmapIssue, NetmapReading, NetmapRenewal};
 
-use meshway_configuration::execution::CompiledNode;
-use meshway_model::ConfigurationRef;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -33,12 +31,4 @@ pub fn now() -> Result<u64, Error> {
         .timestamp_millis()
         .try_into()
         .map_err(|_| Error::Expired)
-}
-
-pub fn reference(target: &CompiledNode) -> ConfigurationRef {
-    ConfigurationRef {
-        revision: target.configuration.revision,
-        execution_publication: target.configuration.publication,
-        digest: target.digest,
-    }
 }

@@ -3,8 +3,8 @@
 //! `control.json` (record v5) holds only the identity envelope: keys, pending
 //! enrollment, binding and rotation. Derived caches live in their own files
 //! with their own format identifiers, so compiler changes never touch the
-//! identity version: `netmap.json` (see `netmap::store`) and the legacy
-//! publication target `execution.json` (removed with the legacy chain).
+//! identity version: `netmap.json` (see `netmap::store`). A leftover
+//! publication-era `execution.json` is neither read nor removed.
 use crate::{
     Control, Error,
     identity::{self, Keys},
@@ -22,8 +22,6 @@ use zeroize::Zeroizing;
 
 pub(super) const LIMIT: usize = 16 * 1024 * 1024;
 const RECORD: &str = "control.json";
-const LEGACY_CACHE: &str = "execution.json";
-const LEGACY_FORMAT: &str = "meshway-execution-cache/1";
 const MARKER: &[u8] = b"meshway-control/1\n";
 const VERSION: u8 = 5;
 
@@ -265,7 +263,16 @@ fn validate_obsolete(
 ) -> Result<(), Error> {
     if version == 4 {
         let saved: CompiledNode = decode(raw.get().as_bytes())?;
-        return crate::execution::validate_target(&saved, binding).map_err(|_| Error::Record);
+        let cfg = &saved.configuration;
+        if cfg.network_id != binding.network_id
+            || cfg.node_id != binding.node_id
+            || cfg.self_keys.control_key != binding.keys.control
+            || cfg.self_keys.dataplane_key != binding.keys.dataplane
+            || meshway_configuration::digest(cfg).map_err(|_| Error::Record)? != saved.digest
+        {
+            return Err(Error::Record);
+        }
+        return Ok(());
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -324,53 +331,14 @@ impl Write for Buffer {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(bound(deserialize = "T: Deserialize<'de>"))]
-struct LegacyCache<T> {
-    format: String,
-    #[serde(deserialize_with = "Option::deserialize")]
-    saved: Option<T>,
-}
-
-/// Legacy publication target cache. A missing, malformed, foreign-format or
-/// misbound file is not authority and not identity: it is ignored and later
-/// replaced by the next synchronized target.
-pub(super) fn load_legacy(
-    directory: &meshway_private_storage::Directory,
-    binding: Option<&EnrollmentResponse>,
-) -> Result<Option<CompiledNode>, Error> {
-    let (Some(bytes), Some(binding)) = (read(directory, LEGACY_CACHE)?, binding) else {
-        return Ok(None);
-    };
-    let Ok(LegacyCache::<CompiledNode> { format, saved }) = decode(&bytes) else {
-        return Ok(None);
-    };
-    Ok(saved.filter(|saved| {
-        format == LEGACY_FORMAT && crate::execution::validate_target(saved, binding).is_ok()
-    }))
-}
-
 impl Control {
     /// Identity envelope write. Stops current execution authority first.
     pub(super) async fn persist(&mut self) -> Result<(), Error> {
         self.ready()?;
         self.invalidate_status_context();
-        self.invalidate_snapshots();
         self.revoke_netmap();
         let bytes = encode(&self.record)?;
         self.write_private(RECORD, bytes).await
-    }
-
-    /// Only the validated configuration-query transaction may preserve lineage.
-    pub(super) async fn persist_target(&mut self) -> Result<(), Error> {
-        self.ready()?;
-        self.invalidate_guards();
-        let bytes = encode(&LegacyCache {
-            format: LEGACY_FORMAT.into(),
-            saved: self.saved.as_ref(),
-        })?;
-        self.write_private(LEGACY_CACHE, bytes).await
     }
 
     /// One fenced durable write under the single driver. Until fsync is

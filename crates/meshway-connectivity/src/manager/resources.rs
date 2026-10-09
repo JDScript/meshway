@@ -84,24 +84,8 @@ impl Manager {
         &mut self,
         old: &Plan,
         new: &Plan,
-        previous: &meshway_authority::ExecutionSnapshot,
-        next: &meshway_authority::ExecutionSnapshot,
     ) -> Result<Vec<Owner>, Error> {
-        let legacy = if new.on_demand() {
-            None
-        } else {
-            Some((
-                next.continuation_from(previous)
-                    .map_err(|_| Error::Authority)?,
-                next.configuration().map_err(|_| Error::Authority)?,
-            ))
-        };
-        let compatible = |resource: &ResourceRef| match legacy {
-            Some((previous, next)) => {
-                meshway_underlay::resource_compatible(previous, next, resource)
-            }
-            None => old.netmap_compatible(new, resource),
-        };
+        let compatible = |resource: &ResourceRef| old.netmap_compatible(new, resource);
         let dial_peers = new.dial_peers();
         let retired: Vec<_> = self
             .owners
@@ -112,7 +96,7 @@ impl Manager {
                 // A retained worker re-reads its peer's candidates per epoch.
                 Key::Peer(peer) => dial_peers.contains(peer),
                 Key::Traversal => true,
-                Key::Idle | Key::Facts => new.on_demand(),
+                Key::Idle | Key::Facts => true,
             })
             .cloned()
             .collect();

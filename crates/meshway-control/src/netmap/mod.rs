@@ -164,6 +164,11 @@ impl Control {
         Ok(renewal.snapshot(self.current_instance().ok())?)
     }
 
+    /// Verified content held, with or without authority; comparison data only.
+    pub(crate) fn netmap_base(&self) -> Option<&Arc<CompiledNetmap>> {
+        self.netmap.base.as_ref()
+    }
+
     /// Verified content held (the next sync base), with or without authority.
     pub fn netmap_reference(&self) -> Option<NetmapRef> {
         self.netmap.base.as_ref().map(|netmap| netmap.reference())

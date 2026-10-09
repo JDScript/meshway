@@ -1,8 +1,8 @@
 //! One bounded owner of forward facts. Preparation is read-only apart from
 //! expired-entry collection; commit happens only after final guard validation.
 //!
-//! A flow is keyed by its stable grant, local role, complete original path and
-//! tuple. The installed content is not part of the key: a content update
+//! A flow is keyed by its (origin, target) pair, local role, complete
+//! original path and tuple. The installed content is not part of the key: a content update
 //! checks each flow in place against the new content and either keeps it with
 //! all protocol state, or retires it alone. No table is cloned or relabeled.
 mod exit;
@@ -10,10 +10,10 @@ mod index;
 mod tcp;
 
 use crate::{Direction, Error, LocalFlow, PacketFacts, Route, Transport, authority::Cap};
-use meshway_configuration::execution::{BusinessProtocol, NodeConfiguration};
-use meshway_model::{Digest, NodeId, RequestId};
+use meshway_configuration::execution::BusinessProtocol;
+use meshway_model::{Digest, NodeId};
 use meshway_policy::{
-    admission::{Hop, Traffic, admit_forward, admit_reply, netmap::Leased},
+    admission::{Hop, Traffic, netmap::Leased},
     compile::netmap::{Decision, Target},
 };
 use meshway_transport_spec::Port;
@@ -68,15 +68,6 @@ impl Tuple {
     }
 }
 
-/// The stable grant a flow was admitted under. It never names installed content.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum FlowGrant {
-    /// The flow's (origin, target) pair on the installed netmap; origin is `path[0]`.
-    Netmap(Target),
-    /// Legacy per-demand grant; removed with the daemon switch.
-    Legacy(RequestId),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Role {
     Origin,
@@ -86,7 +77,8 @@ enum Role {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Key {
-    grant: FlowGrant,
+    /// Target of the (origin = `path[0]`, target) pair; never installed content.
+    grant: Target,
     node: NodeId,
     role: Role,
     path: Vec<NodeId>,
@@ -116,8 +108,7 @@ impl ProtocolState {
 struct Flow {
     forward: Traffic,
     state: ProtocolState,
-    /// Idle bound and, for legacy targets, the permit and guard expiry at the
-    /// last admission. Netmap flows are additionally bounded by the live lease.
+    /// Idle bound at the last admission; additionally bounded by the live lease.
     cap: Cap,
     circuit: Option<[u8; 32]>,
     exit: Option<exit::ExitState>,
@@ -140,40 +131,35 @@ pub(super) struct LocalMatch {
     pub cap: Cap,
 }
 
-/// One entry reading. `guard` is the legacy snapshot expiry; netmap readings
-/// carry none since the lease is checked at every use and renews in place.
+/// One entry reading. The lease is checked at every use and renews in
+/// place, so it is never copied into a flow.
 pub(super) struct FlowTime {
     pub instant: Instant,
     pub now_ms: u64,
-    pub guard: Option<Cap>,
 }
 
 impl FlowTime {
     fn idle(&self, idle: Duration) -> Result<Cap, Error> {
         let at = self.instant.checked_add(idle).ok_or(Error::Limits)?;
-        let cap = Cap { at, ms: u64::MAX };
-        Ok(self.guard.map_or(cap, |guard| cap.min(guard)))
+        Ok(Cap { at, ms: u64::MAX })
     }
 }
 
 /// Authenticated ingress facts for one packet; never decoded from plaintext.
 pub(crate) struct Entry<'a> {
-    pub grant: FlowGrant,
+    pub grant: Target,
     pub path: &'a [NodeId],
     pub origin: NodeId,
     pub previous: Option<NodeId>,
     pub sender: NodeId,
 }
 
-/// The policy view a packet is admitted under.
-pub(crate) enum Policy<'a, 'd> {
-    Legacy(&'a NodeConfiguration),
-    /// `decide` returns the Permitted decision of the forward traffic's
-    /// (origin, destination, service) on the same content, or an error.
-    Netmap {
-        leased: Leased<'a>,
-        decide: &'d mut dyn FnMut(&Traffic) -> Result<Arc<Decision>, Error>,
-    },
+/// The policy view a packet is admitted under. `decide` returns the
+/// Permitted decision of the forward traffic's (origin, destination, service)
+/// on the same content, or an error.
+pub(crate) struct Policy<'a, 'd> {
+    pub leased: Leased<'a>,
+    pub decide: &'d mut dyn FnMut(&Traffic) -> Result<Arc<Decision>, Error>,
 }
 
 pub(super) struct Prepared {
@@ -207,7 +193,7 @@ impl Prepared {
 
 /// Read-only facts of one retained flow for an in-place content update.
 pub(crate) struct Retained<'a> {
-    pub grant: &'a FlowGrant,
+    pub grant: &'a Target,
     pub path: &'a [NodeId],
     pub forward: &'a Traffic,
     pub selection: Option<Digest>,
@@ -310,11 +296,9 @@ impl FlowTable {
     /// Exact tuple lookup in the established table; never refresh or advance it.
     /// Relay traffic and the remote direction of endpoint traffic cannot be
     /// borrowed to originate a local packet. Ambiguous metadata fails closed.
-    /// `legacy` adds the per-demand permit check of a legacy target.
     pub fn local_flow(
         &self,
         node: NodeId,
-        legacy: Option<&NodeConfiguration>,
         facts: &PacketFacts,
         time: FlowTime,
     ) -> Result<Option<LocalMatch>, Error> {
@@ -333,20 +317,7 @@ impl FlowTable {
             {
                 continue;
             }
-            let mut cap = flow.cap;
-            match (&key.grant, legacy) {
-                (FlowGrant::Legacy(demand), Some(cfg)) => {
-                    let Some(permit) = cfg.permits.get(demand) else {
-                        continue;
-                    };
-                    if time.now_ms >= permit.expires_at_ms {
-                        continue;
-                    }
-                    cap.ms = cap.ms.min(permit.expires_at_ms);
-                }
-                (FlowGrant::Netmap(_), None) => {}
-                _ => continue,
-            }
+            let cap = flow.cap;
             let local = match key.role {
                 Role::Origin => key.tuple == tuple && key.path.first() == Some(&node),
                 Role::Terminal => key.tuple == reverse && key.path.last() == Some(&node),
@@ -354,9 +325,6 @@ impl FlowTable {
             };
             if !local || found.is_some() {
                 return Err(Error::Flow);
-            }
-            if let Some(guard) = time.guard {
-                cap = cap.min(guard);
             }
             found = Some(LocalMatch {
                 route: LocalFlow::new(key.grant.clone(), key.path.clone(), flow.circuit),
@@ -498,73 +466,42 @@ impl FlowTable {
             return Err(Error::Sender);
         }
         let forward = existing.map_or(facts.traffic, |flow| flow.forward);
-        let (hop, permit_expires_at_ms, is_exit, selection) = {
+        let (hop, is_exit, selection) = {
             static PROFILE: meshway_logging::profile::Metric =
                 meshway_logging::profile::Metric::new("policy.packet");
             let _profile = PROFILE.enter();
-            match (policy, &entry.grant) {
-                (Policy::Legacy(cfg), FlowGrant::Legacy(demand)) => {
-                    let hop = match direction {
-                        Direction::Forward => admit_forward(
-                            cfg,
-                            *demand,
-                            path,
-                            entry.origin,
-                            entry.previous,
-                            &facts.traffic,
-                            time.now_ms,
-                        )?,
-                        Direction::Reply => admit_reply(
-                            cfg,
-                            *demand,
-                            path,
-                            entry.origin,
-                            entry.previous,
-                            &forward,
-                            &facts.traffic,
-                            time.now_ms,
-                        )?,
-                    };
-                    // Policy owns grant validity. Looking up its expiry here only
-                    // bounds retention and delayed output.
-                    let permit = cfg.permits.get(demand).ok_or(Error::Ingress)?;
-                    (hop, permit.expires_at_ms, permit.exit.is_some(), None)
-                }
-                (Policy::Netmap { leased, decide }, FlowGrant::Netmap(target)) => {
-                    let decision = decide(&forward)?;
-                    if decision.target != *target || decision.source != entry.origin {
-                        return Err(Error::Flow);
-                    }
-                    use meshway_policy::admission::netmap;
-                    let hop = match direction {
-                        Direction::Forward => netmap::admit_forward(
-                            leased,
-                            &decision,
-                            path,
-                            entry.origin,
-                            entry.previous,
-                            &facts.traffic,
-                            time.now_ms,
-                        )?,
-                        Direction::Reply => netmap::admit_reply(
-                            leased,
-                            &decision,
-                            path,
-                            entry.origin,
-                            entry.previous,
-                            &forward,
-                            &facts.traffic,
-                            time.now_ms,
-                        )?,
-                    };
-                    let is_exit = matches!(target, Target::Exit { .. });
-                    if existing.is_some_and(|flow| flow.selection != decision.selection) {
-                        return Err(Error::Flow);
-                    }
-                    (hop, u64::MAX, is_exit, decision.selection)
-                }
-                _ => return Err(Error::Ingress),
+            let Policy { leased, decide } = policy;
+            let target = &entry.grant;
+            let decision = decide(&forward)?;
+            if decision.target != *target || decision.source != entry.origin {
+                return Err(Error::Flow);
             }
+            use meshway_policy::admission::netmap;
+            let hop = match direction {
+                Direction::Forward => netmap::admit_forward(
+                    leased,
+                    &decision,
+                    path,
+                    entry.origin,
+                    entry.previous,
+                    &facts.traffic,
+                    time.now_ms,
+                )?,
+                Direction::Reply => netmap::admit_reply(
+                    leased,
+                    &decision,
+                    path,
+                    entry.origin,
+                    entry.previous,
+                    &forward,
+                    &facts.traffic,
+                    time.now_ms,
+                )?,
+            };
+            if existing.is_some_and(|flow| flow.selection != decision.selection) {
+                return Err(Error::Flow);
+            }
+            (hop, matches!(target, Target::Exit { .. }), decision.selection)
         };
         let mut state = match existing {
             Some(flow) => flow.state.clone(),
@@ -592,11 +529,7 @@ impl FlowTable {
             false
         };
         let closing = remove && is_exit;
-        let idle = self.limits.idle_timeout.min(Duration::from_millis(
-            permit_expires_at_ms.saturating_sub(time.now_ms),
-        ));
-        let mut cap = time.idle(idle)?;
-        cap.ms = cap.ms.min(permit_expires_at_ms);
+        let mut cap = time.idle(self.limits.idle_timeout)?;
         if closing {
             cap = cap.min(existing.ok_or(Error::Flow)?.cap);
         }
@@ -622,10 +555,6 @@ impl FlowTable {
 
     pub fn commit(&mut self, prepared: Prepared) -> CommittedRoute {
         let route = Route {
-            demand: match &prepared.key.grant {
-                FlowGrant::Legacy(demand) => *demand,
-                FlowGrant::Netmap(_) => crate::netmap_demand(),
-            },
             grant: prepared.key.grant.clone(),
             origin: prepared.key.path[0],
             original_path: prepared.key.path.clone(),
@@ -641,63 +570,6 @@ impl FlowTable {
             route,
         }
     }
-}
-
-/// Legacy retention predicate, not packet admission. Policy still checks each
-/// current packet/handshake. Compare complete permit authorization and every
-/// selected-path identity, address, key and locally published carrier binding.
-pub(super) fn authorization_unchanged(
-    old: &NodeConfiguration,
-    new: &NodeConfiguration,
-    demand: RequestId,
-    path: &[NodeId],
-    now_ms: u64,
-) -> Result<bool, Error> {
-    let (Some(before), Some(after)) = (old.permits.get(&demand), new.permits.get(&demand)) else {
-        return Ok(false);
-    };
-    if now_ms >= before.expires_at_ms
-        || now_ms >= after.expires_at_ms
-        || meshway_policy::permit_transition(before, after, now_ms)
-            .map_err(|_| Error::ExecutionScope)?
-            == meshway_policy::PermitTransition::Replacement
-        || path.iter().any(|node| {
-            *node != old.node_id
-                && (!old.peers.contains_key(node) || old.peers.get(node) != new.peers.get(node))
-        })
-        || (path.last() == Some(&old.node_id) && old.exit_enabled != new.exit_enabled)
-    {
-        return Ok(false);
-    }
-    let Some(selected) = before
-        .paths
-        .iter()
-        .find(|candidate| candidate.nodes == path)
-    else {
-        return Ok(false);
-    };
-    Ok(carrier_bindings_unchanged(old, new, selected))
-}
-
-pub(super) fn carrier_bindings_unchanged(
-    old: &NodeConfiguration,
-    new: &NodeConfiguration,
-    selected: &meshway_configuration::execution::LogicalPath,
-) -> bool {
-    let prefix = format!("{}/", old.node_id);
-    for (dialer, keys) in &selected.dial_candidates {
-        for key in keys {
-            if *dialer == old.node_id && old.dialers.get(key) != new.dialers.get(key) {
-                return false;
-            }
-            if let Some(listener) = key.strip_prefix(&prefix)
-                && old.listeners.get(listener) != new.listeners.get(listener)
-            {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 #[cfg(test)]

@@ -225,6 +225,7 @@ pub(super) async fn coordinate(
             a: format!("node:{}", nodes[a]),
             b: format!("node:{}", nodes[b]),
             transports: Input::Omitted,
+ keepalive: false,
         })
         .collect();
     input.access = vec![AccessRule {

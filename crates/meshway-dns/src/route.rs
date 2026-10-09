@@ -4,13 +4,12 @@ use meshway_configuration::{
     execution::LocalEgressAction,
     netmap::{EgressAction, NodeNetmap, ResolverAction},
 };
-use meshway_model::RequestId;
 use std::{fmt, net::SocketAddr, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RouteError {
-    #[error("local resolver route is missing or does not match the publication")]
+    #[error("local resolver route is missing or does not match the netmap")]
     Binding,
     #[error("local resolver route is expired or cancelled")]
     Expired,
@@ -96,7 +95,6 @@ pub struct LocalResolverRoute {
     endpoint: SocketAddr,
     transport: DnsTransport,
     action: LocalEgressAction,
-    demand: Option<RequestId>,
     system: Option<crate::SystemResolverSnapshot>,
 }
 
@@ -129,45 +127,10 @@ fn netmap_local_action(
 }
 
 impl LocalResolverRoute {
-    /// A configured resolver: the legacy exact demand permit, or the
-    /// netmap's per-resolver decision (`dns_route::netmap_resolver`).
+    /// A configured resolver: the netmap's per-resolver decision
+    /// (`dns_route::netmap_resolver`), which the source egress partition must
+    /// leave to a local socket.
     pub(crate) fn new(
-        snapshot: ExecutionSnapshot,
-        key: &str,
-        demand: Option<RequestId>,
-        deadline: Instant,
-    ) -> Result<Self, RouteError> {
-        if snapshot.is_netmap() {
-            return Self::netmap(snapshot, key, deadline);
-        }
-        let demand = demand.ok_or(RouteError::Binding)?;
-        let now = snapshot.now_ms().map_err(|_| RouteError::Expired)?;
-        let configuration = snapshot.configuration().map_err(|_| RouteError::Expired)?;
-        let permit =
-            meshway_policy::dns_route::local_resolver_route(configuration, key, demand, now)
-                .map_err(policy_error)?;
-        let server = configuration
-            .dns
-            .settings
-            .servers
-            .get(key)
-            .ok_or(RouteError::Binding)?;
-        let endpoint = SocketAddr::new(server.server, server.server_port.get());
-        let transport = server.transport;
-        let (action, expires_at_ms) = (permit.action, permit.expires_at_ms);
-        let route = Self {
-            endpoint,
-            transport,
-            action,
-            demand: Some(demand),
-            lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
-            system: None,
-        };
-        route.ensure_current()?;
-        Ok(route)
-    }
-
-    fn netmap(
         snapshot: ExecutionSnapshot,
         key: &str,
         deadline: Instant,
@@ -198,7 +161,6 @@ impl LocalResolverRoute {
             endpoint,
             transport,
             action,
-            demand: None,
             lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
             system: None,
         };
@@ -212,7 +174,6 @@ impl LocalResolverRoute {
         system: crate::SystemResolverSnapshot,
         index: usize,
         transport: DnsTransport,
-        demand: Option<RequestId>,
         deadline: Instant,
     ) -> Result<Self, RouteError> {
         system.ensure_current().map_err(|_| RouteError::Expired)?;
@@ -220,34 +181,24 @@ impl LocalResolverRoute {
         if system.primary == DnsTransport::Tcp && transport != DnsTransport::Tcp {
             return Err(RouteError::Binding);
         }
-        let (action, expires_at_ms, demand) = if snapshot.is_netmap() {
-            use meshway_configuration::netmap::DnsPlan;
-            let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
-            let netmap = &reading.netmap.netmap;
-            // The resolver Node serves sources from its own OS resolvers too.
-            if !netmap.self_.enabled
-                || !matches!(
-                    netmap.dns.egress,
-                    DnsPlan::NoExit | DnsPlan::ServeExitResolver { .. }
-                )
-            {
-                return Err(RouteError::Binding);
-            }
-            (
-                netmap_local_action(netmap, endpoint)?,
-                reading.expires_at_ms,
-                None,
+        use meshway_configuration::netmap::DnsPlan;
+        let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
+        let netmap = &reading.netmap.netmap;
+        // The resolver Node serves sources from its own OS resolvers too.
+        if !netmap.self_.enabled
+            || !matches!(
+                netmap.dns.egress,
+                DnsPlan::NoExit | DnsPlan::ServeExitResolver { .. }
             )
-        } else {
-            let demand = demand.ok_or(RouteError::Binding)?;
-            let (action, expires_at_ms) = legacy_system(&snapshot, endpoint, transport, demand)?;
-            (action, expires_at_ms, Some(demand))
-        };
+        {
+            return Err(RouteError::Binding);
+        }
+        let action = netmap_local_action(netmap, endpoint)?;
+        let expires_at_ms = reading.expires_at_ms;
         let route = Self {
             endpoint,
             transport,
             action,
-            demand,
             lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
             system: Some(system),
         };
@@ -263,10 +214,6 @@ impl LocalResolverRoute {
     }
     pub fn action(&self) -> LocalEgressAction {
         self.action
-    }
-    /// The legacy demand permit; `None` under a netmap.
-    pub fn demand_id(&self) -> Option<RequestId> {
-        self.demand
     }
     pub fn snapshot(&self) -> &ExecutionSnapshot {
         self.lifetime.snapshot()
@@ -309,41 +256,4 @@ impl LocalResolverRoute {
             _ = async { match &self.system { Some(system) => system.invalidated().await, None => std::future::pending().await } } => {},
         }
     }
-}
-
-fn legacy_system(
-    snapshot: &ExecutionSnapshot,
-    endpoint: SocketAddr,
-    transport: DnsTransport,
-    demand: RequestId,
-) -> Result<(LocalEgressAction, u64), RouteError> {
-    use meshway_configuration::execution::{
-        BusinessProtocol, BusinessTarget, DemandDecision, DnsEgress,
-    };
-    let cfg = snapshot.configuration().map_err(|_| RouteError::Expired)?;
-    let permit = cfg.local_egress.get(&demand).ok_or(RouteError::Binding)?;
-    if !matches!(cfg.dns.egress, DnsEgress::NoExit)
-        || !cfg.enabled
-        || permit.source != cfg.node_id
-        || permit.demand_id != demand
-        || !matches!(permit.target, BusinessTarget::Ip { address } if address.0 == endpoint.ip())
-        || permit.port.map(|p| p.get()) != Some(endpoint.port())
-        || permit.protocol
-            != match transport {
-                DnsTransport::Udp => BusinessProtocol::Udp,
-                DnsTransport::Tcp => BusinessProtocol::Tcp,
-            }
-        || permit.profile != cfg.dns.profile
-        || !matches!(
-            (permit.action, cfg.decisions.get(&demand)),
-            (LocalEgressAction::Direct, Some(DemandDecision::Direct))
-                | (
-                    LocalEgressAction::Unmanaged,
-                    Some(DemandDecision::Unmanaged)
-                )
-        )
-    {
-        return Err(RouteError::Binding);
-    }
-    Ok((permit.action, permit.expires_at_ms))
 }

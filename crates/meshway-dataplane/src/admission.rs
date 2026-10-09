@@ -1,8 +1,8 @@
 //! One entry reading for policy/flow preparation; a fresh fence at commit.
 use crate::{
     Engine, Error, PacketFacts, PendingRoute,
-    authority::{Auth, Cap, Lifetime, View},
-    flow::{Entry, FlowGrant, FlowTime, Policy},
+    authority::{Lifetime, View},
+    flow::{Entry, FlowTime, Policy},
     netmap::Outcome,
     secure::Guard,
 };
@@ -14,15 +14,10 @@ use std::sync::Arc;
 
 impl From<&View<'_>> for FlowTime {
     fn from(reading: &View<'_>) -> Self {
+        // The lease is checked at use and renews; it is never copied in.
         Self {
             instant: reading.instant,
             now_ms: reading.now_ms,
-            // A legacy target's deadlines are immutable and become part of
-            // every flow cap. A netmap lease is checked at use and renews.
-            guard: reading.legacy().map(|_| Cap {
-                at: reading.expires_at,
-                ms: reading.expires_at_ms,
-            }),
         }
     }
 }
@@ -61,16 +56,7 @@ impl Engine {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("flow.admit");
         let _profile = PROFILE.enter();
-        let exit = match (&entry.grant, reading.auth) {
-            (FlowGrant::Legacy(demand), Auth::Legacy(cfg)) => cfg
-                .permits
-                .get(demand)
-                .is_some_and(|permit| permit.exit.is_some()),
-            (FlowGrant::Netmap(target), Auth::Netmap { .. }) => {
-                matches!(target, Target::Exit { .. })
-            }
-            _ => return Err(Error::Ingress),
-        };
+        let exit = matches!(entry.grant, Target::Exit { .. });
         if exit && (facts.traffic.source.is_ipv6() || facts.traffic.destination.is_ipv6()) {
             self.exit_counters.ipv6_rejected = self.exit_counters.ipv6_rejected.saturating_add(1);
             return Err(Error::Flow);
@@ -80,7 +66,7 @@ impl Engine {
         let decisions = &mut self.decisions;
         let mut decide =
             |traffic: &Traffic| -> Result<Arc<meshway_policy::compile::netmap::Decision>, Error> {
-                let netmap = reading.netmap().ok_or(Error::Ingress)?;
+                let netmap = reading.netmap();
                 match decisions.decide(
                     netmap,
                     origin,
@@ -92,12 +78,9 @@ impl Engine {
                     Outcome::Direct | Outcome::Unmanaged => Err(Error::Flow),
                 }
             };
-        let policy = match reading.auth {
-            Auth::Legacy(cfg) => Policy::Legacy(cfg),
-            Auth::Netmap { .. } => Policy::Netmap {
-                leased: reading.leased().ok_or(Error::Ingress)?,
-                decide: &mut decide,
-            },
+        let policy = Policy {
+            leased: reading.leased(),
+            decide: &mut decide,
         };
         let mut prepared =
             self.flows
@@ -107,18 +90,6 @@ impl Engine {
         }
         if prepared.is_exit() {
             let (_, guard) = circuit.ok_or(Error::Ingress)?;
-            if prepared.hop_is_exit()
-                && let Some(cfg) = reading.legacy()
-                && cfg.exit_role.as_ref().is_none_or(|role| {
-                    Some(role.instance_id)
-                        != self
-                            .snapshot
-                            .instance_binding()
-                            .map(|instance| instance.instance_id)
-                })
-            {
-                return Err(Error::ExecutionScope);
-            }
             self.flows
                 .prepare_projection(&mut prepared, guard, reading.now())?;
         }

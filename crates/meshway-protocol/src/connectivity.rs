@@ -11,7 +11,7 @@ use crate::{
 };
 use meshway_configuration::{execution::Carrier, transport::Endpoint};
 use meshway_model::{
-    ConfigurationRef, Digest, NetworkId, NodeId, RequestId, Sequence, StateEpoch, UdpTraversalId,
+    Digest, NetmapRef, NetworkId, NodeId, RequestId, Sequence, StateEpoch, UdpTraversalId,
     Version,
     observations::EndpointKind,
     state::{EndpointCandidate, ResourceRef, SocketNetwork},
@@ -34,8 +34,8 @@ wire_object! {
     pub node_id: NodeId,
     /// Owning runtime instance and its Server-issued generation.
     pub instance: InstanceRequest,
-    /// Exact installed execution target associated with the socket.
-    pub configuration: ConfigurationRef,
+    /// Exact installed netmap associated with the socket.
+    pub netmap: NetmapRef,
     /// Node-assigned socket identifier of 1–256 printable non-space ASCII bytes.
     #[serde(deserialize_with = "socket_id")]
     pub socket_id: String [min_length = 1, max_length = 256, pattern = "^[!-~]{1,256}(?![\\s\\S])"],
@@ -281,8 +281,8 @@ wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct QueryUdpTraversalRequest {
     /// Current runtime instance making the query.
     pub instance: InstanceRequest,
-    /// Exact current execution target against which acquisition scope is checked.
-    pub configuration: ConfigurationRef,
+    /// Exact current netmap against which acquisition scope is checked.
+    pub netmap: NetmapRef,
 } }
 
 wire_tagged! { tag = "status";
@@ -315,8 +315,8 @@ wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct PrepareUdpTraversalRequest {
     /// Current source runtime instance preparing the attempt.
     pub instance: InstanceRequest,
-    /// Source's exact current execution target.
-    pub configuration: ConfigurationRef,
+    /// Source's exact current netmap.
+    pub netmap: NetmapRef,
     /// State epoch obtained from current coordination metadata.
     pub state_epoch: StateEpoch,
     /// Stable identifier reused with identical immutable input when retrying preparation.
@@ -451,8 +451,8 @@ wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct UdpTraversalAttemptRequest {
     /// Current participant runtime instance performing the operation.
     pub instance: InstanceRequest,
-    /// Participant's exact current execution target, matching its offer socket binding.
-    pub configuration: ConfigurationRef,
+    /// Participant's exact current netmap, matching its offer socket binding.
+    pub netmap: NetmapRef,
     /// State epoch in which the offer was prepared.
     pub state_epoch: StateEpoch,
     /// Immutable offer version required by the compare-and-swap check.

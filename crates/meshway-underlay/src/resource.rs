@@ -1,28 +1,17 @@
 //! Physical configuration compatibility, never packet or adjacency authority.
 use crate::target::View;
-use meshway_configuration::{execution::NodeConfiguration, netmap::NodeNetmap};
+use meshway_configuration::netmap::NodeNetmap;
 use meshway_model::state::ResourceRef;
 
-/// Compare the exact configured purpose of an existing descriptor. Callers
-/// must separately obtain Control's direct continuation and current admission.
-pub fn resource_compatible(
-    previous: &NodeConfiguration,
-    next: &NodeConfiguration,
-    resource: &ResourceRef,
-) -> bool {
-    compatible(View::Legacy(previous), View::Legacy(next), resource)
-}
-
-/// Netmap form of [`resource_compatible`]: the listener declaration, or the
-/// dial candidate together with the peer's identity, addresses and keys, is
-/// unchanged between two contents. Callers still require
-/// `netmap_continuation_from` and current admission.
+/// The listener declaration, or the dial candidate together with the peer's
+/// identity, addresses and keys, is unchanged between two contents. Callers
+/// still require `netmap_continuation_from` and current admission.
 pub fn netmap_resource_compatible(
     previous: &NodeNetmap,
     next: &NodeNetmap,
     resource: &ResourceRef,
 ) -> bool {
-    compatible(View::Netmap(previous), View::Netmap(next), resource)
+    compatible(View::new(previous), View::new(next), resource)
 }
 
 pub(crate) fn compatible(previous: View<'_>, next: View<'_>, resource: &ResourceRef) -> bool {

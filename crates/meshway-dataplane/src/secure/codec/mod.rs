@@ -3,7 +3,6 @@ use crate::PacketBuffer;
 mod data;
 use super::CircuitGrant;
 use crate::netmap::Purpose;
-use meshway_configuration::execution::CircuitAuthorization;
 use meshway_model::{Digest, EventId, KeyId, NetworkId, NodeId, Version};
 use meshway_policy::admission::Carrier;
 use meshway_policy::compile::netmap::Target;
@@ -126,23 +125,11 @@ impl Context {
             return Err(Error::Wire);
         }
         id(out, self.network.as_uuid());
-        match &self.grant {
-            CircuitGrant::Legacy(CircuitAuthorization::Business(value)) => {
-                out.push(1);
-                id(out, value.as_uuid());
-            }
-            CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(value)) => {
-                out.push(2);
-                id(out, value.as_uuid());
-            }
-            CircuitGrant::Netmap { purpose, target } => {
-                out.push(match purpose {
-                    Purpose::Business => 3,
-                    Purpose::Diagnostic => 4,
-                });
-                encode_target(out, target)?;
-            }
-        }
+        out.push(match self.grant.purpose {
+            Purpose::Business => 3,
+            Purpose::Diagnostic => 4,
+        });
+        encode_target(out, &self.grant.target)?;
         id(out, self.path[0].as_uuid()); // Explicit original origin, checked against the path.
         out.push(self.path.len() as u8);
         for node in &self.path {
@@ -403,13 +390,11 @@ impl Frame {
         let context = if kind.handshake() {
             let network = r.id()?;
             let grant = match r.byte()? {
-                1 => CircuitGrant::Legacy(CircuitAuthorization::Business(r.id()?)),
-                2 => CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(r.id()?)),
-                3 => CircuitGrant::Netmap {
+                3 => CircuitGrant {
                     purpose: Purpose::Business,
                     target: decode_target(&mut r)?,
                 },
-                4 => CircuitGrant::Netmap {
+                4 => CircuitGrant {
                     purpose: Purpose::Diagnostic,
                     target: decode_target(&mut r)?,
                 },

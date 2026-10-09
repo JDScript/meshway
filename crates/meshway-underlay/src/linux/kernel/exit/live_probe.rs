@@ -1,5 +1,5 @@
 use meshway_model::{
-    ConfigurationRef, InstanceId,
+    InstanceId, NetmapRef,
     exit::{ExitCapability, ExitStatus, ExitUnavailableReason as Reason},
 };
 use rtnetlink::packet_route::link::{LinkAttribute, LinkFlags};
@@ -8,14 +8,16 @@ impl super::super::Kernel {
     pub async fn probe_exit(
         &mut self,
         instance_id: InstanceId,
-        target: ConfigurationRef,
+        netmap: NetmapRef,
+        role_generation: meshway_model::Digest,
     ) -> ExitCapability {
-        let result = self.live_probe(instance_id, target.clone()).await;
+        let result = self.live_probe(instance_id, netmap, role_generation).await;
         match result {
             Ok(observation) => observation,
             Err(reason) => ExitCapability {
                 instance_id,
-                target,
+                netmap,
+                role_generation,
                 supported_families: Vec::new(),
                 installed_families: Vec::new(),
                 status: ExitStatus::Unavailable { reason },
@@ -26,7 +28,8 @@ impl super::super::Kernel {
     async fn live_probe(
         &mut self,
         instance: InstanceId,
-        target: ConfigurationRef,
+        netmap: NetmapRef,
+        role_generation: meshway_model::Digest,
     ) -> Result<ExitCapability, Reason> {
         self.ready().await.map_err(|_| Reason::OwnershipConflict)?;
         self.reconcile_stopped_exit()
@@ -90,7 +93,7 @@ impl super::super::Kernel {
             .probe
             .get_or_insert_with(|| super::probe::ExitProbe::live(self.expected.clone()));
         probe.owned_tables = owned_tables;
-        let observation = probe.observe(instance, target, &interfaces).await;
+        let observation = probe.observe(instance, netmap, role_generation, &interfaces).await;
         probe.finish().await.map_err(|error| error.reason)?;
         self.quiesce()
             .await
@@ -124,11 +127,12 @@ mod tests {
         let mut changes = host.network_changes();
         changes.borrow_and_update();
         let instance = "11111111-1111-4111-8111-111111111111".parse().unwrap();
-        let target = ConfigurationRef {
+        let netmap = NetmapRef {
             revision: meshway_model::Revision::MIN,
-            execution_publication: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
+            serial: meshway_model::Version::MIN,
             digest: meshway_model::Digest::from_bytes([3; 32]),
         };
+        let role_generation = meshway_model::Digest::from_bytes([4; 32]);
         let before = std::time::SystemTime::now();
         let expected = std::env::var("MESHWAY_X3C_PROBE").unwrap_or_else(|_| "ready".into());
         let mut commands = super::super::command::Commands::default();
@@ -138,7 +142,7 @@ mod tests {
                 {"add": {"chain": {"family": "inet", "table": "x3c_foreign_sentinel", "name": "forward", "type": "filter", "hook": "forward", "prio": 0, "policy": "drop"}}}
             ]})).await.unwrap();
         }
-        let observation = host.probe_exit(instance, target.clone()).await;
+        let observation = host.probe_exit(instance, netmap, role_generation).await;
         match expected.as_str() {
             "ready" => {
                 assert_eq!(observation.status, ExitStatus::Ready);
@@ -168,7 +172,8 @@ mod tests {
             _ => panic!("unknown fixture case"),
         }
         assert_eq!(observation.instance_id, instance);
-        assert_eq!(observation.target, target);
+        assert_eq!(observation.netmap, netmap);
+        assert_eq!(observation.role_generation, role_generation);
         assert!(observation.installed_families.is_empty());
         let observed: std::time::SystemTime = observation.observed_at.into();
         assert!(observed >= before);

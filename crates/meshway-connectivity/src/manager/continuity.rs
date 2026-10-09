@@ -28,11 +28,10 @@ impl EpochContext {
         protocol: TransportProtocol,
         local: SocketAddr,
     ) -> Result<(), Error> {
-        if self.plan.on_demand() {
-            // See Manager::register_listener: no netmap State socket reference.
+        let Some(reference) = traversal::socket_reference(self, id, resource)? else {
+            // No live instance yet: registered again once one is bound.
             return Ok(());
-        }
-        let reference = traversal::socket_reference(&self.identity, id, self.generation, resource)?;
+        };
         self.sockets
             .lock()
             .map_err(|_| Error::Worker)?
@@ -74,11 +73,7 @@ impl EpochContext {
             if next.identity.snapshot().ensure_current().is_ok() {
                 return Ok(self.rebind(next));
             }
-            let deadline = self
-                .identity
-                .snapshot()
-                .retention_deadline()
-                .map_err(|_| Error::Authority)?;
+            let deadline = retention(self.identity.snapshot())?;
             tokio::select! { biased;
                 _ = self.stop.cancelled() => return Err(Error::Cancelled),
                 _ = tokio::time::sleep_until(deadline.into()) => return Err(Error::Authority),
@@ -121,6 +116,7 @@ impl EpochContext {
             resource_changes: self.resource_changes.clone(),
             interests: self.interests.clone(),
             facts: self.facts.clone(),
+            instance: self.instance.clone(),
         })
     }
 
@@ -171,11 +167,7 @@ impl EpochContext {
                 }
                 return Ok(self.rebind(next));
             }
-            let deadline = self
-                .identity
-                .snapshot()
-                .retention_deadline()
-                .map_err(|_| Error::Authority)?;
+            let deadline = retention(self.identity.snapshot())?;
             tokio::select! { biased;
                 _ = self.stop.cancelled() => return Err(Error::Cancelled),
                 _ = tokio::time::sleep_until(deadline.into()) => return Err(Error::Authority),
@@ -238,21 +230,7 @@ impl EpochContext {
         // Exact resource equality includes TLS, proxy credentials and WS
         // settings. A provider's buffered writes retain Session's frozen
         // output scope; changing the physical epoch never renews old I/O.
-        let compatible = |resource: &ResourceRef| {
-            if self.plan.on_demand() {
-                previous.netmap_compatible(&self.plan, resource)
-            } else {
-                let (Ok(old), Ok(new)) = (
-                    self.identity
-                        .snapshot()
-                        .continuation_from(&link.scope.snapshot),
-                    self.identity.snapshot().configuration(),
-                ) else {
-                    return false;
-                };
-                meshway_underlay::resource_compatible(old, new, resource)
-            }
-        };
+        let compatible = |resource: &ResourceRef| previous.netmap_compatible(&self.plan, resource);
         if !compatible(&resource)
             || (fact.carrier.dialer == previous.node && !compatible(&dial))
             || link.scope.health.as_ref().is_some_and(|health| {
@@ -264,8 +242,7 @@ impl EpochContext {
             return None;
         }
         // A changed carrier order reselects unless this carrier still leads.
-        if self.plan.on_demand()
-            && fact.carrier.dialer == self.plan.node
+        if fact.carrier.dialer == self.plan.node
             && self
                 .plan
                 .outgoing(fact.peer)
@@ -283,12 +260,9 @@ impl EpochContext {
 
     /// One pass over the selected-channel table and socket references.
     pub(super) fn renew_table(&self, previous: &Plan) -> Result<(), Error> {
-        let next = self.identity.snapshot();
-        if !self.plan.on_demand() {
-            let reference = next.reference();
-            for socket in self.sockets.lock().map_err(|_| Error::Worker)?.values_mut() {
-                socket.reference.configuration = reference.clone();
-            }
+        let reference = self.identity.snapshot().reference();
+        for socket in self.sockets.lock().map_err(|_| Error::Worker)?.values_mut() {
+            socket.reference.netmap = reference;
         }
         let mut links = self.links.lock().map_err(|_| Error::Worker)?;
         let peers: Vec<_> = links.keys().copied().collect();
@@ -335,7 +309,7 @@ impl Manager {
         }
         let next = identity.snapshot();
         let current = self.shared.identity.snapshot();
-        if next.is_netmap() && next.same_netmap(current) {
+        if next.same_netmap(current) {
             return true;
         }
         if !continues(next, current) {
@@ -361,7 +335,7 @@ impl Manager {
         }
         let plan = Plan::new(&next)?;
         let old_plan = self.shared.plan.clone();
-        let retired = self.retire_resources(&old_plan, &plan, &previous, &next)?;
+        let retired = self.retire_resources(&old_plan, &plan)?;
         let generation = self
             .shared
             .generation
@@ -417,9 +391,7 @@ impl Manager {
         if expected.is_empty() {
             return Ok(());
         }
-        let deadline = previous
-            .retention_deadline()
-            .map_err(|_| Error::Authority)?;
+        let deadline = retention(previous)?;
         let mut done = self.shared.handoffs.subscribe();
         let sockets = self.shared.sockets.clone();
         tokio::select! { biased;
@@ -435,28 +407,27 @@ impl Manager {
     }
 }
 
-/// Interchangeable authority: same netmap content, or the same publication
-/// target and deadline.
+/// Interchangeable authority: the same netmap content and invalidation epoch.
 pub(super) fn same(a: &ExecutionSnapshot, b: &ExecutionSnapshot) -> bool {
-    if a.is_netmap() || b.is_netmap() {
-        return a.same_netmap(b);
-    }
-    a.same_execution(b) && a.expires_at() == b.expires_at()
+    a.same_netmap(b)
 }
 
 /// `next` directly continues `old` for the same identity and resources.
 pub(super) fn continues(next: &ExecutionSnapshot, old: &ExecutionSnapshot) -> bool {
-    match (next.is_netmap(), old.is_netmap()) {
-        (true, true) => next.netmap_continuation_from(old).is_ok(),
-        (false, false) => next.continuation_from(old).is_ok(),
-        _ => false,
-    }
+    next.netmap_continuation_from(old).is_ok()
 }
 
-/// Diagnostic authority label: publication, or netmap serial.
-pub(super) fn label(snapshot: &ExecutionSnapshot) -> String {
-    match snapshot.netmap_ref() {
-        Some(netmap) => format!("netmap:{}", netmap.serial.get()),
-        None => snapshot.reference().execution_publication.to_string(),
+/// How long an invalidated snapshot's inert resources may await Control's
+/// next content: until its lease ends. Never I/O authority.
+pub(super) fn retention(snapshot: &ExecutionSnapshot) -> Result<std::time::Instant, Error> {
+    let at = snapshot.expires_at();
+    if std::time::Instant::now() >= at {
+        return Err(Error::Authority);
     }
+    Ok(at)
+}
+
+/// Diagnostic authority label: the netmap serial.
+pub(super) fn label(snapshot: &ExecutionSnapshot) -> String {
+    format!("netmap:{}", snapshot.reference().serial.get())
 }

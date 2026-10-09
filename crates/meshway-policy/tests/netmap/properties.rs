@@ -16,6 +16,7 @@ fn mesh_scenario() -> Scenario {
             a: sel(a),
             b: sel(b),
             transports: Input::Omitted,
+ keepalive: false,
         });
     }
     s
@@ -81,6 +82,7 @@ fn selection_switch_and_key_rotation_change_only_dependent_netmaps() {
         a: sel(1),
         b: sel(4),
         transports: Input::Omitted,
+ keepalive: false,
     });
     let first = netmaps(&s);
     let selection = |c: &CompiledNetmaps| {

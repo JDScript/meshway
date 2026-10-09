@@ -4,26 +4,19 @@ impl Owner {
     pub(super) fn system_upstreams(
         &self,
         system: &crate::SystemResolverSnapshot,
-        demands: &BTreeMap<usize, RequestId>,
-        tcp_demands: &BTreeMap<usize, RequestId>,
         deadline: Instant,
     ) -> Result<VecDeque<SystemUpstream>, Unavailable> {
         use meshway_configuration::DnsTransport;
         if system.upstreams.is_empty() || system.upstreams.len() > 8 {
             return Err(Unavailable::MissingResolverPlan);
         }
-        let route = |index, transport, ids: &BTreeMap<usize, RequestId>| {
-            // A netmap decides each upstream from its egress partition.
-            let demand = ids.get(&index).copied();
-            if demand.is_none() && !self.snapshot.is_netmap() {
-                return Err(Unavailable::MissingResolverPlan);
-            }
+        // The netmap decides each upstream from its egress partition.
+        let route = |index, transport| {
             LocalResolverRoute::system(
                 self.snapshot.clone(),
                 system.clone(),
                 index,
                 transport,
-                demand,
                 deadline,
             )
             .map_err(|error| match error {
@@ -34,9 +27,9 @@ impl Owner {
         (0..system.upstreams.len())
             .map(|index| {
                 Ok(SystemUpstream {
-                    route: route(index, system.primary, demands)?,
+                    route: route(index, system.primary)?,
                     fallback: if system.primary == DnsTransport::Udp {
-                        Some(route(index, DnsTransport::Tcp, tcp_demands)?)
+                        Some(route(index, DnsTransport::Tcp)?)
                     } else {
                         None
                     },
@@ -57,23 +50,17 @@ impl Owner {
         deadline: Instant,
     ) -> Begin {
         self.reap();
-        if !self.snapshot.is_netmap() || Plan::of(&self.snapshot) != Some(Plan::ServeExitResolver) {
+        if Plan::of(&self.snapshot) != Some(Plan::ServeExitResolver) {
             return Begin::Unavailable(Unavailable::MissingExitPlan);
         }
         let deadline = deadline
             .min(self.snapshot.expires_at())
             .min(Instant::now() + self.state.limits.query_timeout);
-        let none = BTreeMap::new();
-        let mut upstreams = match self.system_upstreams(system, &none, &none, deadline) {
+        let mut upstreams = match self.system_upstreams(system, deadline) {
             Ok(upstreams) => upstreams,
             Err(reason) => return Begin::Unavailable(reason),
         };
-        let ticket = match self.state.insert_pending(
-            query.clone(),
-            String::new(),
-            PendingKind::Upstream,
-            deadline,
-        ) {
+        let ticket = match self.state.insert_pending(query.clone(), deadline) {
             Ok(ticket) => ticket,
             Err(reason) => return Begin::Unavailable(reason),
         };

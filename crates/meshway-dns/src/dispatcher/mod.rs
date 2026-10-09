@@ -1,5 +1,5 @@
-//! Gateways delegate to the host's unique Control driver and approved local
-//! business socket adapter. Neither trait passes credentials or bootstrap grants.
+//! The exchange adapter is the host's approved local business socket and
+//! SecureNode service path. It passes no credentials or bootstrap grants.
 use crate::{
     Answer, Begin, Limits, LocalResolverRoute, MeshResolverRoute, Owner, Query, ResolverRoute,
     ResponseTransport, Ticket, TrustedUpstreamResponse, Unavailable, UpstreamWork,
@@ -7,9 +7,7 @@ use crate::{
 use bytes::Bytes;
 use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::DnsTransport;
-use meshway_model::RequestId;
-use meshway_protocol::NodeDnsQueryResponse;
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Instant};
+use std::{future::Future, pin::Pin, sync::Arc, time::Instant};
 use tokio::sync::{Mutex, watch};
 
 pub type DnsFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -17,16 +15,6 @@ pub type DnsFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("DNS gateway operation failed")]
 pub struct GatewayError;
-
-/// Implement using a bounded gateway to the existing unique Control driver.
-/// Return only its authenticated typed `Control::query_dns` result. Cancellation
-/// must cancel queued work; no cloned credentials or independent HTTP owner.
-pub trait DiscoveryGateway: Send + Sync + 'static {
-    fn query<'a>(
-        &'a self,
-        name: &'a str,
-    ) -> DnsFuture<'a, Result<NodeDnsQueryResponse, GatewayError>>;
-}
 
 /// Exactly one DNS exchange on the sealed route. Payloads exclude TCP framing.
 /// Validate actual source endpoint, transaction and frame/payload bounds before
@@ -55,43 +43,30 @@ pub trait ResolverExchange: Send + Sync + 'static {
     ) -> DnsFuture<'a, Result<Bytes, GatewayError>>;
 }
 
+/// The installed netmap and the system resolver observation a query owner is
+/// created for. Each resolver endpoint is decided by the netmap itself
+/// (`dns_route::netmap_resolver` and the source egress partition).
 #[derive(Clone)]
 pub struct Scope {
     pub snapshot: ExecutionSnapshot,
-    /// Selection of demand IDs only. Each endpoint/protocol is checked against
-    /// the compiler-produced local_egress binding in this exact snapshot. At most
-    /// 256 mappings are accepted (the compiler's current demand budget).
-    pub resolver_demands: BTreeMap<String, RequestId>,
     pub system_resolvers: Option<crate::SystemResolverSnapshot>,
-    pub system_demands: BTreeMap<usize, RequestId>,
-    pub system_tcp_demands: BTreeMap<usize, RequestId>,
 }
 
 impl Scope {
-    /// A netmap scope. Each resolver endpoint is decided by the netmap itself
-    /// (`dns_route::netmap_resolver` and the source egress partition); there
-    /// are no per-endpoint demand IDs.
     pub fn netmap(
         snapshot: ExecutionSnapshot,
         system_resolvers: Option<crate::SystemResolverSnapshot>,
     ) -> Self {
         Self {
             snapshot,
-            resolver_demands: BTreeMap::new(),
             system_resolvers,
-            system_demands: BTreeMap::new(),
-            system_tcp_demands: BTreeMap::new(),
         }
     }
 
     /// The same netmap content and the same system resolver observation:
-    /// a lease renewal or new instance binding replaces nothing. Distinct
-    /// legacy scopes are never equivalent.
+    /// a lease renewal or new instance binding replaces nothing.
     pub fn equivalent(&self, other: &Self) -> bool {
-        self.snapshot.is_netmap()
-            && self.snapshot.same_netmap(&other.snapshot)
-            && self.resolver_demands.is_empty()
-            && other.resolver_demands.is_empty()
+        self.snapshot.same_netmap(&other.snapshot)
             && match (&self.system_resolvers, &other.system_resolvers) {
                 (None, None) => true,
                 (Some(a), Some(b)) => a.same(b),
@@ -99,21 +74,14 @@ impl Scope {
             }
     }
 
-    fn demand_count(&self) -> usize {
-        self.resolver_demands.len() + self.system_demands.len() + self.system_tcp_demands.len()
-    }
-
-    /// Installation readiness, distinct from per-query selection. Every declared
-    /// resolver and captured system endpoint must have an exact current permit.
+    /// Installation readiness, distinct from per-query selection. Every
+    /// declared resolver and captured system endpoint must be decided by the
+    /// netmap.
     pub fn validate_resolvers(&self) -> Result<(), DispatchError> {
         use crate::owner::Plan;
-        let netmap = self.snapshot.is_netmap();
         let plan = Plan::of(&self.snapshot).ok_or(DispatchError::Scope)?;
         if plan == Plan::Unavailable {
             return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
-        }
-        if self.demand_count() > 256 || (netmap && self.demand_count() != 0) {
-            return Err(DispatchError::Scope);
         }
         let via_exit = matches!(plan, Plan::ViaExit { .. });
         if via_exit {
@@ -125,59 +93,36 @@ impl Scope {
                 )
                 .map_err(|_| DispatchError::Unavailable(Unavailable::MissingExitPlan))?;
             }
-            if self.system_resolvers.is_some()
-                || !self.system_demands.is_empty()
-                || !self.system_tcp_demands.is_empty()
-            {
+            if self.system_resolvers.is_some() {
                 return Err(DispatchError::Scope);
             }
         }
-        let servers = if netmap {
-            let netmap = self.snapshot.netmap().map_err(|_| DispatchError::Scope)?;
-            netmap.netmap.projection.configuration.dns.servers.clone()
-        } else {
-            let cfg = self
-                .snapshot
-                .configuration()
-                .map_err(|_| DispatchError::Scope)?;
-            cfg.dns.settings.servers.clone()
-        };
-        for (key, server) in &servers {
+        let netmap = self.snapshot.netmap().map_err(|_| DispatchError::Scope)?;
+        for (key, server) in &netmap.netmap.projection.configuration.dns.servers {
             if via_exit && !server.use_with_exit {
                 continue;
             }
-            let id = self.resolver_demands.get(key).copied();
-            if id.is_none() && !netmap {
-                return Err(DispatchError::Unavailable(Unavailable::MissingResolverPlan));
-            }
-            LocalResolverRoute::new(self.snapshot.clone(), key, id, self.snapshot.expires_at())
+            LocalResolverRoute::new(self.snapshot.clone(), key, self.snapshot.expires_at())
                 .map_err(|_| DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
         }
         if let Some(system) = &self.system_resolvers {
-            let route = |index, transport, ids: &BTreeMap<usize, RequestId>| {
-                let id = ids.get(&index).copied();
-                if id.is_none() && !netmap {
-                    return Err(DispatchError::Unavailable(Unavailable::MissingResolverPlan));
-                }
+            let route = |index, transport| {
                 LocalResolverRoute::system(
                     self.snapshot.clone(),
                     system.clone(),
                     index,
                     transport,
-                    id,
                     self.snapshot.expires_at(),
                 )
                 .map(|_| ())
                 .map_err(|_| DispatchError::Unavailable(Unavailable::MissingResolverPlan))
             };
             for index in 0..system.upstreams.len() {
-                route(index, system.primary, &self.system_demands)?;
+                route(index, system.primary)?;
                 if system.primary == DnsTransport::Udp {
-                    route(index, DnsTransport::Tcp, &self.system_tcp_demands)?;
+                    route(index, DnsTransport::Tcp)?;
                 }
             }
-        } else if !self.system_demands.is_empty() || !self.system_tcp_demands.is_empty() {
-            return Err(DispatchError::Scope);
         }
         Ok(())
     }
@@ -231,7 +176,7 @@ pub enum DispatchError {
     Scope,
     #[error("DNS work expired")]
     Expired,
-    #[error("DNS upstream or discovery failed")]
+    #[error("DNS upstream failed")]
     Gateway,
     #[error("DNS result is malformed")]
     Wire,
@@ -277,7 +222,6 @@ struct State {
 pub struct OwnerDispatcher {
     state: Mutex<State>,
     served: served::Served,
-    discovery: Arc<dyn DiscoveryGateway>,
     exchange: Arc<dyn ResolverExchange>,
     limits: Limits,
     udp_payload_limit: u16,
@@ -314,7 +258,6 @@ impl OwnerDispatcher {
     }
     pub fn new(
         scopes: watch::Receiver<Option<Scope>>,
-        discovery: Arc<dyn DiscoveryGateway>,
         exchange: Arc<dyn ResolverExchange>,
         limits: Limits,
         udp_payload_limit: u16,
@@ -335,7 +278,6 @@ impl OwnerDispatcher {
                 installed: None,
                 stopped: false,
             }),
-            discovery,
             exchange,
             limits,
             udp_payload_limit,
@@ -367,10 +309,7 @@ impl OwnerDispatcher {
         // replacement seen while retaining the previous query owner.
         let (changed, scope) = {
             let current = state.scopes.borrow_and_update();
-            let scope = current
-                .as_ref()
-                .filter(|scope| scope.demand_count() <= 256)
-                .cloned();
+            let scope = current.as_ref().cloned();
             (current.has_changed(), scope)
         };
         let Some(scope) = scope else {
@@ -386,10 +325,9 @@ impl OwnerDispatcher {
             .as_ref()
             .is_some_and(|installed| installed.equivalent(&scope));
         if (changed && !equivalent) || state.owner.is_none() {
-            // A legacy same-target renewal or a new netmap serial cancels old
-            // tickets. No old operation is completed under a newly extended
-            // scope or transplanted generation. Same netmap content keeps the
-            // owner: its snapshot already carries the renewed lease.
+            // A new netmap serial cancels old tickets. No old operation is
+            // completed under a transplanted generation. Same netmap content
+            // keeps the owner: its snapshot already carries the renewed lease.
             state.owner = None;
             state.installed = None;
             state.owner = Some(
@@ -409,7 +347,7 @@ impl OwnerDispatcher {
         if Instant::now() >= deadline {
             return Err(DispatchError::Expired);
         }
-        let (begin, fence, snapshot) = {
+        let (begin, fence) = {
             let mut state = self.state.lock().await;
             let scope = self.reconcile_state(&mut state)?;
             if Instant::now() >= deadline {
@@ -419,7 +357,7 @@ impl OwnerDispatcher {
                 .owner
                 .as_mut()
                 .ok_or(DispatchError::Scope)?
-                .begin_published_until(query.clone(), &scope.resolver_demands, deadline);
+                .begin_published_until(query.clone(), deadline);
             if matches!(begin, Begin::Unmanaged)
                 && let Some(system) = &scope.system_resolvers
             {
@@ -427,41 +365,15 @@ impl OwnerDispatcher {
                     .owner
                     .as_mut()
                     .ok_or(DispatchError::Scope)?
-                    .begin_system(
-                        query,
-                        system,
-                        &scope.system_demands,
-                        &scope.system_tcp_demands,
-                        deadline,
-                    );
+                    .begin_system(query, system, deadline);
             }
-            let fence = ScopeFence::new(state.scopes.clone(), scope.clone());
-            (begin, fence, scope.snapshot)
+            let fence = ScopeFence::new(state.scopes.clone(), scope);
+            (begin, fence)
         };
         match begin {
             Begin::Answer(answer) => Ok(answer.with_scope_fence(fence)),
             Begin::Unavailable(reason) => Err(DispatchError::Unavailable(reason)),
             Begin::Unmanaged => Err(DispatchError::PreserveSystemResolution),
-            Begin::DiscoveryRequest(request) => {
-                let mut cancellation = CancelOnDrop(Some(request.ticket.clone()));
-                let response = tokio::select! { biased;
-                    _ = fence.invalidated() => return Err(DispatchError::Scope),
-                    _ = snapshot.invalidated() => return Err(DispatchError::Scope),
-                    _ = request.ticket.cancelled() => return Err(DispatchError::Expired),
-                    _ = tokio::time::sleep_until(deadline.into()) => return Err(DispatchError::Expired),
-                    result = self.discovery.query(&request.name) => result.map_err(|_| DispatchError::Gateway)?,
-                };
-                let mut state = self.state.lock().await;
-                self.reconcile_state(&mut state)?;
-                let result = state
-                    .owner
-                    .as_mut()
-                    .ok_or(DispatchError::Scope)?
-                    .complete_discovery(&request.ticket, response);
-                let answer = completed(result)?;
-                cancellation.0 = None;
-                Ok(answer.with_scope_fence(fence))
-            }
             Begin::Upstream(work) => self.upstream(work, fence).await,
         }
     }

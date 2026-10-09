@@ -145,9 +145,7 @@ impl AdjacencyInterest for Interest {
 impl EpochContext {
     /// Whether the peer worker should hold or acquire an adjacency now.
     pub(super) fn wanted(&self, peer: NodeId) -> bool {
-        !self.plan.on_demand()
-            || self.plan.keepalive(peer)
-            || self.interests.recent(peer, self.limits.idle)
+        self.plan.keepalive(peer) || self.interests.recent(peer, self.limits.idle)
     }
 }
 
@@ -164,9 +162,6 @@ pub(super) async fn idle(shared: Arc<EpochContext>) {
             _ = tokio::time::sleep(period) => {},
         }
         let epoch = shared.epochs.borrow().clone();
-        if !epoch.plan.on_demand() {
-            continue;
-        }
         let now = shared.interests.now_ms();
         let Ok(mut links) = shared.links.lock() else {
             return;

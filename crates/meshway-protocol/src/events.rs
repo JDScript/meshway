@@ -336,8 +336,3 @@ event_root!(
     crate::live::UserConfigurationView,
     crate::live::UserEntitiesView
 );
-event_root!(
-    NodeEvent,
-    crate::live::NodeConfigurationView,
-    crate::live::NodeEntitiesView
-);

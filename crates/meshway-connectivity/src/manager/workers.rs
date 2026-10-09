@@ -9,11 +9,9 @@ pub(super) struct Candidate {
     timeout: std::time::Duration,
 }
 
-/// One endpoint to dial: a publication names it by index into its own
-/// candidate; a netmap passes configured or fact endpoints explicitly.
+/// One endpoint to dial: configured in the candidate or from peer facts.
 #[derive(Clone)]
 pub(super) struct Target {
-    pub index: Option<usize>,
     pub endpoint: meshway_configuration::execution::DialEndpoint,
     pub acquisition: LinkAcquisition,
 }
@@ -28,7 +26,7 @@ enum Driver {
 /// peer), plus the peer's current fact endpoints for a netmap.
 pub(super) fn candidates(shared: &EpochContext, peer: NodeId) -> Result<Vec<Candidate>, Error> {
     let plan = &shared.plan;
-    let facts = plan.on_demand().then(|| shared.facts.get(peer)).flatten();
+    let facts = shared.facts.get(peer);
     let now = chrono::Utc::now().timestamp_millis();
     let mut out = Vec::new();
     for (key, candidate) in plan.outgoing(peer)? {
@@ -62,9 +60,7 @@ pub(super) fn candidates(shared: &EpochContext, peer: NodeId) -> Result<Vec<Cand
         let mut endpoints: Vec<_> = candidate
             .endpoints
             .iter()
-            .enumerate()
-            .map(|(index, endpoint)| Target {
-                index: (!plan.on_demand()).then_some(index),
+            .map(|endpoint| Target {
                 endpoint: endpoint.clone(),
                 acquisition: acquisition(endpoint.source),
             })
@@ -77,11 +73,12 @@ pub(super) fn candidates(shared: &EpochContext, peer: NodeId) -> Result<Vec<Cand
             };
             for endpoint in crate::plan::fact_endpoints(facts, &carrier.listener_key, network, now)
             {
-                if !endpoints.iter().any(|known| known.endpoint == endpoint) {
+                if !endpoints.iter().any(|known| {
+                    known.endpoint.host == endpoint.host && known.endpoint.port == endpoint.port
+                }) {
                     endpoints.push(Target {
-                        index: None,
+                        acquisition: acquisition(endpoint.source),
                         endpoint,
-                        acquisition: LinkAcquisition::LocalEndpoint,
                     });
                 }
             }
@@ -230,22 +227,13 @@ async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, 
                     };
                     let attempt = async {
                         let opening = Arc::new(scope::Opening::new(scope.clone()));
-                        let socket = match target.index {
-                            Some(index) => {
-                                factory
-                                    .connect(shared.identity.snapshot(), &candidate.key, index)
-                                    .await?
-                            }
-                            None => {
-                                factory
-                                    .connect_endpoint(
-                                        shared.identity.snapshot(),
-                                        &candidate.key,
-                                        &target.endpoint,
-                                    )
-                                    .await?
-                            }
-                        };
+                        let socket = factory
+                            .connect_endpoint(
+                                shared.identity.snapshot(),
+                                &candidate.key,
+                                &target.endpoint,
+                            )
+                            .await?;
                         let raw = Box::new(scope::Stream {
                             inner: socket.stream,
                             scope: shared.physical()?,
@@ -324,6 +312,9 @@ pub(super) fn acquisition(
         }
         meshway_configuration::execution::DialEndpointSource::Local => {
             LinkAcquisition::LocalEndpoint
+        }
+        meshway_configuration::execution::DialEndpointSource::Stun => {
+            LinkAcquisition::StunEndpoint
         }
     }
 }

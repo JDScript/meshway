@@ -1,16 +1,15 @@
-//! One guard evaluation of either authority kind, and the one lifetime value
-//! shared by circuits, flows, queued routes and output guards.
+//! One guard evaluation, and the one lifetime value shared by circuits,
+//! flows, queued routes and output guards.
 //!
 //! A netmap snapshot is bound by its lease alone. Its deadline lives in the
 //! snapshot's shared lease cell and is raised in place by a same-content
 //! renewal, so derived state never copies it: a [`Cap`] only carries this
-//! object's own shorter bound (idle, handshake, probe or legacy permit), and
-//! every check additionally takes a fresh [`View`]. The legacy per-publication
-//! target (removed with the daemon switch) adds its permit expiries as caps.
-use meshway_authority::{ExecutionSnapshot, Reading};
+//! object's own shorter bound (idle, handshake or probe), and every check
+//! additionally takes a fresh [`View`].
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::{
     NodeAddresses,
-    execution::{NodeConfiguration, TrustedNode},
+    execution::TrustedNode,
     netmap::{CompiledNetmap, NodeNetmap},
 };
 use meshway_model::{BoundNodeKey, KeyAlgorithm, NetmapLease, NetworkId, NodeId};
@@ -18,105 +17,53 @@ use meshway_policy::admission::netmap::Leased;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-/// The configuration a reading authorizes.
-#[derive(Clone, Copy)]
-pub(crate) enum Auth<'a> {
-    /// Legacy per-publication target; removed with the daemon switch (N1h).
-    Legacy(&'a NodeConfiguration),
-    Netmap {
-        netmap: &'a CompiledNetmap,
-        lease: NetmapLease,
-    },
-}
-
 /// Values of one complete snapshot guard evaluation. Borrowed for one
 /// synchronous section; never stored or carried across an await.
 #[derive(Clone, Copy)]
 pub(crate) struct View<'a> {
-    pub auth: Auth<'a>,
+    pub netmap: &'a CompiledNetmap,
+    pub lease: NetmapLease,
     pub now_ms: u64,
     pub instant: Instant,
-    /// Current snapshot deadline; reporting only, never copied into a cap of
-    /// netmap state (it can rise in place).
+    /// Current snapshot deadline; reporting only, never copied into a cap
+    /// (it can rise in place).
     pub expires_at: Instant,
-    pub expires_at_ms: u64,
-}
-
-impl<'a> From<Reading<'a>> for View<'a> {
-    fn from(reading: Reading<'a>) -> Self {
-        Self {
-            auth: Auth::Legacy(reading.configuration),
-            now_ms: reading.now_ms,
-            instant: reading.instant,
-            expires_at: reading.expires_at,
-            expires_at_ms: reading.expires_at_ms,
-        }
-    }
 }
 
 impl<'a> View<'a> {
     pub fn of(snapshot: &'a ExecutionSnapshot) -> Result<Self, meshway_authority::Error> {
-        if snapshot.is_netmap() {
-            let reading = snapshot.netmap_reading()?;
-            Ok(Self {
-                auth: Auth::Netmap {
-                    netmap: reading.netmap,
-                    lease: reading.lease,
-                },
-                now_ms: reading.now_ms,
-                instant: reading.instant,
-                expires_at: reading.expires_at,
-                expires_at_ms: reading.expires_at_ms,
-            })
-        } else {
-            snapshot.reading().map(Self::from)
-        }
+        let reading = snapshot.netmap_reading()?;
+        Ok(Self {
+            netmap: reading.netmap,
+            lease: reading.lease,
+            now_ms: reading.now_ms,
+            instant: reading.instant,
+            expires_at: reading.expires_at,
+        })
     }
 
-    pub fn legacy(&self) -> Option<&'a NodeConfiguration> {
-        match self.auth {
-            Auth::Legacy(cfg) => Some(cfg),
-            Auth::Netmap { .. } => None,
-        }
-    }
-
-    pub fn netmap(&self) -> Option<&'a CompiledNetmap> {
-        match self.auth {
-            Auth::Netmap { netmap, .. } => Some(netmap),
-            Auth::Legacy(_) => None,
-        }
+    pub fn netmap(&self) -> &'a CompiledNetmap {
+        self.netmap
     }
 
     /// Input of `meshway_policy::admission::netmap`, with `now_ms`.
-    pub fn leased(&self) -> Option<Leased<'_>> {
-        match &self.auth {
-            Auth::Netmap { netmap, lease } => Some(Leased {
-                netmap: &netmap.netmap,
-                lease,
-            }),
-            Auth::Legacy(_) => None,
+    pub fn leased(&self) -> Leased<'_> {
+        Leased {
+            netmap: &self.netmap.netmap,
+            lease: &self.lease,
         }
     }
 
     pub fn node(&self) -> NodeId {
-        match self.auth {
-            Auth::Legacy(cfg) => cfg.node_id,
-            Auth::Netmap { netmap, .. } => netmap.netmap.node_id,
-        }
+        self.netmap.netmap.node_id
     }
 
     pub fn network(&self) -> NetworkId {
-        match self.auth {
-            Auth::Legacy(cfg) => cfg.network_id,
-            Auth::Netmap { netmap, .. } => netmap.netmap.network_id,
-        }
+        self.netmap.netmap.network_id
     }
 
     pub fn self_keys(&self) -> &'a TrustedNode {
-        match self.auth {
-            Auth::Legacy(cfg) => &cfg.self_keys,
-            Auth::Netmap { netmap, .. } => &netmap.netmap.self_.self_keys,
-        }
+        &self.netmap.netmap.self_.self_keys
     }
 
     /// Current Ed25519 control and X25519 data-plane bindings of a path Node.
@@ -124,13 +71,7 @@ impl<'a> View<'a> {
         let trusted = if node == self.node() {
             self.self_keys()
         } else {
-            match self.auth {
-                Auth::Legacy(cfg) => {
-                    let peer = cfg.peers.get(&node)?;
-                    return valid(&peer.control_key, &peer.dataplane_key);
-                }
-                Auth::Netmap { netmap, .. } => netmap.netmap.projection.inventory.get(&node)?,
-            }
+            self.netmap.netmap.projection.inventory.get(&node)?
         };
         valid(&trusted.control_key, &trusted.dataplane_key)
     }

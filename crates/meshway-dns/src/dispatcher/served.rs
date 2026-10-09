@@ -10,7 +10,10 @@
 use super::*;
 use meshway_configuration::netmap::DnsPlan;
 use meshway_model::NodeId;
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    collections::BTreeMap,
+    net::{IpAddr, SocketAddr},
+};
 
 /// Per-source admitted queries, bounded by each service's `maxPending`.
 #[derive(Default)]

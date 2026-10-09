@@ -96,6 +96,7 @@ pub(super) async fn lab(exit: bool) -> Lab {
         action: TopologyAction::Allow,
         a: format!("node:{a}"),
         b: format!("node:{b}"),
+ keepalive: false,
     }];
     config.access = vec![AccessRule {
         remark: String::new(),

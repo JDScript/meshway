@@ -358,7 +358,4 @@ impl Prepared {
     pub fn is_exit(&self) -> bool {
         self.flow.exit.is_some()
     }
-    pub fn hop_is_exit(&self) -> bool {
-        self.hop == Hop::Exit
-    }
 }

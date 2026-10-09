@@ -10,8 +10,10 @@ use meshway_model::{Digest, NetmapRef, Version, netmap::MAX_NETMAP_BYTES};
 use std::collections::BTreeSet;
 mod decide;
 mod local;
+mod observe;
 mod project;
 pub use decide::{Decision, LocalCompiler, LocalDecision, Target, compile_local, transit};
+pub use observe::{ObservationDenied, ObservationPaths, observation_paths};
 
 /// Stable inputs only. The caller loads them in the committing transaction.
 pub struct NetmapInput<'a> {

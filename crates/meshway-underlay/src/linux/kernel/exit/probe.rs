@@ -3,7 +3,7 @@ use super::{
     command::{Commands, Tool},
 };
 use meshway_model::exit::{ExitCapability, ExitStatus, ExitUnavailableReason as Reason};
-use meshway_model::{ConfigurationRef, InstanceId};
+use meshway_model::{InstanceId, NetmapRef};
 use std::time::SystemTime;
 
 /// Owned probe operation. Keep this value until `finish` completes, even if the
@@ -45,13 +45,15 @@ impl ExitProbe {
     pub async fn observe(
         &mut self,
         instance_id: InstanceId,
-        target: ConfigurationRef,
+        netmap: NetmapRef,
+        role_generation: meshway_model::Digest,
         interfaces: &[String],
     ) -> ExitCapability {
         let result = self.check(interfaces).await;
         ExitCapability {
             instance_id,
-            target,
+            netmap,
+            role_generation,
             supported_families: if result.is_ok() && self.monitor.is_some() {
                 vec![meshway_model::exit::ExitFamily::Ipv4]
             } else {
@@ -246,18 +248,20 @@ mod tests {
         );
         let mut probe = crate::Host::exit_probe().unwrap();
         let instance = "11111111-1111-4111-8111-111111111111".parse().unwrap();
-        let target = ConfigurationRef {
+        let netmap = NetmapRef {
             revision: meshway_model::Revision::MIN,
-            execution_publication: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
+            serial: meshway_model::Version::MIN,
             digest: meshway_model::Digest::from_bytes([3; 32]),
         };
+        let role_generation = meshway_model::Digest::from_bytes([4; 32]);
         let before = SystemTime::now();
         let observation = probe
-            .observe(instance, target.clone(), &["lo".into()])
+            .observe(instance, netmap, role_generation, &["lo".into()])
             .await;
         assert_eq!(observation.status, ExitStatus::Probing);
         assert_eq!(observation.instance_id, instance);
-        assert_eq!(observation.target, target);
+        assert_eq!(observation.netmap, netmap);
+        assert_eq!(observation.role_generation, role_generation);
         assert!(observation.installed_families.is_empty());
         assert!(observation.supported_families.is_empty());
         let observed: SystemTime = observation.observed_at.into();

@@ -158,6 +158,7 @@ fn route_order_is_retained_and_topology_block_always_wins() {
             a: "*".into(),
             b: "*".into(),
             transports: Input::Omitted,
+ keepalive: false,
         },
         TopologyRule {
             remark: "".into(),
@@ -165,6 +166,7 @@ fn route_order_is_retained_and_topology_block_always_wins() {
             a: "*".into(),
             b: "*".into(),
             transports: Input::Omitted,
+ keepalive: false,
         },
     ];
     let (mut c, _) = normalize(c, &context()).unwrap();

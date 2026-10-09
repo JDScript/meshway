@@ -8,7 +8,7 @@
 
 mod resource;
 mod target;
-pub use resource::{netmap_resource_compatible, resource_compatible};
+pub use resource::netmap_resource_compatible;
 
 #[cfg(not(target_os = "linux"))]
 use std::sync::Arc;

@@ -29,16 +29,14 @@ mod session;
 use crate::{
     Direction, Engine, Hop, Packet, PacketBuffer, PendingAction, PendingRoute,
     authority::{Cap, Lifetime, View},
-    flow::{Entry, FlowGrant},
+    flow::Entry,
 };
 pub use codec::is_control_frame;
 use codec::{Context, Frame, Kind};
 use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot};
-pub use meshway_configuration::execution::CircuitAuthorization;
 use meshway_configuration::execution::LogicalPath;
-use meshway_model::{NodeId, ObservationId, RequestId};
+use meshway_model::NodeId;
 pub use meshway_policy::admission::Carrier;
-use meshway_policy::admission::circuit_permit;
 pub use meshway_policy::compile::netmap::Target;
 pub use netmap::{AdjacencyInterest, Flushed, Outbound, Update, diagnostic_paths};
 use replay::{ReplayWindow, SendNonce};
@@ -100,64 +98,22 @@ pub enum Error {
 /// Allowed difference between an origin's INIT time and a receiver's clock.
 const INIT_SKEW: Duration = Duration::from_secs(2);
 
-/// The stable grant a circuit is admitted under; never installed content.
+/// The stable grant a circuit is admitted under: (origin = `path[0]`,
+/// target, purpose) on the installed netmap; never installed content.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CircuitGrant {
-    /// (origin = `path[0]`, target, purpose) on the installed netmap.
-    Netmap {
-        purpose: crate::Purpose,
-        target: Target,
-    },
-    /// Legacy per-demand or per-observation grant; removed with the daemon switch.
-    Legacy(CircuitAuthorization),
+pub struct CircuitGrant {
+    pub purpose: crate::Purpose,
+    pub target: Target,
 }
 
 impl CircuitGrant {
     fn diagnostic(&self) -> bool {
-        matches!(
-            self,
-            Self::Legacy(CircuitAuthorization::Diagnostic(_))
-                | Self::Netmap {
-                    purpose: crate::Purpose::Diagnostic,
-                    ..
-                }
-        )
+        self.purpose == crate::Purpose::Diagnostic
     }
 
-    /// The legacy field value: the grant itself, or a fixed placeholder for
-    /// netmap circuits (meaningless there; read `grant`).
-    pub fn legacy(&self) -> CircuitAuthorization {
-        match self {
-            Self::Legacy(authorization) => *authorization,
-            Self::Netmap {
-                purpose: crate::Purpose::Business,
-                ..
-            } => CircuitAuthorization::Business(crate::netmap_demand()),
-            Self::Netmap { .. } => CircuitAuthorization::Diagnostic(netmap_observation()),
-        }
+    fn flow(&self) -> Option<Target> {
+        (self.purpose == crate::Purpose::Business).then(|| self.target.clone())
     }
-
-    fn flow(&self) -> Option<FlowGrant> {
-        match self {
-            Self::Legacy(CircuitAuthorization::Business(demand)) => {
-                Some(FlowGrant::Legacy(*demand))
-            }
-            Self::Netmap {
-                purpose: crate::Purpose::Business,
-                target,
-            } => Some(FlowGrant::Netmap(target.clone())),
-            _ => None,
-        }
-    }
-}
-
-fn netmap_observation() -> ObservationId {
-    static ID: std::sync::OnceLock<ObservationId> = std::sync::OnceLock::new();
-    *ID.get_or_init(|| {
-        "00000000-0000-4000-8000-00000000ffed"
-            .parse()
-            .expect("valid placeholder")
-    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -388,8 +344,6 @@ pub enum Received {
 /// selected owner must still call `receive` with the actual incoming carrier.
 #[derive(Clone, Debug)]
 pub struct UntrustedIncomingHint {
-    /// Legacy view of `grant`; see [`CircuitGrant::legacy`].
-    pub authorization: CircuitAuthorization,
     pub grant: CircuitGrant,
     pub path: Vec<NodeId>,
 }
@@ -412,8 +366,6 @@ pub enum CircuitState {
 #[derive(Clone, Debug)]
 pub struct CircuitInfo {
     pub id: [u8; 32],
-    /// Legacy view of `grant`; see [`CircuitGrant::legacy`].
-    pub authorization: CircuitAuthorization,
     pub grant: CircuitGrant,
     pub path: Vec<NodeId>,
     pub role: CircuitRole,
@@ -438,12 +390,10 @@ impl State {
 struct Circuit {
     context: Arc<Context>,
     state: State,
-    /// Own bound: the legacy permit and execution expiry. Netmap circuits
-    /// have none; their lease is checked at every use and renews in place.
+    /// Own bound; the lease is checked at every use and renews in place.
     cap: Option<Cap>,
     handshake: Cap,
-    permit_expires_at_ms: u64,
-    /// Netmap: the exact path this owner admitted, with its dial candidates.
+    /// The exact path this owner admitted, with its dial candidates.
     selected: Option<Arc<LogicalPath>>,
     send: [SendNonce; 2],
     receive: [ReplayWindow; 2],
@@ -470,22 +420,7 @@ impl Circuit {
         cancellation: CancellationToken,
         selected: Option<Arc<LogicalPath>>,
     ) -> Result<Self, Error> {
-        let (cap, permit_expires_at_ms) = match reading.legacy() {
-            Some(cfg) => {
-                let CircuitGrant::Legacy(authorization) = context.grant else {
-                    return Err(Error::Context);
-                };
-                let permit = circuit_permit(cfg, authorization).map_err(|_| Error::Context)?;
-                let permit = Cap::until_ms(reading.instant, reading.now_ms, permit.expires_at_ms)
-                    .ok_or(Error::Limits)?;
-                let execution = Cap {
-                    at: reading.expires_at,
-                    ms: reading.expires_at_ms,
-                };
-                (Some(permit.min(execution)), permit.ms)
-            }
-            None => (None, u64::MAX),
-        };
+        let cap = None;
         let mut handshake =
             Cap::after(reading.instant, reading.now_ms, timeout).ok_or(Error::Limits)?;
         // The INIT window also bounds a responder's handshake state.
@@ -499,7 +434,6 @@ impl Circuit {
             state,
             cap,
             handshake,
-            permit_expires_at_ms,
             selected,
             send: Default::default(),
             receive: Default::default(),
@@ -592,7 +526,6 @@ impl Circuit {
                 cancelled = self.cancellation.is_cancelled(),
                 expires_at_ms = self.cap.map(|cap| cap.ms),
                 handshake_expires_at_ms = self.handshake.ms,
-                permit_expires_at_ms = self.permit_expires_at_ms,
                 "Dataplane circuit retired");
         }
         self.cancellation.cancel();
@@ -709,7 +642,6 @@ impl SecureNode {
             snapshot.ensure_current().map_err(|_| Error::Authority)?;
         }
         Ok(UntrustedIncomingHint {
-            authorization: context.grant.legacy(),
             grant: context.grant.clone(),
             path: context.path.clone(),
         })
@@ -777,37 +709,8 @@ impl SecureNode {
             output_epoch: Arc::new(()),
             first: Default::default(),
         };
-        if node.identity.snapshot().is_netmap() {
-            node.set_carriers(carriers)?;
-        } else {
-            // Legacy construction accepted carriers before any permit used them.
-            node.carriers = carriers;
-        }
+        node.set_carriers(carriers)?;
         Ok(node)
-    }
-
-    /// Legacy: open a business circuit of a demand on its next-hop carrier.
-    pub fn start(&mut self, demand: RequestId, path: Vec<NodeId>) -> Result<PendingFrame, Error> {
-        let carrier = self
-            .carriers
-            .get(path.get(1).ok_or(Error::Context)?)
-            .ok_or(Error::Unsupported)?
-            .clone();
-        self.start_grant(
-            CircuitGrant::Legacy(CircuitAuthorization::Business(demand)),
-            path,
-            &carrier,
-        )
-    }
-
-    /// Legacy: open a circuit of an exact business or diagnostic grant.
-    pub fn start_authorized(
-        &mut self,
-        authorization: CircuitAuthorization,
-        path: Vec<NodeId>,
-        carrier: &Carrier,
-    ) -> Result<PendingFrame, Error> {
-        self.start_grant(CircuitGrant::Legacy(authorization), path, carrier)
     }
 
     /// Open a circuit of a grant on the installed target. A netmap grant
@@ -844,7 +747,6 @@ impl SecureNode {
         }
         let admitted = authorization::admit(
             &mut self.engine.decisions,
-            &snapshot,
             reading,
             &grant,
             &path,
@@ -875,7 +777,7 @@ impl SecureNode {
             reading,
             self.limits.handshake_timeout,
             self.cancellation.child_token(),
-            admitted.selected,
+            Some(admitted.selected),
         )?;
         let frame = Frame {
             context,
@@ -942,7 +844,6 @@ impl SecureNode {
                     output,
                     &circuit.context,
                     circuit.selected.as_deref(),
-                    &reading,
                 )?;
             }
             Ok(output)
@@ -1019,13 +920,11 @@ impl SecureNode {
                 return Err(Error::Context);
             }
             circuit.receive[usize::from(frame.reply)].check(frame.sequence)?;
-            let selected =
-                authorization::selected(&reading, &circuit.context, circuit.selected.as_deref())?;
+            let selected = authorization::selected(&circuit.context, circuit.selected.as_deref())?;
             let previous = circuit.session.verify(selected, &frame, incoming)?;
             authorization::incoming(
                 &mut self.engine.decisions,
                 &reading,
-                &circuit.context,
                 selected,
                 previous,
                 incoming,
@@ -1074,41 +973,23 @@ impl SecureNode {
         incoming: &Carrier,
         reading: &View<'_>,
     ) -> Result<(NodeId, authorization::Admitted), Error> {
-        let snapshot = self.identity.snapshot().clone();
         // Path admission precedes signature work; the arrival direction is
         // checked after the chain names the authenticated previous hop.
-        let selected = match &frame.context.grant {
-            CircuitGrant::Legacy(_) => None,
-            CircuitGrant::Netmap { target, .. } => {
-                let netmap = reading.netmap().ok_or(Error::Context)?;
-                let origin = frame.context.path[0];
-                let paths = self
-                    .engine
-                    .decisions
-                    .transit(netmap, origin, target)
-                    .map_err(|_| Error::Policy)?;
-                Some(Arc::new(
-                    paths
-                        .iter()
-                        .find(|path| path.nodes == frame.context.path)
-                        .ok_or(Error::Policy)?
-                        .clone(),
-                ))
-            }
-        };
-        let path = authorization::selected(reading, &frame.context, selected.as_deref())?;
-        let previous = crypto::verify(reading, frame, incoming, path)?;
-        authorization::incoming(
-            &mut self.engine.decisions,
-            reading,
-            &frame.context,
-            path,
-            previous,
-            incoming,
-        )?;
+        let origin = frame.context.path[0];
+        let paths = self
+            .engine
+            .decisions
+            .transit(reading.netmap(), origin, &frame.context.grant.target)
+            .map_err(|_| Error::Policy)?;
+        let path = paths
+            .iter()
+            .find(|path| path.nodes == frame.context.path)
+            .ok_or(Error::Policy)?
+            .clone();
+        let previous = crypto::verify(reading, frame, incoming, &path)?;
+        authorization::incoming(&mut self.engine.decisions, reading, &path, previous, incoming)?;
         let admitted = authorization::admit(
             &mut self.engine.decisions,
-            &snapshot,
             reading,
             &frame.context.grant,
             &frame.context.path,
@@ -1156,7 +1037,7 @@ impl SecureNode {
             reading,
             self.limits.handshake_timeout,
             self.cancellation.child_token(),
-            admitted.selected,
+            Some(admitted.selected),
         )?;
         let id = circuit.context.circuit;
         let fingerprint = Sha256::digest(frame.encode()?).into();
@@ -1254,7 +1135,7 @@ impl SecureNode {
             return Err(Error::Context);
         }
         match frame.kind {
-            Kind::Init => self.repeat_handshake(circuit, &frame, reading),
+            Kind::Init => self.repeat_handshake(circuit, &frame),
             Kind::Response => {
                 let hop = self.handshake_hop(&frame, Some(previous), reading)?;
                 let fingerprint = Sha256::digest(frame.encode()?).into();
@@ -1313,7 +1194,7 @@ impl SecureNode {
                         })
                     }
                     State::RelayEstablished | State::Endpoint(_) => {
-                        self.repeat_handshake(circuit, &frame, reading)
+                        self.repeat_handshake(circuit, &frame)
                     }
                     _ => Err(Error::Replay),
                 }
@@ -1325,12 +1206,7 @@ impl SecureNode {
         }
     }
 
-    fn repeat_handshake(
-        &self,
-        circuit: &mut Circuit,
-        frame: &Frame,
-        reading: &View<'_>,
-    ) -> Result<Received, Error> {
+    fn repeat_handshake(&self, circuit: &mut Circuit, frame: &Frame) -> Result<Received, Error> {
         let stage = match frame.kind {
             Kind::Init => &mut circuit.recovery.init,
             Kind::Response => &mut circuit.recovery.response,
@@ -1348,7 +1224,6 @@ impl SecureNode {
                 output,
                 &circuit.context,
                 circuit.selected.as_deref(),
-                reading,
             )?;
             let output = stage.retry()?.ok_or(Error::Replay)?;
             if matches!(circuit.state, State::Endpoint(_)) {
@@ -1372,14 +1247,13 @@ impl SecureNode {
         output: &PendingFrame,
         context: &Context,
         selected: Option<&LogicalPath>,
-        reading: &View<'_>,
     ) -> Result<(), Error> {
         output.ensure_current()?;
         if carriers.get(&output.next) != Some(&output.carrier) {
             return Err(Error::Context);
         }
-        let selected = authorization::selected(reading, context, selected).ok();
-        authorization::outgoing(reading, context, selected, output.next, &output.carrier)
+        let selected = authorization::selected(context, selected).ok();
+        authorization::outgoing(selected, output.next, &output.carrier)
     }
 
     pub fn send(&mut self, id: [u8; 32], packet: Packet) -> Result<PendingFrame, Error> {
@@ -1506,10 +1380,8 @@ impl SecureNode {
         previous: Option<NodeId>,
         reading: &View<'_>,
     ) -> Result<Hop, Error> {
-        let snapshot = self.identity.snapshot().clone();
         authorization::admit(
             &mut self.engine.decisions,
-            &snapshot,
             reading,
             &frame.context.grant,
             &frame.context.path,
@@ -1541,8 +1413,8 @@ impl SecureNode {
         if let Some(next) = next {
             let carrier = carriers.get(next).ok_or(Error::Unsupported)?;
             let selected =
-                authorization::selected(reading, context, circuit.selected.as_deref()).ok();
-            authorization::outgoing(reading, context, selected, *next, carrier)?;
+                authorization::selected(context, circuit.selected.as_deref()).ok();
+            authorization::outgoing(selected, *next, carrier)?;
         }
         Ok(())
     }
@@ -1603,8 +1475,8 @@ impl SecureNode {
         let snapshot = owner.identity.snapshot();
         let carrier = owner.carriers.get(&next).ok_or(Error::Unsupported)?.clone();
         let selected =
-            authorization::selected(reading, &frame.context, circuit.selected.as_deref()).ok();
-        authorization::outgoing(reading, &frame.context, selected, next, &carrier)?;
+            authorization::selected(&frame.context, circuit.selected.as_deref()).ok();
+        authorization::outgoing(selected, next, &carrier)?;
         let mut guard = circuit.guard(snapshot, matches!(frame.kind, Kind::Init | Kind::Response));
         if let Some(probe) = frame.probe {
             guard.life.restrict(Some(Cap {
@@ -1685,7 +1557,6 @@ impl SecureNode {
         let local = reading.node();
         Some(CircuitInfo {
             id,
-            authorization: circuit.context.grant.legacy(),
             grant: circuit.context.grant.clone(),
             path: circuit.context.path.clone(),
             role: if circuit.context.path.first() == Some(&local) {
@@ -1720,20 +1591,6 @@ impl SecureNode {
         }
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
         Ok(ready)
-    }
-
-    /// Legacy: select a local output of a demand; see [`Self::local_grant_circuit`].
-    pub fn local_circuit(
-        &self,
-        demand: RequestId,
-        path: &[NodeId],
-        packet: &Packet,
-    ) -> Result<Option<CircuitInfo>, Error> {
-        self.local_grant_circuit(
-            &CircuitGrant::Legacy(CircuitAuthorization::Business(demand)),
-            path,
-            packet,
-        )
     }
 
     /// Select a local output from the unique flow owner's authenticated cipher
@@ -1863,8 +1720,7 @@ impl SecureNode {
     /// may still be followed by a Control-checked update.
     fn terminate_if_expired(&mut self) {
         let snapshot = self.identity.snapshot();
-        if snapshot.is_netmap()
-            && meshway_authority::now().is_ok_and(|now| now >= snapshot.expires_at_ms())
+        if meshway_authority::now().is_ok_and(|now| now >= snapshot.expires_at_ms())
         {
             self.terminate("lease_expired");
         }

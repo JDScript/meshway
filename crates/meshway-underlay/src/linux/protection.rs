@@ -73,13 +73,9 @@ impl PhysicalResource {
 }
 
 /// Interchangeable installed targets: the same netmap content and lease cell
-/// (any instance binding), or the same legacy execution.
+/// (any instance binding).
 pub(super) fn same_target(a: &ExecutionSnapshot, b: &ExecutionSnapshot) -> bool {
-    if a.is_netmap() {
-        a.same_netmap(b)
-    } else {
-        a.same_execution(b)
-    }
+    a.same_netmap(b)
 }
 
 /// Whether a descriptor created under `previous` may follow `next`: the same
@@ -89,18 +85,10 @@ fn follows(previous: &ExecutionSnapshot, next: &ExecutionSnapshot, purpose: &Res
     if same_target(previous, next) {
         return true;
     }
-    if next.is_netmap() {
-        next.netmap_continuation_from(previous).is_ok_and(|old| {
-            next.netmap().is_ok_and(|new| {
-                crate::netmap_resource_compatible(&old.netmap, &new.netmap, purpose)
-            })
-        })
-    } else {
-        next.continuation_from(previous).is_ok_and(|old| {
-            next.configuration()
-                .is_ok_and(|new| crate::resource_compatible(old, new, purpose))
-        })
-    }
+    next.netmap_continuation_from(previous).is_ok_and(|old| {
+        next.netmap()
+            .is_ok_and(|new| crate::netmap_resource_compatible(&old.netmap, &new.netmap, purpose))
+    })
 }
 
 impl Resources {

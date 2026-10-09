@@ -1,7 +1,7 @@
 //! Runtime facts and ordered installation receipts use the same credential,
 //! sequence and retry owners as control-only reporting.
-use crate::{Control, Error, now, reference};
-use meshway_model::{ConfigurationRef, Sequence, Version, state::NodeState};
+use crate::{Control, Error, now};
+use meshway_model::{NetmapRef, Sequence, Version, state::NodeState};
 use meshway_protocol::{
     InstanceRequest, ReceiptRequest, StateAccepted, StateReport,
     execution::{ApplyFailure, ReceiptPhase},
@@ -22,15 +22,16 @@ struct Attempt {
     completion: Mutex<Option<ReceiptRequest>>,
 }
 
-/// A saved, instance-bound application attempt issued by the one Control owner.
+/// A saved, instance-bound application attempt of one netmap, issued by the
+/// one Control owner.
 /// It records retry identity, not proof of installation. The runtime supplies
 /// actual completion facts; cloning never creates another attempt/sample.
 #[derive(Clone)]
 pub struct ApplicationTicket(Arc<Attempt>);
 
 impl ApplicationTicket {
-    pub fn target(&self) -> &ConfigurationRef {
-        &self.0.saved.target
+    pub fn netmap(&self) -> &NetmapRef {
+        &self.0.saved.netmap
     }
     pub fn attempt(&self) -> Version {
         self.0.saved.attempt
@@ -42,26 +43,27 @@ impl ApplicationTicket {
 impl fmt::Debug for ApplicationTicket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ApplicationTicket")
-            .field("target", self.target())
+            .field("netmap", self.netmap())
             .field("attempt", &self.attempt())
             .finish_non_exhaustive()
     }
 }
 
 impl Control {
-    /// Confirm saved for this exact attempt before installation starts. An
-    /// interrupted waiter retries the same saved request and timestamp.
-    pub async fn begin_application(&mut self) -> Result<ApplicationTicket, Error> {
+    /// Confirm saved for this exact attempt of the held netmap before
+    /// installation starts. An interrupted waiter retries the same saved
+    /// request and timestamp. A new instance starts a new attempt for the
+    /// same, already installed netmap.
+    pub async fn begin_application(
+        &mut self,
+        netmap: NetmapRef,
+    ) -> Result<ApplicationTicket, Error> {
         let instance = self.current_instance()?;
-        let target = self
-            .cached_target()
-            .map(reference)
-            .ok_or(Error::Lifecycle)?;
-        if self.instance.as_ref().and_then(|i| i.lease.target.as_ref()) != Some(&target) {
+        if self.netmap_reference() != Some(netmap) {
             return Err(Error::Lifecycle);
         }
         let reusable = self.application.as_ref().filter(|ticket| {
-            ticket.0.saved.instance == instance && ticket.0.saved.target == target
+            ticket.0.saved.instance == instance && ticket.0.saved.netmap == netmap
         });
         let next = match reusable {
             Some(ticket)
@@ -86,40 +88,19 @@ impl Control {
                     .checked_next()
                     .map_err(|_| Error::Lifecycle)?,
                 None => Version::MIN,
-            }
-            .max(
-                self.receipt
-                    .as_ref()
-                    .filter(|receipt| {
-                        receipt.request.instance == instance && receipt.request.target == target
-                    })
-                    .map_or(Version::MIN, |receipt| receipt.request.attempt),
-            );
-            let old_saved = self.receipt.as_ref().filter(|r| {
-                r.request.instance == instance
-                    && r.request.target == target
-                    && r.request.attempt == attempt
-            });
-            let (saved, acknowledged) = if let Some(old) = old_saved {
-                (old.request.clone(), old.acknowledged)
-            } else {
-                (
-                    ReceiptRequest {
-                        instance,
-                        target,
-                        phase: ReceiptPhase::Saved,
-                        attempt,
-                        sequence: Sequence::MIN,
-                        reported_at_ms: now()?,
-                        failure: None,
-                    },
-                    false,
-                )
             };
             let ticket = ApplicationTicket(Arc::new(Attempt {
                 owner: self.application_owner.clone(),
-                saved,
-                saved_acknowledged: AtomicBool::new(acknowledged),
+                saved: ReceiptRequest {
+                    instance,
+                    netmap,
+                    phase: ReceiptPhase::Saved,
+                    attempt,
+                    sequence: Sequence::MIN,
+                    reported_at_ms: now()?,
+                    failure: None,
+                },
+                saved_acknowledged: AtomicBool::new(false),
                 rejected: AtomicBool::new(false),
                 completion: Mutex::new(None),
             }));
@@ -146,8 +127,7 @@ impl Control {
     }
 
     /// Preserve the first actual completion's timestamp and sequence through
-    /// uncertain delivery. Late results may enter Server history for a target
-    /// this instance really held; Server ordering keeps them out of current state.
+    /// uncertain delivery. Applied requires live authority for that netmap.
     pub async fn finish_application(
         &mut self,
         ticket: &ApplicationTicket,
@@ -168,13 +148,9 @@ impl Control {
             Ok(()) => (ReceiptPhase::Applied, None),
             Err(failure) => (ReceiptPhase::Failed, Some(failure)),
         };
-        if phase == ReceiptPhase::Applied
-            && self.instance.as_ref().and_then(|i| i.lease.target.as_ref()) == Some(ticket.target())
-            && self
-                .cached_target()
-                .is_none_or(|target| target.configuration.enabled)
+        if phase == ReceiptPhase::Applied && self.netmap_snapshot()?.reference() != *ticket.netmap()
         {
-            self.execution_snapshot()?.ensure_current()?;
+            return Err(Error::Lifecycle);
         }
         let request = {
             let mut completion = ticket.0.completion.lock().map_err(|_| Error::Lifecycle)?;
@@ -186,7 +162,7 @@ impl Control {
             } else {
                 let request = ReceiptRequest {
                     instance: current,
-                    target: ticket.target().clone(),
+                    netmap: *ticket.netmap(),
                     phase,
                     attempt: ticket.attempt(),
                     sequence: Sequence::MIN.checked_next().map_err(|_| Error::Lifecycle)?,
@@ -235,33 +211,24 @@ impl Control {
         if state.capabilities != active.capabilities {
             return Err(Error::Contract);
         }
-        // A fresh host observation belongs to this precise instance/target,
-        // including failure before applied. Never relabel an old probe with the
-        // latest publication; uncertain retries above keep their original body.
+        // A fresh host observation belongs to this precise instance and the
+        // held netmap, including failure before applied. Never relabel an old
+        // probe; uncertain retries above keep their original body.
+        let held = self.netmap_reference();
         if let Some(exit) = &state.exit_capability
-            && (exit.instance_id != instance.instance_id
-                || active.lease.target.as_ref() != Some(&exit.target)
-                || self.cached_target().map(reference).as_ref() != Some(&exit.target))
+            && (exit.instance_id != instance.instance_id || held != Some(exit.netmap))
         {
             return Err(Error::Contract);
         }
         if let Some(saved) = &state.configuration.saved
-            && self.cached_target().map(reference).as_ref() != Some(saved)
+            && held != Some(*saved)
         {
             return Err(Error::Contract);
         }
-        if let Some(applied) = &state.configuration.applied {
-            if active.lease.target.as_ref() != Some(applied)
-                || self.cached_target().map(reference).as_ref() != Some(applied)
-            {
-                return Err(Error::Contract);
-            }
-            if self
-                .cached_target()
-                .is_none_or(|target| target.configuration.enabled)
-            {
-                self.execution_snapshot()?.ensure_current()?;
-            }
+        if let Some(applied) = &state.configuration.applied
+            && self.netmap_snapshot()?.reference() != *applied
+        {
+            return Err(Error::Contract);
         }
         self.report_sequence = self
             .report_sequence

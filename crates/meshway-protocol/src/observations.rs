@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use meshway_model::{
     InstanceId, NodeId, ObservationId, ObservationSubscriptionId, Sequence,
     observations::{MetricKind, ObservationEvent, ObservationSample},
-    state::ConfigurationRef,
+    NetmapRef,
 };
 
 wire_object! {
@@ -115,8 +115,8 @@ wire_object! {
     pub mean_success_duration_us: Option<f64>,
     /// Source instance shared by the aggregated measurements.
     pub instance_id: InstanceId,
-    /// Execution publication shared by the aggregated measurements.
-    pub publication_id: meshway_model::PublicationId,
+    /// Netmap shared by the aggregated measurements.
+    pub netmap: NetmapRef,
     /// Ordered path shared by the aggregated measurements.
     pub path: Vec<NodeId>,
     /// Measured operation kind, preserving its timing scope.
@@ -291,8 +291,8 @@ wire_object! {
     pub path: Option<Vec<NodeId>>,
     /// Actual path segment identifier, or null before a measured segment is reported.
     pub path_segment: Option<Sequence>,
-    /// Exact source execution target to which results must remain bound.
-    pub configuration: ConfigurationRef,
+    /// Source netmap current when the task was assigned; results name the netmap they ran under.
+    pub netmap: NetmapRef,
     /// Source runtime instance authorized to execute this task.
     pub instance_id: InstanceId,
     /// Measurement kinds assigned to this task.
@@ -321,12 +321,12 @@ wire_object! {
     pub items: Vec<ObservationTask>
 } }
 wire_object! {
-/// Source Node result bound to the task's actual instance and execution target.
+/// Source Node result bound to the task's actual instance and netmap.
 #[derive(Clone, Debug)] pub struct ObservationResult {
     /// Source instance that produced the update.
     pub instance_id: InstanceId,
-    /// Exact execution target under which the update was produced.
-    pub configuration: ConfigurationRef,
+    /// Exact netmap under which the update was produced.
+    pub netmap: NetmapRef,
     /// Actual phase or sample reported by the source Node.
     pub result: ObservationUpdate,
 } }

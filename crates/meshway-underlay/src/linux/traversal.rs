@@ -259,38 +259,22 @@ impl DatagramAuthorization {
     }
 }
 
-/// The reference names this snapshot's Node, instance and target. A netmap
-/// reference carries the content's revision and digest in its legacy
-/// `ConfigurationRef` until the wire names a `NetmapRef`.
+/// The reference names this snapshot's Node and netmap. Its instance is State
+/// qualification only and may be rebound while the netmap stays the same.
 pub(super) fn references(
     snapshot: &meshway_authority::ExecutionSnapshot,
     reference: &SocketReference,
 ) -> Result<bool> {
-    if snapshot.is_netmap() {
-        let netmap = snapshot.netmap().map_err(|_| Error::Expired)?;
-        return Ok(reference.node_id == netmap.netmap.node_id
-            && snapshot.instance_binding().as_ref() == Some(&reference.instance)
-            && reference.configuration.revision == netmap.netmap.revision
-            && reference.configuration.digest == netmap.digest);
-    }
-    let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
-    Ok(reference.node_id == cfg.node_id
-        && reference.instance == snapshot.instance()
-        && reference.configuration == snapshot.reference())
+    let netmap = snapshot.netmap().map_err(|_| Error::Expired)?;
+    Ok(reference.node_id == netmap.netmap.node_id && reference.netmap == netmap.reference())
 }
 
-/// Current permission for a retained physical adjacency under either target.
+/// Current permission for a retained physical adjacency.
 fn admit_adjacency(
     snapshot: &meshway_authority::ExecutionSnapshot,
     peer: meshway_model::NodeId,
     carrier: &meshway_configuration::execution::Carrier,
 ) -> Result<()> {
-    if !snapshot.is_netmap() {
-        return snapshot
-            .admit_adjacency(peer, carrier)
-            .map(|_| ())
-            .map_err(|_| Error::Expired);
-    }
     let reading = snapshot.netmap_reading().map_err(|_| Error::Expired)?;
     let netmap = &reading.netmap.netmap;
     let compiler = meshway_policy::compile::netmap::LocalCompiler::new(netmap);
@@ -298,26 +282,18 @@ fn admit_adjacency(
         .map_err(|_| Error::Expired)
 }
 
-/// Control's continuation from the descriptor's previous target to `next`,
+/// Control's continuation from the descriptor's previous netmap to `next`,
 /// as views of both contents. Comparison data only.
 fn continued<'a>(
     next: &'a meshway_authority::ExecutionSnapshot,
     previous: &'a meshway_authority::ExecutionSnapshot,
 ) -> Result<(View<'a>, View<'a>)> {
-    if next.is_netmap() {
-        let new = next.netmap().map_err(|_| Error::Expired)?;
-        if next.same_netmap(previous) {
-            return Ok((View::Netmap(&new.netmap), View::Netmap(&new.netmap)));
-        }
-        let old = next
-            .netmap_continuation_from(previous)
-            .map_err(|_| Error::Expired)?;
-        Ok((View::Netmap(&old.netmap), View::Netmap(&new.netmap)))
-    } else {
-        let old = next
-            .continuation_from(previous)
-            .map_err(|_| Error::Expired)?;
-        let new = next.configuration().map_err(|_| Error::Expired)?;
-        Ok((View::Legacy(old), View::Legacy(new)))
+    let new = next.netmap().map_err(|_| Error::Expired)?;
+    if next.same_netmap(previous) {
+        return Ok((View::new(&new.netmap), View::new(&new.netmap)));
     }
+    let old = next
+        .netmap_continuation_from(previous)
+        .map_err(|_| Error::Expired)?;
+    Ok((View::new(&old.netmap), View::new(&new.netmap)))
 }

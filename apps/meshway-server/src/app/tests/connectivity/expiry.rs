@@ -296,6 +296,7 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
             action: meshway_configuration::TopologyAction::Allow,
             a: format!("node:{}", a.id),
             b: format!("node:{peer}"),
+ keepalive: false,
         })
         .collect();
     // Every request below uses A as dialer. Passive peers need their genuine

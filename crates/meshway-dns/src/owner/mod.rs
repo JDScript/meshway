@@ -1,5 +1,6 @@
-//! The host executes discovery with its unique `Control::query_dns` driver.
-//! Neither this owner nor a discovery result can authorize resolver traffic.
+//! One bounded DNS query owner per installed netmap. MagicDNS answers come
+//! from the netmap's complete `meshHosts`; nothing here authorizes resolver
+//! traffic beyond the sealed per-query routes.
 mod exit;
 mod response;
 mod system;
@@ -11,14 +12,9 @@ use crate::{
 use bytes::Bytes;
 use hickory_proto::{
     op::{Message, ResponseCode},
-    rr::{RData, Record, RecordType, rdata},
+    rr::RecordType,
 };
 use meshway_authority::ExecutionSnapshot;
-use meshway_configuration::{
-    NodeAddresses, execution::NodeConfiguration, node_dns_name, normalize_dns_name,
-};
-use meshway_model::{NetworkId, NodeId, RequestId, Revision};
-use meshway_protocol::NodeDnsQueryResponse;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt,
@@ -27,15 +23,15 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// Explicit resource bounds. Discovery has no cache: its contract has no TTL.
-/// The timeout bounds work only; it never extends the control snapshot lifetime.
+/// Explicit resource bounds. The timeout bounds work only; it never extends
+/// the control snapshot lifetime.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub max_pending: usize,
     pub query_timeout: Duration,
 }
 
-/// Ordinary DNS selection of either target kind, read from one snapshot.
+/// Ordinary DNS selection, read from one netmap snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Plan {
     NoExit,
@@ -46,30 +42,17 @@ pub(crate) enum Plan {
 
 impl Plan {
     pub(crate) fn of(snapshot: &ExecutionSnapshot) -> Option<Self> {
-        use meshway_configuration::{execution::DnsEgress, netmap::DnsPlan};
-        if snapshot.is_netmap() {
-            let netmap = snapshot.netmap().ok()?;
-            Some(match &netmap.netmap.dns.egress {
-                DnsPlan::NoExit => Self::NoExit,
-                DnsPlan::ViaExit { service } => Self::ViaExit {
-                    max_pending: service.max_pending,
-                    timeout_ms: service.timeout_ms,
-                },
-                DnsPlan::ServeExitResolver { .. } => Self::ServeExitResolver,
-                DnsPlan::Unavailable { .. } => Self::Unavailable,
-            })
-        } else {
-            let cfg = snapshot.configuration().ok()?;
-            Some(match &cfg.dns.egress {
-                DnsEgress::NoExit => Self::NoExit,
-                DnsEgress::ViaExit { service, .. } => Self::ViaExit {
-                    max_pending: service.max_pending,
-                    timeout_ms: service.timeout_ms,
-                },
-                DnsEgress::ServeExitResolver { .. } => Self::ServeExitResolver,
-                DnsEgress::Unavailable { .. } => Self::Unavailable,
-            })
-        }
+        use meshway_configuration::netmap::DnsPlan;
+        let netmap = snapshot.netmap().ok()?;
+        Some(match &netmap.netmap.dns.egress {
+            DnsPlan::NoExit => Self::NoExit,
+            DnsPlan::ViaExit { service } => Self::ViaExit {
+                max_pending: service.max_pending,
+                timeout_ms: service.timeout_ms,
+            },
+            DnsPlan::ServeExitResolver { .. } => Self::ServeExitResolver,
+            DnsPlan::Unavailable { .. } => Self::Unavailable,
+        })
     }
 }
 
@@ -92,19 +75,12 @@ pub enum OwnerError {
 pub enum Unavailable {
     Inactive,
     Capacity,
-    InvalidDiscoveryName,
     UnsupportedRecordType,
     MissingResolverPlan,
     MissingExitPlan,
     InvalidTicket,
     Expired,
     BindingMismatch,
-    /// The response cannot be bound to these execution settings. Reload before
-    /// retrying; a newer Server revision is not necessarily an invalid response.
-    ReloadRequired,
-    /// Unknown and forbidden are deliberately indistinguishable. Valid discovery
-    /// maps this to REFUSED, without SOA, AA or a negative cache entry.
-    NotVisible,
 }
 
 /// Opaque owner-generation and operation identity, unrelated to DNS request IDs
@@ -129,7 +105,7 @@ impl Ticket {
         self.deadline
     }
 
-    /// Select this and `Owner::invalidated()` around host-driven discovery I/O.
+    /// Select this and `Owner::invalidated()` around host-driven upstream I/O.
     /// No task is spawned; explicit cancel/replacement wakes this waiter.
     pub async fn cancelled(&self) {
         tokio::select! { biased;
@@ -145,15 +121,9 @@ impl fmt::Debug for Ticket {
     }
 }
 
-pub struct DiscoveryRequest {
-    pub ticket: Ticket,
-    /// Canonical exact name for `Control::query_dns`; never an inverse guess.
-    pub name: String,
-}
-
 /// Work for an exact configured resolver or a bounded ordered system list.
-/// Every route comes from a current published local permit; the host's mapping
-/// only chooses demand IDs. All attempts share the original query ticket.
+/// Every route is decided by the current netmap. All attempts share the
+/// original query ticket.
 #[derive(Debug)]
 pub struct UpstreamWork {
     pub(crate) ticket: Ticket,
@@ -181,16 +151,9 @@ impl UpstreamWork {
     }
 }
 
-impl fmt::Debug for DiscoveryRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DiscoveryRequest").finish_non_exhaustive()
-    }
-}
-
 #[derive(Debug)]
 pub enum Begin {
     Answer(Answer),
-    DiscoveryRequest(DiscoveryRequest),
     Upstream(Box<UpstreamWork>),
     /// Let the host preserve ordinary system resolution, without a socket grant.
     Unmanaged,
@@ -214,8 +177,8 @@ impl fmt::Debug for Answer {
 
 /// One bounded query owner per installed snapshot. No token, HTTP client, ACL,
 /// lease renewal, background task, upstream socket or domain grant lives here.
-/// Published and discovered records use TTL 0: no separate record TTL authority
-/// is currently supplied. Pending queries are the only retained query data.
+/// Published records use TTL 0: no separate record TTL authority is
+/// currently supplied. Pending queries are the only retained query data.
 pub struct Owner {
     snapshot: ExecutionSnapshot,
     state: State,
@@ -237,13 +200,8 @@ impl Owner {
         {
             return Err(OwnerError::Limits);
         }
-        let state = if snapshot.is_netmap() {
-            let netmap = snapshot.netmap().map_err(|_| OwnerError::Inactive)?;
-            State::from_netmap(&netmap.netmap, limits)?
-        } else {
-            let configuration = snapshot.configuration().map_err(|_| OwnerError::Inactive)?;
-            State::new(configuration, limits)?
-        };
+        let netmap = snapshot.netmap().map_err(|_| OwnerError::Inactive)?;
+        let state = State::from_netmap(&netmap.netmap, limits)?;
         snapshot
             .ensure_current()
             .map_err(|_| OwnerError::Inactive)?;
@@ -265,12 +223,7 @@ impl Owner {
     /// establish no-exit operation. Unsupported exit plans still allow MagicDNS.
     /// Cap every ticket, route and answer by the original client's
     /// request deadline. A host may shorten, but never extend, owner authority.
-    pub fn begin_published_until(
-        &mut self,
-        query: Query,
-        resolver_demands: &BTreeMap<String, RequestId>,
-        request_deadline: Instant,
-    ) -> Begin {
+    pub fn begin_published_until(&mut self, query: Query, request_deadline: Instant) -> Begin {
         self.reap();
         if Instant::now() >= request_deadline {
             return Begin::Unavailable(Unavailable::Expired);
@@ -290,17 +243,8 @@ impl Owner {
         }
         let Selection::Resolvers(candidates) = selected else {
             let mut begin = self.begin(query, exit);
-            match &mut begin {
-                Begin::Answer(answer) => {
-                    answer.ready.deadline = answer.ready.deadline.min(request_deadline)
-                }
-                Begin::DiscoveryRequest(request) => {
-                    request.ticket.deadline = request.ticket.deadline.min(request_deadline);
-                    if let Some(pending) = self.state.pending.get_mut(&request.ticket.sequence) {
-                        pending.deadline = pending.deadline.min(request_deadline);
-                    }
-                }
-                _ => {}
+            if let Begin::Answer(answer) = &mut begin {
+                answer.ready.deadline = answer.ready.deadline.min(request_deadline);
             }
             return begin;
         };
@@ -319,13 +263,8 @@ impl Owner {
         let Some(candidate) = candidates.first() else {
             return Begin::Unavailable(Unavailable::MissingResolverPlan);
         };
-        // A netmap decides each resolver itself; a publication needs its demand.
-        let id = resolver_demands.get(candidate.key).copied();
-        if id.is_none() && !self.snapshot.is_netmap() {
-            return Begin::Unavailable(Unavailable::MissingResolverPlan);
-        }
         let mut route =
-            match LocalResolverRoute::new(self.snapshot.clone(), candidate.key, id, deadline) {
+            match LocalResolverRoute::new(self.snapshot.clone(), candidate.key, deadline) {
                 Ok(route) => route,
                 Err(crate::RouteError::Expired) => return Begin::Unavailable(Unavailable::Expired),
                 Err(crate::RouteError::Binding) => {
@@ -334,8 +273,6 @@ impl Owner {
             };
         let ticket = match self.state.insert_pending(
             query.clone(),
-            String::new(),
-            PendingKind::Upstream,
             deadline,
         ) {
             Ok(ticket) => ticket,
@@ -355,8 +292,6 @@ impl Owner {
         &mut self,
         query: Query,
         system: &crate::SystemResolverSnapshot,
-        demands: &BTreeMap<usize, RequestId>,
-        tcp_demands: &BTreeMap<usize, RequestId>,
         deadline: Instant,
     ) -> Begin {
         self.reap();
@@ -364,8 +299,7 @@ impl Owner {
             return Begin::Unavailable(Unavailable::Inactive);
         };
         // A resolver Node resolves for itself as a no-exit Node does.
-        let no_exit =
-            plan == Plan::NoExit || (self.snapshot.is_netmap() && plan == Plan::ServeExitResolver);
+        let no_exit = plan == Plan::NoExit || plan == Plan::ServeExitResolver;
         if !no_exit
             || !matches!(
                 self.state.published.select(&query, ExitSelection::NoExit),
@@ -379,14 +313,12 @@ impl Owner {
             .min(Instant::now() + self.state.limits.query_timeout);
         // Validate the entire bounded OS list before starting I/O. Missing or
         // expired authority is terminal, never a reason to skip an upstream.
-        let mut upstreams = match self.system_upstreams(system, demands, tcp_demands, deadline) {
+        let mut upstreams = match self.system_upstreams(system, deadline) {
             Ok(upstreams) => upstreams,
             Err(reason) => return Begin::Unavailable(reason),
         };
         let ticket = match self.state.insert_pending(
             query.clone(),
-            String::new(),
-            PendingKind::Upstream,
             deadline,
         ) {
             Ok(ticket) => ticket,
@@ -423,8 +355,7 @@ impl Owner {
             Ok(pending) => pending,
             Err(reason) => return Begin::Unavailable(reason),
         };
-        if pending.kind != PendingKind::Upstream
-            || response.query != pending.query
+        if response.query != pending.query
             || response.message.metadata.id != pending.query.id()
             || response.message.queries.as_slice() != std::slice::from_ref(pending.query.question())
         {
@@ -439,22 +370,6 @@ impl Owner {
             route: Some(work.route.clone()),
         });
         self.finish(Outcome::Answer(ready))
-    }
-
-    /// Pass only the typed result returned by the existing `Control::query_dns`
-    /// operation for this request. That generated-client path owns authentication
-    /// and final Server checks. This method also verifies execution binding and
-    /// the local monotonic query deadline. Server `asOf` is informational: it
-    /// supplies neither lifetime authority nor a client-clock synchronization
-    /// guarantee. Its date-time representation is checked by the typed decoder.
-    /// A completion consumes its ticket even if the response fails validation.
-    pub fn complete_discovery(&mut self, ticket: &Ticket, response: NodeDnsQueryResponse) -> Begin {
-        if self.snapshot.ensure_current().is_err() {
-            self.state.stop();
-            return Begin::Unavailable(Unavailable::Inactive);
-        }
-        let outcome = self.state.complete(ticket, response, Instant::now());
-        self.finish(outcome)
     }
 
     /// Invalidate pending work and any completed but unsent answer for this
@@ -505,24 +420,13 @@ impl Owner {
                 ready,
                 scope_fence: None,
             }),
-            Outcome::Discovery(request) => Begin::DiscoveryRequest(request),
             Outcome::Unmanaged => Begin::Unmanaged,
             Outcome::Unavailable(reason) => Begin::Unavailable(reason),
         }
     }
 }
 
-struct Binding {
-    network: NetworkId,
-    source: NodeId,
-    revision: Revision,
-    self_name: String,
-    self_addresses: NodeAddresses,
-    peers: BTreeMap<NodeId, NodeAddresses>,
-}
-
 struct State {
-    binding: Binding,
     published: PublishedDns,
     limits: Limits,
     generation: Arc<()>,
@@ -533,16 +437,8 @@ struct State {
 
 struct Pending {
     query: Query,
-    name: String,
     deadline: Instant,
     cancelled: CancellationToken,
-    kind: PendingKind,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PendingKind {
-    Discovery,
-    Upstream,
 }
 
 struct ReadyAnswer {
@@ -555,19 +451,12 @@ struct ReadyAnswer {
 
 enum Outcome {
     Answer(Box<ReadyAnswer>),
-    Discovery(DiscoveryRequest),
     Unmanaged,
     Unavailable(Unavailable),
 }
 
 impl State {
-    fn insert_pending(
-        &mut self,
-        query: Query,
-        name: String,
-        kind: PendingKind,
-        deadline: Instant,
-    ) -> Result<Ticket, Unavailable> {
+    fn insert_pending(&mut self, query: Query, deadline: Instant) -> Result<Ticket, Unavailable> {
         if self.cancelled.is_cancelled() {
             return Err(Unavailable::Inactive);
         }
@@ -592,9 +481,7 @@ impl State {
             sequence,
             Pending {
                 query,
-                name,
                 deadline,
-                kind,
                 cancelled: ticket.cancelled.clone(),
             },
         );
@@ -618,55 +505,11 @@ impl State {
         }
         Ok(pending)
     }
-    fn new(configuration: &NodeConfiguration, limits: Limits) -> Result<Self, ConfigurationError> {
-        Ok(Self {
-            binding: Binding {
-                network: configuration.network_id,
-                source: configuration.node_id,
-                revision: configuration.revision,
-                self_name: node_dns_name(
-                    &configuration.hostname,
-                    &configuration.dns.settings.domain,
-                )
-                .map_err(|_| ConfigurationError::Name)?,
-                self_addresses: configuration.addresses.clone(),
-                peers: configuration
-                    .peers
-                    .iter()
-                    .map(|(id, peer)| (*id, peer.addresses.clone()))
-                    .collect(),
-            },
-            published: PublishedDns::from_execution(&configuration.dns)?,
-            limits,
-            generation: Arc::new(()),
-            cancelled: CancellationToken::new(),
-            sequence: 0,
-            pending: BTreeMap::new(),
-        })
-    }
-
     fn from_netmap(
         netmap: &meshway_configuration::netmap::NodeNetmap,
         limits: Limits,
     ) -> Result<Self, ConfigurationError> {
-        let settings = &netmap.projection.configuration.dns;
         Ok(Self {
-            binding: Binding {
-                network: netmap.network_id,
-                source: netmap.node_id,
-                revision: netmap.revision,
-                self_name: node_dns_name(&netmap.self_.hostname, &settings.domain)
-                    .map_err(|_| ConfigurationError::Name)?,
-                self_addresses: netmap.self_.addresses.clone(),
-                peers: netmap
-                    .projection
-                    .configuration
-                    .nodes
-                    .iter()
-                    .filter(|(id, _)| **id != netmap.node_id)
-                    .map(|(id, peer)| (*id, peer.addresses.clone()))
-                    .collect(),
-            },
             published: PublishedDns::from_netmap(netmap)?,
             limits,
             generation: Arc::new(()),
@@ -714,33 +557,18 @@ impl State {
                 ) {
                     return Outcome::Unavailable(Unavailable::UnsupportedRecordType);
                 }
-                // A netmap's MagicDNS hosts are the complete visible set: an
-                // unknown name is answered locally exactly as discovery would
-                // answer a forbidden one (REFUSED, no SOA, no AA).
-                if self.published.complete() {
-                    let mut message = query.response();
-                    message.metadata.response_code = ResponseCode::Refused;
-                    return Outcome::Answer(Box::new(ReadyAnswer {
-                        query,
-                        message,
-                        cancelled: self.cancelled.child_token(),
-                        deadline,
-                        route: None,
-                    }));
-                }
-                let Some(name) = discovery_name(&query) else {
-                    return Outcome::Unavailable(Unavailable::InvalidDiscoveryName);
-                };
-                let ticket = match self.insert_pending(
+                // The netmap's MagicDNS hosts are the complete visible set:
+                // unknown and forbidden names are deliberately
+                // indistinguishable (REFUSED, no SOA, no AA, no negative cache).
+                let mut message = query.response();
+                message.metadata.response_code = ResponseCode::Refused;
+                Outcome::Answer(Box::new(ReadyAnswer {
                     query,
-                    name.clone(),
-                    PendingKind::Discovery,
+                    message,
+                    cancelled: self.cancelled.child_token(),
                     deadline,
-                ) {
-                    Ok(ticket) => ticket,
-                    Err(reason) => return Outcome::Unavailable(reason),
-                };
-                Outcome::Discovery(DiscoveryRequest { ticket, name })
+                    route: None,
+                }))
             }
             Selection::Unavailable(SelectionUnavailable::UnsupportedRecordType) => {
                 Outcome::Unavailable(Unavailable::UnsupportedRecordType)
@@ -756,48 +584,6 @@ impl State {
             }
             Selection::Unmanaged => Outcome::Unmanaged,
         }
-    }
-
-    fn complete(
-        &mut self,
-        ticket: &Ticket,
-        response: NodeDnsQueryResponse,
-        now: Instant,
-    ) -> Outcome {
-        let pending = match self.take_pending(ticket, now) {
-            Ok(pending) => pending,
-            Err(reason) => return Outcome::Unavailable(reason),
-        };
-        if pending.kind != PendingKind::Discovery {
-            pending.cancelled.cancel();
-            return Outcome::Unavailable(Unavailable::InvalidTicket);
-        }
-        let mut message = pending.query.response();
-        let address = match self.binding.validate(&pending, &response) {
-            Ok(address) => address,
-            Err(Unavailable::NotVisible) => {
-                message.metadata.response_code = ResponseCode::Refused;
-                None
-            }
-            Err(reason) => {
-                pending.cancelled.cancel();
-                return Outcome::Unavailable(reason);
-            }
-        };
-        if let Some(data) = address {
-            message.add_answer(Record::from_rdata(
-                pending.query.question().name().clone(),
-                0,
-                data,
-            ));
-        }
-        Outcome::Answer(Box::new(ReadyAnswer {
-            query: pending.query,
-            message,
-            cancelled: pending.cancelled,
-            deadline: pending.deadline,
-            route: None,
-        }))
     }
 
     fn cancel(&mut self, ticket: &Ticket) -> bool {
@@ -828,8 +614,6 @@ impl Drop for State {
         self.stop();
     }
 }
-
-use response::discovery_name;
 
 #[cfg(test)]
 mod tests;

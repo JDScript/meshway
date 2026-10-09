@@ -288,6 +288,7 @@ pub(super) fn generated(seed: u64) -> Scenario {
                 a: sel(a),
                 b: sel(b),
                 transports: Input::Omitted,
+ keepalive: false,
             });
         }
     }
@@ -320,6 +321,7 @@ pub(super) fn generated(seed: u64) -> Scenario {
             a: sel(a),
             b: sel(b),
             transports: Input::Omitted,
+ keepalive: false,
         });
     }
     if rng.chance(30) {
@@ -332,6 +334,7 @@ pub(super) fn generated(seed: u64) -> Scenario {
                 TransportProtocol::NativeTcp,
                 TransportProtocol::NativeUdp,
             ]),
+ keepalive: false,
         });
     }
     let candidates = [

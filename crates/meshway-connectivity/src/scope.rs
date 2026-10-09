@@ -311,7 +311,8 @@ impl Physical {
         if identity.snapshot().ensure_current().is_ok() {
             return Poll::Ready(Ok(()));
         }
-        if identity.snapshot().retention_deadline().is_err() {
+        // Inert until Control's next content or the lease end.
+        if std::time::Instant::now() >= identity.snapshot().expires_at() {
             return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into()));
         }
         Poll::Pending

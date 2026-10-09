@@ -1,8 +1,8 @@
 //! Caller-driven Node control lifecycle over the generated Server client.
 //!
 //! The host owns scheduling, reconnect backoff and runtime installation. This
-//! component owns credentials, pending enrollment, instance binding, durable
-//! saved targets and retry identities. It never reports a target as applied.
+//! component owns credentials, pending enrollment, instance binding, the
+//! verified netmap and retry identities. It never reports a netmap as applied.
 #![forbid(unsafe_code)]
 
 mod authority;
@@ -10,13 +10,9 @@ pub mod connectivity;
 mod runtime;
 use meshway_authority::ExecutionSnapshot;
 pub use runtime::ApplicationTicket;
-mod demand;
-mod dns;
 mod enrollment;
-mod events;
-pub use events::{EventNotice, NodeEvents};
-mod execution;
 mod identity;
+mod instance;
 mod netmap;
 pub use netmap::{
     FactsRejected, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
@@ -28,13 +24,12 @@ pub use observations::ObservationLease;
 mod session;
 mod storage;
 
-use meshway_authority::{Clock, Deadline, Started, now, reference};
-use meshway_configuration::execution::CompiledNode;
+use meshway_authority::{Clock, Deadline, Started, now};
 use meshway_control_client::{Client, ClientError};
-use meshway_model::{ConfigurationRef, NetmapLease, state::Capability};
+use meshway_model::{NetmapLease, NetmapRef, state::Capability};
 use meshway_protocol::{
     AcquireInstanceRequest, EnrollmentResponse, ErrorResponse, InstanceLease, NodeSessionResponse,
-    ReceiptRequest, StateReport, node::NodeSessionIntent,
+    StateReport, node::NodeSessionIntent,
 };
 use std::{
     collections::BTreeMap,
@@ -84,9 +79,9 @@ pub enum Error {
     Lifecycle,
     #[error("a different operation is pending; retry or finish it first")]
     Pending,
-    #[error("state report execution scope changed; refresh and observe again")]
+    #[error("state report scope changed; synchronize and observe again")]
     StateScopeChanged,
-    #[error("configuration receipt was rejected; refresh and apply a new attempt")]
+    #[error("netmap receipt was rejected; synchronize and apply a new attempt")]
     ReceiptRejected(Box<ReceiptRejection>),
     #[error("secure random generation or signing failed")]
     Cryptography,
@@ -96,8 +91,6 @@ pub enum Error {
     SignatureInvalid,
     #[error("netmap was signed by a different Server key than the pinned one")]
     ServerKeyMismatch,
-    #[error("invalid DNS query name")]
-    InvalidDnsName,
     #[error("the current session or instance has expired")]
     Expired,
     #[error("Node membership was revoked")]
@@ -115,7 +108,8 @@ impl From<meshway_authority::Error> for Error {
     }
 }
 
-/// Public facts only. Cached configuration is not execution authority.
+/// Public facts only. A held netmap is execution authority only while its
+/// lease is current (`netmap`).
 #[derive(Clone, Debug)]
 pub struct Status {
     /// Locally durable intent ID; it may still await successful Server creation.
@@ -123,7 +117,8 @@ pub struct Status {
     pub binding: Option<EnrollmentResponse>,
     pub authenticated: bool,
     pub instance: Option<InstanceLease>,
-    pub cached: Option<ConfigurationRef>,
+    /// Verified netmap content held (the next sync base), with or without authority.
+    pub held: Option<NetmapRef>,
     /// Lease of the installed netmap authority, if any.
     pub netmap: Option<NetmapLease>,
     pub reload_required: bool,
@@ -134,19 +129,9 @@ pub struct Status {
 pub struct Control {
     client: Client,
     clock: Arc<Clock>,
-    validity: Arc<AtomicBool>,
     context_validity: Arc<AtomicBool>,
-    invalidated: tokio_util::sync::CancellationToken,
-    // Private owner/barrier and publication identity, independent of guard
-    // invalidations during the lease -> durable-target transaction.
-    lineage: Arc<()>,
-    publication: Arc<()>,
-    predecessor: Option<(Arc<()>, ConfigurationRef)>,
-    publication_pending_grant: bool,
     directory: Arc<meshway_private_storage::Directory>,
     record: Record,
-    /// Legacy publication target cache (`execution.json`), removed with N1h.
-    saved: Option<CompiledNode>,
     netmap: netmap::State,
     netmap_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
     sync_transport: Option<Arc<dyn SyncTransport>>,
@@ -157,14 +142,12 @@ pub struct Control {
     challenge_intent: Option<meshway_protocol::NodeChallengeIntent>,
     instance: Option<Instance>,
     acquiring: Option<AcquireInstanceRequest>,
-    receipt: Option<SavedReceipt>,
     report: Option<StateReport>,
     report_sequence: u64,
     application_owner: Arc<()>,
     application: Option<ApplicationTicket>,
     connectivity: connectivity::Authority,
     observations: observations::Registry,
-    events_cancel: tokio_util::sync::CancellationToken,
 }
 
 struct Session {
@@ -175,13 +158,7 @@ struct Session {
 struct Instance {
     lease: InstanceLease,
     deadline: Deadline,
-    execution_deadline: Option<Deadline>,
     capabilities: BTreeMap<String, Capability>,
-}
-
-struct SavedReceipt {
-    request: ReceiptRequest,
-    acknowledged: bool,
 }
 
 impl Control {
@@ -205,20 +182,12 @@ impl Control {
             "node-control.lock",
         )?);
         let record = Record::load(&directory, &origin)?;
-        let saved = storage::load_legacy(&directory, record.binding.as_ref())?;
         let mut control = Self {
             client,
             clock: Arc::new(Clock::new()?),
-            validity: Arc::new(AtomicBool::new(true)),
             context_validity: Arc::new(AtomicBool::new(true)),
-            invalidated: tokio_util::sync::CancellationToken::new(),
-            lineage: Arc::new(()),
-            publication: Arc::new(()),
-            predecessor: None,
-            publication_pending_grant: false,
             directory,
             record,
-            saved,
             netmap: netmap::State::default(),
             netmap_write: None,
             sync_transport: None,
@@ -229,14 +198,12 @@ impl Control {
             challenge_intent: None,
             instance: None,
             acquiring: None,
-            receipt: None,
             report: None,
             report_sequence: 0,
             application_owner: Arc::new(()),
             application: None,
             connectivity: connectivity::Authority::default(),
             observations: observations::Registry::default(),
-            events_cancel: tokio_util::sync::CancellationToken::new(),
         };
         control.load_netmap()?;
         Ok(control)
@@ -270,27 +237,20 @@ impl Control {
                 .instance
                 .as_ref()
                 .filter(|i| authenticated && i.deadline.valid())
-                .map(|i| {
-                    let mut lease = i.lease.clone();
-                    if !i.execution_deadline.as_ref().is_some_and(|d| d.valid()) {
-                        lease.execution_expires_at_ms = None;
-                    }
-                    lease
-                }),
-            cached: self.cached_target().map(reference),
+                .map(|i| i.lease.clone()),
+            held: if self.dirty {
+                None
+            } else {
+                self.netmap_reference()
+            },
             netmap: self.netmap_lease(),
             reload_required: self.dirty,
         };
         StatusSnapshot {
             status,
-            validity: Arc::clone(&self.validity),
             context_validity: Arc::clone(&self.context_validity),
             session: self.session.as_ref().map(|s| s.deadline.clone()),
             instance: self.instance.as_ref().map(|i| i.deadline.clone()),
-            execution: self
-                .instance
-                .as_ref()
-                .and_then(|i| i.execution_deadline.clone()),
             netmap: self.netmap_snapshot().ok(),
         }
     }
@@ -306,29 +266,6 @@ impl Control {
             .enrollment
             .as_ref()
             .is_some_and(|e| e.code.is_some())
-    }
-
-    fn invalidate_snapshots(&mut self) {
-        self.lineage = Arc::new(());
-        self.predecessor = None;
-        self.publication_pending_grant = false;
-        self.invalidate_guards();
-    }
-
-    fn invalidate_guards(&mut self) {
-        self.validity.store(false, Ordering::Release);
-        self.invalidated.cancel();
-        self.validity = Arc::new(AtomicBool::new(true));
-        self.invalidated = tokio_util::sync::CancellationToken::new();
-    }
-
-    /// Private cached configuration, not an applied installation or a lease.
-    pub fn cached_target(&self) -> Option<&CompiledNode> {
-        if self.dirty {
-            None
-        } else {
-            self.saved.as_ref()
-        }
     }
 
     fn ready(&self) -> Result<(), Error> {
@@ -362,14 +299,14 @@ impl Control {
         })
     }
 
+    /// Drop instance-bound state: State, receipts, coordination and
+    /// observations need a new instance. Netmap authority is unaffected.
     fn fence(&mut self) {
         self.invalidate_status_context();
-        self.reset_events();
         self.observations = observations::Registry::default();
-        self.invalidate_snapshots();
+        self.connectivity = connectivity::Authority::default();
         self.instance = None;
         self.acquiring = None;
-        self.receipt = None;
         self.report = None;
         self.report_sequence = 0;
         self.application = None;
@@ -380,10 +317,23 @@ impl Control {
         self.context_validity = Arc::new(AtomicBool::new(true));
     }
 
+    /// 401/409 (session, instance or binding conflict) fence instance-bound
+    /// state; 403/404 also reject this identity and revoke netmap authority.
     fn registered<T>(
         &mut self,
         response: Result<T, ClientError<ErrorResponse>>,
     ) -> Result<T, Error> {
+        if matches!(
+            &response,
+            Err(ClientError::Http {
+                status: 403 | 404,
+                ..
+            } | ClientError::Network {
+                status: Some(403 | 404)
+            })
+        ) {
+            self.revoke_netmap();
+        }
         if matches!(
             &response,
             Err(ClientError::Http {
@@ -414,8 +364,7 @@ impl Control {
             }) if body.status == 409
                 && matches!(
                     body.problem,
-                    meshway_protocol::Problem::ReceiptPublicationSuperseded { .. }
-                        | meshway_protocol::Problem::ReceiptLeaseExpired { .. }
+                    meshway_protocol::Problem::ReceiptNetmapSuperseded { .. }
                         | meshway_protocol::Problem::ReceiptPrecondition { .. }
                         | meshway_protocol::Problem::ReceiptContentConflict { .. }
                 ) =>
@@ -492,11 +441,9 @@ pub fn server_origin(value: &str) -> Result<String, Error> {
 #[derive(Clone)]
 pub struct StatusSnapshot {
     status: Status,
-    validity: Arc<AtomicBool>,
     context_validity: Arc<AtomicBool>,
     session: Option<Deadline>,
     instance: Option<Deadline>,
-    execution: Option<Deadline>,
     netmap: Option<ExecutionSnapshot>,
 }
 impl StatusSnapshot {
@@ -507,26 +454,17 @@ impl StatusSnapshot {
         if !value.authenticated || !self.instance.as_ref().is_some_and(Deadline::valid) {
             value.instance = None;
         }
-        if let Some(instance) = &mut value.instance
-            && (!self.validity.load(Ordering::Acquire)
-                || !self.execution.as_ref().is_some_and(Deadline::valid))
-        {
-            instance.execution_expires_at_ms = None;
-        }
         value.netmap = self
             .netmap
             .as_ref()
             .filter(|snapshot| snapshot.ensure_current().is_ok())
-            .and_then(ExecutionSnapshot::lease);
+            .map(ExecutionSnapshot::lease);
         value
     }
 }
 impl Drop for Control {
     fn drop(&mut self) {
         self.context_validity.store(false, Ordering::Release);
-        self.events_cancel.cancel();
-        self.validity.store(false, Ordering::Release);
-        self.invalidated.cancel();
         self.netmap.shutdown();
     }
 }

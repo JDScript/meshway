@@ -1476,18 +1476,9 @@ pub(super) async fn dial(
 ) -> Result<(), Error> {
     let mut scope = shared.scope(Some((peer, carrier.clone())), true);
     scope.deadline = scope.deadline.min(Instant::now() + timeout);
-    let endpoints = match target.index {
-        Some(index) => {
-            scope
-                .run(factory.datagram_candidate(shared.identity.snapshot(), key, index))
-                .await?
-        }
-        None => {
-            scope
-                .run(factory.datagram_endpoint(shared.identity.snapshot(), key, &target.endpoint))
-                .await?
-        }
-    };
+    let endpoints = scope
+        .run(factory.datagram_endpoint(shared.identity.snapshot(), key, &target.endpoint))
+        .await?;
     if endpoints.len() > 2 {
         return Err(Error::Capacity);
     }

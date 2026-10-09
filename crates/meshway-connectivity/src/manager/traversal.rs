@@ -6,10 +6,9 @@ use meshway_control::connectivity::{
     AttemptScope, AttemptView, DiscoveryContext, Outcome, ValidatedOffer, prepare_request,
 };
 use meshway_model::{
-    Sequence, UdpTraversalId,
+    UdpTraversalId,
     state::{ResourceRef, SocketNetwork},
 };
-use meshway_policy::admission::admit_adjacency;
 use meshway_protocol::{
     connectivity::SocketReference,
     state::{Freshness, VisibleReport},
@@ -38,24 +37,39 @@ pub(super) enum Command {
     Cancel(UdpTraversalId),
 }
 
+/// The State reference of a socket of this epoch, or `None` while no live
+/// instance qualifies the Node.
 pub(super) fn socket_reference(
-    identity: &DataPlaneIdentity,
+    shared: &EpochContext,
     id: [u8; 32],
-    generation: Sequence,
     resource: ResourceRef,
-) -> Result<SocketReference, Error> {
-    Ok(SocketReference {
-        node_id: identity
-            .snapshot()
-            .configuration()
-            .map_err(|_| Error::Authority)?
-            .node_id,
-        instance: identity.snapshot().instance(),
-        configuration: identity.snapshot().reference(),
+) -> Result<Option<SocketReference>, Error> {
+    let Some(instance) = shared.instance.lock().map_err(|_| Error::Worker)?.clone() else {
+        return Ok(None);
+    };
+    let snapshot = shared.identity.snapshot();
+    Ok(Some(SocketReference {
+        node_id: shared.plan.node,
+        instance,
+        netmap: snapshot.reference(),
         socket_id: id.iter().map(|byte| format!("{byte:02x}")).collect(),
-        socket_generation: generation,
+        socket_generation: shared.generation,
         resource,
-    })
+    }))
+}
+
+/// Native UDP carriers with `peer` the plan admits, in either direction.
+fn udp_carrier(shared: &EpochContext, carrier: &Carrier) -> bool {
+    let peer = if carrier.dialer == shared.plan.node {
+        carrier.listener
+    } else {
+        carrier.dialer
+    };
+    carrier.protocol == TransportProtocol::NativeUdp
+        && shared
+            .plan
+            .admit(shared.identity.snapshot(), peer, carrier)
+            .is_ok()
 }
 
 struct Pending {
@@ -122,21 +136,15 @@ impl QuerySchedule {
 }
 
 fn needs_acquisition(shared: &EpochContext, pending: &BTreeMap<UdpTraversalId, Pending>) -> bool {
-    let Ok(cfg) = shared.identity.snapshot().configuration() else {
-        return false;
-    };
-    let Ok(now) = shared.identity.snapshot().now_ms() else {
-        return false;
-    };
+    let plan = &shared.plan;
     let Ok(links) = shared.links.lock() else {
         return false;
     };
-    cfg.peers.keys().any(|peer| {
+    plan.peers().any(|peer| {
         // The selected owner retires unhealthy channels and performs authorized
         // handoff. A temporarily fenced scope is not a vacant physical slot:
-        // prepare() must wait for that same owner too. Querying during this gap
-        // would turn every normal execution refresh into candidate acquisition.
-        if links.contains_key(peer) {
+        // prepare() must wait for that same owner too.
+        if links.contains_key(&peer) || !shared.wanted(peer) {
             return false;
         }
         // The exact admitted offer already supplies this peer's acquisition
@@ -144,68 +152,54 @@ fn needs_acquisition(shared: &EpochContext, pending: &BTreeMap<UdpTraversalId, P
         // not sit ahead of the final bilateral acceptance in a short window.
         if pending
             .values()
-            .any(|value| value.offer.peer().candidate.socket.node_id == *peer)
+            .any(|value| value.offer.peer().candidate.socket.node_id == peer)
         {
             return false;
         }
-        cfg.dialers.values().any(|dial| {
-            dial.peer == *peer
-                && dial.parameters.transport() == TransportProtocol::NativeUdp
-                && admit_adjacency(
-                    cfg,
-                    *peer,
+        plan.dialers.values().any(|dial| {
+            dial.peer == peer
+                && udp_carrier(
+                    shared,
                     &Carrier {
-                        dialer: cfg.node_id,
-                        listener: *peer,
+                        dialer: plan.node,
+                        listener: peer,
                         listener_key: dial.listener_key.clone(),
-                        protocol: TransportProtocol::NativeUdp,
+                        protocol: dial.parameters.transport(),
                     },
-                    now,
                 )
-                .is_ok()
-        }) || cfg.listeners.iter().any(|(key, listener)| {
+        }) || plan.listeners.iter().any(|(key, listener)| {
             let (protocol, enabled) = provider::declaration(listener);
             enabled
-                && protocol == TransportProtocol::NativeUdp
-                && admit_adjacency(
-                    cfg,
-                    *peer,
+                && udp_carrier(
+                    shared,
                     &Carrier {
-                        dialer: *peer,
-                        listener: cfg.node_id,
+                        dialer: peer,
+                        listener: plan.node,
                         listener_key: key.clone(),
                         protocol,
                     },
-                    now,
                 )
-                .is_ok()
         })
     })
 }
 
 fn needs_observation(shared: &EpochContext) -> bool {
-    let Ok(cfg) = shared.identity.snapshot().configuration() else {
-        return false;
-    };
-    cfg.dialers.values().any(|dial| {
+    let plan = &shared.plan;
+    plan.dialers.values().any(|dial| {
         dial.parameters.transport() == TransportProtocol::NativeUdp
             && !dial.endpoints.iter().any(|endpoint| {
                 endpoint.source == meshway_configuration::execution::DialEndpointSource::Configured
             })
-    }) || cfg.listeners.values().any(|listener| {
+    }) || plan.listeners.values().any(|listener| {
         matches!(listener.declaration(), meshway_transport_spec::Listener::NativeUdp(udp)
             if udp.enabled && udp.endpoints.is_empty())
     })
 }
 
-/// On-demand authority refreshes a socket's mapping only while it carries a
-/// healthy Native UDP channel or some interested peer has a UDP carrier.
-/// The refresh budget is unchanged; resident (publication) peers always want it.
+/// A socket's mapping is refreshed only while it carries a healthy Native
+/// UDP channel or some wanted peer has a UDP carrier. The budget is unchanged.
 fn observation_wanted(shared: &EpochContext, id: &[u8; 32]) -> bool {
     let plan = &shared.plan;
-    if !plan.on_demand() {
-        return true;
-    }
     let carrying = shared.links.lock().is_ok_and(|links| {
         links.values().any(|link| {
             link.fact.socket_id == *id
@@ -539,10 +533,9 @@ async fn run_epoch(
 
 pub(super) fn matching_endpoint(shared: &EpochContext, offer: &ValidatedOffer) -> Option<[u8; 32]> {
     let sockets = shared.sockets.lock().ok()?;
-    let cfg = shared.identity.snapshot().configuration().ok()?;
     sockets.iter().find_map(|(id, fact)| {
         (fact.reference == offer.local().candidate.socket
-            && socket_compatible(cfg, &offer.offer().carrier, fact)
+            && socket_compatible(&shared.plan, &offer.offer().carrier, fact)
             && fact.endpoints.iter().any(|observation| {
                 fact.candidate(observation)
                     .is_ok_and(|candidate| candidate == offer.local().candidate)
@@ -552,19 +545,15 @@ pub(super) fn matching_endpoint(shared: &EpochContext, offer: &ValidatedOffer) -
     })
 }
 
-fn socket_compatible(
-    cfg: &meshway_configuration::execution::NodeConfiguration,
-    carrier: &Carrier,
-    fact: &SocketFact,
-) -> bool {
-    if cfg.node_id == carrier.listener {
+fn socket_compatible(plan: &Plan, carrier: &Carrier, fact: &SocketFact) -> bool {
+    if plan.node == carrier.listener {
         return fact.reference.resource
             == (ResourceRef::Listener {
                 key: carrier.listener_key.clone(),
             });
     }
     let key = format!("{}/{}", carrier.listener, carrier.listener_key);
-    let Some(dial) = cfg.dialers.get(&key) else {
+    let Some(dial) = plan.dialers.get(&key) else {
         return false;
     };
     let meshway_transport_spec::DialParameters::NativeUdp { options } = &dial.parameters else {
@@ -574,7 +563,7 @@ fn socket_compatible(
         ResourceRef::Dial { key: bound } => {
             *bound == key && dial_bind_matches(options, fact.bound_address)
         }
-        ResourceRef::Listener { key } => cfg
+        ResourceRef::Listener { key } => plan
             .listeners
             .get(key)
             .is_some_and(|listener| listener_covers(listener, fact.bound_address, options)),
@@ -682,53 +671,48 @@ async fn prepare(
     pending: &mut BTreeMap<UdpTraversalId, Pending>,
     after_peer: &mut Option<NodeId>,
 ) -> Result<(), Error> {
-    let cfg = shared
-        .identity
-        .snapshot()
-        .configuration()
-        .map_err(|_| Error::Authority)?;
+    let plan = &shared.plan;
     let now = shared
         .identity
         .snapshot()
         .now_ms()
         .map_err(|_| Error::Authority)?;
     let mut carriers = BTreeMap::new();
-    let mut candidates: Vec<_> = cfg.dialers.iter().collect();
-    candidates.sort_by(|a, b| (a.1.priority, a.0).cmp(&(b.1.priority, b.0)));
-    for (_, dial) in candidates {
-        let carrier = Carrier {
-            dialer: cfg.node_id,
-            listener: dial.peer,
-            listener_key: dial.listener_key.clone(),
-            protocol: dial.parameters.transport(),
-        };
-        if carrier.protocol == TransportProtocol::NativeUdp
-            && admit_adjacency(cfg, dial.peer, &carrier, now).is_ok()
-        {
-            carriers.entry(dial.peer).or_insert(carrier);
+    for peer in plan.dial_peers() {
+        if !shared.wanted(peer) {
+            continue;
+        }
+        // The edge's carrier order; the first admitted Native UDP one.
+        for (_, dial) in plan.outgoing(peer)? {
+            let carrier = Carrier {
+                dialer: plan.node,
+                listener: dial.peer,
+                listener_key: dial.listener_key.clone(),
+                protocol: dial.parameters.transport(),
+            };
+            if udp_carrier(shared, &carrier) {
+                carriers.entry(dial.peer).or_insert(carrier);
+                break;
+            }
         }
     }
     // One coordinator (the logical dialer) prepares a given carrier. Both Nodes
     // can discover/accept; physical listener ownership does not change roles.
     carriers.retain(|peer, _| {
-        let reverse = cfg.listeners.iter().any(|(key, listener)| {
+        let reverse = plan.listeners.iter().any(|(key, listener)| {
             let (protocol, enabled) = provider::declaration(listener);
             enabled
-                && protocol == TransportProtocol::NativeUdp
-                && admit_adjacency(
-                    cfg,
-                    *peer,
+                && udp_carrier(
+                    shared,
                     &Carrier {
                         dialer: *peer,
-                        listener: cfg.node_id,
+                        listener: plan.node,
                         listener_key: key.clone(),
                         protocol,
                     },
-                    now,
                 )
-                .is_ok()
         });
-        (!reverse || cfg.node_id < *peer)
+        (!reverse || plan.node < *peer)
             && !pending
                 .values()
                 .any(|pending| pending.offer.peer().candidate.socket.node_id == *peer)
@@ -797,7 +781,7 @@ async fn prepare(
                     meshway_control::connectivity::udp_recipient(&remote.candidate.address).ok()?;
                 sockets.iter().find_map(|(id, fact)| {
                     if fact.bound_address.is_ipv4() != address.is_ipv4()
-                        || !socket_compatible(cfg, carrier, fact)
+                        || !socket_compatible(plan, carrier, fact)
                     {
                         return None;
                     }
@@ -817,7 +801,7 @@ async fn prepare(
         let Some((endpoint, local, remote)) = selected else {
             tracing::debug!(%peer, remote_candidates, compatible_sockets, local_candidates,
                 visible_endpoints = report.endpoints.len(), local_sockets = sockets.len(),
-                publication = %context.snapshot().reference().execution_publication,
+                netmap_serial = context.snapshot().reference().serial.get(),
                 cause = "no_acknowledged_pair", "Traversal preparation has no usable candidate");
             continue;
         };

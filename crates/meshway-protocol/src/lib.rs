@@ -50,17 +50,13 @@ pub use enrollment::{
     EnrollmentKeysResponse, EnrollmentPollResponse, EnrollmentRequestView, EnrollmentResponse,
     KeyEnrollmentRequest, RedeemEnrollmentRequest,
 };
-pub use events::{NodeEvent, StreamEvent, UserEvent};
+pub use events::{StreamEvent, UserEvent};
 pub use execution::{
-    AcquireInstanceRequest, CancelDemandRequest, DemandRequest, DemandResponse, InstanceLease,
-    InstanceRequest, NodeConfigurationRequest, NodeConfigurationResponse, PublicationProgress,
-    ReceiptRequest, RenewDemandRequest, RoutingSelectionRequest, RoutingSelectionResponse,
+    AcquireInstanceRequest, InstanceLease, InstanceRequest, ReceiptRequest,
+    RoutingSelectionRequest, RoutingSelectionResponse,
 };
 pub use history::{ActivityListResponse, ActivityResponse, ConfigurationRevisionList};
-pub use live::{
-    ConfigurationApplyProgress, NodeConfigurationView, NodeEntitiesView, UserConfigurationView,
-    UserEntitiesView,
-};
+pub use live::{ConfigurationApplyProgress, UserConfigurationView, UserEntitiesView};
 pub use management::{
     AccountResponse, AccountSessionsResponse, ChangeEmailRequest, ChangeMemberRoleRequest,
     ChangePasswordRequest, CreateJoinLinkRequest, JoinLinkCreated, JoinLinkCredentialRequest,

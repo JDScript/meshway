@@ -1,6 +1,6 @@
 //! Source facts. These values neither grant authority nor contain transport secrets.
-pub use crate::ConfigurationRef;
-use crate::{Digest, EventId, NodeId, ObservationId, PublicationId, Sequence};
+pub use crate::NetmapRef;
+use crate::{Digest, EventId, NodeId, ObservationId, Sequence};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::{collections::BTreeMap, net::SocketAddr};
@@ -88,8 +88,8 @@ pub enum ApplyPhase {
 meshway_serde::object! {
 /// Node-reported progress for one exact execution target.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ConfigurationProgress {
-    /// Exact configuration and execution publication being processed.
-    pub target: ConfigurationRef,
+    /// Exact netmap being processed.
+    pub target: NetmapRef,
     /// Actual processing or installation stage observed by the Node.
     pub phase: ApplyPhase,
     /// UTC time at which the Node observed this stage.
@@ -101,10 +101,10 @@ meshway_serde::object! {
 meshway_serde::object! {
 /// Node-reported persistence, execution and progress facts, which do not prove business connectivity.
 #[derive(Clone, Debug, Default, PartialEq, Eq)] pub struct ConfigurationState {
-    /// Complete validated configuration privately persisted by the Node, or null if none is reported.
-    pub saved: Option<ConfigurationRef>,
-    /// Configuration used by the current running generation, or null if none is applied.
-    pub applied: Option<ConfigurationRef>,
+    /// Verified netmap privately persisted by the Node, or null if none is reported.
+    pub saved: Option<NetmapRef>,
+    /// Netmap used by the current running generation, or null if none is applied.
+    pub applied: Option<NetmapRef>,
     /// Current target progress, or null when no progress is reported.
     pub progress: Option<ConfigurationProgress>,
 } }
@@ -200,9 +200,9 @@ meshway_serde::object! {
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct SocketState {
     /// Exact resource owning this socket.
     pub resource: ResourceRef,
-    /// None inherits the report's applied configuration; installation sockets
-    /// must name their target even before the first configuration is applied.
-    pub configuration: Option<ConfigurationRef>,
+    /// None inherits the report's applied netmap; installation sockets
+    /// must name their netmap even before the first one is applied.
+    pub netmap: Option<NetmapRef>,
     /// Resource generation that distinguishes replacement sockets using the same address.
     pub generation: Sequence,
     /// Outer protocol used by the socket.
@@ -243,8 +243,8 @@ meshway_serde::object! {
     pub loaded_certificate_sha256: Option<Digest>,
     /// Typed listener failure, or null when none is reported.
     pub problem: Option<StateProblem>,
-    /// Explicit execution target; null or omission inherits the report's applied configuration.
-    pub configuration: Option<ConfigurationRef>,
+    /// Explicit netmap; null or omission inherits the report's applied netmap.
+    pub netmap: Option<NetmapRef>,
 } }
 
 meshway_serde::string_enum! {
@@ -325,8 +325,8 @@ meshway_serde::object! {
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct PathState {
     /// Actual complete ordered Node path.
     pub nodes: Vec<NodeId>,
-    /// Execution publication under which this path was used.
-    pub publication_id: PublicationId,
+    /// Netmap under which this path was used.
+    pub netmap: NetmapRef,
     /// Reporting Node's role in the path.
     pub reporter_role: ReporterRole,
     /// Stage of path use observed by this reporter.
@@ -383,8 +383,8 @@ meshway_serde::object! {
     pub channels: Option<crate::observations::ProbeChannels>,
     /// Ordered Node path associated with the measured operation.
     pub path: Vec<NodeId>,
-    /// Execution publication associated with the measurement.
-    pub publication_id: PublicationId,
+    /// Netmap associated with the measurement.
+    pub netmap: NetmapRef,
     /// UTC start time used to place the measurement in history.
     pub started_at: DateTime<Utc>,
     /// UTC completion time, or null while no completion is recorded.
@@ -410,8 +410,8 @@ pub enum StateProblem {
     },
     /// The Node rejected an execution target.
     ConfigurationRejected = "configuration_rejected" {
-        /// Exact target rejected by the Node.
-        target: ConfigurationRef,
+        /// Exact netmap rejected by the Node.
+        target: NetmapRef,
         /// UTC time at which the Node observed the rejection.
         #[serde(rename = "observedAt")]
         observed_at: DateTime<Utc>,

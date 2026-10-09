@@ -42,6 +42,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
         action: TopologyAction::Block,
         a: format!("node:{}", c.node_id),
         b: "*".into(),
+ keepalive: false,
     });
     input.access.push(AccessRule {
         remark: String::new(),

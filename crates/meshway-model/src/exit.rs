@@ -1,5 +1,5 @@
 //! Exit observations are facts, never forwarding authority.
-use crate::{ConfigurationRef, InstanceId};
+use crate::{Digest, InstanceId, NetmapRef};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -74,8 +74,10 @@ meshway_serde::object! {
 pub struct ExitCapability {
     /// Runtime incarnation which made the observation.
     pub instance_id: InstanceId,
-    /// Exact execution target whose role was probed.
-    pub target: ConfigurationRef,
+    /// Exact netmap whose role was probed.
+    pub netmap: NetmapRef,
+    /// Generation of that netmap's exit role.
+    pub role_generation: Digest,
     /// Families supported by the running backend.
     pub supported_families: Vec<ExitFamily>,
     /// Families actually installed; ready alone does not imply installed.

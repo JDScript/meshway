@@ -25,12 +25,12 @@ mod packet;
 
 use authority::{Lifetime, View};
 pub use buffer::{BufferError, DEFAULT_HEADROOM, DEFAULT_TAILROOM, PacketBuffer, PacketPool};
-pub use flow::FlowGrant;
 use flow::{CommittedRoute, FlowTable};
 use meshway_authority::ExecutionSnapshot;
-use meshway_model::{NodeId, RequestId};
+use meshway_model::NodeId;
 use meshway_policy::admission::AdmissionError;
 pub use meshway_policy::admission::Hop;
+pub use meshway_policy::compile::netmap::Target;
 pub use netmap::Purpose;
 pub use packet::{Packet, PacketError, PacketFacts, PacketInput, TcpSegment, Transport};
 use std::{fmt, time::Duration};
@@ -80,16 +80,17 @@ pub struct AuthenticatedPeer {
     pub previous: NodeId,
 }
 
-/// Both directions name the original full forward path. There is intentionally
-/// no caller-controlled reply flag or caller-supplied forward traffic tuple.
+/// Both directions name the (origin = `path[0]`, target) pair and the
+/// original full forward path. There is intentionally no caller-controlled
+/// reply flag or caller-supplied forward traffic tuple.
 #[derive(Debug)]
 pub enum Ingress {
     Local {
-        demand: RequestId,
+        target: Target,
         path: Vec<NodeId>,
     },
     Peer {
-        demand: RequestId,
+        target: Target,
         path: Vec<NodeId>,
         identity: AuthenticatedPeer,
     },
@@ -98,19 +99,19 @@ pub enum Ingress {
 impl Ingress {
     fn entry(&self, local: NodeId) -> Result<flow::Entry<'_>, Error> {
         Ok(match self {
-            Self::Local { demand, path } => flow::Entry {
-                grant: FlowGrant::Legacy(*demand),
+            Self::Local { target, path } => flow::Entry {
+                grant: target.clone(),
                 path,
                 origin: *path.first().ok_or(Error::Ingress)?,
                 previous: None,
                 sender: local,
             },
             Self::Peer {
-                demand,
+                target,
                 path,
                 identity,
             } => flow::Entry {
-                grant: FlowGrant::Legacy(*demand),
+                grant: target.clone(),
                 path,
                 origin: identity.origin,
                 previous: Some(identity.previous),
@@ -121,12 +122,8 @@ impl Ingress {
 }
 
 impl LocalFlow {
-    pub(crate) fn new(grant: FlowGrant, path: Vec<NodeId>, circuit: Option<[u8; 32]>) -> Self {
+    pub(crate) fn new(grant: Target, path: Vec<NodeId>, circuit: Option<[u8; 32]>) -> Self {
         Self {
-            demand: match &grant {
-                FlowGrant::Legacy(demand) => *demand,
-                FlowGrant::Netmap(_) => netmap_demand(),
-            },
             grant,
             path,
             circuit,
@@ -140,23 +137,11 @@ pub enum Direction {
     Reply,
 }
 
-/// Placeholder of the legacy `demand` fields for netmap flows; meaningless
-/// there (read `grant`). Removed with the daemon switch.
-pub fn netmap_demand() -> RequestId {
-    static ID: std::sync::OnceLock<RequestId> = std::sync::OnceLock::new();
-    *ID.get_or_init(|| {
-        "00000000-0000-4000-8000-00000000ffee"
-            .parse()
-            .expect("valid placeholder")
-    })
-}
-
 /// Output context derived from the admitted flow, never reverse-recompiled.
 #[derive(Debug)]
 pub struct Route {
-    /// Legacy view of `grant`; [`netmap_demand`] for netmap flows.
-    pub demand: RequestId,
-    pub grant: FlowGrant,
+    /// Target of the flow's (origin, target) pair.
+    pub grant: Target,
     pub origin: NodeId,
     pub original_path: Vec<NodeId>,
     pub direction: Direction,
@@ -166,9 +151,8 @@ pub struct Route {
 /// A sender must still perform normal current admission on the selected circuit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalFlow {
-    /// Legacy view of `grant`; [`netmap_demand`] for netmap flows.
-    pub demand: RequestId,
-    pub grant: FlowGrant,
+    /// Target of the flow's (origin, target) pair.
+    pub grant: Target,
     pub path: Vec<NodeId>,
     /// Cipher context of the last admitted forward packet, when this flow is
     /// owned by SecureNode. Plaintext Engine consumers have no cipher context.

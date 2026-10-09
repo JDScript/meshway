@@ -275,6 +275,7 @@ fn ordered_backup_exits_and_unreachable_ones() {
         a: sel(2),
         b: "*".into(),
         transports: Input::Omitted,
+ keepalive: false,
     });
     let backup = permitted(&netmaps(&s), "8.8.8.8");
     assert!(terminals(&backup).iter().all(|t| *t == node(4)));

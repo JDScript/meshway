@@ -1,5 +1,4 @@
 use super::{Carrier, Error, PendingFrame, SecureNode, View};
-use crate::FlowGrant;
 use crate::exit::{Counters, ExitProjection, ExitReplyIngress, FlowIncarnation, Limits};
 use meshway_authority::DataPlaneIdentity;
 use meshway_model::NodeId;
@@ -36,11 +35,13 @@ impl SecureNode {
         if let Ok(reading) = View::of(self.identity.snapshot()) {
             self.engine.flows.expire(reading.instant, reading.now_ms);
         } else {
-            if self.identity.snapshot().retention_deadline().is_err() {
+            // An ended lease retires every exit flow. A merely invalidated
+            // snapshot awaits Control's next content (`SecureNode::update`);
+            // original monotonic deadlines and failed ACKs still retire
+            // meanwhile. Never invent UTC time.
+            if Instant::now() >= self.identity.snapshot().expires_at() {
                 self.engine.flows.retire_exits();
             }
-            // Original monotonic deadlines and failed ACKs still retire while
-            // awaiting an explicit Control continuation. Never invent UTC time.
             self.engine.flows.expire(Instant::now(), 0);
         }
         for id in self.engine.flows.retired_exit_circuits() {
@@ -100,16 +101,7 @@ impl SecureNode {
             };
             let snapshot = self.identity.snapshot();
             let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
-            let exit = match (&route.grant, reading.legacy()) {
-                (FlowGrant::Legacy(demand), Some(cfg)) => cfg
-                    .permits
-                    .get(demand)
-                    .is_some_and(|permit| permit.exit.is_some()),
-                (FlowGrant::Netmap(target), None) => {
-                    matches!(target, super::Target::Exit { .. })
-                }
-                _ => false,
-            };
+            let exit = matches!(route.grant, super::Target::Exit { .. });
             if route.path.last() != Some(&reading.node()) || !exit {
                 return Err(Error::Flow);
             }

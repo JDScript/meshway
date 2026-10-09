@@ -233,7 +233,7 @@ fn diagnostic_metadata_cannot_alias_business_or_reply_direction() {
 fn netmap(kind: Kind, purpose: crate::Purpose, target: Target) -> Frame {
     let mut f = frame(kind);
     let context = Arc::make_mut(&mut f.context);
-    context.grant = CircuitGrant::Netmap { purpose, target };
+    context.grant = CircuitGrant { purpose, target };
     context.initiated_at_ms = 1_700_000_000_123;
     f
 }

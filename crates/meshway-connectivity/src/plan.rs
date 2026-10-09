@@ -1,8 +1,7 @@
 //! Adjacency input of one authority epoch: registered keys, own resources,
 //! carrier admission and order. Built once per snapshot content, never per
-//! peer worker. A legacy publication keeps its time-bounded per-permit
-//! admission; a netmap is admitted only by its projection (topology and both
-//! sides' listener/dialer declarations) and bounded by its lease.
+//! peer worker. A netmap is admitted only by its projection (topology and
+//! both sides' listener/dialer declarations) and bounded by its lease.
 use crate::{Carrier, Error};
 use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::{
@@ -18,17 +17,11 @@ use std::{
 };
 
 /// Peer material compared across epochs; any change ends retained channels.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PeerBinding {
-    Legacy(Box<meshway_configuration::execution::PeerConfiguration>),
-    Netmap(TrustedNode),
-}
-
 #[derive(Clone, Debug)]
 struct Peer {
     control: BoundNodeKey,
     dataplane: BoundNodeKey,
-    binding: PeerBinding,
+    binding: TrustedNode,
 }
 
 type AdmissionKey = (NodeId, NodeId, String, TransportProtocol);
@@ -41,11 +34,6 @@ struct Projection {
     admitted: Mutex<BTreeMap<AdmissionKey, bool>>,
 }
 
-enum Source {
-    Legacy,
-    Netmap(Box<Projection>),
-}
-
 pub(crate) struct Plan {
     pub network: NetworkId,
     pub node: NodeId,
@@ -54,15 +42,11 @@ pub(crate) struct Plan {
     pub listeners: BTreeMap<String, PreparedListener>,
     pub dialers: BTreeMap<String, DialCandidate>,
     peers: BTreeMap<NodeId, Peer>,
-    source: Source,
+    projection: Projection,
 }
 
-/// Placeholder for the per-edge `keepalive` flag of a topology allow rule,
-/// which the configuration model does not carry yet. Production returns
-/// false (every adjacency is on demand); unit tests mark a rule through its
-/// remark. Replace with the configuration field when it exists.
 fn keepalive_rule(rule: &TopologyRule) -> bool {
-    cfg!(test) && rule.remark == "test:keepalive"
+    rule.action == TopologyAction::Allow && rule.keepalive
 }
 
 fn keepalive_peers(netmap: &NodeNetmap) -> BTreeSet<NodeId> {
@@ -72,7 +56,7 @@ fn keepalive_peers(netmap: &NodeNetmap) -> BTreeSet<NodeId> {
         .configuration
         .topology
         .iter()
-        .filter(|rule| rule.action == TopologyAction::Allow && keepalive_rule(rule))
+        .filter(|rule| keepalive_rule(rule))
         .filter_map(|rule| {
             let other = if rule.a == own {
                 &rule.b
@@ -89,79 +73,45 @@ fn keepalive_peers(netmap: &NodeNetmap) -> BTreeSet<NodeId> {
 
 impl Plan {
     pub fn new(snapshot: &ExecutionSnapshot) -> Result<Arc<Self>, Error> {
-        if snapshot.is_netmap() {
-            let netmap = &snapshot.netmap().map_err(|_| Error::Authority)?.netmap;
-            let peers = netmap
-                .projection
-                .inventory
-                .iter()
-                .filter(|(id, _)| **id != netmap.node_id)
-                .map(|(id, keys)| {
-                    (
-                        *id,
-                        Peer {
-                            control: keys.control_key.clone(),
-                            dataplane: keys.dataplane_key.clone(),
-                            binding: PeerBinding::Netmap(keys.clone()),
-                        },
-                    )
-                })
-                .collect();
-            return Ok(Arc::new(Self {
-                network: netmap.network_id,
-                node: netmap.node_id,
-                self_keys: netmap.self_.self_keys.clone(),
-                mesh_address_pools: netmap.self_.mesh_address_pools.clone(),
-                listeners: netmap.self_.listeners.clone(),
-                // Configured endpoints only; local endpoints are peer facts.
-                dialers: netmap.dialers.clone(),
-                peers,
-                source: Source::Netmap(Box::new(Projection {
-                    keepalive: keepalive_peers(netmap),
-                    netmap: netmap.clone(),
-                    outgoing: Mutex::default(),
-                    admitted: Mutex::default(),
-                })),
-            }));
-        }
-        let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+        let netmap = &snapshot.netmap().map_err(|_| Error::Authority)?.netmap;
+        let peers = netmap
+            .projection
+            .inventory
+            .iter()
+            .filter(|(id, _)| **id != netmap.node_id)
+            .map(|(id, keys)| {
+                (
+                    *id,
+                    Peer {
+                        control: keys.control_key.clone(),
+                        dataplane: keys.dataplane_key.clone(),
+                        binding: keys.clone(),
+                    },
+                )
+            })
+            .collect();
         Ok(Arc::new(Self {
-            network: cfg.network_id,
-            node: cfg.node_id,
-            self_keys: cfg.self_keys.clone(),
-            mesh_address_pools: cfg.mesh_address_pools.clone(),
-            listeners: cfg.listeners.clone(),
-            dialers: cfg.dialers.clone(),
-            peers: cfg
-                .peers
-                .iter()
-                .map(|(id, peer)| {
-                    (
-                        *id,
-                        Peer {
-                            control: peer.control_key.clone(),
-                            dataplane: peer.dataplane_key.clone(),
-                            binding: PeerBinding::Legacy(Box::new(peer.clone())),
-                        },
-                    )
-                })
-                .collect(),
-            source: Source::Legacy,
+            network: netmap.network_id,
+            node: netmap.node_id,
+            self_keys: netmap.self_.self_keys.clone(),
+            mesh_address_pools: netmap.self_.mesh_address_pools.clone(),
+            listeners: netmap.self_.listeners.clone(),
+            // Configured endpoints only; local endpoints are peer facts.
+            dialers: netmap.dialers.clone(),
+            peers,
+            projection: Projection {
+                keepalive: keepalive_peers(netmap),
+                netmap: netmap.clone(),
+                outgoing: Mutex::default(),
+                admitted: Mutex::default(),
+            },
         }))
     }
 
-    /// Adjacencies are acquired only for interested peers and close when idle.
-    pub fn on_demand(&self) -> bool {
-        matches!(self.source, Source::Netmap(_))
-    }
-
-    /// Resident regardless of interest: every legacy peer, and netmap peers
-    /// whose topology edge asks for keepalive.
+    /// Resident regardless of interest: peers whose topology edge asks for
+    /// keepalive. Every other adjacency is acquired on demand.
     pub fn keepalive(&self, peer: NodeId) -> bool {
-        match &self.source {
-            Source::Legacy => true,
-            Source::Netmap(projection) => projection.keepalive.contains(&peer),
-        }
+        self.projection.keepalive.contains(&peer)
     }
 
     pub fn peers(&self) -> impl Iterator<Item = NodeId> + '_ {
@@ -180,19 +130,16 @@ impl Plan {
         Ok((&peer.control, &peer.dataplane))
     }
 
-    /// Same registered keys and, for a netmap, the same outgoing carrier order.
+    /// Same registered keys and the same outgoing carrier order.
     pub fn peer_unchanged(&self, next: &Self, peer: NodeId) -> bool {
         let same = self.peers.get(&peer).map(|p| &p.binding)
             == next.peers.get(&peer).map(|p| &p.binding)
             && next.peers.contains_key(&peer);
-        same && (!self.on_demand()
-            || self.outgoing_keys(peer).ok() == next.outgoing_keys(peer).ok())
+        same && self.outgoing_keys(peer).ok() == next.outgoing_keys(peer).ok()
     }
 
     fn outgoing_keys(&self, peer: NodeId) -> Result<Arc<Vec<String>>, Error> {
-        let Source::Netmap(projection) = &self.source else {
-            return Err(Error::Configuration);
-        };
+        let projection = &self.projection;
         if let Some(keys) = projection
             .outgoing
             .lock()
@@ -215,34 +162,19 @@ impl Plan {
         Ok(keys)
     }
 
-    /// Dial candidates toward `peer`, in carrier order: the edge's transport
-    /// order for a netmap, `(priority, key)` for a publication.
+    /// Dial candidates toward `peer`, in the edge's transport order.
     pub fn outgoing(&self, peer: NodeId) -> Result<Vec<(&String, &DialCandidate)>, Error> {
-        if self.on_demand() {
-            let keys = self.outgoing_keys(peer)?;
-            return Ok(keys
-                .iter()
-                .filter_map(|key| self.dialers.get_key_value(&format!("{peer}/{key}")))
-                .filter(|(_, dial)| dial.peer == peer)
-                .collect());
-        }
-        let mut candidates: Vec<_> = self
-            .dialers
+        let keys = self.outgoing_keys(peer)?;
+        Ok(keys
             .iter()
+            .filter_map(|key| self.dialers.get_key_value(&format!("{peer}/{key}")))
             .filter(|(_, dial)| dial.peer == peer)
-            .collect();
-        candidates.sort_by(|a, b| (a.1.priority, a.0).cmp(&(b.1.priority, b.0)));
-        Ok(candidates)
+            .collect())
     }
 
-    /// Peers this Node may dial. Publications list endpoints in the
-    /// candidate; a netmap candidate may gain local endpoints from facts.
+    /// Peers this Node may dial; a candidate may gain local endpoints from facts.
     pub fn dial_peers(&self) -> BTreeSet<NodeId> {
-        self.dialers
-            .values()
-            .filter(|dial| self.on_demand() || !dial.endpoints.is_empty())
-            .map(|dial| dial.peer)
-            .collect()
+        self.dialers.values().map(|dial| dial.peer).collect()
     }
 
     /// Adjacency admission of `carrier` with `peer` under `snapshot`, which
@@ -253,15 +185,9 @@ impl Plan {
         peer: NodeId,
         carrier: &Carrier,
     ) -> Result<u64, Error> {
-        match &self.source {
-            Source::Legacy => meshway_policy::admission::admit_adjacency(
-                snapshot.configuration().map_err(|_| Error::Authority)?,
-                peer,
-                carrier,
-                snapshot.now_ms().map_err(|_| Error::Authority)?,
-            )
-            .map_err(|_| Error::Authority),
-            Source::Netmap(projection) => {
+        {
+            {
+                let projection = &self.projection;
                 snapshot.ensure_current().map_err(|_| Error::Authority)?;
                 let key = (
                     peer,
@@ -336,8 +262,8 @@ impl Plan {
             .collect()
     }
 
-    /// Netmap resource retention: equal declaration, client material,
-    /// configured endpoints and peer keys. Publications use the underlay rule.
+    /// Resource retention: equal declaration, client material, configured
+    /// endpoints and peer keys.
     pub fn netmap_compatible(
         &self,
         next: &Self,
@@ -365,7 +291,8 @@ impl Plan {
 }
 
 /// Peer listener endpoints from the latest facts, appended after configured
-/// ones. Facts never admit a carrier; they only add addresses to try.
+/// ones: interface endpoints, then for UDP the STUN-observed mappings. Facts
+/// never admit a carrier; they only add addresses to try.
 pub(crate) fn fact_endpoints(
     facts: &meshway_protocol::PeerFacts,
     key: &str,
@@ -381,7 +308,7 @@ pub(crate) fn fact_endpoints(
     if listener.network != network {
         return Vec::new();
     }
-    listener
+    let local = listener
         .local_endpoints
         .iter()
         .take(meshway_model::state::MAX_LOCAL_ENDPOINTS)
@@ -391,6 +318,20 @@ pub(crate) fn fact_endpoints(
                 port: endpoint.address.port().try_into().ok()?,
                 source: DialEndpointSource::Local,
             })
-        })
-        .collect()
+        });
+    let stun = listener
+        .stun_candidates
+        .iter()
+        .filter(|_| network == meshway_model::state::SocketNetwork::Udp)
+        .filter(|candidate| candidate.expires_at.timestamp_millis() > now_ms)
+        .take(meshway_model::state::MAX_LOCAL_ENDPOINTS)
+        .filter_map(|candidate| {
+            let address: std::net::SocketAddr = candidate.address.parse().ok()?;
+            Some(DialEndpoint {
+                host: address.ip().to_string(),
+                port: address.port().try_into().ok()?,
+                source: DialEndpointSource::Stun,
+            })
+        });
+    local.chain(stun).collect()
 }

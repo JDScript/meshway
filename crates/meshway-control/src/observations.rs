@@ -1,10 +1,12 @@
 //! Observation RPCs share the held-key Control session. A subscription response
-//! is feedback, never a permit; execution still requires the current snapshot.
+//! is feedback, never a permit: a task runs only while the source's own
+//! netmap decides it (`meshway_policy::compile::netmap::observation_paths`).
 use crate::{Control, Deadline, Error, ExecutionSnapshot, Started};
 use meshway_control_client::{ClientError, *};
-use meshway_model::{ConfigurationRef, Digest, ObservationId, ObservationSubscriptionId};
+use meshway_model::{Digest, ObservationSubscriptionId};
+use meshway_policy::compile::netmap::observation_paths;
 use meshway_protocol::{observations::*, *};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 const LIMIT: usize = 128;
 
@@ -13,13 +15,11 @@ pub(super) struct Registry {
     creates: BTreeMap<ObservationSubscriptionId, Creation>,
     subscriptions: BTreeMap<ObservationSubscriptionId, NodeObservationResponse>,
     renewals: BTreeMap<ObservationSubscriptionId, Digest>,
-    retired_results: BTreeMap<ObservationId, ConfigurationRef>,
     leases: BTreeMap<ObservationSubscriptionId, ObservationLease>,
-    planning: BTreeSet<ObservationSubscriptionId>,
 }
 
-/// Confirmed local subscription lifetime, independent of an execution
-/// publication or another subscriber's task lease. This does not authorize I/O.
+/// Confirmed local subscription lifetime, independent of the netmap or another
+/// subscriber's task lease. This does not authorize I/O.
 #[derive(Clone)]
 pub struct ObservationLease {
     instance: InstanceRequest,
@@ -187,39 +187,41 @@ impl Control {
 
     fn observation_scope(&self, snapshot: &ExecutionSnapshot) -> Result<(), Error> {
         snapshot.ensure_current()?;
-        if snapshot.instance() != self.current_instance()?
-            || !snapshot.same_execution(&self.execution_snapshot()?)
-        {
+        self.current_instance()?;
+        if !snapshot.same_netmap(&self.netmap_snapshot()?) {
             return Err(Error::Expired);
         }
         Ok(())
     }
 
+    /// Complete paths the current netmap lets this task measure. A task the
+    /// netmap does not decide is not executable here (`Expired`): the Server
+    /// assigned it on content the Node no longer holds.
     fn observation_permit(
         &self,
         snapshot: &ExecutionSnapshot,
         task: &ObservationTask,
-    ) -> Result<(), Error> {
-        let permit = snapshot
-            .configuration()?
-            .diagnostics
-            .get(&task.id)
-            .ok_or(Error::Contract)?;
-        if permit.observation_id != task.id
-            || permit.source != task.source_node_id
-            || permit.target != task.target_node_id
-            || permit.instance_id != task.instance_id
-            || permit.service != task.service
-            || permit.expires_at_ms <= snapshot.now_ms()?
-            || permit.paths.is_empty()
+    ) -> Result<Vec<Vec<meshway_model::NodeId>>, Error> {
+        let explicit = match &task.selection {
+            ObservationPath::Auto => None,
+            ObservationPath::Explicit { path } => Some(path.as_slice()),
+        };
+        let decided = observation_paths(
+            &snapshot.netmap()?.netmap,
+            task.target_node_id,
+            &task.service,
+            explicit,
+        )
+        .map_err(|_| Error::Expired)?;
+        if !decided.observable
             || task
                 .path
                 .as_ref()
-                .is_some_and(|path| !permit.paths.iter().any(|allowed| allowed.nodes == *path))
+                .is_some_and(|path| !decided.paths.contains(path))
         {
-            return Err(Error::Contract);
+            return Err(Error::Expired);
         }
-        Ok(())
+        Ok(decided.paths)
     }
 
     fn subscription_response(
@@ -299,8 +301,8 @@ impl Control {
                     let name = name.trim_end_matches('.').to_ascii_lowercase();
                     let hostname = value.target.hostname.to_ascii_lowercase();
                     let domain = self
-                        .cached_target()
-                        .map(|t| t.configuration.dns.settings.domain.as_str());
+                        .netmap_base()
+                        .map(|netmap| netmap.netmap.projection.configuration.dns.domain.as_str());
                     name == hostname
                         || domain.is_some_and(|domain| name == format!("{hostname}.{domain}"))
                 }
@@ -324,7 +326,6 @@ impl Control {
         self.observations
             .subscriptions
             .insert(request.subscription_id, value.clone());
-        self.observations.planning.insert(request.subscription_id);
         Ok(value)
     }
 
@@ -401,7 +402,6 @@ impl Control {
         self.observations
             .subscriptions
             .insert(subscription_id, value.clone());
-        self.observations.planning.insert(subscription_id);
         self.observations.renewals.remove(&subscription_id);
         Ok(value)
     }
@@ -414,7 +414,6 @@ impl Control {
         if *request != self.current_instance()? {
             return Err(Error::Lifecycle);
         }
-        self.observations.planning.remove(&subscription_id);
         if let Some(lease) = self.observations.leases.remove(&subscription_id) {
             lease.cancelled.cancel();
         }
@@ -456,83 +455,10 @@ impl Control {
                 return Err(Error::Contract);
             }
         }
-        // The cancellation transaction can publish a successor before Control
-        // refreshes its business snapshot. Stop reporting the now-known old
-        // observation scope without invalidating unrelated business authority.
-        if let Ok(snapshot) = self.execution_snapshot() {
-            let current = snapshot.reference();
-            if value
-                .task
-                .as_ref()
-                .is_none_or(|task| task.configuration != current)
-                && let Some(id) = value.task.as_ref().map(|task| task.id).or_else(|| {
-                    self.observations
-                        .subscriptions
-                        .get(&subscription_id)
-                        .map(|value| value.task.id)
-                })
-            {
-                self.observations
-                    .retired_results
-                    .retain(|_, configuration| *configuration == current);
-                if self.observations.retired_results.len() >= LIMIT
-                    && !self.observations.retired_results.contains_key(&id)
-                {
-                    return Err(Error::Pending);
-                }
-                self.observations.retired_results.insert(id, current);
-            }
-        }
         self.observations.creates.remove(&subscription_id);
         self.observations.subscriptions.remove(&subscription_id);
         self.observations.renewals.remove(&subscription_id);
         Ok(value)
-    }
-
-    /// Consume freshly confirmed Node subscription metadata only after its
-    /// exact execution grant has arrived. Missing source tasks (including user
-    /// subscriptions) require the ordinary complete Server read. No response is
-    /// relabeled with a later publication or reused as a periodic task cache.
-    pub fn take_confirmed_observation_tasks(
-        &mut self,
-        snapshot: &ExecutionSnapshot,
-    ) -> Result<Option<ObservationList>, Error> {
-        self.observation_scope(snapshot)?;
-        let reference = snapshot.reference();
-        let configuration = snapshot.configuration()?;
-        let mut confirmed = BTreeMap::new();
-        for id in &self.observations.planning {
-            if self.node_observation_lease(*id).is_err() {
-                continue;
-            }
-            if let Some(value) = self.observations.subscriptions.get(id)
-                && value.task.configuration == reference
-            {
-                confirmed.insert(value.task.id, &value.task);
-            }
-        }
-        let mut items = Vec::new();
-        for permit in configuration
-            .diagnostics
-            .values()
-            .filter(|permit| permit.source == configuration.node_id)
-        {
-            let Some(task) = confirmed.get(&permit.observation_id).copied() else {
-                return Ok(None);
-            };
-            self.observation_task(task)?;
-            self.observation_permit(snapshot, task)?;
-            let mut task = task.clone();
-            task.subscription_id = None;
-            task.subscriber_expires_at = None;
-            items.push(task);
-        }
-        if items.is_empty() {
-            return Ok(None);
-        }
-        self.observation_scope(snapshot)?;
-        self.observations.planning.clear();
-        Ok(Some(ObservationList { items }))
     }
 
     pub async fn get_observation_tasks(
@@ -548,16 +474,13 @@ impl Control {
         }
         for (index, task) in value.items.iter().enumerate() {
             self.observation_task(task)?;
-            self.observation_permit(snapshot, task)?;
-            if task.configuration != snapshot.reference()
-                || task.subscription_id.is_some()
+            if task.subscription_id.is_some()
                 || task.subscriber_expires_at.is_some()
                 || value.items[..index].iter().any(|old| old.id == task.id)
             {
                 return Err(Error::Contract);
             }
         }
-        self.observations.planning.clear();
         Ok(value)
     }
 
@@ -568,14 +491,10 @@ impl Control {
         result: &ObservationResult,
     ) -> Result<ObservationTask, Error> {
         self.observation_scope(snapshot)?;
-        if self.observations.retired_results.get(&task.id) == Some(&result.configuration) {
-            return Err(Error::StateScopeChanged);
-        }
         self.observation_task(task)?;
-        self.observation_permit(snapshot, task)?;
-        if result.instance_id != snapshot.instance().instance_id
-            || result.configuration != snapshot.reference()
-            || task.configuration != result.configuration
+        let permitted = self.observation_permit(snapshot, task)?;
+        if result.instance_id != self.current_instance()?.instance_id
+            || result.netmap != snapshot.reference()
         {
             return Err(Error::Contract);
         }
@@ -590,10 +509,7 @@ impl Control {
                     *path_segment < high
                         || (*path_segment == high && task.path.as_ref() != Some(path))
                 })
-                || !snapshot.configuration()?.diagnostics[&task.id]
-                    .paths
-                    .iter()
-                    .any(|allowed| allowed.nodes == *path)
+                || !permitted.contains(path)
                 || sample.partial
                 || sample.window_start >= sample.window_end
                 || sample.window_end > task.expires_at
@@ -601,7 +517,7 @@ impl Control {
                 || sample.probe.as_ref().is_some_and(|probe| {
                     probe.measurement_id != sample.measurement_id
                         || probe.path != *path
-                        || probe.publication_id != result.configuration.execution_publication
+                        || probe.netmap != result.netmap
                 }))
         {
             return Err(Error::Contract);
@@ -619,7 +535,6 @@ impl Control {
         self.observation_task(&value)?;
         if value.id != task.id
             || value.target_node_id != task.target_node_id
-            || value.configuration != result.configuration
             || value.service != task.service
             || value.selection != task.selection
             || value.metrics != task.metrics
@@ -691,9 +606,9 @@ mod tests {
                 selection: ObservationPath::Auto,
                 path: None,
                 path_segment: None,
-                configuration: meshway_model::state::ConfigurationRef {
+                netmap: meshway_model::NetmapRef {
                     revision: meshway_model::Revision::MIN,
-                    execution_publication: id.parse().unwrap(),
+                    serial: meshway_model::Version::MIN,
                     digest: [1; 32].into(),
                 },
                 instance_id: id.parse().unwrap(),

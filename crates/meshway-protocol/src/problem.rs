@@ -128,15 +128,13 @@ problems! {
     BindingConflict(EmptyParams) = "binding_conflict",
     /// The receipt's instance, generation, Server boot, or instance deadline no longer matches; returns HTTP 409 and requires fencing before obtaining valid eligibility again.
     ReceiptInstanceMismatch(EmptyParams) = "receipt_instance_mismatch",
-    /// The receipt target is neither current nor a valid historical reference held by this Node; returns HTTP 409 and requires fencing and entering the blocked state.
+    /// The receipt netmap is neither current nor a valid historical netmap of this Node; returns HTTP 409 and requires fencing and entering the blocked state.
     ReceiptTargetMismatch(EmptyParams) = "receipt_target_mismatch",
-    /// The current publication's execution eligibility was withdrawn or changed; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and create a new installation attempt on the same instance.
-    ReceiptPublicationSuperseded(EmptyParams) = "receipt_publication_superseded",
-    /// An applied receipt for the current enabled target lacks an unexpired execution lease; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and create a new installation attempt without extending the old lease.
-    ReceiptLeaseExpired(EmptyParams) = "receipt_lease_expired",
-    /// The receipt observation time is out of bounds or applied lacks an earlier matching saved receipt; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and confirm saved again in a new installation attempt.
+    /// An applied receipt names a netmap that a newer serial already replaced; returns HTTP 409. Discard the rejected receipt, synchronize, and create a new installation attempt for the current netmap.
+    ReceiptNetmapSuperseded(EmptyParams) = "receipt_netmap_superseded",
+    /// The receipt observation time is out of bounds or applied lacks an earlier matching saved receipt; returns HTTP 409. Discard the rejected receipt, synchronize, and confirm saved again in a new installation attempt.
     ReceiptPrecondition(EmptyParams) = "receipt_precondition",
-    /// A receipt reuses an instance/publication/attempt/sequence identity with different content or has incompatible phase and failure values; returns HTTP 409. Discard it without rewriting the conflicting receipt, retry control refresh after one second, and create a new installation attempt.
+    /// A receipt reuses an instance/netmap/attempt/sequence identity with different content or has incompatible phase and failure values; returns HTTP 409. Discard it without rewriting the conflicting receipt and create a new installation attempt.
     ReceiptContentConflict(EmptyParams) = "receipt_content_conflict",
     /// The resource name changed since the client read it; returns HTTP 409, so reload before retrying.
     NameConflict(EmptyParams) = "name_conflict",

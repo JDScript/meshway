@@ -39,7 +39,8 @@ fn edge(a: &str, b: &str, protocols: &[TransportProtocol]) -> TopologyRule {
         a: a.into(),
         b: b.into(),
         transports: Input::Value(protocols.to_vec()),
-    }
+    },
+    keepalive: false,
 }
 
 #[test]

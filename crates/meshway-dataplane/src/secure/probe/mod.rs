@@ -32,28 +32,17 @@ struct Association {
     completed: bool,
 }
 
-/// One rate budget: a legacy observation, or a netmap (origin, target) pair.
+/// One rate budget per diagnostic (origin, target) pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum RateKey {
-    Observation(ObservationId),
-    Pair(NodeId, [u8; 32]),
-}
+struct RateKey(NodeId, [u8; 32]);
 
 fn rate_key(context: &Context) -> Result<RateKey, Error> {
-    match &context.grant {
-        CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(observation)) => {
-            Ok(RateKey::Observation(*observation))
-        }
-        CircuitGrant::Netmap {
-            purpose: crate::Purpose::Diagnostic,
-            target,
-        } => {
-            let mut hash = Sha256::new();
-            crate::netmap::encode_target(&mut hash, target);
-            Ok(RateKey::Pair(context.path[0], hash.finalize().into()))
-        }
-        _ => Err(Error::Policy),
+    if context.grant.purpose != crate::Purpose::Diagnostic {
+        return Err(Error::Policy);
     }
+    let mut hash = Sha256::new();
+    crate::netmap::encode_target(&mut hash, &context.grant.target);
+    Ok(RateKey(context.path[0], hash.finalize().into()))
 }
 
 #[derive(Default)]
@@ -210,11 +199,6 @@ impl SecureNode {
         if circuit.context.path.first() != Some(&reading.node()) {
             return Err(Error::Context);
         }
-        if let (CircuitGrant::Legacy(authorization), Some(cfg)) =
-            (&circuit.context.grant, reading.legacy())
-        {
-            authorization::source_instance(&snapshot, cfg, *authorization)?;
-        }
         if self.carriers.get(&circuit.context.path[1]) != Some(carrier) {
             return Err(Error::Context);
         }
@@ -284,11 +268,6 @@ impl SecureNode {
         let metadata = frame.probe.ok_or(Error::Wire)?;
         let snapshot = self.identity.snapshot().clone();
         circuit.check_at(reading)?;
-        if let (CircuitGrant::Legacy(authorization), Some(cfg)) =
-            (&circuit.context.grant, reading.legacy())
-        {
-            authorization::source_instance(&snapshot, cfg, *authorization)?;
-        }
         let now_ms = reading.now_ms;
         if now_ms >= metadata.expires_at_ms
             || metadata.expires_at_ms > circuit.guard(&snapshot, false).expiry().ms

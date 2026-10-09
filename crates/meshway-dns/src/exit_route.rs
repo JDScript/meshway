@@ -5,23 +5,16 @@ use crate::{RouteError, route::QueryLifetime};
 use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::{
     DnsTransport,
-    execution::{DnsEgress, DnsServicePermit},
     netmap::{DnsPlan, DnsService},
 };
 use std::{fmt, net::SocketAddr, time::Instant};
 use tokio_util::sync::CancellationToken;
 
-/// The exact service this route carries; never interchangeable.
-#[derive(Clone)]
-enum Service {
-    Legacy(Box<DnsServicePermit>),
-    Netmap(Box<DnsService>),
-}
-
 #[derive(Clone)]
 pub struct MeshResolverRoute {
     lifetime: QueryLifetime,
-    service: Service,
+    /// The exact netmap service this route carries.
+    service: Box<DnsService>,
     transport: DnsTransport,
 }
 
@@ -41,45 +34,22 @@ impl MeshResolverRoute {
             meshway_policy::dns_route::ResolverRouteError::Expired => RouteError::Expired,
             _ => RouteError::Binding,
         };
-        let (service, expires_at_ms) = if snapshot.is_netmap() {
-            let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
-            let netmap = &reading.netmap.netmap;
-            let DnsPlan::ViaExit { service } = &netmap.dns.egress else {
-                return Err(RouteError::Binding);
-            };
-            meshway_policy::dns_route::netmap_dns_service(
-                reading.leased(),
-                service,
-                netmap.node_id,
-                service.exit,
-                &service.path.nodes,
-                transport,
-                reading.now_ms,
-            )
-            .map_err(policy)?;
-            (Service::Netmap(service.clone()), reading.expires_at_ms)
-        } else {
-            let cfg = snapshot.configuration().map_err(|_| RouteError::Expired)?;
-            let DnsEgress::ViaExit { service, .. } = &cfg.dns.egress else {
-                return Err(RouteError::Binding);
-            };
-            if service.source_instance_id != snapshot.instance().instance_id {
-                return Err(RouteError::Binding);
-            }
-            let now = snapshot.now_ms().map_err(|_| RouteError::Expired)?;
-            meshway_policy::dns_route::dns_service_permit(
-                cfg,
-                service,
-                cfg.node_id,
-                service.exit,
-                &service.path.nodes,
-                transport,
-                now,
-            )
-            .map_err(policy)?;
-            let expires_at_ms = service.expires_at_ms;
-            (Service::Legacy(service.clone()), expires_at_ms)
+        let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
+        let netmap = &reading.netmap.netmap;
+        let DnsPlan::ViaExit { service } = &netmap.dns.egress else {
+            return Err(RouteError::Binding);
         };
+        meshway_policy::dns_route::netmap_dns_service(
+            reading.leased(),
+            service,
+            netmap.node_id,
+            service.exit,
+            &service.path.nodes,
+            transport,
+            reading.now_ms,
+        )
+        .map_err(policy)?;
+        let (service, expires_at_ms) = (service.clone(), reading.expires_at_ms);
         let route = Self {
             lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
             service,
@@ -91,26 +61,12 @@ impl MeshResolverRoute {
     pub fn snapshot(&self) -> &ExecutionSnapshot {
         self.lifetime.snapshot()
     }
-    /// The legacy service permit; `None` under a netmap.
-    pub fn permit(&self) -> Option<&DnsServicePermit> {
-        match &self.service {
-            Service::Legacy(permit) => Some(permit),
-            Service::Netmap(_) => None,
-        }
-    }
-    /// The netmap service; `None` under a legacy publication.
-    pub fn service(&self) -> Option<&DnsService> {
-        match &self.service {
-            Service::Netmap(service) => Some(service),
-            Service::Legacy(_) => None,
-        }
+    /// The netmap DNS service this route carries.
+    pub fn service(&self) -> &DnsService {
+        &self.service
     }
     pub fn endpoint(&self) -> SocketAddr {
-        let address = match &self.service {
-            Service::Legacy(permit) => permit.address.0,
-            Service::Netmap(service) => service.address.0,
-        };
-        SocketAddr::new(address, 53)
+        SocketAddr::new(self.service.address.0, 53)
     }
     pub fn transport(&self) -> DnsTransport {
         self.transport

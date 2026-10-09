@@ -77,94 +77,18 @@ fn diagnostic_link(
             )
         })
     });
-    if scope.snapshot.is_netmap() {
-        // Netmap authority has no publication or bound instance; report its
-        // content reference instead. Never reads current candidates.
-        let netmap = scope.snapshot.netmap_ref();
-        tracing::debug!(operation, cause, peer = %fact.peer, channel = ?fact.id,
-            socket = ?fact.socket_id, dialer = %fact.carrier.dialer, listener = %fact.carrier.listener,
-            listener_key = %fact.carrier.listener_key, protocol = ?fact.carrier.protocol,
-            local = %fact.local, remote = %fact.remote,
-            health_remaining_ms = ?health.map(|value| value.1), health_expired = ?health.map(|value| value.0),
-            attempted_remote = ?attempted.map(|value| value.0), attempt = ?attempted.map(|value| value.1),
-            netmap_serial = ?netmap.map(|value| value.serial.get()),
-            netmap_digest = ?netmap.map(|value| value.digest.to_string()),
-            lease_expires_at_ms = scope.snapshot.expires_at_ms(),
-            acquisition = ?fact.acquisition,
-            "Connectivity channel transition");
-        return;
-    }
-    if operation == "install" && cause == "authenticated_ready" {
-        // Read the original admitted scope, never a newer shared publication or
-        // current candidates. Failure to observe it drops diagnostics only.
-        let Ok(cfg) = scope.snapshot.configuration() else {
-            return;
-        };
-        let Some(peer) = cfg.peers.get(&fact.peer) else {
-            return;
-        };
-        let Ok(observed_at_ms) = scope.snapshot.now_ms() else {
-            return;
-        };
-        let instance = scope.snapshot.instance();
-        let reference = scope.snapshot.reference();
-        let (acquisition, attempt_id, endpoint_source) = match &fact.acquisition {
-            LinkAcquisition::PublishedEndpoint => ("publishedEndpoint", String::new(), ""),
-            LinkAcquisition::LocalEndpoint => ("localEndpoint", String::new(), ""),
-            LinkAcquisition::AcceptedInbound => ("acceptedInbound", String::new(), ""),
-            LinkAcquisition::CoordinatedUdp {
-                attempt_id,
-                endpoint_source,
-            } => (
-                "coordinatedUdp",
-                attempt_id.to_string(),
-                match endpoint_source {
-                    meshway_model::observations::EndpointKind::Configured => "configured",
-                    meshway_model::observations::EndpointKind::Interface => "interface",
-                    meshway_model::observations::EndpointKind::Stun => "stun",
-                },
-            ),
-        };
-        tracing::debug!(operation, cause, peer = %fact.peer, channel = ?fact.id,
-            socket = ?fact.socket_id, dialer = %fact.carrier.dialer, listener = %fact.carrier.listener,
-            listener_key = %fact.carrier.listener_key, protocol = ?fact.carrier.protocol,
-            local = %fact.local, remote = %fact.remote,
-            health_remaining_ms = ?health.map(|value| value.1), health_expired = ?health.map(|value| value.0),
-            attempted_remote = ?attempted.map(|value| value.0), attempt = ?attempted.map(|value| value.1),
-            publication = %reference.execution_publication, execution_expires_at_ms = scope.snapshot.expires_at_ms(),
-            install_schema = 1_u64, install_observed_at_ms = observed_at_ms,
-            install_node = %cfg.node_id, install_network = %cfg.network_id,
-            install_instance = %instance.instance_id, install_instance_generation = instance.generation.get(),
-            install_revision = reference.revision.get(), install_digest = %reference.digest,
-            install_link = %meshway_model::Digest::from_bytes(fact.id),
-            install_socket = %meshway_model::Digest::from_bytes(fact.socket_id),
-            install_protocol = fact.carrier.protocol.as_str(),
-            install_acquisition = acquisition, install_attempt_id = attempt_id, install_endpoint_source = endpoint_source,
-            install_control_id = %cfg.self_keys.control_key.id,
-            install_control_generation = cfg.self_keys.control_key.generation.get(),
-            install_control_bytes = %cfg.self_keys.control_key.public_key.bytes,
-            install_dataplane_id = %cfg.self_keys.dataplane_key.id,
-            install_dataplane_generation = cfg.self_keys.dataplane_key.generation.get(),
-            install_dataplane_bytes = %cfg.self_keys.dataplane_key.public_key.bytes,
-            install_peer_control_id = %peer.control_key.id,
-            install_peer_control_generation = peer.control_key.generation.get(),
-            install_peer_control_bytes = %peer.control_key.public_key.bytes,
-            install_peer_dataplane_id = %peer.dataplane_key.id,
-            install_peer_dataplane_generation = peer.dataplane_key.generation.get(),
-            install_peer_dataplane_bytes = %peer.dataplane_key.public_key.bytes,
-            "Connectivity channel transition");
-        return;
-    }
-    let snapshot = shared.identity.snapshot();
+    let netmap = scope.snapshot.reference();
     tracing::debug!(operation, cause, peer = %fact.peer, channel = ?fact.id,
         socket = ?fact.socket_id, dialer = %fact.carrier.dialer, listener = %fact.carrier.listener,
         listener_key = %fact.carrier.listener_key, protocol = ?fact.carrier.protocol,
         local = %fact.local, remote = %fact.remote,
         health_remaining_ms = ?health.map(|value| value.1), health_expired = ?health.map(|value| value.0),
-        attempted_remote = ?attempted.map(|value| value.0),
-        attempt = ?attempted.map(|value| value.1),
-        publication = %continuity::label(snapshot),
-        execution_expires_at_ms = snapshot.expires_at_ms(),
+        attempted_remote = ?attempted.map(|value| value.0), attempt = ?attempted.map(|value| value.1),
+        netmap_serial = netmap.serial.get(),
+        netmap_digest = %netmap.digest,
+        lease_expires_at_ms = scope.snapshot.expires_at_ms(),
+        acquisition = ?fact.acquisition,
+        epoch = %continuity::label(shared.identity.snapshot()),
         "Connectivity channel transition");
 }
 
@@ -315,6 +239,8 @@ struct EpochContext {
     resource_changes: tokio::sync::watch::Sender<()>,
     interests: Arc<interest::Interests>,
     facts: Arc<facts::Store>,
+    /// Instance qualifying State socket references; shared across epochs.
+    instance: Arc<Mutex<Option<meshway_protocol::InstanceRequest>>>,
 }
 
 impl EpochContext {
@@ -388,8 +314,7 @@ impl Manager {
         Self::start_inner(identity, factory, limits, None, None).await
     }
 
-    /// Coordinated UDP acquisition is defined for publication authority only;
-    /// a netmap snapshot is rejected until coordination accepts netmaps.
+    /// With coordinated UDP acquisition through the host's Control gateway.
     pub async fn start_with_traversal(
         identity: DataPlaneIdentity,
         factory: Arc<dyn SocketFactory>,
@@ -397,7 +322,7 @@ impl Manager {
         gateway: Arc<dyn crate::traversal::TraversalGateway>,
         generation: meshway_model::Sequence,
     ) -> Result<Self, Error> {
-        if generation.get() == 0 || identity.snapshot().is_netmap() {
+        if generation.get() == 0 {
             return Err(Error::Configuration);
         }
         Self::start_inner(identity, factory, limits, Some((gateway, generation)), None).await
@@ -438,6 +363,7 @@ impl Manager {
         });
         let (interests, facts) = carried.unwrap_or_default();
         interests.allow(&plan);
+        let identity_instance = identity.snapshot().instance();
         let shared = Arc::new(EpochContext {
             identity,
             plan,
@@ -458,6 +384,7 @@ impl Manager {
             resource_changes: tokio::sync::watch::channel(()).0,
             interests,
             facts,
+            instance: Arc::new(Mutex::new(identity_instance)),
         });
         let mut manager = Self {
             factory,
@@ -514,14 +441,18 @@ impl Manager {
                 return Err(Error::Configuration);
             }
             if protocol == TransportProtocol::NativeUdp {
-                if let Some((_, generation)) = &traversal {
-                    let id = adjacency::nonce()?;
-                    let reference = traversal::socket_reference(
-                        &identity,
+                let id = adjacency::nonce()?;
+                // Coordination needs the State reference of a live instance;
+                // without one the listener binds as a plain datagram socket.
+                let reference = match &traversal {
+                    Some(_) => traversal::socket_reference(
+                        &manager.shared,
                         id,
-                        *generation,
                         meshway_model::state::ResourceRef::Listener { key: key.clone() },
-                    )?;
+                    )?,
+                    None => None,
+                };
+                if let Some(reference) = reference {
                     let socket = tokio::select! { biased;
                         _ = identity.snapshot().invalidated() => return Err(Error::Authority),
                         result = tokio::time::timeout(limits.handshake_timeout, factory.traversal_listener(identity.snapshot(), key, reference.clone())) => result.map_err(|_| Error::Cancelled)??,
@@ -562,7 +493,7 @@ impl Manager {
             };
             prepared.push((fact, listener, acceptor));
         }
-        if let Some((_, generation)) = &traversal {
+        if traversal.is_some() {
             // Dial-only acquisition uses a real configured Native UDP socket,
             // even when the compiler intentionally retained no published target.
             for (key, candidate) in &plan.dialers {
@@ -622,12 +553,14 @@ impl Manager {
                         return Err(Error::Capacity);
                     }
                     let id = adjacency::nonce()?;
-                    let reference = traversal::socket_reference(
-                        &identity,
+                    let Some(reference) = traversal::socket_reference(
+                        &manager.shared,
                         id,
-                        *generation,
                         meshway_model::state::ResourceRef::Dial { key: key.clone() },
-                    )?;
+                    )?
+                    else {
+                        continue;
+                    };
                     let socket = tokio::select! { biased;
                         _ = identity.snapshot().invalidated() => return Err(Error::Authority),
                         result = tokio::time::timeout(limits.handshake_timeout, factory.bind_datagram_candidate(identity.snapshot(), key, ipv4, reference.clone())) => result.map_err(|_| Error::Cancelled)??,
@@ -746,13 +679,11 @@ impl Manager {
                 traversal::run(shared, gateway)
             });
         }
-        if plan.on_demand() {
-            if !manager.owners.contains_key(&resources::Key::Idle) {
-                manager.spawn_owner(resources::Key::Idle, None, interest::idle);
-            }
-            if !manager.owners.contains_key(&resources::Key::Facts) {
-                manager.spawn_owner(resources::Key::Facts, None, facts::run);
-            }
+        if !manager.owners.contains_key(&resources::Key::Idle) {
+            manager.spawn_owner(resources::Key::Idle, None, interest::idle);
+        }
+        if !manager.owners.contains_key(&resources::Key::Facts) {
+            manager.spawn_owner(resources::Key::Facts, None, facts::run);
         }
         for peer in plan.dial_peers() {
             if !manager.owners.contains_key(&resources::Key::Peer(peer)) {
@@ -789,29 +720,19 @@ impl Manager {
         })
     }
 
+    /// A State socket reference names the netmap and the live instance; with
+    /// no instance yet, the socket is registered once one is bound.
     fn register_listener(&self, fact: &ListenerFact) -> Result<(), Error> {
-        if self.shared.plan.on_demand() {
-            // A State socket reference names a publication and instance;
-            // netmap authority reports none until State accepts netmaps.
-            return Ok(());
-        }
-        let generation = self
-            .traversal
-            .as_ref()
-            .map(|(_, generation)| *generation)
-            .unwrap_or(
-                meshway_model::Sequence::MIN
-                    .checked_next()
-                    .map_err(|_| Error::Capacity)?,
-            );
-        let reference = traversal::socket_reference(
-            &self.shared.identity,
+        let Some(reference) = traversal::socket_reference(
+            &self.shared,
             fact.socket_id,
-            generation,
             meshway_model::state::ResourceRef::Listener {
                 key: fact.key.clone(),
             },
-        )?;
+        )?
+        else {
+            return Ok(());
+        };
         self.shared
             .sockets
             .lock()
@@ -1032,12 +953,11 @@ impl Manager {
             .ensure_current()
             .map_err(|_| Error::Authority)?;
         if !self.shared.stop.is_cancelled()
-            && identity.snapshot().is_netmap()
             && identity
                 .snapshot()
                 .same_netmap(self.shared.identity.snapshot())
         {
-            return Ok(());
+            return self.bind_instance(identity.snapshot().instance());
         }
         if self.can_reconcile(&identity) {
             return self.retain(identity).await;
@@ -1064,6 +984,46 @@ impl Manager {
         )
         .await?;
         *self = replacement;
+        Ok(())
+    }
+
+    /// Bind State socket references to the instance that now qualifies this
+    /// Node (a new instance after a Server outage, or the first one after an
+    /// offline restart). Authority, channels and resources are unchanged.
+    fn bind_instance(&self, instance: Option<meshway_protocol::InstanceRequest>) -> Result<(), Error> {
+        {
+            let mut current = self.shared.instance.lock().map_err(|_| Error::Worker)?;
+            if *current == instance {
+                return Ok(());
+            }
+            current.clone_from(&instance);
+        }
+        let Some(instance) = instance else {
+            return Ok(());
+        };
+        for socket in self
+            .shared
+            .sockets
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .values_mut()
+        {
+            socket.reference.instance = instance.clone();
+        }
+        for fact in &self.listeners {
+            self.register_listener(fact)?;
+        }
+        let links: Vec<_> = self
+            .shared
+            .links
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .values()
+            .map(|link| link.fact.clone())
+            .collect();
+        for fact in links {
+            self.shared.register_link_socket(&fact)?;
+        }
         Ok(())
     }
 
@@ -1130,7 +1090,6 @@ fn validate_scale(plan: &Plan, limits: Limits) -> Result<(), Error> {
     // own resources here, and peers are acquired on demand.
     if plan.listeners.len() > limits.listeners
         || plan.dialers.len() > limits.candidates
-        || (!plan.on_demand() && plan.peers().count() > limits.candidates)
         || plan
             .dialers
             .values()

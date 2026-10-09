@@ -32,19 +32,9 @@ impl Measurement {
         let started_at = DateTime::from_timestamp_millis(ms)
             .ok_or(Error::Binding)?
             .max(task.last_end.unwrap_or(DateTime::<Utc>::MIN_UTC));
-        // A netmap task is bounded by its own deadline and the lease alone.
-        let permit_expiry = if task.netmap {
-            u64::MAX
-        } else {
-            task.snapshot
-                .configuration()
-                .map_err(|_| Error::Binding)?
-                .diagnostics[&task.task.id]
-                .expires_at_ms
-        };
-        let expiry = u64::try_from(task.task.expires_at.timestamp_millis())
-            .map_err(|_| Error::Binding)?
-            .min(permit_expiry);
+        // A task is bounded by its own deadline and the lease alone.
+        let expiry =
+            u64::try_from(task.task.expires_at.timestamp_millis()).map_err(|_| Error::Binding)?;
         let deadline = (now + DEADLINE)
             .min(task.snapshot.expires_at())
             .min(now + Duration::from_millis(expiry.saturating_sub(ms as u64)));
@@ -129,7 +119,7 @@ impl Measurement {
                 transport: None,
                 channels,
                 path: task.path.clone(),
-                publication_id: task.task.configuration.execution_publication,
+                netmap: task.snapshot.reference(),
                 started_at: probe_started_at,
                 completed_at: Some(end),
                 outcome,

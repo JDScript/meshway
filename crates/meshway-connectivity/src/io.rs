@@ -74,30 +74,22 @@ pub trait SocketFactory: Send + Sync + 'static {
     ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
         Box::pin(async { Err(Error::Configuration) })
     }
-    fn connect<'a>(
+    /// Dial one configured or peer-fact endpoint of the candidate `key`. The
+    /// endpoint is selection input, never authority; the implementation still
+    /// protects the socket for the candidate's resource.
+    fn connect_endpoint<'a>(
         &'a self,
         snapshot: &'a ExecutionSnapshot,
         key: &'a str,
-        endpoint: usize,
+        endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<AcceptedSocket, Error>>;
-    /// Netmap authority: dial one configured or peer-fact endpoint of the
-    /// candidate `key`. The endpoint is selection input, never authority; the
-    /// implementation still protects the socket for the candidate's resource.
-    fn connect_endpoint<'a>(
-        &'a self,
-        _snapshot: &'a ExecutionSnapshot,
-        _key: &'a str,
-        _endpoint: &'a meshway_configuration::execution::DialEndpoint,
-    ) -> BoxFuture<'a, Result<AcceptedSocket, Error>> {
-        Box::pin(async { Err(Error::Configuration) })
-    }
     fn listen<'a>(
         &'a self,
         snapshot: &'a ExecutionSnapshot,
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn ListenerSocket>, Error>>;
 
-    /// Netmap counterpart of [`Self::datagram_candidate`]; see
+    /// Datagram sockets for one endpoint of candidate `key`; see
     /// [`Self::connect_endpoint`].
     fn datagram_endpoint<'a>(
         &'a self,
@@ -113,15 +105,6 @@ pub trait SocketFactory: Send + Sync + 'static {
         _snapshot: &'a ExecutionSnapshot,
         _key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn Datagram>, Error>> {
-        Box::pin(async { Err(Error::Configuration) })
-    }
-
-    fn datagram_candidate<'a>(
-        &'a self,
-        _snapshot: &'a ExecutionSnapshot,
-        _key: &'a str,
-        _endpoint: usize,
-    ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
         Box::pin(async { Err(Error::Configuration) })
     }
 }
@@ -177,11 +160,11 @@ impl SocketFactory for meshway_underlay::SocketFactory {
         })
     }
 
-    fn datagram_candidate<'a>(
+    fn datagram_endpoint<'a>(
         &'a self,
         snapshot: &'a ExecutionSnapshot,
         key: &'a str,
-        endpoint: usize,
+        endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
         Box::pin(async move {
             Ok(self
@@ -196,11 +179,11 @@ impl SocketFactory for meshway_underlay::SocketFactory {
                 .collect())
         })
     }
-    fn connect<'a>(
+    fn connect_endpoint<'a>(
         &'a self,
         snapshot: &'a ExecutionSnapshot,
         key: &'a str,
-        endpoint: usize,
+        endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<AcceptedSocket, Error>> {
         Box::pin(async move {
             let handle = self

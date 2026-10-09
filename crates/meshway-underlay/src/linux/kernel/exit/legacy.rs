@@ -138,7 +138,11 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Ledger> {
                 base_installation: old.base_installation,
                 network: old.network,
                 node: old.node,
-                plan: (&old.plan).into(),
+                plan: crate::target::RoleIdentity {
+                    generation: old.plan.generation,
+                    family: old.plan.family,
+                    nat: old.plan.nat,
+                },
                 program,
                 tun_name: old.tun_name,
                 mtu: old.mtu,

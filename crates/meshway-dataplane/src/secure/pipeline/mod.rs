@@ -167,13 +167,11 @@ impl SecureNode {
             return Err(Error::Wire);
         }
         circuit.receive[usize::from(frame.reply)].check(frame.sequence)?;
-        let selected =
-            authorization::selected(&reading, &circuit.context, circuit.selected.as_deref())?;
+        let selected = authorization::selected(&circuit.context, circuit.selected.as_deref())?;
         let (previous, mac) = circuit.session.prepare_verify(selected, &frame, incoming)?;
         authorization::incoming(
             &mut self.engine.decisions,
             &reading,
-            &circuit.context,
             selected,
             previous,
             incoming,
@@ -197,13 +195,7 @@ impl SecureNode {
                 .copied()
                 .ok_or(Error::Context)?;
                 let carrier = self.carriers.get(&next).ok_or(Error::Unsupported)?.clone();
-                authorization::outgoing(
-                    &reading,
-                    &circuit.context,
-                    Some(selected),
-                    next,
-                    &carrier,
-                )?;
+                authorization::outgoing(Some(selected), next, &carrier)?;
                 let mac = circuit.session.prepare_append(&frame, &carrier)?;
                 ReceiveTarget::Relay { next, carrier, mac }
             }
@@ -229,9 +221,7 @@ impl SecureNode {
         let snapshot = opened.guard.snapshot.clone();
         let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         opened.guard.check_at(&reading)?;
-        if !snapshot.same_execution(self.identity.snapshot())
-            && !snapshot.same_netmap(self.identity.snapshot())
-        {
+        if !snapshot.same_netmap(self.identity.snapshot()) {
             return Err(Error::Authority);
         }
         let id = opened.circuit;

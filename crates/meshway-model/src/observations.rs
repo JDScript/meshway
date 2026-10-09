@@ -1,6 +1,6 @@
 use crate::{
     Digest, EventId, NodeId, Sequence, SocketAddress, UdpTraversalId,
-    state::{ConfigurationRef, ProbeObservation},
+    state::{NetmapRef, ProbeObservation},
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -28,6 +28,8 @@ pub enum LinkAcquisition {
     PublishedEndpoint,
     /// The channel was acquired by dialing an endpoint the peer Node reported from its own interfaces.
     LocalEndpoint,
+    /// The UDP channel was acquired by dialing a STUN-observed mapping of the peer's listener socket.
+    StunEndpoint,
     /// The channel was acquired by accepting an inbound connection.
     AcceptedInbound,
     /// The UDP channel was acquired through a coordinated traversal attempt.
@@ -76,8 +78,8 @@ meshway_serde::object! {
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ObservationEvent {
     /// Stable event identifier used to deduplicate reports from this source Node.
     pub event_id: EventId,
-    /// Exact execution target under which the event occurred.
-    pub configuration: ConfigurationRef,
+    /// Exact netmap under which the event occurred.
+    pub netmap: NetmapRef,
     /// Original UTC occurrence time, unchanged by delivery retries.
     pub occurred_at: DateTime<Utc>,
     /// Typed event facts reported by the Node's connection or measurement owner.

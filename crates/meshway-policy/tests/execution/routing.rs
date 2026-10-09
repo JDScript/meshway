@@ -256,6 +256,7 @@ fn every_expanded_hop_requires_inventory_topology_and_transport_and_recovers() {
                 action: TopologyAction::Block,
                 a: format!("node:{}", node(2)),
                 b: format!("node:{}", node(3)),
+ keepalive: false,
             }),
             _ => {
                 inv.get_mut(&node(2)).unwrap().capabilities.clear();
@@ -289,6 +290,7 @@ fn automatic_bridges_obey_segment_rules_and_preserve_waypoint_order() {
             action: TopologyAction::Allow,
             a: format!("node:{}", node(a)),
             b: format!("node:{}", node(b)),
+ keepalive: false,
         })
         .to_vec();
     c.routing.mesh = vec![route(1, 4, &[3]), route(2, 3, &[5])];

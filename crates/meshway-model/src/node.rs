@@ -1,4 +1,4 @@
-use crate::{Digest, KeyId, PublicationId, Revision, Version};
+use crate::{Digest, KeyId, Version};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -50,15 +50,3 @@ pub struct BoundNodeKey {
 }
 }
 
-meshway_serde::object! {
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// Exact Node execution target binding source revision, publication and compiled content.
-pub struct ConfigurationRef {
-    /// Source configuration revision used to compile the target.
-    pub revision: Revision,
-    /// Publication fixing the target's identity, material and execution dependencies.
-    pub execution_publication: PublicationId,
-    /// Digest of this Node's complete compiled target, which may differ from other Nodes' digests.
-    pub digest: Digest,
-}
-}

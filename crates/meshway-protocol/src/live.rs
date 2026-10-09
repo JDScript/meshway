@@ -3,7 +3,7 @@
 use crate::object::{wire_object, wire_tagged};
 use meshway_configuration::{ConfigurationView, NodeSettingsView};
 use meshway_model::{
-    ConfigurationRef, MemberSummary, MembershipId, NetworkId, NetworkSummary, NodeId, Revision,
+    MemberSummary, NetmapRef, MembershipId, NetworkId, NetworkSummary, NodeId, Revision,
 };
 use std::collections::BTreeMap;
 
@@ -30,20 +30,6 @@ pub enum UserConfigurationView {
     },
 } }
 wire_object! { #[derive(Clone, PartialEq)]
-/// A node's own desired settings and exact current execution reference, without installation materials.
-pub struct NodeConfigurationView {
-    /// Network to which the authenticated node belongs.
-    pub network_id: NetworkId,
-    /// Node whose desired settings are projected.
-    pub node_id: NodeId,
-    /// Revision of the desired settings below, not the installable target.
-    pub revision: Revision,
-    /// Redacted desired settings for this node.
-    pub settings: NodeSettingsView,
-    /// Exact current execution target. Fetch materials with configuration/query.
-    pub target: Option<ConfigurationRef>,
-} }
-wire_object! { #[derive(Clone, PartialEq)]
 /// User-visible network, node and membership inventory under current permissions.
 pub struct UserEntitiesView {
     /// Network summary and currently available actions.
@@ -52,12 +38,6 @@ pub struct UserEntitiesView {
     #[serde(deserialize_with="meshway_serde::unique_map")] pub nodes: BTreeMap<NodeId, crate::NodeInventoryView>,
     /// Visible member summaries keyed by stable network membership ID.
     #[serde(deserialize_with="meshway_serde::unique_map")] pub members: BTreeMap<MembershipId, MemberSummary>,
-} }
-wire_object! { #[derive(Clone, PartialEq)]
-/// Node-visible inventory projected under its current authenticated scope.
-pub struct NodeEntitiesView {
-    /// Visible node summaries keyed by node ID; presence does not grant business access.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub nodes: BTreeMap<NodeId, crate::NodeInventoryView>,
 } }
 
 meshway_serde::string_enum! {
@@ -93,8 +73,8 @@ pub enum ApplicationPhase {
 wire_object! { #[derive(Clone, PartialEq)]
 /// Historical application result and independent freshness for one original node target.
 pub struct ConfigurationNodeProgress {
-    /// Exact execution reference fixed for this node by the original configuration apply.
-    pub target: ConfigurationRef,
+    /// Netmap of this node current after the original configuration apply.
+    pub target: NetmapRef,
     /// Last result for the original target, including historical instances.
     pub phase: ApplicationPhase,
     /// Instance that submitted the last accepted result; null when no receipt exists.

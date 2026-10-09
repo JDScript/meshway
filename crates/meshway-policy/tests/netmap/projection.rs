@@ -63,6 +63,7 @@ fn islands_see_only_themselves_and_their_access_peers() {
             a: sel(a),
             b: sel(b),
             transports: Input::Omitted,
+ keepalive: false,
         });
     }
     s.cfg.access = vec![

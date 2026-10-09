@@ -1,5 +1,5 @@
 use meshway_authority::ExecutionSnapshot;
-use meshway_configuration::execution::DialCandidate;
+use meshway_configuration::execution::{DialCandidate, DialEndpoint};
 use meshway_model::NodeId;
 use meshway_transport_spec::{
     DialParameters, Endpoint, Listener, PreparedListener, SocketOptions, TcpOptions,
@@ -199,11 +199,14 @@ impl SocketFactory {
         Ok(())
     }
 
+    /// One dial target of candidate `key`: a configured endpoint or a peer
+    /// fact. The endpoint is selection input only; the socket is protected
+    /// for the candidate's resource like any other.
     pub fn candidate(
         &self,
         snapshot: &ExecutionSnapshot,
         key: &str,
-        endpoint_index: usize,
+        endpoint: &DialEndpoint,
     ) -> Result<CandidateHandle> {
         let scope =
             self.shared
@@ -217,11 +220,7 @@ impl SocketFactory {
         if view.peer(candidate.peer).is_none() {
             return Err(Error::Target);
         }
-        let endpoint = candidate
-            .endpoints
-            .get(endpoint_index)
-            .ok_or(Error::Target)?
-            .endpoint();
+        let endpoint = endpoint.endpoint();
         Ok(CandidateHandle {
             scope,
             local: view.node_id(),
@@ -321,9 +320,9 @@ impl SocketFactory {
         &self,
         snapshot: &ExecutionSnapshot,
         key: &str,
-        endpoint_index: usize,
+        endpoint: &DialEndpoint,
     ) -> Result<Vec<DatagramCandidate>> {
-        let handle = self.candidate(snapshot, key, endpoint_index)?;
+        let handle = self.candidate(snapshot, key, endpoint)?;
         let DialParameters::NativeUdp { options } = &handle.candidate.parameters else {
             return Err(Error::Target);
         };

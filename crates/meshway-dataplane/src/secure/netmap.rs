@@ -5,9 +5,8 @@ use super::{
     crypto, pipeline,
 };
 use crate::{
-    FlowGrant, Packet, Purpose,
-    authority::{Auth, Cap, netmap_addresses},
-    engine::retain_legacy,
+    Packet, Purpose,
+    authority::netmap_addresses,
     flow::{FlowTime, Keep},
     netmap::Outcome,
 };
@@ -174,7 +173,7 @@ pub fn diagnostic_paths(
     path: Option<&[NodeId]>,
 ) -> Result<Vec<Vec<NodeId>>, Error> {
     let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
-    let netmap = reading.netmap().ok_or(Error::Context)?;
+    let netmap = reading.netmap();
     let address = mesh_address(&reading, target).ok_or(Error::Policy)?;
     let outcome = crate::netmap::Decisions::default()
         .decide(
@@ -191,7 +190,7 @@ pub fn diagnostic_paths(
 }
 
 fn mesh_address(view: &View<'_>, node: NodeId) -> Option<IpAddr> {
-    let netmap = view.netmap()?;
+    let netmap = view.netmap();
     netmap_addresses(&netmap.netmap, node)
         .and_then(|a| a.ipv4.map(IpAddr::V4).or(a.ipv6.map(IpAddr::V6)))
 }
@@ -204,40 +203,30 @@ impl SecureNode {
     /// authorization digest and key set are unchanged; a flow only while its
     /// exact service, path and exit selection are still decided. Exit flows
     /// retired here publish Retire. A changed own identity, address or key set,
-    /// or an ended old lease, terminates everything. Legacy targets keep their
-    /// per-publication continuation rules.
+    /// or an ended old lease, terminates everything.
     pub fn update(&mut self, identity: DataPlaneIdentity) -> Result<Update, Error> {
         let snapshot = identity.snapshot().clone();
         let old = self.identity.snapshot().clone();
-        if !snapshot.is_netmap() && !old.is_netmap() {
-            return self.update_legacy(identity);
-        }
-        if snapshot.is_netmap() && snapshot.same_netmap(&old) {
+        if snapshot.same_netmap(&old) {
             View::of(&snapshot).map_err(|_| Error::Authority)?;
             self.engine.snapshot = snapshot;
             self.identity = identity;
             return Ok(Update::Renewed);
         }
         let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
-        if !snapshot.is_netmap() || snapshot.netmap_continuation_from(&old).is_err() {
+        if snapshot.netmap_continuation_from(&old).is_err() {
             self.terminate("reset");
             self.install(identity, &reading);
             return Ok(Update::Reset);
         }
-        let Auth::Netmap { netmap, .. } = reading.auth else {
-            return Err(Error::Authority);
-        };
-        let leased = reading.leased().ok_or(Error::Authority)?;
+        let netmap = reading.netmap();
+        let leased = reading.leased();
         let decisions = &mut self.engine.decisions;
         decisions.bind(netmap);
         let local = netmap.netmap.node_id;
         let mut retired_circuits = 0;
         for circuit in self.circuits.values_mut() {
-            let CircuitGrant::Netmap { purpose, target } = &circuit.context.grant else {
-                circuit.retire_for("update", "grant_kind");
-                retired_circuits += 1;
-                continue;
-            };
+            let CircuitGrant { purpose, target } = &circuit.context.grant;
             let path = &circuit.context.path;
             let position = path.iter().position(|node| *node == local);
             let admitted = position.and_then(|position| {
@@ -261,7 +250,7 @@ impl SecureNode {
                         && crypto::key_digest(&reading, path).ok()
                             == Some(circuit.context.keys) =>
                 {
-                    circuit.selected = admitted.selected;
+                    circuit.selected = Some(admitted.selected);
                 }
                 _ => {
                     circuit.retire_for("update", "path_authorization_changed");
@@ -273,9 +262,7 @@ impl SecureNode {
         let time = FlowTime::from(&reading);
         let flows = &mut self.engine.flows;
         flows.retain(&time, |flow| {
-            let FlowGrant::Netmap(target) = flow.grant else {
-                return Keep::Retire;
-            };
+            let target = flow.grant;
             let origin = flow.path[0];
             let forward = flow.forward;
             let kept = match decisions.decide(
@@ -308,13 +295,11 @@ impl SecureNode {
     /// Swap in an accepted snapshot: drop correlations of the old one, keep
     /// only carriers new netmap content admits, and mint a new output section.
     fn install(&mut self, identity: DataPlaneIdentity, reading: &View<'_>) {
-        if reading.netmap().is_some() {
-            let mut carriers = std::mem::take(&mut self.carriers);
-            carriers.retain(|peer, carrier| {
-                authorization::adjacency(&mut self.engine.decisions, reading, *peer, carrier)
-            });
-            self.carriers = carriers;
-        }
+        let mut carriers = std::mem::take(&mut self.carriers);
+        carriers.retain(|peer, carrier| {
+            authorization::adjacency(&mut self.engine.decisions, reading, *peer, carrier)
+        });
+        self.carriers = carriers;
         self.probes.retain_current();
         self.engine.snapshot = identity.snapshot().clone();
         self.identity = identity;
@@ -331,66 +316,6 @@ impl SecureNode {
             }
         }
         self.maintenance.changed();
-    }
-
-    /// Legacy: carry live compatible circuits and flows through an
-    /// owner-authenticated direct publication replacement, in place.
-    fn update_legacy(&mut self, identity: DataPlaneIdentity) -> Result<Update, Error> {
-        let snapshot = identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
-        let old = snapshot
-            .continuation_from(self.identity.snapshot())
-            .map_err(|_| Error::Authority)?;
-        let new = reading.configuration;
-        let view = View::from(reading);
-        let mut retired_circuits = 0;
-        for circuit in self.circuits.values_mut() {
-            let CircuitGrant::Legacy(authorization) = circuit.context.grant else {
-                circuit.retire_for("reconcile", "grant_kind");
-                retired_circuits += 1;
-                continue;
-            };
-            let compatible = authorization::unchanged(
-                old,
-                new,
-                authorization,
-                &circuit.context.path,
-                view.now_ms,
-            )
-            .unwrap_or(false);
-            let expiry = meshway_policy::admission::circuit_permit(new, authorization)
-                .ok()
-                .map(|permit| permit.expires_at_ms);
-            match expiry {
-                Some(expiry) if compatible && circuit.check_at(&view).is_ok() => {
-                    circuit.recovery.maintain();
-                    circuit.permit_expires_at_ms = circuit.permit_expires_at_ms.max(expiry);
-                    circuit.cap = Cap::until_ms(view.instant, view.now_ms, expiry).map(|permit| {
-                        permit.min(Cap {
-                            at: view.expires_at,
-                            ms: view.expires_at_ms,
-                        })
-                    });
-                }
-                _ => {
-                    circuit.retire_for("reconcile", "authorization_changed");
-                    retired_circuits += 1;
-                }
-            }
-        }
-        let before = self.engine.flows.len();
-        self.engine.flows.retain(&FlowTime::from(&view), |flow| {
-            retain_legacy(old, new, flow, &view)
-        });
-        let retired_flows = before.saturating_sub(self.engine.flows.len());
-        snapshot
-            .continuation_from(self.identity.snapshot())
-            .map_err(|_| Error::Authority)?;
-        self.install(identity, &view);
-        Ok(Update::Updated {
-            retired_circuits,
-            retired_flows,
-        })
     }
 
     /// Peers this owner needs an adjacency with; drains the set.
@@ -423,14 +348,12 @@ impl SecureNode {
         let _profile = PROFILE.enter();
         let snapshot = self.identity.snapshot().clone();
         let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
-        let netmap = reading.netmap().ok_or(Error::Context)?;
+        let netmap = reading.netmap();
         self.maintain_circuits(&reading, false)?;
         let local = reading.node();
         if let Some(flow) = self.local_flow_at(&packet, &reading)? {
-            let FlowGrant::Netmap(target) = &flow.grant else {
-                return Err(Error::Flow);
-            };
-            let grant = CircuitGrant::Netmap {
+            let target = &flow.grant;
+            let grant = CircuitGrant {
                 purpose: Purpose::Business,
                 target: target.clone(),
             };
@@ -499,7 +422,7 @@ impl SecureNode {
                     .collect()
             }
         };
-        let grant = CircuitGrant::Netmap {
+        let grant = CircuitGrant {
             purpose: Purpose::Business,
             target: decision.target.clone(),
         };
@@ -523,7 +446,7 @@ impl SecureNode {
         reading: &View<'_>,
     ) -> Result<Outbound, Error> {
         let until = reading.instant + self.limits.handshake_timeout;
-        let grant = CircuitGrant::Netmap {
+        let grant = CircuitGrant {
             purpose: Purpose::Business,
             target: target.clone(),
         };
@@ -584,7 +507,7 @@ impl SecureNode {
         self.first.maintain(reading.instant);
         let mut outputs = Vec::new();
         for mut waiting in std::mem::take(&mut self.first.waiting) {
-            let grant = CircuitGrant::Netmap {
+            let grant = CircuitGrant {
                 purpose: Purpose::Business,
                 target: waiting.target.clone(),
             };
@@ -634,7 +557,7 @@ impl SecureNode {
     ) -> Result<Option<PendingFrame>, Error> {
         let snapshot = self.identity.snapshot().clone();
         let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
-        let netmap = reading.netmap().ok_or(Error::Context)?;
+        let netmap = reading.netmap();
         let address = mesh_address(&reading, target).ok_or(Error::Policy)?;
         let outcome = self
             .engine
@@ -647,7 +570,7 @@ impl SecureNode {
             )
             .map_err(|_| Error::Policy)?;
         let paths = observable_paths(netmap, target, &outcome, path)?;
-        let grant = CircuitGrant::Netmap {
+        let grant = CircuitGrant {
             purpose: Purpose::Diagnostic,
             target: Target::Mesh { node: target },
         };
@@ -658,7 +581,7 @@ impl SecureNode {
     pub fn diagnostic_circuit(&self, target: NodeId) -> Option<super::CircuitInfo> {
         let snapshot = self.identity.snapshot();
         let reading = View::of(snapshot).ok()?;
-        let grant = CircuitGrant::Netmap {
+        let grant = CircuitGrant {
             purpose: Purpose::Diagnostic,
             target: Target::Mesh { node: target },
         };

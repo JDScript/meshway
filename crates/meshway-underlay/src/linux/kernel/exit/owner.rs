@@ -261,55 +261,10 @@ impl Authority {
         {
             return Err(Error::Expired);
         }
-        let permitted = if snapshot.is_netmap() {
-            self.netmap_permits(&snapshot, tuple)?
-        } else {
-            self.legacy_permits(&snapshot, tuple, deadline)?
-        };
-        if !permitted {
+        if !self.netmap_permits(&snapshot, tuple)? {
             return Err(Error::Target);
         }
         self.shared.data(&snapshot)
-    }
-
-    fn legacy_permits(
-        &self,
-        snapshot: &meshway_authority::ExecutionSnapshot,
-        tuple: OriginalTuple,
-        deadline: &Deadline,
-    ) -> Result<bool> {
-        use meshway_configuration::execution::{BusinessProtocol, BusinessTarget};
-        let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
-        let (protocol, _, port) = tuple.fields();
-        Ok(cfg.permits.values().any(|permit| {
-            let target = match &permit.target {
-                BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } => {
-                    address.0
-                }
-                _ => return false,
-            };
-            permit.source_addresses.ipv4 == Some(tuple.source)
-                && target == IpAddr::V4(tuple.destination)
-                && deadline.expires_at_ms() <= permit.expires_at_ms
-                && matches!(
-                    (permit.protocol, protocol),
-                    (BusinessProtocol::Tcp, 6)
-                        | (BusinessProtocol::Udp, 17)
-                        | (BusinessProtocol::IcmpEcho, 1)
-                )
-                && (protocol == 1
-                    || permit
-                        .port
-                        .as_ref()
-                        .is_some_and(|value| value.get() == port))
-                && permit
-                    .exit
-                    .as_ref()
-                    .and_then(|exit| exit.roles.get(&cfg.node_id))
-                    .map(RoleIdentity::from)
-                    .as_ref()
-                    == Some(&self.plan)
-        }))
     }
 
     /// The exit's own decision for the tuple's origin on its installed netmap:
@@ -424,7 +379,6 @@ impl super::super::Kernel {
         if cfg.exit_role().as_ref() != Some(&plan)
             || !cfg.exit_enabled()
             || plan.family != ExitFamily::Ipv4
-            || (!snapshot.is_netmap() && plan.instance_id != Some(snapshot.instance().instance_id))
         {
             return Err(Error::Target);
         }

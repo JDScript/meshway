@@ -167,7 +167,7 @@ async fn same_content_renewal_raises_every_clone_without_cancelling_a_guard() {
     assert!(renewed.same_netmap(&first) && held.same_netmap(&renewed));
     assert!(renewed.netmap_continuation_from(&first).is_err());
     assert!(held.expires_at_ms() >= before + 59_000);
-    assert_eq!(held.lease(), Some(lease));
+    assert_eq!(held.lease(), lease);
     tokio::time::sleep(Duration::from_millis(400)).await;
     held.ensure_current().unwrap();
     let reading = held.netmap_reading().unwrap();
@@ -289,23 +289,19 @@ async fn newer_serial_continues_only_with_the_same_live_own_identity() {
 }
 
 #[test]
-fn netmap_snapshots_reject_legacy_accessors_and_bind_packet_keys() {
+fn instance_binding_is_optional_and_packet_keys_bind_to_the_netmap() {
     let issuer = Issuer::new();
     let netmap = compiled("a", "100.64.0.1", None);
     let (snapshot, renewal) = issuer.issue(&netmap, 60_000).unwrap();
-    assert!(snapshot.is_netmap());
-    assert_eq!(snapshot.netmap_ref(), Some(netmap.reference()));
-    assert!(matches!(snapshot.configuration(), Err(Error::Contract)));
-    assert!(matches!(snapshot.reading(), Err(Error::Contract)));
-    assert!(snapshot.continuation_from(&snapshot).is_err());
-    assert_eq!(snapshot.instance_binding(), None);
+    assert_eq!(snapshot.reference(), netmap.reference());
+    assert_eq!(snapshot.instance(), None);
     let instance = meshway_protocol::InstanceRequest {
         instance_id: "00000000-0000-4000-8000-0000000000aa".parse().unwrap(),
         generation: Version::MIN,
     };
     let bound = renewal.snapshot(Some(instance.clone())).unwrap();
-    assert_eq!(bound.instance_binding(), Some(instance));
-    assert!(bound.same_netmap(&snapshot) && !bound.same_execution(&snapshot));
+    assert_eq!(bound.instance(), Some(instance));
+    assert!(bound.same_netmap(&snapshot));
     let identity = DataPlaneIdentity::new(
         snapshot.clone(),
         SigningKey::from_bytes(&[4; 32]),

@@ -48,7 +48,7 @@ impl Owner {
             || !context.servers().iter().any(|value| value.id == server)
             || !context
                 .snapshot()
-                .same_execution(self.shared.identity.snapshot())
+                .same_netmap(self.shared.identity.snapshot())
         {
             return Ok(());
         }

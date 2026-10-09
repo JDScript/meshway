@@ -64,6 +64,7 @@ fn routed() -> NetworkConfiguration {
         a: format!("node:{}", node(1)),
         b: format!("node:{}", node(3)),
         action: TopologyAction::Allow,
+ keepalive: false,
     }];
     c.defaults.topology = TopologyDefault::Allow;
     c.routing.mesh = vec![MeshRoute {
@@ -412,6 +413,7 @@ fn targets_explain_why_no_path_exists_and_inputs_are_checked() {
         a: "*".into(),
         b: format!("node:{}", node(4)),
         action: TopologyAction::Block,
+ keepalive: false,
     });
     let e = evaluate(
         &c,

@@ -1,10 +1,11 @@
 //! Validated, revocable UDP acquisition authority. Constructors stay with the
 //! single Control owner; State observations are inputs, never grants.
 use crate::{Control, Deadline, Error, ExecutionSnapshot, Started};
-use meshway_configuration::execution::Carrier;
+use meshway_configuration::{execution::Carrier, netmap::NodeNetmap};
 use meshway_model::{NodeId, RequestId, StateEpoch, state::SocketNetwork};
+use meshway_policy::{admission::netmap::admit_adjacency, compile::netmap::LocalCompiler};
 pub use meshway_protocol::connectivity::SocketReference;
-use meshway_protocol::{StateQuery, StateView, connectivity::*};
+use meshway_protocol::{InstanceRequest, StateQuery, StateView, connectivity::*};
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -21,6 +22,7 @@ pub struct DiscoveryContext {
 }
 struct DiscoveryAuthority {
     snapshot: ExecutionSnapshot,
+    instance: InstanceRequest,
     epoch: StateEpoch,
     deadline: Deadline,
     servers: StunServers,
@@ -29,6 +31,10 @@ struct DiscoveryAuthority {
 impl DiscoveryContext {
     pub fn snapshot(&self) -> &ExecutionSnapshot {
         &self.inner.snapshot
+    }
+    /// Instance qualification the coordination requests carry.
+    pub fn instance(&self) -> &InstanceRequest {
+        &self.inner.instance
     }
     pub fn state_epoch(&self) -> StateEpoch {
         self.inner.epoch
@@ -113,13 +119,11 @@ impl ValidatedOffer {
         if self.inner.cancelled.is_cancelled() || !self.inner.deadline.valid() {
             return Err(Error::Expired);
         }
-        meshway_policy::admission::admit_adjacency(
-            self.snapshot().configuration()?,
+        adjacency(
+            self.snapshot(),
             self.peer().candidate.socket.node_id,
             &self.inner.offer.carrier,
-            self.snapshot().now_ms()?,
-        )
-        .map_err(|_| Error::Expired)?;
+        )?;
         Ok(())
     }
     pub fn cancel(&self) {
@@ -187,25 +191,46 @@ pub fn udp_recipient(address: &str) -> Result<SocketAddr, Error> {
     }
 }
 
+/// The installed netmap admits a Native UDP adjacency with `peer` on `carrier`.
+fn adjacency(snapshot: &ExecutionSnapshot, peer: NodeId, carrier: &Carrier) -> Result<(), Error> {
+    let netmap = &snapshot.netmap()?.netmap;
+    admit_adjacency(&LocalCompiler::new(netmap), netmap, peer, carrier).map_err(|_| Error::Expired)
+}
+
+fn visible(netmap: &NodeNetmap, peer: NodeId) -> bool {
+    peer != netmap.node_id && netmap.projection.inventory.contains_key(&peer)
+}
+
 impl Control {
-    fn connectivity_current(&self, snapshot: &ExecutionSnapshot) -> Result<(), Error> {
+    /// The snapshot is this owner's current netmap and an instance is live;
+    /// returns that instance.
+    fn connectivity_current(
+        &self,
+        snapshot: &ExecutionSnapshot,
+    ) -> Result<InstanceRequest, Error> {
         self.token()?;
         snapshot.ensure_current()?;
-        let current = self.execution_snapshot()?;
-        if !snapshot.same_execution(&current) || snapshot.instance() != self.current_instance()? {
+        if !self.netmap_snapshot()?.same_netmap(snapshot) {
             return Err(Error::Expired);
         }
-        Ok(())
+        self.current_instance()
+    }
+
+    fn connectivity_context(&self, context: &DiscoveryContext) -> Result<(), Error> {
+        if self.connectivity_current(context.snapshot())? != *context.instance() {
+            return Err(Error::Expired);
+        }
+        context.ensure_current()
     }
 
     pub async fn query_udp_traversal(
         &mut self,
         snapshot: &ExecutionSnapshot,
     ) -> Result<Outcome<Discovery>, Error> {
-        self.connectivity_current(snapshot)?;
+        let instance = self.connectivity_current(snapshot)?;
         let request = QueryUdpTraversalRequest {
-            instance: snapshot.instance(),
-            configuration: snapshot.reference(),
+            instance: instance.clone(),
+            netmap: snapshot.reference(),
         };
         let started = Started::now(&self.clock)?;
         let response = self
@@ -213,7 +238,9 @@ impl Control {
             .query_udp_traversal(&request, self.token()?)
             .await;
         let response = self.registered(response)?;
-        self.connectivity_current(snapshot)?;
+        if self.connectivity_current(snapshot)? != instance {
+            return Err(Error::Expired);
+        }
         let QueryUdpTraversalResponse::Current {
             state_epoch,
             as_of_ms,
@@ -249,6 +276,7 @@ impl Control {
         let context = DiscoveryContext {
             inner: Arc::new(DiscoveryAuthority {
                 snapshot: snapshot.clone(),
+                instance,
                 epoch: state_epoch,
                 deadline: Deadline::from_response(started.clone(), expires_at_ms)?,
                 servers: stun_servers,
@@ -296,25 +324,23 @@ impl Control {
         offer: UdpTraversalOffer,
         started: Started,
     ) -> Result<ValidatedOffer, Error> {
-        self.connectivity_current(context.snapshot())?;
-        context.ensure_current()?;
-        let cfg = context.snapshot().configuration()?;
-        let local_first = offer.local.candidate.socket.node_id == cfg.node_id;
+        self.connectivity_context(context)?;
+        let netmap = &context.snapshot().netmap()?.netmap;
+        let local_first = offer.local.candidate.socket.node_id == netmap.node_id;
         let (local, peer) = if local_first {
             (&offer.local, &offer.peer)
         } else {
             (&offer.peer, &offer.local)
         };
-        let valid = offer.network_id == cfg.network_id
+        let valid = offer.network_id == netmap.network_id
             && offer.state_epoch == context.state_epoch()
-            && local.candidate.socket.node_id == cfg.node_id
-            && local.candidate.socket.instance == context.snapshot().instance()
-            && local.candidate.socket.configuration == context.snapshot().reference()
-            && peer.candidate.socket.node_id != cfg.node_id
-            && cfg.peers.contains_key(&peer.candidate.socket.node_id)
+            && local.candidate.socket.node_id == netmap.node_id
+            && local.candidate.socket.instance == *context.instance()
+            && local.candidate.socket.netmap == context.snapshot().reference()
+            && visible(netmap, peer.candidate.socket.node_id)
             && offer.carrier.protocol
                 == meshway_configuration::transport::TransportProtocol::NativeUdp
-            && [offer.carrier.dialer, offer.carrier.listener].contains(&cfg.node_id)
+            && [offer.carrier.dialer, offer.carrier.listener].contains(&netmap.node_id)
             && [offer.carrier.dialer, offer.carrier.listener]
                 .contains(&peer.candidate.socket.node_id)
             && offer.compute_digest().map_err(|_| Error::Contract)? == offer.digest
@@ -323,15 +349,12 @@ impl Control {
             self.fence();
             return Err(Error::Contract);
         }
-        let edge_deadline = meshway_policy::admission::admit_adjacency(
-            cfg,
+        adjacency(
+            context.snapshot(),
             peer.candidate.socket.node_id,
             &offer.carrier,
-            context.snapshot().now_ms()?,
-        )
-        .map_err(|_| Error::Expired)?;
-        if offer.expires_at_ms > edge_deadline
-            || offer.expires_at_ms > context.snapshot().expires_at_ms()
+        )?;
+        if offer.expires_at_ms > context.snapshot().expires_at_ms()
         {
             self.fence();
             return Err(Error::Contract);
@@ -372,15 +395,14 @@ impl Control {
         context: &DiscoveryContext,
         peers: &[NodeId],
     ) -> Result<StateView, Error> {
-        self.connectivity_current(context.snapshot())?;
-        context.ensure_current()?;
-        let cfg = context.snapshot().configuration()?;
+        self.connectivity_context(context)?;
+        let netmap = &context.snapshot().netmap()?.netmap;
         if peers.is_empty()
             || peers.len() > 8
             || peers
                 .iter()
                 .enumerate()
-                .any(|(i, peer)| !cfg.peers.contains_key(peer) || peers[..i].contains(peer))
+                .any(|(i, peer)| !visible(netmap, *peer) || peers[..i].contains(peer))
         {
             return Err(Error::Contract);
         }
@@ -394,9 +416,8 @@ impl Control {
             )
             .await;
         let view = self.registered(response)?;
-        self.connectivity_current(context.snapshot())?;
-        context.ensure_current()?;
-        if view.network_id != context.snapshot().configuration()?.network_id
+        self.connectivity_context(context)?;
+        if view.network_id != context.snapshot().netmap()?.netmap.network_id
             || view.nodes.keys().any(|node| !peers.contains(node))
         {
             self.fence();
@@ -416,7 +437,7 @@ impl Control {
                         || reference.socket_id != endpoint.socket_id
                         || reference.socket_generation != endpoint.generation
                         || reference.resource != endpoint.resource
-                        || report.configuration.applied.as_ref() != Some(&reference.configuration)
+                        || report.configuration.applied.as_ref() != Some(&reference.netmap)
                     {
                         self.fence();
                         return Err(Error::Contract);
@@ -432,14 +453,13 @@ impl Control {
         context: &DiscoveryContext,
         request: &PrepareUdpTraversalRequest,
     ) -> Result<Outcome<ValidatedOffer>, Error> {
-        self.connectivity_current(context.snapshot())?;
-        context.ensure_current()?;
-        if request.instance != context.snapshot().instance()
-            || request.configuration != context.snapshot().reference()
+        self.connectivity_context(context)?;
+        if request.instance != *context.instance()
+            || request.netmap != context.snapshot().reference()
             || request.state_epoch != context.state_epoch()
             || request.local_candidate.socket.instance != request.instance
-            || request.local_candidate.socket.configuration != request.configuration
-            || request.local_candidate.socket.node_id != context.snapshot().configuration()?.node_id
+            || request.local_candidate.socket.netmap != request.netmap
+            || request.local_candidate.socket.node_id != context.snapshot().netmap()?.netmap.node_id
             || request.peer_candidate.socket.node_id != request.peer_id
             || request.expires_at_ms > context.expires_at_ms()
             || request.expires_at_ms
@@ -450,20 +470,14 @@ impl Control {
         {
             return Err(Error::Contract);
         }
-        meshway_policy::admission::admit_adjacency(
-            context.snapshot().configuration()?,
-            request.peer_id,
-            &request.carrier,
-            context.snapshot().now_ms()?,
-        )
-        .map_err(|_| Error::Expired)?;
+        adjacency(context.snapshot(), request.peer_id, &request.carrier)?;
         let started = Started::now(&self.clock)?;
         let response = self
             .client
             .prepare_udp_traversal(request, self.token()?)
             .await;
         let response = self.registered(response)?;
-        self.connectivity_current(context.snapshot())?;
+        self.connectivity_context(context)?;
         match response {
             PrepareUdpTraversalResponse::Unavailable { reason } => Ok(Outcome::Unavailable(reason)),
             PrepareUdpTraversalResponse::Offer { offer } => {
@@ -487,7 +501,7 @@ impl Control {
         &mut self,
         offered: &ValidatedOffer,
     ) -> Result<Outcome<AttemptView>, Error> {
-        self.connectivity_current(offered.snapshot())?;
+        self.connectivity_context(&offered.inner.context)?;
         offered.ensure_current()?;
         let path = meshway_control_client::AcceptUdpTraversalPath {
             attempt_id: offered.offer().attempt_id,
@@ -497,7 +511,7 @@ impl Control {
             .accept_udp_traversal(&path, &attempt_request(offered), self.token()?)
             .await;
         let response = self.registered(response)?;
-        self.connectivity_current(offered.snapshot())?;
+        self.connectivity_context(&offered.inner.context)?;
         offered.ensure_current()?;
         let (offer, active) = match response {
             AcceptUdpTraversalResponse::Unavailable { reason } => {
@@ -526,7 +540,7 @@ impl Control {
         if let Some(issued) = self.connectivity.issued.get(&offered.offer().attempt_id) {
             issued.cancel();
         }
-        self.connectivity_current(offered.snapshot())?;
+        self.connectivity_context(&offered.inner.context)?;
         let path = meshway_control_client::CancelUdpTraversalPath {
             attempt_id: offered.offer().attempt_id,
         };
@@ -540,8 +554,8 @@ impl Control {
 
 fn attempt_request(value: &ValidatedOffer) -> UdpTraversalAttemptRequest {
     UdpTraversalAttemptRequest {
-        instance: value.snapshot().instance(),
-        configuration: value.snapshot().reference(),
+        instance: value.inner.context.instance().clone(),
+        netmap: value.snapshot().reference(),
         state_epoch: value.offer().state_epoch,
         version: value.offer().version,
         digest: value.offer().digest,
@@ -557,8 +571,8 @@ pub fn prepare_request(
 ) -> Result<PrepareUdpTraversalRequest, Error> {
     context.ensure_current()?;
     Ok(PrepareUdpTraversalRequest {
-        instance: context.snapshot().instance(),
-        configuration: context.snapshot().reference(),
+        instance: context.instance().clone(),
+        netmap: context.snapshot().reference(),
         state_epoch: context.state_epoch(),
         request_id: RequestId::new(crate::random_id()?).map_err(|_| Error::Cryptography)?,
         expires_at_ms: context.expires_at_ms().min(

@@ -108,6 +108,8 @@ pub struct TopologyRule {
     pub b: String,
     /// Carriers allowed on this undirected edge, in the order they are tried; omitted means unrestricted in the platform order native_udp, native_tcp, vless, trojan, and `[]` leaves the edge without a carrier.
     #[serde(default, skip_serializing_if = "Input::is_omitted")] pub transports: Input<Vec<TransportProtocol>> [value_type = Vec<TransportProtocol>],
+    /// Keep an authenticated adjacency on this allowed edge resident even without traffic; defaults to false (acquired on demand, closed when idle). Ignored on block rules.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")] pub keepalive: bool,
 } }
 fn yes() -> bool {
     true

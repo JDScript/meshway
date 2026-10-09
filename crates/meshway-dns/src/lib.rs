@@ -23,12 +23,11 @@ mod tcp;
 mod wire;
 
 pub use dispatcher::{
-    DiscoveryGateway, DispatchError, Dispatcher, DnsFuture, GatewayError, OwnerDispatcher,
-    ResolverExchange, Scope,
+    DispatchError, Dispatcher, DnsFuture, GatewayError, OwnerDispatcher, ResolverExchange, Scope,
 };
 pub use exit_route::{MeshResolverRoute, ResolverRoute};
 pub use owner::{
-    Answer, Begin, DiscoveryRequest, Limits, Owner, OwnerError, Ticket, Unavailable, UpstreamWork,
+    Answer, Begin, Limits, Owner, OwnerError, Ticket, Unavailable, UpstreamWork,
 };
 pub use route::{LocalResolverRoute, RouteError};
 pub use selection::{

@@ -212,7 +212,6 @@ impl Control {
             keys: keys.clone(),
             ..binding
         });
-        self.saved = None;
         self.record.completed_rotation = Some(request_id);
         // One atomic record replacement publishes keys and binding together.
         // Failed/cancelled writes require reopen; the disk has pending or new.

@@ -70,20 +70,17 @@ impl Host {
     ) -> Result<EgressCapture> {
         self.kernel.install_egress_capture(plan).await
     }
+    /// Probe the exit prerequisites for the role of `netmap` with
+    /// `role_generation`, on behalf of `instance`.
     pub async fn probe_exit(
         &mut self,
         instance: meshway_model::InstanceId,
-        target: meshway_model::ConfigurationRef,
+        netmap: meshway_model::NetmapRef,
+        role_generation: meshway_model::Digest,
     ) -> meshway_model::exit::ExitCapability {
-        self.kernel.probe_exit(instance, target).await
-    }
-    /// Prepare the current Control-issued exit responsibility. Projection and CT
-    /// confirmation are separate operations on the returned handle.
-    pub async fn install_exit_role(
-        &mut self,
-        plan: meshway_configuration::execution::ExitRolePlan,
-    ) -> Result<ExitRole> {
-        self.kernel.install_exit_role((&plan).into()).await
+        self.kernel
+            .probe_exit(instance, netmap, role_generation)
+            .await
     }
     /// Prepare the installed netmap's exit role. It is bound to the content,
     /// not to an instance: re-acquiring an instance keeps it.
