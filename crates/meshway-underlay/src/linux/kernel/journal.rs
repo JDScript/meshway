@@ -212,6 +212,9 @@ pub(super) struct Store {
 }
 
 impl Store {
+    pub fn directory(&self) -> Arc<Directory> {
+        self.directory.clone()
+    }
     pub async fn open(directory: Arc<Directory>) -> Result<(Self, Option<Journal>)> {
         let worker_directory = directory.clone();
         let journal = tokio::task::spawn_blocking(move || -> Result<Option<Journal>> {

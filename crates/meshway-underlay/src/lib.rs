@@ -21,7 +21,9 @@ use std::{
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    DatagramAuthorization, DatagramCandidate, Host, ProtectedDatagram, TraversalDatagram,
+    CtConfirmation, DatagramAuthorization, DatagramCandidate, ExitReply, ExitReplyReader, ExitRole,
+    ExitScope, ExitTransport, Host, OriginalTuple, ProjectionAck, ProtectedDatagram,
+    TraversalDatagram,
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 

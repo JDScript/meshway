@@ -35,6 +35,9 @@ pub(super) struct Expected {
     pub first_conflict: Option<String>,
     pub events: VecDeque<Event>,
     pub pools: Vec<ipnet::IpNet>,
+    pub exit_rules: Vec<Vec<u8>>,
+    pub exit_tables: Vec<u32>,
+    pub exit_tun: Option<u32>,
     pub tun: Option<(u32, String, usize, Vec<std::net::IpAddr>)>,
     // Observation-only tombstone, retained until the synchronous TUN close's
     // notifications have drained. It grants no capture/ownership exception.
@@ -420,7 +423,8 @@ async fn monitor(
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route))
-                        if route_table(&route) == table =>
+                        if route_table(&route) == table
+                            || state.exit_tables.contains(&route_table(&route)) =>
                     {
                         if state
                             .consume(Event {
@@ -434,7 +438,8 @@ async fn monitor(
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRoute(route))
-                        if route_table(&route) == table =>
+                        if route_table(&route) == table
+                            || state.exit_tables.contains(&route_table(&route)) =>
                     {
                         if state
                             .consume(Event {
@@ -537,6 +542,7 @@ async fn monitor(
 fn network_changed(state: &Expected, payload: &NetlinkPayload<RouteNetlinkMessage>) -> bool {
     let external = |index| {
         index != 1
+            && state.exit_tun != Some(index)
             && state.retiring_tun != Some(index)
             && state
                 .tun

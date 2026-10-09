@@ -41,14 +41,23 @@ pub(super) struct Output {
     pub stdout: Vec<u8>,
     #[cfg(test)]
     pub stderr: Vec<u8>,
+    #[cfg(test)]
+    pub status: std::process::ExitStatus,
 }
 
 #[derive(Default)]
 pub(super) struct Commands {
     pending: Option<tokio::task::JoinHandle<Result<Output, Failure>>>,
+    fence: Option<super::child::Fence>,
 }
 
 impl Commands {
+    pub fn recorded(fence: super::child::Fence) -> Self {
+        Self {
+            pending: None,
+            fence: Some(fence),
+        }
+    }
     /// An abandoned waiter leaves the join handle here. The owner must settle
     /// and reconcile its journal before submitting another mutation.
     pub async fn settle(&mut self) -> Result<Option<Output>, Failure> {
@@ -71,9 +80,11 @@ impl Commands {
             return Err(Failure::Limit);
         }
         let permit = PROCESS.try_acquire().map_err(|_| Failure::Limit)?;
+        let end = Instant::now() + BUDGET;
+        let fence = self.fence.clone();
         self.pending = Some(tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            execute(tool, &arguments, &input)
+            execute(tool, &arguments, &input, end, fence.as_ref())
         }));
         self.settle().await?.ok_or(Failure::Worker)
     }
@@ -99,9 +110,24 @@ impl Drop for Reap {
     }
 }
 
-fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Failure> {
-    let started = Instant::now();
-    let mut child = Command::new(tool.path())
+fn execute(
+    tool: Tool,
+    arguments: &[String],
+    input: &[u8],
+    end: Instant,
+    fence: Option<&super::child::Fence>,
+) -> Result<Output, Failure> {
+    if Instant::now() >= end {
+        return Err(Failure::Limit);
+    }
+    let mut command = if fence.is_some() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", super::child::GATE, "meshway-exit", tool.path()]);
+        command
+    } else {
+        Command::new(tool.path())
+    };
+    let mut child = command
         .args(arguments)
         .env_clear()
         .env("LC_ALL", "C")
@@ -114,8 +140,14 @@ fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Fai
     let stderr = child.stderr.take().ok_or(Failure::Worker)?;
     std::thread::scope(move |scope| {
         let mut child = Reap(child);
+        if let Some(fence) = fence {
+            fence.record(child.0.id()).map_err(|_| Failure::Worker)?;
+        }
         let writer = scope.spawn(move || {
             let mut stdin = stdin;
+            if fence.is_some() {
+                stdin.write_all(b"go\n")?;
+            }
             stdin.write_all(input)
         });
         let reader = scope.spawn(move || read_bounded(stdout));
@@ -123,7 +155,7 @@ fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Fai
         let status = loop {
             match child.0.try_wait() {
                 Ok(Some(status)) => break Ok(status),
-                Ok(None) if started.elapsed() < BUDGET => {
+                Ok(None) if Instant::now() < end => {
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 result => {
@@ -141,6 +173,9 @@ fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Fai
         let stdout = reader.join().map_err(|_| Failure::Worker)??;
         let _stderr = errors.join().map_err(|_| Failure::Worker)??;
         let status = status?;
+        if Instant::now() > end {
+            return Err(Failure::Limit);
+        }
         // A command that rejects input may close stdin early; retain its failure
         // status instead of turning it into an unobservable successful write.
         if status.success() {
@@ -151,6 +186,8 @@ fn execute(tool: Tool, arguments: &[String], input: &[u8]) -> Result<Output, Fai
             stdout,
             #[cfg(test)]
             stderr: _stderr,
+            #[cfg(test)]
+            status,
         })
     })
 }

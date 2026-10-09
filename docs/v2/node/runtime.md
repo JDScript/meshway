@@ -58,7 +58,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | --- | --- |
 | Linux Mesh-only | TUN capture、Native TCP／Native UDP 静态端点认证邻接、协调 UDP 穿透、双栈 UDP／TCP 多跳包流、持续续租和失效清理；验收状态见[验收范围](/v2/node/validation) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
-| Exit／本机 egress | Linux Underlay 提供安装前的宿主前置探测；出口角色、NAT 与 egress capture 尚未安装。所需出口角色、受管 IPv4／IPv6 capture、非 Mesh permit、未由 DNS owner 持有的 local egress 或缺少明确 no-exit DNS 执行证明均阻断安装，不能忽略 capture 后报告成功 |
+| Exit／本机 egress | Linux Underlay 提供前置探测与 IPv4 出口角色／精确 NAT 投影 API；正常 Node 的自动装配、applied 与完整出口包流仍待集成验收。受管 IPv4／IPv6 egress capture、没有出口角色的非 Mesh permit、未由 DNS owner 持有的 local egress 或缺少明确 no-exit DNS 执行证明仍阻断安装 |
 | 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切网尚未实现 |
@@ -71,7 +71,33 @@ Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预�
 
 `ip_forward=0` 返回 `ipForwardDisabled`，读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off。工具不可用分别返回 `nftUnavailable`／`conntrackUnavailable`。观测保留原始 `observedAt`，重试上报不得重新计时。
 
-此前置探测成功仍为 `probing`，`supportedFamilies`／`installedFamilies` 为空：route/rule 安装、归属 mark 分配、精确 conntrack 删除、宿主转发与完整出口资源回执尚未完成，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于出口功能已可用。
+此前置探测成功仍为 `probing`，`supportedFamilies`／`installedFamilies` 为空。探测与下面的角色安装是不同操作，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于完整出口功能已可用。
+
+### IPv4 出口角色与 NAT 投影
+
+Linux `Host::install_exit_role(ExitRolePlan)` 消费当前执行快照中相同的出口职责，返回 `ExitRole`。资源仍归该 Host 的唯一 Kernel owner；角色使用独立非持久 TUN，不暴露 FD。crate 根导出 `ExitRole`、`ExitScope`、`OriginalTuple`、`ExitTransport`、`ProjectionAck`、`CtConfirmation`、`ExitReplyReader` 和 `ExitReply`。
+
+| 操作 | 行为 |
+| --- | --- |
+| `install(incarnation, original_tuple, deadline, scope)` | 拒绝已有冲突 CT／tuple／incarnation；安装精确 timed set 资格并回读，返回 `ProjectionAck`，此后才允许提交首包 |
+| `send(incarnation, packet)` | 有界入队；最终 TUN 写入重新检查原执行 guard、流截止、撤回状态和原 tuple |
+| `confirm(incarnation)` | 首包产生 CT 后，按 IPv4 original tuple＋归属 mark 检查，返回 `CtConfirmation::Confirmed`；有界等待不超过三秒及流截止，缺失或冲突时先关闭资格，再返回 `ConfirmFailed`；清理失败返回错误 |
+| `renew(incarnation, deadline, scope)` | 仅在旧资格仍活、绑定相同且已确认 CT 身份仍一致时原子续期 timed set；不创建新的 CT，不复活过期投影 |
+| `retire_flow(incarnation)` | 先关闭资格和用户态输出，再按 family／original tuple／mark 精确删除 CT 并读回；随后释放不再共用的回程规则／路由 |
+| `reply_reader()` | 单次取得独立回包 reader；`recv()` 返回 incarnation 与逆 NAT 包，排队期间继续保留原 guard；业务回复仍须通过唯一 dataplane 流表与原完整路径准入 |
+| `retire()` | 停止正向 I/O，关闭全部资格、清理 CT／回程资源，join TUN owner 后移除所属 nft 表；失败保留 journal 和拒绝边界 |
+
+`ExitScope` 携带生产者提供的授权／路径 binding 与不可逆撤回 token，不签发业务权限。原 tuple 仅支持 IPv4 TCP、UDP 和 ICMP echo；角色计划不能替代精确源地址、目的、服务和活 flow。投影当前最多 128 个活项，最多保留 4096 个 incarnation／tuple 历史及已知转换 tuple 的拒绝记录；容量耗尽拒绝新增。成功退役的原 tuple 在同一角色内也不复用，恢复后的旧转换 tuple 保留隔离。
+
+角色安装使用 `inet meshway_exit_<installation>` 与 `ip meshway_exit_nat_<installation>` 私有表。只有独立 TUN ingress、Mesh 源、精确活投影、NEW 状态且归属 bit 尚未设置时，FORWARD 才设置 CT mark；已归属 NEW／ESTABLISHED／RELATED 必须继续匹配投影，未归属 ESTABLISHED 不接管。NEW 重传仍受同一资格约束。PREROUTING 只准备专用路由 bit，回程要求 reply direction／原 tuple／归属 mark；最终 postrouting 再检查资格。原方向执行 masquerade，回程 RPDB 将逆 NAT 后的源节点 `/32` 导向出口 TUN。正向绕过客户端 capture 的规则同时匹配出口 iif 与资格生成的 mark。
+
+Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft／conntrack、`ip_forward=1` 和已支持的 loose/off 反向路径校验；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
+
+所有 nft 变更通过结构化 JSON 原子批提交；工具每次两秒预算、输入和各输出管道各 2 MiB、进程并发与请求／包队列均有界。timeout 使用秒，按原单调／墙钟截止减去命令预算保守取整，实际资格可提前到期。ACK 不延长原 guard。取消或丢失响应后 join 并读回核验，不把工具被杀视作回滚。
+
+私有 `underlay-exit.json` 记录 boot／namespace、基础与出口 installation、节点／网络／职责、TUN 名称与 index／MTU、mark／回程表、精确 route/rule、nft handle 与规范规则、投影截止／CT 身份／隔离 tuple，以及 pending／closing／removed。`exit-child.json` 在工具执行前记录 PID／启动时间／namespace，阻止仍存活或不可判定的旧工具与恢复竞争。同 namespace 重启先核对资源并关闭旧投影、精确清除 CT；跨 namespace 记录归档，不操作原 namespace。所有权冲突保留证据并停装。
+
+撤回 ACK 证明后续穿越资格门的包被拒绝；此前已通过最终过滤、排入 TUN／网卡的包无法追回。源端默认 capture、IPv6 sink、切换、出口 DNS 与正常 daemon 的整体验收状态以[验收范围](/v2/node/validation)为准。
 
 IPC v5 的公开运行状态：
 

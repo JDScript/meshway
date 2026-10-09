@@ -1,9 +1,29 @@
 //! Kernel-side exit resources. These projections never issue business authority.
+mod api;
+mod backend;
+mod child;
 mod command;
+mod conntrack;
+mod io;
 mod nft;
+mod objects;
+pub(in crate::linux) mod owner;
+mod prerequisites;
 mod probe;
+mod program;
+pub(super) mod recovery;
+pub(super) mod routing;
+mod storage;
+mod tuple;
 
+pub use api::{CtConfirmation, ProjectionAck};
+pub use io::{ExitReply, ExitReplyReader, ExitScope};
+pub use owner::ExitRole;
 pub use probe::ExitProbe;
+pub use tuple::{ExitTransport, OriginalTuple};
+
+#[cfg(test)]
+mod tests;
 
 use meshway_model::exit::ExitUnavailableReason;
 

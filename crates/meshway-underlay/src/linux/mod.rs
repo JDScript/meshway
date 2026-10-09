@@ -4,6 +4,10 @@ pub use traversal::{DatagramAuthorization, TraversalDatagram};
 mod dns;
 pub use datagram::{DatagramCandidate, ProtectedDatagram};
 mod kernel;
+pub use kernel::exit::{
+    CtConfirmation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitTransport, OriginalTuple,
+    ProjectionAck,
+};
 mod protection;
 mod proxy;
 mod resolver_exchange;
@@ -59,6 +63,21 @@ pub struct Host {
 }
 
 impl Host {
+    /// Prepare the current Control-issued exit responsibility. Projection and CT
+    /// confirmation are separate operations on the returned handle.
+    pub async fn install_exit_role(
+        &mut self,
+        plan: meshway_configuration::execution::ExitRolePlan,
+    ) -> Result<ExitRole> {
+        self.kernel.install_exit_role(plan).await
+    }
+    pub fn exit_role(&self) -> Option<ExitRole> {
+        self.kernel
+            .exit
+            .as_ref()
+            .filter(|owner| owner.role.is_active())
+            .map(|owner| owner.role.clone())
+    }
     /// Construct a joinable pre-install probe, including for hosts where opening
     /// the protected socket owner fails. Keep it alive through `finish()`.
     pub fn exit_probe() -> Result<kernel::exit::ExitProbe> {

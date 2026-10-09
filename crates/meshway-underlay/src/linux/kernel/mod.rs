@@ -49,6 +49,7 @@ pub(super) struct Kernel {
     options: Options,
     baseline: Vec<Vec<u8>>,
     dns_cancel: CancellationToken,
+    pub(super) exit: Option<exit::owner::Owner>,
 }
 
 impl Kernel {
@@ -69,7 +70,6 @@ impl Kernel {
     pub async fn open(directory: Arc<Directory>, options: Options, tasks: Tasks) -> Result<Self> {
         // Subscribe before the baseline dump so rule changes cannot disappear
         // between discovery and the monitor's start.
-        let monitor_socket = monitor::open()?;
         let (connection, handle, unsolicited) = rtnetlink::new_connection()?;
         drop(unsolicited); // request socket has no multicast subscriptions
         let conflict = CancellationToken::new();
@@ -78,6 +78,8 @@ impl Kernel {
             connection.await;
             failed.cancel();
         })?;
+        exit::recovery::recover(&handle, directory.clone(), options.max_kernel_objects).await?;
+        let monitor_socket = monitor::open()?;
         let (mut store, previous) = Store::open(directory).await?;
         let rules = get_rules(&handle, options.max_kernel_objects).await?;
         let routes = get_routes(&handle, options.max_kernel_objects).await?;
@@ -175,6 +177,7 @@ impl Kernel {
             options,
             baseline,
             dns_cancel: CancellationToken::new(),
+            exit: None,
         })
     }
 
@@ -191,7 +194,14 @@ impl Kernel {
         if let Some(anchor) = &self.journal.anchor {
             anchor::verify(&self.handle, anchor, self.options.max_kernel_objects).await?;
         }
-        let rules = get_rules(&self.handle, self.options.max_kernel_objects).await?;
+        let mut rules = get_rules(&self.handle, self.options.max_kernel_objects).await?;
+        let exit_rules = self
+            .expected
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .exit_rules
+            .clone();
+        rules.retain(|rule| !exit_rules.contains(&encode_rule(rule.clone())));
         verify_rules(&self.journal, &rules)?;
         let mut foreign: Vec<_> = rules
             .into_iter()
@@ -278,6 +288,12 @@ impl Kernel {
     pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<()> {
         self.ready().await?;
         let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
+        if self.exit.as_ref().is_some_and(|owner| {
+            cfg.exit_role.as_ref() != Some(&owner.role.plan) || !cfg.exit_enabled
+        }) && let Some(mut owner) = self.exit.take()
+        {
+            owner.shutdown().await?;
+        }
         let binding = (cfg.network_id, cfg.node_id);
         if self
             .journal
@@ -286,18 +302,18 @@ impl Kernel {
         {
             return Err(Error::Target);
         }
-        if cfg.exit_enabled
-            || cfg.exit_role.is_some()
+        if (cfg.exit_enabled && cfg.exit_role.is_none())
             || cfg.egress_capture.default_capture
             || !cfg.egress_capture.managed_ipv4.is_empty()
             || !cfg.egress_capture.sink_ipv6.is_empty()
             || cfg.egress_capture.unavailable.is_some()
-            || cfg.permits.values().any(|permit| {
-                !matches!(
-                    permit.target,
-                    meshway_configuration::execution::BusinessTarget::Mesh { .. }
-                )
-            })
+            || (cfg.exit_role.is_none()
+                && cfg.permits.values().any(|permit| {
+                    !matches!(
+                        permit.target,
+                        meshway_configuration::execution::BusinessTarget::Mesh { .. }
+                    )
+                }))
         {
             return Err(Error::Target);
         }
@@ -333,6 +349,9 @@ impl Kernel {
         // pool set before removing any old positive routes or the owned TUN.
         // Retired pools keep their negative rules until explicit down.
         self.shared.suspend()?;
+        if let Some(mut exit) = self.exit.take() {
+            exit.shutdown().await?;
+        }
         self.retain_negative(&pools).await?;
         self.suspend().await?;
         let outcome = self.activate(&snapshot, &pools, &addresses).await;
@@ -663,6 +682,9 @@ impl Kernel {
 
     pub async fn suspend(&mut self) -> Result<()> {
         self.shared.suspend()?;
+        if let Some(mut exit) = self.exit.take() {
+            exit.shutdown().await?;
+        }
         let result = self.remove_live().await;
         self.drop_owned_tun();
         // Closing the owned descriptor emits address/link notifications after
@@ -969,7 +991,8 @@ fn allocate(rules: &[RuleMessage], routes: &[RouteMessage], pool_limit: usize) -
         .unwrap_or(32766)
         .min(32766);
     let width = pool_limit as u32 * 2 + 2;
-    if first <= width {
+    let reserved = exit::routing::RESERVED;
+    if first <= width + reserved {
         return Err(Error::Conflict);
     }
     let mut random = [0u8; 16];
@@ -977,7 +1000,7 @@ fn allocate(rules: &[RuleMessage], routes: &[RouteMessage], pool_limit: usize) -
     let seed = u32::from_ne_bytes(random[..4].try_into().map_err(|_| Error::Worker)?);
     let start = (0..1024)
         .find_map(|attempt| {
-            let start = 1 + seed.wrapping_add(attempt) % (first - width);
+            let start = 1 + reserved + seed.wrapping_add(attempt) % (first - width - reserved);
             let end = start + width - 1;
             (!rules.iter().any(|rule| {
                 rule.attributes.iter().any(
