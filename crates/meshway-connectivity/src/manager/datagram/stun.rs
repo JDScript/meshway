@@ -9,8 +9,7 @@ pub(super) struct Pending {
     transaction: TransactionId,
     output: Vec<u8>,
     deadline: Instant,
-    next_send: Instant,
-    sends: u8,
+    retry: Retry,
 }
 
 #[derive(Debug)]
@@ -77,8 +76,7 @@ impl Owner {
                         .checked_add(Duration::from_secs(5))
                         .ok_or(Error::Limits)?
                         .min(context.expires_at().into()),
-                    next_send: Instant::now(),
-                    sends: 0,
+                    retry: Retry::due(),
                 },
             );
         }
@@ -90,11 +88,9 @@ impl Owner {
             pending.context.ensure_current().is_ok() && Instant::now() < pending.deadline
         });
         for pending in self.discovery.values_mut() {
-            if pending.sends >= MAX_SENDS || Instant::now() < pending.next_send {
+            if !pending.retry.take(Duration::from_millis(500), MAX_SENDS) {
                 continue;
             }
-            pending.sends += 1;
-            pending.next_send = Instant::now() + Duration::from_millis(500);
             let lifetime = Arc::new(Lifetime {
                 context: pending.context.clone(),
                 scope: self.lifetime.clone(),

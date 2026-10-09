@@ -21,6 +21,41 @@ const HEALTH_WINDOW: Duration = Duration::from_secs(6);
 const OUTPUT_WAIT: Duration = Duration::from_millis(100);
 const MAX_REPLAY: usize = 1024;
 
+/// Bounded retransmission of one short control exchange: at most `max`
+/// sends, `interval` apart. Each protocol keeps its own deadline, signature
+/// and budget; only this counting/pacing rule is shared.
+#[derive(Clone, Copy)]
+pub(super) struct Retry {
+    sends: u8,
+    next: Instant,
+}
+impl Retry {
+    /// Nothing sent yet; the first send is due now.
+    pub(super) fn due() -> Self {
+        Self {
+            sends: 0,
+            next: Instant::now(),
+        }
+    }
+    /// One send already made now (e.g. an immediate response).
+    pub(super) fn sent(interval: Duration) -> Self {
+        Self {
+            sends: 1,
+            next: Instant::now() + interval,
+        }
+    }
+    /// Take one send slot if it is due and under budget.
+    pub(super) fn take(&mut self, interval: Duration, max: u8) -> bool {
+        let now = Instant::now();
+        if self.sends >= max || now < self.next {
+            return false;
+        }
+        self.sends += 1;
+        self.next = now + interval;
+        true
+    }
+}
+
 struct ServerAttempt {
     peer: NodeId,
     carrier: Carrier,
@@ -29,8 +64,8 @@ struct ServerAttempt {
     intro_kind: Kind,
     challenge: Vec<u8>,
     scope: Scope,
-    last_response: Instant,
-    responses: u8,
+    /// The first challenge is sent on INIT; repeats answer repeated INITs.
+    responses: Retry,
     capacity: OwnedSemaphorePermit,
     supersedes: Replacement,
     rebuild: bool,
@@ -40,17 +75,33 @@ struct Recovery {
     transcript: Transcript,
     scope: Scope,
     output: Vec<u8>,
-    next_send: Instant,
-    sends: u8,
+    retry: Retry,
     capacity: OwnedSemaphorePermit,
+}
+
+/// Initiator side of one four-message handshake: each phase carries exactly
+/// the material its retransmission needs, with one retry ledger per phase.
+enum ClientPhase {
+    /// INIT sent; waiting for the listener's signed challenge.
+    Init { output: Vec<u8> },
+    /// Challenge verified, ACK signed; waiting for READY.
+    Acked {
+        transcript: Transcript,
+        output: Vec<u8>,
+    },
 }
 
 struct ClientAttempt {
     initiation: Initiation,
-    transcript: Option<Transcript>,
-    output: Vec<u8>,
-    next_send: Instant,
-    sends: u8,
+    phase: ClientPhase,
+    retry: Retry,
+}
+impl ClientAttempt {
+    fn output(&self) -> &[u8] {
+        match &self.phase {
+            ClientPhase::Init { output } | ClientPhase::Acked { output, .. } => output,
+        }
+    }
 }
 
 struct Outbound {
@@ -485,18 +536,15 @@ impl Owner {
                 {
                     return Err(Error::Unavailable);
                 }
-                let now = Instant::now();
                 for (remote, attempt) in &mut outbound.attempts {
-                    if attempt.sends >= MAX_SENDS || now < attempt.next_send {
+                    if !attempt.retry.take(RETRY, MAX_SENDS) {
                         continue;
                     }
-                    attempt.sends += 1;
-                    attempt.next_send = now + RETRY;
                     let _ = send_control(
                         &self.sender,
                         &outbound.scope,
                         *remote,
-                        attempt.output.clone(),
+                        attempt.output().to_vec(),
                     )
                     .await;
                 }
@@ -512,11 +560,8 @@ impl Owner {
                 recovery.scope.cancellation.cancel();
             }
             if let Some(recovery) = &mut channel.recovery
-                && recovery.sends < MAX_SENDS
-                && Instant::now() >= recovery.next_send
+                && recovery.retry.take(RETRY, MAX_SENDS)
             {
-                recovery.sends += 1;
-                recovery.next_send = Instant::now() + RETRY;
                 let _ = send_control(
                     &self.sender,
                     &recovery.scope,
@@ -730,11 +775,8 @@ impl Owner {
             if attempt.scope.check().is_ok()
                 && attempt.intro_kind == kind
                 && attempt.intro == body
-                && attempt.responses < MAX_SENDS
-                && Instant::now() >= attempt.last_response + RETRY
+                && attempt.responses.take(RETRY, MAX_SENDS)
             {
-                attempt.responses += 1;
-                attempt.last_response = Instant::now();
                 let _ = send_control(
                     &self.sender,
                     &attempt.scope,
@@ -897,8 +939,7 @@ impl Owner {
             intro_kind,
             challenge,
             scope,
-            last_response: Instant::now(),
-            responses: 1,
+            responses: Retry::sent(RETRY),
             capacity,
             supersedes,
             rebuild,
@@ -1036,23 +1077,27 @@ impl Owner {
                 // already beaten by this initiator's healthy ranked selection.
                 return Err(Error::Unavailable);
             }
-            if let Some(old) = &attempt.transcript {
-                if old.id() != transcript.id() {
-                    return Ok(());
+            match &attempt.phase {
+                ClientPhase::Acked {
+                    transcript: old, ..
+                } => {
+                    if old.id() != transcript.id() {
+                        return Ok(());
+                    }
                 }
-            } else {
-                attempt.output = adjacency::encode(
-                    Kind::Ack,
-                    &transcript.message(&self.shared.identity, Kind::Ack)?,
-                )?;
-                attempt.transcript = Some(transcript);
-                attempt.sends = 0;
-                attempt.next_send = Instant::now();
+                ClientPhase::Init { .. } => {
+                    let output = adjacency::encode(
+                        Kind::Ack,
+                        &transcript.message(&self.shared.identity, Kind::Ack)?,
+                    )?;
+                    attempt.phase = ClientPhase::Acked { transcript, output };
+                    attempt.retry = Retry::due();
+                }
             }
             // Retransmission is timer-paced, including duplicate challenges.
             return Ok(());
         }
-        let Some(transcript) = &attempt.transcript else {
+        let ClientPhase::Acked { transcript, .. } = &attempt.phase else {
             return Ok(());
         };
         if transcript
@@ -1061,7 +1106,13 @@ impl Owner {
         {
             return Ok(());
         }
-        let transcript = attempt.transcript.take().ok_or(Error::Worker)?;
+        let Some(ClientAttempt {
+            phase: ClientPhase::Acked { transcript, .. },
+            ..
+        }) = outbound.attempts.remove(&remote)
+        else {
+            return Err(Error::Worker);
+        };
         let peer = outbound.peer;
         let carrier = outbound.carrier.clone();
         let capacity = outbound.capacity.take().ok_or(Error::Worker)?;
@@ -1234,8 +1285,7 @@ impl Owner {
                 transcript,
                 scope,
                 output,
-                next_send: Instant::now(),
-                sends: 0,
+                retry: Retry::due(),
                 capacity,
             });
             return Ok(());
@@ -1504,10 +1554,10 @@ async fn dial_endpoint(
             remote,
             ClientAttempt {
                 initiation,
-                transcript: None,
-                output: adjacency::encode(Kind::Init, &intro)?,
-                next_send: Instant::now(),
-                sends: 0,
+                phase: ClientPhase::Init {
+                    output: adjacency::encode(Kind::Init, &intro)?,
+                },
+                retry: Retry::due(),
             },
         );
     }
@@ -1843,7 +1893,7 @@ mod tests {
         assert!(owner.pending.is_empty());
         owner.init(source, &intro).await.unwrap();
         let expected_id = owner.pending[&source].transcript.id();
-        owner.pending.get_mut(&source).unwrap().last_response = Instant::now() - RETRY;
+        owner.pending.get_mut(&source).unwrap().responses = Retry::due();
         owner.init(source, &intro).await.unwrap();
         assert_eq!(owner.pending[&source].transcript.id(), expected_id);
         owner.init(wrong_source, &intro).await.unwrap();
@@ -1903,11 +1953,7 @@ mod tests {
         let (_, _, fresh) =
             adjacency::incoming(&shared.plan, &[(ids[0], carrier)], &intro).unwrap();
         let fresh = fresh.respond().unwrap();
-        assert!(
-            fresh
-                .verify(&shared.plan, ids[0], Kind::Ack, &ack)
-                .is_err()
-        );
+        assert!(fresh.verify(&shared.plan, ids[0], Kind::Ack, &ack).is_err());
         assert!(fresh.verify_health(cfg, ids[1], Kind::Pong, &pong).is_err());
         let peer_pong = transcript
             .health(&fixture.identities[0], Kind::Pong, &nonce)
