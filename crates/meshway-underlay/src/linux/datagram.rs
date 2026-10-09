@@ -1,7 +1,7 @@
 //! The single protected UDP primitive, shared by Mesh endpoints and bootstrap
 //! DNS. Only snapshot-minted factory methods expose Mesh sockets publicly.
 use super::{
-    protection::{Scope, io_error},
+    protection::{ProtectionScope, io_error},
     sockets::Owned,
 };
 use crate::{Error, Result};
@@ -38,11 +38,11 @@ pub struct DatagramCandidate {
 }
 
 impl ProtectedDatagram {
-    pub(super) fn scope(&self) -> Scope {
+    pub(super) fn scope(&self) -> ProtectionScope {
         self.owned.scope.clone()
     }
     pub(super) fn bind(
-        scope: Scope,
+        scope: ProtectionScope,
         local: SocketAddr,
         options: &SocketOptions,
         targets: Option<Vec<SocketAddr>>,

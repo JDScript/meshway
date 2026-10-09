@@ -1,6 +1,6 @@
 //! Target authorization paired with one protected descriptor. No socket alias or
 //! arbitrary recipient-adder escapes this module.
-use super::{ProtectedDatagram, dns::Resolver, protection::Scope};
+use super::{ProtectedDatagram, dns::Resolver, protection::ProtectionScope};
 use crate::{Error, Result};
 use meshway_control::connectivity::{
     AttemptScope, DiscoveryContext, SocketReference, udp_recipient,
@@ -20,7 +20,7 @@ pub struct TraversalDatagram {
 #[derive(Clone)]
 pub struct DatagramAuthorization {
     registry: Arc<Registry>,
-    scope: Scope,
+    scope: ProtectionScope,
     resolver: Resolver,
     binding: Arc<Mutex<Binding>>,
     local: SocketAddr,

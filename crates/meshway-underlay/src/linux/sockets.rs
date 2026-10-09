@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use super::{
     datagram::{DatagramCandidate, ProtectedDatagram},
     dns::Resolver,
-    protection::{Scope, Shared, io_error},
+    protection::{ProtectionScope, Shared, io_error},
 };
 use crate::{Error, Options, Result};
 
@@ -38,7 +38,7 @@ pub struct SocketFactory {
 
 #[derive(Clone)]
 pub struct CandidateHandle {
-    scope: Scope,
+    scope: ProtectionScope,
     local: NodeId,
     candidate: DialCandidate,
     endpoint: Endpoint,
@@ -75,7 +75,7 @@ impl fmt::Debug for CandidateHandle {
 
 #[derive(Clone)]
 pub struct ListenerHandle {
-    scope: Scope,
+    scope: ProtectionScope,
     local: NodeId,
     key: String,
     declaration: PreparedListener,
@@ -535,7 +535,7 @@ fn tcp_socket(address: SocketAddr) -> io::Result<TcpSocket> {
 }
 
 pub(super) async fn connect_tcp(
-    scope: Scope,
+    scope: ProtectionScope,
     address: SocketAddr,
     bind: Option<SocketAddr>,
     options: &SocketOptions,
@@ -562,7 +562,7 @@ pub(super) async fn connect_tcp(
 
 fn adopt(
     stream: TcpStream,
-    scope: Scope,
+    scope: ProtectionScope,
     capacity: OwnedSemaphorePermit,
     options: &SocketOptions,
     tcp: &TcpOptions,
@@ -609,14 +609,18 @@ impl<T> Drop for Clear<T> {
 
 pub(super) struct Owned<T> {
     pub(super) socket: Arc<Mutex<Option<T>>>,
-    pub(super) scope: Scope,
+    pub(super) scope: ProtectionScope,
     pub(super) wakers: Arc<Wakers>,
     closed: CancellationToken,
     capacity: Arc<Mutex<Option<OwnedSemaphorePermit>>>,
 }
 
 impl<T: Send + 'static> Owned<T> {
-    pub(super) fn new(socket: T, scope: Scope, capacity: OwnedSemaphorePermit) -> Result<Self> {
+    pub(super) fn new(
+        socket: T,
+        scope: ProtectionScope,
+        capacity: OwnedSemaphorePermit,
+    ) -> Result<Self> {
         let socket = Arc::new(Mutex::new(Some(socket)));
         let capacity = Arc::new(Mutex::new(Some(capacity)));
         let wakers = Arc::new(Wakers {

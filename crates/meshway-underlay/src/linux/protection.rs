@@ -118,7 +118,7 @@ impl Shared {
         Ok(())
     }
 
-    pub fn data(self: &Arc<Self>, snapshot: &ExecutionSnapshot) -> Result<Scope> {
+    pub fn data(self: &Arc<Self>, snapshot: &ExecutionSnapshot) -> Result<ProtectionScope> {
         self.check()?;
         snapshot.ensure_current().map_err(|_| Error::Expired)?;
         let active = self.execution.read().map_err(|_| Error::Worker)?;
@@ -126,7 +126,7 @@ impl Shared {
         if !installed.same_execution(snapshot) || token.is_cancelled() {
             return Err(Error::Expired);
         }
-        Ok(Scope {
+        Ok(ProtectionScope {
             shared: self.clone(),
             snapshot: Some(snapshot.clone()),
             epoch: token.clone(),
@@ -136,8 +136,8 @@ impl Shared {
         })
     }
 
-    pub fn bootstrap(self: &Arc<Self>) -> Scope {
-        Scope {
+    pub fn bootstrap(self: &Arc<Self>) -> ProtectionScope {
+        ProtectionScope {
             shared: self.clone(),
             snapshot: None,
             epoch: self.tasks.stop.clone(),
@@ -149,7 +149,7 @@ impl Shared {
 }
 
 #[derive(Clone)]
-pub(super) struct Scope {
+pub(super) struct ProtectionScope {
     pub shared: Arc<Shared>,
     snapshot: Option<ExecutionSnapshot>,
     epoch: CancellationToken,
@@ -158,7 +158,7 @@ pub(super) struct Scope {
     binding: Option<Arc<PhysicalResource>>,
 }
 
-impl Scope {
+impl ProtectionScope {
     pub fn owner_current(&self) -> Result<()> {
         self.shared.check()?;
         if self.epoch.is_cancelled()

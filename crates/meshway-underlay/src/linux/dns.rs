@@ -22,7 +22,7 @@ use tokio::io::AsyncReadExt;
 
 use super::{
     datagram::ProtectedDatagram,
-    protection::{Scope, Shared, io_error},
+    protection::{ProtectionScope, Shared, io_error},
     sockets::{ProtectedTcp, connect_tcp},
     tasks::Tasks,
 };
@@ -34,7 +34,7 @@ pub(super) struct Resolver {
     hosts: Arc<Hosts>,
     overrides: Arc<BTreeMap<String, Vec<IpAddr>>>,
     shared: Arc<Shared>,
-    scope: Scope,
+    scope: ProtectionScope,
     config: Option<ResolverConfig>,
     resolver_options: ResolverOpts,
     timeout: Duration,
@@ -149,7 +149,7 @@ impl Resolver {
 
     /// Candidate name resolution has that candidate's execution lifetime. It
     /// cannot borrow the Server bootstrap exemption after publication expiry.
-    pub fn scoped(&self, scope: Scope) -> Result<Self> {
+    pub fn scoped(&self, scope: ProtectionScope) -> Result<Self> {
         scope.check()?;
         let inner = build(
             self.config.clone(),
@@ -225,7 +225,7 @@ impl Resolver {
 fn build(
     config: Option<ResolverConfig>,
     options: ResolverOpts,
-    scope: Scope,
+    scope: ProtectionScope,
     hosts: Arc<Hosts>,
     timeout: Duration,
 ) -> Result<Option<HickoryResolver<Provider>>> {
@@ -267,7 +267,7 @@ async fn read_bounded(path: &str) -> io::Result<Vec<u8>> {
 
 #[derive(Clone)]
 struct Provider {
-    scope: Scope,
+    scope: ProtectionScope,
     upstreams: Arc<Vec<SocketAddr>>,
     timeout: Duration,
 }

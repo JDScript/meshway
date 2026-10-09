@@ -75,7 +75,7 @@ pub(super) type View = Arc<RwLock<BTreeMap<super::ExitIncarnation, Live>>>;
 struct Write {
     packet: Vec<u8>,
     reply: oneshot::Sender<Result<()>>,
-    authority: super::super::super::protection::Scope,
+    authority: super::super::super::protection::ProtectionScope,
     live: Live,
     packet_guard: Box<dyn super::ExitSendGuard>,
 }
@@ -84,7 +84,7 @@ struct Reply {
     incarnation: super::ExitIncarnation,
     packet: Vec<u8>,
     guard: Live,
-    authority: super::super::super::protection::Scope,
+    authority: super::super::super::protection::ProtectionScope,
 }
 
 /// A reverse-NAT packet still requires admission in the unique data-plane flow.
@@ -126,7 +126,7 @@ impl Writer {
     pub async fn send(
         &self,
         packet: Vec<u8>,
-        authority: super::super::super::protection::Scope,
+        authority: super::super::super::protection::ProtectionScope,
         live: Live,
         packet_guard: Box<dyn super::ExitSendGuard>,
     ) -> Result<()> {

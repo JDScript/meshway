@@ -357,7 +357,7 @@ fn mesh(expected: &Mutex<Expected>) -> Result<Ranges> {
 fn current(
     shared: &Arc<super::super::super::protection::Shared>,
     plan: &EgressCapturePlan,
-) -> Result<super::super::super::protection::Scope> {
+) -> Result<super::super::super::protection::ProtectionScope> {
     let snapshot = shared
         .execution
         .read()

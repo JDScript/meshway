@@ -31,14 +31,14 @@ enum Request {
         tuple: OriginalTuple,
         deadline: Deadline,
         scope: ExitScope,
-        guard: super::super::super::protection::Scope,
+        guard: super::super::super::protection::ProtectionScope,
         reply: oneshot::Sender<Result<ProjectionAck>>,
     },
     Renew {
         incarnation: super::ExitIncarnation,
         deadline: Deadline,
         scope: ExitScope,
-        guard: super::super::super::protection::Scope,
+        guard: super::super::super::protection::ProtectionScope,
         reply: oneshot::Sender<Result<ProjectionAck>>,
     },
     Confirm {
@@ -189,7 +189,7 @@ impl ExitRole {
         &self,
         tuple: OriginalTuple,
         deadline: &Deadline,
-    ) -> Result<super::super::super::protection::Scope> {
+    ) -> Result<super::super::super::protection::ProtectionScope> {
         Authority {
             shared: self.shared.clone(),
             plan: self.plan.clone(),
@@ -250,7 +250,7 @@ impl Authority {
         &self,
         tuple: OriginalTuple,
         deadline: &Deadline,
-    ) -> Result<super::super::super::protection::Scope> {
+    ) -> Result<super::super::super::protection::ProtectionScope> {
         use meshway_configuration::execution::{BusinessProtocol, BusinessTarget};
         let snapshot = self.snapshot()?;
         let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
