@@ -138,6 +138,7 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
     // Host. An unacknowledged projection is intentionally not a retained flow.
     let packet_before = mesh.forward(packet(&f, 42000));
     project(&driver, &mut mesh.e, &packet_before).await;
+    let original_deadline = packet_before.exit_scope().unwrap().deadline();
     let references: Vec<_> = f
         .controls
         .iter()
@@ -193,7 +194,7 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
     let packet_after = mesh.forward(packet(&f, 42000));
     project(&driver, &mut mesh.e, &packet_after).await;
     assert_eq!(
-        packet_before.exit_scope().unwrap().deadline(),
+        original_deadline,
         packet_after.exit_scope().unwrap().deadline()
     );
     settled(&mut handle, &mut f).await;
