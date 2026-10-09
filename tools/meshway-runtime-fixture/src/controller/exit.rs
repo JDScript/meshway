@@ -4,11 +4,50 @@ use crate::exit::{Role as ExitRole, Topology, read, ready, wait, write};
 use meshway_configuration::{ProfileAssignment, RouteAction, RoutingProfile};
 
 pub(super) async fn observe_acquisition(
-    axum::extract::State(evidence): axum::extract::State<std::path::PathBuf>,
+    axum::extract::State((evidence, signals)): axum::extract::State<(
+        std::path::PathBuf,
+        std::path::PathBuf,
+    )>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    if request.uri().path().starts_with("/agent-api/v1/")
+        && tokio::fs::try_exists(signals.join("exit-http-hold"))
+            .await
+            .unwrap_or(false)
+        && !tokio::fs::try_exists(signals.join("exit-http-open"))
+            .await
+            .unwrap_or(false)
+    {
+        if tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(signals.join("exit-http-held"))
+            .await
+            .is_ok()
+        {
+            tracing::info!(
+                phase = "exit-http-held",
+                path = request.uri().path(),
+                "real Node HTTP request held before admission"
+            );
+        }
+        let held = tokio::time::timeout(Duration::from_secs(180), async {
+            loop {
+                if tokio::fs::try_exists(signals.join("exit-http-open")).await?
+                    || tokio::fs::try_exists(signals.join("exit-stop")).await?
+                {
+                    break Ok::<(), std::io::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+        if !matches!(held, Ok(Ok(()))) {
+            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    }
     if request.uri().path() != "/agent-api/v1/instances" {
         return next.run(request).await;
     }
@@ -249,6 +288,7 @@ pub(super) async fn coordinate(
             .await?;
         }
         if !outage && tokio::fs::try_exists(cli.signals.join("exit-http-close")).await? {
+            ready(cli, "exit-http-hold").await?;
             write(
                 &cli.signals.join("exit-http-closed.json"),
                 &availability.close().await?,
@@ -268,11 +308,19 @@ pub(super) async fn coordinate(
             withdrawn = true;
         }
         if outage && !reopened && tokio::fs::try_exists(cli.signals.join("exit-http-open")).await? {
-            write(
-                &cli.signals.join("exit-http-opened.json"),
-                &availability.open()?,
-            )
+            // A held handler (or the next retry if its peer disconnected) first
+            // reaches the closed admission gate. Retain the gate's real rejected
+            // request proof before reopening it.
+            let opened = tokio::time::timeout(STARTUP, async {
+                loop {
+                    if let Ok(opened) = availability.open() {
+                        return opened;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
             .await?;
+            write(&cli.signals.join("exit-http-opened.json"), &opened).await?;
             reopened = true;
         }
         if withdrawn && !restored && tokio::fs::try_exists(cli.signals.join("exit-restore")).await?
@@ -290,4 +338,77 @@ pub(super) async fn coordinate(
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::DirBuilderExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn exit_http_hold_precedes_closed_admission_and_releases_a_real_request() {
+        let directory =
+            std::env::temp_dir().join(format!("meshway-exit-hold-{}", request().unwrap()));
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&directory)
+            .unwrap();
+        let result = exercise(&directory).await;
+        std::fs::remove_dir_all(directory).unwrap();
+        result.unwrap();
+    }
+
+    async fn exercise(directory: &std::path::Path) -> Result<()> {
+        let availability = crate::recovery::Availability::new();
+        availability.close().await?;
+        write(&directory.join("exit-http-hold"), &true).await?;
+        let router = axum::Router::new()
+            .route(
+                "/agent-api/v1/test",
+                axum::routing::get(|| async { "admitted" }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                availability.clone(),
+                crate::recovery::gate,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                (directory.to_path_buf(), directory.to_path_buf()),
+                observe_acquisition,
+            ));
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    let _ = stopped.await;
+                })
+                .await
+        });
+        let result = async {
+            let mut client = tokio::net::TcpStream::connect(address).await?;
+            client.write_all(b"GET /agent-api/v1/test HTTP/1.1\r\nHost: fixture\r\nConnection: close\r\n\r\n").await?;
+            tokio::time::timeout(IO, async {
+                while !tokio::fs::try_exists(directory.join("exit-http-held")).await? {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                Ok::<(), std::io::Error>(())
+            }).await??;
+            let mut prefix = [0; 12];
+            if tokio::time::timeout(Duration::from_millis(50), client.read_exact(&mut prefix)).await.is_ok() {
+                return Err("HTTP request was rejected instead of held".into());
+            }
+            write(&directory.join("exit-http-open"), &true).await?;
+            tokio::time::timeout(IO, client.read_exact(&mut prefix)).await??;
+            if &prefix != b"HTTP/1.1 503" { return Err("held request bypassed closed admission".into()); }
+            if availability.open()?.1 != 1 { return Err("missing real rejected-request receipt".into()); }
+            Ok::<(), crate::Error>(())
+        }.await;
+        // Also release held handlers on a failed assertion before joining.
+        write(&directory.join("exit-stop"), &true).await?;
+        let _ = stop.send(());
+        server.await??;
+        result
+    }
 }

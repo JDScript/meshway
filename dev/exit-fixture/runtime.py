@@ -270,6 +270,19 @@ def execute(report, artifacts, runtime_os, platform, short, load):
 
         observations = {}
 
+        def retired():
+            readback = {"e": {
+                "nftCounters": command("e", "/usr/sbin/nft", "-j", "list", "ruleset", required=False),
+                "conntrack": {link: command("e", "/usr/sbin/conntrack", "-L", "-f", "ipv4", "-d", addresses[link][link], "-o", "extended", required=False)
+                              for link in ("external", "lan")},
+            }}
+            write(report / "retirement-readback.json", readback)
+            try:
+                evidence.no_owned_exit(readback)
+            except RuntimeError:
+                return False
+            return True
+
         wait_for(lambda: (report / "signals/exit-configured.json").exists(), "configuration")
         manifest["status"] = "prerequisite"
         save()
@@ -393,10 +406,40 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                            "import socket; s=socket.create_connection(('" + target + "',8080),2); s.settimeout(2); "
                            "s.sendall(b'exit-block-control'); assert s.recv(64)==b'exit-block-control'", required=False)
 
+        def warm_probe(role, target):
+            attempts = []
+            deadline = time.monotonic() + 45
+            while True:
+                result = tcp_probe(role, target)
+                attempts.append(result)
+                if result["exitCode"] == 0 or time.monotonic() >= deadline:
+                    return {"exitCode": result["exitCode"], "attempts": attempts}
+                time.sleep(.1)
+
+        manifest["stages"]["5"] = {"status": "passed", "evidence": ["nat-proof.json", "first-flow.json", "components/driver.log"]}
+        manifest["stages"]["6"] = {"status": "passed", "evidence": ["components/driver.log", "components/handoff.log", "a/receive-only-external.json", "a/receive-only-lan.json"]}
+
+        # Withdraw the still-live original sockets before any egress fault can
+        # independently terminate them and make this assertion vacuous.
+        manifest["status"] = "withdrawal"
+        save()
+        (report / "signals/exit-withdraw").touch()
+        wait_for(lambda: (report / "signals/exit-withdrawn.json").exists(), "role withdrawal")
+        withdrawn_revision = json.loads(command("controller", "cat", "/signals/exit-withdrawn.json")["stdout"])
+        wait_for(lambda: running(s := status("e")) and s["applied"]["revision"] == withdrawn_revision
+                 and (s.get("exit") or {}).get("installedRole") is None, "role drain applied")
+        wait_for(retired, "owned role/conntrack retirement readback")
+        evidence.no_owned_exit(snapshot("withdrawn"))
+        (report / "signals/exit-flow-withdraw").touch()
+        wait_for(lambda: (report / "signals/exit-traffic-done").exists(), "old socket refusal")
+        (report / "signals/exit-restore").touch()
+        wait_for(lambda: (report / "signals/exit-restored.json").exists(), "role restoration")
+        wait_for(installed, "restored applied")
+
         controls = {}
         for link in ("external", "lan"):
             target = addresses[link][link]
-            controls[link] = {"a": tcp_probe("a", target)}
+            controls[link] = {"a": warm_probe("a", target)}
             for role in ("e", "r", "controller"):
                 controls[link][role + "Direct"] = tcp_probe(role, target)
             if controls[link]["eDirect"]["exitCode"] or any(controls[link][role + "Direct"]["exitCode"] == 0 for role in ("r", "controller")):
@@ -406,38 +449,25 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 controls[link]["blocked"] = tcp_probe("a", target)
             finally:
                 controls[link]["restore"] = command("e", "ip", "route", "del", "unreachable", target + "/32")
-            controls[link]["restored"] = tcp_probe("a", target)
+            controls[link]["restored"] = warm_probe("a", target)
             write(report / "business-block-control.json", controls)
             if controls[link]["a"]["exitCode"] or not controls[link]["blocked"]["exitCode"] or controls[link]["restored"]["exitCode"]:
                 raise RuntimeError("A business flow did not follow E block/restore")
             echo = command("a", "ping", "-n", "-c", "3", "-W", "2", target, required=False)
             write(report / ("icmp-" + link + ".json"), echo)
             if echo["exitCode"]: raise RuntimeError("real exit ICMP echo failed")
-        manifest["stages"]["5"] = {"status": "passed", "evidence": ["nat-proof.json", "first-flow.json", "components/driver.log"]}
-        manifest["stages"]["6"] = {"status": "passed", "evidence": ["components/driver.log", "components/handoff.log", "a/receive-only-external.json", "a/receive-only-lan.json"]}
-
-        # Remove the role while the source retains its original TCP/UDP sockets.
-        manifest["status"] = "withdrawal"
-        save()
-        (report / "signals/exit-withdraw").touch()
-        wait_for(lambda: (report / "signals/exit-withdrawn.json").exists(), "role withdrawal")
-        wait_for(lambda: (status("e").get("exit") or {}).get("installedRole") is None, "role drain")
-        evidence.no_owned_exit(snapshot("withdrawn"))
-        (report / "signals/exit-flow-withdraw").touch()
-        wait_for(lambda: (report / "signals/exit-traffic-done").exists(), "old socket refusal")
-        (report / "signals/exit-restore").touch()
-        wait_for(lambda: (report / "signals/exit-restored.json").exists(), "role restoration")
-        wait_for(installed, "restored applied")
         before_expiry = status("e")
         write(report / "e/before-expiry.json", before_expiry)
         manifest["status"] = "http-expiry"
         save()
         (report / "signals/exit-http-close").touch()
         wait_for(lambda: (report / "signals/exit-http-closed.json").exists(), "HTTP closed")
+        wait_for(lambda: (report / "signals/exit-http-held").exists(), "real in-flight Node HTTP held")
         actual_deadline = max(datetime.fromisoformat(status(role)["instance"]["expiresAt"]).timestamp() for role in ("a", "r", "e"))
         wait_for(lambda: status("e").get("applied") is None and (status("e").get("exit") or {}).get("installedRole") is None,
                  "actual instance/execution expiry", 180)
         wait_for(lambda: time.time() > actual_deadline, "original instance deadline", 180)
+        wait_for(retired, "expired role/conntrack retirement readback")
         evidence.no_owned_exit(snapshot("expired"))
         write(report / "e/expired-status.json", status("e"))
         (report / "signals/exit-http-open").touch()
@@ -450,7 +480,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         snapshot("recovered")
         wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "source/relay automatic recovery")
         for link in ("external", "lan"):
-            result = tcp_probe("a", addresses[link][link])
+            result = warm_probe("a", addresses[link][link])
             write(report / ("recovered-flow-" + link + ".json"), result)
             if result["exitCode"]: raise RuntimeError("new flow after instance recovery failed")
         before_crash = snapshot("before-crash")

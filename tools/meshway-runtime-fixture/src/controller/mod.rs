@@ -54,12 +54,6 @@ async fn run_server(cli: &Cli) -> Result<()> {
     let availability = crate::recovery::Availability::new();
     let requests = crate::control_requests::Audit::new();
     let mut router = meshway_server::http::router(&app);
-    if cli.traversal == crate::TraversalMode::Exit {
-        router = router.layer(axum::middleware::from_fn_with_state(
-            cli.evidence.clone(),
-            exit::observe_acquisition,
-        ));
-    }
     if cli.traversal == crate::TraversalMode::Nat {
         router = router.layer(axum::middleware::from_fn_with_state(
             audit.clone(),
@@ -74,6 +68,14 @@ async fn run_server(cli: &Cli) -> Result<()> {
         requests.clone(),
         crate::control_requests::observe,
     ));
+    if cli.traversal == crate::TraversalMode::Exit {
+        // The hold precedes admission so closing the gate can drain already
+        // admitted database work independently of deliberately held requests.
+        router = router.layer(axum::middleware::from_fn_with_state(
+            (cli.evidence.clone(), cli.signals.clone()),
+            exit::observe_acquisition,
+        ));
+    }
     let (stop, mut stopped) = watch::channel(false);
     let server = tokio::spawn(async move {
         let mut connections = JoinSet::new();
