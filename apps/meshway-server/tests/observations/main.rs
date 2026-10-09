@@ -448,7 +448,9 @@ async fn background_expiry_and_session_revocation_never_renew_diagnostic_authori
     )
     .await;
     assert!(chrono::Utc::now() >= task.expires_at);
-    assert!(slice(server.target(&a).await).diagnostics.is_empty());
+    // Expiry is applied by the next transaction that sweeps the runtime, not
+    // at the deadline instant; converge on the projection rather than racing it.
+    wait_no_diagnostics(&server, &a).await;
     let items: ObservationList =
         json(server.get("/agent-api/v1/tasks", a.token.expose()), 200).await;
     assert!(items.items.is_empty());
