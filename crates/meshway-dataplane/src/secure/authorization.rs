@@ -84,18 +84,5 @@ pub(super) fn unchanged(
     {
         return Ok(false);
     }
-    let prefix = format!("{}/", old.node_id);
-    for (dialer, keys) in &selected.dial_candidates {
-        for key in keys {
-            if *dialer == old.node_id && old.dialers.get(key) != new.dialers.get(key) {
-                return Ok(false);
-            }
-            if let Some(listener) = key.strip_prefix(&prefix)
-                && old.listeners.get(listener) != new.listeners.get(listener)
-            {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(true)
+    Ok(crate::flow::carrier_bindings_unchanged(old, new, selected))
 }

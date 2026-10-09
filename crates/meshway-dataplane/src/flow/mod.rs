@@ -623,20 +623,28 @@ pub(super) fn authorization_unchanged(
     else {
         return Ok(false);
     };
+    Ok(carrier_bindings_unchanged(old, new, selected))
+}
+
+pub(super) fn carrier_bindings_unchanged(
+    old: &NodeConfiguration,
+    new: &NodeConfiguration,
+    selected: &meshway_configuration::execution::LogicalPath,
+) -> bool {
     let prefix = format!("{}/", old.node_id);
     for (dialer, keys) in &selected.dial_candidates {
         for key in keys {
             if *dialer == old.node_id && old.dialers.get(key) != new.dialers.get(key) {
-                return Ok(false);
+                return false;
             }
             if let Some(listener) = key.strip_prefix(&prefix)
                 && old.listeners.get(listener) != new.listeners.get(listener)
             {
-                return Ok(false);
+                return false;
             }
         }
     }
-    Ok(true)
+    true
 }
 
 #[cfg(test)]
