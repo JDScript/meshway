@@ -14,6 +14,10 @@ struct Seed {
 #[tokio::test]
 #[ignore = "requires isolated real Server and generated-SDK configuration driver"]
 async fn real_control_external_permit_installs_transit_without_exit_writer() {
+    run(None).await;
+}
+
+pub(super) async fn run(case: Option<super::handoff::Case>) {
     assert_eq!(
         std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
         Ok("1")
@@ -109,7 +113,7 @@ async fn real_control_external_permit_installs_transit_without_exit_writer() {
     let instance = controls[0].execution_snapshot().unwrap().instance().clone();
     let demand = serde_json::from_value(serde_json::json!({
         "instance": instance, "requestId": "44444444-4444-4444-8444-444444444444",
-        "target": {"type": "ip", "address": "198.18.71.11"}, "protocol": "udp", "port": 42424, "profile": "mesh", "durationSeconds": 60
+        "target": {"type": "ip", "address": "198.18.71.11"}, "protocol": "udp", "port": 42424, "profile": "mesh", "durationSeconds": if case.is_some() { 30 } else { 60 }
     })).unwrap();
     let feedback = controls[0].create_demand(&demand).await.unwrap();
     assert!(
@@ -158,12 +162,17 @@ async fn real_control_external_permit_installs_transit_without_exit_writer() {
         meshway_model::exit::ExitStatus::Ready,
         "owned capture/exit rules must not become foreign firewall conflicts"
     );
-    guarded_writer(&role, &current).await;
-    role.retire().await.unwrap();
+    if let Some(case) = case {
+        super::handoff::exercise(case, &mut host, &mut controls, &role, &current).await;
+    } else {
+        guarded_writer(&role, &current).await;
+    }
+    let unknown = matches!(case, Some(super::handoff::Case::UnknownCleanup));
+    assert_eq!(role.retire().await.is_err(), unknown);
     for control in controls {
         control.shutdown().await.unwrap();
     }
-    host.shutdown(false).await.unwrap();
+    assert_eq!(host.shutdown(false).await.is_err(), unknown);
     println!(
         "X3C_RELAY=real-server-real-control,external-permit,full-A-R-E-path,transit-install,no-exit-role,no-exit-writer"
     );
