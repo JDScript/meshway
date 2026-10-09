@@ -1,5 +1,5 @@
 use super::super::{
-    monitor::{Event, Expected},
+    monitor::Expected,
     plan::{PROTOCOL, decode_route, decode_rule, encode_route, encode_rule, priority},
 };
 use super::storage::{Ledger, Store};
@@ -28,6 +28,15 @@ pub(super) struct Routing {
 }
 
 impl Routing {
+    fn objects(&self, monitored: bool) -> super::super::rpdb::Objects<'_> {
+        super::super::rpdb::Objects {
+            handle: &self.handle,
+            expected: &self.expected,
+            limit: self.limit,
+            monitored,
+        }
+    }
+
     pub async fn forward(&self, ledger: &mut Ledger, store: &mut Store) -> Result<()> {
         if self.start <= RESERVED {
             return Err(Error::Conflict);
@@ -68,24 +77,7 @@ impl Routing {
             ledger.pending = true;
             ledger.routes.push(bytes.clone());
             store.persist(ledger).await?;
-            self.expected
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .add(Event {
-                    rule: false,
-                    deleted: false,
-                    bytes: bytes.clone(),
-                })?;
-            super::super::execute(self.handle.route().add(route).execute()).await?;
-            if super::super::get_routes(&self.handle, self.limit)
-                .await?
-                .into_iter()
-                .filter(|route| encode_route(route.clone()) == bytes)
-                .count()
-                != 1
-            {
-                return Err(Error::Conflict);
-            }
+            self.objects(true).add_route(route).await?;
             ledger.pending = false;
             store.persist(ledger).await?;
         }
@@ -146,27 +138,12 @@ impl Routing {
         ledger.pending = true;
         ledger.rules.push(bytes.clone());
         store.persist(ledger).await?;
-        {
-            let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
-            expected.exit_rules.push(bytes.clone());
-            expected.add(Event {
-                rule: true,
-                deleted: false,
-                bytes: bytes.clone(),
-            })?;
-        }
-        let mut request = self.handle.rule().add();
-        *request.message_mut() = message;
-        super::super::execute(request.execute()).await?;
-        if super::super::get_rules(&self.handle, self.limit)
-            .await?
-            .into_iter()
-            .filter(|rule| encode_rule(rule.clone()) == bytes)
-            .count()
-            != 1
-        {
-            return Err(Error::Conflict);
-        }
+        self.expected
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .exit_rules
+            .push(bytes.clone());
+        self.objects(true).add_rule(message).await?;
         ledger.pending = false;
         store.persist(ledger).await
     }
@@ -257,94 +234,19 @@ impl Routing {
         }) {
             return Err(Error::Conflict);
         }
+        let objects = self.objects(monitored);
         for bytes in routes {
             ledger.pending = true;
             store.persist(ledger).await?;
-            if actual_routes
-                .iter()
-                .any(|route| encode_route(route.clone()) == bytes)
-            {
-                if monitored {
-                    self.expected
-                        .lock()
-                        .map_err(|_| Error::Worker)?
-                        .add(Event {
-                            rule: false,
-                            deleted: true,
-                            bytes: bytes.clone(),
-                        })?;
-                }
-                super::super::execute(self.handle.route().del(decode_route(&bytes)?).execute())
-                    .await?;
-            }
-            if super::super::get_routes(&self.handle, self.limit)
-                .await?
-                .iter()
-                .any(|route| encode_route(route.clone()) == bytes)
-            {
-                return Err(Error::Conflict);
-            }
+            objects.remove_route(&bytes, &actual_routes).await?;
             ledger.routes.retain(|route| *route != bytes);
             store.persist(ledger).await?;
         }
         for bytes in rules.into_iter().rev() {
-            let wanted = decode_rule(&bytes)?;
-            let rules = super::super::get_rules(&self.handle, self.limit).await?;
-            let matching: Vec<_> = rules
-                .iter()
-                .filter(|rule| {
-                    rule.header.family == wanted.header.family
-                        && priority(rule) == priority(&wanted)
-                })
-                .collect();
-            let mut deletion = wanted.clone();
-            if let Some(observed) = matching.first() {
-                let mut comparable = (*observed).clone();
-                if comparable.attributes.iter().any(|attribute| matches!(attribute, RuleAttribute::Iifname(name) if name == &ledger.tun_name)) {
-                    let links = super::super::collect(self.handle.link().get().execute(), self.limit).await?;
-                    if !links.iter().any(|link| link.attributes.iter().any(|attribute| matches!(attribute, rtnetlink::packet_route::link::LinkAttribute::IfName(name) if name == &ledger.tun_name))) {
-                        comparable.header.flags.remove(rtnetlink::packet_route::rule::RuleFlags::IifDetached);
-                    }
-                }
-                if encode_rule(comparable) != bytes {
-                    #[cfg(test)]
-                    eprintln!(
-                        "exit rule recovery mismatch wanted={wanted:?} observed={observed:?}"
-                    );
-                    return Err(Error::Conflict);
-                }
-                deletion = (*observed).clone();
-            }
-            if matching.len() > 1 {
-                return Err(Error::Conflict);
-            }
+            let observed = objects.owned_rule(&bytes, Some(&ledger.tun_name)).await?;
             ledger.pending = true;
             store.persist(ledger).await?;
-            if !matching.is_empty() {
-                if monitored {
-                    self.expected
-                        .lock()
-                        .map_err(|_| Error::Worker)?
-                        .add(Event {
-                            rule: true,
-                            deleted: true,
-                            bytes: encode_rule(deletion.clone()),
-                        })?;
-                }
-                // IIF_DETACHED is kernel observation state, not a userspace
-                // request flag. Delete using the original owned specification.
-                super::super::execute(self.handle.rule().del(wanted.clone()).execute()).await?;
-            }
-            if super::super::get_rules(&self.handle, self.limit)
-                .await?
-                .iter()
-                .any(|rule| {
-                    rule.header.family == wanted.header.family
-                        && priority(rule) == priority(&wanted)
-                })
-            {
-                return Err(Error::Conflict);
-            }
+            objects.remove_rule(&bytes, observed).await?;
             ledger.rules.retain(|rule| *rule != bytes);
             self.expected
                 .lock()

@@ -47,7 +47,7 @@ impl Store {
     pub async fn open(directory: Arc<Directory>) -> Result<(Self, Option<Ledger>)> {
         let source = directory.clone();
         let prior = tokio::task::spawn_blocking(move || -> Result<Option<Ledger>> {
-            super::super::exit::child::settled(&source)?;
+            super::super::tool::child::settled(&source)?;
             let Some(file) = source.file(FILE, false)? else {
                 return Ok(None);
             };

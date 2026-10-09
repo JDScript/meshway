@@ -1,5 +1,11 @@
 use super::*;
 
+fn absent(bytes: &[u8], name: &str) -> Result<(), ExitError> {
+    let tables =
+        super::super::super::tool::nft::decode(bytes).map_err(|_| Reason::NftUnavailable)?;
+    collision(&tables, name)
+}
+
 #[test]
 fn readback_requires_schema_and_rejects_colliding_names_without_deletion() {
     let metadata =

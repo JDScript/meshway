@@ -98,42 +98,20 @@ pub(super) async fn dump(commands: &mut Commands, program: &Program) -> Result<R
 }
 
 pub(super) async fn present(commands: &mut Commands, program: &Program) -> Result<usize> {
-    let output = commands
-        .run(
-            Tool::Nft,
-            vec!["-j".into(), "list".into(), "tables".into()],
-            Vec::new(),
-        )
-        .await
-        .map_err(|_| Error::Netlink)?;
-    if !output.success {
-        return Err(Error::Netlink);
-    }
-    let document: Document = serde_json::from_slice(&output.stdout).map_err(|_| Error::Journal)?;
-    if document.nftables.len() > 16384 {
-        return Err(Error::Capacity);
-    }
+    use super::super::tool::nft::{TablesError, tables};
+    let listed = tables(commands).await.map_err(|error| match error {
+        TablesError::Unavailable => Error::Netlink,
+        TablesError::Malformed => Error::Journal,
+    })?;
     let mut found = std::collections::BTreeSet::new();
-    for object in document.nftables {
-        if object.get("metainfo").is_some() {
-            continue;
-        }
-        let table = object.get("table").ok_or(Error::Journal)?;
-        let family = table
-            .get("family")
-            .and_then(Value::as_str)
-            .ok_or(Error::Journal)?;
-        let name = table
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or(Error::Journal)?;
+    for (family, name) in listed {
         if program
             .tables()
             .iter()
             .any(|(expected_family, expected_name)| {
-                family == *expected_family && name == expected_name
+                family == *expected_family && name == *expected_name
             })
-            && !found.insert((family.to_owned(), name.to_owned()))
+            && !found.insert((family, name))
         {
             return Err(Error::Conflict);
         }

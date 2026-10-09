@@ -4,7 +4,7 @@ use super::{
 };
 use meshway_model::exit::{ExitCapability, ExitStatus, ExitUnavailableReason as Reason};
 use meshway_model::{ConfigurationRef, InstanceId};
-use std::{io::Read, time::SystemTime};
+use std::time::SystemTime;
 
 /// Owned probe operation. Keep this value until `finish` completes, even if the
 /// original requester is cancelled. No UID/capability bitmap stands in for I/O.
@@ -214,13 +214,7 @@ impl ExitProbe {
 }
 
 fn read_sysctl(path: &str) -> Result<u32, ()> {
-    let file = std::fs::File::open(path).map_err(|_| ())?;
-    let mut text = String::new();
-    file.take(32).read_to_string(&mut text).map_err(|_| ())?;
-    if text.len() >= 32 {
-        return Err(());
-    }
-    text.trim().parse().map_err(|_| ())
+    super::host::sysctl(path).map_err(|_| ())
 }
 
 fn forwarding(value: Result<u32, ()>) -> Result<(), Reason> {
@@ -232,13 +226,11 @@ fn forwarding(value: Result<u32, ()>) -> Result<(), Reason> {
 }
 
 fn reverse_path(all: u32, interface: u32, all_mark: u32, mark: u32) -> Result<(), Reason> {
-    if all > 2 || interface > 2 || all_mark > 1 || mark > 1 {
-        return Err(Reason::ForwardingProbeFailed);
+    match super::host::reverse_path(all, interface, all_mark, mark) {
+        super::host::ReversePath::Usable => Ok(()),
+        super::host::ReversePath::Strict => Err(Reason::ReversePathFilterConflict),
+        super::host::ReversePath::Invalid => Err(Reason::ForwardingProbeFailed),
     }
-    if all.max(interface) == 1 {
-        return Err(Reason::ReversePathFilterConflict);
-    }
-    Ok(())
 }
 
 #[cfg(test)]

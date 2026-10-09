@@ -4,7 +4,7 @@ use crate::linux::{
     tasks::Tasks,
 };
 use meshway_authority::{Clock, Deadline, Started};
-use meshway_configuration::execution::{ExitNat, ExitRolePlan};
+use meshway_configuration::execution::ExitNat;
 use meshway_model::{Digest, exit::ExitFamily};
 use meshway_private_storage::Directory;
 use std::{
@@ -67,8 +67,8 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         base_installation: kernel.journal.installation.clone(),
         network: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
         node: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
-        plan: ExitRolePlan {
-            instance_id: "33333333-3333-4333-8333-333333333333".parse().unwrap(),
+        plan: crate::target::RoleIdentity {
+            instance_id: Some("33333333-3333-4333-8333-333333333333".parse().unwrap()),
             generation: Digest::from_bytes([1; 32]),
             family: ExitFamily::Ipv4,
             nat: ExitNat::Masquerade,

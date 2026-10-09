@@ -1,6 +1,6 @@
 use super::super::{
-    exit::{child::Fence, command::Commands},
     monitor::Expected,
+    tool::{child::Fence, command::Commands},
 };
 use super::{
     backend::Backend,
@@ -8,7 +8,7 @@ use super::{
     program::Program,
     storage::{Device, Gate, Ledger, Store},
 };
-use crate::{Error, Result};
+use crate::{Error, Result, target::View};
 use meshway_configuration::execution::EgressCapturePlan;
 use std::{
     sync::{Arc, Mutex},
@@ -133,9 +133,7 @@ impl super::super::Kernel {
             .map_err(|_| Error::Worker)?
             .as_ref()
             .is_some_and(|(snapshot, _)| {
-                snapshot
-                    .configuration()
-                    .is_ok_and(|cfg| cfg.egress_capture == plan)
+                View::of(snapshot).is_some_and(|view| view.egress_capture() == Some(&plan))
             });
         if matches {
             capture.switch(plan).await?;
@@ -275,7 +273,11 @@ impl super::super::Kernel {
                     _ = shared.conflict.cancelled() => break,
                     _ = tick.tick() => {
                         if backend.verify().await.is_err() { shared.conflict.cancel(); break; }
-                        if state.borrow().active && current(&shared, &backend.ledger.plan).is_err() {
+                        // Only the end of the installed lease or a different
+                        // plan withdraws an active capture. A replaced target
+                        // awaiting the Host's handoff keeps it: the TUN path
+                        // admits nothing without the new snapshot.
+                        if state.borrow().active && !retained(&shared, &backend.ledger.plan) {
                             state.send_modify(|state| state.active = false);
                             if backend.pause().await.is_err() { shared.conflict.cancel(); break; }
                         }
@@ -300,11 +302,12 @@ impl super::super::Kernel {
                                     let mesh = mesh(&expected)?;
                                     backend.stage(plan.clone(), mesh.clone()).await?;
                                     let scope = scope?;
-                                    let cfg = scope.execution()?.configuration().map_err(|_| Error::Expired)?.clone();
+                                    let snapshot = scope.execution()?;
+                                    let source = View::of(&snapshot).ok_or(Error::Expired)?.addresses().ipv4;
                                     let device = if plan.managed_ipv4.is_empty() { None } else {
                                         let expected = expected.lock().map_err(|_| Error::Worker)?;
                                         let (index, name, _, _) = expected.tun.as_ref().ok_or(Error::Expired)?;
-                                        Some(Device { index: *index, name: name.clone(), source: cfg.addresses.ipv4.ok_or(Error::Target)? })
+                                        Some(Device { index: *index, name: name.clone(), source: source.ok_or(Error::Target)? })
                                     };
                                     backend.commit_staged(plan, mesh, device, || scope.check()).await
                                 }.await;
@@ -358,20 +361,18 @@ fn current(
     shared: &Arc<super::super::super::protection::Shared>,
     plan: &EgressCapturePlan,
 ) -> Result<super::super::super::protection::ProtectionScope> {
-    let snapshot = shared
-        .execution
-        .read()
-        .map_err(|_| Error::Worker)?
-        .as_ref()
-        .map(|(snapshot, _)| snapshot.clone())
-        .ok_or(Error::Expired)?;
-    if snapshot
-        .configuration()
-        .map_err(|_| Error::Expired)?
-        .egress_capture
-        != *plan
-    {
+    let snapshot = shared.installed()?.ok_or(Error::Expired)?;
+    if View::of(&snapshot).ok_or(Error::Expired)?.egress_capture() != Some(plan) {
         return Err(Error::Target);
     }
     shared.data(&snapshot)
+}
+
+/// The installed target's lease is live and, while readable, still selects
+/// `plan`. Resource retention only, never I/O authority.
+fn retained(shared: &super::super::super::protection::Shared, plan: &EgressCapturePlan) -> bool {
+    shared.installed().ok().flatten().is_some_and(|snapshot| {
+        snapshot.deadline().valid()
+            && View::of(&snapshot).is_none_or(|view| view.egress_capture() == Some(plan))
+    })
 }
