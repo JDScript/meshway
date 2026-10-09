@@ -42,7 +42,7 @@ impl Drop for SlowNft {
     }
 }
 
-async fn state(f: &Fixture) -> meshway_protocol::NodeStateView {
+async fn state(f: &Fixture) -> meshway_protocol::state::NodeStateView {
     f.client
         .get_node_state(
             &meshway_control_client::GetNodeStatePath {
