@@ -29,6 +29,9 @@ impl super::super::Kernel {
         target: ConfigurationRef,
     ) -> Result<ExitCapability, Reason> {
         self.ready().await.map_err(|_| Reason::OwnershipConflict)?;
+        self.reconcile_stopped_exit()
+            .await
+            .map_err(|_| Reason::OwnershipConflict)?;
         self.verify().await.map_err(|_| Reason::RouteConflict)?;
         if let Some(probe) = &mut self.probe {
             probe.finish().await.map_err(|error| error.reason)?;
@@ -64,13 +67,14 @@ impl super::super::Kernel {
             .collect();
         let mut owned_tables = Vec::new();
         if let Some(owner) = &self.exit {
-            owned_tables.extend(
-                owner
-                    .role
-                    .audit()
+            match owner.role.audit().await {
+                Ok(tables) => owned_tables.extend(tables),
+                Err(_) if !owner.role.is_active() => self
+                    .reconcile_stopped_exit()
                     .await
                     .map_err(|_| Reason::OwnershipConflict)?,
-            );
+                Err(_) => return Err(Reason::OwnershipConflict),
+            }
         }
         if let Some(owner) = &self.egress {
             owned_tables.push((

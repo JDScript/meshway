@@ -31,12 +31,14 @@ enum Request {
         tuple: OriginalTuple,
         deadline: Deadline,
         scope: ExitScope,
+        guard: super::super::super::protection::Scope,
         reply: oneshot::Sender<Result<ProjectionAck>>,
     },
     Renew {
         incarnation: super::ExitIncarnation,
         deadline: Deadline,
         scope: ExitScope,
+        guard: super::super::super::protection::Scope,
         reply: oneshot::Sender<Result<ProjectionAck>>,
     },
     Confirm {
@@ -75,13 +77,14 @@ impl ExitRole {
         deadline: Deadline,
         scope: ExitScope,
     ) -> Result<ProjectionAck> {
-        self.validate_projection(original_tuple, &deadline)?;
+        let guard = self.validate_projection(original_tuple, &deadline)?;
         let (reply, result) = oneshot::channel();
         self.submit(Request::Install {
             incarnation,
             tuple: original_tuple,
             deadline,
             scope,
+            guard,
             reply,
         })?;
         result.await.map_err(|_| Error::Worker)?
@@ -99,12 +102,13 @@ impl ExitRole {
             .get(&incarnation)
             .map(|live| live.tuple)
             .ok_or(Error::Expired)?;
-        self.validate_projection(tuple, &deadline)?;
+        let guard = self.validate_projection(tuple, &deadline)?;
         let (reply, result) = oneshot::channel();
         self.submit(Request::Renew {
             incarnation,
             deadline,
             scope,
+            guard,
             reply,
         })?;
         result.await.map_err(|_| Error::Worker)?
@@ -167,6 +171,8 @@ impl ExitRole {
             done.changed().await.map_err(|_| Error::Worker)?;
         }
     }
+    /// The resource owner is live, including bounded inactive handoff retention.
+    /// Each operation and packet still requires its own current execution guard.
     pub fn is_active(&self) -> bool {
         !self.stop.is_cancelled()
     }
@@ -179,13 +185,16 @@ impl ExitRole {
             mpsc::error::TrySendError::Closed(_) => Error::Expired,
         })
     }
-    fn validate_projection(&self, tuple: OriginalTuple, deadline: &Deadline) -> Result<()> {
+    fn validate_projection(
+        &self,
+        tuple: OriginalTuple,
+        deadline: &Deadline,
+    ) -> Result<super::super::super::protection::Scope> {
         Authority {
             shared: self.shared.clone(),
             plan: self.plan.clone(),
         }
         .validate(tuple, deadline)
-        .map(|_| ())
     }
 }
 
@@ -195,6 +204,27 @@ pub(super) struct Authority {
     plan: ExitRolePlan,
 }
 impl Authority {
+    /// Resource lifetime only. Kernel::retain_tun is the sole publication
+    /// handoff here: it checks continuation_from before replacing execution;
+    /// incompatible roles/instances are shut down by Kernel::install instead.
+    /// An invalid predecessor may therefore retain resources under its original
+    /// clock/lineage bounds, but cannot mint an operation or packet guard.
+    fn retained_snapshot(&self) -> Result<meshway_authority::ExecutionSnapshot> {
+        self.shared.check()?;
+        let active = self.shared.execution.read().map_err(|_| Error::Worker)?;
+        let (snapshot, epoch) = active.as_ref().ok_or(Error::Expired)?;
+        if epoch.is_cancelled() {
+            return Err(Error::Expired);
+        }
+        snapshot.retention_deadline().map_err(|_| Error::Expired)?;
+        if let Ok(cfg) = snapshot.configuration()
+            && (!cfg.exit_enabled || cfg.exit_role.as_ref() != Some(&self.plan))
+        {
+            return Err(Error::Expired);
+        }
+        Ok(snapshot.clone())
+    }
+
     pub fn snapshot(&self) -> Result<meshway_authority::ExecutionSnapshot> {
         self.shared.check()?;
         let snapshot = self
@@ -267,12 +297,17 @@ impl Authority {
 pub(in crate::linux) struct Owner {
     pub role: ExitRole,
     pub(in crate::linux::kernel) interface_name: String,
-    task: tokio::task::JoinHandle<()>,
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 impl Owner {
     pub async fn shutdown(&mut self) -> Result<()> {
         let result = self.role.retire().await;
-        (&mut self.task).await.map_err(|_| Error::Worker)?;
+        // Cancellation retains the join handle; completed joins are not polled twice.
+        if let Some(task) = self.task.as_mut() {
+            let joined = task.await.map_err(|_| Error::Worker);
+            self.task = None;
+            joined?;
+        }
         result
     }
 }
@@ -294,20 +329,25 @@ impl Drop for Installing {
 }
 
 impl super::super::Kernel {
-    pub async fn install_exit_role(&mut self, plan: ExitRolePlan) -> Result<ExitRole> {
-        self.ready().await?;
-        if self
-            .exit
-            .as_ref()
-            .is_some_and(|owner| !owner.role.is_active())
-            && let Some(mut owner) = self.exit.take()
+    /// Keep uncertain cleanup attached to its owner. A stopped request queue is
+    /// not an ownership conflict, and a failed cleanup is not an absence proof.
+    pub(super) async fn reconcile_stopped_exit(&mut self) -> Result<()> {
+        if let Some(owner) = self.exit.as_mut()
+            && !owner.role.is_active()
         {
             owner.shutdown().await?;
             self.quiesce().await?;
             let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
             expected.exit_tun = None;
             expected.exit_tables.clear();
+            self.exit.take();
         }
+        Ok(())
+    }
+
+    pub async fn install_exit_role(&mut self, plan: ExitRolePlan) -> Result<ExitRole> {
+        self.ready().await?;
+        self.reconcile_stopped_exit().await?;
         if let Some(owner) = &self.exit {
             if owner.role.plan == plan && owner.role.is_active() {
                 return Ok(owner.role.clone());
@@ -495,10 +535,21 @@ impl super::super::Kernel {
                     _ = shutdown.cancelled() => break,
                     _ = audit.tick() => { if backend.verify().await.is_err() { break; } },
                     _ = tick.tick() => {
-                        if authority.snapshot().is_err() || backend.maintain().await.is_err() { break; }
+                        let Ok(snapshot) = authority.retained_snapshot() else { break; };
+                        // Deadlines and explicit projection revocations still
+                        // run while retained. Publication invalidation alone
+                        // neither deletes nor renews a qualification or CT.
+                        if backend.maintain().await.is_err() { break; }
+                        if snapshot.ensure_current().is_err() { continue; }
                         let invalid: Vec<_> = backend.live.iter().filter(|(_, live)| authority.validate(live.tuple, &live.deadline).is_err()).map(|(id, _)| *id).collect();
                         let mut failed = false;
-                        for id in invalid { if backend.retire(id).await.is_err() { failed = true; break; } }
+                        for id in invalid {
+                            // A refresh can invalidate this pass between the
+                            // permission checks. Await its direct successor,
+                            // rather than confusing that gap with withdrawal.
+                            if snapshot.ensure_current().is_err() { break; }
+                            if backend.retire(id).await.is_err() { failed = true; break; }
+                        }
                         if failed { break; }
                     },
                     request = receiver.recv() => {
@@ -508,23 +559,25 @@ impl super::super::Kernel {
                                 let result = backend.verify().await.map(|()| backend.ledger.program.tables().into_iter().map(|(family, name)| (family.to_owned(), name)).collect());
                                 let ok = result.is_ok(); let _ = reply.send(result); if !ok { break; }
                             },
-                            Request::Install { incarnation, tuple, deadline, scope, reply } => {
-                                let guard = authority.validate(tuple, &deadline);
-                                let result = match &guard {
-                                    Ok(guard) if guard.check().is_ok() => backend.install(incarnation, tuple, deadline, scope).await,
-                                    _ => Err(Error::Expired),
-                                };
-                                let result = result.and_then(|ack| { guard?.check()?; Ok(ack) });
+                            Request::Install { incarnation, tuple, deadline, scope, guard, reply } => {
+                                // Rejected queued work never entered the kernel
+                                // transaction and must not retire a retained flow.
+                                if guard.check().is_err() {
+                                    let _ = reply.send(Err(Error::Expired));
+                                    continue;
+                                }
+                                let result = backend.install(incarnation, tuple, deadline, scope).await;
+                                let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
                                 if result.is_err() && backend.failed(incarnation).await.is_err() { break; }
                                 if reply.send(result).is_err() && backend.failed(incarnation).await.is_err() { break; }
                             },
-                            Request::Renew { incarnation, deadline, scope, reply } => {
-                                let guard = backend.live.get(&incarnation).ok_or(Error::Expired).and_then(|live| authority.validate(live.tuple, &deadline));
-                                let result = match &guard {
-                                    Ok(guard) if guard.check().is_ok() => backend.renew(incarnation, deadline, scope).await,
-                                    _ => Err(Error::Expired),
-                                };
-                                let result = result.and_then(|ack| { guard?.check()?; Ok(ack) });
+                            Request::Renew { incarnation, deadline, scope, guard, reply } => {
+                                if guard.check().is_err() {
+                                    let _ = reply.send(Err(Error::Expired));
+                                    continue;
+                                }
+                                let result = backend.renew(incarnation, deadline, scope).await;
+                                let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
                                 if result.is_err() && backend.failed(incarnation).await.is_err() { break; }
                                 if reply.send(result).is_err() && backend.failed(incarnation).await.is_err() { break; }
                             },
@@ -556,7 +609,7 @@ impl super::super::Kernel {
         self.exit = Some(Owner {
             role: role.clone(),
             interface_name,
-            task,
+            task: Some(task),
         });
         installing.0 = None;
         Ok(role)
