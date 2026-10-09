@@ -19,6 +19,8 @@ mod supersession;
 // Keep exact fast-profile contract names while grouping their bodies.
 #[tokio::test]
 async fn passive_restart_challenges_dial_only_peer_without_retiring_it_until_fresh_ack_and_ready() {
+    // C: actual PROBE_INTERVAL (2 s) elicits the passive recovery challenge;
+    // no new endpoint or synthetic trigger is substituted for that timer.
     recovery::passive_restart_challenges_dial_only_peer_without_retiring_it_until_fresh_ack_and_ready().await;
 }
 

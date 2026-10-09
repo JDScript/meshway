@@ -2,6 +2,8 @@ use super::*;
 
 pub(super) async fn passive_restart_challenges_dial_only_peer_without_retiring_it_until_fresh_ack_and_ready()
  {
+    // C: wait for the real signed health probe (PROBE_INTERVAL = 2 s) and
+    // observed ACK. Sending a synthetic trigger would bypass passive recovery.
     let mut fixture = fixture::Fixture::builder().build().await;
     let ids = fixture.ids();
     assert!(

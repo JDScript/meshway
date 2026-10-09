@@ -1,6 +1,8 @@
 use super::*;
 
 pub(super) async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_poll() {
+    // The sender lock and actual queued event establish the ordering. There is
+    // no minimum scheduling delay and no lease-sized sleep in this contract.
     for protocol in [TransportProtocol::NativeUdp, TransportProtocol::NativeTcp] {
         let mut fixture = support::Fixture::builder()
             .stream(protocol == TransportProtocol::NativeTcp)
@@ -36,7 +38,7 @@ pub(super) async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_p
         let locked = sender.lock().await;
         let mut sending = Box::pin(a.send_with_receipt(pending));
         assert!(futures_util::poll!(sending.as_mut()).is_pending());
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        tokio::task::yield_now().await;
         let unlocked_at = std::time::Instant::now();
         drop(locked);
         let mut sends = JoinSet::new();
@@ -44,7 +46,7 @@ pub(super) async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_p
         let receipt = sends.join_next().await.unwrap().unwrap().unwrap();
         assert!(receipt.admitted_at >= unlocked_at);
         assert_eq!(receipt.link, a_link);
-        tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::time::timeout_at(b.shared.identity.snapshot().expires_at().into(), async {
             while b.control_events.is_empty() {
                 tokio::task::yield_now().await;
             }
@@ -52,7 +54,7 @@ pub(super) async fn udp_and_stream_receive_timestamp_precedes_delayed_consumer_p
         .await
         .unwrap();
         let queued_at = std::time::Instant::now();
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        tokio::task::yield_now().await;
         let Event::Frame {
             link,
             frame,

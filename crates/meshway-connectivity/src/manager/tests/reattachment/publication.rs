@@ -1,5 +1,32 @@
 use super::*;
 
+async fn renew_restart_phase(
+    fixture: &mut fixture::Fixture,
+    managers: &mut [Manager],
+    nodes: &mut [SecureNode],
+) {
+    // Repeated real recovery windows can outlive one execution lease. At the
+    // phase boundary there are no queued outputs whose old scope is under test.
+    let lease = fixture.controls[0].renew_instance().await.unwrap();
+    fixture.controls[0]
+        .renew_demand(&meshway_protocol::RenewDemandRequest {
+            instance: meshway_protocol::InstanceRequest {
+                instance_id: lease.instance_id,
+                generation: lease.generation,
+            },
+            request_id: fixture.demands[0],
+            expires_at_ms: lease.expires_at_ms,
+        })
+        .await
+        .unwrap();
+    for (index, (manager, node)) in managers.iter_mut().zip(nodes).enumerate() {
+        let identity = fixture.refresh(index).await;
+        node.reconcile(identity.clone()).unwrap();
+        manager.reconcile(identity).await.unwrap();
+        node.set_carriers(manager.carriers().unwrap()).unwrap();
+    }
+}
+
 pub(super) async fn native_tcp_session_survives_staggered_control_publications_without_reopening() {
     let mut fixture = fixture::Fixture::builder().stream(true).build().await;
     let ids = fixture.ids();
@@ -230,6 +257,7 @@ pub(super) async fn staggered_three_node_managers_and_real_demand_publication_ke
     .await;
     // Each physical owner refreshes separately; logical circuit/flow owners stay.
     for index in [0, 2, 1] {
+        renew_restart_phase(&mut fixture, &mut managers, &mut nodes).await;
         managers[index].shutdown().await.unwrap();
         managers[index]
             .reconcile(fixture.identities[index].clone())

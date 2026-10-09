@@ -69,6 +69,8 @@ async fn new_epoch_dialer_waits_for_selected_owner_handoff_before_acquiring() {
 
 #[tokio::test]
 async fn expired_business_candidate_gains_a_worker_scope_on_direct_publication() {
+    // C: the requested 2 s business permit must really expire before starting
+    // the old worker; sleep is derived from that issued permit's deadline.
     let mut fixture = support::Fixture::builder().build().await;
     let ids = fixture.ids();
     let instance = fixture.controls[0].execution_snapshot().unwrap().instance();

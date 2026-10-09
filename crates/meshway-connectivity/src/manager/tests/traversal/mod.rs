@@ -43,11 +43,15 @@ async fn invalidated_original_accept_slot_cannot_activate_after_uncertain_commit
 
 #[tokio::test]
 async fn empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing_noise_owner() {
+    // C: exercise_traversal crosses the 10 s offer and 20 s STUN observation
+    // lifetimes; selected channels must survive their acquisition authority.
     exercise_traversal(false).await;
 }
 
 #[tokio::test]
 async fn healthy_adjacency_keeps_nat_observations_fresh_without_reacquisition() {
+    // C: the 20 s STUN observation lifetime must pass to prove actual refresh,
+    // not merely retention of the initial candidate timestamp.
     exercise_traversal(true).await;
 }
 

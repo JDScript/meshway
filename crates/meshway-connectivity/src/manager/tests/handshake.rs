@@ -110,6 +110,8 @@ async fn real_udp_four_message_loss_shared_listener_and_unpolled_output_fence() 
 
 pub(super) async fn real_ipv6_udp_blackhole_selects_allowed_stream_without_replacing_secure_owner()
 {
+    // C: real PROBE_INTERVAL (2 s) / HEALTH_WINDOW (6 s) detect the blackhole;
+    // link conditions, not a guessed failover sleep, decide when it recovered.
     let mut fixture = support::Fixture::builder()
         .stream(true)
         .ipv6(true)
@@ -177,6 +179,8 @@ pub(super) async fn real_ipv6_udp_blackhole_selects_allowed_stream_without_repla
 }
 
 pub(super) async fn simultaneous_configured_initiators_converge_on_one_logical_carrier() {
+    // C: span HEALTH_WINDOW (6 s) after convergence to detect stale-handshake
+    // replacement. An immediate successful link would not prove stability.
     let mut fixture = support::Fixture::builder().reverse().build().await;
     let faults = Arc::new(Faults::default());
     let factory = Factory::new(&mut fixture, faults);
