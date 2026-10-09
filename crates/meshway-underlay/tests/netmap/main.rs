@@ -152,7 +152,7 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_it
     let clock = Arc::new(Clock::new().unwrap());
     let tuple = OriginalTuple {
         source: "100.64.0.2".parse().unwrap(),
-        destination: "198.18.71.11".parse().unwrap(),
+        destination: "8.8.8.8".parse().unwrap(),
         transport: ExitTransport::Udp {
             source_port: 17524,
             destination_port: 42424,
@@ -163,7 +163,8 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_it
         revoked: CancellationToken::new(),
     };
     let incarnation = ExitIncarnation::new([221; 32]);
-    // The exit's own decision for source 2 on its netmap admits the tuple;
+    // The exit's own decision for source 2 on its netmap admits the tuple
+    // (an Internet destination; no packet is sent);
     // another source address is not an exit grant.
     role.install(incarnation, tuple, deadline(&clock, 20_000), scope.clone())
         .await
