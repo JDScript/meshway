@@ -27,7 +27,7 @@ impl DataPlaneIdentity {
         signing: SigningKey,
         noise: Zeroizing<[u8; 32]>,
     ) -> Result<Self, Error> {
-        let cfg = snapshot.configuration()?;
+        let (_, _, self_keys) = snapshot.self_binding()?;
         let control = NodePublicKey {
             algorithm: KeyAlgorithm::Ed25519,
             bytes: Digest::from_bytes(signing.verifying_key().to_bytes()),
@@ -38,8 +38,8 @@ impl DataPlaneIdentity {
                 curve25519_dalek::montgomery::MontgomeryPoint::mul_base_clamped(*noise).to_bytes(),
             ),
         };
-        if cfg.self_keys.control_key.public_key != control
-            || cfg.self_keys.dataplane_key.public_key != dataplane
+        if self_keys.control_key.public_key != control
+            || self_keys.dataplane_key.public_key != dataplane
         {
             return Err(Error::Contract);
         }
@@ -65,13 +65,8 @@ impl DataPlaneIdentity {
     /// authentication bytes. Domain, network, node and exact key generation are
     /// always added by this implementation.
     pub fn sign_packet(&self, digest: Digest) -> Result<[u8; 64], Error> {
-        let cfg = self.snapshot.configuration()?;
-        let message = packet_proof_message(
-            cfg.network_id,
-            cfg.node_id,
-            &cfg.self_keys.control_key,
-            digest,
-        );
+        let (network, node, self_keys) = self.snapshot.self_binding()?;
+        let message = packet_proof_message(network, node, &self_keys.control_key, digest);
         let signature = self.material.signing.sign(&message).to_bytes();
         self.snapshot.ensure_current()?;
         Ok(signature)
