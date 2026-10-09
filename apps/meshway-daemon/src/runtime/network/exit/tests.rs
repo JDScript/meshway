@@ -43,7 +43,13 @@ impl Mesh {
                 f.controls[i]
                     .dataplane_identity(f.controls[i].execution_snapshot().unwrap())
                     .unwrap(),
-                Default::default(),
+                meshway_dataplane::secure::Limits {
+                    flows: meshway_dataplane::Limits {
+                        idle_timeout: Duration::from_secs(20),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
                 carriers,
             )
             .unwrap()
@@ -187,6 +193,16 @@ fn packet(f: &Fixture, port: u16) -> Packet {
 #[tokio::test]
 #[ignore = "requires isolated Linux NET_ADMIN/TUN/nft/conntrack and external UDP echo"]
 async fn daemon_exit_driver_real_nat_renew_confirm_failure_and_retirement() {
+    driver_case(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated Linux Host and real Control handoff"]
+async fn daemon_exit_control_handoff_preserves_projection() {
+    driver_case(true).await;
+}
+
+async fn driver_case(handoff: bool) {
     isolated();
     let mut f = Fixture::open().await;
     let mut host = Host::open(f.host_directory(), Fixture::options())
@@ -210,40 +226,47 @@ async fn daemon_exit_driver_real_nat_renew_confirm_failure_and_retirement() {
     mesh.reply(&mut runtime).await;
     // Preserve an already-admitted old packet through a legal lease handoff.
     let old = mesh.forward(packet(&f, 41000));
-    let previous = f.controls[2].execution_snapshot().unwrap();
-    let lease = f.controls[0].renew_instance().await.unwrap();
-    let instance = f.controls[0].execution_snapshot().unwrap().instance();
-    f.controls[0]
-        .renew_demand(&meshway_protocol::RenewDemandRequest {
-            instance,
-            request_id: demand,
-            expires_at_ms: lease.expires_at_ms,
-        })
-        .await
-        .unwrap();
-    f.refresh().await;
-    eprintln!(
-        "X4_RENEW before_host role_active={} old_current={} retained={} continuation={}",
-        runtime.role.is_active(),
-        previous.ensure_current().is_ok(),
-        previous.retention_deadline().is_ok(),
-        f.controls[2]
-            .execution_snapshot()
-            .unwrap()
-            .continuation_from(&previous)
-            .is_ok()
-    );
-    mesh.reconcile(&f);
-    host.install(f.controls[2].execution_snapshot().unwrap())
-        .await
-        .unwrap();
-    eprintln!(
-        "X4_RENEW after_host role_active={} host_role={} flows={}",
-        runtime.role.is_active(),
-        host.exit_role().is_some(),
-        mesh.e.retained_flows()
-    );
-    runtime.packet(&mut mesh.e, old);
+    runtime.synchronize(&mut mesh.e).await.unwrap();
+    let old_deadline = old.exit_scope().unwrap().deadline();
+    let mut old = Some(old);
+    if handoff {
+        let previous = f.controls[2].execution_snapshot().unwrap();
+        let lease = f.controls[0].renew_instance().await.unwrap();
+        let instance = f.controls[0].execution_snapshot().unwrap().instance();
+        f.controls[0]
+            .renew_demand(&meshway_protocol::RenewDemandRequest {
+                instance,
+                request_id: demand,
+                expires_at_ms: lease.expires_at_ms,
+            })
+            .await
+            .unwrap();
+        f.refresh().await;
+        eprintln!(
+            "X4_RENEW before_host role_active={} old_current={} retained={} continuation={}",
+            runtime.role.is_active(),
+            previous.ensure_current().is_ok(),
+            previous.retention_deadline().is_ok(),
+            f.controls[2]
+                .execution_snapshot()
+                .unwrap()
+                .continuation_from(&previous)
+                .is_ok()
+        );
+        mesh.reconcile(&f);
+        host.install(f.controls[2].execution_snapshot().unwrap())
+            .await
+            .unwrap();
+        eprintln!(
+            "X4_RENEW after_host role_active={} host_role={} flows={}",
+            runtime.role.is_active(),
+            host.exit_role().is_some(),
+            mesh.e.retained_flows()
+        );
+        runtime.packet(&mut mesh.e, old.take().unwrap());
+    } else {
+        tokio::time::sleep_until((old_deadline - Duration::from_secs(9)).into()).await;
+    }
     let pending = mesh.forward(packet(&f, 41000));
     runtime.packet(&mut mesh.e, pending);
     mesh.reply(&mut runtime).await;
@@ -277,6 +300,10 @@ async fn daemon_exit_driver_real_nat_renew_confirm_failure_and_retirement() {
             .unwrap()
             .success()
     );
+    if let Some(old) = old {
+        tokio::time::sleep_until((old_deadline + Duration::from_millis(50)).into()).await;
+        runtime.packet(&mut mesh.e, old);
+    }
     let pending = mesh.forward(packet(&f, 41000));
     runtime.packet(&mut mesh.e, pending);
     mesh.reply(&mut runtime).await;
@@ -299,6 +326,16 @@ async fn install_drop(mut child: tokio::process::Child) {
 #[tokio::test]
 #[ignore = "requires isolated Linux Host kernel installation"]
 async fn daemon_exit_role_applied_probe_failure_and_instance_replacement() {
+    role_case(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated Linux Host and DNS role publication handoff"]
+async fn daemon_exit_dns_role_refresh_preserves_applied() {
+    role_case(true).await;
+}
+
+async fn role_case(dns_handoff: bool) {
     isolated();
     let mut f = Fixture::open().await;
     let (reports, mut report) = tokio::sync::watch::channel(super::super::Report::stopped());
@@ -343,40 +380,43 @@ async fn daemon_exit_role_applied_probe_failure_and_instance_replacement() {
                 .installed_families,
             vec![meshway_model::exit::ExitFamily::Ipv4]
         );
-        // Publish the actual prerequisite observation independently of the
-        // installation receipt, then offer the resulting DNS service target.
-        let mut capability = report.borrow().exit_capability.clone().unwrap();
-        capability.installed_families.clear();
-        f.capability(capability).await;
-        f.refresh().await;
-        let reference = f.controls[2].status().cached.unwrap();
-        let external_dns = !matches!(
-            f.controls[2]
-                .execution_snapshot()
-                .unwrap()
-                .configuration()
-                .unwrap()
-                .dns
-                .egress,
-            meshway_configuration::execution::DnsEgress::NoExit
-        );
-        handle.publish(&mut f.controls[2]).await.unwrap();
-        let outcome = tokio::time::timeout(
-            Duration::from_secs(20),
-            report.wait_for(|r| r.applied().as_ref() == Some(&reference)),
-        )
-        .await
-        .map(|result| result.map(|_| ()));
-        assert!(
-            matches!(outcome, Ok(Ok(()))),
-            "role refresh: plane={:?} problem={:?} capability={:?}",
-            report.borrow().plane,
-            report.borrow().problem,
-            report.borrow().exit_capability
-        );
-        assert_eq!(report.borrow().exit_dns_unavailable, external_dns);
-        handle.finish(&mut f.controls[2]).await.unwrap();
         f.cli_status(report.clone(), true).await;
+        if dns_handoff {
+            // Publish the actual prerequisite observation independently of the
+            // installation receipt, then offer the resulting DNS service target.
+            let mut capability = report.borrow().exit_capability.clone().unwrap();
+            capability.installed_families.clear();
+            f.capability(capability).await;
+            f.refresh().await;
+            let reference = f.controls[2].status().cached.unwrap();
+            let external_dns = !matches!(
+                f.controls[2]
+                    .execution_snapshot()
+                    .unwrap()
+                    .configuration()
+                    .unwrap()
+                    .dns
+                    .egress,
+                meshway_configuration::execution::DnsEgress::NoExit
+            );
+            handle.publish(&mut f.controls[2]).await.unwrap();
+            let outcome = tokio::time::timeout(
+                Duration::from_secs(20),
+                report.wait_for(|r| r.applied().as_ref() == Some(&reference)),
+            )
+            .await
+            .map(|result| result.map(|_| ()));
+            assert!(
+                matches!(outcome, Ok(Ok(()))),
+                "role refresh: plane={:?} problem={:?} capability={:?}",
+                report.borrow().plane,
+                report.borrow().problem,
+                report.borrow().exit_capability
+            );
+            assert_eq!(report.borrow().exit_dns_unavailable, external_dns);
+            handle.finish(&mut f.controls[2]).await.unwrap();
+            f.cli_status(report.clone(), true).await;
+        }
         let old = f.controls[2].execution_snapshot().unwrap();
         f.controls[2].stop().await.unwrap();
         handle.stop(false).await.unwrap();

@@ -1103,6 +1103,14 @@ async fn install(
                 .await
                 .map_err(|p| (p, ApplyFailure::Underlay))?;
         }
+        state
+            .target
+            .identity
+            .as_ref()
+            .expect("installed identity")
+            .snapshot()
+            .ensure_current()
+            .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
     }
     Ok(true)
 }
