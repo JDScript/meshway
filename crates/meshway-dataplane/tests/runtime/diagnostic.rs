@@ -381,16 +381,17 @@ async fn diagnostic_continuation_retains_cipher_but_cancels_original_probe_and_r
         .await;
     fixture.reconcile().await;
     for node in [&fixture.a, &fixture.r, &fixture.b] {
-        assert_eq!(
-            node.circuit_info(circuit).unwrap().unwrap().state,
-            CircuitState::Closed
+        assert!(
+            node.circuit_info(circuit)
+                .unwrap()
+                .is_none_or(|info| info.state == CircuitState::Closed)
         );
     }
     fixture.close().await;
 }
 
 #[tokio::test]
-async fn retained_relay_delivers_inflight_diagnostic_and_business_reply_exactly_once() {
+async fn relay_update_ends_inflight_probe_but_delivers_business_reply_exactly_once() {
     let (mut fixture, task) = setup().await;
     let diagnostic = handshake(&mut fixture, &task).await;
     let business = fixture.handshake().await;
@@ -496,29 +497,17 @@ async fn retained_relay_delivers_inflight_diagnostic_and_business_reply_exactly_
         ar,
         rb,
     };
-    // Explicit maintenance must preserve eligible relay correlation state too.
+    // The relay correlation belonged to the replaced snapshot: it ends with
+    // it and is never rebound. The scheduler sends a new measurement instead.
     fixture.r.maintain().unwrap();
-    let reply = forward(
+    assert!(matches!(
         fixture
             .r
             .receive(&fixture.rb.carrier, diagnostic_reply.clone()),
-    );
-    let reply = wire(reply);
-    assert!(matches!(
-        fixture.a.receive(&fixture.ar.carrier, reply.clone()).unwrap(),
-        Received::ProbeReply { circuit, measurement_id, challenge: returned }
-            if circuit == diagnostic && measurement_id == id && returned == challenge
-    ));
-    assert!(matches!(
-        fixture.a.receive(&fixture.ar.carrier, reply),
         Err(Error::Replay)
     ));
     assert!(matches!(
         fixture.r.receive(&fixture.ar.carrier, request_wire),
-        Err(Error::Replay)
-    ));
-    assert!(matches!(
-        fixture.r.receive(&fixture.rb.carrier, diagnostic_reply),
         Err(Error::Replay)
     ));
     let packet = forward(

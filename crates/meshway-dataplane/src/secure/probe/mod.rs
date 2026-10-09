@@ -1,10 +1,11 @@
 //! Fixed-size diagnostic messages over the sole circuit/Noise/proof owner.
-//! Request correlations are separate from IP flows. Endpoints retain their
-//! original execution guard; relay state may follow a directly retained circuit
-//! without renewing a request or rebinding any already-issued output.
+//! Request correlations are separate from IP flows. Every correlation, at
+//! endpoints and relays alike, keeps the original guard and deadline of its
+//! request: a content update ends it instead of rebinding it, and the
+//! scheduler sends a new measurement.
 use super::*;
 use codec::ProbeMetadata;
-use meshway_model::{Digest, EventId, ObservationId};
+use meshway_model::{Digest, EventId};
 
 const MAX_PENDING: usize = 128;
 const INTERVAL: Duration = Duration::from_secs(1);
@@ -31,57 +32,47 @@ struct Association {
     completed: bool,
 }
 
+/// One rate budget: a legacy observation, or a netmap (origin, target) pair.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum RateKey {
+    Observation(ObservationId),
+    Pair(NodeId, [u8; 32]),
+}
+
+fn rate_key(context: &Context) -> Result<RateKey, Error> {
+    match &context.grant {
+        CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(observation)) => {
+            Ok(RateKey::Observation(*observation))
+        }
+        CircuitGrant::Netmap {
+            purpose: crate::Purpose::Diagnostic,
+            target,
+        } => {
+            let mut hash = Sha256::new();
+            crate::netmap::encode_target(&mut hash, target);
+            Ok(RateKey::Pair(context.path[0], hash.finalize().into()))
+        }
+        _ => Err(Error::Policy),
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Probes {
     pending: BTreeMap<([u8; 32], EventId), Association>,
-    rates: BTreeMap<ObservationId, Rate>,
+    rates: BTreeMap<RateKey, Rate>,
 }
 impl Probes {
-    pub(super) fn reconcile(
-        &mut self,
-        circuits: &BTreeMap<[u8; 32], Box<Circuit>>,
-        snapshot: &ExecutionSnapshot,
-        reading: &Reading<'_>,
-    ) {
-        self.pending.retain(|(id, _), request| {
-            // Source challenges and terminal replies belong to the original
-            // operation. Only opaque relay correlation is continuation state.
-            if request.challenge.is_some() {
-                return request.guard.ensure_current().is_ok();
-            }
-            let Some(circuit) = circuits.get(id) else {
-                return false;
-            };
-            if !matches!(circuit.state, State::RelayEstablished)
-                || circuit.check_at(reading).is_err()
-                || request.guard.check_at(reading).is_err()
-                || snapshot.continuation_from(&request.guard.snapshot).is_err()
-            {
-                return false;
-            }
-            // reconcile has already checked this circuit's authorization,
-            // path and keys. Keep both original deadlines and completed state.
-            // PendingFrame owns a separate guard clone, so old outputs remain
-            // fenced. A new reply must still pass normal receive admission.
-            request.guard.snapshot = snapshot.clone();
-            true
-        });
+    /// Correlations whose original guard ended (including by a content
+    /// update) are dropped; nothing is carried to another snapshot.
+    pub(super) fn retain_current(&mut self) {
+        self.pending
+            .retain(|_, request| request.guard.ensure_current().is_ok());
     }
 
-    pub(super) fn maintain(&mut self, reading: &Reading<'_>) {
+    pub(super) fn maintain(&mut self, reading: &View<'_>) {
         tracing::trace!(target: "meshway_dataplane::secure::authority_boundary", operation = "probe_maintenance",
             "Validating probe correlation lifetime");
-        self.pending.retain(|_, request| {
-            if request.challenge.is_none() {
-                // Publication can change after the owner's entry check. Keep
-                // passive relay state until its original bounds or circuit
-                // cancellation; only reconcile can authorize its successor.
-                request.guard.check_at(reading).is_ok()
-                    && request.guard.snapshot.retention_deadline().is_ok()
-            } else {
-                request.guard.ensure_current().is_ok()
-            }
-        });
+        self.retain_current();
         self.maintain_rates(reading.instant);
     }
 
@@ -93,7 +84,7 @@ impl Probes {
 
     fn admit_rate(
         &mut self,
-        observation: ObservationId,
+        observation: RateKey,
         role: RateRole,
         now: Instant,
     ) -> Result<(), Error> {
@@ -128,11 +119,11 @@ impl Probes {
 
     fn admit(
         &mut self,
-        observation: ObservationId,
+        observation: RateKey,
         circuit: [u8; 32],
         measurement: EventId,
         role: RateRole,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<(), Error> {
         self.maintain(reading);
         if self.pending.contains_key(&(circuit, measurement)) {
@@ -185,7 +176,7 @@ impl SecureNode {
         carrier: &Carrier,
     ) -> Result<PendingFrame, Error> {
         let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         self.maintain_circuits(&reading, false)?;
         let mut owned = self.circuits.remove(&circuit).ok_or(Error::State)?;
         let result = self.probe_inner(
@@ -197,7 +188,7 @@ impl SecureNode {
             &reading,
         );
         let result = owned.finish_operation(self.identity.snapshot(), "probe", result);
-        self.circuits.insert(circuit, owned);
+        self.restore(circuit, owned, &reading);
         result
     }
 
@@ -208,38 +199,40 @@ impl SecureNode {
         challenge: Digest,
         deadline: Instant,
         carrier: &Carrier,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<PendingFrame, Error> {
-        let snapshot = self.identity.snapshot();
+        let snapshot = self.identity.snapshot().clone();
         circuit.check_at(reading)?;
-        let CircuitAuthorization::Diagnostic(observation) = circuit.context.authorization else {
-            return Err(Error::Policy);
-        };
+        let observation = rate_key(&circuit.context)?;
         let State::Endpoint(noise) = &circuit.state else {
             return Err(Error::State);
         };
-        let cfg = reading.configuration;
-        if circuit.context.path.first() != Some(&cfg.node_id) {
+        if circuit.context.path.first() != Some(&reading.node()) {
             return Err(Error::Context);
         }
-        authorization::source_instance(snapshot, cfg, circuit.context.authorization)?;
+        if let (CircuitGrant::Legacy(authorization), Some(cfg)) =
+            (&circuit.context.grant, reading.legacy())
+        {
+            authorization::source_instance(&snapshot, cfg, *authorization)?;
+        }
         if self.carriers.get(&circuit.context.path[1]) != Some(carrier) {
             return Err(Error::Context);
         }
-        Self::check_outgoing_carrier(&self.carriers, &circuit.context, false, reading)?;
+        Self::check_outgoing_carrier(&self.carriers, circuit, false, reading)?;
         let now = reading.instant;
         let now_ms = reading.now_ms;
-        let mut guard = circuit.guard(snapshot, false);
-        guard.expires_at = guard.expires_at.min(deadline).min(now + MAX_LIFETIME);
-        let remaining = u64::try_from(guard.expires_at.saturating_duration_since(now).as_millis())
+        let mut guard = circuit.guard(&snapshot, false);
+        let at = guard.expiry().at.min(deadline).min(now + MAX_LIFETIME);
+        let remaining = u64::try_from(at.saturating_duration_since(now).as_millis())
             .map_err(|_| Error::Limits)?;
-        guard.expires_at_ms = guard
-            .expires_at_ms
-            .min(now_ms.checked_add(remaining).ok_or(Error::Limits)?);
+        guard.life.restrict(Some(Cap {
+            at,
+            ms: now_ms.checked_add(remaining).ok_or(Error::Limits)?,
+        }));
         guard.finish()?;
         let metadata = ProbeMetadata {
             measurement_id,
-            expires_at_ms: guard.expires_at_ms,
+            expires_at_ms: guard.expiry().ms,
         };
         self.probes.admit(
             observation,
@@ -282,25 +275,23 @@ impl SecureNode {
         circuit: &mut Circuit,
         frame: Frame,
         previous: NodeId,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<Received, Error> {
         if !circuit.state.established() {
             return Err(Error::State);
         }
-        let CircuitAuthorization::Diagnostic(observation) = circuit.context.authorization else {
-            return Err(Error::Policy);
-        };
+        let observation = rate_key(&circuit.context)?;
         let metadata = frame.probe.ok_or(Error::Wire)?;
-        let snapshot = self.identity.snapshot();
+        let snapshot = self.identity.snapshot().clone();
         circuit.check_at(reading)?;
-        authorization::source_instance(
-            snapshot,
-            reading.configuration,
-            circuit.context.authorization,
-        )?;
+        if let (CircuitGrant::Legacy(authorization), Some(cfg)) =
+            (&circuit.context.grant, reading.legacy())
+        {
+            authorization::source_instance(&snapshot, cfg, *authorization)?;
+        }
         let now_ms = reading.now_ms;
         if now_ms >= metadata.expires_at_ms
-            || metadata.expires_at_ms > circuit.expires_at_ms
+            || metadata.expires_at_ms > circuit.guard(&snapshot, false).expiry().ms
             || metadata.expires_at_ms - now_ms > MAX_LIFETIME.as_millis() as u64
         {
             return Err(Error::Expired);
@@ -344,14 +335,14 @@ impl SecureNode {
                 .completed = true;
             result
         } else {
-            circuit.ensure_current(snapshot)?;
+            circuit.ensure_current(&snapshot)?;
             self.probes
                 .admit(observation, key.0, key.1, RateRole::Remote, reading)?;
-            let mut guard = circuit.guard(snapshot, false);
-            guard.expires_at_ms = metadata.expires_at_ms;
-            guard.expires_at = guard
-                .expires_at
-                .min(reading.instant + Duration::from_millis(metadata.expires_at_ms - now_ms));
+            let mut guard = circuit.guard(&snapshot, false);
+            guard.life.restrict(Some(Cap {
+                at: reading.instant + Duration::from_millis(metadata.expires_at_ms - now_ms),
+                ms: metadata.expires_at_ms,
+            }));
             let (result, challenge, completed) = match (&circuit.state, hop) {
                 (State::RelayEstablished, Hop::Forward(_)) => {
                     let mut output = self.output(circuit, frame, hop, None, reading)?;
@@ -400,7 +391,7 @@ impl SecureNode {
             );
             result
         };
-        circuit.ensure_current(snapshot)?;
+        circuit.ensure_current(&snapshot)?;
         circuit.receive[index].commit(sequence);
         Ok(result)
     }

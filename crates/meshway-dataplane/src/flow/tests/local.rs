@@ -3,24 +3,20 @@ use super::*;
 fn lookup(scene: &Scene, local: u8, packet: Packet) -> Result<Option<LocalFlow>, Error> {
     scene.tables[&node(local)]
         .local_flow(
-            &scene.configs[&node(local)],
+            node(local),
+            Some(&scene.configs[&node(local)]),
             &packet.facts(),
-            FlowTime {
-                instant: scene.instant,
-                now_ms: scene.now_ms,
-                guard_expires_at: scene.guard_expires_at,
-                guard_expires_at_ms: scene.guard_expires_at_ms,
-            },
+            scene.time(),
         )
         .map(|found| found.map(|found| found.route))
 }
 
 fn original() -> LocalFlow {
-    LocalFlow {
-        demand: request(),
-        path: vec![node(1), node(2), node(3)],
-        circuit: None,
-    }
+    LocalFlow::new(
+        FlowGrant::Legacy(request()),
+        vec![node(1), node(2), node(3)],
+        None,
+    )
 }
 
 #[test]
@@ -108,9 +104,7 @@ fn local_lookup_never_advances_tcp_state_or_refreshes_deadlines() {
         );
     }
     let after = scene.tables[&node(1)].entries.values().next().unwrap();
-    assert_eq!(after.expires_at, before.expires_at);
-    assert_eq!(after.permit_expires_at_ms, before.permit_expires_at_ms);
-    assert_eq!(after.guard_expires_at_ms, before.guard_expires_at_ms);
+    assert_eq!(after.cap, before.cap);
     assert!(matches!(
         scene.process(1, Some(2), 3, &[1, 2, 3], tcp(true, 901, 108, 0x10, 0)),
         Err(Error::Flow)
@@ -135,7 +129,8 @@ fn expired_or_removed_flows_are_not_returned_and_lookup_does_not_collect_entries
                     .values_mut()
                     .next()
                     .unwrap()
-                    .guard_expires_at_ms = scene.now_ms
+                    .cap
+                    .ms = scene.now_ms
             }
             3 => {
                 scene

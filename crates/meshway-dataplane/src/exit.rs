@@ -1,6 +1,6 @@
 //! Opaque, bounded kernel projections of the unique FlowTable. No kernel owner
 //! or socket lives here. The host maps these operations to its Underlay owner.
-use crate::{Error, Packet, secure::Guard};
+use crate::{Error, Packet, authority::Cap, secure::Guard};
 use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::BusinessProtocol;
 use std::{
@@ -130,11 +130,12 @@ impl ProjectionScope {
     pub fn snapshot(&self) -> &ExecutionSnapshot {
         self.0.snapshot()
     }
+    /// This operation's own cutoff, or the snapshot's current one.
     pub fn deadline(&self) -> Instant {
-        self.0.expires_at
+        self.0.expiry().at
     }
     pub fn deadline_ms(&self) -> u64 {
-        self.0.expires_at_ms
+        self.0.expiry().ms
     }
 }
 
@@ -162,7 +163,7 @@ impl Gate {
         budget: Arc<AtomicUsize>,
         limits: Limits,
         now: Instant,
-        previous_deadline: Option<(Instant, u64)>,
+        previous_deadline: Option<Cap>,
     ) -> Result<Arc<Self>, Error> {
         budget
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
@@ -172,10 +173,10 @@ impl Gate {
         let acknowledgement_deadline = scope
             .deadline()
             .min(now + limits.projection_timeout)
-            .min(previous_deadline.map_or(scope.deadline(), |deadline| deadline.0));
+            .min(previous_deadline.map_or(scope.deadline(), |deadline| deadline.at));
         let acknowledgement_deadline_ms = previous_deadline
             .map_or(scope.deadline_ms(), |deadline| {
-                deadline.1.min(scope.deadline_ms())
+                deadline.ms.min(scope.deadline_ms())
             });
         let status = Arc::new(AtomicU8::new(PENDING));
         scope.1 = Some(Arc::new(Acknowledgement {

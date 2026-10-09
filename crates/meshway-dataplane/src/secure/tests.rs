@@ -10,23 +10,29 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
     Circuit {
         context: Arc::new(Context {
             network: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-            authorization: CircuitAuthorization::Business(
+            grant: CircuitGrant::Legacy(CircuitAuthorization::Business(
                 "00000000-0000-4000-8000-000000000002".parse().unwrap(),
-            ),
+            )),
             path: vec![
                 "00000000-0000-4000-8000-000000000003".parse().unwrap(),
                 "00000000-0000-4000-8000-000000000004".parse().unwrap(),
             ],
             circuit: [5; 32],
-            permit: [6; 32].into(),
+            authorization: [6; 32].into(),
             keys: [7; 32].into(),
+            initiated_at_ms: 0,
         }),
         state,
-        expires_at: Instant::now() + Duration::from_secs(60),
-        expires_at_ms: u64::MAX,
-        handshake_at: Instant::now() + Duration::from_secs(10),
-        handshake_at_ms: u64::MAX,
+        cap: Some(Cap {
+            at: Instant::now() + Duration::from_secs(60),
+            ms: u64::MAX,
+        }),
+        handshake: Cap {
+            at: Instant::now() + Duration::from_secs(10),
+            ms: u64::MAX,
+        },
         permit_expires_at_ms: u64::MAX,
+        selected: None,
         send: Default::default(),
         receive: Default::default(),
         cancellation: parent.child_token(),

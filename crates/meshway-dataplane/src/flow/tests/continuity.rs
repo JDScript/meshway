@@ -1,7 +1,25 @@
 use super::*;
 
+fn retain(table: &mut FlowTable, old: &NodeConfiguration, new: &NodeConfiguration, time: FlowTime) {
+    let now_ms = time.now_ms;
+    let instant = time.instant;
+    table.retain(&time, |flow| {
+        let FlowGrant::Legacy(demand) = flow.grant else {
+            return Keep::Retire;
+        };
+        match authorization_unchanged(old, new, *demand, flow.path, now_ms) {
+            Ok(true) => Keep::Retain(Cap::until_ms(
+                instant,
+                now_ms,
+                new.permits[demand].expires_at_ms,
+            )),
+            _ => Keep::Retire,
+        }
+    });
+}
+
 #[test]
-fn relabel_preserves_tcp_state_and_original_deadlines_until_current_packet_admission() {
+fn retention_keeps_tcp_state_key_and_original_deadlines_in_place() {
     let mut scene = Scene::new(BusinessProtocol::Tcp, false, true);
     forward(&mut scene, tcp(false, 100, 0, 2, 0));
     reply(&mut scene, tcp(true, 900, 101, 0x12, 0));
@@ -11,27 +29,16 @@ fn relabel_preserves_tcp_state_and_original_deadlines_until_current_packet_admis
         let mut new = old.clone();
         new.publication = "00000000-0000-4004-8000-000000000002".parse().unwrap();
         new.permits.get_mut(&request()).unwrap().expires_at_ms += 60_000;
-        let original = scene.tables[&id].entries.values().next().unwrap();
-        let original_deadline = original.expires_at;
-        let original_wall = original.permit_expires_at_ms;
-        let table = scene.tables[&id]
-            .reconciled(
-                &old,
-                &new,
-                FlowTime {
-                    instant: scene.instant,
-                    now_ms: scene.now_ms,
-                    guard_expires_at: scene.guard_expires_at,
-                    guard_expires_at_ms: scene.guard_expires_at_ms,
-                },
-            )
-            .unwrap();
+        let (key, original) = scene.tables[&id].entries.first_key_value().unwrap();
+        let (key, original) = (key.clone(), original.cap);
+        let time = scene.time();
+        retain(scene.tables.get_mut(&id).unwrap(), &old, &new, time);
+        let table = &scene.tables[&id];
         assert_eq!(table.len(), 1);
-        let (key, flow) = table.entries.first_key_value().unwrap();
-        assert_eq!(key.publication, new.publication);
-        assert_eq!(flow.expires_at, original_deadline);
-        assert_eq!(flow.permit_expires_at_ms, original_wall);
-        scene.tables.insert(id, table);
+        let (retained, flow) = table.entries.first_key_value().unwrap();
+        // The key never names a publication; nothing is relabeled.
+        assert_eq!(*retained, key);
+        assert_eq!(flow.cap, original);
         scene.configs.insert(id, new);
     }
     // A fresh TCP state cannot admit this payload/ACK without the old handshake.
@@ -39,64 +46,8 @@ fn relabel_preserves_tcp_state_and_original_deadlines_until_current_packet_admis
     reply(&mut scene, tcp(true, 901, 108, 0x18, 5));
     for table in scene.tables.values() {
         assert_eq!(table.len(), 1);
-        assert_eq!(
-            table.entries.values().next().unwrap().permit_expires_at_ms,
-            160_000
-        );
+        assert_eq!(table.entries.values().next().unwrap().cap.ms, 160_000);
     }
-}
-
-#[test]
-fn changed_authorization_peers_and_expired_retention_are_never_migrated() {
-    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
-    forward(&mut scene, udp(1, 3, 50000, 443));
-    let old = &scene.configs[&node(1)];
-    let table = &scene.tables[&node(1)];
-    let empty = |new: &NodeConfiguration, instant: Instant, wall: u64| {
-        assert_eq!(
-            table
-                .reconciled(
-                    old,
-                    new,
-                    FlowTime {
-                        instant,
-                        now_ms: wall,
-                        guard_expires_at: scene.guard_expires_at,
-                        guard_expires_at_ms: scene.guard_expires_at_ms,
-                    }
-                )
-                .unwrap()
-                .len(),
-            0
-        );
-    };
-    let mut new = old.clone();
-    new.permits.remove(&request());
-    empty(&new, scene.instant, scene.now_ms);
-    new = old.clone();
-    new.permits.get_mut(&request()).unwrap().port = Some(444.try_into().unwrap());
-    empty(&new, scene.instant, scene.now_ms);
-    new = old.clone();
-    new.permits.get_mut(&request()).unwrap().paths[0]
-        .dial_candidates
-        .clear();
-    empty(&new, scene.instant, scene.now_ms);
-    new = old.clone();
-    new.peers.get_mut(&node(2)).unwrap().addresses.ipv4 = Some("100.64.0.44".parse().unwrap());
-    empty(&new, scene.instant, scene.now_ms);
-    new = old.clone();
-    new.peers
-        .get_mut(&node(3))
-        .unwrap()
-        .dataplane_key
-        .generation = meshway_model::Version::new(2).unwrap();
-    empty(&new, scene.instant, scene.now_ms);
-    new = old.clone();
-    new.permits.get_mut(&request()).unwrap().expires_at_ms += 60_000;
-    empty(&new, scene.instant + Duration::from_secs(60), scene.now_ms);
-    empty(&new, scene.instant, 100_000);
-    // Failed migration candidates never modify the source table.
-    assert_eq!(table.len(), 1);
 }
 
 #[test]

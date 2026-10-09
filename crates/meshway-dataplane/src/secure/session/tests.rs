@@ -33,13 +33,14 @@ impl Fixture {
         let mut init = Frame {
             context: Arc::new(Context {
                 network: NetworkId::new(node(20).into_uuid()).unwrap(),
-                authorization: CircuitAuthorization::Business(
+                grant: crate::secure::CircuitGrant::Legacy(CircuitAuthorization::Business(
                     RequestId::new(node(21).into_uuid()).unwrap(),
-                ),
+                )),
                 path: selected.nodes.clone(),
                 circuit: [1; 32],
-                permit: [2; 32].into(),
+                authorization: [2; 32].into(),
                 keys: [3; 32].into(),
+                initiated_at_ms: 0,
             }),
             kind: Kind::Init,
             reply: false,
@@ -140,9 +141,10 @@ fn prekeyed_hmac_matches_fixed_data_and_probe_transcripts() {
             frame.sequence = 1 << 32;
             frame.body = vec![0xa5; if probe { 48 } else { 1296 }].into();
             if probe {
-                Arc::make_mut(&mut frame.context).authorization = CircuitAuthorization::Diagnostic(
-                    meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
-                );
+                Arc::make_mut(&mut frame.context).grant =
+                    crate::secure::CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(
+                        meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
+                    ));
                 frame.kind = if reply {
                     Kind::ProbeReply
                 } else {
@@ -249,15 +251,16 @@ fn session_kdf_binds_full_context_and_both_handshake_messages() {
         let mut frame = f.frame(false);
         f.sessions[0].append(&mut frame, carrier(0)).unwrap();
         match tamper {
-            0 => Arc::make_mut(&mut f.response.context).permit = [13; 32].into(),
+            0 => Arc::make_mut(&mut f.response.context).authorization = [13; 32].into(),
             1 => Arc::make_mut(&mut f.response.context).keys = [14; 32].into(),
             2 => {
                 Arc::make_mut(&mut f.response.context).network =
                     NetworkId::new(node(22).into_uuid()).unwrap()
             }
             3 => {
-                Arc::make_mut(&mut f.response.context).authorization =
-                    CircuitAuthorization::Business(RequestId::new(node(23).into_uuid()).unwrap())
+                Arc::make_mut(&mut f.response.context).grant = crate::secure::CircuitGrant::Legacy(
+                    CircuitAuthorization::Business(RequestId::new(node(23).into_uuid()).unwrap()),
+                )
             }
             4 => f.response.body[0] ^= 1,
             5 => {
@@ -307,9 +310,10 @@ fn low_order_and_substituted_ephemeral_contributions_never_establish_keys() {
 #[test]
 fn diagnostic_mac_binds_measurement_deadline_kind_and_ciphertext() {
     let mut f = Fixture::pending(3);
-    Arc::make_mut(&mut f.response.context).authorization = CircuitAuthorization::Diagnostic(
-        meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
-    );
+    Arc::make_mut(&mut f.response.context).grant =
+        crate::secure::CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(
+            meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
+        ));
     f.establish();
     for reply in [false, true] {
         for tamper in 0..5 {

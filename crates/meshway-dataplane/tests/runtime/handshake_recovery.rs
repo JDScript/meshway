@@ -257,13 +257,14 @@ async fn close_proof_rejection_and_cancel_never_revive_a_cached_handshake() {
     );
     assert!(matches!(
         fixture.b.receive(&fixture.rb.carrier, terminal_init),
-        Err(Error::State)
+        Err(Error::Replay)
     ));
     fixture.r.close(cid);
     assert!(matches!(
         fixture.r.receive(&fixture.ar.carrier, init),
-        Err(Error::State)
+        Err(Error::Replay)
     ));
+    assert_eq!(fixture.b.dead_circuits() + fixture.r.dead_circuits(), 2);
 
     tokio::time::sleep(Duration::from_millis(300)).await;
     let pending = fixture.a.retry_handshake(cid).unwrap().unwrap();
@@ -395,17 +396,24 @@ async fn exhausted_handshake_keeps_its_cid_tombstone_and_cannot_retry_after_expi
     assert!(pending.release(|_| panic!("expired INIT escaped")).is_err());
     assert!(fixture.a.retry_handshake(cid).is_err());
     assert!(fixture.a.handshake_retry_at(cid).is_err());
-    assert_eq!(
-        fixture.a.circuit_info(cid).unwrap().unwrap().state,
-        CircuitState::Closed
-    );
-    assert_eq!(fixture.a.retained_circuits(), 1);
-    assert!(matches!(
+    assert!(
         fixture
             .a
-            .start(fixture.mesh.demand, fixture.mesh.path.clone()),
-        Err(Error::Capacity)
-    ));
+            .circuit_info(cid)
+            .unwrap()
+            .is_none_or(|info| info.state == CircuitState::Closed)
+    );
+    // The exhausted CID is kept only as a dead record inside its INIT
+    // window; it neither revives nor occupies the single circuit slot.
+    fixture.a.maintain().unwrap();
+    assert_eq!(fixture.a.retained_circuits(), 0);
+    assert_eq!(fixture.a.dead_circuits(), 1);
+    assert!(fixture.a.retry_handshake(cid).is_err());
+    let fresh = fixture
+        .a
+        .start(fixture.mesh.demand, fixture.mesh.path.clone())
+        .unwrap();
+    assert_ne!(fresh.circuit(), cid);
     fixture.close().await;
 }
 

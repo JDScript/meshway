@@ -37,7 +37,7 @@ fn admitted_but_undelivered_data_recovers_with_delayed_ack_and_nonlatest_resegme
     for table in scene.tables.values() {
         assert_eq!(table.len(), 1);
         let key = table.entries.keys().next().unwrap();
-        assert_eq!(key.demand, request());
+        assert_eq!(key.grant, FlowGrant::Legacy(request()));
         assert_eq!(key.path, vec![node(1), node(2), node(3)]);
     }
 }

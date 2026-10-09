@@ -1,12 +1,13 @@
 use crate::{
     Engine, Error, Ingress, Limits, LocalFlow, Packet, PendingAction,
-    flow::{FlowTable, FlowTime},
+    authority::View,
+    flow::{FlowGrant, FlowTable, FlowTime, Keep},
 };
-use meshway_authority::{ExecutionSnapshot, Reading};
+use meshway_authority::ExecutionSnapshot;
 
 impl Engine {
     pub fn new(snapshot: ExecutionSnapshot, limits: Limits) -> Result<Self, Error> {
-        snapshot.reading()?;
+        View::of(&snapshot)?;
         Self::new_current(snapshot, limits)
     }
 
@@ -19,38 +20,30 @@ impl Engine {
             snapshot,
             flows: FlowTable::new(limits),
             exit_counters: Default::default(),
+            decisions: Default::default(),
         })
     }
 
-    /// Reconcile a Control-issued successor transactionally. Old queued actions
-    /// keep their original cancelled guard. Retained flow deadlines/idle time
-    /// are unchanged; only a subsequently admitted packet can refresh them.
+    /// Legacy: install a Control-issued successor publication. Every retained
+    /// flow is judged in place; old queued actions keep their original
+    /// cancelled guard and retained idle time is unchanged.
     pub fn reconcile(&mut self, snapshot: ExecutionSnapshot) -> Result<(), Error> {
         let reading = snapshot.reading()?;
-        let flows = self.reconciled_flows(&snapshot, &reading)?;
-        snapshot.continuation_from(&self.snapshot)?;
-        self.flows.replace(flows);
+        let old = snapshot.continuation_from(&self.snapshot)?;
+        let new = reading.configuration;
+        let view = View::from(reading);
+        self.flows.retain(&FlowTime::from(&view), |flow| {
+            retain_legacy(old, new, flow, &view)
+        });
         self.snapshot = snapshot;
         Ok(())
     }
 
-    pub(crate) fn reconciled_flows(
-        &self,
-        snapshot: &ExecutionSnapshot,
-        reading: &Reading<'_>,
-    ) -> Result<FlowTable, Error> {
-        let old = snapshot.continuation_from(&self.snapshot)?;
-        let mut flows =
-            self.flows
-                .reconciled(old, reading.configuration, FlowTime::from(reading))?;
-        flows.project_successor(snapshot, reading);
-        Ok(flows)
-    }
-
     pub fn process(&mut self, ingress: Ingress, packet: Packet) -> Result<PendingAction, Error> {
         let snapshot = self.snapshot.clone();
-        let reading = snapshot.reading()?;
-        self.admit_facts(ingress, packet.facts(), &reading)?
+        let reading = View::of(&snapshot)?;
+        let entry = ingress.entry(reading.node())?;
+        self.admit_facts(&entry, packet.facts(), &reading)?
             .attach(packet)
     }
 
@@ -58,28 +51,27 @@ impl Engine {
     /// `None` means only that the packet could initiate a new protocol flow;
     /// it does not authorize its source, destination or a new demand.
     pub fn local_flow(&self, packet: &Packet) -> Result<Option<LocalFlow>, Error> {
-        let reading = self.snapshot.reading()?;
+        let reading = View::of(&self.snapshot)?;
         self.local_flow_at(packet, &reading)
     }
 
     pub(crate) fn local_flow_at(
         &self,
         packet: &Packet,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<Option<LocalFlow>, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("flow.lookup");
         let _profile = PROFILE.enter();
         let found = self.flows.local_flow(
-            reading.configuration,
+            reading.node(),
+            reading.legacy(),
             &packet.facts(),
             FlowTime::from(reading),
         )?;
-        let current = self.snapshot.reading()?;
+        let current = View::of(&self.snapshot)?;
         match found {
-            Some(found)
-                if current.instant >= found.expires_at || current.now_ms >= found.expires_at_ms =>
-            {
+            Some(found) if !found.cap.live_at(current.instant, current.now_ms) => {
                 Err(Error::Expired)
             }
             Some(found) => Ok(Some(found.route)),
@@ -89,15 +81,15 @@ impl Engine {
 
     /// Host-driven idle cleanup. Reading counters never changes permits/state.
     /// Invalidated entries are unusable immediately. Authority loss retains inert
-    /// state for a possible Control-approved successor; reconciliation checks
-    /// every original expiry. Explicit invalidated().await/drop still tears down.
+    /// state for a possible Control-checked update. An ended netmap lease or an
+    /// explicit invalidated().await terminates everything.
     pub fn maintain(&mut self) -> Result<(), Error> {
         let snapshot = self.snapshot.clone();
-        let reading = snapshot.reading()?;
+        let reading = View::of(&snapshot)?;
         self.maintain_at(&reading)
     }
 
-    pub(crate) fn maintain_at(&mut self, reading: &Reading<'_>) -> Result<(), Error> {
+    pub(crate) fn maintain_at(&mut self, reading: &View<'_>) -> Result<(), Error> {
         self.snapshot.ensure_current()?;
         self.flows.expire(reading.instant, reading.now_ms);
         Ok(())
@@ -112,5 +104,24 @@ impl Engine {
     pub async fn invalidated(&mut self) {
         self.snapshot.invalidated().await;
         self.flows.clear();
+    }
+}
+
+/// Legacy flow retention across a publication: the demand's permit and every
+/// path binding must be unchanged; the new permit can only shorten the cap.
+pub(crate) fn retain_legacy(
+    old: &meshway_configuration::execution::NodeConfiguration,
+    new: &meshway_configuration::execution::NodeConfiguration,
+    flow: &crate::flow::Retained<'_>,
+    view: &View<'_>,
+) -> Keep {
+    let FlowGrant::Legacy(demand) = flow.grant else {
+        return Keep::Retire;
+    };
+    match crate::flow::authorization_unchanged(old, new, *demand, flow.path, view.now_ms) {
+        Ok(true) => Keep::Retain(new.permits.get(demand).and_then(|permit| {
+            crate::authority::Cap::until_ms(view.instant, view.now_ms, permit.expires_at_ms)
+        })),
+        _ => Keep::Retire,
     }
 }

@@ -1,15 +1,20 @@
 use super::{Error, MAX_FRAME, MAX_PLAINTEXT};
 use crate::PacketBuffer;
 mod data;
+use super::CircuitGrant;
+use crate::netmap::Purpose;
 use meshway_configuration::execution::CircuitAuthorization;
 use meshway_model::{Digest, EventId, KeyId, NetworkId, NodeId, Version};
 use meshway_policy::admission::Carrier;
+use meshway_policy::compile::netmap::Target;
 use meshway_transport_spec::TransportProtocol;
 use std::{str::FromStr, sync::Arc};
 
-pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x05";
+pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x06";
 pub(super) const DATA_HEADER: usize = data::HEADER;
 pub(super) const MAX_PATH: usize = 8;
+/// Bound of each ordered exit node and waypoint list in a netmap grant.
+pub(super) const MAX_TARGET_NODES: usize = 8;
 static ENCODE: meshway_logging::profile::Metric =
     meshway_logging::profile::Metric::new("codec.encode");
 static DECODE: meshway_logging::profile::Metric =
@@ -51,11 +56,15 @@ impl Kind {
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct Context {
     pub network: NetworkId,
-    pub authorization: CircuitAuthorization,
+    pub grant: CircuitGrant,
     pub path: Vec<NodeId>,
     pub circuit: [u8; 32],
-    pub permit: Digest,
+    /// Path authorization digest (netmap) or legacy permit digest.
+    pub authorization: Digest,
     pub keys: Digest,
+    /// Origin UTC time of the INIT. Receivers accept it only within the
+    /// handshake window, which bounds every closed-circuit replay tombstone.
+    pub initiated_at_ms: u64,
 }
 
 pub(super) struct Frame {
@@ -111,14 +120,21 @@ impl Context {
             return Err(Error::Wire);
         }
         id(out, self.network.as_uuid());
-        match self.authorization {
-            CircuitAuthorization::Business(value) => {
+        match &self.grant {
+            CircuitGrant::Legacy(CircuitAuthorization::Business(value)) => {
                 out.push(1);
                 id(out, value.as_uuid());
             }
-            CircuitAuthorization::Diagnostic(value) => {
+            CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(value)) => {
                 out.push(2);
                 id(out, value.as_uuid());
+            }
+            CircuitGrant::Netmap { purpose, target } => {
+                out.push(match purpose {
+                    Purpose::Business => 3,
+                    Purpose::Diagnostic => 4,
+                });
+                encode_target(out, target)?;
             }
         }
         id(out, self.path[0].as_uuid()); // Explicit original origin, checked against the path.
@@ -127,9 +143,72 @@ impl Context {
             id(out, node.as_uuid());
         }
         out.extend_from_slice(&self.circuit);
-        out.extend_from_slice(self.permit.as_bytes());
+        out.extend_from_slice(self.authorization.as_bytes());
         out.extend_from_slice(self.keys.as_bytes());
+        out.extend_from_slice(&self.initiated_at_ms.to_be_bytes());
         Ok(())
+    }
+
+    pub fn diagnostic(&self) -> bool {
+        self.grant.diagnostic()
+    }
+}
+
+fn encode_nodes(out: &mut Vec<u8>, nodes: &[NodeId], minimum: usize) -> Result<(), Error> {
+    if !(minimum..=MAX_TARGET_NODES).contains(&nodes.len())
+        || nodes
+            .iter()
+            .enumerate()
+            .any(|(i, n)| nodes[..i].contains(n))
+    {
+        return Err(Error::Wire);
+    }
+    out.push(nodes.len() as u8);
+    for node in nodes {
+        id(out, node.as_uuid());
+    }
+    Ok(())
+}
+
+fn encode_target(out: &mut Vec<u8>, target: &Target) -> Result<(), Error> {
+    match target {
+        Target::Mesh { node } => {
+            out.push(1);
+            id(out, node.as_uuid());
+        }
+        Target::Exit { nodes, via } => {
+            out.push(2);
+            encode_nodes(out, nodes, 1)?;
+            encode_nodes(out, via, 0)?;
+        }
+    }
+    Ok(())
+}
+
+fn decode_nodes(r: &mut Reader<'_>, minimum: usize) -> Result<Vec<NodeId>, Error> {
+    let count = usize::from(r.byte()?);
+    if !(minimum..=MAX_TARGET_NODES).contains(&count) {
+        return Err(Error::Wire);
+    }
+    let mut nodes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let node = r.id()?;
+        if nodes.contains(&node) {
+            return Err(Error::Wire);
+        }
+        nodes.push(node);
+    }
+    Ok(nodes)
+}
+
+fn decode_target(r: &mut Reader<'_>) -> Result<Target, Error> {
+    match r.byte()? {
+        1 => Ok(Target::Mesh { node: r.id()? }),
+        2 => Ok(Target::Exit {
+            nodes: decode_nodes(r, 1)?,
+            via: decode_nodes(r, 0)?,
+        }),
+        _ => Err(Error::Wire),
     }
 }
 
@@ -205,10 +284,7 @@ impl Frame {
         {
             return Err(Error::Wire);
         }
-        let diagnostic = matches!(
-            self.context.authorization,
-            CircuitAuthorization::Diagnostic(_)
-        );
+        let diagnostic = self.context.diagnostic();
         let probe = matches!(self.kind, Kind::ProbeRequest | Kind::ProbeReply);
         if self.probe.is_some() != probe
             || (probe && !diagnostic)
@@ -320,9 +396,17 @@ impl Frame {
         };
         let context = if kind.handshake() {
             let network = r.id()?;
-            let authorization = match r.byte()? {
-                1 => CircuitAuthorization::Business(r.id()?),
-                2 => CircuitAuthorization::Diagnostic(r.id()?),
+            let grant = match r.byte()? {
+                1 => CircuitGrant::Legacy(CircuitAuthorization::Business(r.id()?)),
+                2 => CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(r.id()?)),
+                3 => CircuitGrant::Netmap {
+                    purpose: Purpose::Business,
+                    target: decode_target(&mut r)?,
+                },
+                4 => CircuitGrant::Netmap {
+                    purpose: Purpose::Diagnostic,
+                    target: decode_target(&mut r)?,
+                },
                 _ => return Err(Error::Wire),
             };
             let origin: NodeId = r.id()?;
@@ -342,15 +426,17 @@ impl Frame {
                 return Err(Error::Wire);
             }
             let circuit = r.array()?;
-            let permit = Digest::from_bytes(r.array()?);
+            let authorization = Digest::from_bytes(r.array()?);
             let keys = Digest::from_bytes(r.array()?);
+            let initiated_at_ms = r.u64()?;
             Arc::new(Context {
                 network,
-                authorization,
+                grant,
                 path,
                 circuit,
-                permit,
+                authorization,
                 keys,
+                initiated_at_ms,
             })
         } else {
             let circuit: [u8; 32] = r.array()?;

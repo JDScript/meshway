@@ -19,7 +19,7 @@ fn tuple(key: &Tuple) -> Tuple {
 }
 
 fn utc(flow: &Flow) -> u64 {
-    flow.permit_expires_at_ms.min(flow.guard_expires_at_ms)
+    flow.cap.ms
 }
 
 impl Index {
@@ -49,7 +49,7 @@ impl Index {
                 .or_default()
                 .insert(key.clone());
         }
-        self.monotonic.insert((flow.expires_at, key.clone()));
+        self.monotonic.insert((flow.cap.at, key.clone()));
         self.utc.insert((utc(flow), key.clone()));
     }
 
@@ -65,7 +65,7 @@ impl Index {
     }
 
     fn remove_deadlines(&mut self, key: &Key, flow: &Flow) {
-        self.monotonic.remove(&(flow.expires_at, key.clone()));
+        self.monotonic.remove(&(flow.cap.at, key.clone()));
         self.utc.remove(&(utc(flow), key.clone()));
     }
 }
