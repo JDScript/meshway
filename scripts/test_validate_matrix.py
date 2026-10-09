@@ -247,55 +247,86 @@ class MatrixTests(unittest.TestCase):
 
 
 class RemoteTests(unittest.TestCase):
-    def test_worker_requires_clean_source_and_independent_zero_leftovers(self):
+    def test_concurrent_workers_own_worktrees_share_target_and_always_remove_them(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             binaries = root / ".local/bin"
             binaries.mkdir(parents=True)
             programs = {
-                "git": "import pathlib,sys,json\nwith (pathlib.Path.home() / 'git-calls.jsonl').open('a') as log: log.write(json.dumps(sys.argv[1:]) + '\\n')\nif sys.argv[1:3] == ['worktree', 'add']: pathlib.Path(sys.argv[-2]).mkdir(parents=True)\nprint('dirty' if sys.argv[1] == 'status' and pathlib.Path('dirty').exists() else '')\n",
+                "git": """import pathlib,shutil,sys,json
+with (pathlib.Path.home() / 'git-calls.jsonl').open('a') as log: log.write(json.dumps(sys.argv[1:]) + '\\n')
+if sys.argv[1:3] == ['worktree', 'add']: pathlib.Path(sys.argv[-2]).mkdir(parents=True)
+if sys.argv[1:3] == ['worktree', 'remove']: shutil.rmtree(sys.argv[-1])
+print('')
+""",
                 "uptime": "print('fixture uptime')\n",
                 "docker": "import pathlib\nprint('owned-leftover' if (pathlib.Path.home() / 'leftover').exists() else '')\n",
-                "mise": '''import json,pathlib,sys,os
+                # Each run waits for both to be inside the matrix: proves no run-wide lock.
+                "mise": """import json,pathlib,sys,os,time
 run = sys.argv[sys.argv.index('--run') + 1]
+home = pathlib.Path.home()
+(home / ('started-' + run)).touch()
+deadline = time.monotonic() + 8
+while len(list(home.glob('started-*'))) < 2 and time.monotonic() < deadline:
+    time.sleep(0.05)
+if run == 'broken':
+    sys.exit(3)
 directory = pathlib.Path(os.environ['MESHWAY_VALIDATION_ROOT']) / 'matrix' / run
 directory.mkdir(parents=True)
-data = dict(status='complete', passed=True, sourceRoot=str(pathlib.Path.cwd()), rows=[dict(row='udp/off', report='rows/udp-off/actor/report.json', reportId='actor')])
+data = dict(status='complete', passed=len(list(home.glob('started-*'))) == 2, sourceRoot=str(pathlib.Path.cwd()),
+            target=os.environ['MESHWAY_VALIDATION_TARGET'], tmp=os.environ['TMPDIR'],
+            rows=[dict(row='udp/off', report='rows/udp-off/actor/report.json', reportId='actor')])
 (directory / 'matrix.json').write_text(json.dumps(data))
 (directory / 'summary.md').write_text('matrix summary')
-''',
+""",
             }
             for name, source in programs.items():
                 path = binaries / name
                 path.write_text('#!' + sys.executable + '\n' + source)
                 path.chmod(0o700)
-            for name, dirty, leftover in (("clean", False, False), ("leftover", False, True), ("dirty", True, False)):
-                for marker, present in (("dirty", dirty), ("leftover", leftover)):
-                    path = root / marker
-                    if present:
-                        path.touch()
-                    else:
-                        path.unlink(missing_ok=True)
+            environment = dict(os.environ, HOME=str(root), PATH=str(binaries) + os.pathsep + os.environ["PATH"])
+
+            def start(name):
                 job = root / ".meshway/validation/jobs" / name
                 job.mkdir(parents=True)
-                payload = dict(path=str(root), run=name, revision="pushed", arguments=["--parallel", "4"])
-                subprocess.run([sys.executable, "-c", remote.WORKER, json.dumps(payload)], check=True,
-                               env=dict(os.environ, HOME=str(root), PATH=str(binaries) + os.pathsep + os.environ["PATH"]),
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-                result = json.loads((job / "result.json").read_text())
+                payload = dict(path=str(root), run=name, revision="pushed", arguments=["--short"])
+                return subprocess.Popen([sys.executable, "-c", remote.WORKER, json.dumps(payload)], env=environment,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            def finish(names):
+                for process in [start(name) for name in names]:
+                    self.assertEqual(process.wait(timeout=20), 0)
+                for path in root.glob("started-*"):
+                    path.unlink()
+                return {name: json.loads((root / ".meshway/validation/jobs" / name / "result.json").read_text())
+                        for name in names}
+
+            results = finish(["clean", "broken"])
+            (root / "leftover").touch()
+            results.update(finish(["leftover", "other"]))
+            validation = root / ".meshway/validation"
+            for name, result in results.items():
                 self.assertEqual(result["status"], "complete")
-                self.assertEqual(result["exitCode"], 0 if name == "clean" else 1)
-                self.assertTrue((root / ".meshway/validation/matrix" / name / "remote.json").exists())
-                if dirty:
-                    self.assertIn("clean", result["error"])
-                elif leftover:
+                self.assertEqual(result["exitCode"] == 0, name == "clean")
+                workspace = root / ".worktree" / ("validation-" + name)
+                self.assertEqual(result["workspace"], str(workspace))
+                self.assertTrue(result["workspaceRemoved"])
+                self.assertFalse(workspace.exists())
+                self.assertTrue((validation / "matrix" / name / "remote.json").exists())
+                if name == "broken":
+                    self.assertIn("matrix.json", result["error"])
+                    continue
+                data = json.loads((validation / "matrix" / name / "matrix.json").read_text())
+                self.assertTrue(data["passed"], "both runs of a pair must overlap inside the matrix")
+                self.assertEqual(Path(data["sourceRoot"]), workspace.resolve())
+                self.assertEqual(data["target"], str(validation / "target"))
+                self.assertEqual(data["tmp"], str(validation / "tmp" / name))
+                if name in ("leftover", "other"):
                     self.assertIn("owned-leftover", result["remainingResources"]["containers"])
-                if not dirty:
-                    self.assertEqual(result["workspace"], str(root / ".worktree/validation-matrix"))
-                    matrix_data = json.loads((root / ".meshway/validation/matrix" / name / "matrix.json").read_text())
-                    self.assertEqual(Path(matrix_data["sourceRoot"]), Path(result["workspace"]).resolve())
             calls = [json.loads(line) for line in (root / "git-calls.jsonl").read_text().splitlines()]
             self.assertFalse(any(call[0] == "checkout" for call in calls), "never switch the shared clone")
+            self.assertEqual(sum(call[:2] == ["worktree", "remove"] for call in calls), 4)
+            self.assertFalse((validation / "remote.lock").exists())
 
     def test_forwarding_and_attach_contract(self):
         args, forwarded = remote.parse_args(["--ref", "branch", "--parallel", "4", "--short", "--rows", "nat/off"])
@@ -317,7 +348,8 @@ data = dict(status='complete', passed=True, sourceRoot=str(pathlib.Path.cwd()), 
         compile(remote.WORKER, "worker", "exec")
         compile(remote.LAUNCH, "launch", "exec")
         self.assertIn("start_new_session=True", remote.LAUNCH)
-        self.assertIn("LOCK_EX | fcntl.LOCK_NB", remote.WORKER)
+        self.assertNotIn("remote.lock", remote.WORKER)
+        self.assertNotIn("LOCK_NB", remote.WORKER)
 
 
 if __name__ == "__main__":
