@@ -124,6 +124,23 @@ pub struct Observations {
     undo: Option<undo::ObservationUndo>,
 }
 impl Observations {
+    pub(crate) fn next_deadline(&self) -> Option<DateTime<Utc>> {
+        self.tasks
+            .values()
+            .flat_map(|stored| {
+                std::iter::once(stored.task.expires_at + Duration::minutes(1)).chain(
+                    stored.subscribers.values().map(|subscriber| {
+                        subscriber.expires_at
+                            + if subscriber.terminal.is_some() {
+                                Duration::minutes(1)
+                            } else {
+                                Duration::zero()
+                            }
+                    }),
+                )
+            })
+            .min()
+    }
     pub(crate) fn leases(&self) -> Vec<service::SubscriptionLease> {
         self.tasks
             .values()

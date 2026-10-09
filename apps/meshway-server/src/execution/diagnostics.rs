@@ -589,7 +589,7 @@ impl Execution {
         tx: &Transaction<'_>,
         subscriptions: &[crate::observations::service::SubscriptionLease],
         now: DateTime<Utc>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let rows = store::diagnostics::active_subscriptions(tx).map_err(node_dependency_error)?;
         for (id, old_expiry) in rows {
             let lease = subscriptions
@@ -610,10 +610,11 @@ impl Execution {
             }
         }
         let networks = store::diagnostics::dirty_networks(tx).map_err(node_dependency_error)?;
+        let changed = !networks.is_empty();
         for network in networks {
             self.publish_diagnostics(tx, network, now)?;
         }
         store::diagnostics::prune(tx, now.timestamp_millis() - 60_000)?;
-        Ok(())
+        Ok(changed)
     }
 }

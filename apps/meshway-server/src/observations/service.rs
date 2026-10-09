@@ -39,6 +39,11 @@ pub(crate) enum MaintenanceOwner {
 /// B computes the authorized full path candidates; A checks current session and
 /// source User identity ownership. A network role cannot manufacture a path.
 pub trait ObservationProvider: Send + Sync + 'static {
+    /// True only when all authorization changes publish committed wakeups;
+    /// subscriber deadlines remain an independent maintenance trigger.
+    fn event_driven_maintenance(&self) -> bool {
+        false
+    }
     fn node_observation_identity(
         &self,
         _: &Transaction<'_>,
@@ -65,13 +70,16 @@ pub trait ObservationProvider: Send + Sync + 'static {
     ) -> Result<NodeObservationAdmission, Error> {
         Err(Error::PermissionDenied)
     }
+    /// Return whether synchronization may have changed task authorization
+    /// bindings, requiring a second check before exposing their current view.
     fn synchronize(
         &self,
         _: &Transaction<'_>,
         _: &[SubscriptionLease],
         _: DateTime<Utc>,
-    ) -> Result<(), Error> {
-        Ok(())
+    ) -> Result<bool, Error> {
+        // Unknown providers conservatively require a second authorization pass.
+        Ok(true)
     }
     fn scope(
         &self,
@@ -183,25 +191,57 @@ impl<P: ObservationProvider> ObservationService<P> {
         let (stop, mut stopped) = tokio::sync::watch::channel(false);
         let service = self.clone();
         let worker = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut activity = match service.runtime.lock() {
+                Ok(runtime) => runtime.hub.wakeups.activity(),
+                Err(_) => return,
+            };
+            let coalesce = std::time::Duration::from_millis(250);
             loop {
-                tokio::select! {
+                let outcome = tokio::select! {
                     biased;
                     _=stopped.changed()=>break,
-                    _=interval.tick()=>{}
+                    result=service.maintain(activity.clone())=>result,
+                };
+                let Ok((deadline, observed)) = outcome else {
+                    tokio::select! {biased; _=stopped.changed()=>break, _=tokio::time::sleep(coalesce)=>{}}
+                    continue;
+                };
+                activity = observed;
+                let deadline = deadline.map(|deadline| {
+                    tokio::time::Instant::now()
+                        + (deadline - Utc::now()).to_std().unwrap_or_default()
+                });
+                let fallback = (!service.provider.event_driven_maintenance())
+                    .then(|| tokio::time::Instant::now() + coalesce);
+                let due = deadline.into_iter().chain(fallback).min();
+                let changed = tokio::select! {
+                    biased;
+                    _=stopped.changed()=>break,
+                    _=wait_deadline(due)=>false,
+                    _=activity.changed()=>true,
+                };
+                // Coalesce committed traffic without periodic reauthorization.
+                // A subscription/retention deadline is never postponed by it.
+                if !changed {
+                    continue;
                 }
+                let due = due.map_or(tokio::time::Instant::now() + coalesce, |due| {
+                    due.min(tokio::time::Instant::now() + coalesce)
+                });
                 tokio::select! {
                     biased;
                     _=stopped.changed()=>break,
-                    _=service.maintain()=>{}
+                    _=tokio::time::sleep_until(due)=>{}
                 }
             }
         });
         ObservationMaintenance { stop, worker }
     }
 
-    async fn maintain(&self) -> Result<(), Error> {
+    async fn maintain(
+        &self,
+        mut activity: tokio::sync::watch::Receiver<u64>,
+    ) -> Result<(Option<DateTime<Utc>>, tokio::sync::watch::Receiver<u64>), Error> {
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
         self.handle
@@ -212,11 +252,15 @@ impl<P: ObservationProvider> ObservationService<P> {
                     RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
                 runtime.observations.expire(now);
                 reauthorize_all(&*provider, &tx, &mut runtime, now, None);
-                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
-                reauthorize_all(&*provider, &tx, &mut runtime, now, None);
+                if provider.synchronize(&tx, &runtime.observations.leases(), now)? {
+                    reauthorize_all(&*provider, &tx, &mut runtime, now, None);
+                }
                 tx.commit()?;
                 runtime.committed();
-                Ok(())
+                // Mark on the serialized owner, after our own effects. A later
+                // accepted transaction cannot be swallowed by the async waiter.
+                activity.borrow_and_update();
+                Ok((runtime.observations.next_deadline(), activity))
             })
             .await?
     }
@@ -442,8 +486,10 @@ impl<P: ObservationProvider> ObservationService<P> {
     ) -> Result<NodeObservationResponse, Error> {
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
+        let queued_at = std::time::Instant::now();
         self.handle
             .execute(move |connection| {
+                let started_at = std::time::Instant::now();
                 let tx = connection.transaction()?;
                 let now = Utc::now();
                 let mut runtime =
@@ -470,6 +516,11 @@ impl<P: ObservationProvider> ObservationService<P> {
                     network_id: prepared.admission.report.network_id,
                     observation_id: task.id,
                 });
+                tracing::info!(subscription = ?task.subscription_id, observation = %task.id,
+                    publication = %task.configuration.execution_publication,
+                    queue_us = started_at.duration_since(queued_at).as_micros() as u64,
+                    processing_us = started_at.elapsed().as_micros() as u64,
+                    "Node observation subscription admitted");
                 Ok(NodeObservationResponse {
                     task,
                     target: prepared.target,
@@ -729,6 +780,13 @@ impl<P: ObservationProvider> ObservationService<P> {
                 Ok(task)
             })
             .await?
+    }
+}
+
+async fn wait_deadline(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1068,6 +1126,113 @@ mod tests {
         })
         .await
         .expect("lifecycle boundary");
+    }
+
+    struct CountMaintenance(Arc<std::sync::atomic::AtomicUsize>);
+    impl ObservationProvider for CountMaintenance {
+        fn event_driven_maintenance(&self) -> bool {
+            true
+        }
+        fn synchronize(
+            &self,
+            _: &Transaction<'_>,
+            _: &[SubscriptionLease],
+            _: DateTime<Utc>,
+        ) -> Result<bool, Error> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(false)
+        }
+        fn scope(
+            &self,
+            _: &Transaction<'_>,
+            _: &ReadIdentity,
+            _: DateTime<Utc>,
+        ) -> Result<crate::state::VisibilityScope, Error> {
+            Err(Error::PermissionDenied)
+        }
+        fn report(
+            &self,
+            _: &Transaction<'_>,
+            _: &str,
+            _: DateTime<Utc>,
+        ) -> Result<crate::state::ReportAdmission, Error> {
+            Err(Error::PermissionDenied)
+        }
+        fn observation(
+            &self,
+            _: &Transaction<'_>,
+            _: &ReadIdentity,
+            _: &CreateObservation,
+            _: DateTime<Utc>,
+        ) -> Result<TaskAdmission, Error> {
+            Err(Error::PermissionDenied)
+        }
+        fn observation_session(
+            &self,
+            _: &Transaction<'_>,
+            _: &ReadIdentity,
+            _: DateTime<Utc>,
+        ) -> Result<SessionId, Error> {
+            Err(Error::PermissionDenied)
+        }
+    }
+
+    #[tokio::test]
+    async fn maintenance_waits_for_committed_changes_instead_of_quarter_second_reauthorization() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = crate::App::open(crate::Settings::new(
+            temp.path().canonicalize().unwrap().join("data"),
+        ))
+        .await
+        .unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let service = app.observation_service(CountMaintenance(calls.clone()));
+        let maintenance = service.start();
+        until(|| calls.load(Ordering::SeqCst) == 1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let runtime = service.runtime.clone();
+        service
+            .handle
+            .execute(move |connection| {
+                connection.transaction().unwrap().commit().unwrap();
+                runtime
+                    .lock()
+                    .unwrap()
+                    .hub
+                    .publish_committed(Effect::Progress {
+                        network_id: id(1000),
+                    });
+            })
+            .await
+            .unwrap();
+        until(|| calls.load(Ordering::SeqCst) == 2).await;
+        tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "own completion must not trigger a reauthorization loop"
+        );
+        maintenance.shutdown().await.unwrap();
+        app.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn maintenance_deadline_keeps_subscription_expiry_separate_from_terminal_retention() {
+        let now = Utc::now();
+        let mut observations = crate::observations::Observations::default();
+        observations.tasks.insert(id(1), task(1, now, 0));
+        assert_eq!(
+            observations.next_deadline(),
+            Some(now + chrono::Duration::seconds(30))
+        );
+        observations.expire(now + chrono::Duration::seconds(30));
+        assert_eq!(
+            observations.next_deadline(),
+            Some(now + chrono::Duration::seconds(90))
+        );
+        observations.expire(now + chrono::Duration::seconds(90));
+        assert_eq!(observations.next_deadline(), None);
     }
 
     #[tokio::test]

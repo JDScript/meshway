@@ -315,7 +315,7 @@ pub(crate) fn prune(tx: &Transaction<'_>, before: i64) -> Result<(), Error> {
     // Node IDs retain their immutable selector binding even after terminal RAM
     // retention. Tombstones grant nothing and do not consume the live quota.
     tx.execute(
-        "DELETE FROM diagnostic_subscriptions WHERE principal_kind='user_session' AND cancelled=1 AND expires_at<?1",
+        "DELETE FROM diagnostic_subscriptions WHERE principal_kind='user_session' AND cancelled=1 AND expires_at<=?1",
         [before],
     )?;
     tx.execute("DELETE FROM diagnostic_tasks WHERE NOT EXISTS(SELECT 1 FROM diagnostic_subscriptions WHERE task_id=diagnostic_tasks.id)",[])?;

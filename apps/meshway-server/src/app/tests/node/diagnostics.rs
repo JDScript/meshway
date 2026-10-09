@@ -220,5 +220,36 @@ async fn diagnostic_results_and_identical_refreshes_reuse_publication() {
             .is_err(),
         "old output must not be relabeled with the renewed permit"
     );
+    observations
+        .observations(
+            crate::state::service::ReadIdentity::UserSession {
+                digest: crate::accounts::token_digest(owner.token.expose()).unwrap(),
+                network,
+            },
+            Some(subscription_id),
+            crate::observations::service::ObservationOperation::Cancel,
+        )
+        .await
+        .unwrap();
+    app.executor
+        .handle()
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            store::execution::diagnostics::prune(&tx, expires_at.timestamp_millis()).unwrap();
+            let retained: i64 = tx
+                .query_row(
+                    "SELECT count(*) FROM diagnostic_subscriptions WHERE id=?1",
+                    [subscription_id.as_uuid().as_bytes().as_slice()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                retained, 0,
+                "exact retention cutoff must not need a later polling tick"
+            );
+            tx.commit().unwrap();
+        })
+        .await
+        .unwrap();
     app.shutdown().await.unwrap();
 }

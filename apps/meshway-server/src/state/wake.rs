@@ -11,12 +11,15 @@ use tokio::sync::watch;
 pub struct Wakeups {
     networks: Mutex<BTreeMap<NetworkId, watch::Sender<u64>>>,
     all: watch::Sender<u64>,
+    activity: watch::Sender<u64>,
 }
 
 impl Wakeups {
     /// Called by the effect sink after COMMIT and by shutdown. `None` wakes
     /// every subscription.
     pub fn bump(&self, network: Option<NetworkId>) {
+        self.activity
+            .send_modify(|version| *version = version.wrapping_add(1));
         match network {
             Some(network) => {
                 let Ok(mut networks) = self.networks.lock() else {
@@ -32,6 +35,11 @@ impl Wakeups {
                 .all
                 .send_modify(|version| *version = version.wrapping_add(1)),
         }
+    }
+
+    /// App-owned maintenance follows committed changes across its networks.
+    pub(crate) fn activity(&self) -> watch::Receiver<u64> {
+        self.activity.subscribe()
     }
 
     pub fn listen(&self, network: NetworkId) -> Listener {

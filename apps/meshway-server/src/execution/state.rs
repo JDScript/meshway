@@ -613,6 +613,9 @@ fn time(ms: u64) -> Result<DateTime<Utc>, Error> {
 }
 
 impl crate::observations::service::ObservationProvider for Execution {
+    fn event_driven_maintenance(&self) -> bool {
+        true
+    }
     fn node_observation_identity(
         &self,
         tx: &Transaction<'_>,
@@ -653,7 +656,7 @@ impl crate::observations::service::ObservationProvider for Execution {
         tx: &Transaction<'_>,
         subscriptions: &[crate::observations::service::SubscriptionLease],
         now: DateTime<Utc>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         self.synchronize_diagnostics(tx, subscriptions, now)
     }
     fn scope(
