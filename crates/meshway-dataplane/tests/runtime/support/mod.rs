@@ -80,6 +80,38 @@ impl Node {
 }
 
 impl Server {
+    pub async fn renew_observation_if_due(
+        &self,
+        owner: &Owner,
+        task: &mut meshway_protocol::ObservationTask,
+    ) -> bool {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        if now_ms < u128::try_from(task.renew_after.timestamp_millis()).unwrap() {
+            return false;
+        }
+        let subscription_id = task.subscription_id.unwrap();
+        let renewed = self
+            .client
+            .renew_observation(
+                &meshway_control_client::RenewObservationPath {
+                    network_id: owner.network,
+                    subscription_id,
+                },
+                owner.token.expose(),
+            )
+            .await
+            .unwrap();
+        *task = renewed
+            .items
+            .into_iter()
+            .find(|item| item.subscription_id == Some(subscription_id))
+            .expect("renewed observer subscription");
+        true
+    }
+
     pub async fn observe(
         &self,
         owner: &Owner,

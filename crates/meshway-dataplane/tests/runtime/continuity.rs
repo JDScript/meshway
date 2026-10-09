@@ -18,18 +18,16 @@ async fn identity(node: &mut Node) -> DataPlaneIdentity {
 }
 
 async fn reconcile(fixture: &mut SecureMesh) {
-    fixture
-        .a
-        .reconcile(identity(&mut fixture.mesh.a).await)
-        .unwrap();
-    fixture
-        .r
-        .reconcile(identity(&mut fixture.mesh.r).await)
-        .unwrap();
-    fixture
-        .b
-        .reconcile(identity(&mut fixture.mesh.b).await)
-        .unwrap();
+    // Independent Node installs share no Control owner. Do not spend a short
+    // permit's live budget serially waiting for three unrelated HTTP clients.
+    let (a, r, b) = tokio::join!(
+        identity(&mut fixture.mesh.a),
+        identity(&mut fixture.mesh.r),
+        identity(&mut fixture.mesh.b),
+    );
+    fixture.a.reconcile(a).unwrap();
+    fixture.r.reconcile(r).unwrap();
+    fixture.b.reconcile(b).unwrap();
 }
 
 fn forward(fixture: &mut SecureMesh, circuit: [u8; 32]) -> Vec<u8> {
@@ -303,8 +301,11 @@ async fn cancellation_breaks_local_lineage_and_same_id_recreation_is_rejected() 
 
 #[tokio::test]
 async fn an_expired_permit_cannot_be_revived_while_the_node_execution_lease_remains_live() {
+    // C: expire the actual requested 5 s permit, below EXECUTION_TTL (60 s).
+    // Waiting on the issued deadline is necessary to distinguish both guards.
     let mut fixture = SecureMesh::start().await;
     fixture.mesh.demand = request();
+    let permit_seconds = 5;
     let response = fixture
         .mesh
         .a
@@ -320,7 +321,7 @@ async fn an_expired_permit_cannot_be_revived_while_the_node_execution_lease_rema
             profile: "mesh".into(),
             // Leave time for the three real HTTP installations and handshake;
             // this verifies expiry while execution stays live, not setup speed.
-            duration_seconds: 5,
+            duration_seconds: permit_seconds,
         })
         .await
         .unwrap();
@@ -335,6 +336,11 @@ async fn an_expired_permit_cannot_be_revived_while_the_node_execution_lease_rema
         .a
         .send(circuit, datagram(&fixture.mesh, false, false))
         .unwrap();
+    let remaining = permit.expires_at_ms.saturating_sub(old.now_ms().unwrap());
+    assert!(
+        remaining >= u64::from(permit_seconds) * 1000 / 2,
+        "short-permit preparation must finish inside half its lifetime: {remaining} ms left"
+    );
     tokio::time::timeout(
         std::time::Duration::from_secs(7),
         old.invalidated_at(permit.expires_at_ms),

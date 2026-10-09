@@ -62,6 +62,19 @@ async fn handshake(fixture: &mut SecureMesh, task: &meshway_protocol::Observatio
     fixture.finish_handshake(init).await
 }
 
+async fn renew_observer(fixture: &mut SecureMesh, task: &mut meshway_protocol::ObservationTask) {
+    // Renew only at boundaries with no queued old-publication outputs under
+    // test, then install the actual successor before creating another probe.
+    if fixture
+        .mesh
+        .server
+        .renew_observation_if_due(&fixture.mesh.owner, task)
+        .await
+    {
+        fixture.reconcile().await;
+    }
+}
+
 fn terminal_response(fixture: &mut SecureMesh, request: PendingFrame) -> PendingFrame {
     let request = forward(fixture.r.receive(&fixture.ar.carrier, wire(request)));
     let Received::ProbeRequest { response, .. } = fixture
@@ -108,6 +121,8 @@ async fn delayed_probe_roundtrip(
 
 #[tokio::test]
 async fn diagnostic_source_cadence_survives_compressed_remote_arrivals() {
+    // C: the diagnostic's 1000 ms source cadence must pass while the remote
+    // read is held; virtual time cannot establish real TCP receive timestamps.
     let (mut fixture, task) = setup().await;
     let circuit = handshake(&mut fixture, &task).await;
     let first_id = measurement();
@@ -157,6 +172,8 @@ async fn diagnostic_source_cadence_survives_compressed_remote_arrivals() {
 
 #[tokio::test]
 async fn diagnostic_remote_burst_budget_is_shared_across_cids_at_relay_and_terminal() {
+    // C: emit at the real 1000 ms source cadence, then deliver a compressed
+    // burst. Skipping the cadence would test source rejection instead.
     for terminal in [false, true] {
         let (mut fixture, task) = setup().await;
         let circuits = [
@@ -361,7 +378,10 @@ async fn diagnostic_observation_rate_cannot_be_bypassed_with_another_cid() {
 
 #[tokio::test]
 async fn diagnostic_continuation_retains_cipher_but_cancels_original_probe_and_reply() {
-    let (mut fixture, task) = setup().await;
+    // C: the renewed circuit retains the original 1000 ms diagnostic cadence;
+    // a second probe before that window tests rate limiting, not continuation.
+    let (mut fixture, mut task) = setup().await;
+    renew_observer(&mut fixture, &mut task).await;
     let circuit = handshake(&mut fixture, &task).await;
     let request = fixture
         .a
@@ -386,6 +406,7 @@ async fn diagnostic_continuation_retains_cipher_but_cancels_original_probe_and_r
             CircuitState::Established
         );
     }
+    renew_observer(&mut fixture, &mut task).await;
     tokio::time::sleep(Duration::from_millis(1010)).await;
     let id = measurement();
     let request = fixture
