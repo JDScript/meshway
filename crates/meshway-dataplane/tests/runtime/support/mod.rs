@@ -1,5 +1,6 @@
 pub mod diagnostic;
 pub mod dns;
+pub mod netmap;
 pub mod packet;
 pub mod secure;
 
@@ -43,6 +44,8 @@ pub struct Owner {
 pub struct Node {
     pub id: NodeId,
     pub control: Control,
+    /// Bindings committed by enrollment.
+    pub keys: meshway_protocol::NodeKeyMetadata,
 }
 
 impl Node {
@@ -278,6 +281,7 @@ impl Server {
         Node {
             id: enrolled.node_id,
             control,
+            keys: enrolled.keys,
         }
     }
 
