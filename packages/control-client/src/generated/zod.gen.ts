@@ -3027,6 +3027,12 @@ export const zNetmapLease = z.strictObject({
   ["netmap"]: zNetmapRef
 });
 
+export const zNetmapSignature = z.strictObject({
+  ["keyGeneration"]: zVersion,
+  ["keyId"]: zKeyId,
+  ["signature"]: z.string()
+});
+
 export const zNetworkActions = z.strictObject({
   ["editConfiguration"]: z.boolean(),
   ["joinLinkRoles"]: z.array(zMembershipRole),
@@ -3816,7 +3822,8 @@ export const zSyncRequest = z.strictObject({
 export const zSyncResponse = z.strictObject({
   ["lease"]: zNetmapLease,
   ["netmap"]: zSyncNetmap,
-  ["peerFacts"]: zPeerFactsDelta.nullable()
+  ["peerFacts"]: zPeerFactsDelta.nullable(),
+  ["signature"]: zNetmapSignature
 });
 
 export const zTransportCatalogEntry = z.strictObject({

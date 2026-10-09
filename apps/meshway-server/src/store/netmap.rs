@@ -42,6 +42,23 @@ impl Recompiled {
     }
 }
 
+/// What changed a stable input, deciding how a netmap above the bound ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Trigger {
+    /// A configuration version or rule-set binding: the whole transaction is
+    /// rejected with the `netmap_limit` configuration issue.
+    Configuration,
+    /// A Node-side or credential operation (key revocation and rotation,
+    /// capabilities, profile selection) that must not be refused because of a
+    /// netmap: each over-limit Node is excluded from the inventory, its netmap
+    /// becomes unavailable and every other Node is compiled without it.
+    Node,
+}
+
+/// How many over-limit Nodes one Node-triggered recompilation excludes before
+/// it gives up and the operation itself is unavailable.
+const MAX_EXCLUDED: usize = 16;
+
 /// Recompiles every Node of `network` from the current stable inputs and the
 /// current rule-set binding.
 pub(crate) fn recompile(
@@ -49,11 +66,12 @@ pub(crate) fn recompile(
     sealer: &Sealer,
     network: NetworkId,
     now: i64,
+    trigger: Trigger,
 ) -> Result<Recompiled, Error> {
     let (revision, _, bindings) = current_configuration(tx, sealer, network)?;
     let rule_sets =
         crate::resources::bindings::at_revision(tx, network, revision, &bindings.rule_sets)?;
-    recompile_with_rule_sets(tx, sealer, network, now, &rule_sets)
+    recompile_with_rule_sets(tx, sealer, network, now, &rule_sets, trigger)
 }
 
 /// Same as [`recompile`] with the rule-set binding the caller is committing.
@@ -63,6 +81,7 @@ pub(crate) fn recompile_with_rule_sets(
     network: NetworkId,
     now: i64,
     rule_set_bindings: &crate::resources::bindings::Bindings,
+    trigger: Trigger,
 ) -> Result<Recompiled, Error> {
     let (revision, cfg, bindings) = current_configuration(tx, sealer, network)?;
     let rule_sets =
@@ -78,18 +97,41 @@ pub(crate) fn recompile_with_rule_sets(
         .iter()
         .map(|(node, head)| (*node, head.previous))
         .collect();
-    let compiled = compile_netmap(NetmapInput {
-        network,
-        revision,
-        configuration: &cfg,
-        subjects: &subjects,
-        inventory: &inventory,
-        rule_sets: &rule_sets,
-        selected_profiles: &selected_profiles,
-        selection_versions: &selection_versions,
-        previous: &previous,
-    })
-    .map_err(netmap_error)?;
+    let mut excluded = BTreeSet::new();
+    let compiled = loop {
+        let mut trusted = inventory.clone();
+        trusted.retain(|node, _| !excluded.contains(node));
+        match compile_netmap(NetmapInput {
+            network,
+            revision,
+            configuration: &cfg,
+            subjects: &subjects,
+            inventory: &trusted,
+            rule_sets: &rule_sets,
+            selected_profiles: &selected_profiles,
+            selection_versions: &selection_versions,
+            previous: &previous,
+        }) {
+            Ok(compiled) => break compiled,
+            Err(NetmapError::Limit { node, bytes }) if trigger == Trigger::Node => {
+                tracing::warn!(network = %network, node = %node, bytes, "Netmap exceeds the safety bound; the Node's netmap is unavailable");
+                if excluded.len() >= MAX_EXCLUDED || !excluded.insert(node) {
+                    return Err(Error::Unavailable(crate::error::Unavailability::Netmap));
+                }
+            }
+            Err(error) => return Err(netmap_error(error)),
+        }
+    };
+    tx.execute(
+        "DELETE FROM node_netmap_unavailable WHERE network_id=?1",
+        [bytes(network.as_uuid())],
+    )?;
+    for node in &excluded {
+        tx.execute(
+            "INSERT INTO node_netmap_unavailable(network_id,node_id,reason,since) VALUES(?1,?2,'limit',?3)",
+            params![bytes(network.as_uuid()), bytes(node.as_uuid()), now],
+        )?;
+    }
     let mut changed = BTreeSet::new();
     let compiled_nodes: BTreeSet<NodeId> = compiled.nodes.keys().copied().collect();
     for (node, netmap) in compiled.nodes {
@@ -245,6 +287,19 @@ pub(crate) struct Current {
     pub(crate) previous: Option<NetmapRef>,
 }
 
+/// Whether the Node's netmap was excluded for exceeding the safety bound.
+pub(crate) fn unavailable(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+) -> Result<bool, Error> {
+    Ok(tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM node_netmap_unavailable WHERE network_id=?1 AND node_id=?2)",
+        params![bytes(network.as_uuid()), bytes(node.as_uuid())],
+        |row| row.get(0),
+    )?)
+}
+
 /// Null when the Node has no current netmap (never compiled, or withdrawn).
 pub(crate) fn current(
     tx: &Transaction<'_>,
@@ -339,4 +394,113 @@ fn reference(revision: i64, serial: i64, content: Vec<u8>) -> Result<NetmapRef, 
             .map_err(|_| Error::decode("node_netmaps.serial"))?,
         digest: digest(content)?,
     })
+}
+
+/// The current netmap signing key: public binding and its sealed private seed.
+pub(crate) struct StoredSigningKey {
+    pub(crate) public: meshway_protocol::netmap::ServerSigningKey,
+    pub(crate) seed: zeroize::Zeroizing<[u8; 32]>,
+}
+
+/// Loads the current netmap signing key, creating generation 1 when none
+/// exists yet. The private seed never leaves the sealed column in plaintext.
+pub(crate) fn signing_key(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    now: i64,
+    generate: impl FnOnce() -> Result<zeroize::Zeroizing<[u8; 32]>, Error>,
+    public_of: impl Fn(&[u8; 32]) -> [u8; 32],
+) -> Result<StoredSigningKey, Error> {
+    type Row = (Vec<u8>, i64, Vec<u8>, Vec<u8>);
+    let row: Option<Row> = tx
+        .query_row(
+            "SELECT id,generation,public_key,private_key FROM server_signing_keys
+             WHERE purpose='netmap' AND retired_at IS NULL",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let Some((key_id, generation, public, private)) = row else {
+        let key_id = crate::secrets::random_key_id()?;
+        let generation = Version::MIN;
+        let seed = generate()?;
+        let public = public_of(&seed);
+        let sealed = sealer.seal_signing_key(key_id, generation, seed.as_slice())?;
+        tx.execute(
+            "INSERT INTO server_signing_keys(id,purpose,generation,public_key,private_key,created_at)
+             VALUES(?1,'netmap',?2,?3,?4,?5)",
+            params![
+                bytes(key_id.as_uuid()),
+                generation.get() as i64,
+                public.as_slice(),
+                sealed.as_bytes(),
+                now
+            ],
+        )?;
+        return Ok(StoredSigningKey {
+            public: public_signing_key(key_id, generation, public),
+            seed,
+        });
+    };
+    let key_id: meshway_model::KeyId = id(key_id)?;
+    let generation = u64::try_from(generation)
+        .ok()
+        .and_then(|value| Version::new(value).ok())
+        .ok_or(Error::decode("server_signing_keys.generation"))?;
+    let plaintext = sealer.open_signing_key(key_id, generation, &private)?;
+    let mut seed = zeroize::Zeroizing::new([0; 32]);
+    if plaintext.as_bytes().len() != 32 {
+        return Err(Error::decode("server_signing_keys.private_key"));
+    }
+    seed.copy_from_slice(plaintext.as_bytes());
+    let public: [u8; 32] = public
+        .try_into()
+        .map_err(|_| Error::decode("server_signing_keys.public_key"))?;
+    if public_of(&seed) != public {
+        return Err(Error::decode("server_signing_keys.private_key"));
+    }
+    Ok(StoredSigningKey {
+        public: public_signing_key(key_id, generation, public),
+        seed,
+    })
+}
+
+/// Public half of the current netmap signing key, for enrollment responses.
+pub(crate) fn server_signing_key(
+    tx: &Transaction<'_>,
+) -> Result<meshway_protocol::netmap::ServerSigningKey, Error> {
+    let (key_id, generation, public): (Vec<u8>, i64, Vec<u8>) = tx
+        .query_row(
+            "SELECT id,generation,public_key FROM server_signing_keys
+             WHERE purpose='netmap' AND retired_at IS NULL",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?
+        .ok_or(Error::Internal("netmap signing key missing"))?;
+    Ok(public_signing_key(
+        id(key_id)?,
+        u64::try_from(generation)
+            .ok()
+            .and_then(|value| Version::new(value).ok())
+            .ok_or(Error::decode("server_signing_keys.generation"))?,
+        public
+            .try_into()
+            .map_err(|_| Error::decode("server_signing_keys.public_key"))?,
+    ))
+}
+
+fn public_signing_key(
+    key_id: meshway_model::KeyId,
+    key_generation: Version,
+    public: [u8; 32],
+) -> meshway_protocol::netmap::ServerSigningKey {
+    meshway_protocol::netmap::ServerSigningKey {
+        key_id,
+        key_generation,
+        public_key: meshway_model::NodePublicKey {
+            algorithm: meshway_model::KeyAlgorithm::Ed25519,
+            bytes: Digest::from_bytes(public),
+        },
+    }
 }

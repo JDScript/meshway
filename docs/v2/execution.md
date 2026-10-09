@@ -47,7 +47,7 @@ Node execution lease 最长为 Server 当前时点后 60 秒，并受当前 inst
 
 Server 与现行按需发布并存地维护每个 Node 的 netmap（[设计](/v2/node/netmap-design)）并提供 `POST /agent-api/v1/sync`（`syncNode`）。Node 尚未消费该端点；Node 侧执行仍以上文发布为准。
 
-**存储与编译**。每个已登记、有可信 Control／数据面密钥的配置节点有一份 `CompiledNetmap`，按 (网络, 节点) 保存当前 serial 及其前一份（delta 基准），内容私有密封。下列稳定输入在其自身事务内整网重新投影，内容 digest 不变则 serial 与 revision 不变；任一节点超过 8 MiB 时整个事务以 `configuration_invalid` 拒绝，问题 code 为 `netmap_limit`：
+**存储与编译**。每个已登记、有可信 Control／数据面密钥的配置节点有一份 `CompiledNetmap`，按 (网络, 节点) 保存当前 serial 及其前一份（delta 基准），内容私有密封。下列稳定输入在其自身事务内整网重新投影，内容 digest 不变则 serial 与 revision 不变。任一节点超过 8 MiB 时：配置版本与规则集绑定以 `configuration_invalid`（问题 code `netmap_limit`）拒绝整个事务；密钥吊销／换钥、实例能力与方案选择照常提交，超限节点被移出可信库存，其 netmap 记为不可用（其他节点在不含它的库存上编译），直到后续重编不再超限：
 
 | 触发 | 事务 |
 | --- | --- |
@@ -57,7 +57,7 @@ Server 与现行按需发布并存地维护每个 Node 的 netmap（[设计](/v2
 | 实例能力变化 | `acquireNodeInstance` 上报的能力与已认证能力不同时 |
 | 方案选择 | `selectNodeRoutingProfile` |
 
-State 报告、实例续租／释放／到期与观察订阅不重新投影。失去可信密钥或被移出配置的节点，其 netmap 被撤回但保留 serial 高水位；之后恢复也不会出现 serial 回退。
+State 报告、实例续租／释放／到期与观察订阅不重新投影。规则集按配置版本保存当前绑定（版本自身绑定，或其后检查更新绑定的 artifact），不依赖执行发布。失去可信密钥或被移出配置的节点，其 netmap 被撤回但保留 serial 高水位；之后恢复也不会出现 serial 回退。
 
 **请求与响应**。请求为 `SyncRequest { netmap, state }`，二者都可省略；只需 Node session，无需 instance。网络与节点只由凭据决定，请求不携带也不能指定。
 
@@ -67,9 +67,10 @@ State 报告、实例续租／释放／到期与观察订阅不重新投影。�
 | 等于当前的前一份 | serial 已前进 | `delta`（基准为请求） |
 | 省略、null、更早、其他节点的引用 | — | `full` |
 | 任意 | 挂起期间当前 netmap 改变 | 立即以上两行之一 |
+| 任意 | 本节点 netmap 因超限不可用 | `503 service_unavailable` |
 | 任意 | 本节点无当前 netmap | `409 binding_conflict` |
 
-每个成功响应都签发新的 `lease`（`issuedAt` 为 Server 当前时刻，`expiresAt` 为其后 `--netmap-validity`），续期不写入 serial。`peerFacts` 当前恒为 null。挂起时长为 `--netmap-sync-hold` 加 ±10% 抖动，最长不足 60 秒；同一节点的新请求使旧请求立即返回。凭据缺失、无效、属于用户或节点已吊销返回 `401 invalid_credentials`。
+每个成功响应都签发新的 `lease`（`issuedAt` 为 Server 当前时刻，`expiresAt` 为其后 `--netmap-validity`），续期不写入 serial。每个响应的 `signature` 是 Server netmap 签发钥对 `netmap_lease_transcript(network, node, lease, server, keyId, keyGeneration)` 的 Ed25519 签名，覆盖认证所得的网络与节点、`NetmapRef` 与租约区间；该钥的公钥随接入响应 `serverSigningKey` 下发并由 Node 钉住。签发钥在 Server 首次启动时生成（generation 1），私钥由主密钥密封私有保存，重启沿用；当前不轮换。`peerFacts` 当前恒为 null。挂起时长为 `--netmap-sync-hold` 加 ±10% 抖动，最长不足 60 秒；同一节点的新请求使旧请求立即返回。凭据缺失、无效、属于用户或节点已吊销返回 `401 invalid_credentials`。
 
 ## 各方职责
 

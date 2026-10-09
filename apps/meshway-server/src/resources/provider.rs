@@ -139,6 +139,13 @@ impl ResourceProvider for Provider {
         if unchanged {
             return Ok(Vec::new());
         }
+        crate::store::resources::bindings::record(
+            tx,
+            network,
+            revision,
+            &selected,
+            now.timestamp_millis(),
+        )?;
         crate::store::execution::publish_with_rule_sets(
             tx,
             &self.sealer,
@@ -153,6 +160,7 @@ impl ResourceProvider for Provider {
             network,
             now.timestamp_millis(),
             &selected,
+            crate::store::netmap::Trigger::Configuration,
         )?;
         Ok(netmap.effects())
     }

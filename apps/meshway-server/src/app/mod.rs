@@ -33,6 +33,7 @@ pub struct App {
     effects: Arc<Effects>,
     netmap_timing: crate::netmap::SyncTiming,
     peer_facts: Arc<dyn crate::netmap::PeerFactsSource>,
+    netmap_signer: Arc<crate::netmap::signing::NetmapSigningKey>,
     shutdown_hooks: ShutdownHooks,
     console_origin: Option<Arc<crate::settings::Url>>,
     public_origin: Option<Arc<crate::settings::Url>>,
@@ -175,7 +176,7 @@ impl App {
         });
         // No yield between taking the prepared directory and transferring it
         // to the SQLite worker. Dropping either future preserves lock ownership.
-        let (executor, sealer) = Executor::open_with_effects(
+        let (executor, (sealer, netmap_signer)) = Executor::open_with_effects(
             directory.database_path(),
             options,
             directory,
@@ -189,8 +190,11 @@ impl App {
                     .map_err(|_| AppError::Database)?;
                 crate::store::execution::retire_obsolete(&transaction, &sealer)
                     .map_err(|_| AppError::StorageIntegrity)?;
+                let signer =
+                    crate::netmap::signing::NetmapSigningKey::load_or_create(&transaction, &sealer)
+                        .map_err(|_| AppError::StorageIntegrity)?;
                 transaction.commit().map_err(|_| AppError::Database)?;
-                Ok(sealer)
+                Ok((sealer, signer))
             },
         )
         .await
@@ -213,6 +217,7 @@ impl App {
                 }
             }));
         let sealer = Arc::new(sealer);
+        let netmap_signer = Arc::new(netmap_signer);
         // The one owner of configuration versions and their snapshot cache.
         let committer = crate::configuration::Committer::new(Arc::clone(&sealer), Arc::default());
         let resource_scheduler = crate::resources::scheduler::Scheduler::start(
@@ -240,6 +245,7 @@ impl App {
             effects,
             netmap_timing: crate::netmap::SyncTiming::default(),
             peer_facts: Arc::new(crate::netmap::NoPeerFacts),
+            netmap_signer,
             shutdown_hooks,
             console_origin,
             public_origin: None,
@@ -432,6 +438,7 @@ impl App {
             self.boot,
             Arc::clone(&self.effects.netmaps),
             Arc::clone(&self.peer_facts),
+            Arc::clone(&self.netmap_signer),
             self.netmap_timing,
         )
     }

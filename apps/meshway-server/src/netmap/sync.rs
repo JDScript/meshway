@@ -60,6 +60,12 @@ impl PeerFactsSource for NoPeerFacts {
     }
 }
 
+/// What every answer's lease is issued with.
+pub(super) struct Issue<'a> {
+    pub(super) signer: &'a super::signing::NetmapSigningKey,
+    pub(super) validity: Duration,
+}
+
 /// Credentials, the netmap part, peer facts and a fresh lease from one transaction.
 pub(super) fn read(
     tx: &Transaction<'_>,
@@ -68,12 +74,18 @@ pub(super) fn read(
     token: [u8; 32],
     request: &SyncRequest,
     facts: &dyn PeerFactsSource,
-    validity: Duration,
+    issue: &Issue<'_>,
 ) -> Result<(SyncResponse, Option<PeerFactsChanged>), Error> {
     let now = execution_store::now()?;
     let principal = execution_store::authorize_node(tx, sealer, boot, token, now)?;
     let (network, node) = (principal.network, principal.node);
-    let current = store::current(tx, network, node)?.ok_or(Error::BindingConflict)?;
+    let Some(current) = store::current(tx, network, node)? else {
+        return Err(if store::unavailable(tx, network, node)? {
+            Error::Unavailable(crate::error::Unavailability::Netmap)
+        } else {
+            Error::BindingConflict
+        });
+    };
     let netmap = if request.netmap == Some(current.current) {
         SyncNetmap::Unchanged
     } else if request.netmap.is_some() && request.netmap == current.previous {
@@ -97,11 +109,12 @@ pub(super) fn read(
     let PeerFactsRead { delta, changed } =
         facts.read(tx, network, node, current.current, request.state)?;
     let now_ms = u64::try_from(now).map_err(|_| Error::Internal("system clock before epoch"))?;
-    let validity_ms =
-        u64::try_from(validity.as_millis()).map_err(|_| Error::Internal("netmap validity"))?;
+    let validity_ms = u64::try_from(issue.validity.as_millis())
+        .map_err(|_| Error::Internal("netmap validity"))?;
     let lease = NetmapLease::new(current.current, now_ms, now_ms.saturating_add(validity_ms))
         .map_err(|_| Error::Internal("netmap validity"))?;
     let response = SyncResponse {
+        signature: issue.signer.sign(network, node, &lease),
         lease,
         netmap,
         peer_facts: delta,

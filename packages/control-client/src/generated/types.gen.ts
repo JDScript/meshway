@@ -302,6 +302,7 @@ export type NetmapLease = z.output<typeof schemas.zNetmapLease>;
 export type NetmapNodeDelta = z.output<typeof schemas.zNetmapNodeDelta>;
 export type NetmapRef = z.output<typeof schemas.zNetmapRef>;
 export type NetmapSelf = z.output<typeof schemas.zNetmapSelf>;
+export type NetmapSignature = z.output<typeof schemas.zNetmapSignature>;
 export type NetworkActions = z.output<typeof schemas.zNetworkActions>;
 export type NetworkConfiguration = z.output<typeof schemas.zNetworkConfiguration>;
 export type NetworkId = z.output<typeof schemas.zNetworkId>;

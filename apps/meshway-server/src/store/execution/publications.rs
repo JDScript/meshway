@@ -68,7 +68,13 @@ pub(crate) fn select_profile(
         ],
     )?;
     publish(tx, sealer, p.network, "refresh", now)?;
-    let netmap = crate::store::netmap::recompile(tx, sealer, p.network, now)?;
+    let netmap = crate::store::netmap::recompile(
+        tx,
+        sealer,
+        p.network,
+        now,
+        crate::store::netmap::Trigger::Node,
+    )?;
     let publication = target_for_node(tx, sealer, p.network, p.node)?
         .ok_or(Error::BindingConflict)?
         .0;
