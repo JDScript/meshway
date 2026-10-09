@@ -35,6 +35,7 @@ members = [
     "tools/meshway-dataplane-perf",
     "tools/meshway-packet-fixture",
     "tools/meshway-runtime-fixture",
+    "tools/meshway-netmap-fixture",
 ]
 resolver = "3"
 

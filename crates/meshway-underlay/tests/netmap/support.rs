@@ -10,14 +10,14 @@ use meshway_configuration::{
 use meshway_control::{Control, FactsRejected, PeerFactsSink, SyncFuture, SyncTransport};
 use meshway_control_client::{ApproveDeviceAuthorizationPath, Client, ClientError};
 use meshway_model::{
-    BoundNodeKey, KeyAlgorithm, NetmapLease, NetmapRef, NetworkId, NodeId, NodePublicKey,
-    RequestId, Revision, Version,
+    BoundNodeKey, KeyAlgorithm, NetmapRef, NetworkId, NodeId, NodePublicKey, RequestId, Revision,
+    Version,
     state::{Capability, StreamKind, TransportRole},
 };
 use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
 use meshway_protocol::{
-    ApproveEnrollmentRequest, CreateNetworkRequest, PeerFactsDelta, RegisterRequest, SyncNetmap,
-    SyncRequest, SyncResponse, WireSecret,
+    ApproveEnrollmentRequest, CreateNetworkRequest, PeerFactsDelta, RegisterRequest, SyncRequest,
+    SyncResponse, WireSecret,
 };
 use meshway_server::{App, Settings};
 use std::{
@@ -68,7 +68,8 @@ pub struct Server {
     task: Option<tokio::task::JoinHandle<()>>,
     stop: CancellationToken,
     client: Client,
-    origin: String,
+    /// Node traffic goes through it so enrollment pins the fixture netmap key.
+    proxy: meshway_netmap_fixture::PinningProxy,
 }
 
 impl Server {
@@ -101,7 +102,7 @@ impl Server {
             task: Some(task),
             stop,
             client,
-            origin,
+            proxy: meshway_netmap_fixture::PinningProxy::start(&origin).await,
         }
     }
 
@@ -130,7 +131,7 @@ impl Server {
             .id;
         let mut control = Control::open(
             &directory.join("node"),
-            &self.origin,
+            &self.proxy.origin,
             meshway_control_client::http_client_builder()
                 .unwrap()
                 .no_proxy(),
@@ -173,18 +174,11 @@ pub async fn sync(
     full: bool,
     validity_ms: u64,
 ) -> meshway_authority::ExecutionSnapshot {
-    let now = meshway_authority::now().unwrap();
-    script.0.lock().unwrap().push_back(SyncResponse {
-        lease: NetmapLease::new(netmap.reference(), now, now + validity_ms).unwrap(),
-        netmap: if full {
-            SyncNetmap::Full {
-                netmap: Box::new(netmap.clone()),
-            }
-        } else {
-            SyncNetmap::Unchanged
-        },
-        peer_facts: None,
-    });
+    script
+        .0
+        .lock()
+        .unwrap()
+        .push_back(meshway_netmap_fixture::reply(netmap, validity_ms, full));
     control.sync(&mut Facts).await.unwrap().snapshot
 }
 

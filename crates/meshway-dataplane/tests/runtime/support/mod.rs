@@ -28,7 +28,8 @@ pub fn request() -> RequestId {
 }
 
 pub struct Server {
-    origin: String,
+    /// Node traffic goes through it so enrollment pins the fixture netmap key.
+    proxy: meshway_netmap_fixture::PinningProxy,
     client: Client,
     app: App,
     temp: tempfile::TempDir,
@@ -190,8 +191,9 @@ impl Server {
             16 * 1024 * 1024,
         )
         .unwrap();
+        let proxy = meshway_netmap_fixture::PinningProxy::start(&origin).await;
         Self {
-            origin,
+            proxy,
             client,
             app,
             temp,
@@ -251,7 +253,7 @@ impl Server {
         let path = self.temp.path().canonicalize().unwrap().join(hostname);
         let mut control = Control::open(
             &path,
-            &self.origin,
+            &self.proxy.origin,
             meshway_control_client::http_client_builder()
                 .unwrap()
                 .no_proxy()
@@ -325,6 +327,7 @@ impl Server {
     }
 
     pub async fn close(self) {
+        self.proxy.close().await;
         self.app.stream_shutdown()();
         self.stop.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(10), self.task)

@@ -1806,6 +1806,7 @@ dependencies = [
  "meshway-dataplane",
  "meshway-logging",
  "meshway-model",
+ "meshway-netmap-fixture",
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
@@ -1957,6 +1958,7 @@ dependencies = [
  "meshway-dns",
  "meshway-logging",
  "meshway-model",
+ "meshway-netmap-fixture",
  "meshway-policy",
  "meshway-protocol",
  "meshway-server",
@@ -2045,6 +2047,7 @@ dependencies = [
  "meshway-control",
  "meshway-control-client",
  "meshway-model",
+ "meshway-netmap-fixture",
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
@@ -2106,6 +2109,24 @@ dependencies = [
  "thiserror",
  "utoipa",
  "uuid",
+]
+
+[[package]]
+name = "meshway-netmap-fixture"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "chrono",
+ "ed25519-dalek",
+ "meshway-configuration",
+ "meshway-control",
+ "meshway-control-client",
+ "meshway-model",
+ "meshway-protocol",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2438,6 +2459,7 @@ dependencies = [
  "meshway-control-client",
  "meshway-dns",
  "meshway-model",
+ "meshway-netmap-fixture",
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",

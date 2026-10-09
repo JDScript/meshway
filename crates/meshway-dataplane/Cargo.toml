@@ -33,6 +33,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 meshway-control = { path = "../meshway-control" }
+meshway-netmap-fixture = { path = "../../tools/meshway-netmap-fixture" }
 axum.workspace = true
 meshway-control-client = { path = "../meshway-control-client" }
 meshway-protocol = { path = "../meshway-protocol" }

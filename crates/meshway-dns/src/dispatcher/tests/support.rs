@@ -25,7 +25,8 @@ pub(super) struct Server {
     tasks: JoinSet<()>,
     stop: CancellationToken,
     client: Client,
-    origin: String,
+    /// Node traffic goes through it so enrollment pins the fixture netmap key.
+    proxy: meshway_netmap_fixture::PinningProxy,
     temporary: tempfile::TempDir,
 }
 
@@ -58,12 +59,13 @@ impl Server {
                 .await
                 .unwrap();
         });
+        let proxy = meshway_netmap_fixture::PinningProxy::start(&origin).await;
         Self {
             app: Some(app),
             tasks,
             stop,
             client,
-            origin,
+            proxy,
             temporary,
         }
     }
@@ -71,7 +73,7 @@ impl Server {
     pub(super) fn control(&self) -> Control {
         Control::open(
             &self.temporary.path().canonicalize().unwrap().join("node"),
-            &self.origin,
+            &self.proxy.origin,
             meshway_control_client::http_client_builder()
                 .unwrap()
                 .no_proxy(),

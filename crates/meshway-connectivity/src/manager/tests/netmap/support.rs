@@ -9,11 +9,11 @@ use meshway_configuration::{
 };
 use meshway_control::{Control, SyncFuture, SyncTransport};
 use meshway_control_client::{ApproveDeviceAuthorizationPath, Client, ClientError};
-use meshway_model::{NetmapLease, Revision};
+use meshway_model::Revision;
 use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
 use meshway_protocol::{
     ApproveEnrollmentRequest, CreateNetworkRequest, EnrollmentResponse, ErrorResponse,
-    RegisterRequest, SyncNetmap, SyncRequest, SyncResponse, WireSecret,
+    RegisterRequest, SyncRequest, SyncResponse, WireSecret,
 };
 use meshway_server::{App, Settings};
 use meshway_transport_spec::{
@@ -50,6 +50,7 @@ impl meshway_control::PeerFactsSink for NoFacts {
 
 pub(in crate::manager) struct Netmaps {
     app: App,
+    proxy: meshway_netmap_fixture::PinningProxy,
     stop: oneshot::Sender<()>,
     server: JoinHandle<()>,
     _temp: tempfile::TempDir,
@@ -130,6 +131,7 @@ impl Netmaps {
                 .timeout(Duration::from_secs(10))
         };
         let client = Client::new(&origin, builder(), 16 * 1024 * 1024).unwrap();
+        let proxy = meshway_netmap_fixture::PinningProxy::start(&origin).await;
         let user = client
             .register(&RegisterRequest {
                 email: "netmap@example.test".into(),
@@ -151,7 +153,7 @@ impl Netmaps {
             .id;
         let (mut controls, mut scripts, mut bindings) = (Vec::new(), Vec::new(), Vec::new());
         for name in ["a", "b", "c"] {
-            let mut control = Control::open(&root.join(name), &origin, builder()).unwrap();
+            let mut control = Control::open(&root.join(name), &proxy.origin, builder()).unwrap();
             let pending = control.begin_enrollment(name).await.unwrap();
             client
                 .approve_device_authorization(
@@ -235,6 +237,7 @@ impl Netmaps {
         }
         let mut fixture = Self {
             app,
+            proxy,
             stop,
             server,
             _temp: temp,
@@ -328,7 +331,7 @@ impl Netmaps {
                 .0
                 .lock()
                 .unwrap()
-                .push_back(Ok(response(&netmap, same)));
+                .push_back(Ok(meshway_netmap_fixture::reply(&netmap, HOUR, !same)));
             let outcome = self.controls[index].sync(&mut NoFacts).await.unwrap();
             let identity = self.controls[index]
                 .dataplane_identity(outcome.snapshot)
@@ -348,6 +351,7 @@ impl Netmaps {
         for control in self.controls {
             control.shutdown().await.unwrap();
         }
+        self.proxy.close().await;
         self.app.stream_shutdown()();
         self.stop.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(5), self.server)
@@ -355,21 +359,6 @@ impl Netmaps {
             .unwrap()
             .unwrap();
         self.app.shutdown().await.unwrap();
-    }
-}
-
-fn response(netmap: &CompiledNetmap, unchanged: bool) -> SyncResponse {
-    let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
-    SyncResponse {
-        lease: NetmapLease::new(netmap.reference(), now, now + HOUR).unwrap(),
-        netmap: if unchanged {
-            SyncNetmap::Unchanged
-        } else {
-            SyncNetmap::Full {
-                netmap: Box::new(netmap.clone()),
-            }
-        },
-        peer_facts: None,
     }
 }
 

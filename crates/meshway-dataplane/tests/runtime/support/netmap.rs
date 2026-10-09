@@ -14,11 +14,11 @@ use meshway_dataplane::{
     secure::{Carrier, CircuitGrant, PendingFrame, Received, SecureNode, Target, Update},
 };
 use meshway_model::{
-    NetmapLease, NetmapRef, NodeId, Revision,
+    NetmapRef, NodeId, Revision,
     state::{Capability, StreamKind, TransportRole},
 };
 use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
-use meshway_protocol::{ErrorResponse, PeerFactsDelta, SyncNetmap, SyncRequest, SyncResponse};
+use meshway_protocol::{ErrorResponse, PeerFactsDelta, SyncRequest, SyncResponse};
 use meshway_transport_spec::{Listener, PreparedListener, TransportProtocol};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -54,16 +54,6 @@ impl PeerFactsSink for Facts {
     fn apply(&mut self, _: NetmapRef, _: PeerFactsDelta) -> Result<(), FactsRejected> {
         Ok(())
     }
-}
-
-fn now_ms() -> u64 {
-    u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis(),
-    )
-    .unwrap()
 }
 
 fn listener(port: u16) -> PreparedListener {
@@ -525,18 +515,15 @@ async fn install(
     validity_ms: u64,
     full: bool,
 ) -> meshway_authority::ExecutionSnapshot {
-    let now = now_ms();
-    let lease = NetmapLease::new(compiled.reference(), now, now + validity_ms).unwrap();
-    script.replies.lock().unwrap().push_back(Ok(SyncResponse {
-        lease,
-        netmap: if full && node.control.netmap_reference() != Some(compiled.reference()) {
-            SyncNetmap::Full {
-                netmap: Box::new(compiled.clone()),
-            }
-        } else {
-            SyncNetmap::Unchanged
-        },
-        peer_facts: None,
-    }));
+    let full = full && node.control.netmap_reference() != Some(compiled.reference());
+    script
+        .replies
+        .lock()
+        .unwrap()
+        .push_back(Ok(meshway_netmap_fixture::reply(
+            compiled,
+            validity_ms,
+            full,
+        )));
     node.control.sync(&mut Facts).await.unwrap().snapshot
 }

@@ -12,11 +12,11 @@ use meshway_configuration::{
 use meshway_control::{FactsRejected, PeerFactsSink, SyncFuture, SyncTransport};
 use meshway_control_client::ClientError;
 use meshway_model::{
-    BoundNodeKey, KeyAlgorithm, NetmapLease, NetmapRef, NodeId, NodePublicKey, Revision, Version,
+    BoundNodeKey, KeyAlgorithm, NetmapRef, NodeId, NodePublicKey, Revision, Version,
     state::{Capability, StreamKind, TransportRole},
 };
 use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
-use meshway_protocol::{PeerFactsDelta, SyncNetmap, SyncRequest, SyncResponse};
+use meshway_protocol::{PeerFactsDelta, SyncRequest, SyncResponse};
 
 const HOUR: u64 = 60 * 60 * 1000;
 
@@ -232,18 +232,7 @@ impl Network {
 }
 
 fn reply(netmap: &CompiledNetmap, full: bool) -> SyncResponse {
-    let now = meshway_authority::now().unwrap();
-    SyncResponse {
-        lease: NetmapLease::new(netmap.reference(), now, now + HOUR).unwrap(),
-        netmap: if full {
-            SyncNetmap::Full {
-                netmap: Box::new(netmap.clone()),
-            }
-        } else {
-            SyncNetmap::Unchanged
-        },
-        peer_facts: None,
-    }
+    meshway_netmap_fixture::reply(netmap, HOUR, full)
 }
 
 async fn enrolled(server: &support::Server) -> (Control, Arc<Script>) {

@@ -1,0 +1,24 @@
+[package]
+name = "meshway-netmap-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Test-only netmap signer, key-pinning enrollment proxy and scripted sync transport"
+publish = false
+
+[dependencies]
+axum.workspace = true
+base64 = "0.23"
+chrono.workspace = true
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
+meshway-configuration = { path = "../../crates/meshway-configuration" }
+meshway-control = { path = "../../crates/meshway-control" }
+meshway-control-client = { path = "../../crates/meshway-control-client" }
+meshway-model = { path = "../../crates/meshway-model" }
+meshway-protocol = { path = "../../crates/meshway-protocol" }
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
