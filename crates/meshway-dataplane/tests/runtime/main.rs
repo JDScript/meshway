@@ -355,7 +355,6 @@ async fn real_http_access_revocation_fences_synced_receiver_and_queued_delivery(
             .permits
             .contains_key(&mesh.demand)
     );
-    assert!(b.refresh(fresh.clone()).is_err());
     b.reconcile(fresh.clone()).unwrap();
     assert_eq!(b.retained_flows(), 0); // Actual withdrawal removes prior state.
     let mut replacement = Engine::new(fresh, Limits::default()).unwrap();
@@ -387,11 +386,11 @@ async fn real_control_renewal_preserves_flows_but_not_queued_deadlines_and_stop_
     assert_eq!(original.reference(), renewed.reference());
     assert_eq!(original.expires_at(), original_deadline);
     assert!(renewed.expires_at() >= original_deadline);
-    a.refresh(renewed.clone()).unwrap();
+    a.reconcile(renewed.clone()).unwrap();
     assert_eq!(a.retained_flows(), 1);
     queued.ensure_current().unwrap();
     assert!(
-        a.refresh(mesh.b.control.execution_snapshot().unwrap())
+        a.reconcile(mesh.b.control.execution_snapshot().unwrap())
             .is_err()
     );
     assert_eq!(a.retained_flows(), 1);
@@ -421,7 +420,7 @@ async fn real_control_renewal_preserves_flows_but_not_queued_deadlines_and_stop_
     let short = idle
         .process(local(&mesh), datagram(&mesh, false, false))
         .unwrap();
-    idle.refresh(renewed).unwrap();
+    idle.reconcile(renewed).unwrap();
     tokio::time::timeout(WAIT, short.invalidated())
         .await
         .unwrap();

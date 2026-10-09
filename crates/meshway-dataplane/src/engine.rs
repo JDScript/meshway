@@ -22,14 +22,6 @@ impl Engine {
         })
     }
 
-    /// Same-target renewal, using the shared reconciliation implementation.
-    pub fn refresh(&mut self, snapshot: ExecutionSnapshot) -> Result<(), Error> {
-        if !self.snapshot.same_execution(&snapshot) {
-            return Err(Error::ExecutionScope);
-        }
-        self.reconcile(snapshot)
-    }
-
     /// Reconcile a Control-issued successor transactionally. Old queued actions
     /// keep their original cancelled guard. Retained flow deadlines/idle time
     /// are unchanged; only a subsequently admitted packet can refresh them.

@@ -1469,14 +1469,6 @@ impl SecureNode {
         }
     }
 
-    /// Same-target renewal, using the shared reconciliation implementation.
-    pub fn refresh(&mut self, identity: DataPlaneIdentity) -> Result<(), Error> {
-        if !self.identity.snapshot().same_execution(identity.snapshot()) {
-            return Err(Error::Context);
-        }
-        self.reconcile(identity)
-    }
-
     /// Carry live compatible circuits through an owner-authenticated direct
     /// publication replacement. Noise state, nonce/replay windows and the one
     /// flow table are retained. Old issued outputs never receive the new guard.
