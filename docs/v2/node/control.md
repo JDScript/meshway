@@ -135,4 +135,6 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 
 IPC v5 与 CLI／daemon 同版本发布，Ping 通道新增 `localEndpoint` 获取来源；旧版本请求返回 `ErrorCode::Version`。事件连接状态与最近有效事件接收时间只是观测，不代表执行许可，见[公开运行状态](/v2/node/runtime#安装范围与状态)。
 
+Server 已提供预发布的 [netmap 同步](/v2/execution#netmap-同步)端点；本组件尚未调用它，现行刷新仍按上文接口进行。
+
 组件测试使用 `mise exec -- cargo test -p meshway-control -p meshway-private-storage --all-targets --locked`，以真实 Server 与独立私有数据库运行；它不替代 TUN 或业务包流验收，见[验收范围](/v2/node/validation)。

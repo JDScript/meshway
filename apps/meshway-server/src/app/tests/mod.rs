@@ -9,6 +9,7 @@ mod connectivity;
 mod demand_renewal;
 mod discovery;
 mod lifecycle;
+mod netmap;
 mod node;
 mod refresh;
 mod resources;

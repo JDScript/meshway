@@ -6864,6 +6864,156 @@
         ]
       }
     },
+    "/agent-api/v1/sync": {
+      "post": {
+        "tags": [
+          "execution"
+        ],
+        "summary": "Long-poll the Node's netmap, lease and peer facts.",
+        "description": "Requires a Node session; no instance is needed. The request names the netmap and peer-fact cursor the Node holds.\nThe Server answers at once when either is behind, otherwise holds the request until the netmap or visible facts change, a newer sync of the same Node replaces it, or the hold (about 50 seconds, at most 60) ends.\nA held base answers `delta`, any other base `full`, the current netmap `unchanged`; every answer carries a fresh lease.",
+        "operationId": "syncNode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_request",
+                    "message": "Invalid request parameters.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 400
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_credentials",
+                    "message": "Invalid credentials.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 401
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "binding_conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "binding_conflict",
+                    "message": "Request conflicts with the current generation or binding.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 409
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "request_too_large",
+                    "message": "Request body exceeds the allowed size.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 413
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "unsupported_media_type",
+                    "message": "A JSON request body is required.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 415
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy, service_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "busy",
+                    "message": "Service is busy; retry later.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 503
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeSession": []
+          }
+        ]
+      }
+    },
     "/agent-api/v1/tasks": {
       "get": {
         "tags": [
@@ -22506,6 +22656,25 @@
         },
         "additionalProperties": false
       },
+      "CompiledNetmap": {
+        "type": "object",
+        "description": "Compiled netmap paired with its content digest.",
+        "required": [
+          "digest",
+          "netmap"
+        ],
+        "properties": {
+          "digest": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Canonical content digest."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NodeNetmap",
+            "description": "Complete content."
+          }
+        },
+        "additionalProperties": false
+      },
       "CompiledNode": {
         "type": "object",
         "description": "Complete Server-compiled Node target paired with the digest checked before persistence and installation.",
@@ -25192,6 +25361,93 @@
         },
         "additionalProperties": false
       },
+      "DnsPlan": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The DNS selection has no exit possibility.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "noExit"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Ordinary queries use only this Mesh resolver service.",
+            "required": [
+              "service",
+              "type"
+            ],
+            "properties": {
+              "service": {
+                "$ref": "#/components/schemas/DnsService",
+                "description": "Exact service, equal to the copy held by the resolver."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "viaExit"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Serve these sources with verified system upstreams.",
+            "required": [
+              "services",
+              "type"
+            ],
+            "properties": {
+              "services": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DnsService"
+                },
+                "description": "Accepted source services."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "serveExitResolver"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A required executable plan is missing.",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/DnsEgressUnavailable",
+                "description": "Condition preventing DNS egress."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Ordinary DNS selection, separate from business grants."
+      },
       "DnsServer": {
         "type": "object",
         "description": "An explicit upstream resolver identified by its literal IP address.",
@@ -25215,6 +25471,77 @@
           "useWithExit": {
             "type": "boolean",
             "description": "Retain this resolver's explicit DNS role when an exit is selected; defaults to false."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsService": {
+        "type": "object",
+        "description": "Mesh resolver service between one source and one exit.",
+        "required": [
+          "source",
+          "sourceAddresses",
+          "exit",
+          "address",
+          "profile",
+          "generation",
+          "role",
+          "path",
+          "transports",
+          "maxPending",
+          "timeoutMs"
+        ],
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/ExecutionAddress",
+            "description": "Exact IPv4 Mesh resolver endpoint; port 53 is reserved."
+          },
+          "exit": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Resolver Node terminating this service."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Same selection identity as the source egress capture."
+          },
+          "maxPending": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum simultaneous queries from this source.",
+            "minimum": 0
+          },
+          "path": {
+            "$ref": "#/components/schemas/LogicalPath",
+            "description": "One complete ordered path, reversed for replies."
+          },
+          "profile": {
+            "type": "string",
+            "description": "Source routing profile."
+          },
+          "role": {
+            "$ref": "#/components/schemas/ExitRole",
+            "description": "Exit role required at the resolver."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Original querying Node."
+          },
+          "sourceAddresses": {
+            "$ref": "#/components/schemas/NodeAddresses",
+            "description": "Exact inner source addresses."
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum query duration in milliseconds.",
+            "minimum": 0
+          },
+          "transports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DnsTransport"
+            },
+            "description": "Independently authorized transports."
           }
         },
         "additionalProperties": false
@@ -25308,6 +25635,75 @@
           "tcp"
         ]
       },
+      "EgressAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Forward through the first ready exit, in this order; never direct.",
+            "required": [
+              "nodes",
+              "via",
+              "type"
+            ],
+            "properties": {
+              "nodes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NodeId"
+                },
+                "description": "Ordered primary and backup exit Nodes."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit"
+                ]
+              },
+              "via": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NodeId"
+                },
+                "description": "Ordered waypoints before the exit."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Execute locally outside the Mesh.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "direct"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Leave to unmanaged local routing.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unmanaged"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Source-local action for one managed destination prefix."
+      },
       "EgressCapturePlan": {
         "type": "object",
         "description": "Packet ownership only. These disjoint CIDRs grant no business Access.",
@@ -25366,6 +25762,47 @@
               "type": "string"
             },
             "description": "Explicit unmanaged IPv4 exceptions after first-match subtraction."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EgressPlan": {
+        "type": "object",
+        "description": "Source egress ownership with the action of every partition prefix.",
+        "required": [
+          "capture",
+          "routes"
+        ],
+        "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/EgressCapturePlan",
+            "description": "Capture boundary handed to the packet owner; `generation` is the selection identity."
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EgressRoute"
+            },
+            "description": "Complete disjoint partition of IPv4 and IPv6; empty when capture is unavailable."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EgressRoute": {
+        "type": "object",
+        "description": "One prefix of the source's first-match egress partition.",
+        "required": [
+          "prefix",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/EgressAction",
+            "description": "Action selected by the first matching rule or the profile fallback."
+          },
+          "prefix": {
+            "type": "string",
+            "description": "IPv4 or IPv6 prefix, disjoint from every other route."
           }
         },
         "additionalProperties": false
@@ -26772,6 +27209,30 @@
         },
         "additionalProperties": false
       },
+      "ExitRole": {
+        "type": "object",
+        "description": "Exit resource responsibility; never a grant to forward a packet.",
+        "required": [
+          "generation",
+          "family",
+          "nat"
+        ],
+        "properties": {
+          "family": {
+            "$ref": "#/components/schemas/ExitFamily",
+            "description": "Inner family implemented by this role."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Role identity, stable while the role content is unchanged."
+          },
+          "nat": {
+            "$ref": "#/components/schemas/ExitNat",
+            "description": "Required translation mode."
+          }
+        },
+        "additionalProperties": false
+      },
       "ExitRolePlan": {
         "type": "object",
         "description": "Resource preparation responsibility; never a grant to forward a packet.\nNetwork, node, publication and deadlines come from the enclosing target/lease.",
@@ -27736,6 +28197,7 @@
           "exit_outside_access",
           "global_exit_requires_internet",
           "exit_fallback_requires_internet",
+          "netmap_limit",
           "shadowed_rule"
         ]
       },
@@ -29941,6 +30403,377 @@
         },
         "additionalProperties": false
       },
+      "NetmapDelta": {
+        "type": "object",
+        "description": "Changes from an exact base netmap to an exact target netmap of the same Node.",
+        "required": [
+          "networkId",
+          "nodeId",
+          "base",
+          "target",
+          "dependencyDigest",
+          "self",
+          "configuration",
+          "nodes",
+          "subjects",
+          "inventory",
+          "ruleSets",
+          "selectedProfiles",
+          "selectionVersions",
+          "dialers",
+          "egress",
+          "exitRole",
+          "dns"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact base the receiver must hold."
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationView",
+            "description": "Complete replacement projected configuration except `nodes`, which is always empty here."
+          },
+          "dependencyDigest": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Target dependency digest."
+          },
+          "dialers": {
+            "$ref": "#/components/schemas/NetmapDialerDelta",
+            "description": "Dial candidate changes."
+          },
+          "dns": {
+            "$ref": "#/components/schemas/NetmapDns",
+            "description": "Complete replacement DNS content."
+          },
+          "egress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EgressPlan",
+                "description": "Complete replacement egress plan."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exitRole": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitRole",
+                "description": "Complete replacement exit role."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inventory": {
+            "$ref": "#/components/schemas/NetmapInventoryDelta",
+            "description": "Visible inventory changes."
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network shared by base and target."
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Node owning both netmaps."
+          },
+          "nodes": {
+            "$ref": "#/components/schemas/NetmapNodeDelta",
+            "description": "Visible Node declaration changes."
+          },
+          "ruleSets": {
+            "type": "object",
+            "description": "Complete replacement rule-set contents.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuleSetContent"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "selectedProfiles": {
+            "type": "object",
+            "description": "Complete replacement profile selections.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "selectionVersions": {
+            "type": "object",
+            "description": "Complete replacement selection versions.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Version"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "self": {
+            "$ref": "#/components/schemas/NetmapSelf",
+            "description": "Complete replacement of the target's own resources."
+          },
+          "subjects": {
+            "$ref": "#/components/schemas/SubjectContext",
+            "description": "Complete replacement user bindings."
+          },
+          "target": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact target, including the digest to verify after reconstruction."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetmapDialerDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Base keys to remove; never also upserted."
+          },
+          "upsert": {
+            "type": "object",
+            "description": "Complete values to insert or replace.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DialCandidate"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetmapDns": {
+        "type": "object",
+        "description": "Names and resolver decisions for one Node; settings are in the projection.",
+        "required": [
+          "meshHosts",
+          "resolvers",
+          "profile",
+          "egress"
+        ],
+        "properties": {
+          "egress": {
+            "$ref": "#/components/schemas/DnsPlan",
+            "description": "Ordinary DNS selection."
+          },
+          "meshHosts": {
+            "type": "object",
+            "description": "Every name this Node may discover: itself and Nodes it has Access to.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodeAddresses"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "profile": {
+            "type": "string",
+            "description": "Effective routing profile used for ordinary resolution."
+          },
+          "resolvers": {
+            "type": "object",
+            "description": "Decision for each configured resolver key.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ResolverAction"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetmapInventoryDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Base keys to remove; never also upserted."
+          },
+          "upsert": {
+            "type": "object",
+            "description": "Complete values to insert or replace.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TrustedNode"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetmapLease": {
+        "type": "object",
+        "description": "Validity interval of one exact netmap; renewal replaces the lease, never the content.",
+        "required": [
+          "netmap",
+          "issuedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339; at most 24 hours after issue."
+          },
+          "issuedAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Issue time in milliseconds since the Unix epoch, serialized as UTC RFC 3339."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact netmap content covered by this lease."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetmapNodeDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Base keys to remove; never also upserted."
+          },
+          "upsert": {
+            "type": "object",
+            "description": "Complete values to insert or replace.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodeSettingsView"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetmapRef": {
+        "type": "object",
+        "description": "Exact per-node netmap content: revision and serial identify it, the digest verifies it.",
+        "required": [
+          "revision",
+          "serial",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Canonical content digest, excluding revision, serial, dependency digest and lease."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision",
+            "description": "Configuration revision whose compilation first produced this content."
+          },
+          "serial": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Per-node content sequence; increases only when the content digest changes."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetmapSelf": {
+        "type": "object",
+        "description": "This Node's own configured identity and resources.",
+        "required": [
+          "enabled",
+          "hostname",
+          "identity",
+          "addresses",
+          "selfKeys",
+          "meshAddressPools",
+          "listeners",
+          "exitEnabled"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses",
+            "description": "Configured Mesh addresses."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether business execution is enabled."
+          },
+          "exitEnabled": {
+            "type": "boolean",
+            "description": "Configured exit eligibility gated by enablement."
+          },
+          "hostname": {
+            "type": "string",
+            "description": "Configured canonical hostname."
+          },
+          "identity": {
+            "$ref": "#/components/schemas/NodeIdentity",
+            "description": "Configured User or Tag identity."
+          },
+          "listeners": {
+            "type": "object",
+            "description": "Local listeners; empty while disabled.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PreparedListener"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "meshAddressPools": {
+            "$ref": "#/components/schemas/AddressPools",
+            "description": "Complete managed Mesh pools."
+          },
+          "selfKeys": {
+            "$ref": "#/components/schemas/TrustedNode",
+            "description": "Trusted key bindings and authenticated capabilities."
+          }
+        },
+        "additionalProperties": false
+      },
       "NetworkActions": {
         "type": "object",
         "description": "Current network operation hints; mutations independently recheck authorization.",
@@ -31677,6 +32510,95 @@
           "dataplane": {
             "$ref": "#/components/schemas/BoundNodeKey",
             "description": "Bound X25519 data-plane key."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeNetmap": {
+        "type": "object",
+        "description": "Complete per-node netmap content.",
+        "required": [
+          "networkId",
+          "nodeId",
+          "revision",
+          "serial",
+          "compilerVersion",
+          "dependencyDigest",
+          "self",
+          "projection",
+          "dialers",
+          "egress",
+          "exitRole",
+          "dns"
+        ],
+        "properties": {
+          "compilerVersion": {
+            "type": "string",
+            "description": "Compiler contract family, `meshway-netmap-1`."
+          },
+          "dependencyDigest": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Digest of the network compilation input that produced this serial."
+          },
+          "dialers": {
+            "type": "object",
+            "description": "Dial candidates with configured endpoints and client material, from this Node to each topology-adjacent visible Node.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DialCandidate"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "dns": {
+            "$ref": "#/components/schemas/NetmapDns",
+            "description": "DNS settings, names and plan."
+          },
+          "egress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EgressPlan",
+                "description": "Source egress plan; null while disabled."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exitRole": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitRole",
+                "description": "Exit role; null unless enabled, exit-enabled and capable."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network of this netmap."
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Only Node intended to install it."
+          },
+          "projection": {
+            "$ref": "#/components/schemas/ProjectedConfiguration",
+            "description": "Configuration subset the shared compiler runs on."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision",
+            "description": "Revision whose compilation first produced this content."
+          },
+          "self": {
+            "$ref": "#/components/schemas/NetmapSelf",
+            "description": "Own configured identity and resources."
+          },
+          "serial": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Per-node content sequence."
           }
         },
         "additionalProperties": false
@@ -33443,6 +34365,172 @@
           "socketId": {
             "type": "string",
             "description": "Socket identifier within the reporting instance."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerExitFacts": {
+        "type": "object",
+        "description": "Exit readiness of a peer's installed role; selection input only.",
+        "required": [
+          "roleGeneration",
+          "status",
+          "installedFamilies"
+        ],
+        "properties": {
+          "installedFamilies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitFamily"
+            },
+            "description": "Families actually installed."
+          },
+          "roleGeneration": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Role generation from the peer's netmap that was probed."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExitStatus",
+            "description": "Reported lifecycle; unavailable carries its typed cause."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerFacts": {
+        "type": "object",
+        "description": "Current dynamic facts of one peer, disclosed only to Nodes whose netmap lists it.",
+        "required": [
+          "nodeId",
+          "listeners",
+          "exit",
+          "observedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "exit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PeerExitFacts",
+                "description": "Exit readiness, or null when the peer has no exit role."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time after which the facts are no longer current."
+          },
+          "listeners": {
+            "type": "object",
+            "description": "Listener facts by listener key; endpoint details only reach adjacent Nodes.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PeerListenerFacts"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Peer described by these facts."
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Original report time."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerFactsDelta": {
+        "type": "object",
+        "description": "Peer facts after the request's cursor, scoped by the current netmap.",
+        "required": [
+          "base",
+          "cursor",
+          "netmapSerial",
+          "updated",
+          "removed"
+        ],
+        "properties": {
+          "base": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StateCursor",
+                "description": "Cursor the delta applies to; null means `updated` replaces all facts."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/StateCursor",
+            "description": "Cursor to send in the next request after applying this delta."
+          },
+          "netmapSerial": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Netmap serial whose visible Nodes scoped this projection."
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Peers whose facts are no longer visible or current."
+          },
+          "updated": {
+            "type": "object",
+            "description": "Complete replacement facts of each updated peer.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PeerFacts"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerListenerFacts": {
+        "type": "object",
+        "description": "Observed resources of one peer listener.",
+        "required": [
+          "phase",
+          "network",
+          "localEndpoints",
+          "stunCandidates"
+        ],
+        "properties": {
+          "localEndpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LocalEndpoint"
+            },
+            "description": "Addresses the peer derived from its own interfaces."
+          },
+          "network": {
+            "$ref": "#/components/schemas/SocketNetwork",
+            "description": "Outer socket protocol."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ListenerPhase",
+            "description": "Listener lifecycle as reported by the peer."
+          },
+          "stunCandidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EndpointCandidate"
+            },
+            "description": "STUN-observed mappings of this listener socket."
           }
         },
         "additionalProperties": false
@@ -35492,6 +36580,84 @@
           "partial"
         ]
       },
+      "ProjectedConfiguration": {
+        "type": "object",
+        "description": "A monotone subset of the full configuration: every rule is an unchanged\nfull-configuration rule in its original relative order, and every Node\ndeclaration is the existing redacted `NodeSettingsView` of a visible Node.",
+        "required": [
+          "configuration",
+          "subjects",
+          "inventory",
+          "ruleSets",
+          "selectedProfiles",
+          "selectionVersions"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationView",
+            "description": "Redacted configuration restricted to visible Nodes and the rules that can affect them."
+          },
+          "inventory": {
+            "type": "object",
+            "description": "Trusted keys and authenticated capabilities of visible registered Nodes.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TrustedNode"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "ruleSets": {
+            "type": "object",
+            "description": "Resolved remote rule-set contents referenced by egress rules.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuleSetContent"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "selectedProfiles": {
+            "type": "object",
+            "description": "Persisted profile selections of visible Nodes.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "selectionVersions": {
+            "type": "object",
+            "description": "Persisted selection versions of visible Nodes; each switch increments one.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Version"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "subjects": {
+            "$ref": "#/components/schemas/SubjectContext",
+            "description": "User bindings of visible User-identity Nodes."
+          }
+        },
+        "additionalProperties": false
+      },
       "ProofOperation": {
         "type": "string",
         "description": "Operation bound into the signed Node challenge transcript.",
@@ -36004,6 +37170,16 @@
           "view_changed",
           "backpressure",
           "epoch_changed"
+        ]
+      },
+      "ResolverAction": {
+        "type": "string",
+        "description": "Local socket decision for one configured resolver endpoint.",
+        "enum": [
+          "direct",
+          "unmanaged",
+          "exit",
+          "rejected"
         ]
       },
       "ResourceProblem": {
@@ -36553,6 +37729,49 @@
         ],
         "description": "Destination set declared inline or downloaded and validated by the Server."
       },
+      "RuleSetContent": {
+        "type": "object",
+        "description": "Resolved rule-set artifact content supplied as a fixed Server compilation dependency.",
+        "required": [
+          "networkId",
+          "artifact",
+          "ipCIDR",
+          "domainSuffix",
+          "domain"
+        ],
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/ArtifactId",
+            "description": "Exact artifact version whose content is supplied."
+          },
+          "domain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact domain names used by rule-set matching."
+          },
+          "domainSuffix": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Domain suffixes used by rule-set matching."
+          },
+          "ipCIDR": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "IP CIDR ranges used by rule-set matching."
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network owning this resolved rule-set input."
+          }
+        },
+        "additionalProperties": false
+      },
       "RuleSetFormat": {
         "type": "string",
         "description": "Remote source format whose supported subset converts exactly to IP and DNS destination sets.",
@@ -36949,6 +38168,25 @@
         },
         "additionalProperties": false
       },
+      "StateCursor": {
+        "type": "object",
+        "description": "Position in the Server's peer-fact stream; only meaningful within one epoch.",
+        "required": [
+          "epoch",
+          "sequence"
+        ],
+        "properties": {
+          "epoch": {
+            "$ref": "#/components/schemas/StateEpoch",
+            "description": "State continuity domain; a different epoch requires full facts."
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/Sequence",
+            "description": "Last applied fact sequence within the epoch."
+          }
+        },
+        "additionalProperties": false
+      },
       "StateEpoch": {
         "type": "string",
         "format": "uuid",
@@ -37191,6 +38429,176 @@
           "additionalProperties": false
         },
         "maxItems": 4
+      },
+      "SubjectContext": {
+        "type": "object",
+        "description": "Current user bindings resolved by the Server; carried in netmap projections.",
+        "required": [
+          "users",
+          "nodeUsers",
+          "members"
+        ],
+        "properties": {
+          "members": {
+            "type": "object",
+            "description": "Current active memberships, loaded in the same Controller transaction.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/UserBinding"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "nodeUsers": {
+            "type": "object",
+            "description": "User-identity Nodes mapped to the binding that enrolled them.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/UserBinding"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "users": {
+            "type": "object",
+            "description": "User emails mapped to their current account binding.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/UserBinding"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SyncNetmap": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Complete netmap; the request held no usable base.",
+            "required": [
+              "netmap",
+              "type"
+            ],
+            "properties": {
+              "netmap": {
+                "$ref": "#/components/schemas/CompiledNetmap",
+                "description": "Complete content with its digest."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "full"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Changes from the netmap named in the request.",
+            "required": [
+              "delta",
+              "type"
+            ],
+            "properties": {
+              "delta": {
+                "$ref": "#/components/schemas/NetmapDelta",
+                "description": "Keyed changes, verified by reconstructing the target digest."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "delta"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The requested netmap is current; only the lease is renewed.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unchanged"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Netmap part of a sync response."
+      },
+      "SyncRequest": {
+        "type": "object",
+        "description": "`POST /agent-api/v1/sync`: what the Node currently holds.",
+        "properties": {
+          "netmap": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapRef",
+                "description": "Exact verified netmap held; null or omission requests full content."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StateCursor",
+                "description": "Last applied peer-fact cursor; null or omission requests full facts."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SyncResponse": {
+        "type": "object",
+        "description": "Current netmap lease, netmap changes and peer-fact changes for the Node.",
+        "required": [
+          "lease",
+          "netmap",
+          "peerFacts"
+        ],
+        "properties": {
+          "lease": {
+            "$ref": "#/components/schemas/NetmapLease",
+            "description": "Lease bound to the current netmap."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/SyncNetmap",
+            "description": "Full, delta or unchanged netmap."
+          },
+          "peerFacts": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PeerFactsDelta",
+                "description": "Peer-fact changes; null when none occurred during the hold."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "SystemState": {
         "type": "object",
@@ -37870,6 +39278,25 @@
           "invalidProfile",
           "inactiveNode"
         ]
+      },
+      "UserBinding": {
+        "type": "object",
+        "description": "Stable user and network membership identity bound to a readable configuration reference.",
+        "required": [
+          "userId",
+          "membershipId"
+        ],
+        "properties": {
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId",
+            "description": "Exact network membership incarnation, preventing name reuse or rejoining from reviving old grants."
+          },
+          "userId": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "Account identity that owns the referenced membership."
+          }
+        },
+        "additionalProperties": false
       },
       "UserConfigurationView": {
         "oneOf": [

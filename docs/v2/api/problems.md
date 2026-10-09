@@ -81,7 +81,7 @@ revision_conflict 不携带当前配置差异；客户端重新读取基准后�
 | `params` | 该 code 文档声明的参数，始终存在（可为空对象），值均为字符串 |
 | `message` | `code` 的英文渲染，不含参数值，不供程序判断 |
 
-参数约定：引用类问题带被引用的名字（`user`、`name`、`node`、`key`、`profile`、`value`、`address`、`hostname`）；节点级的出口授权问题（`exit_outside_access`、`global_exit_requires_internet`、`exit_fallback_requires_internet`）挂在**规则／分配／fallback** 的 pointer 上，受影响节点在 `params.node`；传输声明问题 `invalid_transport` 的 `params.reason` 是传输层声明错误码（如 `invalid_host`、`websocket_alpn`）；源文本问题 `invalid_jsonc`／`invalid_shape` 带 1 起算的 `line`、`column`，不回显文本；远程规则集问题 `rule_set_unavailable` 的 `params.reason` 是 `ResourceProblem` code。
+参数约定：引用类问题带被引用的名字（`user`、`name`、`node`、`key`、`profile`、`value`、`address`、`hostname`）；节点级的出口授权问题（`exit_outside_access`、`global_exit_requires_internet`、`exit_fallback_requires_internet`）挂在**规则／分配／fallback** 的 pointer 上，受影响节点在 `params.node`；传输声明问题 `invalid_transport` 的 `params.reason` 是传输层声明错误码（如 `invalid_host`、`websocket_alpn`）；源文本问题 `invalid_jsonc`／`invalid_shape` 带 1 起算的 `line`、`column`，不回显文本；远程规则集问题 `rule_set_unavailable` 的 `params.reason` 是 `ResourceProblem` code。`netmap_limit` 表示该版本会使某节点的 netmap 超过 8 MiB 下发安全上界，路径为 `/nodes/<id>`，参数 `node`、`bytes`、`maxBytes`。
 
 同一类型也用于 `warnings`（接受但可能非本意的配置，如 `shadowed_rule`：该规则的全部目标已被前面的规则匹配，`params.by` 是补齐覆盖的那条规则下标）和 `unavailableDependencies`（保留但已失效的依赖）。
 

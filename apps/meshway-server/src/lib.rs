@@ -19,6 +19,7 @@ pub mod error;
 pub mod execution;
 pub(crate) mod history;
 pub mod http;
+pub mod netmap;
 pub mod networks;
 mod secrets;
 pub mod settings;

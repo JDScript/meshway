@@ -29,9 +29,31 @@ pub struct App {
     committer: crate::configuration::Committer,
     boot: meshway_model::InstanceId,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
+    /// Sole audience of committed effects; the executor holds it weakly.
+    effects: Arc<Effects>,
+    netmap_timing: crate::netmap::SyncTiming,
+    peer_facts: Arc<dyn crate::netmap::PeerFactsSource>,
     shutdown_hooks: ShutdownHooks,
     console_origin: Option<Arc<crate::settings::Url>>,
     public_origin: Option<Arc<crate::settings::Url>>,
+}
+
+/// Committed effects: netmap changes wake pending syncs, everything else
+/// goes to the State runtime.
+struct Effects {
+    state: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
+    netmaps: Arc<crate::netmap::Hub>,
+}
+impl crate::effect::EffectSink for Effects {
+    fn apply(&self, effect: crate::effect::Effect) {
+        match effect {
+            crate::effect::Effect::Netmap {
+                network_id,
+                node_ids,
+            } => self.netmaps.wake(network_id, &node_ids),
+            other => self.state.apply(other),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -103,6 +125,9 @@ impl App {
             crate::accounts::Options::new(settings.registration_enabled, settings.session_ttl)
                 .ok_or(AppError::InvalidSettings)?;
         crate::settings::validate_stun(&settings)?;
+        if !settings.netmap.valid() {
+            return Err(AppError::InvalidSettings);
+        }
         let stun_sockets = crate::stun::bind(&settings.stun_listen)?;
         let permit = DIRECTORY_PREPARATIONS
             .acquire()
@@ -129,6 +154,7 @@ impl App {
         app.public_origin = settings.public_origin.map(Arc::new);
         app.stun = crate::stun::Hosted::start(stun_sockets)?;
         app.stun_servers = Arc::new(settings.stun_servers);
+        app.netmap_timing = settings.netmap;
         Ok(app)
     }
 
@@ -143,13 +169,17 @@ impl App {
         let state_runtime = Arc::new(std::sync::Mutex::new(
             crate::state::service::Runtime::new().map_err(|_| AppError::Worker)?,
         ));
+        let effects = Arc::new(Effects {
+            state: Arc::clone(&state_runtime),
+            netmaps: Arc::default(),
+        });
         // No yield between taking the prepared directory and transferring it
         // to the SQLite worker. Dropping either future preserves lock ownership.
         let (executor, sealer) = Executor::open_with_effects(
             directory.database_path(),
             options,
             directory,
-            Arc::downgrade(&state_runtime) as std::sync::Weak<dyn crate::effect::EffectSink>,
+            Arc::downgrade(&effects) as std::sync::Weak<dyn crate::effect::EffectSink>,
             |connection, directory| {
                 let sealer = schema::initialize(connection, |connection, fresh| {
                     secrets::initialize(connection, directory, fresh).map_err(AppError::from)
@@ -171,11 +201,13 @@ impl App {
         let accounts = Accounts::new(executor.handle(), account_options, delegation);
         let shutdown_hooks = ShutdownHooks::default();
         let shutdown_runtime = Arc::clone(&state_runtime);
+        let shutdown_netmaps = Arc::clone(&effects.netmaps);
         shutdown_hooks
             .0
             .lock()
             .map_err(|_| AppError::Worker)?
             .push(Box::new(move || {
+                shutdown_netmaps.close();
                 if let Ok(mut runtime) = shutdown_runtime.lock() {
                     runtime.close();
                 }
@@ -205,6 +237,9 @@ impl App {
             sealer,
             committer,
             state_runtime,
+            effects,
+            netmap_timing: crate::netmap::SyncTiming::default(),
+            peer_facts: Arc::new(crate::netmap::NoPeerFacts),
             shutdown_hooks,
             console_origin,
             public_origin: None,
@@ -311,7 +346,9 @@ impl App {
     pub fn stream_shutdown(&self) -> impl FnOnce() + Send + 'static {
         let runtime = Arc::clone(&self.state_runtime);
         let downloads = self.downloads.clone();
+        let netmaps = Arc::clone(&self.effects.netmaps);
         move || {
+            netmaps.close();
             runtime
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -362,6 +399,17 @@ impl App {
             provider,
             self.sealer(),
             Arc::clone(&self.state_runtime),
+        )
+    }
+    /// Node netmap distribution (`sync`).
+    pub fn netmaps(&self) -> crate::netmap::Netmaps {
+        crate::netmap::Netmaps::new(
+            self.executor.handle(),
+            self.sealer(),
+            self.boot,
+            Arc::clone(&self.effects.netmaps),
+            Arc::clone(&self.peer_facts),
+            self.netmap_timing,
         )
     }
     pub fn execution(&self) -> crate::execution::Execution {

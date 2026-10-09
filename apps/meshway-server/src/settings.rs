@@ -34,6 +34,9 @@ pub struct Settings {
     pub stun_listen: Vec<SocketAddr>,
     /// Explicit hosted/external discovery endpoints; never inferred from HTTP.
     pub stun_servers: BTreeMap<String, Endpoint>,
+    /// Netmap lease validity (5 minutes through 24 hours) and nominal sync
+    /// hold (1 through 54 seconds, jittered ±10%).
+    pub netmap: crate::netmap::SyncTiming,
 }
 
 impl Settings {
@@ -49,6 +52,7 @@ impl Settings {
             public_origin: None,
             stun_listen: Vec::new(),
             stun_servers: BTreeMap::new(),
+            netmap: crate::netmap::SyncTiming::default(),
         }
     }
 }
