@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T21:36:00.510089+00:00",
+  "updatedAt": "2026-10-09T21:40:23.445196+00:00",
   "runs": [
     {
       "id": 37993679388,
@@ -12,9 +12,9 @@
       "commit": "e926cd239daeca4fe7e2b88f1d260e962d5f16eb",
       "message": "build: drop the workspace-wide CARGO_BUILD_JOBS=2 cap; throttle only when dispatching parallel builds",
       "createdAt": "2026-10-09T21:28:42Z",
-      "updatedAt": "2026-10-09T21:31:29Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-09T21:38:02Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/37993679388",
       "jobs": [
         {
@@ -54,11 +54,11 @@
           "id": 114034114849,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-09T21:31:28Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-09T21:38:01Z",
+          "seconds": 393.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37993679388/job/114034114849"
         }
       ],
