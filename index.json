@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T00:51:36.548230+00:00",
+  "updatedAt": "2026-10-09T00:55:57.802521+00:00",
   "runs": [
     {
       "id": 37866040817,
@@ -136,9 +136,9 @@
       "commit": "c52e7cfe6372644f2b7ac2d5b91b343b8af1bf42",
       "message": "docs(changelog): record X2 and V6",
       "createdAt": "2026-10-09T00:41:21Z",
-      "updatedAt": "2026-10-09T00:45:41Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-09T00:53:46Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/37866040771",
       "jobs": [
         {
@@ -167,11 +167,11 @@
           "id": 113612958180,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-09T00:41:39Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-09T00:53:46Z",
+          "seconds": 727.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37866040771/job/113612958180"
         },
         {
