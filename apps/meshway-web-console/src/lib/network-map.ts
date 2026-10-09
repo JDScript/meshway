@@ -2,11 +2,16 @@ import type {
   AggregatedLink,
   LocationAbsentReason,
   NodeInventoryView,
+  NodeSettingsView,
   RecentLink,
   StateView,
 } from "@meshway/control-client"
 
 import type { LinkLook, Scene, SceneLink, SceneNode } from "@/globe/scene"
+import type {
+  DeclaredEdge,
+  DeclaredTopology,
+} from "@/lib/configuration/topology-view"
 import {
   nodeAddresses,
   type AddressGeo,
@@ -88,18 +93,24 @@ function unlocatedOf(
 }
 
 /**
- * Every node in the State, named by its configured hostname; a node the
+ * Configuration nodes when readable, otherwise the visible inventory/State,
+ * named by the configuration's hostname; a node the
  * account cannot list (a peer of its own device) takes its status from its
  * report alone. `geoOf` says where the addresses of `locationAddresses` are.
  */
 export function mapNodes(
-  state: StateView,
+  state: StateView | undefined,
   inventory: ReadonlyMap<string, NodeInventoryView>,
-  geoOf: GeoOf
+  geoOf: GeoOf,
+  configured?: Readonly<Record<string, NodeSettingsView>>
 ): MapNode[] {
-  return [...new Set([...Object.keys(state.nodes), ...inventory.keys()])]
+  const ids = configured
+    ? Object.keys(configured)
+    : [...new Set([...Object.keys(state?.nodes ?? {}), ...inventory.keys()])]
+  return ids
     .map((id): MapNode => {
-      const view = Object.hasOwn(state.nodes, id) ? state.nodes[id] : undefined
+      const view =
+        state && Object.hasOwn(state.nodes, id) ? state.nodes[id] : undefined
       const { location, locationAbsent } = view
         ? nodeAddresses(view.derived)
         : { location: null, locationAbsent: null }
@@ -107,8 +118,15 @@ export function mapNodes(
       const listed = inventory.get(id) ?? null
       return {
         id,
-        name: listed?.hostname ?? view?.hostname ?? id.slice(0, 8),
-        status: nodeStatus(listed, view),
+        name:
+          configured?.[id]?.hostname ??
+          listed?.hostname ??
+          view?.hostname ??
+          id.slice(0, 8),
+        status:
+          configured?.[id]?.enabled === false
+            ? "disabled"
+            : nodeStatus(listed, view),
         location,
         geo,
         unlocated: unlocatedOf(location, locationAbsent, geo),
@@ -229,14 +247,15 @@ export function mergeRecentLinks(items: readonly RecentLink[]): HistoryLink[] {
 export function overviewScene(
   nodes: readonly MapNode[],
   links: readonly AggregatedLink[],
-  history: readonly HistoryLink[] | null
+  history: readonly HistoryLink[] | null,
+  declared?: DeclaredTopology
 ): Scene {
   const scene = nodes.map(sceneNode)
   const located = new Set(
     scene.filter((node) => node.placement).map((node) => node.id)
   )
   const sceneLinks: SceneLink[] = drawnBetween(
-    mapConnections(links, history),
+    mapConnections(links, history, declared),
     located
   ).map((link) => ({
     key: link.key,
@@ -252,16 +271,57 @@ export type MapConnection = {
   a: string
   b: string
   look: LinkLook
-  status: ConnectionStatus | "history"
+  status: ConnectionStatus | "history" | "allowed" | "unavailable"
   transports: string[]
+  declaration?: DeclaredEdge
 }
 
 /** Shared graph projection: one current edge per adjacent pair, optional historical pairs apart. */
 export function mapConnections(
   links: readonly AggregatedLink[],
-  history: readonly HistoryLink[] | null
+  history: readonly HistoryLink[] | null,
+  declared?: DeclaredTopology
 ): MapConnection[] {
   const current = neighborConnections(links)
+  if (declared) {
+    const byPair = new Map(
+      current.map((connection) => [connection.key, connection])
+    )
+    const past = new Map(
+      groupNodePairs(history ?? []).map((pair) => [pair.key, pair])
+    )
+    return declared.edges.map((edge) => {
+      const connection = byPair.get(edge.key)
+      const unavailable = edge.transports?.length === 0
+      const historical = !connection ? past.get(edge.key) : undefined
+      return {
+        key: edge.key,
+        a: edge.a,
+        b: edge.b,
+        declaration: edge,
+        status: unavailable
+          ? "unavailable"
+          : (connection?.status ?? (historical ? "history" : "allowed")),
+        look: unavailable
+          ? "closed"
+          : connection
+            ? connectionLook(connection)
+            : historical
+              ? "history"
+              : "allowed",
+        transports: unavailable
+          ? []
+          : (connection?.transports ??
+            (historical
+              ? [
+                  ...new Set(
+                    historical.channels.map((channel) => channel.transport)
+                  ),
+                ]
+              : [])),
+      }
+    })
+  }
   const present = new Set(current.map((connection) => connection.key))
   return [
     ...current.map((connection) => ({

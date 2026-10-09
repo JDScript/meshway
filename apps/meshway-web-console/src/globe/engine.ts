@@ -234,6 +234,7 @@ function lookColor(colors: GlobeColors, look: LinkLook): Rgb {
     case "conflicting":
     case "failed":
       return colors.degraded
+    case "allowed":
     case "preparing":
     case "expired":
     case "closed":

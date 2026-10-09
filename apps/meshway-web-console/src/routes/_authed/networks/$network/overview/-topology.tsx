@@ -1,16 +1,12 @@
-import type { AggregatedLink } from "@meshway/control-client"
 import { Button } from "@meshway/ui/button"
 import { MinusIcon, PlusIcon, ScanIcon, ServerIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import { NodeStatusDot } from "@/components/chrome/node-status"
+import type { DeclaredTopology } from "@/lib/configuration/topology-view"
+import type { MapConnection, MapNode } from "@/lib/network-map"
 import {
-  mapConnections,
-  type HistoryLink,
-  type MapNode,
-} from "@/lib/network-map"
-import {
-  connectionStatusLabel,
+  mapConnectionText,
   statusLabel,
   transportText,
 } from "@/lib/state-labels"
@@ -47,15 +43,15 @@ function positions(ids: readonly string[], width: number, height: number) {
 
 export function Topology({
   nodes,
-  links,
-  history,
+  edges,
+  declared,
   selected,
   onSelect,
   onClear,
 }: {
   nodes: readonly MapNode[]
-  links: readonly AggregatedLink[]
-  history: readonly HistoryLink[] | null
+  edges: readonly MapConnection[]
+  declared: DeclaredTopology | undefined
   selected: string | null
   onSelect: (id: string) => void
   onClear: () => void
@@ -86,7 +82,6 @@ export function Topology({
     ...[...slots.values()].map((point) => point.y + 100)
   )
   const byId = new Map(nodes.map((node) => [node.id, node]))
-  const edges = mapConnections(links, history)
   const peers = new Set(
     edges.flatMap((link) =>
       link.a === selected ? [link.b] : link.b === selected ? [link.a] : []
@@ -177,11 +172,27 @@ export function Topology({
                 }
               >
                 <title>
-                  {byId.get(link.a)?.name} ↔ {byId.get(link.b)?.name} ·{" "}
-                  {link.transports.map(transportText).join(" / ")} ·{" "}
-                  {link.status === "history"
-                    ? m.overview_history()
-                    : connectionStatusLabel[link.status]()}
+                  {[
+                    `${byId.get(link.a)?.name} ↔ ${byId.get(link.b)?.name}`,
+                    mapConnectionText(link),
+                    link.transports.map(transportText).join(" / "),
+                    link.declaration
+                      ? link.declaration.rule === null
+                        ? m.overview_topology_default()
+                        : m.overview_topology_rule({
+                            number: link.declaration.rule + 1,
+                          })
+                      : null,
+                    link.declaration?.transports?.length
+                      ? m.overview_allowed_transports({
+                          value: link.declaration.transports
+                            .map(transportText)
+                            .join(" / "),
+                        })
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </title>
               </path>
             )
@@ -210,9 +221,9 @@ export function Topology({
                   aria-pressed={selected === node.id}
                   onClick={() => onSelect(node.id)}
                   title={`${node.name} · ${statusLabel[node.status]()}`}
-                  className="group flex w-full flex-col items-center gap-3 rounded-row p-1 text-center outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="group flex w-full flex-col items-center gap-3 rounded-row p-1 text-center outline-none"
                 >
-                  <span className="relative flex size-12 items-center justify-center rounded-2xl border border-border bg-background shadow-sm transition-colors group-hover:border-foreground/30 group-aria-pressed:border-foreground/50 group-aria-pressed:bg-fill-selected">
+                  <span className="relative flex size-12 items-center justify-center rounded-2xl border border-border bg-background shadow-sm transition-colors group-hover:border-foreground/30 group-focus-visible:ring-2 group-focus-visible:ring-ring group-aria-pressed:border-foreground/50 group-aria-pressed:bg-fill-selected">
                     <ServerIcon
                       className="size-5 text-muted-foreground group-aria-pressed:text-foreground"
                       strokeWidth={1.5}
@@ -232,7 +243,7 @@ export function Topology({
       </div>
       {nodes.length > 0 && edges.length === 0 ? (
         <p className="pointer-events-none absolute bottom-4 left-4 text-meta text-muted-foreground">
-          {m.nodes_links_none()}
+          {declared ? m.overview_topology_empty() : m.nodes_links_none()}
         </p>
       ) : null}
     </div>

@@ -339,9 +339,10 @@ its generated client only, and only what the controller delivers:
   with Mesh addresses, place/network summary and an action to open details. Every
   other node is listed under 待定位 with the reason: the server's
   `locationAbsent`, or that the lookup is off, under way or failed (an
-  answer without coordinates names its region). Current links (`StateView.links`)
-  are grouped by adjacent node pair and drawn only between located ends,
-  styled as connected, connecting, failed or unknown, and
+  answer without coordinates names its region). With readable configuration,
+  base edges come from its declarations; `StateView.links` annotates those
+  pairs as connected, connecting, failed or unknown. Without full configuration
+  access only visible runtime connections are drawn. Globe edges require located ends and are
   never animated: nothing travels along a line, and `inUse` is a listed
   fact. Links with an unlocated end are counted and listed, not drawn. Links
   between the same nodes share one edge. The corner counts nodes by
@@ -524,19 +525,24 @@ states stay distinguishable by stroke and colour.
 
 ## Overview and node information hierarchy
 
-- Target network topology: its base edges are the permitted undirected pairs
-  from configuration `topology` and `defaults.topology`, evaluated by the
-  Server's existing Policy owner. Any matching block wins; otherwise the first
+- Configuration topology is drawn directly from the existing non-secret
+  `ConfigurationView` (`configurationQuery`, also written by SSE), using its
+  nodes, identities, groups, topology and defaults. `lib/configuration/topology-view.ts`
+  owns this non-executable display projection. Any matching block wins; otherwise the first
   matching allow supplies transports; otherwise the default applies. With no
   rules, allow means the complete permitted graph, deny means no permitted
   edges. State annotates these edges with runtime state and never determines
-  whether the configured edge exists. This permission graph is not business
-  access or a selected routing path. The required authoritative projection is
-  tracked in `v2-api-needs.md`; the delivered preview remains explicitly named
-  Live connections until that contract is available. `evaluateConfiguration`
-  is a business-path plan, not a substitute for this graph.
-- A connection means direct Node adjacency: if A reaches B through R, A's
-  connection page lists R and the network graph shows A—R—B. It does not list
+  whether the configured edge exists. This declaration view does not resolve
+  private stable membership bindings, authorize traffic or compile executable
+  paths; those remain Server/Policy responsibilities. No additional endpoint
+  or path-evaluation call is needed for drawing it. `[]` remains an explicit
+  absence of permitted carriers, distinct from an unrestricted edge.
+  Configuration reads follow `readConfiguration`; a member without that
+  permission gets the existing visible-State diagram labelled Live connections.
+  Configuration nodes remain present before any runtime report arrives.
+- A runtime connection means direct Node adjacency: if A reaches B through R,
+  A's connection page lists R and the runtime overlay shows A—R—B. A separately
+  declared A—B edge can remain on the topology base. The runtime list does not list
   B as directly connected. Online is the node's reported runtime/control state,
   not a statement that every allowed adjacency already exists.
 - `lib/nodes/connections.ts` owns the shared projection used by the node list,
@@ -550,12 +556,11 @@ states stay distinguishable by stroke and colour.
   Counts labelled connected count peers/pairs in that state, not channel IDs
   or report records. The neighbor list can also show known pending/unknown
   peers, with their states explicit; absent node reports do not become zero.
-- The current network preview switches between the globe and a live connection view in the
-  same canvas, remembering the choice. The topology shows actual reported
-  connections from State, with each visible node separate, including nodes
-  without a location or a connection. It does not expand configuration
-  rules into allowed edges yet. A missing runtime line says nothing about whether a
-  future connection is permitted or will succeed. Node positions stay stable
+- Network overview switches between the globe and the topology diagram in the
+  same canvas, remembering the choice. The diagram separates every node,
+  including nodes without a location or a live connection. Configuration and
+  runtime counts are labelled separately. A different State configuration
+  revision does not annotate the new declaration as current. Node positions stay stable
   across status updates. Original channel evidence remains available in details;
   history remains an explicitly selected layer.
 - Clicking a node selects a persistent compact card on the right, with its
@@ -599,10 +604,14 @@ states stay distinguishable by stroke and colour.
 - A matching revision alone must not say the current execution target is
   applied. Summaries use State evidence and the complete desired/saved/applied
   references already used by diagnostics, preserving unknown values.
-- The connection diagram uses small device symbols and status dots, on a quiet grid
-  without a surrounding panel. It draws real State connections and optional
-  recorded history; no lines stand in for missing records. Names stay legible
-  on small screens, where nodes occupy separate rows.
+- The diagram uses small device symbols and status dots, on a quiet grid
+  without a surrounding panel. Configuration-only edges are dashed; actual
+  connection state and optional recorded history annotate only declared pairs.
+  The source rule/default and transport restriction are available on the edge.
+  Names stay legible on small screens, where nodes occupy separate rows.
+  Dense drawings have an explicitly labelled 80-node window, retaining the
+  selected node; this bounds pair expansion without claiming a partial drawing
+  is the whole network.
 - Overview and device facts use `FactList` / `FactRow`: one 64px row, 16px
   horizontal inset and a shared label column. The header's status, address
   and identity share a text size, 20px line height and baseline; only the
@@ -617,7 +626,7 @@ controller supports today; the rest of each row is the target design.
 
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
-| Overview `/overview` | globe / actual topology, status corner and optional history; a persistent compact node or cluster card | selected node / cluster | an explicit action opens node details | |
+| Overview `/overview` | globe / configuration topology with runtime overlay, status corner and optional history; a persistent compact node or cluster card | selected node / cluster | an explicit action opens node details | |
 | Nodes `/nodes?q=` | overview, connections, diagnostics and settings; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=…`, `/nodes/add` | revoke, enrolment key |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |

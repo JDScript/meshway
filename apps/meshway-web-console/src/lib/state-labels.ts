@@ -13,6 +13,7 @@ import type {
   StateProblem,
 } from "@meshway/control-client"
 
+import type { MapConnection } from "@/lib/network-map"
 import type { ConnectionStatus } from "@/lib/nodes/connections"
 import type { NodeStatus } from "@/lib/nodes/status"
 import { m } from "@/paraglide/messages.js"
@@ -22,6 +23,19 @@ export const connectionStatusLabel: Record<ConnectionStatus, () => string> = {
   connecting: () => linkPhaseLabel.preparing(),
   failed: () => linkPhaseLabel.failed(),
   unknown: () => statusLabel.unknown(),
+}
+
+export function mapConnectionText(connection: MapConnection): string {
+  switch (connection.status) {
+    case "allowed":
+      return m.overview_allowed()
+    case "unavailable":
+      return m.overview_no_transports()
+    case "history":
+      return m.overview_history()
+    default:
+      return connectionStatusLabel[connection.status]()
+  }
 }
 
 /** Known carrier names use the same wording as configuration; future providers keep their name. */

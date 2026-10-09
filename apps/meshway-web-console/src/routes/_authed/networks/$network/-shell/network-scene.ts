@@ -2,14 +2,18 @@ import { useQuery } from "@tanstack/react-query"
 import { useMatch, useNavigate } from "@tanstack/react-router"
 import { useEffect, useMemo } from "react"
 
+import { configurationQuery, isDenied } from "@/api/queries/configuration"
 import { useAddressGeo } from "@/api/queries/ip-geo"
+import { networkQuery } from "@/api/queries/network"
 import { nodesQuery } from "@/api/queries/nodes"
 import { networkStateQuery } from "@/api/queries/state"
 import { recentLinksOf, useHistory } from "@/api/queries/use-history"
 import { EMPTY_SCENE } from "@/globe/scene"
+import { configurationTopology } from "@/lib/configuration/topology-view"
 import { shortId } from "@/lib/format"
 import {
   locationAddresses,
+  mapConnections,
   mapNodes,
   mergeRecentLinks,
   overviewScene,
@@ -35,6 +39,33 @@ const HISTORY_FILTER = {
 export function useNetworkScene(networkId: string) {
   const state = useQuery(networkStateQuery(networkId))
   const inventory = useQuery(nodesQuery(networkId))
+  const network = useQuery(networkQuery(networkId))
+  const canRead = network.data?.network.actions.readConfiguration === true
+  const configuration = useQuery({
+    ...configurationQuery(networkId),
+    enabled: canRead,
+  })
+  const configured =
+    canRead && !isDenied(configuration.error) ? configuration.data : undefined
+  const overviewNode = useMatch({
+    from: "/_authed/networks/$network/overview",
+    shouldThrow: false,
+    select: (match) => match.search.node,
+  })
+  const workspaceNode = useMatch({
+    from: "/_authed/networks/$network/nodes/$node",
+    shouldThrow: false,
+    select: (match) => match.params.node,
+  })
+  const focus = workspaceNode ?? overviewNode
+  const declared = useMemo(
+    () =>
+      configured
+        ? configurationTopology(configured.configuration, focus)
+        : undefined,
+    [configured, focus]
+  )
+  const runtimeState = state.isError ? undefined : state.data
   const window = useHistoryLayer(networkId)
   const history = useHistory(networkId, window, HISTORY_FILTER)
 
@@ -44,10 +75,11 @@ export function useNetworkScene(networkId: string) {
   )
   const nameOf = useMemo(
     () => (id: string) =>
+      configured?.configuration.nodes[id]?.hostname ??
       listed.get(id)?.hostname ??
       stateOf(state.data, id)?.hostname ??
       shortId(id),
-    [listed, state.data]
+    [listed, state.data, configured]
   )
   const addresses = useMemo(
     () => (state.data ? locationAddresses(state.data) : new Map()),
@@ -55,17 +87,45 @@ export function useNetworkScene(networkId: string) {
   )
   const geoOf = useAddressGeo(addresses)
   const nodes = useMemo(
-    () => (state.data ? mapNodes(state.data, listed, geoOf) : []),
-    [state.data, listed, geoOf]
+    () =>
+      mapNodes(runtimeState, listed, geoOf, configured?.configuration.nodes),
+    [runtimeState, listed, geoOf, configured]
+  )
+  const drawnNodes = useMemo(
+    () =>
+      declared
+        ? nodes.filter((node) => declared.nodeIds.includes(node.id))
+        : nodes,
+    [declared, nodes]
   )
   const historyLinks = useMemo(
     () => (window ? mergeRecentLinks(recentLinksOf(history.pages)) : null),
     [window, history.pages]
   )
-  const links = state.data?.links
+  // A different configuration revision cannot annotate the saved declaration
+  // as current. Configuration edges remain visible while State catches up.
+  const links =
+    configured && runtimeState?.configurationRevision !== configured.revision
+      ? undefined
+      : runtimeState?.links
+  const waitingForConfiguration =
+    canRead && !configured && !isDenied(configuration.error)
+  const edges = useMemo(
+    () =>
+      waitingForConfiguration
+        ? []
+        : mapConnections(links ?? [], historyLinks, declared),
+    [waitingForConfiguration, links, historyLinks, declared]
+  )
   const scene = useMemo(
-    () => overviewScene(nodes, links ?? [], historyLinks),
-    [nodes, links, historyLinks]
+    () =>
+      overviewScene(
+        drawnNodes,
+        waitingForConfiguration ? [] : (links ?? []),
+        waitingForConfiguration ? null : historyLinks,
+        declared
+      ),
+    [drawnNodes, waitingForConfiguration, links, historyLinks, declared]
   )
   const located = useMemo(
     () =>
@@ -78,6 +138,13 @@ export function useNetworkScene(networkId: string) {
     state,
     inventory: inventory.data?.items,
     nodes,
+    drawnNodes,
+    edges,
+    declared,
+    configurationRevision: configured?.revision,
+    waitingForConfiguration,
+    configurationError:
+      canRead && configuration.isError ? configuration.error : null,
     nameOf,
     scene,
     located,

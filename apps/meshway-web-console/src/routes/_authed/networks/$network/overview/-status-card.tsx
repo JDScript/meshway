@@ -7,6 +7,7 @@ import { failureText } from "@/api/failure"
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
+import type { DeclaredTopology } from "@/lib/configuration/topology-view"
 import { agoTime, dateTime } from "@/lib/format"
 import { connectionLook, countBy, type MapNode } from "@/lib/network-map"
 import {
@@ -46,6 +47,7 @@ export function StatusCard({
   history,
   mobile,
   topology = false,
+  declaration,
 }: {
   state: StateView | undefined
   stateError: unknown
@@ -58,6 +60,7 @@ export function StatusCard({
   history: HistoryLayerProps
   mobile: boolean
   topology?: boolean
+  declaration?: { topology: DeclaredTopology; revision: number }
 }) {
   const now = useNow(5_000)
   const globe = useGlobeAvailable()
@@ -108,7 +111,7 @@ export function StatusCard({
     </div>
   )
 
-  if (!state)
+  if (!state && !declaration)
     return (
       <>
         {header}
@@ -134,6 +137,29 @@ export function StatusCard({
       {open ? (
         <div className="scroll-edge flex min-h-0 flex-col gap-4 overflow-y-auto px-4 pb-4">
           <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2 text-row">
+            {declaration ? (
+              <>
+                <dt className="text-muted-foreground">
+                  {m.overview_topology()}
+                </dt>
+                <dd className="text-row">
+                  {m.overview_topology_edges({
+                    count: declaration.topology.edges.length,
+                  })}
+                  <span className="ml-2 text-meta text-muted-foreground">
+                    {m.revision({ revision: declaration.revision })}
+                  </span>
+                </dd>
+                <dt className="text-muted-foreground">
+                  {m.overview_topology_default()}
+                </dt>
+                <dd className="text-row">
+                  {declaration.topology.defaultAction === "allow"
+                    ? m.configuration_topology_default_allow()
+                    : m.configuration_topology_default_deny()}
+                </dd>
+              </>
+            ) : null}
             <dt className="text-muted-foreground">{m.overview_nodes()}</dt>
             <dd className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <span className="font-medium tabular-nums">{nodes.length}</span>
@@ -151,12 +177,16 @@ export function StatusCard({
                 </span>
               ))}
             </dd>
-            <dt className="text-muted-foreground">{m.overview_links()}</dt>
+            <dt className="text-muted-foreground">
+              {m.overview_runtime_connections()}
+            </dt>
             <dd className="flex min-w-0 flex-col gap-1">
               <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 {links.length === 0 ? (
                   <span className="text-meta text-muted-foreground">
-                    {m.nodes_links_none()}
+                    {state
+                      ? m.nodes_links_none()
+                      : m.nodes_connections_unknown()}
                   </span>
                 ) : null}
                 <Counts
@@ -171,6 +201,16 @@ export function StatusCard({
               </span>
             </dd>
           </dl>
+          {declaration &&
+          declaration.topology.totalNodes >
+            declaration.topology.nodeIds.length ? (
+            <p className="text-meta text-muted-foreground">
+              {m.overview_topology_window({
+                shown: declaration.topology.nodeIds.length,
+                total: declaration.topology.totalNodes,
+              })}
+            </p>
+          ) : null}
 
           {globe || topology ? null : (
             <p className="text-row text-muted-foreground">

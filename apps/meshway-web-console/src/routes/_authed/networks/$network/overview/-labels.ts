@@ -28,6 +28,7 @@ export function unlocatedReason(node: MapNode): string {
 
 /** The colour a link's look takes on the globe, for its swatch in a list. */
 export const lookColor: Record<LinkLook, string> = {
+  allowed: "var(--link-configured)",
   matched: "var(--link-confirmed)",
   one_sided: "var(--link-one-sided)",
   conflicting: "var(--link-degraded)",

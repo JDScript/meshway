@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { useEffect, type CSSProperties } from "react"
 import { z } from "zod"
 
+import { failureText } from "@/api/failure"
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import {
@@ -13,7 +14,9 @@ import {
   PANEL_TOP,
 } from "@/components/surface/layout"
 import { Surface } from "@/components/surface/surface"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useIsMobile } from "@/hooks/use-media-query"
+import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 import { useBooted } from "@/state/boot"
@@ -53,6 +56,16 @@ function OverviewPage() {
   const live = useLive(networkId)
   const scene = useNetworkScene(networkId)
   const { state, nodes, located, nameOf } = scene
+  useReadFailureToast(
+    `topology-${networkId}`,
+    scene.configurationError !== null,
+    failureText(scene.configurationError) ?? m.nodes_listeners_failed()
+  )
+  useReadFailureToast(
+    `state-${networkId}`,
+    state.isError,
+    failureText(state.error) ?? m.nodes_state_failed()
+  )
   const navigation = useNodeNavigation(networkId)
   const pointed = usePointedNodes()
   const pointedNode = nodes.find((node) => pointed.includes(node.id))
@@ -117,7 +130,13 @@ function OverviewPage() {
           onChange={selectView}
           options={[
             { value: "globe", label: m.overview_globe() },
-            { value: "topology", label: m.overview_topology() },
+            {
+              value: "topology",
+              label:
+                scene.declared || scene.waitingForConfiguration
+                  ? m.overview_topology()
+                  : m.overview_runtime_connections(),
+            },
           ]}
           className="glass"
         />
@@ -132,14 +151,24 @@ function OverviewPage() {
             bottom: mobile ? MOBILE_SHEET_BOTTOM + 60 : EDGE,
           }}
         >
-          <Topology
-            nodes={nodes}
-            links={state.data?.links ?? []}
-            history={scene.historyLinks}
-            selected={selected?.id ?? null}
-            onSelect={select}
-            onClear={close}
-          />
+          {scene.waitingForConfiguration ? (
+            <div className="flex flex-1 items-center justify-center text-meta text-muted-foreground">
+              {scene.configurationError ? (
+                m.nodes_listeners_failed()
+              ) : (
+                <Skeleton className="h-5 w-40 rounded-full" />
+              )}
+            </div>
+          ) : (
+            <Topology
+              nodes={scene.drawnNodes}
+              edges={scene.edges}
+              declared={scene.declared}
+              selected={selected?.id ?? null}
+              onSelect={select}
+              onClear={close}
+            />
+          )}
         </div>
       ) : null}
       <div
@@ -188,7 +217,7 @@ function OverviewPage() {
             className="glass pointer-events-auto flex min-h-0 flex-col overflow-hidden rounded-surface"
           >
             <StatusCard
-              state={state.data}
+              state={state.isError ? undefined : state.data}
               stateError={state.isError ? state.error : null}
               nodes={nodes}
               located={
@@ -201,6 +230,14 @@ function OverviewPage() {
               onOpenNode={select}
               mobile={mobile}
               topology={view === "topology"}
+              declaration={
+                scene.declared && scene.configurationRevision !== undefined
+                  ? {
+                      topology: scene.declared,
+                      revision: scene.configurationRevision,
+                    }
+                  : undefined
+              }
               history={{
                 window: scene.window,
                 onChoose: (choice) => chooseHistoryLayer(networkId, choice),
