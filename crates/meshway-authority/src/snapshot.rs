@@ -250,6 +250,16 @@ impl ExecutionSnapshot {
             .expect("three deadlines")
     }
 
+    /// Preserve an admitted operation's absolute UTC and monotonic cutoffs on
+    /// this issuer's clock. The caller must still retain its original I/O guard.
+    pub fn deadline_at(&self, instant: Instant, wall: u64) -> Result<Deadline, Error> {
+        self.ensure_current()?;
+        self.deadlines[0].restrict(
+            instant.min(self.expires_at()),
+            wall.min(self.expires_at_ms()),
+        )
+    }
+
     /// Wait without owning a background task. The monotonic deadline bounds
     /// idle I/O; every admission/output additionally checks the shared UTC
     /// high-water clock, including a forward wall-clock adjustment.
