@@ -14,6 +14,7 @@ mod editing;
 mod editing_secrets;
 pub mod evaluation;
 pub mod execution;
+pub mod netmap;
 pub use editing_secrets::*;
 mod fields;
 mod object;
