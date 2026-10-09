@@ -1,6 +1,10 @@
 use super::{
     datagram,
-    support::{request, secure::SecureMesh},
+    support::{
+        diagnostic::{handshake, renew_observer, setup},
+        request,
+        secure::SecureMesh,
+    },
 };
 use meshway_dataplane::secure::{
     CircuitAuthorization, CircuitState, Error, PendingFrame, Received,
@@ -19,60 +23,6 @@ fn forward(result: Result<Received, Error>) -> PendingFrame {
         panic!("opaque relay")
     };
     frame
-}
-
-async fn setup() -> (SecureMesh, meshway_protocol::ObservationTask) {
-    let mut fixture = SecureMesh::start().await;
-    fixture
-        .mesh
-        .server
-        .configure(&fixture.mesh.owner, |cfg| {
-            cfg.access[0].ip.push("icmp:*".into())
-        })
-        .await;
-    fixture.reconcile().await;
-    let task = fixture
-        .mesh
-        .server
-        .observe(&fixture.mesh.owner, fixture.mesh.a.id, fixture.mesh.b.id)
-        .await;
-    fixture.reconcile().await;
-    for node in [&fixture.mesh.a, &fixture.mesh.r, &fixture.mesh.b] {
-        let snapshot = node.control.execution_snapshot().unwrap();
-        let cfg = snapshot.configuration().unwrap();
-        assert_eq!(cfg.diagnostics[&task.id].paths[0].nodes, fixture.mesh.path);
-        assert_eq!(cfg.permits.len(), 1);
-        assert_eq!(
-            cfg.diagnostics[&task.id].instance_id,
-            fixture.mesh.a.instance().instance_id
-        );
-    }
-    (fixture, task)
-}
-
-async fn handshake(fixture: &mut SecureMesh, task: &meshway_protocol::ObservationTask) -> [u8; 32] {
-    let init = fixture
-        .a
-        .start_authorized(
-            CircuitAuthorization::Diagnostic(task.id),
-            fixture.mesh.path.clone(),
-            &fixture.ar.carrier,
-        )
-        .unwrap();
-    fixture.finish_handshake(init).await
-}
-
-async fn renew_observer(fixture: &mut SecureMesh, task: &mut meshway_protocol::ObservationTask) {
-    // Renew only at boundaries with no queued old-publication outputs under
-    // test, then install the actual successor before creating another probe.
-    if fixture
-        .mesh
-        .server
-        .renew_observation_if_due(&fixture.mesh.owner, task)
-        .await
-    {
-        fixture.reconcile().await;
-    }
 }
 
 fn terminal_response(fixture: &mut SecureMesh, request: PendingFrame) -> PendingFrame {
@@ -621,9 +571,37 @@ async fn diagnostic_original_probe_expiry_rejects_queued_and_late_reply() {
 
 #[tokio::test]
 async fn retained_relay_correlation_never_renews_probe_deadline_or_source_scope() {
+    // C: the original 2 s probe deadline must expire through relay handoff;
+    // the 10 s source-scope case instead completes before half its deadline.
     for refresh_source in [false, true] {
         let (mut fixture, task) = setup().await;
         let circuit = handshake(&mut fixture, &task).await;
+        if refresh_source {
+            // Publish a real successor before issuing the short-lived probe.
+            // Demand feedback does not renew the old local snapshot; A keeps
+            // using it until the later source-only installation below.
+            let response = fixture
+                .mesh
+                .a
+                .control
+                .create_demand(&meshway_protocol::DemandRequest {
+                    instance: fixture.mesh.a.instance(),
+                    request_id: request(),
+                    target: meshway_configuration::execution::BusinessTarget::Mesh {
+                        node: fixture.mesh.b.id,
+                    },
+                    protocol: meshway_configuration::execution::BusinessProtocol::Udp,
+                    port: Some(42424.try_into().unwrap()),
+                    profile: "mesh".into(),
+                    duration_seconds: 120,
+                })
+                .await
+                .unwrap();
+            assert!(matches!(
+                response.decision,
+                meshway_configuration::execution::DemandDecision::Permitted { .. }
+            ));
+        }
         // Scope invalidation is checked before expiry, independently of the
         // real HTTP handoff's scheduling under the full workspace test load.
         let lifetime = if refresh_source { 10 } else { 2 };
@@ -641,13 +619,25 @@ async fn retained_relay_correlation_never_renews_probe_deadline_or_source_scope(
         let response = terminal_response(&mut fixture, request);
         let reply = wire(response);
         let old = fixture.mesh.a.control.execution_snapshot().unwrap();
-        fixture.renew().await;
         if refresh_source {
+            // Source-scope fencing needs only the source's real lease handoff.
+            // Three Nodes' HTTP installations need not race this probe. The
+            // other branch separately covers retained relay correlation expiry.
+            let snapshot = fixture.mesh.a.sync_current().await;
+            fixture
+                .a
+                .reconcile(fixture.mesh.a.control.dataplane_identity(snapshot).unwrap())
+                .unwrap();
             assert!(old.ensure_current().is_err());
-            assert!(Instant::now() < deadline, "check scope before probe expiry");
+            assert!(
+                deadline.saturating_duration_since(Instant::now())
+                    >= Duration::from_secs(lifetime) / 2,
+                "source-only handoff must fit half the original probe deadline"
+            );
             let reply = forward(fixture.r.receive(&fixture.rb.carrier, reply));
             assert!(fixture.a.receive(&fixture.ar.carrier, wire(reply)).is_err());
         } else {
+            fixture.renew().await;
             tokio::time::sleep_until((deadline + Duration::from_millis(10)).into()).await;
             assert!(fixture.r.receive(&fixture.rb.carrier, reply).is_err());
         }

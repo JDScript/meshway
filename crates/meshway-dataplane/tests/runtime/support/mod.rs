@@ -1,3 +1,4 @@
+pub mod diagnostic;
 pub mod dns;
 pub mod packet;
 pub mod secure;
