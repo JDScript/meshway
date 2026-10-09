@@ -459,18 +459,8 @@ async fn verify_owner(
         &(expected,),
     )
     .await?;
-    let uid: u32 = raw(
-        connection,
-        "org.freedesktop.DBus",
-        "/org/freedesktop/DBus",
-        "org.freedesktop.DBus",
-        "GetConnectionUnixUser",
-        &(expected,),
-    )
-    .await?;
     // resolved commonly runs as systemd-resolve, not root. The system bus owns
     // service-name policy; PID/netns is checked regardless of service UID.
-    let _ = uid;
     namespace.verify_pid(pid)
 }
 
