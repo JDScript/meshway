@@ -147,6 +147,9 @@ pub enum IssueCode {
     GlobalExitRequiresInternet,
     /// A node is assigned a profile whose exit fallback lacks an Internet access grant; params `node`, `profile`.
     ExitFallbackRequiresInternet,
+    /// A Node's netmap would exceed the distribution safety bound; params
+    /// `node`, `bytes`, `maxBytes`.
+    NetmapLimit,
     // Warnings.
     /// Every destination of this rule is matched by earlier rules; params
     /// `by` (index of the last rule that completes the cover).
@@ -225,6 +228,7 @@ impl IssueCode {
             ExitOutsideAccess => "assigned exit destination is outside access grants",
             GlobalExitRequiresInternet => "global exit requires internet access grant",
             ExitFallbackRequiresInternet => "exit fallback requires internet access grant",
+            NetmapLimit => "netmap exceeds the distribution safety bound",
             ShadowedRule => "every destination of this rule is matched by earlier rules",
         }
     }

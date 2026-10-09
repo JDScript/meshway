@@ -65,7 +65,7 @@ pub struct NetmapDelta {
     /// Complete replacement profile selections.
     pub selected_profiles: BTreeMap<NodeId, String>,
     /// Complete replacement selection versions.
-    pub selection_versions: BTreeMap<NodeId, u64>,
+    pub selection_versions: BTreeMap<NodeId, u64> [value_type = BTreeMap<NodeId, meshway_model::Version>],
     /// Dial candidate changes.
     pub dialers: NetmapDialerDelta,
     /// Complete replacement egress plan.

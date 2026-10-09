@@ -28,5 +28,5 @@ pub struct ProjectedConfiguration {
     pub selected_profiles: BTreeMap<NodeId, String>,
     /// Persisted selection versions of visible Nodes; each switch increments one.
     #[serde(deserialize_with = "unique_map")]
-    pub selection_versions: BTreeMap<NodeId, u64>,
+    pub selection_versions: BTreeMap<NodeId, u64> [value_type = BTreeMap<NodeId, meshway_model::Version>],
 } }
