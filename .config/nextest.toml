@@ -75,7 +75,7 @@ max-threads = 12
 # This explicitly bounded Server/SecureNode scheduling contract includes fsync
 # and cryptography; reserve the runner slots so unrelated fixture CPU contention
 # cannot be mistaken for an inserted preparation timer. The bounds stay fixed.
-filter = 'test(=tests::preparing::ready_channel_and_handshake_events_start_direct_and_relay_probes_without_ticks)'
+filter = 'test(=tests::preparing::ready_channel_and_handshake_events_start_direct_and_relay_probes_without_ticks) | test(=runtime::control::tests::execution_target_notice_wakes_without_a_five_second_refresh_delay)'
 threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
