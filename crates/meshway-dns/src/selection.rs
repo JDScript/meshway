@@ -105,6 +105,7 @@ pub struct PublishedDns {
     default: Vec<String>,
     override_local: bool,
     executable_exit: bool,
+    complete: bool,
 }
 
 impl fmt::Debug for PublishedDns {
@@ -115,10 +116,47 @@ impl fmt::Debug for PublishedDns {
 
 impl PublishedDns {
     pub fn from_execution(execution: &DnsExecution) -> Result<Self, ConfigurationError> {
-        let settings = &execution.settings;
+        Self::from_parts(
+            &execution.settings,
+            &execution.mesh_hosts,
+            matches!(
+                execution.egress,
+                meshway_configuration::execution::DnsEgress::ViaExit { .. }
+            ),
+            false,
+        )
+    }
+
+    /// A netmap's names are the complete set this Node may discover: itself
+    /// and every Node it has Access to. Absence is then authoritative locally.
+    pub fn from_netmap(
+        netmap: &meshway_configuration::netmap::NodeNetmap,
+    ) -> Result<Self, ConfigurationError> {
+        Self::from_parts(
+            &netmap.projection.configuration.dns,
+            &netmap.dns.mesh_hosts,
+            matches!(
+                netmap.dns.egress,
+                meshway_configuration::netmap::DnsPlan::ViaExit { .. }
+            ),
+            true,
+        )
+    }
+
+    /// Whether `select`'s `DiscoveryRequired` means "not visible".
+    pub fn complete(&self) -> bool {
+        self.complete
+    }
+
+    fn from_parts(
+        settings: &meshway_configuration::DnsConfiguration,
+        mesh_hosts: &BTreeMap<String, NodeAddresses>,
+        executable_exit: bool,
+        complete: bool,
+    ) -> Result<Self, ConfigurationError> {
         let domain = configuration_name(&settings.domain)?;
         let mut hosts = BTreeMap::new();
-        for (name, addresses) in &execution.mesh_hosts {
+        for (name, addresses) in mesh_hosts {
             let name = configuration_name(name)?;
             if !domain.zone_of(&name) || domain == name {
                 return Err(ConfigurationError::HostOutsideDomain);
@@ -164,10 +202,8 @@ impl PublishedDns {
             routes,
             default: settings.default.clone(),
             override_local: settings.override_local,
-            executable_exit: matches!(
-                execution.egress,
-                meshway_configuration::execution::DnsEgress::ViaExit { .. }
-            ),
+            executable_exit,
+            complete,
         })
     }
 

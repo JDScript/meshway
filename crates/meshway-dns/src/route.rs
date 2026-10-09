@@ -1,7 +1,12 @@
 use meshway_authority::ExecutionSnapshot;
-use meshway_configuration::{DnsTransport, execution::LocalEgressAction};
+use meshway_configuration::{
+    DnsTransport,
+    execution::LocalEgressAction,
+    netmap::{EgressAction, NodeNetmap, ResolverAction},
+};
 use meshway_model::RequestId;
 use std::{fmt, net::SocketAddr, time::Instant};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RouteError {
@@ -11,18 +16,87 @@ pub enum RouteError {
     Expired,
 }
 
+/// The one query lifetime both resolver route kinds share: the original
+/// snapshot, a fixed permit cutoff, the request deadline and the query
+/// ticket's cancellation. An exchange can only shorten it. It carries no
+/// grant; each route kind keeps its own sealed one.
+#[derive(Clone)]
+pub(crate) struct QueryLifetime {
+    snapshot: ExecutionSnapshot,
+    expires_at_ms: u64,
+    deadline: Instant,
+    cancelled: CancellationToken,
+}
+
+impl QueryLifetime {
+    pub(crate) fn new(snapshot: ExecutionSnapshot, expires_at_ms: u64, deadline: Instant) -> Self {
+        Self {
+            expires_at_ms: expires_at_ms.min(snapshot.expires_at_ms()),
+            deadline: deadline.min(snapshot.expires_at()),
+            snapshot,
+            cancelled: CancellationToken::new(),
+        }
+    }
+    pub(crate) fn snapshot(&self) -> &ExecutionSnapshot {
+        &self.snapshot
+    }
+    pub(crate) fn expires_at_ms(&self) -> u64 {
+        self.expires_at_ms
+    }
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
+    pub(crate) fn bind_cancellation(&mut self, cancelled: CancellationToken) {
+        self.cancelled = cancelled;
+    }
+    /// A child scope: the dispatcher can stop an accepted adapter worker
+    /// without cancelling the query ticket that later, independently
+    /// authorized upstreams still need.
+    pub(crate) fn exchange(&self, deadline: Instant) -> Self {
+        Self {
+            deadline: self.deadline.min(deadline),
+            cancelled: self.cancelled.child_token(),
+            ..self.clone()
+        }
+    }
+    pub(crate) fn cancel(&self) {
+        self.cancelled.cancel();
+    }
+    pub(crate) fn ensure_current(&self) -> Result<(), RouteError> {
+        let now = self.snapshot.now_ms().map_err(|_| RouteError::Expired)?;
+        if now >= self.expires_at_ms
+            || Instant::now() >= self.deadline
+            || self.cancelled.is_cancelled()
+        {
+            return Err(RouteError::Expired);
+        }
+        Ok(())
+    }
+    pub(crate) async fn invalidated(&self) {
+        tokio::select! { biased;
+            _ = self.snapshot.invalidated_at(self.expires_at_ms) => {},
+            _ = tokio::time::sleep_until(self.deadline.into()) => {},
+            _ = self.cancelled.cancelled() => {},
+        }
+    }
+}
+
+fn policy_error(error: meshway_policy::dns_route::ResolverRouteError) -> RouteError {
+    match error {
+        meshway_policy::dns_route::ResolverRouteError::Expired => RouteError::Expired,
+        _ => RouteError::Binding,
+    }
+}
+
 /// Sealed exact local-business route, never a bootstrap socket exemption.
 /// Adapters check this before every actual I/O poll and wait on `invalidated`.
 #[derive(Clone)]
 pub struct LocalResolverRoute {
-    snapshot: ExecutionSnapshot,
+    lifetime: QueryLifetime,
     endpoint: SocketAddr,
     transport: DnsTransport,
     action: LocalEgressAction,
-    demand: RequestId,
-    expires_at_ms: u64,
-    deadline: Instant,
-    cancelled: tokio_util::sync::CancellationToken,
+    demand: Option<RequestId>,
     system: Option<crate::SystemResolverSnapshot>,
 }
 
@@ -32,90 +106,149 @@ impl fmt::Debug for LocalResolverRoute {
     }
 }
 
+/// A netmap's local decision for one resolver endpoint: the source egress
+/// partition must leave it to a local socket. Exit-routed, Mesh and pool
+/// addresses never get one.
+fn netmap_local_action(
+    netmap: &NodeNetmap,
+    endpoint: SocketAddr,
+) -> Result<LocalEgressAction, RouteError> {
+    let pools = &netmap.self_.mesh_address_pools;
+    if pools.ipv4.iter().chain(&pools.ipv6).any(|pool| {
+        pool.parse::<ipnet::IpNet>()
+            .is_ok_and(|net| net.contains(&endpoint.ip()))
+    }) {
+        return Err(RouteError::Binding);
+    }
+    let plan = netmap.egress.as_ref().ok_or(RouteError::Binding)?;
+    match plan.route(endpoint.ip()).map(|route| &route.action) {
+        Some(EgressAction::Direct) => Ok(LocalEgressAction::Direct),
+        Some(EgressAction::Unmanaged) => Ok(LocalEgressAction::Unmanaged),
+        _ => Err(RouteError::Binding),
+    }
+}
+
 impl LocalResolverRoute {
+    /// A configured resolver: the legacy exact demand permit, or the
+    /// netmap's per-resolver decision (`dns_route::netmap_resolver`).
     pub(crate) fn new(
         snapshot: ExecutionSnapshot,
         key: &str,
-        demand: RequestId,
+        demand: Option<RequestId>,
         deadline: Instant,
     ) -> Result<Self, RouteError> {
+        if snapshot.is_netmap() {
+            return Self::netmap(snapshot, key, deadline);
+        }
+        let demand = demand.ok_or(RouteError::Binding)?;
         let now = snapshot.now_ms().map_err(|_| RouteError::Expired)?;
         let configuration = snapshot.configuration().map_err(|_| RouteError::Expired)?;
         let permit =
             meshway_policy::dns_route::local_resolver_route(configuration, key, demand, now)
-                .map_err(|error| match error {
-                    meshway_policy::dns_route::ResolverRouteError::Expired => RouteError::Expired,
-                    _ => RouteError::Binding,
-                })?;
+                .map_err(policy_error)?;
         let server = configuration
             .dns
             .settings
             .servers
             .get(key)
             .ok_or(RouteError::Binding)?;
+        let endpoint = SocketAddr::new(server.server, server.server_port.get());
+        let transport = server.transport;
+        let (action, expires_at_ms) = (permit.action, permit.expires_at_ms);
         let route = Self {
-            endpoint: SocketAddr::new(server.server, server.server_port.get()),
-            transport: server.transport,
-            action: permit.action,
-            demand,
-            expires_at_ms: permit.expires_at_ms.min(snapshot.expires_at_ms()),
-            deadline: deadline.min(snapshot.expires_at()),
-            snapshot,
-            cancelled: tokio_util::sync::CancellationToken::new(),
+            endpoint,
+            transport,
+            action,
+            demand: Some(demand),
+            lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
             system: None,
         };
         route.ensure_current()?;
         Ok(route)
     }
 
+    fn netmap(
+        snapshot: ExecutionSnapshot,
+        key: &str,
+        deadline: Instant,
+    ) -> Result<Self, RouteError> {
+        let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
+        let netmap = &reading.netmap.netmap;
+        let action =
+            match meshway_policy::dns_route::netmap_resolver(netmap, key).map_err(policy_error)? {
+                ResolverAction::Direct => LocalEgressAction::Direct,
+                ResolverAction::Unmanaged => LocalEgressAction::Unmanaged,
+                ResolverAction::Exit | ResolverAction::Rejected => return Err(RouteError::Binding),
+            };
+        let server = netmap
+            .projection
+            .configuration
+            .dns
+            .servers
+            .get(key)
+            .ok_or(RouteError::Binding)?;
+        let endpoint = SocketAddr::new(server.server, server.server_port.get());
+        let transport = server.transport;
+        // The resolver decision and the source partition must agree.
+        if netmap_local_action(netmap, endpoint)? != action {
+            return Err(RouteError::Binding);
+        }
+        let expires_at_ms = reading.expires_at_ms;
+        let route = Self {
+            endpoint,
+            transport,
+            action,
+            demand: None,
+            lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
+            system: None,
+        };
+        route.ensure_current()?;
+        Ok(route)
+    }
+
+    /// One OS resolver upstream. UDP and its TCP fallback are separate routes.
     pub(crate) fn system(
         snapshot: ExecutionSnapshot,
         system: crate::SystemResolverSnapshot,
         index: usize,
         transport: DnsTransport,
-        demand: RequestId,
+        demand: Option<RequestId>,
         deadline: Instant,
     ) -> Result<Self, RouteError> {
-        use meshway_configuration::execution::{
-            BusinessProtocol, BusinessTarget, DemandDecision, DnsEgress,
-        };
         system.ensure_current().map_err(|_| RouteError::Expired)?;
         let endpoint = *system.upstreams.get(index).ok_or(RouteError::Binding)?;
-        let cfg = snapshot.configuration().map_err(|_| RouteError::Expired)?;
-        let permit = cfg.local_egress.get(&demand).ok_or(RouteError::Binding)?;
-        if !matches!(cfg.dns.egress, DnsEgress::NoExit)
-            || !cfg.enabled
-            || permit.source != cfg.node_id
-            || permit.demand_id != demand
-            || !matches!(permit.target, BusinessTarget::Ip { address } if address.0 == endpoint.ip())
-            || permit.port.map(|p| p.get()) != Some(endpoint.port())
-            || permit.protocol
-                != match transport {
-                    DnsTransport::Udp => BusinessProtocol::Udp,
-                    DnsTransport::Tcp => BusinessProtocol::Tcp,
-                }
-            || (system.primary == DnsTransport::Tcp && transport != DnsTransport::Tcp)
-            || permit.profile != cfg.dns.profile
-            || !matches!(
-                (permit.action, cfg.decisions.get(&demand)),
-                (LocalEgressAction::Direct, Some(DemandDecision::Direct))
-                    | (
-                        LocalEgressAction::Unmanaged,
-                        Some(DemandDecision::Unmanaged)
-                    )
-            )
-        {
+        if system.primary == DnsTransport::Tcp && transport != DnsTransport::Tcp {
             return Err(RouteError::Binding);
         }
+        let (action, expires_at_ms, demand) = if snapshot.is_netmap() {
+            use meshway_configuration::netmap::DnsPlan;
+            let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
+            let netmap = &reading.netmap.netmap;
+            // The resolver Node serves sources from its own OS resolvers too.
+            if !netmap.self_.enabled
+                || !matches!(
+                    netmap.dns.egress,
+                    DnsPlan::NoExit | DnsPlan::ServeExitResolver { .. }
+                )
+            {
+                return Err(RouteError::Binding);
+            }
+            (
+                netmap_local_action(netmap, endpoint)?,
+                reading.expires_at_ms,
+                None,
+            )
+        } else {
+            let demand = demand.ok_or(RouteError::Binding)?;
+            let (action, expires_at_ms) = legacy_system(&snapshot, endpoint, transport, demand)?;
+            (action, expires_at_ms, Some(demand))
+        };
         let route = Self {
             endpoint,
             transport,
-            action: permit.action,
+            action,
             demand,
-            expires_at_ms: permit.expires_at_ms.min(snapshot.expires_at_ms()),
-            deadline: deadline.min(snapshot.expires_at()),
-            snapshot,
-            cancelled: tokio_util::sync::CancellationToken::new(),
+            lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
             system: Some(system),
         };
         route.ensure_current()?;
@@ -131,49 +264,40 @@ impl LocalResolverRoute {
     pub fn action(&self) -> LocalEgressAction {
         self.action
     }
-    pub fn demand_id(&self) -> RequestId {
+    /// The legacy demand permit; `None` under a netmap.
+    pub fn demand_id(&self) -> Option<RequestId> {
         self.demand
     }
     pub fn snapshot(&self) -> &ExecutionSnapshot {
-        &self.snapshot
+        self.lifetime.snapshot()
     }
     pub fn expires_at_ms(&self) -> u64 {
-        self.expires_at_ms
+        self.lifetime.expires_at_ms()
     }
     pub fn deadline(&self) -> Instant {
-        self.deadline
+        self.lifetime.deadline()
     }
 
-    pub(crate) fn bind_cancellation(&mut self, cancelled: tokio_util::sync::CancellationToken) {
-        self.cancelled = cancelled;
+    pub(crate) fn bind_cancellation(&mut self, cancelled: CancellationToken) {
+        self.lifetime.bind_cancellation(cancelled);
     }
 
-    /// A single exchange can only shorten this route. Its child token lets the
-    /// dispatcher stop an accepted adapter worker without cancelling the query
-    /// ticket needed by later, independently authorized upstreams.
     pub(crate) fn exchange_scope(&self, deadline: Instant) -> Self {
-        let mut route = self.clone();
-        route.deadline = route.deadline.min(deadline);
-        route.cancelled = self.cancelled.child_token();
-        route
+        Self {
+            lifetime: self.lifetime.exchange(deadline),
+            ..self.clone()
+        }
     }
 
     pub(crate) fn cancel_exchange(&self) {
-        self.cancelled.cancel();
+        self.lifetime.cancel();
     }
 
     pub fn ensure_current(&self) -> Result<(), RouteError> {
         if let Some(system) = &self.system {
             system.ensure_current().map_err(|_| RouteError::Expired)?;
         }
-        let now = self.snapshot.now_ms().map_err(|_| RouteError::Expired)?;
-        if now >= self.expires_at_ms
-            || Instant::now() >= self.deadline
-            || self.cancelled.is_cancelled()
-        {
-            return Err(RouteError::Expired);
-        }
-        Ok(())
+        self.lifetime.ensure_current()
     }
 
     pub async fn invalidated(&self) {
@@ -181,10 +305,45 @@ impl LocalResolverRoute {
             return;
         }
         tokio::select! { biased;
-            _ = self.snapshot.invalidated_at(self.expires_at_ms) => {},
-            _ = tokio::time::sleep_until(self.deadline.into()) => {},
-            _ = self.cancelled.cancelled() => {},
+            _ = self.lifetime.invalidated() => {},
             _ = async { match &self.system { Some(system) => system.invalidated().await, None => std::future::pending().await } } => {},
         }
     }
+}
+
+fn legacy_system(
+    snapshot: &ExecutionSnapshot,
+    endpoint: SocketAddr,
+    transport: DnsTransport,
+    demand: RequestId,
+) -> Result<(LocalEgressAction, u64), RouteError> {
+    use meshway_configuration::execution::{
+        BusinessProtocol, BusinessTarget, DemandDecision, DnsEgress,
+    };
+    let cfg = snapshot.configuration().map_err(|_| RouteError::Expired)?;
+    let permit = cfg.local_egress.get(&demand).ok_or(RouteError::Binding)?;
+    if !matches!(cfg.dns.egress, DnsEgress::NoExit)
+        || !cfg.enabled
+        || permit.source != cfg.node_id
+        || permit.demand_id != demand
+        || !matches!(permit.target, BusinessTarget::Ip { address } if address.0 == endpoint.ip())
+        || permit.port.map(|p| p.get()) != Some(endpoint.port())
+        || permit.protocol
+            != match transport {
+                DnsTransport::Udp => BusinessProtocol::Udp,
+                DnsTransport::Tcp => BusinessProtocol::Tcp,
+            }
+        || permit.profile != cfg.dns.profile
+        || !matches!(
+            (permit.action, cfg.decisions.get(&demand)),
+            (LocalEgressAction::Direct, Some(DemandDecision::Direct))
+                | (
+                    LocalEgressAction::Unmanaged,
+                    Some(DemandDecision::Unmanaged)
+                )
+        )
+    {
+        return Err(RouteError::Binding);
+    }
+    Ok((permit.action, permit.expires_at_ms))
 }

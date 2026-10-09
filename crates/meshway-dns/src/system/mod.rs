@@ -285,6 +285,10 @@ impl SystemResolverSnapshot {
     pub fn id(&self) -> &str {
         &self.id
     }
+    /// The same observation, not merely equal endpoints.
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        self.id == other.id && Arc::ptr_eq(&self.upstreams, &other.upstreams)
+    }
     pub fn demands(&self, profile: &str) -> Vec<ResolverDemand> {
         let mut demands: Vec<_> = self
             .upstreams

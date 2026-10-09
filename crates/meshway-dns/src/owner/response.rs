@@ -6,7 +6,7 @@ impl Answer {
         self.ready.query == *query
     }
     pub(crate) fn with_scope_fence(mut self, fence: crate::dispatcher::ScopeFence) -> Self {
-        self.scope_fence = Some(fence);
+        self.scope_fence = Some(Box::new(fence));
         self
     }
     pub fn ensure_current(&self) -> Result<(), OwnerError> {
