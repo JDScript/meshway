@@ -8,6 +8,8 @@ use crate::{
     secrets::Sealer,
     store::{Handle, execution as store},
 };
+pub use connectivity::netmap_udp_coordination;
+pub use diagnostics::{NetmapDiagnostic, NetmapDiagnostics, netmap_diagnostic};
 use meshway_model::*;
 use meshway_protocol::{execution::*, node::*};
 use rusqlite::TransactionBehavior;

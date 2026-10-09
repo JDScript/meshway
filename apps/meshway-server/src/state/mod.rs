@@ -2,6 +2,7 @@
 //! with commits on the SQLite owner; no HTTP future owns committed effects.
 pub(crate) mod connectivity;
 pub(crate) mod exit;
+pub mod facts;
 pub(crate) mod local_endpoints;
 pub mod service;
 pub mod stream;

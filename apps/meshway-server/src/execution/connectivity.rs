@@ -2,8 +2,9 @@
 use super::{Execution, NodePrincipal};
 use crate::{error::Error, state::ReportAdmission, store::execution as store};
 use chrono::{DateTime, Utc};
-use meshway_configuration::execution::{
-    Carrier, CircuitAuthorization, CompiledNode, NodeConfiguration,
+use meshway_configuration::{
+    execution::{Carrier, CircuitAuthorization, CompiledNode, NodeConfiguration},
+    netmap::NodeNetmap,
 };
 use meshway_model::{ConfigurationRef, NetworkId, NodeId, state::ResourceRef};
 use meshway_policy::admission::{admit_circuit_carrier, admit_circuit_handshake};
@@ -476,6 +477,66 @@ pub(crate) fn common_witness(
         }
     }
     Ok(None)
+}
+
+/// Netmap chain: UDP coordination authority between the carrier's two ends.
+/// Both current netmaps must list each other with the same keys, and both must
+/// allow this Native UDP carrier: the dialer holds it as a dial candidate and
+/// the listener's own projection admits the dialer on that listener. Business
+/// demands and complete-path witnesses play no part; the candidate CAS, the
+/// two-sided acceptance and short attempt deadlines still apply to the attempt.
+pub fn netmap_udp_coordination(
+    a: &NodeNetmap,
+    b: &NodeNetmap,
+    carrier: &Carrier,
+) -> std::result::Result<bool, Error> {
+    if a.network_id != b.network_id
+        || a.node_id == b.node_id
+        || carrier.protocol != TransportProtocol::NativeUdp
+        || !a.self_.enabled
+        || !b.self_.enabled
+    {
+        return Ok(false);
+    }
+    let (dialer, listener) = match (carrier.dialer, carrier.listener) {
+        (d, l) if d == a.node_id && l == b.node_id => (a, b),
+        (d, l) if d == b.node_id && l == a.node_id => (b, a),
+        _ => return Ok(false),
+    };
+    let bound = |viewer: &NodeNetmap, peer: &NodeNetmap| {
+        viewer
+            .projection
+            .configuration
+            .nodes
+            .contains_key(&peer.node_id)
+            && viewer
+                .projection
+                .inventory
+                .get(&peer.node_id)
+                .is_some_and(|keys| {
+                    keys.control_key == peer.self_.self_keys.control_key
+                        && keys.dataplane_key == peer.self_.self_keys.dataplane_key
+                })
+    };
+    if !bound(a, b) || !bound(b, a) {
+        return Ok(false);
+    }
+    let dialable = dialer.dialers.values().any(|dial| {
+        dial.peer == listener.node_id
+            && dial.listener_key == carrier.listener_key
+            && dial.parameters.transport() == TransportProtocol::NativeUdp
+    });
+    let listening = matches!(
+        listener.self_.listeners.get(&carrier.listener_key).map(|l| l.declaration()),
+        Some(Listener::NativeUdp(declaration)) if declaration.enabled
+    );
+    if !dialable || !listening {
+        return Ok(false);
+    }
+    let admitted = meshway_policy::compile::netmap::LocalCompiler::new(listener)
+        .carriers(dialer.node_id, listener.node_id)
+        .map_err(|_| Error::Internal("netmap carrier evaluation"))?;
+    Ok(admitted.contains(&carrier.listener_key))
 }
 
 pub(crate) fn carrier_resources(

@@ -288,6 +288,8 @@ mod identity;
 
 mod membership;
 
+mod netmap;
+
 mod progress;
 
 mod signatures;

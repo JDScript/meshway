@@ -335,6 +335,29 @@ impl App {
             cache: Arc::clone(&self.committer.cache),
         })
     }
+    /// Peer facts for Node `sync`, scoped by each Node's netmap.
+    pub fn peer_facts(&self) -> crate::state::facts::StateFacts {
+        crate::state::facts::StateFacts::new(Arc::clone(&self.state_runtime))
+    }
+    /// The netmap store owner installs its reader once; until then no Node has
+    /// a netmap, so no fact is recorded or disclosed.
+    pub fn install_netmaps(&self, netmaps: Arc<dyn crate::state::facts::NetmapReader>) {
+        self.state_runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .install_netmaps(netmaps);
+    }
+    /// Netmap-chain observation authority: reads the source's netmap only.
+    pub fn netmap_diagnostics(&self) -> crate::execution::NetmapDiagnostics {
+        let netmaps = Arc::clone(
+            &self
+                .state_runtime
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .netmaps,
+        );
+        crate::execution::NetmapDiagnostics::new(self.execution(), netmaps)
+    }
     /// Shared core handles are available before constructing any HTTP provider.
     pub fn state_reader(&self) -> crate::state::service::StateReader {
         crate::state::service::StateReader::new(Arc::clone(&self.state_runtime))

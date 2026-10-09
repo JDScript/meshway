@@ -145,6 +145,12 @@ pub(crate) struct Runtime {
     pub geoip: GeoIp,
     pub observations: Observations,
     pub traversal: crate::connectivity::Attempts,
+    /// Peer facts disclosed through Node `sync`; never a compilation input.
+    pub(crate) facts: super::facts::FactLedger,
+    /// Netmap store owner's reader; scopes fact recording and disclosure.
+    pub(crate) netmaps: Arc<dyn super::facts::NetmapReader>,
+    /// A netmap store is installed: dynamic facts no longer republish.
+    netmap_chain: bool,
 }
 /// The executor applies committed effects here, on its own thread, after COMMIT.
 impl crate::effect::EffectSink for Mutex<Runtime> {
@@ -172,7 +178,32 @@ impl crate::effect::EffectSink for Mutex<Runtime> {
                 runtime.observations.revoke_session(session_id);
                 runtime.hub.wakeups.bump(None);
             }
-            journaled => runtime.hub.publish_committed(journaled),
+            Effect::PeerFacts {
+                network_id,
+                node_id,
+                facts,
+            } => {
+                let recorded = match facts {
+                    Some(facts) => runtime.facts.record(network_id, *facts, Utc::now()),
+                    None => runtime.facts.remove(network_id, node_id),
+                };
+                if recorded.is_err() {
+                    tracing::error!("Peer facts could not be recorded");
+                    runtime.close();
+                }
+            }
+            journaled => {
+                if let Effect::NodeRetired {
+                    network_id,
+                    node_id,
+                } = &journaled
+                    && runtime.facts.remove(*network_id, *node_id).is_err()
+                {
+                    tracing::error!("Retired Node facts could not be withdrawn");
+                    runtime.close();
+                }
+                runtime.hub.publish_committed(journaled)
+            }
         }
     }
 }
@@ -184,16 +215,26 @@ impl Runtime {
         self.closed = true;
         self.observations = Observations::default();
         self.traversal = crate::connectivity::Attempts::default();
+        self.facts = super::facts::FactLedger::new(self.hub.epoch);
         self.hub.wakeups.bump(None);
     }
     pub(crate) fn new() -> Result<Self, Error> {
+        let hub = StateHub::new()?;
         Ok(Self {
             closed: false,
-            hub: StateHub::new()?,
+            facts: super::facts::FactLedger::new(hub.epoch),
+            hub,
             geoip: GeoIp::default(),
             observations: Observations::default(),
             traversal: crate::connectivity::Attempts::default(),
+            netmaps: Arc::new(super::facts::NoNetmaps),
+            netmap_chain: false,
         })
+    }
+    /// Install the netmap store owner's reader; until then nothing is visible.
+    pub(crate) fn install_netmaps(&mut self, netmaps: Arc<dyn super::facts::NetmapReader>) {
+        self.netmaps = netmaps;
+        self.netmap_chain = true;
     }
 }
 pub struct StateService<P: StateProvider> {
@@ -328,13 +369,29 @@ impl<P: StateProvider> StateService<P> {
                 let admission = provider.report(tx, &authorization, now)?;
                 let runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let accepted = runtime.hub.check_report(&admission, &report, now)?;
-                let changed = if accepted.duplicate {
-                    false
+                let netmaps = Arc::clone(&runtime.netmaps);
+                let netmap_chain = runtime.netmap_chain;
+                drop(runtime);
+                let mut previous_chain_changed = false;
+                let facts = if accepted.duplicate {
+                    None
                 } else {
                     let endpoints =
                         super::local_endpoints::replace(tx, &sealer, &admission, &report, now)?;
                     let exit = super::exit::replace(tx, &sealer, &admission, &report, now)?;
-                    endpoints || exit
+                    previous_chain_changed = endpoints || exit;
+                    let reporter = netmaps.current(tx, admission.network_id, admission.node_id)?;
+                    Some(Effect::PeerFacts {
+                        network_id: admission.network_id,
+                        node_id: admission.node_id,
+                        facts: super::facts::peer_facts(
+                            &admission,
+                            &report,
+                            reporter.as_deref().map(|compiled| &compiled.netmap),
+                            now,
+                        )
+                        .map(Box::new),
+                    })
                 };
                 let network_id = admission.network_id;
                 let mut effects = vec![Effect::AcceptedState {
@@ -342,7 +399,12 @@ impl<P: StateProvider> StateService<P> {
                     report: Box::new(report),
                     observed_at: now,
                 }];
-                if changed {
+                effects.extend(facts);
+                // Only the previous chain, whose current Nodes learn endpoints
+                // and exit readiness from publications, still republishes.
+                // Once a netmap store is installed, facts never compile; the
+                // branch is removed with the previous chain.
+                if previous_chain_changed && !netmap_chain {
                     crate::store::execution::publish(
                         tx,
                         &sealer,
