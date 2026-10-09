@@ -1,8 +1,97 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T21:40:23.445196+00:00",
+  "updatedAt": "2026-10-09T22:17:24.439368+00:00",
   "runs": [
+    {
+      "id": 37998031613,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "a840048d16d9876f671bfc1d03b9dadee5fb44d5",
+      "message": "docs: per-run remote worktrees, shared validation target and CPU//2 matrix concurrency",
+      "createdAt": "2026-10-09T22:13:33Z",
+      "updatedAt": "2026-10-09T22:15:03Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37998031613",
+      "jobs": [
+        {
+          "id": 114048946122,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T22:13:36Z",
+          "completedAt": "2026-10-09T22:13:48Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37998031613/job/114048946122"
+        },
+        {
+          "id": 114049023332,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T22:13:51Z",
+          "completedAt": "2026-10-09T22:15:02Z",
+          "seconds": 71.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37998031613/job/114049023332"
+        },
+        {
+          "id": 114049024928,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-09T22:13:49Z",
+          "completedAt": "2026-10-09T22:13:49Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37998031613/job/114049024928"
+        },
+        {
+          "id": 114049025086,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-09T22:13:49Z",
+          "completedAt": "2026-10-09T22:13:49Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37998031613/job/114049025086"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37998031540,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "a840048d16d9876f671bfc1d03b9dadee5fb44d5",
+      "message": "docs: per-run remote worktrees, shared validation target and CPU//2 matrix concurrency",
+      "createdAt": "2026-10-09T22:13:33Z",
+      "updatedAt": "2026-10-09T22:13:35Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37998031540",
+      "jobs": [
+        {
+          "id": 114048945221,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-09T22:13:35Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37998031540/job/114048945221"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37993679388,
       "attempt": 1,
