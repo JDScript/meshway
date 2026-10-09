@@ -1,92 +1,125 @@
-//! Node API netmap distribution and dynamic peer facts.
+//! Node↔Server synchronization: one long-poll `POST /agent-api/v1/sync`.
 //!
-//! The query response is the only carrier of netmap content and leases; the
-//! `netmap.changed` notice only wakes the Node. Peer facts never authorize
-//! anything: they select among candidates the installed netmap already allows.
-use crate::object::wire_object;
+//! The request names what the Node holds; the Server holds the request until
+//! the netmap or visible peer facts change, or until its hold timeout, and
+//! answers with a lease for the current netmap. Peer facts never authorize
+//! anything: they select among candidates the installed netmap allows.
+use crate::object::{wire_object, wire_tagged};
 use chrono::{DateTime, Utc};
 use meshway_configuration::netmap::{CompiledNetmap, NetmapDelta};
 use meshway_model::{
-    Digest, NetmapLease, NetmapRef, NetworkId, NodeId, StateEpoch, Version,
+    Digest, NetmapLease, NetmapRef, NodeId, Sequence, StateEpoch, Version,
     exit::{ExitFamily, ExitStatus},
     state::{EndpointCandidate, ListenerPhase, LocalEndpoint, SocketNetwork},
 };
 use std::collections::BTreeMap;
 
 wire_object! {
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// `POST /agent-api/v1/netmap/query`: fetch the current netmap and a fresh lease.
-pub struct NetmapQueryRequest {
-    /// Exact netmap the Node holds, verified locally; null or omission requests a full netmap.
-    pub base: Option<NetmapRef>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Position in the Server's peer-fact stream; only meaningful within one epoch.
+pub struct StateCursor {
+    /// State continuity domain; a different epoch requires full facts.
+    pub epoch: StateEpoch,
+    /// Last applied fact sequence within the epoch.
+    pub sequence: Sequence,
 } }
 
 wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// Current netmap of the authenticated Node with a lease for exactly that content.
-/// Both `full` and `delta` null means the base is current and only the lease is renewed.
-pub struct NetmapQueryResponse {
+/// `POST /agent-api/v1/sync`: what the Node currently holds.
+pub struct SyncRequest {
+    /// Exact verified netmap held; null or omission requests full content.
+    pub netmap: Option<NetmapRef>,
+    /// Last applied peer-fact cursor; null or omission requests full facts.
+    pub state: Option<StateCursor>,
+} }
+
+wire_tagged! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Netmap part of a sync response.
+pub enum SyncNetmap {
+    /// Complete netmap; the request held no usable base.
+    Full {
+        /// Complete content with its digest.
+        netmap: Box<CompiledNetmap>
+    },
+    /// Changes from the netmap named in the request.
+    Delta {
+        /// Keyed changes, verified by reconstructing the target digest.
+        delta: Box<NetmapDelta>
+    },
+    /// The requested netmap is current; only the lease is renewed.
+    Unchanged,
+} }
+
+wire_object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Peer facts after the request's cursor, scoped by the current netmap.
+pub struct PeerFactsDelta {
+    /// Cursor the delta applies to; null means `updated` replaces all facts.
+    pub base: Option<StateCursor> [required = true],
+    /// Cursor to send in the next request after applying this delta.
+    pub cursor: StateCursor,
+    /// Netmap serial whose visible Nodes scoped this projection.
+    pub netmap_serial: Version,
+    /// Complete replacement facts of each updated peer.
+    #[serde(deserialize_with = "meshway_serde::unique_map")]
+    pub updated: BTreeMap<NodeId, PeerFacts>,
+    /// Peers whose facts are no longer visible or current.
+    pub removed: Vec<NodeId>,
+} }
+
+wire_object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Current netmap lease, netmap changes and peer-fact changes for the Node.
+pub struct SyncResponse {
     /// Lease bound to the current netmap.
     pub lease: NetmapLease,
-    /// Complete netmap when no usable base was supplied; null otherwise.
-    pub full: Option<CompiledNetmap> [required = true],
-    /// Changes from the supplied base; null when returning full content or renewing only.
-    pub delta: Option<NetmapDelta> [required = true],
+    /// Full, delta or unchanged netmap.
+    pub netmap: SyncNetmap,
+    /// Peer-fact changes; null when none occurred during the hold.
+    pub peer_facts: Option<PeerFactsDelta> [required = true],
 } }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InconsistentNetmapResponse;
+pub struct InconsistentSyncResponse;
 
-impl std::fmt::Display for InconsistentNetmapResponse {
+impl std::fmt::Display for InconsistentSyncResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("netmap query response is inconsistent with its lease or base")
+        f.write_str("sync response is inconsistent with its lease or request")
     }
 }
 
-impl std::error::Error for InconsistentNetmapResponse {}
+impl std::error::Error for InconsistentSyncResponse {}
 
-impl NetmapQueryResponse {
-    /// Structural consistency only; the receiver still verifies content
-    /// digests and its own network/Node binding before saving.
-    pub fn check(&self, base: Option<&NetmapRef>) -> Result<(), InconsistentNetmapResponse> {
+impl SyncResponse {
+    /// Structural consistency with the request only; the receiver still
+    /// verifies digests and its own network/Node binding before saving.
+    pub fn check(&self, request: &SyncRequest) -> Result<(), InconsistentSyncResponse> {
         self.lease
             .validate()
-            .map_err(|_| InconsistentNetmapResponse)?;
-        let target = match (&self.full, &self.delta) {
-            (Some(full), None) => full.reference(),
-            (None, Some(delta)) if Some(&delta.base) == base => delta.target,
-            (None, None) => *base.ok_or(InconsistentNetmapResponse)?,
-            _ => return Err(InconsistentNetmapResponse),
+            .map_err(|_| InconsistentSyncResponse)?;
+        let target = match &self.netmap {
+            SyncNetmap::Full { netmap } => netmap.reference(),
+            SyncNetmap::Delta { delta } if Some(delta.base) == request.netmap => delta.target,
+            SyncNetmap::Unchanged => request.netmap.ok_or(InconsistentSyncResponse)?,
+            SyncNetmap::Delta { .. } => return Err(InconsistentSyncResponse),
         };
         if target != self.lease.netmap {
-            return Err(InconsistentNetmapResponse);
+            return Err(InconsistentSyncResponse);
+        }
+        if let Some(facts) = &self.peer_facts
+            && (facts.netmap_serial != target.serial
+                || facts.base.is_some_and(|base| Some(base) != request.state)
+                || facts
+                    .base
+                    .is_some_and(|base| base.epoch != facts.cursor.epoch))
+        {
+            return Err(InconsistentSyncResponse);
         }
         Ok(())
     }
 }
-
-wire_object! {
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// `netmap.changed` SSE payload: a newer netmap exists; query to obtain it.
-pub struct NetmapChanged {
-    /// Network of the changed netmap.
-    pub network_id: NetworkId,
-    /// Node whose netmap changed.
-    pub node_id: NodeId,
-    /// New current serial.
-    pub serial: Version,
-} }
-
-wire_object! {
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// `netmap.delta` SSE payload: changes from the Node's last acknowledged netmap.
-/// A Node holding a different base ignores it and queries instead.
-pub struct NetmapDeltaNotice {
-    /// Lease bound to the delta target.
-    pub lease: NetmapLease,
-    /// Changes from an exact base.
-    pub delta: NetmapDelta,
-} }
 
 wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,25 +163,6 @@ pub struct PeerFacts {
     pub expires_at: DateTime<Utc>,
 } }
 
-wire_object! {
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// `state.delta` SSE payload for a Node: replacement facts of visible peers.
-pub struct NodeStateDelta {
-    /// State continuity domain of this update.
-    pub state_epoch: StateEpoch,
-    /// Netmap serial whose peers and edges scoped this projection.
-    pub netmap_serial: Version,
-    /// Cursor of the preceding applied event.
-    pub base_cursor: String,
-    /// Resume cursor after applying this delta.
-    pub cursor: String,
-    /// Complete replacement facts of each updated peer.
-    #[serde(deserialize_with = "meshway_serde::unique_map")]
-    pub updated: BTreeMap<NodeId, PeerFacts>,
-    /// Peers whose facts are no longer visible or current.
-    pub removed: Vec<NodeId>,
-} }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,36 +177,83 @@ mod tests {
     }
 
     #[test]
-    fn renewal_only_response_must_match_the_base() {
+    fn unchanged_response_must_match_the_request() {
         let base = reference(3);
-        let response = NetmapQueryResponse {
-            lease: NetmapLease::new(base, 0, 60_000).unwrap(),
-            full: None,
-            delta: None,
+        let request = SyncRequest {
+            netmap: Some(base),
+            state: None,
         };
-        assert_eq!(response.check(Some(&base)), Ok(()));
-        assert!(response.check(Some(&reference(2))).is_err());
-        assert!(response.check(None).is_err());
+        let response = SyncResponse {
+            lease: NetmapLease::new(base, 0, 60_000).unwrap(),
+            netmap: SyncNetmap::Unchanged,
+            peer_facts: None,
+        };
+        assert_eq!(response.check(&request), Ok(()));
+        let stale = SyncRequest {
+            netmap: Some(reference(2)),
+            state: None,
+        };
+        assert!(response.check(&stale).is_err());
         let text = serde_json::to_string(&response).unwrap();
-        assert!(text.contains("\"full\":null") && text.contains("\"delta\":null"));
+        assert!(
+            text.contains(r#""netmap":{"type":"unchanged"}"#)
+                && text.contains(r#""peerFacts":null"#)
+        );
         assert_eq!(
-            serde_json::from_str::<NetmapQueryResponse>(&text).unwrap(),
+            serde_json::from_str::<SyncResponse>(&text).unwrap(),
             response
         );
-        assert!(serde_json::from_str::<NetmapQueryRequest>(r#"{"base":null,"x":1}"#).is_err());
+        assert!(serde_json::from_str::<SyncRequest>(r#"{"netmap":null,"x":1}"#).is_err());
         assert_eq!(
-            serde_json::from_str::<NetmapQueryRequest>("{}").unwrap(),
-            NetmapQueryRequest { base: None }
+            serde_json::from_str::<SyncRequest>("{}").unwrap(),
+            SyncRequest {
+                netmap: None,
+                state: None
+            }
         );
+    }
+
+    #[test]
+    fn peer_facts_must_continue_the_request_cursor() {
+        let base = reference(3);
+        let epoch: StateEpoch = "00000000-0000-4000-8000-000000000009".parse().unwrap();
+        let cursor = |n| StateCursor {
+            epoch,
+            sequence: Sequence::new(n).unwrap(),
+        };
+        let facts = |base| PeerFactsDelta {
+            base,
+            cursor: cursor(5),
+            netmap_serial: base_serial(),
+            updated: BTreeMap::new(),
+            removed: vec![],
+        };
+        fn base_serial() -> Version {
+            Version::new(3).unwrap()
+        }
+        let request = SyncRequest {
+            netmap: Some(base),
+            state: Some(cursor(4)),
+        };
+        let mut response = SyncResponse {
+            lease: NetmapLease::new(base, 0, 60_000).unwrap(),
+            netmap: SyncNetmap::Unchanged,
+            peer_facts: Some(facts(Some(cursor(4)))),
+        };
+        assert_eq!(response.check(&request), Ok(()));
+        response.peer_facts = Some(facts(Some(cursor(2))));
+        assert!(response.check(&request).is_err());
+        response.peer_facts = Some(facts(None));
+        assert_eq!(response.check(&request), Ok(()));
     }
 
     #[test]
     fn schemas_are_closed_objects() {
         use utoipa::PartialSchema;
         for schema in [
-            NetmapQueryResponse::schema(),
-            NodeStateDelta::schema(),
-            NetmapDeltaNotice::schema(),
+            SyncRequest::schema(),
+            SyncResponse::schema(),
+            PeerFactsDelta::schema(),
         ] {
             let text = serde_json::to_string(&schema).unwrap();
             assert!(text.contains("\"additionalProperties\":false"), "{text}");
