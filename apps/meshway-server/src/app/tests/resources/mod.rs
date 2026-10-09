@@ -27,6 +27,7 @@ fn rid() -> RequestId {
 
 struct HttpsSource {
     requests: Arc<AtomicUsize>,
+    request_times: Arc<Mutex<Vec<chrono::DateTime<chrono::Utc>>>>,
     hold_body: Arc<AtomicBool>,
     body_entered: Arc<tokio::sync::Notify>,
     peer_closed: Arc<AtomicBool>,
@@ -71,6 +72,8 @@ impl HttpsSource {
         let server_body = body.clone();
         let requests = Arc::new(AtomicUsize::new(0));
         let server_requests = requests.clone();
+        let request_times = Arc::new(Mutex::new(Vec::new()));
+        let server_request_times = request_times.clone();
         let hold_body = Arc::new(AtomicBool::new(false));
         let held = hold_body.clone();
         let body_entered = Arc::new(tokio::sync::Notify::new());
@@ -108,6 +111,10 @@ impl HttpsSource {
                     continue;
                 }
                 server_requests.fetch_add(1, Ordering::SeqCst);
+                server_request_times
+                    .lock()
+                    .unwrap()
+                    .push(chrono::Utc::now());
                 if held.load(Ordering::SeqCst) {
                     entered.notify_one();
                     tls.sock
@@ -148,6 +155,7 @@ impl HttpsSource {
         });
         Arc::new(Self {
             requests,
+            request_times,
             hold_body,
             body_entered,
             peer_closed,

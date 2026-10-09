@@ -410,6 +410,35 @@ pub async fn status(request: reqwest::RequestBuilder, status: u16) {
     assert_eq!(actual.as_u16(), status, "{body}");
 }
 
+pub async fn wait_until(deadline: chrono::DateTime<chrono::Utc>) {
+    if let Ok(remaining) = (deadline - chrono::Utc::now()).to_std() {
+        tokio::time::sleep(remaining).await;
+    }
+}
+
+/// Revocation is asynchronous. Bound convergence by the subscription lease,
+/// and inspect the actual projection instead of guessing a scheduler delay.
+pub async fn wait_no_diagnostics(server: &Server, node: &Node) {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(
+            meshway_server::observations::OBSERVATION_LEASE_SECONDS as u64,
+        ),
+        async {
+            loop {
+                if super::slice(server.target(node).await)
+                    .diagnostics
+                    .is_empty()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        },
+    )
+    .await
+    .expect("revocation projection before the original subscription lease");
+}
+
 pub struct Events {
     response: reqwest::Response,
     pending: Vec<u8>,

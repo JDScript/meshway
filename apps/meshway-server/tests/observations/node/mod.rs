@@ -27,6 +27,32 @@ fn query(a: &Node) -> NodeObservationQuery {
     }
 }
 
+async fn keep_node_alive(server: &Server, a: &Node, task: &mut ObservationTask) {
+    if chrono::Utc::now() < task.renew_after {
+        return;
+    }
+    let renewed: NodeObservationResponse = json(
+        server.post(
+            &format!(
+                "/agent-api/v1/observations/{}/renew",
+                task.subscription_id.unwrap()
+            ),
+            a.token.expose(),
+            &RenewNodeObservation {
+                instance: a.instance.clone(),
+                expires_at_ms: (chrono::Utc::now()
+                    + chrono::Duration::seconds(
+                        meshway_server::observations::OBSERVATION_LEASE_SECONDS,
+                    ))
+                .timestamp_millis() as u64,
+            },
+        ),
+        200,
+    )
+    .await;
+    *task = renewed.task;
+}
+
 mod capabilities;
 
 mod selectors;

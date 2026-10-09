@@ -3,6 +3,8 @@ use super::*;
 #[tokio::test]
 async fn node_absolute_renewal_does_not_slide_on_retry_and_restart_or_revocation_does_not_restore_it()
  {
+    // C: the Node subscription's renew_after (10 s) must pass in real time;
+    // replaying an absolute renewal must not slide the confirmed deadline.
     let server = Server::new().await;
     let user = server.user("node-lease@example.com").await;
     let network = server.network(&user).await;
@@ -44,7 +46,9 @@ async fn node_absolute_renewal_does_not_slide_on_retry_and_restart_or_revocation
     .await;
     let invalid = RenewNodeObservation {
         instance: a.instance.clone(),
-        expires_at_ms: chrono::Utc::now().timestamp_millis() as u64 + 31_000,
+        // A 31 s client deadline becomes legal after 1 s of HTTP scheduling.
+        // Exercise the invalid upper bound without racing that transport delay.
+        expires_at_ms: (chrono::Utc::now() + chrono::Duration::days(1)).timestamp_millis() as u64,
     };
     status(
         server.post(
@@ -55,7 +59,7 @@ async fn node_absolute_renewal_does_not_slide_on_retry_and_restart_or_revocation
         400,
     )
     .await;
-    tokio::time::sleep(std::time::Duration::from_secs(11)).await;
+    wait_until(created.task.renew_after).await;
     server.target(&a).await;
     let read: NodeObservationResponse = json(
         server

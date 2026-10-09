@@ -116,6 +116,8 @@ async fn node_get_decodes_required_uri_scalars_without_relaxing_json_or_instance
 
 #[tokio::test]
 async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_cancel_independently() {
+    // A: authorization probes are not a 30 s subscription-expiry test. Renew
+    // at the advertised window before obtaining the final report configuration.
     let server = Server::new().await;
     let user = server.user("node-observer@example.com").await;
     let network = server.network(&user).await;
@@ -148,7 +150,7 @@ async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_canc
         })
         .await;
     let first = demand(&a, "b.mesh.test");
-    let initial: NodeObservationResponse = json(
+    let mut initial: NodeObservationResponse = json(
         server.post("/agent-api/v1/observations", a.token.expose(), &first),
         201,
     )
@@ -185,6 +187,7 @@ async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_canc
             address: "8.8.8.8".into(),
         },
     ] {
+        keep_node_alive(&server, &a, &mut initial.task).await;
         status(
             server.post(
                 "/agent-api/v1/observations",
@@ -218,6 +221,7 @@ async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_canc
         401,
     )
     .await;
+    keep_node_alive(&server, &a, &mut initial.task).await;
     status(
         server
             .get(&selected(&first), b.token.expose())
@@ -260,6 +264,7 @@ async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_canc
         403,
     )
     .await;
+    keep_node_alive(&server, &a, &mut initial.task).await;
     let icmp = CreateNodeObservation {
         subscription_id: id(),
         service: ObservationServiceScope::IcmpEcho,
@@ -285,13 +290,14 @@ async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_canc
         403,
     )
     .await;
+    keep_node_alive(&server, &a, &mut initial.task).await;
     let ip = initial.target.addresses.ipv4.unwrap().to_string();
     let second = CreateNodeObservation {
         subscription_id: id(),
         target: NodeObservationTarget::MeshIp { address: ip },
         ..first.clone()
     };
-    let ip_view: NodeObservationResponse = json(
+    let mut ip_view: NodeObservationResponse = json(
         server.post("/agent-api/v1/observations", a.token.expose(), &second),
         201,
     )
@@ -299,7 +305,7 @@ async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_canc
     assert_eq!(ip_view.task.id, initial.task.id);
     let user_request = request(&a, &b);
     let user_endpoint = format!("/api/v1/networks/{}/observations", network.id);
-    let user_task: ObservationTask = json(
+    let mut user_task: ObservationTask = json(
         server.post(&user_endpoint, user.token.expose(), &user_request),
         201,
     )
@@ -333,6 +339,9 @@ async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_canc
     let user_list: ObservationList =
         json(server.get(&user_endpoint, user.token.expose()), 200).await;
     assert_eq!(user_list.items.len(), 1);
+    keep_node_alive(&server, &a, &mut initial.task).await;
+    keep_node_alive(&server, &a, &mut ip_view.task).await;
+    user_task = keep_alive(&server, &user, &user_endpoint, user_task).await;
     server.target(&a).await;
     let executor: ObservationList =
         json(server.get("/agent-api/v1/tasks", a.token.expose()), 200).await;
@@ -408,6 +417,7 @@ async fn node_selectors_are_current_network_scoped_and_shared_subscriptions_canc
         accepted.latest.unwrap().probe.unwrap().outcome,
         ProbeOutcome::Timeout
     );
+    keep_alive(&server, &user, &user_endpoint, user_task.clone()).await;
     for request in [&first, &second] {
         let cancelled: NodeObservationCancelled = json(
             server.post(

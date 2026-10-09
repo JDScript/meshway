@@ -54,6 +54,8 @@ async fn resource_scan_shutdown_releases_its_waiter_before_accepted_sql_drains()
 
 #[tokio::test]
 async fn startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket() {
+    // C: real scheduler MIN_INTERVAL_MS (1000) and persisted failure backoff
+    // must pass across restart; view predicates/Notify observe actual work.
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().canonicalize().unwrap().join("data");
@@ -94,13 +96,25 @@ async fn startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket
         v.problem == Some(ResourceProblem::DownloadFailed)
     })
     .await;
-    let requests = remote.requests.load(Ordering::SeqCst);
     s.close().await;
     let s = Server::open(&path, remote.clone()).await;
-    tokio::time::sleep(Duration::from_millis(1200)).await;
-    assert_eq!(s.view(token, network).await.checked_at, failed.checked_at);
-    assert_eq!(remote.requests.load(Ordering::SeqCst), requests);
     let retried = wait_view(&s, token, network, |v| v.checked_at > failed.checked_at).await;
+    // Inspect the actual retry's timestamp. Restart and inspection may finish
+    // after backoff on a busy host; neither operation is required to win it.
+    let failed_at = failed.checked_at.unwrap();
+    let first_retry = *remote
+        .request_times
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|at| at.timestamp_millis() > failed_at.timestamp_millis())
+        .expect("actual first HTTP retry, even if the view skipped a check");
+    assert!(crate::resources::scheduler::due(
+        first_retry.timestamp_millis() as u64,
+        Some(failed_at.timestamp_millis() as u64),
+        crate::resources::scheduler::MIN_INTERVAL_MS,
+        1,
+    ));
     assert_eq!(retried.artifact, failed.artifact);
     remote.set(200, "payload:\n - 8.8.8.0/24\n");
     s.refresh(token, network).await;

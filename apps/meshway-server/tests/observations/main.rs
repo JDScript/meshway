@@ -29,8 +29,8 @@ fn slice(target: NodeConfigurationResponse) -> NodeConfiguration {
 /// A real subscriber renews once `renew_after` has passed. The subscriber
 /// lease is 30 s and a loaded CI host can spend longer than that inside one
 /// flow; the flow asserts cancellation isolation, not lease expiry. Renewal
-/// republishes the diagnostic demand, so it is only done after the last
-/// node result has been reported against the earlier configuration.
+/// republishes the diagnostic demand: callers renew before fetching a report
+/// configuration, or after the last result using that configuration.
 async fn keep_alive(
     server: &Server,
     user: &meshway_protocol::SessionIssuedResponse,
@@ -54,7 +54,7 @@ async fn keep_alive(
         .items
         .into_iter()
         .find(|item| item.subscription_id == Some(subscription))
-        .unwrap_or(task)
+        .expect("renewed subscription must remain present")
 }
 
 #[tokio::test]
@@ -89,13 +89,32 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         })
         .await;
     let endpoint = format!("/api/v1/networks/{}/observations", network.id);
+    // Denied authorization setup does not need the shared subscriptions.
+    // Finish it before starting their OBSERVATION_LEASE_SECONDS clocks.
+    let mut forbidden = request(&a, &b);
+    forbidden.service = ObservationServiceScope::Tcp {
+        port: 80.try_into().unwrap(),
+    };
+    status(server.post(&endpoint, user.token.expose(), &forbidden), 403).await;
+    forbidden = request(&a, &b);
+    forbidden.selection = ObservationPath::Explicit {
+        path: vec![a.id, b.id],
+    };
+    status(server.post(&endpoint, user.token.expose(), &forbidden), 403).await;
     let first = request(&a, &b);
-    let task: ObservationTask =
+    let mut task: ObservationTask =
         json(server.post(&endpoint, user.token.expose(), &first), 201).await;
     assert_eq!(task.phase, ObservationPhase::Preparing);
     assert!(task.path.is_none());
     assert!(task.latest.is_none());
     assert_eq!(task.unsupported_metrics, vec![MetricKind::Traffic]);
+    // Idempotency is checked next to creation, before any legitimate renewal.
+    let retry: ObservationTask =
+        json(server.post(&endpoint, user.token.expose(), &first), 201).await;
+    assert_eq!(retry.id, task.id);
+    assert_eq!(retry.expires_at, task.expires_at);
+    assert_eq!(retry.configuration, task.configuration);
+    task = keep_alive(&server, &user, &endpoint, task).await;
     let source = slice(server.target(&a).await);
     assert!(source.permits.is_empty());
     assert!(source.decisions.is_empty());
@@ -107,29 +126,15 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         slice(server.target(&c).await).diagnostics[&task.id].paths[0].nodes,
         vec![a.id, c.id, b.id]
     );
-    let retry: ObservationTask =
-        json(server.post(&endpoint, user.token.expose(), &first), 201).await;
-    assert_eq!(retry.id, task.id);
-    assert_eq!(retry.expires_at, task.expires_at);
-    assert_eq!(retry.configuration, task.configuration);
+    task = keep_alive(&server, &user, &endpoint, task).await;
     let second = request(&a, &b);
-    let shared: ObservationTask =
+    let mut shared: ObservationTask =
         json(server.post(&endpoint, user.token.expose(), &second), 201).await;
     assert_eq!(shared.id, task.id);
     assert_ne!(shared.subscription_id, task.subscription_id);
     let listing: ObservationList = json(server.get(&endpoint, user.token.expose()), 200).await;
     assert_eq!(listing.items.len(), 2);
-    let mut forbidden = request(&a, &b);
-    forbidden.service = ObservationServiceScope::Tcp {
-        port: 80.try_into().unwrap(),
-    };
-    status(server.post(&endpoint, user.token.expose(), &forbidden), 403).await;
-    forbidden = request(&a, &b);
-    forbidden.selection = ObservationPath::Explicit {
-        path: vec![a.id, b.id],
-    };
-    status(server.post(&endpoint, user.token.expose(), &forbidden), 403).await;
-    server.target(&a).await;
+    task = keep_alive(&server, &user, &endpoint, task).await;
     let mut explicit = request(&a, &b);
     explicit.selection = ObservationPath::Explicit {
         path: vec![a.id, c.id, b.id],
@@ -145,6 +150,8 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         204,
     )
     .await;
+    task = keep_alive(&server, &user, &endpoint, task).await;
+    shared = keep_alive(&server, &user, &endpoint, shared).await;
     server.target(&a).await;
     let tasks: ObservationList =
         json(server.get("/agent-api/v1/tasks", a.token.expose()), 200).await;
@@ -241,6 +248,10 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         400,
     )
     .await;
+    // All old-configuration reports are finished. Renew both tabs before
+    // history I/O, then renew the survivor before testing cancellation isolation.
+    let _ = keep_alive(&server, &user, &endpoint, task).await;
+    shared = keep_alive(&server, &user, &endpoint, shared).await;
     let history: HistoryPage = json(
         server.post(
             &format!("/api/v1/networks/{}/history/query", network.id),
@@ -265,6 +276,7 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
         panic!()
     };
     assert_eq!(items.len(), 1);
+    shared = keep_alive(&server, &user, &endpoint, shared).await;
     status(
         server.post(
             &format!("{endpoint}/{}/cancel", first.subscription_id),
@@ -314,6 +326,8 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
 
 #[tokio::test]
 async fn background_expiry_and_session_revocation_never_renew_diagnostic_authority() {
+    // C: OBSERVATION_LEASE_SECONDS (30 s) itself must elapse without a
+    // subscriber renew; a shorter wait cannot prove expiry of this authority.
     let server = Server::new().await;
     let user = server.user("expiry@example.com").await;
     let network = server.network(&user).await;
@@ -336,19 +350,17 @@ async fn background_expiry_and_session_revocation_never_renew_diagnostic_authori
     server.target(&a).await;
     // Keep only the Node instance alive. Neither this nor elapsed time is a
     // Console subscription renewal; there is no state/observation/SSE polling.
-    for _ in 0..4 {
-        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-        let _: InstanceLease = json(
-            server.post(
-                "/agent-api/v1/instances/renew",
-                a.token.expose(),
-                &a.instance,
-            ),
-            200,
-        )
-        .await;
-    }
-    assert!(chrono::Utc::now() > task.expires_at);
+    wait_until(task.expires_at).await;
+    let _: InstanceLease = json(
+        server.post(
+            "/agent-api/v1/instances/renew",
+            a.token.expose(),
+            &a.instance,
+        ),
+        200,
+    )
+    .await;
+    assert!(chrono::Utc::now() >= task.expires_at);
     assert!(slice(server.target(&a).await).diagnostics.is_empty());
     let items: ObservationList =
         json(server.get("/agent-api/v1/tasks", a.token.expose()), 200).await;
@@ -360,7 +372,6 @@ async fn background_expiry_and_session_revocation_never_renew_diagnostic_authori
         204,
     )
     .await;
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    assert!(slice(server.target(&a).await).diagnostics.is_empty());
+    wait_no_diagnostics(&server, &a).await;
     server.stop().await;
 }

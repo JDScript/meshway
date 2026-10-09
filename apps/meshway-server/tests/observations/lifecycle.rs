@@ -50,6 +50,8 @@ async fn unavailable_node_instance_never_invalidates_observer_user_session() {
 
 #[tokio::test]
 async fn renew_is_per_subscription_and_restart_or_node_key_revocation_cannot_restore_tasks() {
+    // C: the response's renew_after (10 s) is the real minimum renewal window;
+    // keep the early rejection next to creation, then wait for that deadline.
     let server = Server::new().await;
     let user = server.user("renew@example.com").await;
     let network = server.network(&user).await;
@@ -70,8 +72,6 @@ async fn renew_is_per_subscription_and_restart_or_node_key_revocation_cannot_res
     let second = request(&a, &b);
     let task: ObservationTask =
         json(server.post(&endpoint, user.token.expose(), &first), 201).await;
-    let other: ObservationTask =
-        json(server.post(&endpoint, user.token.expose(), &second), 201).await;
     status(
         server.post(
             &format!("{endpoint}/{}/renew", first.subscription_id),
@@ -81,7 +81,10 @@ async fn renew_is_per_subscription_and_restart_or_node_key_revocation_cannot_res
         429,
     )
     .await;
-    tokio::time::sleep(std::time::Duration::from_secs(11)).await;
+    wait_until(task.renew_after).await;
+    // Create the untouched tab at the assertion, not before the renewal wait.
+    let other: ObservationTask =
+        json(server.post(&endpoint, user.token.expose(), &second), 201).await;
     let renewed: ObservationList = json(
         server.post(
             &format!("{endpoint}/{}/renew", first.subscription_id),
@@ -135,8 +138,22 @@ async fn renew_is_per_subscription_and_restart_or_node_key_revocation_cannot_res
     )
     .await;
     status(server.get("/agent-api/v1/tasks", a.token.expose()), 401).await;
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let tasks: ObservationList = json(server.get(&endpoint, user.token.expose()), 200).await;
-    assert!(tasks.items.is_empty());
+    tokio::time::timeout(
+        std::time::Duration::from_secs(
+            meshway_server::observations::OBSERVATION_LEASE_SECONDS as u64,
+        ),
+        async {
+            loop {
+                let tasks: ObservationList =
+                    json(server.get(&endpoint, user.token.expose()), 200).await;
+                if tasks.items.is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        },
+    )
+    .await
+    .expect("revoked observation projection");
     server.stop().await;
 }

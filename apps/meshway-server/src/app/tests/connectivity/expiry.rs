@@ -211,6 +211,9 @@ async fn real_restart_changes_epoch_and_old_credentials_and_attempts_cannot_reap
 
 #[tokio::test]
 async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
+    // Capacity, not expiry: enrollment/KDF work must not consume the source's
+    // EXECUTION_TTL (60 s). Renew real instances before publishing demands; only
+    // the final capacity transaction batch uses the non-renewable 9 s offers.
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let (_dir, app, network, a, b, _) = setup(false).await;
     let owner = app
@@ -224,6 +227,16 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
         .unwrap();
     let mut peers = vec![(b.id, b.token, b.instance, b.report.sequence)];
     for number in 0..8u8 {
+        app.execution()
+            .renew(&a.token, a.instance.clone())
+            .await
+            .unwrap();
+        for (_, token, instance, _) in &peers {
+            app.execution()
+                .renew(token, instance.clone())
+                .await
+                .unwrap();
+        }
         let signer = ed25519_dalek::SigningKey::from_bytes(&[100 + number; 32]);
         let enrolled = super::super::node::enroll_tag_node(
             &app,
@@ -263,7 +276,48 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
             Sequence::MIN,
         ));
     }
+    // This test needs nine distinct authenticated A-peer pairs, not a complete
+    // graph's unrelated alternate paths. Publish that exact star before any
+    // short-lived offers, so authority checks do not spend their live budget
+    // repeatedly compiling/rechecking irrelevant peer-to-peer routes.
+    let current = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    let mut config =
+        meshway_configuration::NetworkConfigurationInput::from(&current.document.configuration);
+    config.defaults.topology = meshway_configuration::TopologyDefault::Deny;
+    config.topology = peers
+        .iter()
+        .map(|(peer, _, _, _)| meshway_configuration::TopologyRule {
+            transports: meshway_configuration::Input::Omitted,
+            remark: String::new(),
+            action: meshway_configuration::TopologyAction::Allow,
+            a: format!("node:{}", a.id),
+            b: format!("node:{peer}"),
+        })
+        .collect();
+    app.configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: meshway_protocol::WireSecret::new(
+                    serde_json::to_string(&config).unwrap(),
+                ),
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
     for (peer, _, _, _) in &peers {
+        app.execution()
+            .renew(&a.token, a.instance.clone())
+            .await
+            .unwrap();
         let decision = app
             .execution()
             .demand(
@@ -292,6 +346,10 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
     for (id, token, instance, sequence) in
         std::iter::once((a.id, a.token, a.instance, a.report.sequence)).chain(peers)
     {
+        app.execution()
+            .renew(&token, instance.clone())
+            .await
+            .unwrap();
         let target = sync_execution(&app, &token, &instance).await;
         synchronized.push((id, token, instance, sequence, target));
     }
@@ -321,28 +379,26 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
     else {
         panic!("current metadata");
     };
-    let mut offers = Vec::new();
-    for (index, peer) in ready.iter().enumerate() {
-        let request = request_in_epoch(&a, peer, state_epoch);
-        let result = app.connectivity().prepare(&a.token, request).await.unwrap();
-        if index < 8 {
-            let PrepareUdpTraversalResponse::Offer { offer } = result else {
-                panic!(
-                    "slot {index}: {result:?}; source report age={}, peer report age={}",
-                    chrono::Utc::now() - a.report.observed_at,
-                    chrono::Utc::now() - peer.report.observed_at,
-                );
-            };
-            offers.push(offer);
-        } else {
-            assert_eq!(
-                result,
-                PrepareUdpTraversalResponse::Unavailable {
-                    reason: UdpTraversalUnavailableReason::Capacity
-                }
-            );
+    let started = chrono::Utc::now().timestamp_millis() as u64;
+    // Eight independent callers may be admitted together; the SQLite owner
+    // still serializes and authorizes every actual transaction. The ninth is
+    // issued only after all eight offers are confirmed, never by task order.
+    let offers = futures_util::future::join_all(
+        ready[..8]
+            .iter()
+            .map(|peer| offer(&app, &a, request_in_epoch(&a, peer, state_epoch))),
+    )
+    .await;
+    let last = ready.last().unwrap();
+    assert_eq!(
+        app.connectivity()
+            .prepare(&a.token, request_in_epoch(&a, last, state_epoch))
+            .await
+            .unwrap(),
+        PrepareUdpTraversalResponse::Unavailable {
+            reason: UdpTraversalUnavailableReason::Capacity
         }
-    }
+    );
     assert_eq!(offers.len(), 8);
     let QueryUdpTraversalResponse::Current { attempts, .. } =
         app.connectivity().query(&a.token, a.query()).await.unwrap()
@@ -362,11 +418,20 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
             .unwrap(),
         CancelUdpTraversalResponse::Cancelled,
     );
-    let last = ready.last().unwrap();
     let _replacement = offer(&app, &a, request_in_epoch(&a, last, state_epoch)).await;
     // Cancellation freed the slot: none of the original fixed deadlines has
     // elapsed, including through the current-authority query above.
     let now = chrono::Utc::now().timestamp_millis() as u64;
     assert!(offers.iter().all(|offer| offer.expires_at_ms > now));
+    let deadline = offers
+        .iter()
+        .map(|offer| offer.expires_at_ms)
+        .min()
+        .unwrap();
+    assert!(
+        now - started <= (deadline - started) / 2,
+        "capacity transaction batch must fit half the original offer budget: {} ms",
+        now - started,
+    );
     app.shutdown().await.unwrap();
 }
