@@ -350,7 +350,7 @@ test("SDK form edits preserve hidden headers and explicit empty headers clear th
     ...(visible.dialers.native_tcp ? { native_tcp: visible.dialers.native_tcp } : {}),
     ...(visible.dialers.trojan ? { trojan: visible.dialers.trojan } : {}),
   };
-  const form = { access: visible.access, topology: visible.topology, dialers: { ...publicDialers, vless: { ...vless, priority: 301, websocket: {} } } };
+  const form = { access: visible.access, topology: visible.topology, dialers: { ...publicDialers, vless: { ...vless, remark: "retained", websocket: {} } } };
   const updated = await applyConfiguration(client, path, {
     type: "operations", expectedRevision: view.data.revision, requestId: randomUUID(),
     ops: [{ type: "replaceDefaults", defaults: form }],
@@ -360,7 +360,7 @@ test("SDK form edits preserve hidden headers and explicit empty headers clear th
   const retained = await getConfigurationSource(client, path, {}, options);
   assert.ok(retained.ok);
   assert.equal(retained.data.configuration.defaults?.dialers?.vless?.websocket?.headers?.Authorization, credential);
-  assert.equal(retained.data.configuration.defaults?.dialers?.vless?.priority, 301);
+  assert.equal(retained.data.configuration.defaults?.dialers?.vless?.remark, "retained");
   const cleared = await applyConfiguration(client, path, {
     type: "operations", expectedRevision: updated.data.revision, requestId: randomUUID(),
     ops: [{ type: "replaceDefaults", defaults: { ...form, dialers: { ...form.dialers, vless: { ...form.dialers.vless, websocket: { headers: {} } } } } }],
