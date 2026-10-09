@@ -1,8 +1,193 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T07:15:36.204724+00:00",
+  "updatedAt": "2026-10-09T07:52:52.533336+00:00",
   "runs": [
+    {
+      "id": 37900484013,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "b031fc37346395fc2634b8ba7d8c8fb3b70ac039",
+      "message": "docs(changelog): record X4",
+      "createdAt": "2026-10-09T07:41:38Z",
+      "updatedAt": "2026-10-09T07:46:16Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37900484013",
+      "jobs": [
+        {
+          "id": 113721612655,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-09T07:46:15Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900484013/job/113721612655"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37900483993,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "b031fc37346395fc2634b8ba7d8c8fb3b70ac039",
+      "message": "docs(changelog): record X4",
+      "createdAt": "2026-10-09T07:41:38Z",
+      "updatedAt": "2026-10-09T07:43:10Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37900483993",
+      "jobs": [
+        {
+          "id": 113721612522,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T07:41:41Z",
+          "completedAt": "2026-10-09T07:41:55Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900483993/job/113721612522"
+        },
+        {
+          "id": 113721694314,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T07:41:58Z",
+          "completedAt": "2026-10-09T07:43:07Z",
+          "seconds": 69.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900483993/job/113721694314"
+        },
+        {
+          "id": 113721694529,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-09T07:43:09Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900483993/job/113721694529"
+        },
+        {
+          "id": 113721696466,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-09T07:41:56Z",
+          "completedAt": "2026-10-09T07:41:55Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900483993/job/113721696466"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37900483992,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "b031fc37346395fc2634b8ba7d8c8fb3b70ac039",
+      "message": "docs(changelog): record X4",
+      "createdAt": "2026-10-09T07:41:38Z",
+      "updatedAt": "2026-10-09T07:49:55Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37900483992",
+      "jobs": [
+        {
+          "id": 113721612512,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T07:41:39Z",
+          "completedAt": "2026-10-09T07:46:15Z",
+          "seconds": 276.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900483992/job/113721612512"
+        },
+        {
+          "id": 113721612868,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T07:41:58Z",
+          "completedAt": "2026-10-09T07:49:54Z",
+          "seconds": 476.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900483992/job/113721612868"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11602801122,
+          "name": "node-aarch64-unknown-linux-musl-b031fc37346395fc2634b8ba7d8c8fb3b70ac039",
+          "bytes": 8178513,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900483992/artifacts/11602801122",
+          "jobId": 113721612512,
+          "runner": "planck",
+          "seconds": 276.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 14192952,
+              "sha256": "894f1742da19c3a9f6f4c1374b64f7ceb0294b05dc95d31b38b6a6df754a963f"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1644952,
+              "sha256": "769125957ec4f91725b2689632779e23ab21067698f040070ecf63ad222d245b"
+            }
+          ]
+        },
+        {
+          "id": 11602402953,
+          "name": "node-x86_64-unknown-linux-musl-b031fc37346395fc2634b8ba7d8c8fb3b70ac039",
+          "bytes": 8678980,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37900483992/artifacts/11602402953",
+          "jobId": 113721612868,
+          "runner": "mars-epyc7543",
+          "seconds": 476.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 17009448,
+              "sha256": "d73d6d8b25511db6aec3329ad6376ce57902efddeb7bfbc2e4d1abfccd15390c"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1864736,
+              "sha256": "4b28f0860faf0cdf3f217b7f10d72f3ab56ac7647770e8e0fd8665401d7a78a7"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 37895135669,
       "attempt": 1,
