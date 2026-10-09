@@ -90,7 +90,7 @@ async fn failed_final_identity_publish_keeps_durable_pending_material_for_recove
 
 #[tokio::test]
 async fn rejected_expired_rotation_rolls_back_only_after_old_key_authentication() {
-    // C: the real CHALLENGE_LIFETIME_MS (59_000) bounds pending rotation.
+    // C: the real rotation allocation expires after 59_000 ms (rotation.rs).
     // Rollback before that original deadline would violate uncertainty handling.
     let server = Server::start().await;
     let owner = server.owner().await;
