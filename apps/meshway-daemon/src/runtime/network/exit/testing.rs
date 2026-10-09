@@ -23,6 +23,88 @@ pub(in crate::runtime::network) struct Fixture {
     server: tokio::task::JoinHandle<()>,
 }
 impl Fixture {
+    pub async fn cli_status(
+        &self,
+        network: tokio::sync::watch::Receiver<super::super::Report>,
+        ready: bool,
+    ) {
+        use crate::runtime::{
+            intent::Desired,
+            status::{Report, View},
+        };
+        use tokio::sync::{mpsc, watch};
+        let revision = meshway_model::Version::MIN;
+        let (_desired, desired) = watch::channel(Desired {
+            revision,
+            up: true,
+            shutdown: false,
+            retry_enrollment: false,
+            enrollment_key: None,
+            rotation: None,
+        });
+        let mut report = Report::initial(revision);
+        report.control = Some(self.controls[2].snapshot());
+        report.phase = meshway_ipc::Phase::ControlReady;
+        let (_reported, report) = watch::channel(report);
+        let (_events, events) = watch::channel(Default::default());
+        let view = View {
+            desired,
+            report,
+            server: self.origin.clone(),
+            network_mode: meshway_ipc::NetworkMode::Tun,
+            network,
+            events,
+        };
+        assert_eq!(
+            view.status()
+                .exit
+                .as_ref()
+                .unwrap()
+                .installed_role
+                .is_some(),
+            ready
+        );
+        let directory = Arc::new(
+            meshway_private_storage::Directory::open(
+                &self.directory.path().join("ipc"),
+                "test.lock",
+            )
+            .unwrap(),
+        );
+        let path = directory.path().join("control.sock");
+        let socket = crate::ipc::Socket::bind(directory, None).await.unwrap();
+        let (commands, _commands) = mpsc::channel(1);
+        let (pings, _pings) = mpsc::channel(1);
+        let (stop, stopped) = watch::channel(false);
+        let task = tokio::spawn(crate::ipc::serve(socket, commands, pings, view, stopped));
+        let executable = std::env::var("MESHWAY_X4_CLI")
+            .expect("isolated fixture mounts the current meshway CLI");
+        let output = tokio::process::Command::new(executable)
+            .arg("--socket")
+            .arg(path)
+            .arg("status")
+            .output()
+            .await
+            .unwrap();
+        stop.send_replace(true);
+        task.await.unwrap().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = String::from_utf8(output.stdout).unwrap();
+        if ready {
+            assert!(output.contains("Exit: Ready"), "{output}");
+            assert!(!output.contains("role=none"), "{output}");
+            assert!(output.contains("flows=0"), "{output}");
+        } else {
+            assert!(output.contains("IpForwardDisabled"), "{output}");
+            assert!(output.contains("role=none"), "{output}");
+            assert!(output.contains("flows=unknown"), "{output}");
+        }
+        println!("X4_REAL_CLI_STATUS\n{output}");
+    }
     pub async fn open() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let app = meshway_server::App::open(meshway_server::Settings::new(

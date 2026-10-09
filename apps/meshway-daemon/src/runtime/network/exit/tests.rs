@@ -12,6 +12,11 @@ fn isolated() {
         std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
         Ok("1")
     );
+    let _ = meshway_logging::Options {
+        filter: "meshway_daemon=debug,meshway_underlay=debug".into(),
+        format: meshway_logging::Format::Text,
+    }
+    .init();
 }
 
 struct Mesh {
@@ -205,6 +210,7 @@ async fn daemon_exit_driver_real_nat_renew_confirm_failure_and_retirement() {
     mesh.reply(&mut runtime).await;
     // Preserve an already-admitted old packet through a legal lease handoff.
     let old = mesh.forward(packet(&f, 41000));
+    let previous = f.controls[2].execution_snapshot().unwrap();
     let lease = f.controls[0].renew_instance().await.unwrap();
     let instance = f.controls[0].execution_snapshot().unwrap().instance();
     f.controls[0]
@@ -216,10 +222,27 @@ async fn daemon_exit_driver_real_nat_renew_confirm_failure_and_retirement() {
         .await
         .unwrap();
     f.refresh().await;
+    eprintln!(
+        "X4_RENEW before_host role_active={} old_current={} retained={} continuation={}",
+        runtime.role.is_active(),
+        previous.ensure_current().is_ok(),
+        previous.retention_deadline().is_ok(),
+        f.controls[2]
+            .execution_snapshot()
+            .unwrap()
+            .continuation_from(&previous)
+            .is_ok()
+    );
     mesh.reconcile(&f);
     host.install(f.controls[2].execution_snapshot().unwrap())
         .await
         .unwrap();
+    eprintln!(
+        "X4_RENEW after_host role_active={} host_role={} flows={}",
+        runtime.role.is_active(),
+        host.exit_role().is_some(),
+        mesh.e.retained_flows()
+    );
     runtime.packet(&mut mesh.e, old);
     let pending = mesh.forward(packet(&f, 41000));
     runtime.packet(&mut mesh.e, pending);
@@ -308,6 +331,7 @@ async fn daemon_exit_role_applied_probe_failure_and_instance_replacement() {
             }
         );
         f.capability(cap).await;
+        f.cli_status(report.clone(), false).await;
     } else {
         assert!(report.borrow().applied().is_some());
         assert_eq!(
@@ -337,15 +361,22 @@ async fn daemon_exit_role_applied_probe_failure_and_instance_replacement() {
             meshway_configuration::execution::DnsEgress::NoExit
         );
         handle.publish(&mut f.controls[2]).await.unwrap();
-        tokio::time::timeout(
+        let outcome = tokio::time::timeout(
             Duration::from_secs(20),
             report.wait_for(|r| r.applied().as_ref() == Some(&reference)),
         )
         .await
-        .unwrap()
-        .unwrap();
+        .map(|result| result.map(|_| ()));
+        assert!(
+            matches!(outcome, Ok(Ok(()))),
+            "role refresh: plane={:?} problem={:?} capability={:?}",
+            report.borrow().plane,
+            report.borrow().problem,
+            report.borrow().exit_capability
+        );
         assert_eq!(report.borrow().exit_dns_unavailable, external_dns);
         handle.finish(&mut f.controls[2]).await.unwrap();
+        f.cli_status(report.clone(), true).await;
         let old = f.controls[2].execution_snapshot().unwrap();
         f.controls[2].stop().await.unwrap();
         handle.stop(false).await.unwrap();
