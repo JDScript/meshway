@@ -591,4 +591,6 @@ mod configuration;
 
 mod lifecycle;
 
+mod netmap_bindings;
+
 mod publication;

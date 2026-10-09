@@ -111,18 +111,16 @@ pub(crate) fn at_publication(
     store::resources::bindings::at_publication(tx, network, revision, publication)
 }
 
-/// The latest publication for this exact source revision owns the current
-/// validated binding. Withdrawn publications remain valid historical evidence.
+/// The version's current validated binding: the last refreshed binding
+/// recorded for it, or its own initial binding. Independent of publications.
 pub(crate) fn at_revision(
     tx: &Transaction<'_>,
     network: NetworkId,
     revision: Revision,
     initial: &Bindings,
 ) -> Result<Bindings, Error> {
-    match latest_publication(tx, network, revision)? {
-        Some(publication) => at_publication(tx, network, revision, publication),
-        None => Ok(initial.clone()),
-    }
+    Ok(store::resources::bindings::current(tx, network, revision)?
+        .unwrap_or_else(|| initial.clone()))
 }
 
 pub(crate) fn contents(

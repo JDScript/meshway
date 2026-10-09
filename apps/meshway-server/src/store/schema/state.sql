@@ -45,6 +45,17 @@ CREATE TABLE rule_set_checks (
     FOREIGN KEY(network_id, revision) REFERENCES configuration_versions(network_id, revision)
 ) STRICT;
 
+-- Current rule-set binding of one configuration version, after the version's
+-- initial binding was refreshed. Absent: the version's own bindings apply.
+CREATE TABLE rule_set_bindings (
+    network_id BLOB NOT NULL,
+    revision INTEGER NOT NULL,
+    bindings TEXT NOT NULL CHECK(json_valid(bindings) AND json_type(bindings)='object'),
+    bound_at INTEGER NOT NULL CHECK(bound_at>=0),
+    PRIMARY KEY(network_id, revision),
+    FOREIGN KEY(network_id, revision) REFERENCES configuration_versions(network_id, revision)
+) STRICT;
+
 -- Manual refreshes are idempotent per (network, user, request ID): a retry
 -- with the same key returns the current view without downloading again.
 -- Rows are kept for one day; a request ID seen after that refreshes anew.
