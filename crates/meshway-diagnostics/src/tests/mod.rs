@@ -491,7 +491,7 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
         .unwrap();
     assert_eq!(fixture.owner.tasks.len(), 1);
     let (mid, challenge) = fixture.measurement(Instant::now());
-    fixture.owner.pause(fixture.task.id);
+    fixture.owner.set_paused(&[fixture.task.id].into());
     fixture
         .owner
         .reply([7; 32], mid, challenge, fixture.channel(), Instant::now());
@@ -528,7 +528,7 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
         snapshot.ensure_current().is_ok(),
         "observation cancellation does not fence business Control"
     );
-    fixture.owner.resume(fixture.task.id);
+    fixture.owner.set_paused(&Default::default());
     fixture.controls[0].stop().await.unwrap();
     assert_eq!(fixture.owner.outputs().count(), 0);
     assert!(
@@ -663,10 +663,10 @@ async fn shared_cancel_keeps_a_finished_window_backpressured_until_acknowledged(
     let (mid, _) = fixture.measurement(start);
     fixture.owner.sent(fixture.task.id, mid, Err(()));
     let output = fixture.owner.outputs().next().unwrap().clone();
-    fixture.owner.pause(fixture.task.id);
+    fixture.owner.set_paused(&[fixture.task.id].into());
     assert!(output.is_current());
     assert_eq!(fixture.owner.outputs().count(), 0);
-    fixture.owner.resume(fixture.task.id);
+    fixture.owner.set_paused(&Default::default());
     assert_eq!(fixture.sample().measurement_id, mid);
     fixture.owner.acknowledge(fixture.task.id);
     assert_eq!(fixture.owner.outputs().count(), 0);

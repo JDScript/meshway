@@ -210,29 +210,6 @@ impl Owner {
         Ok(())
     }
 
-    /// Cancel only diagnostic work; a still-shared task may resume after the
-    /// subscription cancellation transaction returns. Business flows are intact.
-    pub fn pause(&mut self, id: ObservationId) {
-        if let Some(task) = self.tasks.get_mut(&id) {
-            if !task.paused {
-                task.next = task.next.max(Instant::now() + MIN_INTERVAL);
-            }
-            task.paused = true;
-            task.cancellation.cancel();
-            task.sending = false;
-            task.measurement = None;
-        }
-    }
-
-    pub fn resume(&mut self, id: ObservationId) {
-        if let Some(task) = self.tasks.get_mut(&id) {
-            task.paused = false;
-            if task.cancellation.is_cancelled() {
-                task.cancellation = tokio_util::sync::CancellationToken::new();
-            }
-        }
-    }
-
     pub fn clear(&mut self) {
         self.tasks.clear();
     }
