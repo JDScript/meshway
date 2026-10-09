@@ -5,6 +5,7 @@
 mod adjacency;
 mod io;
 mod manager;
+mod plan;
 mod provider;
 mod scope;
 pub mod traversal;
@@ -13,7 +14,10 @@ pub use io::{
     AcceptedSocket, DatagramAuthorization, DatagramSocket, ListenerSocket, SocketFactory,
     TraversalSocket,
 };
-pub use manager::{Event, LinkFact, ListenerFact, Manager, SendReceipt, Snapshot, SocketFact};
+pub use manager::{
+    AdjacencyInterest, Event, FactsSink, Interest, LinkFact, ListenerFact, Manager, SendReceipt,
+    Snapshot, SocketFact,
+};
 pub use meshway_policy::admission::Carrier;
 
 use meshway_model::state::{Capability, StreamKind, TransportRole};
@@ -32,6 +36,9 @@ pub struct Limits {
     pub events: usize,
     pub handshake_timeout: Duration,
     pub retry_backoff: Duration,
+    /// Netmap authority: a selected channel with neither interest nor frames
+    /// for this long closes, unless its topology edge is keepalive.
+    pub idle: Duration,
     pub session: meshway_transport::Limits,
 }
 
@@ -44,6 +51,7 @@ impl Default for Limits {
             events: 1024,
             handshake_timeout: Duration::from_secs(5),
             retry_backoff: Duration::from_secs(1),
+            idle: Duration::from_secs(120),
             session: meshway_transport::Limits::new(128 * 1024, 34, 512 * 1024, 16, 32)
                 .expect("fixed valid session limits"),
         }
@@ -60,6 +68,8 @@ impl Limits {
             || self.handshake_timeout > Duration::from_secs(5)
             || self.retry_backoff < Duration::from_millis(100)
             || self.retry_backoff > Duration::from_secs(60)
+            || self.idle < Duration::from_millis(100)
+            || self.idle > Duration::from_secs(3600)
         {
             return Err(Error::Limits);
         }

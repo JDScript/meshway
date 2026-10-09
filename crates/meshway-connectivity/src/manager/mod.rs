@@ -1,11 +1,12 @@
 use crate::{
-    Carrier, Error, Limits, SocketFactory, adjacency, provider,
+    Carrier, Error, Limits, SocketFactory, adjacency,
+    plan::Plan,
+    provider,
     scope::{self, Scope},
 };
 use meshway_authority::DataPlaneIdentity;
 use meshway_dataplane::secure::PendingFrame;
 use meshway_model::{NodeId, observations::LinkAcquisition};
-use meshway_policy::admission::admit_adjacency;
 use meshway_transport::{Frame, Sender, Session};
 use meshway_transport_spec::TransportProtocol;
 use std::{
@@ -23,11 +24,15 @@ mod batch;
 mod continuity;
 mod datagram;
 mod events;
+mod facts;
+mod interest;
 mod resources;
 #[cfg(test)]
 mod tests;
 mod traversal;
 mod workers;
+pub use facts::FactsSink;
+pub use interest::{AdjacencyInterest, Interest};
 
 // Diagnostics only: at most 64 events/second and 32768/process; contention drops
 // a diagnostic rather than delaying an owner or changing a selection decision.
@@ -72,6 +77,23 @@ fn diagnostic_link(
             )
         })
     });
+    if scope.snapshot.is_netmap() {
+        // Netmap authority has no publication or bound instance; report its
+        // content reference instead. Never reads current candidates.
+        let netmap = scope.snapshot.netmap_ref();
+        tracing::debug!(operation, cause, peer = %fact.peer, channel = ?fact.id,
+            socket = ?fact.socket_id, dialer = %fact.carrier.dialer, listener = %fact.carrier.listener,
+            listener_key = %fact.carrier.listener_key, protocol = ?fact.carrier.protocol,
+            local = %fact.local, remote = %fact.remote,
+            health_remaining_ms = ?health.map(|value| value.1), health_expired = ?health.map(|value| value.0),
+            attempted_remote = ?attempted.map(|value| value.0), attempt = ?attempted.map(|value| value.1),
+            netmap_serial = ?netmap.map(|value| value.serial.get()),
+            netmap_digest = ?netmap.map(|value| value.digest.to_string()),
+            lease_expires_at_ms = scope.snapshot.expires_at_ms(),
+            acquisition = ?fact.acquisition,
+            "Connectivity channel transition");
+        return;
+    }
     if operation == "install" && cause == "authenticated_ready" {
         // Read the original admitted scope, never a newer shared publication or
         // current candidates. Failure to observe it drops diagnostics only.
@@ -133,6 +155,7 @@ fn diagnostic_link(
             "Connectivity channel transition");
         return;
     }
+    let snapshot = shared.identity.snapshot();
     tracing::debug!(operation, cause, peer = %fact.peer, channel = ?fact.id,
         socket = ?fact.socket_id, dialer = %fact.carrier.dialer, listener = %fact.carrier.listener,
         listener_key = %fact.carrier.listener_key, protocol = ?fact.carrier.protocol,
@@ -140,8 +163,8 @@ fn diagnostic_link(
         health_remaining_ms = ?health.map(|value| value.1), health_expired = ?health.map(|value| value.0),
         attempted_remote = ?attempted.map(|value| value.0),
         attempt = ?attempted.map(|value| value.1),
-        publication = %shared.identity.snapshot().reference().execution_publication,
-        execution_expires_at_ms = shared.identity.snapshot().expires_at_ms(),
+        publication = %continuity::label(snapshot),
+        execution_expires_at_ms = snapshot.expires_at_ms(),
         "Connectivity channel transition");
 }
 
@@ -226,6 +249,7 @@ struct Link {
     sender: Arc<AsyncMutex<Sender>>,
     scope: Scope,
     batch_scope: meshway_transport::ChannelScope,
+    activity: Arc<interest::Activity>,
 }
 
 /// The one selected-link owner also remembers its latest committed ID per peer.
@@ -259,10 +283,19 @@ impl LinkTable {
     }
 }
 
+/// One installed authority epoch: its identity, adjacency plan and sequence.
+#[derive(Clone)]
+pub(crate) struct Epoch {
+    pub(crate) identity: DataPlaneIdentity,
+    pub(crate) plan: Arc<Plan>,
+    pub(crate) generation: meshway_model::Sequence,
+}
+
 /// A fixed identity/generation view over the manager's shared resource watches.
 /// Rebinding creates a new view; existing operation scopes keep the old identity.
 struct EpochContext {
     identity: DataPlaneIdentity,
+    plan: Arc<Plan>,
     stop: CancellationToken,
     links: Arc<Mutex<LinkTable>>,
     events: events::Sender,
@@ -271,12 +304,17 @@ struct EpochContext {
     limits: Limits,
     control_budget: Arc<Mutex<datagram::ControlBudget>>,
     sockets: Arc<Mutex<BTreeMap<[u8; 32], SocketFact>>>,
-    epochs: tokio::sync::watch::Sender<DataPlaneIdentity>,
+    epochs: tokio::sync::watch::Sender<Epoch>,
+    /// Generation whose selected-channel table the Manager has renewed.
+    renewed: tokio::sync::watch::Sender<meshway_model::Sequence>,
+    /// Handoff completion of owners holding socket authorization, by socket.
+    handoffs: tokio::sync::watch::Sender<BTreeMap<[u8; 32], meshway_model::Sequence>>,
     gates: Arc<Mutex<Vec<std::sync::Weak<scope::Physical>>>>,
-    socket_epochs: Arc<Mutex<BTreeMap<[u8; 32], meshway_authority::ExecutionSnapshot>>>,
     generation: meshway_model::Sequence,
     traversal_endpoints: Arc<Mutex<BTreeMap<[u8; 32], traversal::Endpoint>>>,
     resource_changes: tokio::sync::watch::Sender<()>,
+    interests: Arc<interest::Interests>,
+    facts: Arc<facts::Store>,
 }
 
 impl EpochContext {
@@ -284,6 +322,7 @@ impl EpochContext {
         let deadline: tokio::time::Instant = self.identity.snapshot().expires_at().into();
         Scope {
             snapshot: self.identity.snapshot().clone(),
+            plan: self.plan.clone(),
             cancellation: self.stop.child_token(),
             deadline: if handshake {
                 deadline.min(tokio::time::Instant::now() + self.limits.handshake_timeout)
@@ -347,9 +386,11 @@ impl Manager {
         factory: Arc<dyn SocketFactory>,
         limits: Limits,
     ) -> Result<Self, Error> {
-        Self::start_inner(identity, factory, limits, None).await
+        Self::start_inner(identity, factory, limits, None, None).await
     }
 
+    /// Coordinated UDP acquisition is defined for publication authority only;
+    /// a netmap snapshot is rejected until coordination accepts netmaps.
     pub async fn start_with_traversal(
         identity: DataPlaneIdentity,
         factory: Arc<dyn SocketFactory>,
@@ -357,10 +398,10 @@ impl Manager {
         gateway: Arc<dyn crate::traversal::TraversalGateway>,
         generation: meshway_model::Sequence,
     ) -> Result<Self, Error> {
-        if generation.get() == 0 {
+        if generation.get() == 0 || identity.snapshot().is_netmap() {
             return Err(Error::Configuration);
         }
-        Self::start_inner(identity, factory, limits, Some((gateway, generation))).await
+        Self::start_inner(identity, factory, limits, Some((gateway, generation)), None).await
     }
 
     async fn start_inner(
@@ -371,8 +412,10 @@ impl Manager {
             Arc<dyn crate::traversal::TraversalGateway>,
             meshway_model::Sequence,
         )>,
+        carried: Option<(Arc<interest::Interests>, Arc<facts::Store>)>,
     ) -> Result<Self, Error> {
         limits.validate()?;
+        let plan = Plan::new(identity.snapshot())?;
         // More small-packet slots absorb scheduling bursts without expanding
         // the former 64-frame maximum storage exposure (8 MiB by default).
         let frame = limits.session.max_frame_bytes();
@@ -381,7 +424,6 @@ impl Manager {
             .max(frame);
         let (tx, events) = events::channel(limits.events, bytes);
         let (control_tx, control_events) = events::channel(32, frame * 32);
-        let (epochs, _) = tokio::sync::watch::channel(identity.clone());
         let generation = traversal
             .as_ref()
             .map(|(_, generation)| *generation)
@@ -390,8 +432,16 @@ impl Manager {
                     .checked_next()
                     .map_err(|_| Error::Capacity)?,
             );
+        let (epochs, _) = tokio::sync::watch::channel(Epoch {
+            identity: identity.clone(),
+            plan: plan.clone(),
+            generation,
+        });
+        let (interests, facts) = carried.unwrap_or_default();
+        interests.allow(&plan);
         let shared = Arc::new(EpochContext {
             identity,
+            plan,
             stop: CancellationToken::new(),
             links: Arc::new(Mutex::new(LinkTable::default())),
             events: tx,
@@ -401,11 +451,14 @@ impl Manager {
             control_budget: Arc::new(Mutex::new(datagram::ControlBudget::new())),
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
             epochs,
+            renewed: tokio::sync::watch::channel(generation).0,
+            handoffs: tokio::sync::watch::channel(BTreeMap::new()).0,
             gates: Arc::new(Mutex::new(Vec::new())),
-            socket_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
             resource_changes: tokio::sync::watch::channel(()).0,
+            interests,
+            facts,
         });
         let mut manager = Self {
             factory,
@@ -418,10 +471,20 @@ impl Manager {
         };
         manager.install_resources().await?;
         if diagnostic_event() {
-            tracing::debug!(operation = "start", publication = %manager.shared.identity.snapshot().reference().execution_publication,
+            tracing::debug!(operation = "start", publication = %continuity::label(manager.shared.identity.snapshot()),
                 listeners = manager.listeners.len(), generation = manager.shared.generation.get(), "Connectivity manager transition");
         }
         Ok(manager)
+    }
+
+    /// Handle for the packet owner to request on-demand adjacencies.
+    pub fn interest(&self) -> Interest {
+        Interest(self.shared.interests.clone())
+    }
+
+    /// Bounded sink for Control's peer facts; it survives Manager replacement.
+    pub fn facts_sink(&self) -> FactsSink {
+        FactsSink(self.shared.facts.clone())
     }
 
     async fn install_resources(&mut self) -> Result<(), Error> {
@@ -430,17 +493,14 @@ impl Manager {
         let factory = manager.factory.clone();
         let limits = manager.shared.limits;
         let traversal = manager.traversal.clone();
-        let cfg = identity
-            .snapshot()
-            .configuration()
-            .map_err(|_| Error::Authority)?;
-        validate_scale(cfg, limits)?;
+        let plan = manager.shared.plan.clone();
+        validate_scale(&plan, limits)?;
         let mut prepared = Vec::new();
         let mut datagrams = Vec::new();
         let mut traversal_endpoints = Vec::new();
         let mut bound_candidates = Vec::new();
         // All declarations must validate and bind before any worker is installed.
-        for (key, declaration) in &cfg.listeners {
+        for (key, declaration) in &plan.listeners {
             if manager
                 .owners
                 .contains_key(&resources::Key::Listener(key.clone()))
@@ -506,7 +566,7 @@ impl Manager {
         if let Some((_, generation)) = &traversal {
             // Dial-only acquisition uses a real configured Native UDP socket,
             // even when the compiler intentionally retained no published target.
-            for (key, candidate) in &cfg.dialers {
+            for (key, candidate) in &plan.dialers {
                 let meshway_transport_spec::DialParameters::NativeUdp { options } =
                     &candidate.parameters
                 else {
@@ -542,7 +602,7 @@ impl Manager {
                         .any(|fact| {
                             fact.local.is_ipv4() == ipv4
                                 && traversal::listener_covers(
-                                    &cfg.listeners[&fact.key],
+                                    &plan.listeners[&fact.key],
                                     fact.local,
                                     options,
                                 )
@@ -582,7 +642,6 @@ impl Manager {
                 }
             }
         }
-        let plans = workers::plans(&identity, limits)?;
         identity
             .snapshot()
             .ensure_current()
@@ -607,12 +666,6 @@ impl Manager {
         }
         let mut endpoints = BTreeMap::new();
         for (fact, reference, socket) in traversal_endpoints {
-            manager
-                .shared
-                .socket_epochs
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .insert(fact.socket_id, manager.shared.identity.snapshot().clone());
             manager.listeners.push(fact.clone());
             let (commands, received) = mpsc::channel(8);
             manager
@@ -645,12 +698,6 @@ impl Manager {
             );
         }
         for (key, id, reference, socket) in bound_candidates {
-            manager
-                .shared
-                .socket_epochs
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .insert(id, manager.shared.identity.snapshot().clone());
             let (commands, received) = mpsc::channel(8);
             manager
                 .shared
@@ -700,7 +747,15 @@ impl Manager {
                 traversal::run(shared, gateway)
             });
         }
-        for peer in plans.into_keys() {
+        if plan.on_demand() {
+            if !manager.owners.contains_key(&resources::Key::Idle) {
+                manager.spawn_owner(resources::Key::Idle, None, interest::idle);
+            }
+            if !manager.owners.contains_key(&resources::Key::Facts) {
+                manager.spawn_owner(resources::Key::Facts, None, facts::run);
+            }
+        }
+        for peer in plan.dial_peers() {
             if !manager.owners.contains_key(&resources::Key::Peer(peer)) {
                 let factory = manager.factory.clone();
                 manager.spawn_owner(resources::Key::Peer(peer), None, |shared| {
@@ -736,11 +791,11 @@ impl Manager {
     }
 
     fn register_listener(&self, fact: &ListenerFact) -> Result<(), Error> {
-        self.shared
-            .socket_epochs
-            .lock()
-            .map_err(|_| Error::Worker)?
-            .insert(fact.socket_id, self.shared.identity.snapshot().clone());
+        if self.shared.plan.on_demand() {
+            // A State socket reference names a publication and instance;
+            // netmap authority reports none until State accepts netmaps.
+            return Ok(());
+        }
         let generation = self
             .traversal
             .as_ref()
@@ -838,6 +893,7 @@ impl Manager {
                 return Err(Error::Unavailable);
             }
             link.scope.check()?;
+            link.activity.record(&shared.interests);
             Ok((link.sender.clone(), link.scope.clone(), link.fact.clone()))
         })();
         async move {
@@ -915,7 +971,12 @@ impl Manager {
                 events.retain(|event| match event {
                     Event::Frame { link, .. } => *checked.entry(link.id).or_insert_with(|| {
                         links.get(&link.peer).is_some_and(|current| {
-                            current.fact.id == link.id && current.scope.check().is_ok()
+                            let selected =
+                                current.fact.id == link.id && current.scope.check().is_ok();
+                            if selected {
+                                current.activity.record(&self.shared.interests);
+                            }
+                            selected
                         })
                     }),
                     _ => true,
@@ -963,11 +1024,22 @@ impl Manager {
         }
     }
 
+    /// Install the next authority. Same netmap content (a lease renewal) is a
+    /// no-op; a larger serial retains every unchanged resource and channel and
+    /// replaces only what changed; anything else restarts the Manager.
     pub async fn reconcile(&mut self, identity: DataPlaneIdentity) -> Result<(), Error> {
         identity
             .snapshot()
             .ensure_current()
             .map_err(|_| Error::Authority)?;
+        if !self.shared.stop.is_cancelled()
+            && identity.snapshot().is_netmap()
+            && identity
+                .snapshot()
+                .same_netmap(self.shared.identity.snapshot())
+        {
+            return Ok(());
+        }
         if self.can_reconcile(&identity) {
             return self.retain(identity).await;
         }
@@ -982,12 +1054,14 @@ impl Manager {
                     .map_err(|_| Error::Capacity)
             })
             .transpose()?;
+        let carried = (self.shared.interests.clone(), self.shared.facts.clone());
         self.shutdown().await?;
         let replacement = Self::start_inner(
             identity,
             self.factory.clone(),
             self.shared.limits,
             traversal,
+            Some(carried),
         )
         .await?;
         *self = replacement;
@@ -996,7 +1070,7 @@ impl Manager {
 
     pub async fn shutdown(&mut self) -> Result<(), Error> {
         if diagnostic_event() {
-            tracing::debug!(operation = "shutdown", publication = %self.shared.identity.snapshot().reference().execution_publication,
+            tracing::debug!(operation = "shutdown", publication = %continuity::label(self.shared.identity.snapshot()),
                 listeners = self.listeners.len(), "Connectivity manager transition");
         }
         if let Ok(links) = self.shared.links.lock() {
@@ -1052,14 +1126,13 @@ fn rank(fact: &LinkFact) -> (NodeId, NodeId, &str, TransportProtocol, [u8; 32]) 
     )
 }
 
-fn validate_scale(
-    cfg: &meshway_configuration::execution::NodeConfiguration,
-    limits: Limits,
-) -> Result<(), Error> {
-    if cfg.listeners.len() > limits.listeners
-        || cfg.dialers.len() > limits.candidates
-        || cfg.peers.len() > limits.candidates
-        || cfg
+fn validate_scale(plan: &Plan, limits: Limits) -> Result<(), Error> {
+    // A netmap lists every visible Node; only dial candidates and listeners
+    // own resources here, and peers are acquired on demand.
+    if plan.listeners.len() > limits.listeners
+        || plan.dialers.len() > limits.candidates
+        || (!plan.on_demand() && plan.peers().count() > limits.candidates)
+        || plan
             .dialers
             .values()
             .try_fold(0usize, |count, dial| {
@@ -1068,6 +1141,13 @@ fn validate_scale(
             .is_none_or(|count| count > limits.candidates)
     {
         return Err(Error::Capacity);
+    }
+    if plan
+        .dialers
+        .values()
+        .any(|dial| dial.listener_key.is_empty() || dial.listener_key.len() > 128)
+    {
+        return Err(Error::Configuration);
     }
     Ok(())
 }
@@ -1104,7 +1184,7 @@ fn install_ready(shared: &EpochContext, ready: ReadyPeer) -> Result<bool, Error>
     // departed peer's ABA tombstone. Hold the watch read through installation:
     // publishing an epoch and committing a channel have one definite order.
     let epoch = shared.epochs.borrow();
-    if !continuity::same(&ready.scope.snapshot, epoch.snapshot()) {
+    if !continuity::same(&ready.scope.snapshot, epoch.identity.snapshot()) {
         ready.scope.cancellation.cancel();
         return Err(Error::Authority);
     }
@@ -1170,6 +1250,8 @@ fn install_ready(shared: &EpochContext, ready: ReadyPeer) -> Result<bool, Error>
     if let Some(old) = &old {
         old.scope.cancellation.cancel();
     }
+    let activity = Arc::new(interest::Activity::default());
+    activity.record(&shared.interests);
     links.insert(
         ready.fact.peer,
         Link {
@@ -1177,6 +1259,7 @@ fn install_ready(shared: &EpochContext, ready: ReadyPeer) -> Result<bool, Error>
             sender: ready.sender,
             scope: ready.scope,
             batch_scope: meshway_transport::ChannelScope::new(),
+            activity,
         },
     );
     drop(links);
@@ -1308,15 +1391,14 @@ async fn connected(
             break result;
         }
         if scope.snapshot.ensure_current().is_err() || shared.epoch_changed() {
-            match shared.successor(&mut updates).await {
-                Ok(next) => match next.renew_link(&fact)? {
-                    Some(next_scope) => {
-                        shared = next;
-                        scope = next_scope;
-                        continue;
-                    }
-                    None => break Err(Error::Unavailable),
-                },
+            // The Manager renews or retires every selected channel itself when
+            // it installs a continuing epoch; this owner only adopts the result.
+            match shared.adopt(&mut updates, &fact).await {
+                Ok((next, next_scope)) => {
+                    shared = next;
+                    scope = next_scope;
+                    continue;
+                }
                 Err(error) => break Err(error),
             }
         }

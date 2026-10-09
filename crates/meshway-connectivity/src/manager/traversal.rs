@@ -9,6 +9,7 @@ use meshway_model::{
     Sequence, UdpTraversalId,
     state::{ResourceRef, SocketNetwork},
 };
+use meshway_policy::admission::admit_adjacency;
 use meshway_protocol::{
     connectivity::SocketReference,
     state::{Freshness, VisibleReport},
@@ -258,7 +259,7 @@ async fn run_epoch(
     shared: Arc<EpochContext>,
     gateway: &Arc<dyn TraversalGateway>,
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
-    updates: &mut tokio::sync::watch::Receiver<DataPlaneIdentity>,
+    updates: &mut tokio::sync::watch::Receiver<Epoch>,
     resources: &mut tokio::sync::watch::Receiver<()>,
     discover_at: &mut Instant,
     after_peer: &mut Option<NodeId>,

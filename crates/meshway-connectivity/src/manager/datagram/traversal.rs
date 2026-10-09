@@ -163,6 +163,7 @@ impl Owner {
                 }
                 let (initiation, intro) = Initiation::new_bound(
                     &self.shared.identity,
+                    &self.shared.plan,
                     &attempt.offer.offer().carrier,
                     Some(attempt.offer.offer().digest),
                 )?;
@@ -364,15 +365,11 @@ impl Owner {
         if active.ensure_current().is_err() || attempt.offer.ensure_current().is_err() {
             return Ok(());
         }
-        let cfg = self
-            .shared
-            .identity
-            .snapshot()
-            .configuration()
-            .map_err(|_| Error::Authority)?;
+        let plan = self.shared.plan.clone();
+        let cfg = &*plan;
         let peer = attempt.offer.peer().candidate.socket.node_id;
         let carrier = attempt.offer.offer().carrier.clone();
-        let dialer = carrier.dialer == cfg.node_id;
+        let dialer = carrier.dialer == cfg.node;
         if kind == 0 {
             adjacency::incoming_bound(cfg, peer, &carrier, attempt.offer.offer().digest, body)?;
             return Ok(());

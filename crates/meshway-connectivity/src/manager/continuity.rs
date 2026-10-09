@@ -1,22 +1,21 @@
 //! Explicit Control-approved handoff of physical resources. Each operation's
-//! Scope stays immutable; only the owner takes a fresh scope for future work.
+//! Scope stays immutable. When a continuing epoch is installed, the Manager
+//! itself renews or retires every selected channel and socket reference in
+//! one pass; owners only adopt that result. Only owners holding external
+//! socket authorization report a completion event the Manager waits for.
 use super::*;
 use meshway_authority::ExecutionSnapshot;
+use meshway_model::{Sequence, state::ResourceRef};
 use tokio::sync::watch;
 
 impl EpochContext {
     pub(super) fn register_link_socket(&self, fact: &LinkFact) -> Result<(), Error> {
-        let cfg = self
-            .identity
-            .snapshot()
-            .configuration()
-            .map_err(|_| Error::Authority)?;
-        let resource = if fact.carrier.listener == cfg.node_id {
-            meshway_model::state::ResourceRef::Listener {
+        let resource = if fact.carrier.listener == self.plan.node {
+            ResourceRef::Listener {
                 key: fact.carrier.listener_key.clone(),
             }
         } else {
-            meshway_model::state::ResourceRef::Dial {
+            ResourceRef::Dial {
                 key: format!("{}/{}", fact.carrier.listener, fact.carrier.listener_key),
             }
         };
@@ -25,10 +24,14 @@ impl EpochContext {
     pub(super) fn register_socket(
         &self,
         id: [u8; 32],
-        resource: meshway_model::state::ResourceRef,
+        resource: ResourceRef,
         protocol: TransportProtocol,
         local: SocketAddr,
     ) -> Result<(), Error> {
+        if self.plan.on_demand() {
+            // See Manager::register_listener: no netmap State socket reference.
+            return Ok(());
+        }
         let reference = traversal::socket_reference(&self.identity, id, self.generation, resource)?;
         self.sockets
             .lock()
@@ -50,24 +53,25 @@ impl EpochContext {
         if let Ok(mut sockets) = self.sockets.lock() {
             sockets.remove(&id);
         }
-        if let Ok(mut epochs) = self.socket_epochs.lock() {
-            epochs.remove(&id);
-        }
+        self.handoffs
+            .send_if_modified(|done| done.remove(&id).is_some());
     }
     pub(super) fn epoch_changed(&self) -> bool {
-        let current = self.epochs.borrow();
-        !same(current.snapshot(), self.identity.snapshot())
+        !same(
+            self.epochs.borrow().identity.snapshot(),
+            self.identity.snapshot(),
+        )
     }
     pub(super) async fn latest(
         &self,
-        updates: &mut watch::Receiver<DataPlaneIdentity>,
+        updates: &mut watch::Receiver<Epoch>,
     ) -> Result<Arc<Self>, Error> {
         loop {
             if self.stop.is_cancelled() {
                 return Err(Error::Cancelled);
             }
             let next = updates.borrow_and_update().clone();
-            if next.snapshot().ensure_current().is_ok() {
+            if next.identity.snapshot().ensure_current().is_ok() {
                 return Ok(self.rebind(next));
             }
             let deadline = self
@@ -83,29 +87,23 @@ impl EpochContext {
         }
     }
 
-    pub(super) fn listener_handoff(&self, id: [u8; 32]) -> Result<(), Error> {
-        self.identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
-        if let Some(fact) = self.sockets.lock().map_err(|_| Error::Worker)?.get_mut(&id) {
-            fact.reference.configuration = self.identity.snapshot().reference();
-        }
-        self.socket_epochs
-            .lock()
-            .map_err(|_| Error::Worker)?
-            .insert(id, self.identity.snapshot().clone());
-        Ok(())
-    }
-    fn rebind(&self, identity: DataPlaneIdentity) -> Arc<Self> {
-        self.rebind_scoped(identity, self.stop.clone())
+    fn rebind(&self, epoch: Epoch) -> Arc<Self> {
+        self.rebind_scoped(epoch, self.stop.clone())
     }
     pub(super) fn for_owner(&self) -> Arc<Self> {
-        self.rebind_scoped(self.identity.clone(), self.stop.child_token())
+        self.rebind_scoped(
+            Epoch {
+                identity: self.identity.clone(),
+                plan: self.plan.clone(),
+                generation: self.generation,
+            },
+            self.stop.child_token(),
+        )
     }
-    fn rebind_scoped(&self, identity: DataPlaneIdentity, stop: CancellationToken) -> Arc<Self> {
+    fn rebind_scoped(&self, epoch: Epoch, stop: CancellationToken) -> Arc<Self> {
         Arc::new(Self {
-            identity,
+            identity: epoch.identity,
+            plan: epoch.plan,
             stop,
             links: self.links.clone(),
             events: self.events.clone(),
@@ -115,11 +113,14 @@ impl EpochContext {
             control_budget: self.control_budget.clone(),
             sockets: self.sockets.clone(),
             epochs: self.epochs.clone(),
+            renewed: self.renewed.clone(),
+            handoffs: self.handoffs.clone(),
             gates: self.gates.clone(),
-            socket_epochs: self.socket_epochs.clone(),
-            generation: self.generation,
+            generation: epoch.generation,
             traversal_endpoints: self.traversal_endpoints.clone(),
             resource_changes: self.resource_changes.clone(),
+            interests: self.interests.clone(),
+            facts: self.facts.clone(),
         })
     }
 
@@ -139,21 +140,35 @@ impl EpochContext {
         Ok(value)
     }
 
+    /// The next epoch directly continuing this one, once the Manager has
+    /// renewed its selected-channel table. Same-content renewal never ends here.
     pub(super) async fn successor(
         &self,
-        updates: &mut watch::Receiver<DataPlaneIdentity>,
+        updates: &mut watch::Receiver<Epoch>,
     ) -> Result<Arc<Self>, Error> {
         loop {
             if self.stop.is_cancelled() {
                 return Err(Error::Cancelled);
             }
             let next = updates.borrow_and_update().clone();
-            if !next.snapshot().same_execution(self.identity.snapshot())
-                || next.snapshot().expires_at() != self.identity.snapshot().expires_at()
-            {
-                next.snapshot()
-                    .continuation_from(self.identity.snapshot())
-                    .map_err(|_| Error::Authority)?;
+            if !same(next.identity.snapshot(), self.identity.snapshot()) {
+                if !continues(next.identity.snapshot(), self.identity.snapshot()) {
+                    return Err(Error::Authority);
+                }
+                let mut renewed = self.renewed.subscribe();
+                tokio::select! { biased;
+                    _ = self.stop.cancelled() => return Err(Error::Cancelled),
+                    result = renewed.wait_for(|done| *done >= next.generation) => {
+                        result.map_err(|_| Error::Cancelled)?;
+                    },
+                }
+                if !same(
+                    self.epochs.borrow().identity.snapshot(),
+                    next.identity.snapshot(),
+                ) {
+                    // A later epoch superseded the one we waited for.
+                    return Err(Error::Authority);
+                }
                 return Ok(self.rebind(next));
             }
             let deadline = self
@@ -169,82 +184,145 @@ impl EpochContext {
         }
     }
 
-    pub(super) fn renew_link(&self, fact: &LinkFact) -> Result<Option<Scope>, Error> {
-        let mut links = self.links.lock().map_err(|_| Error::Worker)?;
-        let Some(link) = links
-            .get_mut(&fact.peer)
-            .filter(|link| link.fact.id == fact.id)
-        else {
-            return Ok(None);
-        };
-        let Ok(previous) = self
-            .identity
-            .snapshot()
-            .continuation_from(&link.scope.snapshot)
-        else {
-            return Ok(None);
-        };
-        let next = self
-            .identity
-            .snapshot()
-            .configuration()
-            .map_err(|_| Error::Authority)?;
+    /// Adopt the Manager's renewal of this owner's selected channel.
+    pub(super) async fn adopt(
+        &self,
+        updates: &mut watch::Receiver<Epoch>,
+        fact: &LinkFact,
+    ) -> Result<(Arc<Self>, Scope), Error> {
+        let next = self.successor(updates).await?;
+        let scope = next.selected_scope(fact).ok_or(Error::Unavailable)?;
+        Ok((next, scope))
+    }
+
+    /// The current scope of a still-selected channel installed in this epoch.
+    pub(super) fn selected_scope(&self, fact: &LinkFact) -> Option<Scope> {
+        let links = self.links.lock().ok()?;
+        let link = links
+            .get(&fact.peer)
+            .filter(|link| link.fact.id == fact.id)?;
+        (same(&link.scope.snapshot, self.identity.snapshot()) && link.scope.check().is_ok())
+            .then(|| link.scope.clone())
+    }
+
+    /// Renew a selected channel for this (newly installed) epoch, or report
+    /// that it must be retired. Exact peer keys, retained resources, a still
+    /// admitted carrier, carrier preference and live health are required.
+    fn renewal(&self, previous: &Plan, link: &Link) -> Option<Scope> {
+        let fact = &link.fact;
+        if !continues(self.identity.snapshot(), &link.scope.snapshot)
+            || !previous.peer_unchanged(&self.plan, fact.peer)
+        {
+            return None;
+        }
         let resource = self
             .sockets
             .lock()
-            .map_err(|_| Error::Worker)?
+            .ok()?
             .get(&fact.socket_id)
             .map(|socket| socket.reference.resource.clone())
             .unwrap_or_else(|| {
-                if fact.carrier.listener == previous.node_id {
-                    meshway_model::state::ResourceRef::Listener {
+                if fact.carrier.listener == previous.node {
+                    ResourceRef::Listener {
                         key: fact.carrier.listener_key.clone(),
                     }
                 } else {
-                    meshway_model::state::ResourceRef::Dial {
+                    ResourceRef::Dial {
                         key: format!("{}/{}", fact.peer, fact.carrier.listener_key),
                     }
                 }
             });
-        if previous.peers.get(&fact.peer) != next.peers.get(&fact.peer)
-            || !next.peers.contains_key(&fact.peer)
-            // Exact resource equality includes TLS, proxy credentials and WS
-            // settings. A provider's buffered writes retain Session's frozen
-            // output scope; changing the physical epoch never renews old I/O.
-            || !meshway_underlay::resource_compatible(previous, next, &resource)
-            || (fact.carrier.dialer == previous.node_id
-                && !meshway_underlay::resource_compatible(
-                    previous,
-                    next,
-                    &meshway_model::state::ResourceRef::Dial {
-                        key: format!("{}/{}", fact.peer, fact.carrier.listener_key),
-                    },
-                ))
+        let dial = ResourceRef::Dial {
+            key: format!("{}/{}", fact.peer, fact.carrier.listener_key),
+        };
+        // Exact resource equality includes TLS, proxy credentials and WS
+        // settings. A provider's buffered writes retain Session's frozen
+        // output scope; changing the physical epoch never renews old I/O.
+        let compatible = |resource: &ResourceRef| {
+            if self.plan.on_demand() {
+                previous.netmap_compatible(&self.plan, resource)
+            } else {
+                let (Ok(old), Ok(new)) = (
+                    self.identity
+                        .snapshot()
+                        .continuation_from(&link.scope.snapshot),
+                    self.identity.snapshot().configuration(),
+                ) else {
+                    return false;
+                };
+                meshway_underlay::resource_compatible(old, new, resource)
+            }
+        };
+        if !compatible(&resource)
+            || (fact.carrier.dialer == previous.node && !compatible(&dial))
             || link.scope.health.as_ref().is_some_and(|health| {
                 health
                     .lock()
                     .map_or(true, |deadline| tokio::time::Instant::now() >= *deadline)
             })
         {
-            return Ok(None);
+            return None;
+        }
+        // A changed carrier order reselects unless this carrier still leads.
+        if self.plan.on_demand()
+            && fact.carrier.dialer == self.plan.node
+            && self
+                .plan
+                .outgoing(fact.peer)
+                .ok()?
+                .first()
+                .is_none_or(|(_, dial)| dial.listener_key != fact.carrier.listener_key)
+        {
+            return None;
         }
         let mut scope = self.scope(Some((fact.peer, fact.carrier.clone())), false);
         scope.health = link.scope.health.clone();
-        if scope.check().is_err() {
-            return Ok(None);
+        scope.check().ok()?;
+        Some(scope)
+    }
+
+    /// One pass over the selected-channel table and socket references.
+    pub(super) fn renew_table(&self, previous: &Plan) -> Result<(), Error> {
+        let next = self.identity.snapshot();
+        if !self.plan.on_demand() {
+            let reference = next.reference();
+            for socket in self.sockets.lock().map_err(|_| Error::Worker)?.values_mut() {
+                socket.reference.configuration = reference.clone();
+            }
         }
-        link.scope.cancellation.cancel();
-        link.scope = scope.clone();
-        link.batch_scope = meshway_transport::ChannelScope::new();
-        if let Some(socket) = self
-            .sockets
-            .lock()
-            .map_err(|_| Error::Worker)?
-            .get_mut(&fact.socket_id)
-        {
-            socket.reference.configuration = self.identity.snapshot().reference();
+        let mut links = self.links.lock().map_err(|_| Error::Worker)?;
+        let peers: Vec<_> = links.keys().copied().collect();
+        for peer in peers {
+            let renewal = links
+                .get(&peer)
+                .and_then(|link| self.renewal(previous, link));
+            match renewal {
+                Some(scope) => {
+                    let link = links.get_mut(&peer).ok_or(Error::Worker)?;
+                    link.scope.cancellation.cancel();
+                    link.scope = scope;
+                    link.batch_scope = meshway_transport::ChannelScope::new();
+                }
+                None => {
+                    if let Some(link) = links.remove(&peer) {
+                        link.scope.cancellation.cancel();
+                        diagnostic_link(
+                            self,
+                            &link.fact,
+                            &link.scope,
+                            "retire",
+                            "handoff_incompatible",
+                            None,
+                        );
+                    }
+                }
+            }
         }
-        Ok(Some(scope))
+        // install_ready already rejects every older acquisition epoch, so a
+        // departed peer's late READY cannot observe this as a vacant slot.
+        let plan = &self.plan;
+        links.last.retain(|peer, _| plan.has_peer(*peer));
+        Ok(())
     }
 }
 
@@ -256,18 +334,18 @@ impl Manager {
             return false;
         }
         let next = identity.snapshot();
-        let Ok(old) = next.continuation_from(self.shared.identity.snapshot()) else {
-            return false;
-        };
-        let Ok(cfg) = next.configuration() else {
-            return false;
-        };
-        if validate_scale(cfg, self.shared.limits).is_err()
-            || old.mesh_address_pools != cfg.mesh_address_pools
-        {
+        let current = self.shared.identity.snapshot();
+        if next.is_netmap() && next.same_netmap(current) {
+            return true;
+        }
+        if !continues(next, current) {
             return false;
         }
-        true
+        let Ok(plan) = Plan::new(next) else {
+            return false;
+        };
+        validate_scale(&plan, self.shared.limits).is_ok()
+            && plan.mesh_address_pools == self.shared.plan.mesh_address_pools
     }
 
     pub(super) async fn retain(&mut self, identity: DataPlaneIdentity) -> Result<(), Error> {
@@ -278,29 +356,31 @@ impl Manager {
         let next = identity.snapshot().clone();
         // Do not manufacture an epoch change when the offered authority is
         // literally unchanged (otherwise waiting owners would await forever).
-        if next.same_execution(&previous) && next.expires_at() == previous.expires_at() {
+        if same(&next, &previous) {
             return Ok(());
         }
-        let retired = self.retire_resources(
-            next.continuation_from(&previous)
-                .map_err(|_| Error::Authority)?,
-            next.configuration().map_err(|_| Error::Authority)?,
-        );
-        self.shared = self.shared.rebind(identity.clone());
+        let plan = Plan::new(&next)?;
+        let old_plan = self.shared.plan.clone();
+        let retired = self.retire_resources(&old_plan, &plan, &previous, &next)?;
         let generation = self
             .shared
             .generation
             .checked_next()
             .map_err(|_| Error::Capacity)?;
-        Arc::get_mut(&mut self.shared)
-            .ok_or(Error::Worker)?
-            .generation = generation;
+        let epoch = Epoch {
+            identity,
+            plan: plan.clone(),
+            generation,
+        };
+        self.shared = self.shared.rebind(epoch.clone());
         if let Some((_, current)) = &mut self.traversal {
             *current = generation;
         }
         while self.events.try_recv().is_ok() {}
         while self.control_events.try_recv().is_ok() {}
-        self.shared.epochs.send_replace(identity);
+        // Publishing first fences every acquisition of an older epoch at
+        // install_ready; the renewal below then sees the final table.
+        self.shared.epochs.send_replace(epoch);
         for gate in self
             .shared
             .gates
@@ -311,57 +391,72 @@ impl Manager {
         {
             gate.wake();
         }
+        self.shared.renew_table(&old_plan)?;
+        self.shared.interests.allow(&plan);
+        self.shared.renewed.send_replace(generation);
         self.join_retired(retired).await?;
         self.install_resources().await?;
+        self.await_handoffs(&previous, generation).await
+    }
+
+    /// Owners that hold external socket authorization hand it to the new
+    /// epoch themselves; wait for each one's completion event.
+    async fn await_handoffs(
+        &self,
+        previous: &ExecutionSnapshot,
+        generation: Sequence,
+    ) -> Result<(), Error> {
+        let expected: Vec<[u8; 32]> = self
+            .shared
+            .traversal_endpoints
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .keys()
+            .copied()
+            .collect();
+        if expected.is_empty() {
+            return Ok(());
+        }
         let deadline = previous
             .retention_deadline()
             .map_err(|_| Error::Authority)?;
-        loop {
-            next.ensure_current().map_err(|_| Error::Authority)?;
-            let links_ready = self
-                .shared
-                .links
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .values()
-                .all(|link| same(&link.scope.snapshot, &next));
-            let sockets_ready = self
-                .shared
-                .sockets
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .values()
-                .all(|socket| socket.reference.configuration == next.reference());
-            let owners_ready = self
-                .shared
-                .socket_epochs
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .values()
-                .all(|snapshot| same(snapshot, &next));
-            if links_ready && sockets_ready && owners_ready {
-                // install_ready rejects every previous acquisition epoch, even
-                // still-live same-target snapshots. No departed peer's late
-                // READY can observe this collection as a new vacant slot.
-                let cfg = next.configuration().map_err(|_| Error::Authority)?;
-                self.shared
-                    .links
-                    .lock()
-                    .map_err(|_| Error::Worker)?
-                    .last
-                    .retain(|peer, _| cfg.peers.contains_key(peer));
-                return Ok(());
-            }
-            tokio::select! { biased;
-                _ = self.shared.stop.cancelled() => return Err(Error::Cancelled),
-                _ = next.invalidated() => return Err(Error::Authority),
-                _ = tokio::time::sleep_until(deadline.into()) => return Err(Error::Authority),
-                _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {},
-            }
+        let mut done = self.shared.handoffs.subscribe();
+        let sockets = self.shared.sockets.clone();
+        tokio::select! { biased;
+            _ = self.shared.stop.cancelled() => Err(Error::Cancelled),
+            _ = self.shared.identity.snapshot().invalidated() => Err(Error::Authority),
+            _ = tokio::time::sleep_until(deadline.into()) => Err(Error::Authority),
+            result = done.wait_for(|done| expected.iter().all(|id| {
+                done.get(id).is_some_and(|at| *at >= generation)
+                    // An owner that already exited released its socket.
+                    || sockets.lock().is_ok_and(|sockets| !sockets.contains_key(id))
+            })) => result.map(|_| ()).map_err(|_| Error::Cancelled),
         }
     }
 }
 
+/// Interchangeable authority: same netmap content, or the same publication
+/// target and deadline.
 pub(super) fn same(a: &ExecutionSnapshot, b: &ExecutionSnapshot) -> bool {
+    if a.is_netmap() || b.is_netmap() {
+        return a.same_netmap(b);
+    }
     a.same_execution(b) && a.expires_at() == b.expires_at()
+}
+
+/// `next` directly continues `old` for the same identity and resources.
+pub(super) fn continues(next: &ExecutionSnapshot, old: &ExecutionSnapshot) -> bool {
+    match (next.is_netmap(), old.is_netmap()) {
+        (true, true) => next.netmap_continuation_from(old).is_ok(),
+        (false, false) => next.continuation_from(old).is_ok(),
+        _ => false,
+    }
+}
+
+/// Diagnostic authority label: publication, or netmap serial.
+pub(super) fn label(snapshot: &ExecutionSnapshot) -> String {
+    match snapshot.netmap_ref() {
+        Some(netmap) => format!("netmap:{}", netmap.serial.get()),
+        None => snapshot.reference().execution_publication.to_string(),
+    }
 }

@@ -332,7 +332,7 @@ impl Gateway {
                         .lock()
                         .unwrap()
                         .saturating_duration_since(tokio::time::Instant::now())),
-                    admit_adjacency(
+                    meshway_policy::admission::admit_adjacency(
                         identity.snapshot().configuration().unwrap(),
                         link.fact.peer,
                         &link.fact.carrier,

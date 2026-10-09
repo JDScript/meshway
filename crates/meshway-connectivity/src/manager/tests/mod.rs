@@ -17,6 +17,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 #[cfg(target_os = "linux")]
 mod linux_resources;
 mod local_endpoints;
+mod netmap;
 mod reattachment;
 mod regression;
 mod resources;

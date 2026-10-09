@@ -453,6 +453,16 @@ impl Fixture {
     }
 }
 
+/// An installed epoch for driving owners directly; `generation` must exceed
+/// the previous one's.
+pub(in crate::manager) fn epoch(identity: &DataPlaneIdentity, generation: u64) -> super::Epoch {
+    super::Epoch {
+        identity: identity.clone(),
+        plan: crate::plan::Plan::new(identity.snapshot()).unwrap(),
+        generation: meshway_model::Sequence::new(generation).unwrap(),
+    }
+}
+
 pub(in crate::manager) fn carriers(
     identity: &DataPlaneIdentity,
 ) -> BTreeMap<meshway_model::NodeId, crate::Carrier> {

@@ -11,6 +11,8 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub(crate) struct Scope {
     pub snapshot: ExecutionSnapshot,
+    /// Adjacency input of the same epoch as `snapshot`.
+    pub plan: std::sync::Arc<crate::plan::Plan>,
     pub cancellation: CancellationToken,
     pub deadline: Instant,
     pub edge: Option<(NodeId, Carrier)>,
@@ -20,15 +22,7 @@ pub(crate) struct Scope {
 impl Scope {
     fn edge_deadline(&self) -> Result<u64, Error> {
         match &self.edge {
-            Some((peer, carrier)) => meshway_policy::admission::admit_adjacency(
-                self.snapshot
-                    .configuration()
-                    .map_err(|_| Error::Authority)?,
-                *peer,
-                carrier,
-                self.snapshot.now_ms().map_err(|_| Error::Authority)?,
-            )
-            .map_err(|_| Error::Authority),
+            Some((peer, carrier)) => self.plan.admit(&self.snapshot, *peer, carrier),
             None => Ok(self.snapshot.expires_at_ms()),
         }
     }
@@ -271,14 +265,14 @@ impl Opening {
 /// The physical gate follows only Manager-approved epochs. It is NEVER a
 /// SendLifetime: every accepted output instead retains its frozen Scope.
 pub(crate) struct Physical {
-    epochs: tokio::sync::watch::Receiver<meshway_authority::DataPlaneIdentity>,
+    epochs: tokio::sync::watch::Receiver<crate::manager::Epoch>,
     stop: CancellationToken,
     read: futures_util::task::AtomicWaker,
     write: futures_util::task::AtomicWaker,
 }
 impl Physical {
     pub fn new(
-        epochs: tokio::sync::watch::Receiver<meshway_authority::DataPlaneIdentity>,
+        epochs: tokio::sync::watch::Receiver<crate::manager::Epoch>,
         stop: CancellationToken,
     ) -> Self {
         Self {
@@ -298,6 +292,7 @@ impl Physical {
         }
         self.epochs
             .borrow()
+            .identity
             .snapshot()
             .ensure_current()
             .map_err(|_| Error::Authority)
@@ -311,7 +306,8 @@ impl Physical {
         if self.stop.is_cancelled() {
             return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
-        let identity = self.epochs.borrow();
+        let epoch = self.epochs.borrow();
+        let identity = &epoch.identity;
         if identity.snapshot().ensure_current().is_ok() {
             return Poll::Ready(Ok(()));
         }

@@ -83,9 +83,12 @@ async fn recovery_probe_and_challenge_bind_registered_peer_channel_role_and_outs
     let fixture = fixture::Fixture::builder().build().await;
     let ids = fixture.ids();
     let carrier = fixture::carriers(&fixture.identities[0])[&ids[1]].clone();
-    let (_, intro) = Initiation::new(&fixture.identities[0], &carrier).unwrap();
-    let a = fixture.identities[0].snapshot().configuration().unwrap();
-    let b = fixture.identities[1].snapshot().configuration().unwrap();
+    let (pa, pb) = (
+        Plan::new(fixture.identities[0].snapshot()).unwrap(),
+        Plan::new(fixture.identities[1].snapshot()).unwrap(),
+    );
+    let (a, b) = (&*pa, &*pb);
+    let (_, intro) = Initiation::new(&fixture.identities[0], a, &carrier).unwrap();
     let (_, _, init) = adjacency::incoming(b, &[(ids[0], carrier.clone())], &intro).unwrap();
     let old = init.respond().unwrap();
     let probe = adjacency::nonce().unwrap();

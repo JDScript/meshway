@@ -74,14 +74,14 @@ impl Initiation {
     /// possessing its transient transcript. The fresh probe nonce becomes the
     /// client challenge; a NEW server nonce and a signed ACK are still required.
     pub fn from_probe(
-        cfg: &NodeConfiguration,
+        cfg: &Plan,
         peer: NodeId,
         carrier: &Carrier,
         body: &[u8],
     ) -> Result<([u8; 32], Self), Error> {
         if carrier.protocol != meshway_transport_spec::TransportProtocol::NativeUdp
             || carrier.dialer != peer
-            || carrier.listener != cfg.node_id
+            || carrier.listener != cfg.node
             || body.len() != 160
         {
             return Err(Error::Authentication);
@@ -103,19 +103,20 @@ impl Initiation {
         Ok((channel, Self { context, client }))
     }
 
-    pub fn new(identity: &DataPlaneIdentity, carrier: &Carrier) -> Result<(Self, Vec<u8>), Error> {
-        Self::new_bound(identity, carrier, None)
+    pub fn new(
+        identity: &DataPlaneIdentity,
+        cfg: &Plan,
+        carrier: &Carrier,
+    ) -> Result<(Self, Vec<u8>), Error> {
+        Self::new_bound(identity, cfg, carrier, None)
     }
 
     pub fn new_bound(
         identity: &DataPlaneIdentity,
+        cfg: &Plan,
         carrier: &Carrier,
         binding: Option<meshway_model::Digest>,
     ) -> Result<(Self, Vec<u8>), Error> {
-        let cfg = identity
-            .snapshot()
-            .configuration()
-            .map_err(|_| Error::Authority)?;
         let context = bound_context(cfg, carrier, binding)?;
         let client = nonce()?;
         let signature = identity
@@ -135,12 +136,7 @@ impl Initiation {
         })
     }
 
-    pub fn challenge(
-        &self,
-        cfg: &NodeConfiguration,
-        peer: NodeId,
-        body: &[u8],
-    ) -> Result<Transcript, Error> {
+    pub fn challenge(&self, cfg: &Plan, peer: NodeId, body: &[u8]) -> Result<Transcript, Error> {
         let server = parse_response(body, &self.context, &self.client)?;
         let transcript = Transcript {
             context: self.context.clone(),
@@ -153,7 +149,7 @@ impl Initiation {
 }
 
 pub(crate) fn incoming(
-    cfg: &NodeConfiguration,
+    cfg: &Plan,
     carriers: &[(NodeId, Carrier)],
     intro: &[u8],
 ) -> Result<(NodeId, Carrier, Initiation), Error> {
@@ -177,7 +173,7 @@ pub(crate) fn incoming(
 }
 
 fn bound_context(
-    cfg: &NodeConfiguration,
+    cfg: &Plan,
     carrier: &Carrier,
     binding: Option<meshway_model::Digest>,
 ) -> Result<Vec<u8>, Error> {
@@ -190,7 +186,7 @@ fn bound_context(
 }
 
 pub(crate) fn incoming_bound(
-    cfg: &NodeConfiguration,
+    cfg: &Plan,
     peer: NodeId,
     carrier: &Carrier,
     binding: meshway_model::Digest,
@@ -223,7 +219,7 @@ impl Transcript {
     /// may use the result. Channel compare-and-replace remains the manager's job.
     pub fn probe_challenge(
         &self,
-        cfg: &NodeConfiguration,
+        cfg: &Plan,
         peer: NodeId,
         probe: [u8; 32],
         body: &[u8],
@@ -260,13 +256,7 @@ impl Transcript {
         Ok(response(&self.context, &self.client, &self.server, proof))
     }
 
-    pub fn verify(
-        &self,
-        cfg: &NodeConfiguration,
-        peer: NodeId,
-        kind: Kind,
-        body: &[u8],
-    ) -> Result<(), Error> {
+    pub fn verify(&self, cfg: &Plan, peer: NodeId, kind: Kind, body: &[u8]) -> Result<(), Error> {
         if !matches!(kind, Kind::Challenge | Kind::Ack | Kind::Ready)
             || parse_response(body, &self.context, &self.client)? != self.server
         {
@@ -305,7 +295,7 @@ impl Transcript {
 
     pub fn verify_health(
         &self,
-        cfg: &NodeConfiguration,
+        cfg: &Plan,
         peer: NodeId,
         kind: Kind,
         body: &[u8],
