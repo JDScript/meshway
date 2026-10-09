@@ -139,6 +139,8 @@ pub enum Unavailability {
     Runtime,
     #[error("operating system entropy is unavailable")]
     Entropy,
+    #[error("the Node's netmap is unavailable")]
+    Netmap,
 }
 
 /// Why a storage operation failed. Labels name a table/column or operation,

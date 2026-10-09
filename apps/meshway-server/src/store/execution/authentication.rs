@@ -578,7 +578,13 @@ pub(crate) fn rotate(
         ],
     )?;
     revoke_execution(tx, sealer, c.network_id, c.node_id, now)?;
-    let netmap = crate::store::netmap::recompile(tx, sealer, c.network_id, now)?;
+    let netmap = crate::store::netmap::recompile(
+        tx,
+        sealer,
+        c.network_id,
+        now,
+        crate::store::netmap::Trigger::Node,
+    )?;
     let mut effects = vec![
         Effect::Authorization {
             network_id: c.network_id,

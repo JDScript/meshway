@@ -7,6 +7,7 @@
 //! out. Every answer carries a fresh lease for the current netmap. Content is
 //! stored by `store::netmap` and only changes in stable-input transactions.
 mod hub;
+pub(crate) mod signing;
 mod sync;
 
 pub(crate) use hub::Hub;
@@ -70,6 +71,7 @@ pub struct Netmaps {
     boot: InstanceId,
     hub: Arc<Hub>,
     facts: Arc<dyn PeerFactsSource>,
+    signer: Arc<signing::NetmapSigningKey>,
     timing: SyncTiming,
 }
 
@@ -80,6 +82,7 @@ impl Netmaps {
         boot: InstanceId,
         hub: Arc<Hub>,
         facts: Arc<dyn PeerFactsSource>,
+        signer: Arc<signing::NetmapSigningKey>,
         timing: SyncTiming,
     ) -> Self {
         Self {
@@ -88,6 +91,7 @@ impl Netmaps {
             boot,
             hub,
             facts,
+            signer,
             timing,
         }
     }
@@ -144,16 +148,28 @@ impl Netmaps {
         token: [u8; 32],
         request: &SyncRequest,
     ) -> Result<(SyncResponse, Option<PeerFactsChanged>), Error> {
-        let (sealer, boot, facts, validity) = (
+        let (sealer, boot, facts, signer, validity) = (
             self.sealer.clone(),
             self.boot,
             self.facts.clone(),
+            self.signer.clone(),
             self.timing.validity,
         );
         let request = request.clone();
         self.handle
             .read(move |tx| {
-                sync::read(tx, &sealer, boot, token, &request, facts.as_ref(), validity)
+                sync::read(
+                    tx,
+                    &sealer,
+                    boot,
+                    token,
+                    &request,
+                    facts.as_ref(),
+                    &sync::Issue {
+                        signer: &signer,
+                        validity,
+                    },
+                )
             })
             .await
     }

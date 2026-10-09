@@ -12,6 +12,7 @@ slow-timeout = "20s"
 default-filter = '''not (
     test(=app::tests::connectivity::expiry::per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs)
   | test(=app::tests::netmap::commit::a_netmap_above_the_safety_bound_rejects_the_version)
+  | test(=app::tests::netmap::commit::a_node_triggered_netmap_above_the_bound_is_unavailable_not_a_configuration_error)
   | test(=app::tests::resources::lifecycle::startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket)
   | test(=background_expiry_and_session_revocation_never_renew_diagnostic_authority)
   | test(=client::tests::stream_has_per_frame_idle_limit_instead_of_overall_request_deadline)

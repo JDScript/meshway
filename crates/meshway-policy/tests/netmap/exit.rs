@@ -323,7 +323,8 @@ fn selection_identity_changes_on_switch_and_survives_unrelated_revisions() {
     let renewed = compile_with(&s, &previous(&first), Revision::new(7).unwrap());
     assert_eq!(selection(&first), selection(&renewed));
     assert_eq!(first.nodes, renewed.nodes);
-    s.selection_versions.insert(node(1), 2);
+    s.selection_versions
+        .insert(node(1), meshway_model::Version::new(2).unwrap());
     let switched = netmaps(&s);
     assert_ne!(selection(&first), selection(&switched));
     // The exit recomputes the source's selection from its own projection.

@@ -18,16 +18,15 @@ pub struct ExitInputs {
 #[derive(Clone, Copy)]
 pub(super) enum Facts<'a> {
     Runtime(&'a ExitInputs),
-    Stable(&'a BTreeMap<NodeId, u64>),
+    Stable(&'a BTreeMap<NodeId, meshway_model::Version>),
 }
 
 impl Facts<'_> {
     pub fn selection(self, node: NodeId) -> u64 {
         match self {
-            Self::Runtime(runtime) => runtime.selection_generations.get(&node),
-            Self::Stable(versions) => versions.get(&node),
+            Self::Runtime(runtime) => runtime.selection_generations.get(&node).copied(),
+            Self::Stable(versions) => versions.get(&node).map(|version| version.get()),
         }
-        .copied()
         .unwrap_or(0)
     }
 }

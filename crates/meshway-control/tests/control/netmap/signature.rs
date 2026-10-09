@@ -4,7 +4,10 @@ use super::{
     HOUR, enrolled,
     support::{Facts, Script, compiled, full, server_key, sign, sign_with},
 };
-use crate::{Control, Server, faults::Proxy};
+use crate::{
+    Control, Server,
+    faults::{Fault, Proxy},
+};
 use ed25519_dalek::SigningKey;
 use meshway_control::Error;
 use meshway_model::{Digest, Version};
@@ -102,15 +105,18 @@ async fn tampered_digest_lease_signature_key_or_node_are_rejected_without_state_
 #[tokio::test]
 async fn unpinned_binding_accepts_no_netmap() {
     let server = Server::start().await;
+    let proxy = Proxy::start(&server.origin).await;
     let owner = server.owner().await;
     let mut control = Control::open(
         &server.path("unpinned"),
-        &server.origin,
+        &proxy.origin,
         meshway_control_client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
     .unwrap();
+    // The Server always pins its key; an unpinned binding is a rewritten one.
+    proxy.fault("/redeem", Fault::NoServerKey);
     let binding = server.enroll(&owner, &mut control, "unpinned").await;
     assert_eq!(binding.server_signing_key, None);
     control.authenticate().await.unwrap();

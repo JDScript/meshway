@@ -9518,6 +9518,30 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NetmapSignature": {
+        "type": "object",
+        "description": "Server signature over `netmap_lease_transcript(network, node, lease, Server, keyId, keyGeneration)`.",
+        "required": [
+          "keyId",
+          "keyGeneration",
+          "signature"
+        ],
+        "properties": {
+          "keyGeneration": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Generation of the signing key."
+          },
+          "keyId": {
+            "$ref": "#/components/schemas/KeyId",
+            "description": "Signing key; must equal the key pinned at enrollment."
+          },
+          "signature": {
+            "type": "string",
+            "description": "Unpadded base64url Ed25519 signature (64 bytes, 86 characters); public, not a secret."
+          }
+        },
+        "additionalProperties": false
+      },
       "NetworkActions": {
         "type": "object",
         "description": "Current network operation hints; mutations independently recheck authorization.",
@@ -17342,6 +17366,7 @@ export const schemaDocument = {
         "description": "Current netmap lease, netmap changes and peer-fact changes for the Node.",
         "required": [
           "lease",
+          "signature",
           "netmap",
           "peerFacts"
         ],
@@ -17364,6 +17389,10 @@ export const schemaDocument = {
                 "type": "null"
               }
             ]
+          },
+          "signature": {
+            "$ref": "#/components/schemas/NetmapSignature",
+            "description": "Server signature over this lease for the requesting Node."
           }
         },
         "additionalProperties": false

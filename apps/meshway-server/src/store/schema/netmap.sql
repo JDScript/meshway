@@ -20,3 +20,30 @@ WHEN EXISTS(SELECT 1 FROM node_netmaps WHERE network_id=NEW.network_id AND node_
 BEGIN SELECT RAISE(ABORT,'netmap serial must increase'); END;
 CREATE TRIGGER node_netmaps_immutable BEFORE UPDATE OF network_id,node_id,serial,revision,digest,dependency_digest,payload,created_at ON node_netmaps
 BEGIN SELECT RAISE(ABORT,'immutable netmap content'); END;
+-- Over-limit Nodes excluded by a non-configuration recompilation: their
+-- netmap is unavailable until a later recompilation fits the bound again.
+CREATE TABLE node_netmap_unavailable (
+    network_id BLOB NOT NULL,
+    node_id BLOB NOT NULL,
+    reason TEXT NOT NULL CHECK(reason='limit'),
+    since INTEGER NOT NULL CHECK(since>=0),
+    PRIMARY KEY(network_id,node_id),
+    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
+) STRICT;
+-- The Server's netmap signing keys. The private key is sealed with the master
+-- key and bound to its ID and generation; exactly one key is current.
+CREATE TABLE server_signing_keys (
+    id BLOB NOT NULL PRIMARY KEY CHECK(length(id)=16 AND id!=zeroblob(16)),
+    purpose TEXT NOT NULL CHECK(purpose='netmap'),
+    generation INTEGER NOT NULL CHECK(generation BETWEEN 1 AND 9007199254740991),
+    public_key BLOB NOT NULL UNIQUE CHECK(length(public_key)=32 AND public_key!=zeroblob(32)),
+    private_key BLOB NOT NULL,
+    created_at INTEGER NOT NULL CHECK(created_at>=0),
+    retired_at INTEGER CHECK(retired_at>=created_at),
+    UNIQUE(purpose,generation)
+) STRICT;
+CREATE UNIQUE INDEX server_signing_keys_current ON server_signing_keys(purpose) WHERE retired_at IS NULL;
+CREATE TRIGGER server_signing_keys_immutable BEFORE UPDATE OF id,purpose,generation,public_key,private_key,created_at ON server_signing_keys
+BEGIN SELECT RAISE(ABORT,'immutable signing key'); END;
+CREATE TRIGGER server_signing_keys_no_delete BEFORE DELETE ON server_signing_keys
+BEGIN SELECT RAISE(ABORT,'signing keys are retained'); END;

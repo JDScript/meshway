@@ -126,7 +126,16 @@ pub(crate) fn acquire(
     if old_caps.as_deref() != Some(caps.as_slice())
         && (old_caps.is_some() || !request.capabilities.is_empty())
     {
-        effects.extend(crate::store::netmap::recompile(tx, sealer, p.network, now)?.effects());
+        effects.extend(
+            crate::store::netmap::recompile(
+                tx,
+                sealer,
+                p.network,
+                now,
+                crate::store::netmap::Trigger::Node,
+            )?
+            .effects(),
+        );
     }
     Ok((result, effects))
 }

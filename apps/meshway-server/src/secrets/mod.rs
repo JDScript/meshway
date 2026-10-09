@@ -174,6 +174,22 @@ impl Sealer {
     ) -> Result<Plaintext, SealError> {
         self.decrypt(&netmap_context(network, node, serial), protected)
     }
+    pub(crate) fn seal_signing_key(
+        &self,
+        id: KeyId,
+        generation: meshway_model::Version,
+        plaintext: &[u8],
+    ) -> Result<ProtectedBytes, SealError> {
+        self.encrypt(&signing_key_context(id, generation), plaintext)
+    }
+    pub(crate) fn open_signing_key(
+        &self,
+        id: KeyId,
+        generation: meshway_model::Version,
+        protected: &[u8],
+    ) -> Result<Plaintext, SealError> {
+        self.decrypt(&signing_key_context(id, generation), protected)
+    }
     pub(crate) fn seal(
         &self,
         network: NetworkId,
@@ -268,6 +284,13 @@ fn context(network: NetworkId, revision: Revision, purpose: Purpose) -> Vec<u8> 
     bytes
 }
 
+fn signing_key_context(id: KeyId, generation: meshway_model::Version) -> Vec<u8> {
+    let mut bytes = b"server-signing-key/netmap/v1\0".to_vec();
+    bytes.extend_from_slice(id.as_uuid().as_bytes());
+    bytes.extend_from_slice(&generation.get().to_be_bytes());
+    bytes
+}
+
 fn netmap_context(
     network: NetworkId,
     node: meshway_model::NodeId,
@@ -336,7 +359,7 @@ fn decode_key(bytes: &[u8]) -> Result<Sealer, KeyError> {
     Ok(Sealer { id, key })
 }
 
-fn random_key_id() -> Result<KeyId, SealError> {
+pub(crate) fn random_key_id() -> Result<KeyId, SealError> {
     let mut bytes = [0; 16];
     getrandom::fill(&mut bytes).map_err(|_| SealError::Random)?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;

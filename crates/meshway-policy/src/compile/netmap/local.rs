@@ -182,7 +182,10 @@ impl Local {
             input.rule_sets,
             node,
             &profile,
-            input.selection_versions.get(&node).copied().unwrap_or(0),
+            input
+                .selection_versions
+                .get(&node)
+                .map_or(0, |version| version.get()),
         )?;
         let enabled = cfg.nodes[&node].enabled;
         let plan = match matching::dns_egress(cfg, &profile) {

@@ -61,7 +61,13 @@ pub(crate) fn revoke_key(
     let mut effects = Vec::new();
     if current {
         revoke_execution(tx, sealer, network, node, now)?;
-        let netmap = crate::store::netmap::recompile(tx, sealer, network, now)?;
+        let netmap = crate::store::netmap::recompile(
+            tx,
+            sealer,
+            network,
+            now,
+            crate::store::netmap::Trigger::Node,
+        )?;
         effects.extend([
             Effect::Authorization {
                 network_id: network,

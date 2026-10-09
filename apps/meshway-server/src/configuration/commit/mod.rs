@@ -401,7 +401,13 @@ impl Committer {
         )?;
         // Netmaps are part of the version: the same transaction stores every
         // changed Node's next serial, or rejects the version.
-        let netmap = store::netmap::recompile(tx, &self.sealer, network, now)?;
+        let netmap = store::netmap::recompile(
+            tx,
+            &self.sealer,
+            network,
+            now,
+            store::netmap::Trigger::Configuration,
+        )?;
         let publication_ids = vec![publication.publication];
         let target_node_ids: BTreeSet<NodeId> = publication.nodes.keys().copied().collect();
         let execution_targets = store::execution::configuration_targets(

@@ -288,3 +288,103 @@ async fn a_netmap_above_the_safety_bound_rejects_the_version() {
     );
     app.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_node_triggered_netmap_above_the_bound_is_unavailable_not_a_configuration_error() {
+    use meshway_model::netmap::MAX_NETMAP_BYTES;
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, b, ak, bk, signer_a, signer_b) = fixture().await;
+    let owner = owner(&app).await;
+    let size = |netmap: CompiledNetmap| netmap.netmap.encoded_len().unwrap();
+    let base = size(load(&app, network, a).await).max(size(load(&app, network, b).await));
+    let capabilities: BTreeMap<String, meshway_model::state::Capability> = (0..32)
+        .map(|index| {
+            (
+                format!("feature:{index:02}{}", "y".repeat(52)),
+                meshway_model::state::Capability::Feature { version: 1 },
+            )
+        })
+        .collect();
+    // a's netmap carries its capabilities twice (self keys and inventory), b's
+    // once. One more tag adds its name plus 6 bytes to every projection: fill
+    // both so that only a crosses the bound.
+    let margin = serde_json::to_vec(&capabilities).unwrap().len() * 3 / 2;
+    let name = format!(
+        "tag:{}",
+        "x".repeat(MAX_NETMAP_BYTES - base - margin - 6 - 4)
+    );
+    edit(
+        &app,
+        &owner,
+        network,
+        vec![ConfigurationOperation::ReplaceTagsOwners {
+            tags_owners: BTreeMap::from([("tag:test".into(), vec![]), (name, vec![])]),
+        }],
+    )
+    .await
+    .unwrap();
+    assert!(size(load(&app, network, a).await) <= MAX_NETMAP_BYTES);
+
+    // a authenticates 32 long capabilities: its own netmap carries them twice
+    // (self keys and inventory) and crosses the bound. Acquire still succeeds.
+    let token = session(&app.execution(), network, a, &ak, &signer_a).await;
+    app.execution()
+        .acquire(
+            token.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: InstanceId::new(random_uuid().unwrap()).unwrap(),
+                capabilities,
+            },
+        )
+        .await
+        .unwrap();
+    // Only a is excluded; b is compiled without a, which it no longer trusts.
+    assert_eq!(current(&app, network, a).await, None);
+    assert!(
+        !load(&app, network, b)
+            .await
+            .netmap
+            .projection
+            .inventory
+            .contains_key(&a)
+    );
+    let error = app
+        .netmaps()
+        .sync(token.token.expose(), holding(None))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            crate::error::Error::Unavailable(crate::error::Unavailability::Netmap)
+        ),
+        "{error:?}"
+    );
+    let b_token = session(&app.execution(), network, b, &bk, &signer_b).await;
+    assert!(
+        app.netmaps()
+            .sync(b_token.token.expose(), holding(None))
+            .await
+            .is_ok()
+    );
+
+    // A version that fits again restores both netmaps.
+    edit(
+        &app,
+        &owner,
+        network,
+        vec![ConfigurationOperation::ReplaceTagsOwners {
+            tags_owners: BTreeMap::from([("tag:test".into(), vec![])]),
+        }],
+    )
+    .await
+    .unwrap();
+    assert!(current(&app, network, a).await.is_some());
+    assert!(
+        app.netmaps()
+            .sync(token.token.expose(), holding(None))
+            .await
+            .is_ok()
+    );
+    app.shutdown().await.unwrap();
+}
