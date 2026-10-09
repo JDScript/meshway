@@ -1140,6 +1140,15 @@ impl SecureNode {
             return Err(Error::Context);
         }
         let hop = admitted.hop;
+        if let Hop::Forward(next) = hop
+            && !self.carriers.contains_key(&next)
+        {
+            // A relay without a carrier to the next hop consumes nothing: it
+            // asks for that adjacency, and the origin's paced retry of the
+            // same INIT is admitted afresh once it exists.
+            self.first.interest(next);
+            return Err(Error::Unsupported);
+        }
         let mut circuit = Circuit::new(
             frame.context.clone(),
             State::RelayAwaiting,
@@ -1225,13 +1234,6 @@ impl SecureNode {
             // or final authority failure must not allow a second Noise owner for
             // the same CID. Keep the responder failure tombstone.
             circuit.retire_for("handshake", "initial_output_failed");
-        }
-        if let Err(Error::Unsupported) = &result
-            && let Hop::Forward(next) = hop
-        {
-            // A relay without a carrier to the next hop asks for that adjacency;
-            // the origin's paced INIT retry then finds it.
-            self.first.interest(next);
         }
         self.restore(id, Box::new(circuit), reading);
         self.maintenance.changed();

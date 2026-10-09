@@ -416,3 +416,38 @@ async fn dead_circuit_record_is_reclaimed_after_its_init_window() {
     assert_eq!(f.r.dead_circuits(), 0);
     f.close().await;
 }
+
+#[tokio::test]
+async fn relay_without_next_hop_registers_interest_and_admits_the_retried_init() {
+    let mut f = NetmapMesh::start().await;
+    let [a, _, b] = f.ids();
+    let (ar, rb) = (f.ar.carrier.clone(), f.rb.carrier.clone());
+    f.r.set_carriers(BTreeMap::from([(a, ar.clone())])).unwrap();
+    let packet = f.mesh_udp(false, 42424);
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("first packet")
+    };
+    let id = init.circuit();
+    assert!(matches!(
+        f.r.receive(&f.ar.carrier, wire(init)),
+        Err(Error::Unsupported)
+    ));
+    let interests = f.r.take_adjacency_interests();
+    assert_eq!(interests.len(), 1);
+    assert_eq!(interests[0].peer, b);
+    // Nothing was consumed: no circuit and no dead record for this CID.
+    assert_eq!(f.r.retained_circuits(), 0);
+    assert_eq!(f.r.dead_circuits(), 0);
+    f.r.set_carriers(BTreeMap::from([(a, ar), (b, rb)]))
+        .unwrap();
+    let due = f.a.handshake_retry_at(id).unwrap().unwrap();
+    tokio::time::sleep_until(due.into()).await;
+    let retry = f.a.retry_handshake(id).unwrap().unwrap();
+    assert_eq!(f.finish_handshake(retry).await, id);
+    let mut flushed = f.a.flush();
+    let Ok(Flushed::Send(job)) = flushed.remove(0) else {
+        panic!("queued packet")
+    };
+    delivered(&mut f, sealed(job));
+    f.close().await;
+}

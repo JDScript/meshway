@@ -306,13 +306,15 @@ impl SecureNode {
     }
 
     /// Swap in an accepted snapshot: drop correlations of the old one, keep
-    /// only carriers the new content admits, and mint a new output section.
+    /// only carriers new netmap content admits, and mint a new output section.
     fn install(&mut self, identity: DataPlaneIdentity, reading: &View<'_>) {
-        let mut carriers = std::mem::take(&mut self.carriers);
-        carriers.retain(|peer, carrier| {
-            authorization::adjacency(&mut self.engine.decisions, reading, *peer, carrier)
-        });
-        self.carriers = carriers;
+        if reading.netmap().is_some() {
+            let mut carriers = std::mem::take(&mut self.carriers);
+            carriers.retain(|peer, carrier| {
+                authorization::adjacency(&mut self.engine.decisions, reading, *peer, carrier)
+            });
+            self.carriers = carriers;
+        }
         self.probes.retain_current();
         self.engine.snapshot = identity.snapshot().clone();
         self.identity = identity;
