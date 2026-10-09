@@ -165,7 +165,10 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
     );
     mesh.reconcile(&f);
     for node in [&mesh.a, &mesh.r, &mesh.e] {
-        assert!(node.circuit_info(mesh.circuit).unwrap().is_some());
+        assert_eq!(
+            node.circuit_info(mesh.circuit).unwrap().unwrap().state,
+            meshway_dataplane::secure::CircuitState::Established
+        );
     }
     assert_eq!(mesh.a.retained_flows(), 1);
     assert_eq!(mesh.e.retained_flows(), 1);
@@ -221,7 +224,10 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
     assert_ne!(references, retired);
     mesh.reconcile(&f);
     for node in [&mesh.a, &mesh.r, &mesh.e] {
-        assert!(node.circuit_info(mesh.circuit).unwrap().is_none());
+        assert_eq!(
+            node.circuit_info(mesh.circuit).unwrap().unwrap().state,
+            meshway_dataplane::secure::CircuitState::Closed
+        );
     }
     eprintln!(
         "X4B_STOPPED sequence={:?} publications={retired:?}",
