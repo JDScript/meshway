@@ -14,7 +14,7 @@ from node_lab import ROOT, check_elf, docker_target, run, sha256
 from verify_tun import pinned_image
 from verify_runtime import record_load
 from verification_sources import fingerprint as source_fingerprint
-from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact, run_id, bind_access_options, export_evidence
+from validation_support import build_lock, cargo_target, fixture_options, report_directory, save_artifact, import_artifact, run_id, bind_access_options, export_evidence
 
 
 def fingerprint():
@@ -37,7 +37,7 @@ def main():
     for directory in ("bin", "public", "controller", "signals"):
         (report / directory).mkdir(parents=True)
     before = fingerprint()
-    env = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / "target/node-kernel-tests"), CARGO_INCREMENTAL="0")
+    env = dict(os.environ, CARGO_TARGET_DIR=str(cargo_target()), CARGO_INCREMENTAL="0")
     binary = report / "bin/meshway-packet-fixture"
     if args.artifacts:
         import_artifact(args.artifacts, binary, before, target, platform, machine)
