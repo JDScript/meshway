@@ -1,8 +1,193 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T02:32:04.144978+00:00",
+  "updatedAt": "2026-10-09T02:58:29.439600+00:00",
   "runs": [
+    {
+      "id": 37876269814,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "4880e5160000fd9f25e6e36569953321ce6232f3",
+      "message": "docs(changelog): record X3 preflight and X3a",
+      "createdAt": "2026-10-09T02:47:59Z",
+      "updatedAt": "2026-10-09T02:56:18Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37876269814",
+      "jobs": [
+        {
+          "id": 113646461135,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-09T02:56:17Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269814/job/113646461135"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 37876269807,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "4880e5160000fd9f25e6e36569953321ce6232f3",
+      "message": "docs(changelog): record X3 preflight and X3a",
+      "createdAt": "2026-10-09T02:47:59Z",
+      "updatedAt": "2026-10-09T02:56:18Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/37876269807",
+      "jobs": [
+        {
+          "id": 113645499218,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T02:48:02Z",
+          "completedAt": "2026-10-09T02:55:55Z",
+          "seconds": 473.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269807/job/113645499218"
+        },
+        {
+          "id": 113645499538,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T02:51:52Z",
+          "completedAt": "2026-10-09T02:56:17Z",
+          "seconds": 265.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269807/job/113645499538"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11593036119,
+          "name": "node-aarch64-unknown-linux-musl-4880e5160000fd9f25e6e36569953321ce6232f3",
+          "bytes": 7862691,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269807/artifacts/11593036119",
+          "jobId": 113645499218,
+          "runner": "mars-epyc7543",
+          "seconds": 473.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 13604984,
+              "sha256": "80d0e5d1f56930cedff7262d7467827e82dcf698f48b5c41c7dbb53f513053aa"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1618808,
+              "sha256": "6936e773b05d904cbd076f8e4e7d39e69dd043f2da7356735e562feb46a04e78"
+            }
+          ]
+        },
+        {
+          "id": 11592532870,
+          "name": "node-x86_64-unknown-linux-musl-4880e5160000fd9f25e6e36569953321ce6232f3",
+          "bytes": 8347265,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269807/artifacts/11592532870",
+          "jobId": 113645499538,
+          "runner": "planck",
+          "seconds": 265.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16297640,
+              "sha256": "9333b136c8ee2d068a53a6688a287022db43d58c7a0437b171d29287733597af"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1833344,
+              "sha256": "772b8d6e7d46d7cf9a0209efaa0368665182d9b78cc83462b549dd41218aeb72"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 37876269706,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "4880e5160000fd9f25e6e36569953321ce6232f3",
+      "message": "docs(changelog): record X3 preflight and X3a",
+      "createdAt": "2026-10-09T02:47:59Z",
+      "updatedAt": "2026-10-09T02:49:34Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/37876269706",
+      "jobs": [
+        {
+          "id": 113645499246,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T02:48:02Z",
+          "completedAt": "2026-10-09T02:48:17Z",
+          "seconds": 15.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269706/job/113645499246"
+        },
+        {
+          "id": 113645575041,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T02:48:19Z",
+          "completedAt": "2026-10-09T02:49:31Z",
+          "seconds": 72.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269706/job/113645575041"
+        },
+        {
+          "id": 113645575101,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-09T02:49:33Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269706/job/113645575101"
+        },
+        {
+          "id": 113645575950,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-09T02:48:17Z",
+          "completedAt": "2026-10-09T02:48:17Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37876269706/job/113645575950"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 37873385530,
       "attempt": 1,
@@ -108,24 +293,124 @@
       "commit": "71c1edcf1dbfbe7552732c69c35c9eab4fea7958",
       "message": "test(server): converge on expiry projection instead of asserting at the deadline instant",
       "createdAt": "2026-10-09T02:11:31Z",
-      "updatedAt": "2026-10-09T02:21:37Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-09T02:51:52Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/37873385454",
       "jobs": [
         {
           "id": 113636275770,
           "name": "matrix",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-09T02:21:36Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-09T02:51:51Z",
+          "seconds": 1815.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37873385454/job/113636275770"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 11593055554,
+          "name": "validate-matrix-37873385454",
+          "bytes": 441161,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37873385454/artifacts/11593055554",
+          "jobId": 113636275770,
+          "runner": "planck",
+          "seconds": 1815.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261009T022143Z-7268e2c6",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261009T022510Z-3f5ebeb7",
+                  "seconds": 0.771,
+                  "load": "7.31/5.52/4.03"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261009T022510Z-8ebb0485",
+                  "seconds": 485.303,
+                  "load": "7.31/5.52/4.03"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261009T022510Z-b231cc2a",
+                  "seconds": 540.276,
+                  "load": "7.31/5.52/4.03"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261009T022510Z-db649e37",
+                  "seconds": 504.856,
+                  "load": "7.31/5.52/4.03"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": true,
+                  "reportId": "20261009T022511Z-92e3139e",
+                  "seconds": 509.628,
+                  "load": "7.29/5.54/4.04"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261009T023315Z-bd47eab1",
+                  "seconds": 482.088,
+                  "load": "1.27/3.18/3.67"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261009T023335Z-8b9366dc",
+                  "seconds": 536.258,
+                  "load": "2.28/3.28/3.70"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261009T023340Z-d243d7fc",
+                  "seconds": 538.316,
+                  "load": "2.34/3.28/3.69"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261009T023410Z-8aca97f0",
+                  "seconds": 535.146,
+                  "load": "3.05/3.37/3.71"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": true,
+                  "reportId": "20261009T024117Z-3835f0e0",
+                  "seconds": 580.8,
+                  "load": "4.52/3.94/3.83"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": true,
+                  "reportId": "20261009T024231Z-2f0c3284",
+                  "seconds": 555.928,
+                  "load": "3.76/3.87/3.81"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
     },
     {
       "id": 37873385446,
