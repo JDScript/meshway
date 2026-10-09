@@ -56,8 +56,12 @@ impl Retry {
 pub(super) struct Subscriptions {
     entries: BTreeMap<ObservationSubscriptionId, Subscription>,
     cursor: Option<ObservationSubscriptionId>,
+    refresh: bool,
 }
 impl Subscriptions {
+    pub fn take_refresh(&mut self) -> bool {
+        std::mem::take(&mut self.refresh)
+    }
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -256,6 +260,8 @@ impl Subscriptions {
                 .await;
                 match result {
                     Ok(Ok(response)) => {
+                        self.refresh |=
+                            control.status().cached.as_ref() != Some(&response.task.configuration);
                         tracing::info!(subscription = %id, observation = %response.task.id,
                             publication = %response.task.configuration.execution_publication,
                             phase = ?response.task.phase,
@@ -338,6 +344,8 @@ impl Subscriptions {
                     .await
                     {
                         Ok(Ok(response)) => {
+                            self.refresh |= control.status().cached.as_ref()
+                                != Some(&response.task.configuration);
                             if !entry.intent.current() || entry.local.cancellation.is_cancelled() {
                                 entry.response = Some(response);
                                 entry.renewal = None;
@@ -368,6 +376,7 @@ impl Subscriptions {
             fail(&entry.local, PingError::Stopped);
         }
         self.entries.clear();
+        self.refresh = false;
         self.cursor = None;
     }
 }
@@ -541,6 +550,14 @@ mod tests {
                 .await
         );
         assert_eq!(fixture.creates(), before + 1);
+        assert!(
+            subscriptions.take_refresh(),
+            "a newly confirmed target must outrank old-scope gateway work"
+        );
+        assert!(
+            !subscriptions.take_refresh(),
+            "confirmation is a one-shot refresh hint"
+        );
         assert!(matches!(events.try_recv(), Ok(PingEvent::Accepted { .. })));
         worker.attached(request_id);
         subscriptions.stop();

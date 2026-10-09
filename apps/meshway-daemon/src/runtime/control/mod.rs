@@ -110,6 +110,7 @@ pub(super) async fn run(
     let mut reset = plan.retry_enrollment;
     let mut shutdown_failure = None;
     let mut pending_failure = None;
+    let mut refresh_pending = false;
     let mut observations = observations::Subscriptions::default();
     let mut events = events::Events::new(event_status);
     loop {
@@ -297,9 +298,15 @@ pub(super) async fn run(
                     // A newly queued local subscription must not sit behind an
                     // unrelated traversal/result HTTP request. Both queues keep
                     // their bounded turns before the ordinary control cycle.
-                    observations.advance(driver, network.as_mut()).await;
+                    if !refresh_pending {
+                        observations.advance(driver, network.as_mut()).await;
+                        refresh_pending |= observations.take_refresh();
+                    }
                     let requests_started = Instant::now();
                     for _ in 0..32 {
+                        // An actual target notice takes precedence over queued
+                        // work carrying the predecessor's acquisition scope.
+                        if refresh_pending { break; }
                         let request = queued.take().or_else(|| network.as_mut().and_then(|network| network.requests.try_recv().ok()));
                         let Some(request) = request else { break; };
                         if let Err(error) = network::request(driver, request).await {
@@ -317,7 +324,8 @@ pub(super) async fn run(
                     &mut reset,
                     network.as_mut(),
                     plan.enrollment_key.as_ref(),
-                ).await?;
+                 ).await?;
+                    refresh_pending = result.phase.is_none();
                     Ok::<_, failure::Failure>(result)
                 } => Some(result),
             };
@@ -376,6 +384,10 @@ pub(super) async fn run(
                         }
                         Waiting::Ping(ping) => {
                             observations.accept(ping, driver);
+                            continue;
+                        }
+                        Waiting::Refresh => {
+                            refresh_pending = true;
                             continue;
                         }
                         Waiting::Timer => continue,
@@ -458,6 +470,10 @@ pub(super) async fn run(
                             observations.accept(ping, driver);
                             continue;
                         }
+                        Waiting::Refresh => {
+                            refresh_pending = true;
+                            continue;
+                        }
                         Waiting::Timer => continue,
                         Waiting::Worker => {
                             stop(driver, false).await;
@@ -481,6 +497,7 @@ pub(super) async fn run(
         events.stop().await;
         observations.stop();
         pending_failure = None;
+        refresh_pending = false;
         if let Some(network) = &mut network {
             let _ = network.stop(false).await;
         }
@@ -559,6 +576,7 @@ enum Waiting {
     Failed(failure::Failure),
     Change,
     Timer,
+    Refresh,
     Worker,
     Request(network::Request),
     Ping(super::PingSession),
@@ -614,7 +632,7 @@ async fn wait_work(
                     // one-slot event queue coalesces actual changes during work.
                     Ok(true) => {
                         tracing::debug!(event_kind, "Node event admitted immediate refresh");
-                        return Waiting::Timer;
+                        return Waiting::Refresh;
                     },
                     Ok(false) => {
                         tracing::debug!(event_kind, "Node event already covered by current control scope");
@@ -734,7 +752,7 @@ async fn wait_work(
                             {
                                 Waiting::Change
                             } else {
-                                Waiting::Timer
+                                Waiting::Refresh
                             };
                         }
                         scheduling::Wake::Work(scheduling::Report::Sent(Err(error))) => {
@@ -769,7 +787,13 @@ async fn wait_work(
                         .await
                     {
                         scheduling::Wake::Changed => return Waiting::Change,
-                        scheduling::Wake::Work(true) => return Waiting::Timer,
+                        scheduling::Wake::Work(true) => {
+                            return if observations.take_refresh() {
+                                Waiting::Refresh
+                            } else {
+                                Waiting::Timer
+                            };
+                        }
                         scheduling::Wake::Work(false) => continue,
                         scheduling::Wake::Due => {
                             unreachable!("admitted maintenance retains its deadline")

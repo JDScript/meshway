@@ -304,7 +304,7 @@ async fn execution_target_notice_wakes_without_a_five_second_refresh_delay() {
     )
     .await;
     match result {
-        Ok(Waiting::Timer) => {}
+        Ok(Waiting::Refresh) => {}
         Ok(Waiting::Failed(failure)) => panic!("target event failed: {:?}", failure.problem),
         Ok(_) => panic!("target event did not wake the refresh cycle"),
         Err(_) => panic!("target event waited for a refresh timer"),
