@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T08:21:02.133905+00:00",
+  "updatedAt": "2026-10-09T08:24:13.079228+00:00",
   "runs": [
     {
       "id": 37904282074,
@@ -12,21 +12,54 @@
       "commit": "e9f7a47f6151b18541cfaf1cc04f8d020b2993e6",
       "message": "docs(netmap): record the five product decisions; delta distribution instead of a protocol-level size limit",
       "createdAt": "2026-10-09T08:19:49Z",
-      "updatedAt": "2026-10-09T08:20:04Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-09T08:21:31Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/37904282074",
       "jobs": [
         {
           "id": 113733943404,
           "name": "changes",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-09T08:20:03Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-09T08:20:17Z",
+          "seconds": 14.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37904282074/job/113733943404"
+        },
+        {
+          "id": 113734039416,
+          "name": "docs-and-scripts",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-09T08:20:20Z",
+          "completedAt": "2026-10-09T08:21:30Z",
+          "seconds": 70.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37904282074/job/113734039416"
+        },
+        {
+          "id": 113734040538,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-09T08:20:18Z",
+          "completedAt": "2026-10-09T08:20:18Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37904282074/job/113734040538"
+        },
+        {
+          "id": 113734041466,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-09T08:20:18Z",
+          "completedAt": "2026-10-09T08:20:18Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37904282074/job/113734041466"
         }
       ],
       "artifacts": []
