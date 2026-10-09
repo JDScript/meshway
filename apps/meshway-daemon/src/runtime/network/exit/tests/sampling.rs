@@ -61,8 +61,8 @@ async fn state(f: &Fixture) -> meshway_protocol::NodeStateView {
 async fn settled(handle: &mut Handle, f: &mut Fixture) {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let sample = handle.sample().await.unwrap();
-            if sample.report.current(&f.controls[2].status())
+            if let Ok(sample) = handle.sample().await
+                && sample.report.current(&f.controls[2].status())
                 && sample.report.completion == Some(Ok(()))
             {
                 break;

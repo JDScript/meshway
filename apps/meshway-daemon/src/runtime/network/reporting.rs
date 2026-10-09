@@ -292,7 +292,19 @@ impl super::Handle {
                 }
             }
         }
-        let sample = self.sample().await.ok();
+        let sample = match self.sample().await {
+            Ok(sample) => Some(sample),
+            Err(super::SampleError::Timeout) => {
+                // Installation can keep the worker busy beyond the sampling
+                // budget. No observation is not an observation of absence:
+                // leave the complete State, its timestamps and grants alone.
+                // Do not acknowledge this change; a later attempt samples it.
+                tracing::debug!("Runtime State sample timed out; skipping complete report");
+                return Ok(false);
+            }
+            // A closed worker is stopped, rather than temporarily unobserved.
+            Err(super::SampleError::Closed) => None,
+        };
         // Sampling also orders a pending target installation before this
         // report. Its completion can therefore arrive after cycle.finish();
         // settle that exact completion before advertising applied State.
@@ -401,6 +413,58 @@ impl super::Handle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn missing_sample_does_not_create_state_but_closed_worker_reports_stopped() {
+        let mut fixture = super::super::exit::testing::Fixture::open().await;
+        let mut worker = super::super::testing::Worker::new();
+        let settings = crate::settings::Settings::new(
+            fixture.directory.path().join("daemon"),
+            &fixture.origin,
+            Some("exit"),
+        )
+        .unwrap();
+        let path = meshway_control_client::GetNodeStatePath {
+            network_id: fixture.network,
+            node_id: fixture.nodes()[2],
+        };
+        // The bounded command channel remains open but its owner is busy.
+        assert!(
+            !worker
+                .handle
+                .report_state(&mut fixture.controls[2], &settings, true)
+                .await
+                .unwrap()
+        );
+        let view = fixture
+            .client
+            .get_node_state(&path, fixture.token.expose())
+            .await
+            .unwrap();
+        assert!(view.nodes[&path.node_id].report_sequence.is_none());
+        assert!(worker.handle.reporting.pending.is_none());
+
+        // Loss of the worker is definitive, and must still publish stopped.
+        let (closed, receiver) = tokio::sync::mpsc::channel(1);
+        drop(receiver);
+        worker.handle.commands = closed;
+        assert!(
+            worker
+                .handle
+                .report_state(&mut fixture.controls[2], &settings, true)
+                .await
+                .unwrap()
+        );
+        let view = fixture
+            .client
+            .get_node_state(&path, fixture.token.expose())
+            .await
+            .unwrap();
+        assert!(view.nodes[&path.node_id].report_sequence.is_some());
+        worker.close().await;
+        fixture.close().await;
+    }
 
     #[test]
     fn observation_times_do_not_notify_but_real_resource_changes_do() {

@@ -234,6 +234,12 @@ enum Command {
     },
 }
 
+#[derive(Debug)]
+enum SampleError {
+    Timeout,
+    Closed,
+}
+
 #[derive(Clone)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 struct ObservationPlan {
@@ -788,17 +794,17 @@ impl Handle {
         self.worker.await.map_err(|_| Problem::Worker)?
     }
 
-    async fn sample(&self) -> Result<reporting::Sample, ()> {
+    async fn sample(&self) -> Result<reporting::Sample, SampleError> {
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             let (reply, sample) = oneshot::channel();
             self.commands
                 .send(Command::Sample(reply))
                 .await
-                .map_err(|_| ())?;
-            sample.await.map_err(|_| ())
+                .map_err(|_| SampleError::Closed)?;
+            sample.await.map_err(|_| SampleError::Closed)
         })
         .await
-        .map_err(|_| ())?
+        .map_err(|_| SampleError::Timeout)?
     }
 
     pub async fn work(&mut self, report_changes: bool) -> Work {
