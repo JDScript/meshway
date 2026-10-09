@@ -513,10 +513,12 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
 
 #[tokio::test]
 async fn timed_out_admitted_send_has_one_loss_and_a_late_reply_cannot_revise_it() {
+    // C: the admitted probe's actual DEADLINE must elapse before its late
+    // receipt/reply. No setup or HTTP work occurs inside that deadline.
     let mut fixture = Fixture::open().await;
     let start = Instant::now();
     let (mid, challenge) = fixture.measurement(start);
-    tokio::time::sleep(DEADLINE + Duration::from_millis(10)).await;
+    tokio::time::sleep_until((start + DEADLINE).into()).await;
     fixture
         .owner
         .reply([7; 32], mid, challenge, fixture.channel(), Instant::now());
