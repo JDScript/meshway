@@ -309,13 +309,18 @@ async fn one_shot_rejects_ping_and_socket_must_be_private() {
 
 #[tokio::test]
 async fn stream_has_per_frame_idle_limit_instead_of_overall_request_deadline() {
+    // C: cross REQUEST_TIMEOUT (12 s), remaining inside the streaming idle
+    // budget. A shorter wait cannot distinguish one-shot and streaming reads.
     let (_directory, listener, client) = listener();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let request = crate::read(&mut stream).await.unwrap();
         send(&mut stream, &request, 0, accepted()).await;
-        // Cross the one-shot 12s deadline while remaining inside the idle limit.
-        tokio::time::sleep(Duration::from_secs(13)).await;
+        // This is an intentional quiet interval, with no setup inside it.
+        // Progress heartbeats would hide a regression using REQUEST_TIMEOUT
+        // for each frame. Cross that bound while staying inside PING_IDLE_TIMEOUT.
+        let silence = REQUEST_TIMEOUT + (PING_IDLE_TIMEOUT - REQUEST_TIMEOUT) / 3;
+        tokio::time::sleep(silence).await;
         send(
             &mut stream,
             &request,
