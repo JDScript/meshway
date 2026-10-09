@@ -37,19 +37,21 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 
 ### 文档与租约
 
-一个节点在任一时刻有一份 `NodeNetmap`（内容）和一个 `NetmapLease`（有效期）。内容只在稳定输入变化时改变；租约可在内容不变时反复续期。
+一个节点在任一时刻有一份 `NodeNetmap`（内容）和一个 `NetmapLease`（有效期）。内容只在稳定输入变化时改变；租约可在内容不变时反复续期。类型已由 N1a 冻结，字段与文档注释以源码为准：
 
-```text
-NetmapRef   = { revision, serial, digest }        // digest 覆盖完整内容，不含租约
-NetmapLease = { netmap: NetmapRef, issuedAt, expiresAt }   // expiresAt ≤ issuedAt + 24 h
-```
+| 类型 | 定义位置 | 要点 |
+| --- | --- | --- |
+| `NetmapRef { revision, serial, digest }` | `crates/meshway-model/src/netmap.rs` | `digest` 是内容摘要，不含租约、`revision`、`serial`、`dependencyDigest` |
+| `NetmapLease { netmap, issuedAt, expiresAt }` | 同上 | `NetmapLease::validate` 要求 `issuedAt < expiresAt ≤ issuedAt + 24 h`；`MIN_NETMAP_VALIDITY_MS`＝5 min、`MAX_NETMAP_BYTES`＝8 MiB |
+| `NodeNetmap`、`CompiledNetmap { digest, netmap }` | `crates/meshway-configuration/src/netmap/mod.rs` | `NodeNetmap::content_digest`、`CompiledNetmap::verify`／`reference`；`NETMAP_COMPILER_VERSION`＝`meshway-netmap-1` |
+| `NetmapDelta` 与 `netmap_delta`／`apply_netmap_delta` | `crates/meshway-configuration/src/netmap/delta.rs` | peers／dialers／edges／grants 按键增删，其余整块替换；重建后必须复现目标 digest，serial 必须增大 |
 
 | 字段 | 含义 |
 | --- | --- |
-| `revision` | 编译所用配置 revision |
+| `revision` | 首次产生这份内容的配置 revision；内容不变的后续 revision 沿用旧值 |
 | `serial` | 每节点单调递增的内容序号；内容 digest 不变则不递增 |
 | `digest` | 规范序列化内容摘要；Node 校验后保存 |
-| `dependencyDigest` | 本节点 netmap 使用的稳定输入摘要（配置、主体、库存密钥／能力、方案选择、地址退出、规则集） |
+| `dependencyDigest` | 产生该 serial 的整网编译输入摘要（配置、主体、库存密钥／能力、方案选择及版本、规则集）；与 `revision` 一样随 serial 保留，不进入 `digest` |
 | `compilerVersion` | **`meshway-netmap-1`**。语义不再是“需求编译”，换新族名而非 `meshway-demand-8`；`meshway-demand-1..7` 全部视为过时派生缓存 |
 | `issuedAt`／`expiresAt` | 租约，不进入 `digest`；Server 每次成功查询签发 `min(now + 24 h, 依赖截止)` |
 
@@ -57,38 +59,29 @@ NetmapLease = { netmap: NetmapRef, issuedAt, expiresAt }   // expiresAt ≤ issu
 
 ### 内容字段
 
-```text
-NodeNetmap {
-  networkId, nodeId, revision, serial, compilerVersion, dependencyDigest,
-  self:    { enabled, hostname, identity, addresses, selfKeys, meshAddressPools,
-             listeners, exitEnabled },
-  peers:   NodeId → PeerConfiguration          // 身份、Mesh 地址、两把公钥
-  dialers: CandidateKey → DialCandidate        // 只含 configured 端点；local 端点改走事实线
-  edges:   NodeId → { dial: [CandidateKey], accept: [listenerKey] }
-  grants:  GrantKey → Grant
-  egress:  Option<EgressPlan>                  // 仅源节点：capture 计划＋每个范围的动作
-  exitRole: Option<ExitRolePlan>               // 去掉 instanceId
-  dns:     { settings, meshHosts, resolvers, egress: DnsEgress }
-}
+全部定义在 `crates/meshway-configuration/src/netmap/`：
 
-GrantKey = { source: NodeId, target: Mesh(NodeId) | Exit(NodeId, ExitScopeId) }
-Grant {
-  source, sourceAddresses, target,
-  services: Option<ServiceSet>,   // 端点（source／target／exit）持有；中继为 null（不适用）
-  exit: Option<{ destination: Internet | Cidr(prefix), family, selection: Digest }>,
-  paths: [ { nodes: [NodeId], dialCandidates, observable: bool } ],   // ≤ 4 条，含全部必经点
-  replies: StatefulExactReversePath,
-}
-ServiceSet = 有序互斥的 { protocol: tcp|udp|icmpEcho, ports: [range] }
-```
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `self` | `NetmapSelf` | enabled、hostname、identity、addresses、selfKeys、meshAddressPools、listeners（禁用时为空）、exitEnabled |
+| `peers` | `NodeId → PeerConfiguration` | 本节点所持 grant 路径与 DNS 服务路径上的全部其他节点 |
+| `dialers` | `CandidateKey → DialCandidate` | 只含 configured 端点；local 端点改走事实线 |
+| `edges` | `NodeId → Edges { dial, accept }` | 只列相邻节点；`dial` 按承载顺序排列 |
+| `grants` | `GrantKey → Grant`，线上为按键严格递增的数组 | 见下 |
+| `egress` | `Option<EgressPlan { capture, routes }>` | 禁用节点为 null；`routes` 是 IPv4＋IPv6 的完整互斥分割，每段 `EgressAction::{Exit { nodes, via }, Direct, Unmanaged}`；capture 不可用时 `routes` 为空 |
+| `exitRole` | `Option<ExitRole { generation, family, nat }>` | enabled ∧ exitEnabled ∧ `feature:exit-ipv4` v1 时下发 |
+| `dns` | `NetmapDns { settings, meshHosts, resolvers, profile, egress: DnsPlan }` | `resolvers` 为每个配置 resolver 键的 `ResolverAction::{Direct, Unmanaged, Exit, Rejected}`；`DnsPlan` 的 `DnsService` 去掉 instance 与截止 |
+
+`GrantKey { source, target: GrantTarget::{Mesh { node }, Exit { node, scope: ExitScopeId }} }`；`Grant { source, sourceAddresses, target, services: Option<ServiceSet>, exit: Option<GrantExit>, paths: [GrantPath { nodes, dialCandidates, observable }], replies }`；`GrantExit { destination, routes, family, selection }`；`ServiceSet` 为按 tcp、udp、icmpEcho 排序、端口区间合并的唯一规范编码（`services.rs`），非规范编码解码即拒绝。
 
 - **grant 以节点对为单位**。Access 规则取并集、顺序无关，Mesh routing 每段只按节点起终点 first-match，因此同一 (source, target) 的服务集合和完整路径集合都只依赖节点对。`bidirectional` 规则生成两个方向各自的 grant，单向规则只生成一个；回复仍只依赖已有正向流。
-- 每个节点只收到**自己出现在某条路径上**的 grant：作为源或终点时带服务集合，作为中继时 `services` 为 null。中继仍只做会话级转发，不解析业务事实。
+- **出口 grant 以 (source, 出口节点, Access 目的范围, via) 为单位**。`ExitScopeId`＝digest(目的范围, via)；`GrantExit.routes` 列出源端分割中以该出口与该 via 为动作的 IPv4 前缀，出口与中继据此保证“走哪条 via”不被源端换用。同一出口的多个目的范围可同时覆盖一个目的地，源端选第一个，终点接受其中任一。
+- 每个节点只收到**自己出现在某条路径上**的 grant：作为源或终点时带完整 grant 与服务集合；作为中继时 `services` 为 null，且只保留经过自己的路径。中继仍只做会话级转发，不解析业务事实。
 - `edges` 是 topology ∩ 双方 listeners／dialers 的承载交集，只列出本节点在某条 grant 路径上的相邻节点。它是邻接与 STUN 协调的唯一许可来源，不授予业务。
-- `observable` 由路径上全部节点的 `feature:path-observation` 能力计算；能力来自认证 acquire 的库存，是稳定输入。
-- `meshHosts` 改为本节点 **Access 可达的完整名称集合**（不是今天“路径上恰好出现的 peer”），使 MagicDNS 与 `meshway ping <name>` 本地解析，删除精确发现往返。
-- `egress.routes` 扩展现有 `EgressCapturePlan`：每个互斥 managed 前缀带动作 `exit { nodes: 有序主备, via }`、`direct` 或 `unmanaged`。源节点据此本地判定外部目的和系统 resolver 端点的动作，取代 `LocalEgressPermit`。
-- `exit` 的 `selection` 等于源端 capture generation（源 revision、有效方案、持久选择版本）；方案切换必然改变它，旧出口连接结束。
+- `observable` 由路径上全部节点的 `feature:path-observation` v1 能力计算；能力来自认证 acquire 的库存，是稳定输入。
+- `meshHosts` 与精确发现同一谓词：本节点自身及 `mesh_access_allows_any(self, T)` 的已登记活动节点；`magicDNS` 关闭时为空。
+- `egress.routes` 扩展现有 `EgressCapturePlan`。源节点据此本地判定外部目的和 resolver 端点的动作，取代 `LocalEgressPermit`。
+- `exit.selection`＝`egress.capture.generation`＝digest(网络、节点、有效方案、持久选择版本、routing.egress、分割结果)。**不含 revision**：无关配置变更不改变它，也不结束出口连接；任何选择切换（含切回）都会改变选择版本。`ExitRole.generation` 同样不含 revision。
 
 ### 与现有类型的关系
 
@@ -105,8 +98,8 @@ ServiceSet = 有序互斥的 { protocol: tcp|udp|icmpEcho, ports: [range] }
 | `DemandDecision`、`decisions`、`Demand` | 退出 Node 合同；路径检测若仍需决定原因，由 `plan` 的评估类型表达 |
 | `CompiledNode`／`CompiledPublication` | 变形为 `CompiledNetmap { digest, netmap }`；不存在整网 publication 容器 |
 | `EgressCapturePlan` | 保留并扩展为 `EgressPlan` |
-| `ExitRolePlan` | 保留；去掉 `instanceId`，generation = digest(network, node, revision) |
-| `DnsExecution`、`DnsEgress`、`DnsServicePermit` | 保留结构；`DnsServicePermit` 去掉 `sourceInstanceId`、`role.instanceId` 和 `expiresAt` |
+| `ExitRolePlan` | 变形为 `ExitRole`；去掉 `instanceId`，generation = digest(network, node, family, nat) |
+| `DnsExecution`、`DnsEgress`、`DnsServicePermit` | 变形为 `NetmapDns`、`DnsPlan`、`DnsService`；去掉 `sourceInstanceId`、`role.instanceId`、`expiresAt` 与 `associations` |
 | `TrustedDnsAssociation` | 不进入 netmap；X6 时作为每源 overlay，见下文 |
 | `InstanceLease.target`／`executionExpiresAt` | 消失；instance lease 只剩 instance 资格；数据面截止来自 `NetmapLease` |
 | `CircuitAuthorization::{Business(RequestId), Diagnostic(ObservationId)}` | 变形为 `{ grant: GrantKey, purpose: Business \| Diagnostic }` |
@@ -114,17 +107,17 @@ ServiceSet = 有序互斥的 { protocol: tcp|udp|icmpEcho, ports: [range] }
 
 ### 规模与预算
 
-今天每网络最多 256 条有效需求（`compile::MAX_DEMANDS`）。netmap 按节点对展开，实际规模由可达节点对决定：
+`meshway_policy::compile::netmap::compile_netmap` 不设 grant 数协议上限，只对每份 netmap 检查 `MAX_NETMAP_BYTES`（8 MiB）：任一节点超限即返回 `NetmapError::Limit`，整体拒绝，不做部分 netmap。每节点对仍最多 4 条路径、每条 ≤ 8 跳，每次路径搜索沿用 16,384 工作项预算。
 
-| 项 | 建议上限 |
-| --- | --- |
-| 每网络有 grant 的节点对 | 65,536 |
-| 单份 netmap 的 grant | 16,384（中继 hub 最可能接近） |
-| 单份 netmap 序列化 | 8 MiB（Control 记录上限现为 16 MiB） |
-| 每节点对路径 | 4，每条 ≤ 8 跳（不变） |
-| 一次全网编译的路径搜索工作量 | 2²⁴ 工作项，独立于每目标 16,384 |
+N1a 实测（M3、release、单线程，私有证据 `.meshway/netmap/n1a/scale.md`）：
 
-超限不做部分 netmap：配置提交、节点批准／接入密钥接入、方案选择在事务内返回 `netmapLimit` 校验错误，原 revision 保持。撤销与删除只缩小规模，永不被预算阻挡。N1a 须给出 1,000 节点全互访时的实际编译耗时；若在提交事务中不可接受，再评估节点对级增量复用（同一 (source, target) 的匹配规则、拓扑与库存未变则复用上一结果）。
+| 规模 | 路径搜索 | 结果 |
+| --- | --- | --- |
+| 100 节点全互访 | 1.4 s | 通过；最大 netmap 7.4 MB（hub 9,900 grant） |
+| 200／300 节点全互访 | 12.4 s／43.7 s | `NetmapError::Limit` |
+| 1,000 节点、1,024 个授权节点对 | 2.0 s | 通过；每节点对约 1.8 ms |
+
+1,000 节点全互访按实测单对成本外推约 30 分钟，且确定被预算拒绝：路径搜索按节点 ID 顺序广度优先产生最多 4 条备选，编号最小的节点成为每一对的中继，其 netmap 为 O(N²) grant。差分等价要求保持这一路径语义，因此 N1a 未改动；节点对级增量复用不能解决 hub 规模，需要先决定备选路径与中继披露的产品规则（未决，见[限制](#限制)）。
 
 ## 两条线
 
@@ -167,7 +160,7 @@ TUN 源包 → Packet::parse → 查唯一 FlowTable（已有流直接走原路�
 
 ### 准入函数
 
-`meshway_policy::admission` 的输入从 `(NodeConfiguration, RequestId)` 改为 `(NodeNetmap, GrantKey)`；判定内容不变：
+N1a 在 `meshway_policy::admission::netmap` 中实现（旧的按 `NodeConfiguration` 的入口保留至 N1h）。`Leased { netmap, lease }` 绑定已安装内容与其租约；`classify(netmap, dst, protocol, port)` 返回 `Destination::{Mesh(GrantKey), Exit([GrantKey] 按主备序), Direct, Unmanaged}`；另有 `admit_observation`（服务＋observable 路径）与 `admit_path_carrier`。DNS 对应 `dns_route::{netmap_resolver, netmap_dns_service}`。判定内容不变：
 
 | 函数 | 检查 |
 | --- | --- |
@@ -367,7 +360,7 @@ cold（静态端点）：  T ≈ Σ每跳串行邻接获取（TCP 1 RTT；TLS �
 | Node Control 记录 | 记录格式升为 **v5**：身份 envelope 与 netmap 缓存分离（缓存带自己的 `compilerVersion`），今后编译器升级不再改身份版本（S5）。v1–v4 沿用现有规则：校验完整性与绑定、私有归档原字节、清空缓存、保留身份 |
 | netmap 缓存用途 | 只作 delta 基准；进程重启后是否可凭未到期缓存离线运行见[已决产品问题](#已决产品问题)，默认不恢复 |
 | Server 数据库 | 新的当前 schema：删除 `execution_demands`、`execution_publications`、诊断编译镜像表；新增 `node_netmaps(network, node, serial, revision, digest, sealed payload, created_at)` 与有界历史；`node_execution` 去掉 `target_publication_id`／`execution_expires_at`，回执改引用 `NetmapRef`。按[存储](/v2/storage)现行规则没有迁移链：开发环境重新初始化 Server 数据目录 |
-| HTTP | 新增 `POST /agent-api/v1/netmap/query`；删除 demands、`configuration/refresh`、diagnostic 编译相关字段；`/agent-api/v1` 根不变。重生成 OpenAPI／Rust／TS SDK 并过 drift |
+| HTTP | 新增 `POST /agent-api/v1/netmap/query`（请求／响应及 `netmap.changed`、`netmap.delta`、Node `state.delta` 载荷已定义于 `crates/meshway-protocol/src/netmap.rs`，接入路由后才进入 OpenAPI）；删除 demands、`configuration/refresh`、diagnostic 编译相关字段；`/agent-api/v1` 根不变。重生成 OpenAPI／Rust／TS SDK 并过 drift |
 | wire | v6（握手授权字段与 INIT 时刻）；全路径协调升级 |
 | IPC／CLI | v6：`instance.executionExpiresAt` 改为 `netmap { revision, serial, expiresAt }` |
 | 升级顺序 | 停全部 Node → Server 用新数据目录启动 → 重新创建网络配置 → Node 清理旧身份目录后重新接入 |
@@ -465,6 +458,7 @@ S 类简化不在本表；N1 使 S1–S6（Server）、S1–S5（Node）、S1–
 ## 限制
 
 - 中继获知所有经过它的 (source, target) 节点对，今天只获知活跃需求；这是 netmap 模型固有的披露范围扩大。
+- **未决**：现行 4 条备选路径按节点 ID 顺序选中继，全互访时最小编号节点成为全网 hub，netmap 随 N² 增长，约 150 节点全互访即超过 8 MiB（[规模与预算](#规模与预算)）。可选方向：直连可用时不生成备选、备选中继按节点对散列分布、或限制备选只在 via 约束下生成；任一方向都改变路径语义，需确认后另包实现。
 - 同一身份的克隆进程（复制私钥）在 Server 层仍只能持有一个 instance，但两者都能使用各自已取得的 netmap 租约直到到期；instance 替换不能撤回已签发租约。
 - Server 停机期间无法进行协调 UDP 穿透；只有静态端点与已有通道可用。
 - 本稿不改变端到端保护、源授权、有序必经点、原路径精确回复、重放保护、State 不自授权、失败不静默放行等硬约束；它们在 N1 下由同一 owner 执行。
