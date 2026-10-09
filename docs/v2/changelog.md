@@ -55,4 +55,5 @@
 | X0 Exit/NAT 设计 | `e3ba2519` | `docs/v2/node/exit-design.md`：对照 Tailscale（router_linux／linuxfw／peerapi DoH／table 52）的首版方案：Linux IPv4 内核转发＋masquerade、独立出口 TUN、nft CLI 批事务、ip_forward 只检测、经 Mesh 的出口 resolver、X1–X7 拆包 | 研究基线 tailscale `ab2380a6` |
 | X7a Exit 验收准备 | `31f8880f`…`f492fe5d` | `exit/off` 隔离拓扑（Controller／A／R／E＋外部服务＋E LAN 服务）、镜像锁定 nftables／conntrack／tcpdump、fixture 八阶段 `pending-x2-x5`、证据链；默认矿阵不含该行 | planck 短跑 `20261008T222757Z-a9263023` 以 `unsupported` 如实结束；`.meshway/exit/x7a/` |
 | X1 Exit 契约与联合编译 | `feat/exit-contract` 系列 | `EgressCapturePlan`／`ExitRolePlan`／`ExitPermit`／`ExitCapability`，first-match CIDR 互斥分割，`is_internet_address` 唯一公网边界，能力不可用投影不回退 direct，compilerVersion `meshway-demand-6`；Control record v4 退役 demand-5 缓存；Console 原因文案 | policy `tests/execution/exit_contract.rs`；`.meshway/exit/x1/` |
+| X5 单出口 DNS 契约与客户端 owner | `ef68c08a`、`7b4519ec` | `DnsServicePermit`、`DnsEgress::ViaExit`／`ServeExitResolver`，选择顺序 MagicDNS→useWithExit split→出口 resolver，联合许可与到期交集，客户端密封 `MeshResolverRoute`，默认适配拒绝安装（出口侧接线等 X2／X3／X4） | `.meshway/exit/x5/{receipt,interfaces}.md` |
 
