@@ -369,6 +369,7 @@ impl Control {
                 }
                 ClosedReason::MembershipRevoked => {
                     self.fence();
+                    self.revoke_netmap();
                     self.session = None;
                     self.authentication = None;
                     self.challenge_intent = None;

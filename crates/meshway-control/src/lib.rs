@@ -17,6 +17,11 @@ mod events;
 pub use events::{EventNotice, NodeEvents};
 mod execution;
 mod identity;
+mod netmap;
+pub use netmap::{
+    FactsRejected, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
+    SyncReply, SyncTransport, lease_message, sync_loop,
+};
 mod observations;
 mod rotation;
 pub use observations::ObservationLease;
@@ -26,7 +31,7 @@ mod storage;
 use meshway_authority::{Clock, Deadline, Started, now, reference};
 use meshway_configuration::execution::CompiledNode;
 use meshway_control_client::{Client, ClientError};
-use meshway_model::{ConfigurationRef, state::Capability};
+use meshway_model::{ConfigurationRef, NetmapLease, state::Capability};
 use meshway_protocol::{
     AcquireInstanceRequest, EnrollmentResponse, ErrorResponse, InstanceLease, NodeSessionResponse,
     ReceiptRequest, StateReport, node::NodeSessionIntent,
@@ -115,6 +120,8 @@ pub struct Status {
     pub authenticated: bool,
     pub instance: Option<InstanceLease>,
     pub cached: Option<ConfigurationRef>,
+    /// Lease of the installed netmap authority, if any.
+    pub netmap: Option<NetmapLease>,
     pub reload_required: bool,
 }
 
@@ -134,6 +141,11 @@ pub struct Control {
     publication_pending_grant: bool,
     directory: Arc<meshway_private_storage::Directory>,
     record: Record,
+    /// Legacy publication target cache (`execution.json`), removed with N1h.
+    saved: Option<CompiledNode>,
+    netmap: netmap::State,
+    netmap_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
+    sync_transport: Option<Arc<dyn SyncTransport>>,
     write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
     dirty: bool,
     session: Option<Session>,
@@ -176,8 +188,10 @@ impl Control {
         let origin = server_origin(origin)?;
         let client = Client::new(
             &origin,
+            // The idle read bound admits the sync long poll; ordinary
+            // operations keep the shorter total request timeout below.
             http.connect_timeout(Duration::from_secs(20))
-                .read_timeout(Duration::from_secs(30)),
+                .read_timeout(SYNC_TIMEOUT),
             storage::LIMIT,
         )
         .map_err(|_| Error::Endpoint)?
@@ -187,7 +201,8 @@ impl Control {
             "node-control.lock",
         )?);
         let record = Record::load(&directory, &origin)?;
-        Ok(Self {
+        let saved = storage::load_legacy(&directory, record.binding.as_ref())?;
+        let mut control = Self {
             client,
             clock: Arc::new(Clock::new()?),
             validity: Arc::new(AtomicBool::new(true)),
@@ -199,6 +214,10 @@ impl Control {
             publication_pending_grant: false,
             directory,
             record,
+            saved,
+            netmap: netmap::State::default(),
+            netmap_write: None,
+            sync_transport: None,
             write: None,
             dirty: false,
             session: None,
@@ -214,7 +233,9 @@ impl Control {
             connectivity: connectivity::Authority::default(),
             observations: observations::Registry::default(),
             events_cancel: tokio_util::sync::CancellationToken::new(),
-        })
+        };
+        control.load_netmap()?;
+        Ok(control)
     }
 
     pub fn status(&self) -> Status {
@@ -253,6 +274,7 @@ impl Control {
                     lease
                 }),
             cached: self.cached_target().map(reference),
+            netmap: self.netmap_lease(),
             reload_required: self.dirty,
         };
         StatusSnapshot {
@@ -265,6 +287,7 @@ impl Control {
                 .instance
                 .as_ref()
                 .and_then(|i| i.execution_deadline.clone()),
+            netmap: self.netmap_snapshot().ok(),
         }
     }
 
@@ -300,7 +323,7 @@ impl Control {
         if self.dirty {
             None
         } else {
-            self.record.saved.as_ref()
+            self.saved.as_ref()
         }
     }
 
@@ -412,6 +435,7 @@ impl Control {
         self.authentication = None;
         self.challenge_intent = None;
         self.fence();
+        self.revoke_netmap();
         if let Some(session) = &mut self.session {
             session.active = false;
         }
@@ -428,6 +452,9 @@ impl Control {
     pub async fn shutdown(mut self) -> Result<(), Error> {
         let stopped = self.stop().await;
         if let Some(write) = self.write.take() {
+            write.await.map_err(|_| Error::ReloadRequired)??;
+        }
+        if let Some(write) = self.netmap_write.take() {
             write.await.map_err(|_| Error::ReloadRequired)??;
         }
         stopped
@@ -466,6 +493,7 @@ pub struct StatusSnapshot {
     session: Option<Deadline>,
     instance: Option<Deadline>,
     execution: Option<Deadline>,
+    netmap: Option<ExecutionSnapshot>,
 }
 impl StatusSnapshot {
     pub fn status(&self) -> Status {
@@ -481,6 +509,11 @@ impl StatusSnapshot {
         {
             instance.execution_expires_at_ms = None;
         }
+        value.netmap = self
+            .netmap
+            .as_ref()
+            .filter(|snapshot| snapshot.ensure_current().is_ok())
+            .and_then(ExecutionSnapshot::lease);
         value
     }
 }
@@ -490,6 +523,7 @@ impl Drop for Control {
         self.events_cancel.cancel();
         self.validity.store(false, Ordering::Release);
         self.invalidated.cancel();
+        self.netmap.shutdown();
     }
 }
 

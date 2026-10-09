@@ -1,0 +1,141 @@
+//! Restart: a sealed, live `netmap.json` is authority without the Server;
+//! expired, forged or foreign files are not.
+use super::{
+    HOUR, enrolled,
+    support::{Facts, compiled, full, unchanged},
+};
+use crate::{Control, Server};
+use meshway_control::NetmapChange;
+use std::{fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
+
+fn reopen(path: &Path, origin: &str) -> Control {
+    Control::open(
+        path,
+        origin,
+        meshway_control_client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn restart_loads_a_live_sealed_netmap_without_any_server_contact() {
+    let server = Server::start().await;
+    let (mut control, binding, script) = enrolled(&server, &server.origin, "restart").await;
+    let netmap = compiled(&binding, "restart", None);
+    script.push(Ok(full(&netmap, HOUR)));
+    let before = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    control.shutdown().await.unwrap();
+    let path = server.path("restart");
+    let origin = server.origin.clone();
+    let file = path.join("netmap.json");
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(path.join("control.json")).unwrap()).unwrap();
+    assert_eq!(record["version"], 5);
+    assert!(record.get("saved").is_none() && record.get("netmap").is_none());
+    let cache: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(cache["format"], "meshway-netmap-cache/1");
+    assert_eq!(cache["seal"]["signer"], "node");
+    // Closing the fixture removes its directory: keep an exact private copy.
+    let kept = tempfile::tempdir().unwrap();
+    let copy = kept.path().canonicalize().unwrap().join("restart");
+    fs::create_dir(&copy).unwrap();
+    fs::set_permissions(&copy, fs::Permissions::from_mode(0o700)).unwrap();
+    for entry in fs::read_dir(&path).unwrap() {
+        let entry = entry.unwrap();
+        let target = copy.join(entry.file_name());
+        fs::copy(entry.path(), &target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    server.close().await;
+
+    let restored = reopen(&copy, &origin);
+    let snapshot = restored.netmap_snapshot().unwrap();
+    assert_eq!(snapshot.netmap_ref(), Some(netmap.reference()));
+    assert_eq!(snapshot.expires_at_ms(), before.expires_at_ms());
+    assert!(!snapshot.same_netmap(&before) && before.ensure_current().is_err());
+    assert_eq!(snapshot.instance_binding(), None);
+    assert!(!restored.status().authenticated);
+    assert_eq!(restored.status().netmap.unwrap().netmap, netmap.reference());
+    restored.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn expired_cache_is_only_a_delta_base_until_the_server_renews_it() {
+    let server = Server::start().await;
+    let (mut control, binding, script) = enrolled(&server, &server.origin, "expired").await;
+    let netmap = compiled(&binding, "expired", None);
+    script.push(Ok(full(&netmap, 300)));
+    control.sync(&mut Facts::default()).await.unwrap();
+    control.shutdown().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let mut restored = reopen(&server.path("expired"), &server.origin);
+    assert!(restored.netmap_snapshot().is_err());
+    assert_eq!(restored.status().netmap, None);
+    assert_eq!(restored.netmap_reference(), Some(netmap.reference()));
+    restored.authenticate().await.unwrap();
+    restored.set_sync_transport(script.clone());
+    script.push(Ok(unchanged(&netmap, HOUR)));
+    let outcome = restored.sync(&mut Facts::default()).await.unwrap();
+    assert_eq!(outcome.change, NetmapChange::Reissued);
+    assert_eq!(script.requests()[1].netmap, Some(netmap.reference()));
+    outcome.snapshot.ensure_current().unwrap();
+    restored.shutdown().await.unwrap();
+    server.close().await;
+}
+
+#[tokio::test]
+async fn forged_extended_or_altered_netmap_files_are_not_loaded() {
+    let server = Server::start().await;
+    let (mut control, binding, script) = enrolled(&server, &server.origin, "forged").await;
+    let netmap = compiled(&binding, "forged", None);
+    script.push(Ok(full(&netmap, HOUR)));
+    control.sync(&mut Facts::default()).await.unwrap();
+    control.shutdown().await.unwrap();
+    let path = server.path("forged");
+    let file = path.join("netmap.json");
+    let original: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    let mut forgeries = Vec::new();
+    let mut signature = original.clone();
+    let text = signature["seal"]["signature"].as_str().unwrap().to_owned();
+    let flipped = if text.starts_with('A') { "B" } else { "A" };
+    signature["seal"]["signature"] = format!("{flipped}{}", &text[1..]).into();
+    forgeries.push(signature);
+    // A longer lease with the old seal.
+    let mut extended = original.clone();
+    extended["lease"]["expiresAt"] = (chrono::Utc::now() + chrono::Duration::hours(20))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        .into();
+    forgeries.push(extended);
+    // Other content with a matching digest and lease, but the old seal.
+    let other = compiled(&binding, "forged-other", Some(&netmap));
+    let mut altered = original.clone();
+    altered["netmap"] = serde_json::to_value(&other).unwrap();
+    altered["lease"]["netmap"] = serde_json::to_value(other.reference()).unwrap();
+    forgeries.push(altered);
+    let mut unknown = original.clone();
+    unknown["extra"] = true.into();
+    forgeries.push(unknown);
+    let mut format = original.clone();
+    format["format"] = "meshway-netmap-cache/0".into();
+    forgeries.push(format);
+    for forged in forgeries {
+        fs::write(&file, serde_json::to_vec(&forged).unwrap()).unwrap();
+        let restored = reopen(&path, &server.origin);
+        assert!(restored.netmap_snapshot().is_err());
+        assert_eq!(restored.netmap_reference(), None);
+        // A derived cache never blocks the identity.
+        assert_eq!(restored.status().binding.as_ref(), Some(&binding));
+        restored.shutdown().await.unwrap();
+    }
+    fs::write(&file, serde_json::to_vec(&original).unwrap()).unwrap();
+    let restored = reopen(&path, &server.origin);
+    restored.netmap_snapshot().unwrap();
+    restored.shutdown().await.unwrap();
+    server.close().await;
+}

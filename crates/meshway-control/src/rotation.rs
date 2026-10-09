@@ -160,6 +160,7 @@ impl Control {
         // A submitted rotation can retire all current execution. Stop old local
         // authority before sending, including when delivery becomes uncertain.
         self.fence();
+        self.revoke_netmap();
         self.session = None;
         self.authentication = None;
         self.challenge_intent = None;
@@ -211,7 +212,7 @@ impl Control {
             keys: keys.clone(),
             ..binding
         });
-        self.record.saved = None;
+        self.saved = None;
         self.record.completed_rotation = Some(request_id);
         // One atomic record replacement publishes keys and binding together.
         // Failed/cancelled writes require reopen; the disk has pending or new.

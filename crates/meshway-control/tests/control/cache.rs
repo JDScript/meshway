@@ -50,8 +50,12 @@ fn record(bytes: &[u8], version: u8, saved: Option<String>) -> Vec<u8> {
         "version".into(),
         RawValue::from_string(version.to_string()).unwrap(),
     );
-    if let Some(saved) = saved {
-        fields.insert("saved".into(), RawValue::from_string(saved).unwrap());
+    // Records v1–v4 always serialized `saved`; v5 has no derived cache field.
+    if version < 5 {
+        fields.insert(
+            "saved".into(),
+            RawValue::from_string(saved.unwrap_or_else(|| "null".into())).unwrap(),
+        );
     }
     serde_json::to_vec(&fields).unwrap()
 }
@@ -83,6 +87,11 @@ async fn v3_cache_retires_without_reenrollment_for_exit_contract_upgrade() {
     upgrade(3).await;
 }
 
+#[tokio::test]
+async fn v4_cache_retires_into_identity_only_v5_record() {
+    upgrade(4).await;
+}
+
 async fn upgrade(version: u8) {
     let server = Server::start().await;
     let owner = server.owner().await;
@@ -102,6 +111,9 @@ async fn upgrade(version: u8) {
     control.acknowledge_saved().await.unwrap();
     let old = if version == 1 {
         old_slice(control.cached_target().unwrap())
+    } else if version == 4 {
+        // v4 carried the current demand-7 target inside the identity record.
+        serde_json::to_string(control.cached_target().unwrap()).unwrap()
     } else {
         // Derive the retired compiler body from the current one: v3 carried
         // demand-5 (endpoint sources, no exit contract), v2 demand-4 (no sources).
@@ -121,6 +133,8 @@ async fn upgrade(version: u8) {
     let current = fs::read(path.join("control.json")).unwrap();
     let bytes = record(&current, version, Some(old));
     fs::write(path.join("control.json"), &bytes).unwrap();
+    // Records before v5 had no separate cache file.
+    fs::remove_file(path.join("execution.json")).unwrap();
     let intent = server.path("daemon-up-intent");
     fs::write(&intent, b"retained host intent evidence").unwrap();
     let marker = fs::read(path.join("node-control.lock")).unwrap();
@@ -143,8 +157,8 @@ async fn upgrade(version: u8) {
     for field in ["origin", "keys", "enrollment", "binding"] {
         assert_eq!(upgraded[field], original[field]);
     }
-    assert_eq!(upgraded["version"], 4);
-    assert!(upgraded["saved"].is_null());
+    assert_eq!(upgraded["version"], 5);
+    assert!(upgraded.get("saved").is_none());
     assert_eq!(fs::read(path.join("node-control.lock")).unwrap(), marker);
     assert_eq!(fs::read(&intent).unwrap(), b"retained host intent evidence");
     let hash = meshway_model::Digest::from_bytes(Sha256::digest(&bytes).into());
@@ -201,8 +215,8 @@ async fn unknown_corrupt_and_misbound_cache_records_are_retained_byte_for_byte()
     control.shutdown().await.unwrap();
     let current = fs::read(path.join("control.json")).unwrap();
     let mut bad_identity: serde_json::Value = serde_json::from_slice(&current).unwrap();
-    let mut corrupt_current: serde_json::Value = serde_json::from_slice(&current).unwrap();
-    corrupt_current["saved"]["digest"] = serde_json::json!("00".repeat(32));
+    let mut corrupt_v4: serde_json::Value = serde_json::to_value(control_target(&path)).unwrap();
+    corrupt_v4["digest"] = serde_json::json!("00".repeat(32));
     bad_identity["keys"]["control"] = serde_json::json!("bad private key");
     let bad_identity = record(
         &serde_json::to_vec(&bad_identity).unwrap(),
@@ -236,7 +250,13 @@ async fn unknown_corrupt_and_misbound_cache_records_are_retained_byte_for_byte()
         .into_bytes();
     for invalid in [
         record(&current, 99, Some(old.clone())),
-        serde_json::to_vec(&corrupt_current).unwrap(),
+        record(&current, 4, Some(old.clone())), // v4 carries a current-shape target
+        record(&current, 4, Some(corrupt_v4.to_string())),
+        // A v5 identity record never carries a derived target.
+        String::from_utf8(record(&current, 5, None))
+            .unwrap()
+            .replacen('{', "{\"saved\":null,", 1)
+            .into_bytes(),
         record(&current, 3, Some(old.clone())), // malformed CURRENT never means obsolete
         record(&current, 2, Some(old.clone())), // v2 cannot contain a v1 slice shape
         record(
@@ -327,4 +347,14 @@ async fn pending_v1_enrollment_and_archive_failure_preserve_identity_and_marker(
     }
     restored.shutdown().await.unwrap();
     server.close().await;
+}
+
+fn control_target(path: &std::path::Path) -> CompiledNode {
+    #[derive(serde::Deserialize)]
+    struct Cache {
+        saved: CompiledNode,
+    }
+    serde_json::from_slice::<Cache>(&fs::read(path.join("execution.json")).unwrap())
+        .unwrap()
+        .saved
 }

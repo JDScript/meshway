@@ -119,7 +119,7 @@ impl Control {
     pub async fn sync_configuration(&mut self) -> Result<Option<ConfigurationRef>, Error> {
         let request = NodeConfigurationRequest {
             instance: self.current_instance()?,
-            base: self.record.saved.as_ref().map(reference),
+            base: self.saved.as_ref().map(reference),
         };
         let started = Started::now(&self.clock)?;
         let response = self
@@ -135,7 +135,7 @@ impl Control {
     pub async fn refresh_configuration(&mut self) -> Result<Option<ConfigurationRef>, Error> {
         let request = NodeConfigurationRequest {
             instance: self.current_instance()?,
-            base: self.record.saved.as_ref().map(reference),
+            base: self.saved.as_ref().map(reference),
         };
         let started = Started::now(&self.clock)?;
         let response = self
@@ -154,7 +154,7 @@ impl Control {
         let target = match (response.full, response.delta) {
             (Some(full), None) => Some(full),
             (None, Some(delta)) => {
-                let Some(base) = self.record.saved.as_ref() else {
+                let Some(base) = self.saved.as_ref() else {
                     self.fence();
                     return Err(Error::Contract);
                 };
@@ -193,16 +193,16 @@ impl Control {
                 return Err(Error::Contract);
             }
         } else if response.lease.target.is_some()
-            && self.record.saved.as_ref().map(reference) != response.lease.target
+            && self.saved.as_ref().map(reference) != response.lease.target
         {
             self.fence();
             return Err(Error::Contract);
         }
         self.update_lease(response.lease, started)?;
         if let Some(target) = target
-            && self.record.saved.as_ref() != Some(&target)
+            && self.saved.as_ref() != Some(&target)
         {
-            self.record.saved = Some(target);
+            self.saved = Some(target);
             self.receipt = None;
             // A possibly accepted State report keeps its sequence/sample until
             // its exact retry is acknowledged or this instance is fenced.
@@ -240,7 +240,7 @@ impl Control {
         let saved = self.receipt.as_ref().ok_or(Error::Lifecycle)?;
         let receipt = &saved.request;
         if receipt.instance != current
-            || self.record.saved.as_ref().map(reference).as_ref() != Some(&receipt.target)
+            || self.saved.as_ref().map(reference).as_ref() != Some(&receipt.target)
             || self
                 .instance
                 .as_ref()
@@ -281,7 +281,6 @@ impl Control {
         self.current_instance()?;
         let active = self.instance.as_ref().ok_or(Error::Lifecycle)?;
         let saved = self
-            .record
             .saved
             .as_ref()
             .map(reference)

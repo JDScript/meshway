@@ -7,6 +7,7 @@ mod events;
 mod exit;
 mod faults;
 mod key_enrollment;
+mod netmap;
 mod recovery;
 mod refresh;
 mod rotation;

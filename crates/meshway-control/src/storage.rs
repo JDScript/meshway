@@ -1,3 +1,10 @@
+//! Private Node control storage.
+//!
+//! `control.json` (record v5) holds only the identity envelope: keys, pending
+//! enrollment, binding and rotation. Derived caches live in their own files
+//! with their own format identifiers, so compiler changes never touch the
+//! identity version: `netmap.json` (see `netmap::store`) and the legacy
+//! publication target `execution.json` (removed with the legacy chain).
 use crate::{
     Control, Error,
     identity::{self, Keys},
@@ -15,8 +22,10 @@ use zeroize::Zeroizing;
 
 pub(super) const LIMIT: usize = 16 * 1024 * 1024;
 const RECORD: &str = "control.json";
+const LEGACY_CACHE: &str = "execution.json";
+const LEGACY_FORMAT: &str = "meshway-execution-cache/1";
 const MARKER: &[u8] = b"meshway-control/1\n";
-const VERSION: u8 = 4;
+const VERSION: u8 = 5;
 
 fn marker(directory: &meshway_private_storage::Directory) -> Result<bool, Error> {
     let file = directory
@@ -34,7 +43,7 @@ fn marker(directory: &meshway_private_storage::Directory) -> Result<bool, Error>
         Err(Error::Record)
     }
 }
-fn ensure_marker(directory: &meshway_private_storage::Directory) -> Result<(), Error> {
+pub(super) fn ensure_marker(directory: &meshway_private_storage::Directory) -> Result<(), Error> {
     let mut file = directory
         .file("node-control.lock", false)?
         .ok_or(Error::Record)?;
@@ -48,10 +57,10 @@ fn ensure_marker(directory: &meshway_private_storage::Directory) -> Result<(), E
     Ok(())
 }
 
+/// Identity envelope v5. Derived caches are never part of it.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[serde(bound(deserialize = "T: Deserialize<'de>"))]
-pub(super) struct Record<T = CompiledNode> {
+pub(super) struct Record {
     version: u8,
     origin: String,
     #[serde(deserialize_with = "Option::deserialize")]
@@ -60,13 +69,38 @@ pub(super) struct Record<T = CompiledNode> {
     pub enrollment: Option<Enrollment>,
     #[serde(deserialize_with = "Option::deserialize")]
     pub binding: Option<EnrollmentResponse>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub saved: Option<T>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<crate::rotation::Rotation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_rotation: Option<meshway_model::RequestId>,
 }
+
+/// Records v1–v4 carried a derived target in `saved`. It is inspected only for
+/// integrity and binding, archived with the original bytes, and dropped.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Previous<'a> {
+    version: u8,
+    origin: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    keys: Option<Keys>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    enrollment: Option<Enrollment>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    binding: Option<EnrollmentResponse>,
+    #[serde(borrow, deserialize_with = "Option::deserialize")]
+    saved: Option<&'a RawValue>,
+    #[serde(default)]
+    rotation: Option<crate::rotation::Rotation>,
+    #[serde(default)]
+    completed_rotation: Option<meshway_model::RequestId>,
+}
+
+#[derive(Deserialize)]
+struct Version {
+    version: u8,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Enrollment {
@@ -78,6 +112,30 @@ pub(super) struct Enrollment {
     pub approved_network: Option<meshway_model::NetworkId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access_key: Option<WireSecret>,
+}
+
+/// Private bytes of one bounded file, or `None` when absent.
+pub(super) fn read(
+    directory: &meshway_private_storage::Directory,
+    name: &str,
+) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
+    let Some(file) = directory.file(name, false)? else {
+        return Ok(None);
+    };
+    let mut bytes = Zeroizing::new(Vec::with_capacity(LIMIT.min(1 << 20)));
+    file.take((LIMIT + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| meshway_private_storage::Error::Io)?;
+    if bytes.len() > LIMIT {
+        return Err(Error::Record);
+    }
+    Ok(Some(bytes))
+}
+
+pub(super) fn encode<T: Serialize>(value: &T) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let mut buffer = Buffer(Zeroizing::new(Vec::new()));
+    serde_json::to_writer(&mut buffer, value).map_err(|_| Error::Record)?;
+    Ok(buffer.0)
 }
 
 impl Record {
@@ -109,7 +167,6 @@ impl Record {
                 keys: None,
                 enrollment: None,
                 binding: None,
-                saved: None,
                 rotation: None,
                 completed_rotation: None,
             });
@@ -117,55 +174,47 @@ impl Record {
         file.sync_all()
             .map_err(|_| meshway_private_storage::Error::Io)?;
         directory.sync()?;
-        let mut bytes = Zeroizing::new(Vec::with_capacity(LIMIT + 1));
-        file.take((LIMIT + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|_| meshway_private_storage::Error::Io)?;
-        if bytes.len() > LIMIT {
-            return Err(Error::Record);
-        }
-        let envelope: Record<&RawValue> = decode(&bytes)?;
-        if envelope.origin != origin {
-            return Err(Error::Record);
-        }
-        let previous_version = envelope.version;
-        let upgrading = match previous_version {
-            1..=3 => true,
-            VERSION => false,
+        let bytes = read(directory, RECORD)?.ok_or(Error::Record)?;
+        let Version { version } = serde_json::from_slice(&bytes).map_err(|_| Error::Record)?;
+        let record = match version {
+            VERSION => {
+                let record: Self = decode(&bytes)?;
+                if record.origin != origin {
+                    return Err(Error::Record);
+                }
+                record.validate()?;
+                record
+            }
+            1..=4 => {
+                let previous: Previous<'_> = decode(&bytes)?;
+                if previous.origin != origin || previous.version != version {
+                    return Err(Error::Record);
+                }
+                if let Some(saved) = previous.saved {
+                    validate_obsolete(
+                        saved,
+                        previous.binding.as_ref().ok_or(Error::Record)?,
+                        version,
+                    )?;
+                }
+                let record = Self {
+                    version: VERSION,
+                    origin: previous.origin,
+                    keys: previous.keys,
+                    enrollment: previous.enrollment,
+                    binding: previous.binding,
+                    rotation: previous.rotation,
+                    completed_rotation: previous.completed_rotation,
+                };
+                record.validate()?;
+                archive(directory, version, &bytes)?;
+                // The lock remains held and both writes are synchronous and
+                // durable. A failed archive never replaces the original record.
+                directory.replace(RECORD, &encode(&record)?)?;
+                record
+            }
             _ => return Err(Error::Record),
         };
-        let record = if upgrading {
-            // The old cache is inspected only for integrity and binding. It is
-            // never deserialized as, or defaulted into, current authority.
-            if let Some(saved) = envelope.saved {
-                validate_obsolete(
-                    saved,
-                    envelope.binding.as_ref().ok_or(Error::Record)?,
-                    previous_version,
-                )?;
-            }
-            Self {
-                version: VERSION,
-                origin: envelope.origin,
-                keys: envelope.keys,
-                enrollment: envelope.enrollment,
-                binding: envelope.binding,
-                saved: None,
-                rotation: envelope.rotation,
-                completed_rotation: envelope.completed_rotation,
-            }
-        } else {
-            decode(&bytes)?
-        };
-        record.validate()?;
-        if upgrading {
-            archive(directory, previous_version, &bytes)?;
-            let mut buffer = Buffer(Zeroizing::new(Vec::with_capacity(LIMIT)));
-            serde_json::to_writer(&mut buffer, &record).map_err(|_| Error::Record)?;
-            // The lock remains held and both writes are synchronous and durable.
-            // A failed archive never replaces the original identity record.
-            directory.replace(RECORD, &buffer.0)?;
-        }
         ensure_marker(directory)?;
         Ok(record)
     }
@@ -179,8 +228,8 @@ impl Record {
             rotation.validate(record.binding.as_ref().ok_or(Error::Record)?)?;
         }
         match (&record.keys, &record.enrollment, &record.binding) {
-            (None, None, None) if record.saved.is_none() => {}
-            (Some(keys), Some(pending), None) if record.saved.is_none() => {
+            (None, None, None) => {}
+            (Some(keys), Some(pending), None) => {
                 if pending.intent.existing.is_some()
                     || pending.intent.control_key != keys.control()?
                     || pending.intent.dataplane_key != keys.dataplane()?
@@ -191,33 +240,33 @@ impl Record {
                     return Err(Error::Record);
                 }
             }
-            (Some(keys), None, Some(binding)) if keys.matches(binding)? => {
-                if let Some(saved) = &record.saved {
-                    super::execution::validate_target(saved, binding).map_err(|_| Error::Record)?;
-                }
-            }
+            (Some(keys), None, Some(binding)) if keys.matches(binding)? => {}
             _ => return Err(Error::Record),
         }
         Ok(())
     }
 }
 
-fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
+pub(super) fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
     let mut decoder = serde_json::Deserializer::from_slice(bytes);
     let value = T::deserialize(meshway_serde::MapOnly(&mut decoder)).map_err(|_| Error::Record)?;
     decoder.end().map_err(|_| Error::Record)?;
     Ok(value)
 }
 
-/// Records before the current version carry derived bodies of retired compiler
-/// versions (v1: demand-4 without pools, v2: demand-4, v3: demand-5). MapOnly recursively
-/// rejects duplicate keys, including inside fields that are not execution inputs
+/// Derived bodies of retired record versions (v1: demand-4 without pools, v2:
+/// demand-4, v3: demand-5, v4: demand-7). MapOnly recursively rejects
+/// duplicate keys, including inside fields that are not execution inputs
 /// anymore. Header values retain their original strong types.
 fn validate_obsolete(
     raw: &RawValue,
     binding: &EnrollmentResponse,
     version: u8,
 ) -> Result<(), Error> {
+    if version == 4 {
+        let saved: CompiledNode = decode(raw.get().as_bytes())?;
+        return crate::execution::validate_target(&saved, binding).map_err(|_| Error::Record);
+    }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Slice<'a> {
@@ -250,11 +299,7 @@ fn archive(
 ) -> Result<(), Error> {
     let digest = meshway_model::Digest::from_bytes(Sha256::digest(bytes).into());
     let name = format!("control-v{version}-{digest}.json");
-    if let Some(file) = directory.file(&name, false)? {
-        let mut existing = Zeroizing::new(Vec::new());
-        file.take((LIMIT + 1) as u64)
-            .read_to_end(&mut existing)
-            .map_err(|_| meshway_private_storage::Error::Io)?;
+    if let Some(existing) = read(directory, &name)? {
         if existing.as_slice() != bytes {
             return Err(Error::Record);
         }
@@ -279,33 +324,72 @@ impl Write for Buffer {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+struct LegacyCache<T> {
+    format: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    saved: Option<T>,
+}
+
+/// Legacy publication target cache. A missing, malformed, foreign-format or
+/// misbound file is not authority and not identity: it is ignored and later
+/// replaced by the next synchronized target.
+pub(super) fn load_legacy(
+    directory: &meshway_private_storage::Directory,
+    binding: Option<&EnrollmentResponse>,
+) -> Result<Option<CompiledNode>, Error> {
+    let (Some(bytes), Some(binding)) = (read(directory, LEGACY_CACHE)?, binding) else {
+        return Ok(None);
+    };
+    let Ok(LegacyCache::<CompiledNode> { format, saved }) = decode(&bytes) else {
+        return Ok(None);
+    };
+    Ok(saved.filter(|saved| {
+        format == LEGACY_FORMAT && crate::execution::validate_target(saved, binding).is_ok()
+    }))
+}
+
 impl Control {
+    /// Identity envelope write. Stops current execution authority first.
     pub(super) async fn persist(&mut self) -> Result<(), Error> {
-        self.persist_record(false).await
+        self.ready()?;
+        self.invalidate_status_context();
+        self.invalidate_snapshots();
+        self.revoke_netmap();
+        let bytes = encode(&self.record)?;
+        self.write_private(RECORD, bytes).await
     }
 
     /// Only the validated configuration-query transaction may preserve lineage.
     pub(super) async fn persist_target(&mut self) -> Result<(), Error> {
-        self.persist_record(true).await
+        self.ready()?;
+        self.invalidate_guards();
+        let bytes = encode(&LegacyCache {
+            format: LEGACY_FORMAT.into(),
+            saved: self.saved.as_ref(),
+        })?;
+        self.write_private(LEGACY_CACHE, bytes).await
     }
 
-    async fn persist_record(&mut self, target: bool) -> Result<(), Error> {
+    /// One fenced durable write under the single driver. Until fsync is
+    /// acknowledged, neither this driver nor a cancelled caller may use the new
+    /// state; an unknown outcome requires reopening the storage.
+    pub(super) async fn write_private(
+        &mut self,
+        name: &'static str,
+        bytes: Zeroizing<Vec<u8>>,
+    ) -> Result<(), Error> {
         self.ready()?;
-        // Mutations happen under the single driver. Until fsync is acknowledged,
-        // neither this driver nor a cancelled caller may use the new identity.
         self.dirty = true;
-        if target {
-            self.invalidate_guards();
-        } else {
-            self.invalidate_status_context();
-            self.invalidate_snapshots();
-        }
-        let mut buffer = Buffer(Zeroizing::new(Vec::with_capacity(LIMIT)));
-        serde_json::to_writer(&mut buffer, &self.record).map_err(|_| Error::Record)?;
+        // A cancelled caller leaves the outcome unknown: the fuse then cancels
+        // every netmap guard, as an error does below.
+        let fuse = self.netmap.fuse();
         let directory = Arc::clone(&self.directory);
         self.write = Some(tokio::task::spawn_blocking(move || {
             ensure_marker(&directory).map_err(|_| meshway_private_storage::Error::UnsafeStorage)?;
-            directory.replace(RECORD, &buffer.0)
+            directory.replace(name, &bytes)
         }));
         let result = self
             .write
@@ -314,7 +398,13 @@ impl Control {
             .await
             .map_err(|_| Error::ReloadRequired)?;
         self.write.take();
-        result?;
+        if let Err(error) = result {
+            // Unknown outcome: no snapshot may outlive it.
+            drop(fuse);
+            self.revoke_netmap();
+            return Err(error.into());
+        }
+        fuse.disarm();
         self.dirty = false;
         Ok(())
     }

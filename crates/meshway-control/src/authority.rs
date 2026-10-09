@@ -1,6 +1,8 @@
-//! Control is the production issuer of execution authority. Every snapshot is
-//! bound to the current lease, the durable private target and this owner's
-//! shared validity/invalidation; saved files alone cannot mint a grant.
+//! Control is the production issuer of execution authority. Every legacy
+//! snapshot is bound to the current lease, the durable private target and this
+//! owner's shared validity/invalidation; saved files alone cannot mint a grant.
+//! Netmap snapshots are issued only by `netmap` from verified, sealed content
+//! and its lease.
 use crate::{
     Control, Error,
     execution::{validate_exit_binding, validate_target},
@@ -52,8 +54,12 @@ impl Control {
         snapshot: ExecutionSnapshot,
     ) -> Result<DataPlaneIdentity, Error> {
         snapshot.ensure_current()?;
-        let current = self.execution_snapshot()?;
-        if !current.same_execution(&snapshot) {
+        let current = if snapshot.is_netmap() {
+            self.netmap_snapshot()?
+        } else {
+            self.execution_snapshot()?
+        };
+        if !current.same_execution(&snapshot) && !current.same_netmap(&snapshot) {
             return Err(Error::Contract);
         }
         let keys = self.record.keys.as_ref().ok_or(Error::Lifecycle)?;

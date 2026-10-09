@@ -24,6 +24,7 @@ pub enum Fault {
     WrongDnsName,
     MissingDnsRecord,
     ShortSession,
+    ShortInstance,
     UntypedConflict,
     WrongStateScopeStatus,
     StateScopeChanged,
@@ -218,6 +219,12 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                         value["expiresAt"] = (chrono::Utc::now() + chrono::Duration::seconds(2))
                             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
                             .into()
+                    }
+                    Fault::ShortInstance => {
+                        value["expiresAt"] = (chrono::Utc::now() + chrono::Duration::seconds(2))
+                            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+                            .into();
+                        value["executionExpiresAt"] = serde_json::Value::Null;
                     }
                     Fault::Lost | Fault::Hold => unreachable!("delivery fault handled above"),
                     Fault::RejectBefore => unreachable!("rejected before forwarding"),
