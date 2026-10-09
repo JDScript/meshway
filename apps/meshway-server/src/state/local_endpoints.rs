@@ -1,6 +1,5 @@
-//! State-owned, volatile projection read by the previous publication chain
-//! when another input triggers it; a report never triggers a compilation.
-//! TEMP storage shares the single SQLite owner and transaction with execution
+//! State-owned, volatile projection of the previous publication chain. A
+//! change republishes only while no netmap store is installed. TEMP storage shares the single SQLite owner and transaction with execution
 //! publication; it never survives a Server restart or becomes
 //! configuration/identity authority. The netmap chain uses `state::facts`.
 use super::{REPORT_TTL_SECONDS, ReportAdmission};

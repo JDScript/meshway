@@ -231,7 +231,6 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
         Some(&ExitUnavailableReason::IpForwardDisabled)
     );
     let ready = report_current(&app, bt.token.expose(), &bi, 2, ExitStatus::Ready).await;
-    crate::app::tests::recompile(&app, network).await;
     assert!(matches!(
         service
             .demand(at.token.expose(), d.clone())
@@ -248,7 +247,6 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
         .accept_report(bt.token.expose().to_owned(), unknown)
         .await
         .unwrap();
-    crate::app::tests::recompile(&app, network).await;
     assert_eq!(
         service
             .demand(at.token.expose(), d.clone())
@@ -298,7 +296,6 @@ async fn exit_capability_before_applied_is_fenced_and_withdraws_joint_permission
         },
     )
     .await;
-    crate::app::tests::recompile(&app, network).await;
     assert_eq!(
         service
             .demand(at.token.expose(), d.clone())

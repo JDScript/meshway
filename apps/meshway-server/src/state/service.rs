@@ -149,6 +149,8 @@ pub(crate) struct Runtime {
     pub(crate) facts: super::facts::FactLedger,
     /// Netmap store owner's reader; scopes fact recording and disclosure.
     pub(crate) netmaps: Arc<dyn super::facts::NetmapReader>,
+    /// A netmap store is installed: dynamic facts no longer republish.
+    netmap_chain: bool,
 }
 /// The executor applies committed effects here, on its own thread, after COMMIT.
 impl crate::effect::EffectSink for Mutex<Runtime> {
@@ -226,11 +228,13 @@ impl Runtime {
             observations: Observations::default(),
             traversal: crate::connectivity::Attempts::default(),
             netmaps: Arc::new(super::facts::NoNetmaps),
+            netmap_chain: false,
         })
     }
     /// Install the netmap store owner's reader; until then nothing is visible.
     pub(crate) fn install_netmaps(&mut self, netmaps: Arc<dyn super::facts::NetmapReader>) {
         self.netmaps = netmaps;
+        self.netmap_chain = true;
     }
 }
 pub struct StateService<P: StateProvider> {
@@ -366,15 +370,16 @@ impl<P: StateProvider> StateService<P> {
                 let runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let accepted = runtime.hub.check_report(&admission, &report, now)?;
                 let netmaps = Arc::clone(&runtime.netmaps);
+                let netmap_chain = runtime.netmap_chain;
                 drop(runtime);
-                // Dynamic facts never compile or publish. The previous-chain
-                // projections stay readable for compilations that other
-                // stable inputs trigger.
+                let mut previous_chain_changed = false;
                 let facts = if accepted.duplicate {
                     None
                 } else {
-                    super::local_endpoints::replace(tx, &sealer, &admission, &report, now)?;
-                    super::exit::replace(tx, &sealer, &admission, &report, now)?;
+                    let endpoints =
+                        super::local_endpoints::replace(tx, &sealer, &admission, &report, now)?;
+                    let exit = super::exit::replace(tx, &sealer, &admission, &report, now)?;
+                    previous_chain_changed = endpoints || exit;
                     let reporter = netmaps.current(tx, admission.network_id, admission.node_id)?;
                     Some(Effect::PeerFacts {
                         network_id: admission.network_id,
@@ -388,12 +393,27 @@ impl<P: StateProvider> StateService<P> {
                         .map(Box::new),
                     })
                 };
+                let network_id = admission.network_id;
                 let mut effects = vec![Effect::AcceptedState {
                     admission: Box::new(admission),
                     report: Box::new(report),
                     observed_at: now,
                 }];
                 effects.extend(facts);
+                // Only the previous chain, whose current Nodes learn endpoints
+                // and exit readiness from publications, still republishes.
+                // Once a netmap store is installed, facts never compile; the
+                // branch is removed with the previous chain.
+                if previous_chain_changed && !netmap_chain {
+                    crate::store::execution::publish(
+                        tx,
+                        &sealer,
+                        network_id,
+                        "refresh",
+                        now.timestamp_millis(),
+                    )?;
+                    effects.push(Effect::Progress { network_id });
+                }
                 Ok((accepted, effects))
             })
             .await

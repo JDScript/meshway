@@ -95,7 +95,6 @@ async fn server_exit_dns_tracks_ready_and_withdrawn_capability() {
         }
     );
     report_current(&app, bt.token.expose(), &bi, 1, ExitStatus::Ready).await;
-    crate::app::tests::recompile(&app, network).await;
     let DnsEgress::ViaExit {
         exit,
         service: permit,
@@ -125,7 +124,6 @@ async fn server_exit_dns_tracks_ready_and_withdrawn_capability() {
         },
     )
     .await;
-    crate::app::tests::recompile(&app, network).await;
     assert_eq!(
         dns(&app, at.token.expose(), &ai).await,
         DnsEgress::Unavailable {
