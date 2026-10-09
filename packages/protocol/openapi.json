@@ -6877,6 +6877,14 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SyncRequest"
+              },
+              "example": {
+                "netmap": {
+                  "digest": "abababababababababababababababababababababababababababababababab",
+                  "revision": 7,
+                  "serial": 3
+                },
+                "state": null
               }
             }
           },
@@ -6888,6 +6896,21 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SyncResponse"
+                },
+                "example": {
+                  "lease": {
+                    "expiresAt": "2026-10-10T09:00:00Z",
+                    "issuedAt": "2026-10-09T09:00:00Z",
+                    "netmap": {
+                      "digest": "abababababababababababababababababababababababababababababababab",
+                      "revision": 7,
+                      "serial": 3
+                    }
+                  },
+                  "netmap": {
+                    "type": "unchanged"
+                  },
+                  "peerFacts": null
                 }
               }
             }
