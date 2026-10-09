@@ -41,7 +41,7 @@ pub(super) struct Ledger {
 }
 pub(super) struct Store {
     pub directory: Arc<Directory>,
-    pending: Option<tokio::task::JoinHandle<Result<()>>>,
+    writes: meshway_private_storage::Writes<Error>,
 }
 impl Store {
     pub async fn open(directory: Arc<Directory>) -> Result<(Self, Option<Ledger>)> {
@@ -79,18 +79,13 @@ impl Store {
         Ok((
             Self {
                 directory,
-                pending: None,
+                writes: meshway_private_storage::Writes::per_write(|| Error::Worker),
             },
             prior,
         ))
     }
     pub async fn settle(&mut self) -> Result<()> {
-        if let Some(task) = &mut self.pending {
-            let result = task.await.map_err(|_| Error::Worker)?;
-            self.pending = None;
-            result?;
-        }
-        Ok(())
+        self.writes.settle().await
     }
     pub async fn persist(&mut self, ledger: &Ledger) -> Result<()> {
         self.settle().await?;
@@ -100,11 +95,12 @@ impl Store {
             return Err(Error::Capacity);
         }
         let directory = self.directory.clone();
-        self.pending = Some(tokio::task::spawn_blocking(move || {
-            directory.replace(FILE, &bytes)?;
-            Ok(())
-        }));
-        self.settle().await
+        self.writes
+            .run(move || {
+                directory.replace(FILE, &bytes)?;
+                Ok(())
+            })
+            .await
     }
 }
 impl Ledger {

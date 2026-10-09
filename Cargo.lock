@@ -2160,6 +2160,7 @@ dependencies = [
  "rustix",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

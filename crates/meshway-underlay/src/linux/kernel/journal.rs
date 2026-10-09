@@ -207,8 +207,7 @@ impl Journal {
 
 pub(super) struct Store {
     directory: Arc<Directory>,
-    write: Option<tokio::task::JoinHandle<std::result::Result<(), meshway_private_storage::Error>>>,
-    poisoned: bool,
+    writes: meshway_private_storage::Writes<Error>,
 }
 
 impl Store {
@@ -255,26 +254,14 @@ impl Store {
         Ok((
             Self {
                 directory,
-                write: None,
-                poisoned: false,
+                writes: meshway_private_storage::Writes::poisoning(|| Error::Journal),
             },
             journal,
         ))
     }
 
     pub async fn settle(&mut self) -> Result<()> {
-        if let Some(write) = &mut self.write {
-            let result = write.await;
-            self.write = None;
-            if !matches!(result, Ok(Ok(()))) {
-                self.poisoned = true;
-                return Err(Error::Journal);
-            }
-        }
-        if self.poisoned {
-            return Err(Error::Journal);
-        }
-        Ok(())
+        self.writes.settle().await
     }
 
     pub async fn persist(&mut self, journal: &Journal) -> Result<()> {
@@ -284,10 +271,12 @@ impl Store {
             return Err(Error::Capacity);
         }
         let directory = self.directory.clone();
-        self.write = Some(tokio::task::spawn_blocking(move || {
-            directory.replace(FILE, &bytes)
-        }));
-        self.settle().await
+        self.writes
+            .run(move || {
+                directory.replace(FILE, &bytes)?;
+                Ok(())
+            })
+            .await
     }
 }
 

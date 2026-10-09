@@ -1,6 +1,9 @@
 //! Checked private filesystem resources. Callers own formats and lifecycle.
-//! Operations are synchronous; asynchronous owners run them on blocking workers.
+//! Filesystem operations are synchronous; accepted writes can be joined by async owners.
 #![forbid(unsafe_code)]
+
+mod writes;
+pub use writes::Writes;
 
 use std::{
     fs::File,

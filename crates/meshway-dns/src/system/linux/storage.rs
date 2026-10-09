@@ -36,33 +36,25 @@ pub(super) fn save<T: Serialize>(
         .replace(name, &bytes)
         .map_err(|_| SystemDnsError::Storage)
 }
-#[derive(Default)]
 pub(super) struct Writes {
-    pending: Option<tokio::task::JoinHandle<Result<(), SystemDnsError>>>,
-    poisoned: bool,
+    writes: meshway_private_storage::Writes<SystemDnsError>,
+}
+impl Default for Writes {
+    fn default() -> Self {
+        Self {
+            writes: meshway_private_storage::Writes::poisoning(|| SystemDnsError::Storage),
+        }
+    }
 }
 impl Writes {
     pub async fn settle(&mut self) -> Result<(), SystemDnsError> {
-        if let Some(pending) = &mut self.pending {
-            let result = pending.await;
-            self.pending = None;
-            if !matches!(result, Ok(Ok(()))) {
-                self.poisoned = true;
-            }
-        }
-        if self.poisoned {
-            Err(SystemDnsError::Storage)
-        } else {
-            Ok(())
-        }
+        self.writes.settle().await
     }
     pub async fn run(
         &mut self,
         work: impl FnOnce() -> Result<(), SystemDnsError> + Send + 'static,
     ) -> Result<(), SystemDnsError> {
-        self.settle().await?;
-        self.pending = Some(tokio::task::spawn_blocking(work));
-        self.settle().await
+        self.writes.run(work).await
     }
     pub async fn save<T: Serialize>(
         &mut self,

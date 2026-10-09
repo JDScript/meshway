@@ -106,8 +106,7 @@ impl Ledger {
 
 pub(super) struct Store {
     pub directory: Arc<Directory>,
-    write: Option<tokio::task::JoinHandle<Result<()>>>,
-    failed: bool,
+    writes: meshway_private_storage::Writes<Error>,
 }
 
 impl Store {
@@ -144,25 +143,13 @@ impl Store {
         Ok((
             Self {
                 directory,
-                write: None,
-                failed: false,
+                writes: meshway_private_storage::Writes::poisoning(|| Error::Journal),
             },
             ledger,
         ))
     }
     pub async fn settle(&mut self) -> Result<()> {
-        if let Some(write) = &mut self.write {
-            let result = write.await;
-            self.write = None;
-            if !matches!(result, Ok(Ok(()))) {
-                self.failed = true;
-            }
-        }
-        if self.failed {
-            Err(Error::Journal)
-        } else {
-            Ok(())
-        }
+        self.writes.settle().await
     }
     pub async fn persist(&mut self, ledger: &Ledger) -> Result<()> {
         self.settle().await?;
@@ -172,10 +159,11 @@ impl Store {
             return Err(Error::Capacity);
         }
         let directory = self.directory.clone();
-        self.write = Some(tokio::task::spawn_blocking(move || {
-            directory.replace(FILE, &bytes)?;
-            Ok(())
-        }));
-        self.settle().await
+        self.writes
+            .run(move || {
+                directory.replace(FILE, &bytes)?;
+                Ok(())
+            })
+            .await
     }
 }

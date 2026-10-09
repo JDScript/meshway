@@ -9,6 +9,7 @@ description = "Owner-only directory, file and atomic publication primitives"
 getrandom.workspace = true
 rustix.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
