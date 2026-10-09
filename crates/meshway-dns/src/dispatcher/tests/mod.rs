@@ -370,6 +370,33 @@ async fn check_system_failover(control: &mut Control) {
         dispatcher.stop().await;
     }
 
+    // Replacing a live scope fences both unsent answers and blocked work,
+    // even when the published snapshot itself is unchanged.
+    let exchange = Exchange::new(&[Step::Answer, Step::Hang, Step::Answer]);
+    let (dispatcher, sender) = make_dispatcher(scope.clone(), exchange.clone());
+    let answer = dispatcher
+        .dispatch(query(), Instant::now() + Duration::from_secs(1))
+        .await
+        .unwrap();
+    let (result, ()) = tokio::join!(
+        dispatcher.dispatch(query(), Instant::now() + Duration::from_secs(1)),
+        async {
+            exchange.entered(2).await;
+            sender.send_replace(Some(scope.clone()));
+            dispatcher.reconcile().await.unwrap();
+        }
+    );
+    assert!(result.is_err());
+    assert!(answer.ensure_current().is_err());
+    assert!(exchange.calls.lock().unwrap()[1].ensure_current().is_err());
+    assert!(
+        dispatcher
+            .dispatch(query(), Instant::now() + Duration::from_secs(1))
+            .await
+            .is_ok()
+    );
+    dispatcher.stop().await;
+
     // Both watch withdrawal and actual Control revocation must stop a blocked
     // first exchange rather than letting its timeout start the second server.
     for revoke_control in [false, true] {

@@ -41,8 +41,6 @@ pub enum OwnerError {
     Limits,
     #[error("DNS execution snapshot is not current")]
     Inactive,
-    #[error("DNS refresh requires the same execution epoch, instance and exact target")]
-    DifferentExecution,
     #[error(transparent)]
     Configuration(#[from] ConfigurationError),
     #[error("DNS output is cancelled or expired")]
@@ -209,39 +207,6 @@ impl Owner {
         Ok(Self { snapshot, state })
     }
 
-    /// Replacing even the same snapshot invalidates all previous tickets and
-    /// unsent answers. Failed construction leaves the existing owner intact.
-    pub fn replace(&mut self, snapshot: ExecutionSnapshot) -> Result<(), OwnerError> {
-        *self = Self::new(snapshot, self.state.limits)?;
-        Ok(())
-    }
-
-    /// Explicit same-execution renewal for future queries. Both snapshots must
-    /// still be current; a stopped owner cannot be refreshed. Unlike `replace`,
-    /// this requires the same control epoch, instance, network, node and target.
-    ///
-    /// Conservatively cancels every pending ticket and unsent answer, including
-    /// published answers, before installing the new guard. No old operation can
-    /// complete under renewed deadlines or bypass its original wall-clock cap.
-    /// Failed validation leaves the owner unchanged.
-    pub fn refresh(&mut self, snapshot: ExecutionSnapshot) -> Result<(), OwnerError> {
-        snapshot
-            .ensure_current()
-            .map_err(|_| OwnerError::Inactive)?;
-        self.snapshot
-            .ensure_current()
-            .map_err(|_| OwnerError::Inactive)?;
-        if self.state.cancelled.is_cancelled() {
-            return Err(OwnerError::Inactive);
-        }
-        if !self.snapshot.same_execution(&snapshot) {
-            return Err(OwnerError::DifferentExecution);
-        }
-        self.state.refresh_generation();
-        self.snapshot = snapshot;
-        Ok(())
-    }
-
     pub fn begin(&mut self, query: Query, exit: ExitSelection) -> Begin {
         if self.snapshot.ensure_current().is_err() {
             self.state.stop();
@@ -255,15 +220,7 @@ impl Owner {
 
     /// Authoritative live entry. Profile strings and caller booleans never
     /// establish no-exit operation. Unsupported exit plans still allow MagicDNS.
-    pub fn begin_published(
-        &mut self,
-        query: Query,
-        resolver_demands: &BTreeMap<String, RequestId>,
-    ) -> Begin {
-        self.begin_published_until(query, resolver_demands, self.snapshot.expires_at())
-    }
-
-    /// Additionally cap every ticket, route and answer by the original client's
+    /// Cap every ticket, route and answer by the original client's
     /// request deadline. A host may shorten, but never extend, owner authority.
     pub fn begin_published_until(
         &mut self,
@@ -478,7 +435,8 @@ impl Owner {
         self.state.reap(Instant::now());
     }
 
-    pub fn pending_len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn pending_len(&self) -> usize {
         self.state.pending.len()
     }
 
@@ -770,13 +728,6 @@ impl State {
     fn stop(&mut self) {
         self.cancelled.cancel();
         self.pending.clear();
-    }
-
-    fn refresh_generation(&mut self) {
-        self.stop();
-        self.generation = Arc::new(());
-        self.cancelled = CancellationToken::new();
-        self.sequence = 0;
     }
 }
 

@@ -231,7 +231,7 @@ Ticket 绑定 owner 代际与本次操作；DNS request ID 相同不表示同一
 
 当前已发布／发现的 MagicDNS 记录均以 TTL 0 应答，没有正／负缓存，也不新增 TTL 来源。已知名称缺少对应地址族返回 NODATA；精确发现的 `record: null` 保持类型化 `NotVisible` 并编码为 REFUSED，无 AA／SOA，不制造可缓存 NXDOMAIN。部分 `mesh_hosts` 缺席先进行精确发现，不能被当作权威 NXDOMAIN。
 
-`refresh`、`replace`、`stop` 或 owner 销毁取消旧 ticket 与尚未发送的回答；失效 Control 快照同样阻止回答交付。
+`OwnerDispatcher` 的 scope 更新、`stop` 或 owner 销毁取消旧 ticket 与尚未发送的回答；失效 Control 快照同样阻止回答交付。
 
 ### Service 与 resolver 路由
 

@@ -99,7 +99,7 @@ async fn real_control_dns_discovery_binds_wire_answers_and_preserves_typed_not_v
 }
 
 #[tokio::test]
-async fn dns_owner_refresh_replace_drop_and_control_stop_fence_late_real_completions() {
+async fn dns_owner_drop_and_control_stop_fence_late_real_completions() {
     use hickory_proto::rr::RecordType;
     use meshway_dns::{Begin, Owner, ResponseTransport, Unavailable};
     let server = Server::start().await;
@@ -120,50 +120,17 @@ async fn dns_owner_refresh_replace_drop_and_control_stop_fence_late_real_complet
     let request = dns::discover(&mut owner, &name, RecordType::A);
     let response = node.control.query_dns(&request.name).await.unwrap();
     let unsent = dns::answer(owner.complete_discovery(&request.ticket, response.clone()));
-    let pending = dns::discover(&mut owner, &name, RecordType::A);
-    let late_response = node.control.query_dns(&pending.name).await.unwrap();
-    node.control.renew_instance().await.unwrap();
-    let renewed = node.control.execution_snapshot().unwrap();
-    assert!(original.same_execution(&renewed));
-    owner.refresh(renewed.clone()).unwrap();
-    assert_eq!(owner.pending_len(), 0);
-    tokio::time::timeout(WAIT, pending.ticket.cancelled())
-        .await
-        .unwrap();
-    tokio::time::timeout(WAIT, unsent.invalidated())
-        .await
-        .unwrap();
-    assert!(unsent.encode(ResponseTransport::Udp, 1232).is_err());
-    assert!(matches!(
-        owner.complete_discovery(&pending.ticket, late_response.clone()),
-        Begin::Unavailable(Unavailable::InvalidTicket)
-    ));
-
-    let request = dns::discover(&mut owner, &name, RecordType::A);
-    let unsent = dns::answer(owner.complete_discovery(&request.ticket, response.clone()));
-    let pending = dns::discover(&mut owner, &name, RecordType::A);
-    owner.replace(renewed.clone()).unwrap();
-    tokio::time::timeout(WAIT, pending.ticket.cancelled())
-        .await
-        .unwrap();
-    assert!(unsent.ensure_current().is_err());
-    assert!(matches!(
-        owner.complete_discovery(&pending.ticket, late_response.clone()),
-        Begin::Unavailable(Unavailable::InvalidTicket)
-    ));
-
-    let request = dns::discover(&mut owner, &name, RecordType::A);
-    let unsent = dns::answer(owner.complete_discovery(&request.ticket, response.clone()));
     drop(owner);
     tokio::time::timeout(WAIT, unsent.invalidated())
         .await
         .unwrap();
     assert!(unsent.encode(ResponseTransport::Udp, 1232).is_err());
 
-    let mut owner = Owner::new(renewed, limits).unwrap();
+    let mut owner = Owner::new(original, limits).unwrap();
     let request = dns::discover(&mut owner, &name, RecordType::A);
     let unsent = dns::answer(owner.complete_discovery(&request.ticket, response));
     let pending = dns::discover(&mut owner, &name, RecordType::A);
+    let late_response = node.control.query_dns(&pending.name).await.unwrap();
     tokio::time::timeout(WAIT, async {
         let (stopped, ()) = tokio::join!(node.control.stop(), unsent.invalidated());
         stopped.unwrap();

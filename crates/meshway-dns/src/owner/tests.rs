@@ -369,43 +369,6 @@ fn cancellation_capacity_deadlines_and_generation_replacement_are_bounded() {
 }
 
 #[test]
-fn refresh_cancels_pending_and_unsent_answers_before_admitting_a_new_generation() {
-    let mut state = state();
-    let now = Instant::now();
-    let request = begin(&mut state, "ready.mesh.example", RecordType::A, now);
-    let response = dns_response(&state, &request);
-    let ready = answer(state.complete(&request.ticket, response, now));
-    let pending = begin(&mut state, "pending.mesh.example", RecordType::A, now);
-    let pending_response = dns_response(&state, &pending);
-    let published = answer(state.begin(
-        query("known.mesh.example", RecordType::A),
-        ExitSelection::NoExit,
-        now,
-        now + Duration::from_secs(60),
-    ));
-
-    state.refresh_generation();
-    assert!(state.pending.is_empty());
-    assert!(pending.ticket.cancelled.is_cancelled());
-    assert!(ready.cancelled.is_cancelled());
-    assert!(published.cancelled.is_cancelled());
-    assert!(!state.cancelled.is_cancelled());
-    unavailable(
-        state.complete(&pending.ticket, pending_response, now),
-        Unavailable::InvalidTicket,
-    );
-
-    // Sequences can repeat only under a different opaque generation.
-    let fresh = begin(&mut state, "ready.mesh.example", RecordType::A, now);
-    assert_eq!(fresh.ticket.sequence, request.ticket.sequence);
-    assert!(!state.cancel(&request.ticket));
-    let response = dns_response(&state, &fresh);
-    let fresh_ready = answer(state.complete(&fresh.ticket, response, now));
-    assert!(!fresh_ready.cancelled.is_cancelled());
-    assert_eq!(fresh_ready.message.answers[0].ttl, 0);
-}
-
-#[test]
 fn unsent_answers_cancel_and_query_timeout_is_capped_by_snapshot_expiry() {
     let mut state = state();
     let now = Instant::now();
