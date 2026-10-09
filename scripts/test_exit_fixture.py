@@ -19,6 +19,7 @@ class ExitEvidenceTests(unittest.TestCase):
 
     def test_component_or_partial_pass_cannot_promote_row(self):
         report = {"stages": {str(i): {"status": "passed"} for i in range(1, 9)},
+                  "dnsNoSourceFallback": {"passed": True},
                   "processes": {role: {"ExitCode": 0, "Running": False, "OOMKilled": False}
                                 for role in ("controller", "a", "r", "e", "external", "lan")}}
         self.assertTrue(evidence.all_stages_passed(report))

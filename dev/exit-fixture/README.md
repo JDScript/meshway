@@ -62,7 +62,7 @@ must prove their own installation, NAT and traffic lifecycle.
 | --- | --- | --- |
 | 1 Capability | Accepted acquire declares `feature:exit-ipv4` v1; capability instance equals live instance | `e/acquisition.json`, `e/installed-status.json` |
 | 2 Prerequisite | `ip_forward=0` gives `ipForwardDisabled`, empty installed families and no role; restore reads back 1 | `ip-forward-disabled.json`, `forwarding-restored.json` |
-| 3 Applied | Ready IPv4 role, exact saved/applied reference, real kernel resources | `installed.json`, `e/installed-status.json` |
+| 3 Applied/DNS | Ready IPv4 role, exact saved/applied reference, real kernel resources; failed system DNS query with no plaintext query on A's physical interfaces | `installed.json`, `e/installed-status.json`, `negative-dns-query.json`, `a/*.pcap` |
 | 4 Capture/transit | A default capture routes the external IP to its actual TUN; R remains a non-exit with original external transit permits | `capture-before-admission.json`, `capture-route.json`, `original-path.json` |
 | 5 Projection/NAT | Original and reverse conntrack tuple/owned mark match external service log; exact ACK/first-write/confirmation ordering is checked by the production driver test | `nat-proof.json`, `first-flow.json`, `components/driver.log` |
 | 6 Renewal/failure | Persistent TCP/UDP and receive-only UDP; driver checks original cutoff, ConfirmFailed exact isolation and surviving flow | `a/traffic-*.json`, `a/receive-only-*.json`, `components/{driver,handoff}.log` |

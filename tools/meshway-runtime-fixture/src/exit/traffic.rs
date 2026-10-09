@@ -97,20 +97,29 @@ async fn measure(cli: &Cli, (link, udp, tcp): &mut (&str, UdpSocket, TcpStream))
     )
     .await?;
     let started = std::time::Instant::now();
+    tracing::info!(
+        phase = "exit-persistent-traffic",
+        link = *link,
+        seconds = cli.traffic_duration().as_secs(),
+        "real TCP/UDP window starting"
+    );
     let regular = async {
         let mut count = 0_u64;
         while started.elapsed() < cli.traffic_duration() {
             let mut payload = b"exit-steady-".to_vec();
             payload.extend_from_slice(&count.to_be_bytes());
             udp.send(&payload).await?;
-            expected_reply(udp, &payload).await?;
+            expected_reply(udp, &payload)
+                .await
+                .map_err(|error| format!("exit {link} UDP sequence {count}: {error}"))?;
             let sent = [0x5a; 16384];
             let mut echoed = [0; 16384];
             tokio::time::timeout(IO, async {
                 tcp.write_all(&sent).await?;
                 tcp.read_exact(&mut echoed).await
             })
-            .await??;
+            .await
+            .map_err(|_| format!("exit {link} TCP echo timeout at sequence {count}"))??;
             if echoed != sent {
                 return Err("exit multi-MSS TCP reply mismatch".into());
             }

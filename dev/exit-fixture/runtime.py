@@ -221,7 +221,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         manifest["status"] = "collecting-infrastructure"
         save()
         interfaces = {}
-        for role in ("r", "e"):
+        for role in ("a", "r", "e"):
             links = json.loads(command(role, "ip", "-j", "address")["stdout"])
             interfaces[role] = {address["local"]: link["ifname"] for link in links for address in link["addr_info"]
                                 if address["family"] == "inet"}
@@ -322,7 +322,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         if acquired["capabilities"].get("feature:exit-ipv4") != {"kind": "feature", "version": 1}:
             raise RuntimeError("E did not acquire the executable IPv4 exit capability v1")
         manifest["stages"]["1"] = {"status": "passed", "evidence": ["e/installed-status.json"]}
-        manifest["stages"]["3"] = {"status": "passed", "evidence": ["installed.json"]}
+        manifest["stages"]["3"] = {"status": "observed", "evidence": ["installed.json", "negative-dns-query.json"]}
         wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "A/R running with execution lease")
         snapshot("capture-before-admission")
         # Actual policy/kernel readback is retained before the first application
@@ -348,6 +348,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         if bypass["ipv6"]["exitCode"] == 0 or a_saved["configuration"]["egressCapture"]["sinkIpv6"] != ["::/0"]:
             raise RuntimeError("source exit IPv6 is not negatively captured")
         write(report / "capture-bypass.json", bypass)
+        dns_name = "exit-negative-" + identity.lower() + ".fixture.test"
+        dns_probe = command("a", "timeout", "8", "getent", "ahostsv4", dns_name, required=False)
+        write(report / "negative-dns-query.json", {"name": dns_name, "status": status("a"), "probe": dns_probe})
+        if dns_probe["exitCode"] not in (2, 124):
+            raise RuntimeError("exit/off DNS query did not fail through the system resolver")
         manifest["stages"]["4"] = {"status": "passed", "evidence": ["capture-before-admission.json", "compiled-plans.json"]}
         manifest["status"] = "traffic"
         save()
@@ -477,6 +482,12 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             raise RuntimeError("foreign sentinel changed during product cleanup")
         manifest["stages"]["8"] = {"status": "passed", "evidence": ["withdrawn.json", "a/withdrawn-old-flows.json", "expired.json", "recovered.json", "down.json", "components/role.log"]}
         stop_captures()
+        for interface in sorted(set(interfaces["a"].values()) - {"lo"}):
+            leak = command("a", "python3", "-c", "import pathlib; b=pathlib.Path('/evidence/" + interface + ".pcap').read_bytes().lower(); print(int(" + repr(dns_name.split('.')[0].encode()) + " in b))")
+            if leak["stdout"].strip() != "0":
+                raise RuntimeError("exit DNS query escaped on a source physical interface")
+        manifest["dnsNoSourceFallback"] = {"passed": True, "evidence": "negative-dns-query.json"}
+        manifest["stages"]["3"]["status"] = "passed"
         manifest["packetTuples"] = {}
         for role in ("r", "e"):
             manifest["packetTuples"][role] = {}

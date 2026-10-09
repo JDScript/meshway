@@ -21,6 +21,7 @@ pub(super) async fn run(cli: &Cli) -> Result<()> {
     let mut subscriber = None;
     let mut sent = 0_u64;
     let mut tick = tokio::time::interval(Duration::from_millis(250));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut tasks = JoinSet::new();
     let mut visits = Vec::new();
     let mut buffer = [0; 65536];
@@ -57,6 +58,7 @@ pub(super) async fn run(cli: &Cli) -> Result<()> {
                     let (count, peer) = packet?;
                     if &subscription_buffer[..count] != b"exit-subscribe" { return Err("invalid fixture subscription".into()); }
                     subscriber = Some((peer, std::time::Instant::now()));
+                    tick.reset();
                     visits.push(Visit { protocol: "udp-subscription", peer, local: subscription.local_addr()?, bytes: count });
                 }
                 _ = tick.tick(), if subscriber.is_some() => {

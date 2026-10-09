@@ -33,6 +33,7 @@
 | `test:runtime:linux --transport native-udp --traversal nat --traversal-fallback` | Native UDP＋A–R Native TCP 退路 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋穿透场景＋同路径 TCP 退路 | W5 短模式通过：`20261008T184559Z-c77e0683`；既有全长证据：`20261008T032749Z-4299bfde`、`20261008T050153Z-d30caa20` |
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 端口保持型 SNAT | 整组组合 | 当前 wire 已通过（两次）；Planck `20261008T032749Z-d13bd2a9`、`20261008T050153Z-1978b05b` |
 | [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 未验收（当前整组）；2026-10-07 已有下述 L5 局部证据；共享 bridge 不构成 NAT 证明 |
+| `validate:matrix --rows exit/off`（显式选择） | Native UDP；声明 Native TCP 能力 | off；独立 resolved 后端 | IPv4 出口 masquerade | A→R→E；能力／安装、公网与 LAN、长流／仅接收、撤回／到期／journal | 未通过；Planck 全长 `20261009T081025Z-8b7bf62b`，见[出口场景](#exit-scenario) |
 
 以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、出口转发／NAT、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、整机重启与系统 resolver 服务停机间隙、userspace／SOCKS5。
 
@@ -135,7 +136,9 @@ mise run validate:remote -- --ref feat/exit-acceptance --rows exit/off
 
 入口收集能力／前置条件、saved／applied、capture、原始与 NAT tuple、nft／conntrack、服务日志、R 密文、E 阻断对照、持续／仅接收窗口、撤回、真实 instance 到期与同 namespace journal 恢复证据。投影 ACK／ConfirmFailed／原截止等内部边界另运行同源码的正式 X4 组件测试；组件通过不能代替独立进程行通过。所有八阶段、进程退出与精确清理通过后该次行才通过；需两次全长独立通过才加入默认矩阵。
 
-当前状态：**未验收**。首轮短模式 `20261009T074812Z-36969f23` 在 forwarding 恢复步骤失败：只读 proc-sys 上的 `sysctl -w` 返回零但实际未写入，属于 fixture 缺陷；真实 NodeState 正确报告 `ipForwardDisabled`、空 installedFamilies 和空 applied。该诊断结果不构成产品转发失败或出口通过证据。
+当前状态：**未通过**。Planck 全长矩阵 `20261009T080945Z-9fc2ac9c`／行 `20261009T081025Z-8b7bf62b` 使用候选 `282ed20b`（产品基线 `b031fc37`）。能力／前置条件、实际安装、默认 capture、首次公网与 LAN TCP／UDP、满 MTU UDP已有真实证据，五个正式 X4 组件环境用例通过；125 秒持续／仅接收窗口未完成，后续生命周期阶段未到达。
+
+阻塞位于 daemon 的 runtime State 采样／上报：安装占用 worker 超过采样的 1 秒期限后，缺失样本被投影为 `stopped` 完整 State，Server 撤回出口能力，三端以 `authorization_changed` 关闭仍有约 35–48 秒 permit 预算的活动流。该时刻配置 revision 保持不变，fixture 尚未发起撤回或 HTTP 中断。此行仍为 explicit-only；第二次全长复跑须等待该产品问题修复。最终 fixture 的系统 DNS 反漏、撤回、E 阻断对照、HTTP 到期／恢复与 journal/down 断言仍需真实行验证，不由组件通过或首次包流替代。
 
 #### 穿透场景
 

@@ -31,7 +31,7 @@ ROWS = {
     "nat/resolved": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "resolved")),
     "exit/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit", "--dns-backend", "off")),
 }
-PENDING_ROWS = {"exit/off": "explicit-only: awaiting two complete acceptance passes"}
+PENDING_ROWS = {"exit/off": "explicit-only: runtime State sampling withdrawal blocks acceptance; two full passes required"}
 DEFAULT_ROWS = tuple(name for name in ROWS if name not in PENDING_ROWS)
 
 

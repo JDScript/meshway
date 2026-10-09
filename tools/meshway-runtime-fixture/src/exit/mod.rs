@@ -168,7 +168,7 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     write(&cli.evidence.join("down-status.json"), &down?).await?;
     stopped?;
     ready(cli, &format!("exit-down-{}", role.name())).await?;
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(Duration::from_secs(90), async {
         while !tokio::fs::try_exists(cli.signals.join("exit-stop")).await? {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
