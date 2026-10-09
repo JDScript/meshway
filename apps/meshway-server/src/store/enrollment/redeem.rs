@@ -100,6 +100,7 @@ pub(crate) fn redeem_key_in_transaction(
                 network_id: network,
                 node_id: node,
                 keys,
+                server_signing_key: None,
             },
             None,
         ));
@@ -188,6 +189,7 @@ pub(crate) fn redeem_key_in_transaction(
             network_id: network,
             node_id: node,
             keys,
+            server_signing_key: None,
         },
         Some(effects),
     ))
@@ -233,6 +235,7 @@ pub(crate) fn redeem_in_transaction(
                 network_id: approval.network,
                 node_id: node,
                 keys,
+                server_signing_key: None,
             },
             None,
         ));
@@ -327,6 +330,7 @@ pub(crate) fn redeem_in_transaction(
             network_id: approval.network,
             node_id: node,
             keys,
+            server_signing_key: None,
         },
         Some(effects),
     ))

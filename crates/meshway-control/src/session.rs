@@ -377,6 +377,7 @@ mod tests {
                         public_key: keys.dataplane().unwrap(),
                     },
                 },
+                server_signing_key: None,
             };
             // Only the Control retry state machine is under test here. Real
             // registration/signature/quota admission is covered by Server tests.

@@ -1977,11 +1977,18 @@ export const zNodeKeyMetadata = z.strictObject({
   ["dataplane"]: zBoundNodeKey
 });
 
+export const zServerSigningKey = z.strictObject({
+  ["keyGeneration"]: zVersion,
+  ["keyId"]: zKeyId,
+  ["publicKey"]: zNodePublicKey
+});
+
 export const zEnrollmentResponse = z.strictObject({
   ["controllerId"]: zKeyId,
   ["keys"]: zNodeKeyMetadata,
   ["networkId"]: zNetworkId,
-  ["nodeId"]: zNodeId
+  ["nodeId"]: zNodeId,
+  ["serverSigningKey"]: zServerSigningKey.nullable().exactOptional()
 });
 
 export const zEntityRemovals = z.strictObject({

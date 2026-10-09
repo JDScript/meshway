@@ -25978,6 +25978,17 @@
           "nodeId": {
             "$ref": "#/components/schemas/NodeId",
             "description": "Stable registered Node identity."
+          },
+          "serverSigningKey": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ServerSigningKey",
+                "description": "Server key signing netmap leases, pinned by the Node with this binding; null or omission means the Server issues no signed netmaps and the Node accepts none."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -36708,6 +36719,30 @@
         "description": "A nonnegative sequence number.",
         "maximum": 9007199254740991,
         "minimum": 0
+      },
+      "ServerSigningKey": {
+        "type": "object",
+        "description": "Server Ed25519 key that signs netmap leases.",
+        "required": [
+          "keyId",
+          "keyGeneration",
+          "publicKey"
+        ],
+        "properties": {
+          "keyGeneration": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Key generation; a rotated key has a larger generation."
+          },
+          "keyId": {
+            "$ref": "#/components/schemas/KeyId",
+            "description": "Stable identifier of this Server signing key."
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/NodePublicKey",
+            "description": "Ed25519 public key."
+          }
+        },
+        "additionalProperties": false
       },
       "SessionId": {
         "type": "string",

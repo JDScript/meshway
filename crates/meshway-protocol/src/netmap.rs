@@ -8,7 +8,8 @@ use crate::object::{wire_object, wire_tagged};
 use chrono::{DateTime, Utc};
 use meshway_configuration::netmap::{CompiledNetmap, NetmapDelta};
 use meshway_model::{
-    Digest, NetmapLease, NetmapRef, NodeId, Sequence, StateEpoch, Version,
+    Digest, KeyId, NetmapLease, NetmapRef, NetworkId, NodeId, NodePublicKey, Sequence, StateEpoch,
+    Version,
     exit::{ExitFamily, ExitStatus},
     state::{EndpointCandidate, ListenerPhase, LocalEndpoint, SocketNetwork},
 };
@@ -71,10 +72,74 @@ pub struct PeerFactsDelta {
 
 wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Server Ed25519 key that signs netmap leases.
+pub struct ServerSigningKey {
+    /// Stable identifier of this Server signing key.
+    pub key_id: KeyId,
+    /// Key generation; a rotated key has a larger generation.
+    pub key_generation: Version,
+    /// Ed25519 public key.
+    pub public_key: NodePublicKey,
+} }
+
+wire_object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Server signature over `netmap_lease_transcript(network, node, lease, Server, keyId, keyGeneration)`.
+pub struct NetmapSignature {
+    /// Signing key; must equal the key pinned at enrollment.
+    pub key_id: KeyId,
+    /// Generation of the signing key.
+    pub key_generation: Version,
+    /// Unpadded base64url Ed25519 signature (64 bytes, 86 characters); public, not a secret.
+    pub signature: String,
+} }
+
+/// Signer kind encoded in the netmap lease transcript.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NetmapSigner {
+    /// The Node's own registered control key (local acceptance evidence only).
+    Node = 0,
+    /// The Server signing key pinned at enrollment (authoritative).
+    Server = 1,
+}
+
+/// Canonical transcript of one netmap lease for one Node and signer key:
+/// domain, network, Node, revision, serial, content digest, lease interval,
+/// signer kind, key ID and generation; fixed width, big-endian. The digest
+/// covers the content, so full and delta deliveries are both covered once the
+/// receiver checks its reconstructed digest against `lease.netmap`.
+pub fn netmap_lease_transcript(
+    network: NetworkId,
+    node: NodeId,
+    lease: &NetmapLease,
+    signer: NetmapSigner,
+    key_id: KeyId,
+    key_generation: Version,
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(160);
+    message.extend_from_slice(b"meshway/netmap-lease/v1\0");
+    message.extend_from_slice(network.as_uuid().as_bytes());
+    message.extend_from_slice(node.as_uuid().as_bytes());
+    message.extend_from_slice(&lease.netmap.revision.get().to_be_bytes());
+    message.extend_from_slice(&lease.netmap.serial.get().to_be_bytes());
+    message.extend_from_slice(lease.netmap.digest.as_bytes());
+    message.extend_from_slice(&lease.issued_at_ms.to_be_bytes());
+    message.extend_from_slice(&lease.expires_at_ms.to_be_bytes());
+    message.push(signer as u8);
+    message.extend_from_slice(key_id.as_uuid().as_bytes());
+    message.extend_from_slice(&key_generation.get().to_be_bytes());
+    message
+}
+
+wire_object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Current netmap lease, netmap changes and peer-fact changes for the Node.
 pub struct SyncResponse {
     /// Lease bound to the current netmap.
     pub lease: NetmapLease,
+    /// Server signature over this lease for the requesting Node.
+    pub signature: NetmapSignature,
     /// Full, delta or unchanged netmap.
     pub netmap: SyncNetmap,
     /// Peer-fact changes; null when none occurred during the hold.
@@ -176,6 +241,37 @@ mod tests {
         }
     }
 
+    fn signature() -> NetmapSignature {
+        NetmapSignature {
+            key_id: "00000000-0000-4000-8000-0000000000aa".parse().unwrap(),
+            key_generation: Version::MIN,
+            signature: "A".repeat(86),
+        }
+    }
+
+    #[test]
+    fn lease_transcript_binds_signer_kind_and_key() {
+        let lease = NetmapLease::new(reference(3), 1, 2).unwrap();
+        let network: NetworkId = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let node: NodeId = "00000000-0000-4000-8000-000000000002".parse().unwrap();
+        let key = signature().key_id;
+        let server = netmap_lease_transcript(
+            network,
+            node,
+            &lease,
+            NetmapSigner::Server,
+            key,
+            Version::MIN,
+        );
+        let local =
+            netmap_lease_transcript(network, node, &lease, NetmapSigner::Node, key, Version::MIN);
+        assert!(server.starts_with(b"meshway/netmap-lease/v1\0"));
+        assert_eq!(server.len(), 24 + 16 + 16 + 8 + 8 + 32 + 8 + 8 + 1 + 16 + 8);
+        assert_eq!(server[120], 1);
+        assert_eq!(local[120], 0);
+        assert_ne!(server, local);
+    }
+
     #[test]
     fn unchanged_response_must_match_the_request() {
         let base = reference(3);
@@ -185,6 +281,7 @@ mod tests {
         };
         let response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
+            signature: signature(),
             netmap: SyncNetmap::Unchanged,
             peer_facts: None,
         };
@@ -237,6 +334,7 @@ mod tests {
         };
         let mut response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
+            signature: signature(),
             netmap: SyncNetmap::Unchanged,
             peer_facts: Some(facts(Some(cursor(4)))),
         };

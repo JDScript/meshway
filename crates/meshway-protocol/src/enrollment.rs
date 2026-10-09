@@ -268,6 +268,8 @@ wire_object! {
     pub node_id: NodeId,
     /// Public control and data-plane key bindings committed by enrollment.
     pub keys: NodeKeyMetadata,
+    /// Server key signing netmap leases, pinned by the Node with this binding; null or omission means the Server issues no signed netmaps and the Node accepts none.
+    pub server_signing_key: Option<crate::netmap::ServerSigningKey>,
 } }
 
 /// Enrollment intent proof domain is separate from registered-node session proof.
