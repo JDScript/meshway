@@ -14,6 +14,8 @@ const SQL: &str = concat!(
     include_str!("state.sql"),
     "\n",
     include_str!("diagnostics.sql"),
+    "\n",
+    include_str!("netmap.sql"),
 );
 
 #[derive(Debug, Error, PartialEq, Eq)]

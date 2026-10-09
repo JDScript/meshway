@@ -578,17 +578,17 @@ pub(crate) fn rotate(
         ],
     )?;
     revoke_execution(tx, sealer, c.network_id, c.node_id, now)?;
-    Ok((
-        keys,
-        vec![
-            Effect::Authorization {
-                network_id: c.network_id,
-            },
-            Effect::Progress {
-                network_id: c.network_id,
-            },
-        ],
-    ))
+    let netmap = crate::store::netmap::recompile(tx, sealer, c.network_id, now)?;
+    let mut effects = vec![
+        Effect::Authorization {
+            network_id: c.network_id,
+        },
+        Effect::Progress {
+            network_id: c.network_id,
+        },
+    ];
+    effects.extend(netmap.effects());
+    Ok((keys, effects))
 }
 pub(crate) fn insert_keys(
     tx: &Transaction<'_>,
