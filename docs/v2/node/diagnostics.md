@@ -27,6 +27,8 @@ meshway ping fd12:3456::2 -c 3 --json
 
 诊断使用独立 `DiagnosticPermit` 和与业务共用的候选 wire（版本见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)）上的诊断 request／reply，复用同一 SecureNode 的 Noise、逐跳证明和原路径回复。探测不经过两端 OS ICMP 栈，不建立业务 FlowTable 记录；成功说明获准 Node 路径完成了认证往返，不代表某个应用端口接受连接。
 
+许可在参与节点上保留同一完整候选集合；可选中转只须参与其中至少一条完整路径，不要求出现在所有候选中。每次实际握手与包准入仍检查所选完整路径及本节点在该路径中的位置，安装许可不授予其他候选的转发权限。
+
 源、每个中转和终点均需声明并实现 `feature:path-observation` version 1。获准路径缺少必需能力时任务为 unsupported；没有 Access 或违反完整路径时为权限拒绝。具备能力的完整候选仍可使用，不能借缺能力跳过必经点。
 
 ## 输出事实
@@ -45,6 +47,10 @@ meshway ping fd12:3456::2 -c 3 --json
 
 当前 IPC v5 的 Preparing 只携带 `elapsedMs`，CLI 显示等待耗时；具体阶段由上述日志关联，不从耗时推断 STUN、安装或某段路径失败。
 
+首轮准备由安装、认证通道和握手接收事件推进，不等待额外的 1 秒首轮节拍或 100 ms 握手完成轮询。握手重发仍由 SecureNode 的原重发期限决定；后续 probe 保持至少 1 秒的真实发送间隔，合法交接不重置已有 probe 的节流截止，迟到的就绪事件不越过原 setup 截止。`first_hop_channel` 到 `path_handshake` 是邻接获取耗时，`path_handshake` 到 `path_established` 才是完整路径握手耗时。
+
+新排队的 CLI 订阅优先于已接纳订阅的维护和后台控制请求取得一次有界执行机会。`subscription_accepted` 日志中的 `queue_ms`／`request_ms` 分别记录本机排队和请求往返；Server 的 `Node observation subscription admitted` 记录数据库队列及事务处理耗时。订阅响应中的任务元数据仅可在对应 execution grant 到达后使用一次；只有它覆盖当前全部源端诊断许可时才能省去额外 tasks 查询，缺少用户订阅等任一任务时仍读取完整任务列表。该优化不把订阅响应当成许可，也不把旧元数据或输出换绑到后继 publication。
+
 RTT 使用源端单调时钟：从完整 probe 被正式 transport sender 接纳，到完整回复被 receiver 取得并在之后通过 SecureNode 认证／关联验证。它包含发送排队、承载与终点处理；控制面请求、建连和结果上报不进入该差值。
 
 本机发送须达到 `LocalComplete` 才形成有效发送回执。未接纳、失败或完成不确定单独计为本机失败。只有实际发送后未在期限内获得有效回复，才进入探测未回应统计；它不是底层 wire 丢包率。
@@ -56,6 +62,10 @@ source 每 observation 跨 CID 至少间隔 1 秒；relay／terminal 使用每�
 IPC v5 的一次 Ping 请求可返回多个 `ResultBody::Ping`，复用原 Response envelope；sequence 从 0 连续增长。Preparing 可先于唯一 Accepted，Sample 绑定 Accepted 的 ObservationId，Completed／Failed 结束流。无终态的 EOF 为错误；初始请求及每帧等待有界，取消不自动发起第二次测量。
 
 Node 订阅绑定真实 control key、instance／generation、网络和 Server boot。CLI 与用户订阅可共享同一 source task；取消一个订阅只移除它的需求，其他合法订阅继续。Node 普通续租、tasks 读取、State 和结果上报都不续活观察。
+
+创建订阅把诊断需求加入联合编译；只有实际执行切片变化的节点取得新的 publication，相同编译结果复用既有 publication。读取、正常采样和结果上报本身不改变诊断需求，也不产生新的 publication。当前 `DiagnosticPermit` 的截止时间属于不可变执行切片：订阅续租若延长共享任务的有效截止，会发布合法后继；同一续租重放或未改变有效截止的共享订阅更新复用既有目标。取消最后一个订阅、到期、权限／路径或参与节点资格变化仍须撤回或重新编译，旧样本不会换绑到后继 publication。
+
+Server 的观察维护由已提交的变化通知及真实订阅／保留截止驱动；通知在有界窗口内合并，截止不被推迟。空闲时不以固定频率重复全量重授权；每次实际 API 操作仍在事务中检查身份和权限，发布改变授权绑定时重新检查任务视图。
 
 Control 以 RPC 开始时的时钟高水位和单调时钟固定已确认的订阅截止；相同响应重放、失败续租或时钟回拨均不延长它。结果上报受阻时仍提供有界等待进度；到期由独立本机计时明确结束 CLI，不等待 HTTP 返回，也不以该本机订阅到期暂停其他有效共享订阅。
 

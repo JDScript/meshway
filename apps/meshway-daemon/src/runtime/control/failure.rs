@@ -32,8 +32,7 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         }) => body.request_id,
         _ => None,
     };
-    let retry_after = matches!(&error, Error::StateScopeChanged | Error::ReceiptRejected(_))
-        .then_some(Duration::from_secs(1));
+    let retry_after = matches!(&error, Error::ReceiptRejected(_)).then_some(Duration::from_secs(1));
     // A received rejection remains a rejection even if its body is truncated.
     // Runtime bearer/instance rejection first reauthenticates the held identity;
     // rejection of that proof must stop, including unknown Controller/key/Node.
@@ -43,7 +42,9 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         if body.status == 409 && matches!(body.problem, meshway_protocol::Problem::RequestConflict { .. }));
     let (problem, retry, reset) = match &error {
         Error::MembershipRevoked => (Problem::Credentials, true, true),
-        Error::StateScopeChanged | Error::ReceiptRejected(_) => (Problem::Apply, true, false),
+        // State report scope rotation is consumed by the report scheduler before
+        // reaching failure classification; it is not an installation problem.
+        Error::ReceiptRejected(_) => (Problem::Apply, true, false),
         Error::Server(ClientError::Http {
             status: 409,
             problem: Some(body),
@@ -290,8 +291,5 @@ mod tests {
         ] {
             assert!(!failure(error, true).retry);
         }
-        let failed = failure(Error::StateScopeChanged, false);
-        assert!(failed.retry && !failed.reset);
-        assert_eq!(failed.retry_after, Some(Duration::from_secs(1)));
     }
 }

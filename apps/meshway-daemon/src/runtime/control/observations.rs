@@ -11,6 +11,7 @@ use meshway_protocol::{
 use std::{collections::BTreeMap, time::Duration};
 
 struct Subscription {
+    queued_at: tokio::time::Instant,
     local: PingRequest,
     create: CreateNodeObservation,
     response: Option<NodeObservationResponse>,
@@ -112,6 +113,7 @@ impl Subscriptions {
         self.entries.insert(
             subscription_id,
             Subscription {
+                queued_at: tokio::time::Instant::now(),
                 local,
                 create,
                 response: None,
@@ -140,6 +142,9 @@ impl Subscriptions {
             let at = ids.partition_point(|id| *id <= cursor);
             ids.rotate_left(at);
         }
+        // Preserve round-robin order within each class; first admission need not
+        // wait behind maintenance of an already accepted subscription.
+        ids.sort_by_key(|id| self.entries[id].create_started);
         for id in &ids {
             // A slow local observation RPC cannot monopolize lease renewal or
             // the connectivity gateway. Rotate the next turn across clients.
@@ -242,6 +247,7 @@ impl Subscriptions {
                 entry.retry.dispatched();
                 attempted = true;
                 entry.create_started = true;
+                let requested_at = tokio::time::Instant::now();
                 tracing::debug!(subscription = %id, stage = "subscription_request", "Diagnostic subscription request dispatched");
                 let result = tokio::time::timeout(
                     Duration::from_secs(5),
@@ -253,6 +259,8 @@ impl Subscriptions {
                         tracing::info!(subscription = %id, observation = %response.task.id,
                             publication = %response.task.configuration.execution_publication,
                             phase = ?response.task.phase,
+                            queue_ms = requested_at.duration_since(entry.queued_at).as_millis() as u64,
+                            request_ms = requested_at.elapsed().as_millis() as u64,
                             stage = "subscription_accepted", "Diagnostic preparation stage changed");
                         if !entry.intent.current() || entry.local.cancellation.is_cancelled() {
                             entry.response = Some(response);

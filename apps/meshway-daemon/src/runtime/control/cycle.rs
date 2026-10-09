@@ -42,11 +42,24 @@ async fn stage<T, E>(
 }
 
 pub(super) struct Cycle {
-    pub phase: Phase,
+    /// None requests scope refresh while preserving the published phase.
+    pub phase: Option<Phase>,
     pub url: Option<String>,
     pub delay: Duration,
     pub renewed: bool,
     pub reported: bool,
+}
+impl Cycle {
+    fn scope_changed(renewed: bool) -> Self {
+        tracing::debug!("State scope rotated; refreshing before resampling");
+        Self {
+            phase: None,
+            url: None,
+            delay: Duration::from_secs(1),
+            renewed,
+            reported: false,
+        }
+    }
 }
 pub(super) async fn cycle(
     control: &mut Control,
@@ -96,7 +109,7 @@ pub(super) async fn cycle(
                 EnrollmentPhase::Pending => {
                     *reset = false;
                     return Ok(Cycle {
-                        phase: Phase::AwaitingApproval,
+                        phase: Some(Phase::AwaitingApproval),
                         url: created.authorization_url,
                         delay: Duration::from_secs(2),
                         renewed: false,
@@ -113,7 +126,7 @@ pub(super) async fn cycle(
                             .map_err(|e| failure::at("cancel_enrollment", e, true))?;
                         *reset = false;
                         return Ok(Cycle {
-                            phase: Phase::Starting,
+                            phase: Some(Phase::Starting),
                             url: None,
                             delay: Duration::ZERO,
                             renewed: false,
@@ -270,29 +283,35 @@ pub(super) async fn cycle(
     }
     let routine = report || renewed || before != control.status().cached;
     let reported = if let Some(network) = &mut network {
-        stage(
+        match stage(
             "report_state",
             network.report_state(control, settings, routine),
         )
         .await
-        .map_err(|error| failure::at("report_runtime_state", error, false))?
+        {
+            Ok(reported) => reported,
+            Err(Error::StateScopeChanged) => return Ok(Cycle::scope_changed(renewed)),
+            Err(error) => return Err(failure::at("report_runtime_state", error, false)),
+        }
     } else if routine {
         match control.report_control_state(settings.system.clone()).await {
             Ok(_) => true,
             Err(Error::Pending) => {
-                control
-                    .retry_state_report()
-                    .await
-                    .map_err(|e| failure::at("retry_state_report", e, false))?;
+                match control.retry_state_report().await {
+                    Ok(_) => {}
+                    Err(Error::StateScopeChanged) => return Ok(Cycle::scope_changed(renewed)),
+                    Err(error) => return Err(failure::at("retry_state_report", error, false)),
+                }
                 false
             }
+            Err(Error::StateScopeChanged) => return Ok(Cycle::scope_changed(renewed)),
             Err(error) => return Err(failure::at("report_control_state", error, false)),
         }
     } else {
         false
     };
     Ok(Cycle {
-        phase: Phase::ControlReady,
+        phase: Some(Phase::ControlReady),
         url: None,
         delay: if network
             .as_ref()
@@ -317,24 +336,4 @@ fn enabled_current_target(control: &Control) -> bool {
             .instance
             .as_ref()
             .is_some_and(|instance| instance.target == status.cached)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::failure::failure;
-    use super::*;
-
-    #[test]
-    fn state_scope_rejection_requests_prompt_refresh_without_credential_failure() {
-        for authenticating in [false, true] {
-            let retry = failure(Error::StateScopeChanged, authenticating);
-            assert_eq!(retry.problem, Problem::Apply);
-            assert!(retry.retry);
-            assert_eq!(retry.retry_after, Some(Duration::from_secs(1)));
-        }
-        let invalid = failure(Error::Contract, false);
-        assert_eq!(invalid.problem, Problem::Contract);
-        assert!(!invalid.retry);
-        assert_eq!(invalid.retry_after, None);
-    }
 }

@@ -4,7 +4,7 @@ use crate::{Control, Deadline, Error, ExecutionSnapshot, Started};
 use meshway_control_client::{ClientError, *};
 use meshway_model::{ConfigurationRef, Digest, ObservationId, ObservationSubscriptionId};
 use meshway_protocol::{observations::*, *};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const LIMIT: usize = 128;
 
@@ -15,6 +15,7 @@ pub(super) struct Registry {
     renewals: BTreeMap<ObservationSubscriptionId, Digest>,
     retired_results: BTreeMap<ObservationId, ConfigurationRef>,
     leases: BTreeMap<ObservationSubscriptionId, ObservationLease>,
+    planning: BTreeSet<ObservationSubscriptionId>,
 }
 
 /// Confirmed local subscription lifetime, independent of an execution
@@ -323,6 +324,7 @@ impl Control {
         self.observations
             .subscriptions
             .insert(request.subscription_id, value.clone());
+        self.observations.planning.insert(request.subscription_id);
         Ok(value)
     }
 
@@ -399,6 +401,7 @@ impl Control {
         self.observations
             .subscriptions
             .insert(subscription_id, value.clone());
+        self.observations.planning.insert(subscription_id);
         self.observations.renewals.remove(&subscription_id);
         Ok(value)
     }
@@ -411,6 +414,7 @@ impl Control {
         if *request != self.current_instance()? {
             return Err(Error::Lifecycle);
         }
+        self.observations.planning.remove(&subscription_id);
         if let Some(lease) = self.observations.leases.remove(&subscription_id) {
             lease.cancelled.cancel();
         }
@@ -485,6 +489,52 @@ impl Control {
         Ok(value)
     }
 
+    /// Consume freshly confirmed Node subscription metadata only after its
+    /// exact execution grant has arrived. Missing source tasks (including user
+    /// subscriptions) require the ordinary complete Server read. No response is
+    /// relabeled with a later publication or reused as a periodic task cache.
+    pub fn take_confirmed_observation_tasks(
+        &mut self,
+        snapshot: &ExecutionSnapshot,
+    ) -> Result<Option<ObservationList>, Error> {
+        self.observation_scope(snapshot)?;
+        let reference = snapshot.reference();
+        let configuration = snapshot.configuration()?;
+        let mut confirmed = BTreeMap::new();
+        for id in &self.observations.planning {
+            if self.node_observation_lease(*id).is_err() {
+                continue;
+            }
+            if let Some(value) = self.observations.subscriptions.get(id)
+                && value.task.configuration == reference
+            {
+                confirmed.insert(value.task.id, &value.task);
+            }
+        }
+        let mut items = Vec::new();
+        for permit in configuration
+            .diagnostics
+            .values()
+            .filter(|permit| permit.source == configuration.node_id)
+        {
+            let Some(task) = confirmed.get(&permit.observation_id).copied() else {
+                return Ok(None);
+            };
+            self.observation_task(task)?;
+            self.observation_permit(snapshot, task)?;
+            let mut task = task.clone();
+            task.subscription_id = None;
+            task.subscriber_expires_at = None;
+            items.push(task);
+        }
+        if items.is_empty() {
+            return Ok(None);
+        }
+        self.observation_scope(snapshot)?;
+        self.observations.planning.clear();
+        Ok(Some(ObservationList { items }))
+    }
+
     pub async fn get_observation_tasks(
         &mut self,
         snapshot: &ExecutionSnapshot,
@@ -507,6 +557,7 @@ impl Control {
                 return Err(Error::Contract);
             }
         }
+        self.observations.planning.clear();
         Ok(value)
     }
 

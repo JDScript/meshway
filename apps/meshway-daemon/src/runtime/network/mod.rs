@@ -334,11 +334,16 @@ impl Handle {
             }));
             return;
         }
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            control.get_observation_tasks(&snapshot),
-        )
-        .await;
+        let response = match control.take_confirmed_observation_tasks(&snapshot) {
+            Ok(Some(tasks)) => Ok(Ok(tasks)),
+            _ => {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    control.get_observation_tasks(&snapshot),
+                )
+                .await
+            }
+        };
         if let Ok(Ok(tasks)) = response {
             for task in &tasks.items {
                 tracing::debug!(operation = "get_observation_tasks", observation = %task.id,

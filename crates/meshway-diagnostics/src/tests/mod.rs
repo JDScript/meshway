@@ -8,6 +8,7 @@ use meshway_model::{
     *,
 };
 use meshway_protocol::*;
+mod preparing;
 
 fn id<T: TryFrom<uuid::Uuid>>() -> T
 where
@@ -29,10 +30,16 @@ struct Fixture {
     owner: Owner,
     subscription: ObservationSubscriptionId,
     task: ObservationTask,
+    created_at: Instant,
+    accepted_at: Instant,
+    installed_at: Instant,
     _directory: tempfile::TempDir,
 }
 impl Fixture {
     async fn open() -> Self {
+        Self::open_route(false).await
+    }
+    async fn open_route(relay: bool) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
         let app = meshway_server::App::open(meshway_server::Settings::new(root.join("server")))
@@ -76,7 +83,12 @@ impl Fixture {
             .await
             .unwrap();
         let mut controls = Vec::new();
-        for name in ["probe-source", "probe-target"] {
+        let names = if relay {
+            vec!["probe-source", "probe-target", "probe-relay"]
+        } else {
+            vec!["probe-source", "probe-target"]
+        };
+        for name in names {
             let mut control = Control::open(
                 &root.join(name),
                 &origin,
@@ -139,6 +151,17 @@ impl Fixture {
             ip: vec!["icmp:*".into()],
             bidirectional: false,
         }];
+        if relay {
+            cfg.routing.mesh = vec![meshway_configuration::MeshRoute {
+                remark: String::new(),
+                src: vec![format!("node:{a}")],
+                dst: vec![format!("node:{b}")],
+                via: vec![format!(
+                    "node:{}",
+                    controls[2].status().binding.unwrap().node_id
+                )],
+            }];
+        }
         for node in cfg.nodes.values_mut() {
             use meshway_configuration::transport::*;
             node.listeners.insert(
@@ -179,6 +202,7 @@ impl Fixture {
         }
         let subscription = id();
         let instance = controls[0].execution_snapshot().unwrap().instance();
+        let created_at = Instant::now();
         let first = controls[0]
             .create_node_observation(&CreateNodeObservation {
                 instance,
@@ -193,6 +217,7 @@ impl Fixture {
             })
             .await
             .unwrap();
+        let accepted_at = Instant::now();
         for control in &mut controls {
             control.refresh_configuration().await.unwrap();
         }
@@ -209,6 +234,7 @@ impl Fixture {
         owner
             .synchronize(snapshot, std::slice::from_ref(&task))
             .unwrap();
+        let installed_at = Instant::now();
         Self {
             app,
             server,
@@ -217,6 +243,9 @@ impl Fixture {
             owner,
             subscription,
             task,
+            created_at,
+            accepted_at,
+            installed_at,
             _directory: directory,
         }
     }

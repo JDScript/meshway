@@ -71,6 +71,7 @@ struct Task {
     circuit: Option<[u8; 32]>,
     preparing: Instant,
     next: Instant,
+    setup_wake: Option<Instant>,
     measurement: Option<Measurement>,
     output: Option<Output>,
     paused: bool,
@@ -175,6 +176,13 @@ impl Owner {
                 .get(&task.id)
                 .filter(|old| old.task.instance_id == task.instance_id)
                 .map_or(now, |old| old.preparing);
+            // Probe pacing survives even an uncertain predecessor admission.
+            // A genuinely new task has no prior probe to pace: setup starts on
+            // installation/channel events, not after a synthetic first second.
+            let next = self
+                .tasks
+                .get(&task.id)
+                .map_or(now, |old| old.next.max(now));
             self.tasks.insert(
                 task.id,
                 Task {
@@ -184,9 +192,8 @@ impl Owner {
                     segment,
                     circuit: None,
                     preparing,
-                    // Also fences uncertain admissions from a just-cancelled
-                    // predecessor when an execution handoff rebuilt the plan.
-                    next: now + MIN_INTERVAL,
+                    next,
+                    setup_wake: Some(now),
                     measurement: None,
                     output: None,
                     paused: false,
@@ -271,6 +278,11 @@ impl Owner {
                 task.measurement.as_ref().map_or(
                     if task.sending {
                         task.preparing + SETUP_TIMEOUT
+                    } else if task.connecting {
+                        task.setup_wake
+                            .unwrap_or(task.preparing + SETUP_TIMEOUT)
+                            .max(task.next)
+                            .min(task.preparing + SETUP_TIMEOUT)
                     } else {
                         task.next
                     },
@@ -312,6 +324,12 @@ impl Owner {
             if task.paused || task.setup_failed || task.output.is_some() {
                 continue;
             }
+            if task.connecting {
+                preparing_failure(task, now);
+                if task.setup_failed {
+                    continue;
+                }
+            }
             if let Some(measurement) = &task.measurement {
                 if now >= measurement.deadline && measurement.send_completed {
                     finish(task, now);
@@ -328,6 +346,7 @@ impl Owner {
             if actions.len() >= budget {
                 preparing_failure(task, now);
                 task.next = now + Duration::from_millis(100);
+                task.setup_wake = Some(task.next);
                 continue;
             }
             let unsupported = !task
@@ -348,7 +367,9 @@ impl Owner {
                 preparation_stage(task, "first_hop_channel");
                 task.connecting = true;
                 preparing_failure(task, now);
-                task.next = now + Duration::from_millis(100);
+                // Manager emits a carrier event when authenticated adjacency
+                // becomes available. Only the original setup deadline remains.
+                task.setup_wake = None;
                 continue;
             };
             if task.circuit.is_none() {
@@ -409,6 +430,7 @@ impl Owner {
                             task.connecting = true;
                             preparing_failure(task, now);
                             task.next = now + MIN_INTERVAL;
+                            task.setup_wake = Some(task.next);
                         }
                     }
                 }
@@ -436,11 +458,11 @@ impl Owner {
                         }
                     }
                     preparing_failure(task, now);
-                    task.next = secure
+                    task.setup_wake = secure
                         .handshake_retry_at(info.id)
                         .ok()
                         .flatten()
-                        .unwrap_or(now + Duration::from_millis(100));
+                        .or_else(|| task.circuit.is_none().then_some(now));
                 }
                 _ => {
                     preparation_stage(task, "path_handshake");
@@ -454,6 +476,8 @@ impl Owner {
                         Ok(frame) => {
                             task.sending = true;
                             task.circuit = Some(frame.circuit());
+                            task.setup_wake =
+                                secure.handshake_retry_at(frame.circuit()).ok().flatten();
                             actions.push(Action {
                                 observation_id: *id,
                                 measurement_id: None,
@@ -461,9 +485,11 @@ impl Owner {
                                 cancellation: task.cancellation.clone(),
                             });
                         }
-                        Err(_) => preparing_failure(task, now),
+                        Err(_) => {
+                            preparing_failure(task, now);
+                            task.setup_wake = None;
+                        }
                     }
-                    task.next = now + Duration::from_millis(100);
                 }
             }
         }

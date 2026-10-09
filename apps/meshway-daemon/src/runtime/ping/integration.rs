@@ -34,6 +34,7 @@ where
 #[derive(Default)]
 struct Fault {
     receipt: std::sync::Mutex<Option<&'static str>>,
+    state_scope: AtomicBool,
     creates: AtomicUsize,
     create_gate: Arc<CreateGate>,
     blocked: AtomicBool,
@@ -61,6 +62,19 @@ async fn fault(
     request: Request,
     next: Next,
 ) -> axum::response::Response {
+    if request.uri().path() == "/agent-api/v1/state"
+        && request.method() == axum::http::Method::POST
+        && fault.state_scope.swap(false, Ordering::AcqRel)
+    {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({
+                "requestId": id::<RequestId>(), "status": 409,
+                "problem": {"code": "state_scope_changed", "params": {}, "message": "scope changed"}
+            })),
+        )
+            .into_response();
+    }
     if request.uri().path() == "/agent-api/v1/configuration/receipts"
         && let Some(code) = fault.receipt.lock().unwrap().take()
     {
@@ -102,6 +116,8 @@ async fn fault(
 
 pub(in crate::runtime) struct Fixture {
     app: meshway_server::App,
+    client: Client,
+    user: SessionIssuedResponse,
     server: tokio::task::JoinHandle<()>,
     stop: tokio::sync::oneshot::Sender<()>,
     pub(in crate::runtime) controls: Vec<Control>,
@@ -115,10 +131,39 @@ pub(in crate::runtime) struct Fixture {
     _directory: tempfile::TempDir,
 }
 impl Fixture {
+    pub(in crate::runtime) async fn create_user_task(&self) -> ObservationTask {
+        self.client
+            .create_observation(
+                &CreateObservationPath {
+                    network_id: self.controls[0].status().binding.unwrap().network_id,
+                },
+                &CreateObservation {
+                    subscription_id: id(),
+                    source_node_id: self.task.source_node_id,
+                    target_node_id: self.task.target_node_id,
+                    service: self.task.service.clone(),
+                    selection: self.task.selection.clone(),
+                    metrics: vec![MetricKind::Rtt],
+                    interval_ms: 30_000,
+                },
+                self.user.token.expose(),
+            )
+            .await
+            .unwrap()
+    }
+    pub(in crate::runtime) fn change_state_scope(&self) {
+        self.fault.state_scope.store(true, Ordering::Release);
+    }
     pub(in crate::runtime) fn reject_receipt(&self, code: &'static str) {
         *self.fault.receipt.lock().unwrap() = Some(code);
     }
     pub(in crate::runtime) async fn open() -> Self {
+        Self::open_nodes(&["lease-source", "lease-target"]).await
+    }
+    pub(in crate::runtime) async fn open_with_optional_relay() -> Self {
+        Self::open_nodes(&["lease-source", "lease-target", "lease-relay"]).await
+    }
+    async fn open_nodes(names: &[&str]) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
         let app = meshway_server::App::open(meshway_server::Settings::new(root.join("server")))
@@ -164,7 +209,7 @@ impl Fixture {
             .await
             .unwrap();
         let mut controls = Vec::new();
-        for name in ["lease-source", "lease-target"] {
+        for name in names {
             let mut control = Control::open(
                 &root.join(name),
                 &origin,
@@ -295,6 +340,8 @@ impl Fixture {
             .unwrap();
         Self {
             app,
+            client,
+            user,
             server,
             stop,
             controls,

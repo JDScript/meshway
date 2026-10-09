@@ -349,6 +349,16 @@ impl Control {
             }
         }
         match event.0 {
+            StreamEvent::ConfigSnapshot { configuration, .. } => {
+                // An RPC may have installed this exact target while its SSE
+                // hint was queued. Do not invalidate that fresh grant again.
+                let current = self.execution_snapshot().is_ok_and(|snapshot| {
+                    let reference = snapshot.reference();
+                    configuration.revision == reference.revision
+                        && configuration.target.as_ref() == Some(&reference)
+                });
+                Ok(refresh && !current)
+            }
             StreamEvent::Closed { reason } => match reason {
                 ClosedReason::SessionExpired | ClosedReason::NodeLeaseExpired => {
                     self.fence();

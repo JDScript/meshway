@@ -293,8 +293,12 @@ pub(super) async fn run(
                 _ = desired.wait_for(|next| next.shutdown || next.revision != plan.revision) => None,
                 result = async {
                     if let Some(error) = pending_failure.take() { return Err(error); }
-                    let requests_started = Instant::now();
                     while let Ok(ping) = pings.try_recv() { observations.accept(ping, driver); }
+                    // A newly queued local subscription must not sit behind an
+                    // unrelated traversal/result HTTP request. Both queues keep
+                    // their bounded turns before the ordinary control cycle.
+                    observations.advance(driver, network.as_mut()).await;
+                    let requests_started = Instant::now();
                     for _ in 0..32 {
                         let request = queued.take().or_else(|| network.as_mut().and_then(|network| network.requests.try_recv().ok()));
                         let Some(request) = request else { break; };
@@ -305,7 +309,6 @@ pub(super) async fn run(
                         // traversal pressure. Each request has its own deadline.
                         if requests_started.elapsed() >= Duration::from_millis(100) { break; }
                     }
-                    observations.advance(driver, network.as_mut()).await;
                     let result = cycle(
                     driver,
                     &settings,
@@ -333,21 +336,26 @@ pub(super) async fn run(
                         last_report = Some(Instant::now());
                     }
                     backoff = 1;
-                    publish(
-                        &reported,
-                        &plan,
-                        Some(driver),
-                        result.phase,
-                        result.url,
-                        None,
-                        None,
-                    );
+                    let phase = result.phase.unwrap_or_else(|| reported.borrow().phase);
+                    if result.phase.is_some() {
+                        publish(
+                            &reported,
+                            &plan,
+                            Some(driver),
+                            phase,
+                            result.url,
+                            None,
+                            None,
+                        );
+                    } else {
+                        reported.send_modify(|report| report.control = Some(driver.snapshot()));
+                    }
                     match wait_work(
                         &mut desired,
                         &plan,
                         Some(result.delay),
                         network.as_mut(),
-                        scheduling::reports_enabled(result.phase),
+                        scheduling::reports_enabled(phase),
                         Some(driver),
                         &mut pings,
                         &mut observations,
@@ -579,11 +587,6 @@ async fn wait_work(
     let mut window = scheduling::Window::new(delay);
     let mut local_at = Instant::now() + Duration::from_secs(1);
     let mut event_maintenance_at = Instant::now() + Duration::from_secs(1);
-    // A projection invalidation is not an urgent new grant. Keep the previous
-    // five-second refresh admission bound under a continuous SSE publication
-    // burst; an idle connection can still wake before the periodic fallback.
-    let event_refresh_at = Instant::now() + Duration::from_secs(5);
-    let mut event_refresh_pending = false;
     let mut event_budget = 32;
     loop {
         if desired.borrow().shutdown
@@ -597,7 +600,6 @@ async fn wait_work(
             event_budget = 32;
         }
         let waiting = tokio::select! { biased;
-            _ = tokio::time::sleep_until(event_refresh_at), if event_refresh_pending => return Waiting::Timer,
             _ = tokio::time::sleep_until(event_maintenance_at), if control.is_some() => {
                 events.advance(control.as_deref().expect("event Control")).await;
                 event_maintenance_at = Instant::now() + Duration::from_secs(1);
@@ -605,9 +607,19 @@ async fn wait_work(
             },
             notice = events.next(), if control.is_some() => {
                 event_budget -= 1;
+                let event_kind = notice.kind();
                 match control.as_deref_mut().expect("event Control").receive_event(notice) {
-                    Ok(true) => { event_refresh_pending = true; continue; },
-                    Ok(false) => continue,
+                    // Control already excludes ordinary peer/projection changes
+                    // and hints for a target acquired by an in-flight RPC. The
+                    // one-slot event queue coalesces actual changes during work.
+                    Ok(true) => {
+                        tracing::debug!(event_kind, "Node event admitted immediate refresh");
+                        return Waiting::Timer;
+                    },
+                    Ok(false) => {
+                        tracing::debug!(event_kind, "Node event already covered by current control scope");
+                        continue;
+                    },
                     Err(error) => return Waiting::Failed(failure::at("watch_node", error, false)),
                 }
             },
@@ -713,6 +725,17 @@ async fn wait_work(
                                 *last_report = Some(Instant::now());
                             }
                             continue;
+                        }
+                        scheduling::Wake::Work(scheduling::Report::Sent(Err(
+                            Error::StateScopeChanged,
+                        ))) => {
+                            tracing::debug!("State scope rotated; refreshing before resampling");
+                            return if wait_change(desired, plan, Some(Duration::from_secs(1))).await
+                            {
+                                Waiting::Change
+                            } else {
+                                Waiting::Timer
+                            };
                         }
                         scheduling::Wake::Work(scheduling::Report::Sent(Err(error))) => {
                             return Waiting::Failed(failure::at(

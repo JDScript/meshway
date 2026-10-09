@@ -36,13 +36,7 @@ pub(super) fn validate(
             }),
             dns_ids,
         )
-        || cfg.diagnostics.values().any(|permit| {
-            permit.paths.is_empty()
-                || permit
-                    .paths
-                    .iter()
-                    .any(|path| path.nodes.len() < 2 || !path.nodes.contains(&cfg.node_id))
-        })
+        || !diagnostic_paths_valid(cfg)
         || cfg.permits.values().any(|permit| {
             !matches!(
                 permit.target,
@@ -53,6 +47,20 @@ pub(super) fn validate(
         return Err((Problem::Apply, ApplyFailure::Dataplane));
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn diagnostic_paths_valid(cfg: &meshway_configuration::execution::NodeConfiguration) -> bool {
+    cfg.diagnostics.values().all(|permit| {
+        // Every participant receives the complete candidate set. An optional
+        // relay need only occur on one candidate; per-frame policy still checks
+        // the actual full path and this node's position within it.
+        permit.paths.iter().all(|path| path.nodes.len() >= 2)
+            && permit
+                .paths
+                .iter()
+                .any(|path| path.nodes.contains(&cfg.node_id))
+    })
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -79,6 +87,39 @@ pub(super) fn dns_required(dns: &meshway_configuration::DnsConfiguration) -> boo
 mod tests {
     use super::dns_required;
     use meshway_configuration::DnsConfiguration;
+
+    #[tokio::test]
+    async fn optional_relay_installs_the_full_diagnostic_candidate_set() {
+        let mut fixture =
+            crate::runtime::ping::integration::Fixture::open_with_optional_relay().await;
+        for control in &mut fixture.controls {
+            control.refresh_configuration().await.unwrap();
+            let snapshot = control.execution_snapshot().unwrap();
+            let cfg = snapshot.configuration().unwrap();
+            let permit = cfg.diagnostics.values().next().unwrap();
+            assert_eq!(permit.paths.len(), 2);
+            assert!(
+                super::diagnostic_paths_valid(cfg),
+                "node {} must accept its participating candidate",
+                cfg.node_id
+            );
+            let mut malformed = cfg.clone();
+            malformed.diagnostics.values_mut().next().unwrap().paths[0]
+                .nodes
+                .clear();
+            assert!(!super::diagnostic_paths_valid(&malformed));
+            let mut unrelated = cfg.clone();
+            unrelated
+                .diagnostics
+                .values_mut()
+                .next()
+                .unwrap()
+                .paths
+                .retain(|path| !path.nodes.contains(&cfg.node_id));
+            assert!(!super::diagnostic_paths_valid(&unrelated));
+        }
+        fixture.close().await;
+    }
 
     #[test]
     fn unrelated_local_egress_cannot_pass_the_dns_component_gate() {

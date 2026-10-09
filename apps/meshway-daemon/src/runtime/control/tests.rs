@@ -149,6 +149,227 @@ async fn cancelled_queued_demand_does_not_fence_an_unrelated_live_instance() {
 }
 
 #[tokio::test]
+async fn confirmed_task_metadata_waits_for_exact_grant_is_single_use_and_keeps_user_tasks() {
+    let mut fixture = crate::runtime::ping::integration::Fixture::open().await;
+    let mut request = fixture.request.clone();
+    request.subscription_id = "00000000-0000-4000-8000-000000000079".parse().unwrap();
+    let old = fixture.controls[0].execution_snapshot().unwrap();
+    let accepted = fixture.controls[0]
+        .create_node_observation(&request)
+        .await
+        .unwrap();
+    assert!(
+        fixture.controls[0]
+            .take_confirmed_observation_tasks(&old)
+            .unwrap()
+            .is_none(),
+        "subscription feedback must not become an execution grant"
+    );
+    fixture.controls[0].refresh_configuration().await.unwrap();
+    let current = fixture.controls[0].execution_snapshot().unwrap();
+    let tasks = fixture.controls[0]
+        .take_confirmed_observation_tasks(&current)
+        .unwrap()
+        .unwrap();
+    assert_eq!(tasks.items.len(), 1);
+    assert_eq!(tasks.items[0].configuration, accepted.task.configuration);
+    assert!(tasks.items[0].subscription_id.is_none());
+    assert!(tasks.items[0].subscriber_expires_at.is_none());
+    assert!(
+        fixture.controls[0]
+            .take_confirmed_observation_tasks(&current)
+            .unwrap()
+            .is_none(),
+        "metadata is consumed once, not replayed as a periodic tasks cache"
+    );
+    current.ensure_current().unwrap();
+    let user = fixture.create_user_task().await;
+    request.subscription_id = "00000000-0000-4000-8000-000000000080".parse().unwrap();
+    fixture.controls[0]
+        .create_node_observation(&request)
+        .await
+        .unwrap();
+    fixture.controls[0].refresh_configuration().await.unwrap();
+    let current = fixture.controls[0].execution_snapshot().unwrap();
+    assert!(
+        fixture.controls[0]
+            .take_confirmed_observation_tasks(&current)
+            .unwrap()
+            .is_none(),
+        "a partial local plan must never replace the user's concurrent source task"
+    );
+    let complete = fixture.controls[0]
+        .get_observation_tasks(&current)
+        .await
+        .unwrap();
+    assert_eq!(complete.items.len(), 2);
+    assert!(complete.items.iter().any(|task| task.id == user.id));
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn queued_target_hint_does_not_refresh_a_grant_already_acquired_by_rpc() {
+    let mut fixture = crate::runtime::ping::integration::Fixture::open().await;
+    let mut stream = fixture.controls[0].watch_node().unwrap();
+    while let Some(notice) = stream.next().await {
+        let ready = notice.kind() == "sync.ready";
+        fixture.controls[0].receive_event(notice).unwrap();
+        if ready {
+            break;
+        }
+    }
+    let mut request = fixture.request.clone();
+    request.subscription_id = "00000000-0000-4000-8000-000000000078".parse().unwrap();
+    request.metrics = vec![meshway_model::observations::MetricKind::Rtt];
+    fixture.controls[0]
+        .create_node_observation(&request)
+        .await
+        .unwrap();
+    fixture.controls[0].refresh_configuration().await.unwrap();
+    let snapshot = fixture.controls[0].execution_snapshot().unwrap();
+    let notice = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let notice = stream.next().await.unwrap();
+            if notice.kind() == "config.snapshot" && notice.refresh_requested() {
+                break notice;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!fixture.controls[0].receive_event(notice).unwrap());
+    snapshot.ensure_current().unwrap();
+    drop(stream);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn execution_target_notice_wakes_without_a_five_second_refresh_delay() {
+    let mut fixture = crate::runtime::ping::integration::Fixture::open().await;
+    let mut events = events::Events::default();
+    let mut request = fixture.request.clone();
+    request.subscription_id = "00000000-0000-4000-8000-000000000077".parse().unwrap();
+    request.metrics = vec![meshway_model::observations::MetricKind::Rtt];
+    fixture.controls[0]
+        .create_node_observation(&request)
+        .await
+        .unwrap();
+    // Finish the initial SSE batch before measuring an established watch's
+    // event-to-cycle delay; opening/authorizing that batch is a separate stage.
+    events.advance(&fixture.controls[0]).await;
+    let initial = tokio::time::timeout(Duration::from_secs(5), events.next())
+        .await
+        .unwrap();
+    assert_eq!(initial.kind(), "sync.ready");
+    fixture.controls[0].receive_event(initial).unwrap();
+    fixture.controls[0].refresh_configuration().await.unwrap();
+    request.subscription_id = "00000000-0000-4000-8000-000000000081".parse().unwrap();
+    request.metrics = vec![meshway_model::observations::MetricKind::ProbeLoss];
+    fixture.controls[0]
+        .create_node_observation(&request)
+        .await
+        .unwrap();
+    let plan = Desired {
+        revision: meshway_model::Version::MIN,
+        up: true,
+        shutdown: false,
+        retry_enrollment: false,
+        enrollment_key: None,
+        rotation: None,
+    };
+    let (_desired, mut desired) = watch::channel(plan.clone());
+    let (_pings, mut pings) = tokio::sync::mpsc::channel(1);
+    let directory = tempfile::tempdir().unwrap();
+    let settings = Settings::new(
+        directory.path().to_owned(),
+        "http://127.0.0.1:9",
+        Some("scope"),
+    )
+    .unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_millis(500),
+        wait_work(
+            &mut desired,
+            &plan,
+            Some(Duration::from_secs(20)),
+            None,
+            false,
+            Some(&mut fixture.controls[0]),
+            &mut pings,
+            &mut observations::Subscriptions::default(),
+            &settings,
+            &mut None,
+            &mut events,
+        ),
+    )
+    .await;
+    match result {
+        Ok(Waiting::Timer) => {}
+        Ok(Waiting::Failed(failure)) => panic!("target event failed: {:?}", failure.problem),
+        Ok(_) => panic!("target event did not wake the refresh cycle"),
+        Err(_) => panic!("target event waited for a refresh timer"),
+    }
+    events.stop().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn state_scope_rotation_keeps_phase_instance_and_execution_without_retrying() {
+    let mut fixture = crate::runtime::ping::integration::Fixture::open().await;
+    let directory = tempfile::tempdir().unwrap();
+    let settings = Settings::new(
+        directory.path().to_owned(),
+        "http://127.0.0.1:9",
+        Some("scope"),
+    )
+    .unwrap();
+    let mut reset = false;
+    fixture.change_state_scope();
+    let instance = fixture.controls[0].status().instance.unwrap().instance_id;
+    let result = cycle(
+        &mut fixture.controls[0],
+        &settings,
+        false,
+        true,
+        &mut reset,
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "scope rotation must be normal scheduling, not Failure"
+    );
+    let result = result.unwrap_or_else(|_| unreachable!());
+    assert_eq!(result.phase, None);
+    assert_eq!(result.delay, Duration::from_secs(1));
+    assert!(!result.reported);
+    assert_eq!(
+        fixture.controls[0].status().instance.unwrap().instance_id,
+        instance
+    );
+    fixture.controls[0]
+        .execution_snapshot()
+        .unwrap()
+        .ensure_current()
+        .unwrap();
+    let result = cycle(
+        &mut fixture.controls[0],
+        &settings,
+        false,
+        true,
+        &mut reset,
+        None,
+        None,
+    )
+    .await
+    .unwrap_or_else(|_| panic!("fresh scope must report"));
+    assert!(result.reported);
+    assert_eq!(result.phase, Some(Phase::ControlReady));
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn ready_report_settles_receipt_without_refreshing_acquisition_authority() {
     use crate::runtime::{network::testing::Worker, ping::integration::Fixture};
     let mut fixture = Fixture::open().await;
