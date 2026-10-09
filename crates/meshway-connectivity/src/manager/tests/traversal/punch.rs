@@ -602,7 +602,9 @@ pub(super) async fn exercise_traversal(healthy_only: bool) {
         let link = &links[&dial_fact.peer];
         link.sender.clone()
     };
-    let (initiation, intro) = adjacency::Initiation::new(identity, &dial_fact.carrier).unwrap();
+    let plan = Plan::new(identity.snapshot()).unwrap();
+    let (initiation, intro) =
+        adjacency::Initiation::new(identity, &plan, &dial_fact.carrier).unwrap();
     inject_adjacency(
         &sender,
         dial_fact.remote,
@@ -626,13 +628,7 @@ pub(super) async fn exercise_traversal(healthy_only: bool) {
                         if kind != adjacency::Kind::Challenge {
                             return None;
                         }
-                        initiation
-                            .challenge(
-                                identity.snapshot().configuration().unwrap(),
-                                dial_fact.peer,
-                                body,
-                            )
-                            .ok()
+                        initiation.challenge(&plan, dial_fact.peer, body).ok()
                     });
             if let Some(transcript) = challenge {
                 break transcript;

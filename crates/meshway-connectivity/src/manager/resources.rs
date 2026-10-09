@@ -9,6 +9,8 @@ pub(super) enum Key {
     Candidate(String, bool),
     Peer(NodeId),
     Traversal,
+    Idle,
+    Facts,
 }
 
 pub(super) struct Owner {
@@ -80,39 +82,48 @@ impl Manager {
 
     pub(super) fn retire_resources(
         &mut self,
-        previous: &meshway_configuration::execution::NodeConfiguration,
-        next: &meshway_configuration::execution::NodeConfiguration,
-    ) -> Vec<Owner> {
+        old: &Plan,
+        new: &Plan,
+        previous: &meshway_authority::ExecutionSnapshot,
+        next: &meshway_authority::ExecutionSnapshot,
+    ) -> Result<Vec<Owner>, Error> {
+        let legacy = if new.on_demand() {
+            None
+        } else {
+            Some((
+                next.continuation_from(previous)
+                    .map_err(|_| Error::Authority)?,
+                next.configuration().map_err(|_| Error::Authority)?,
+            ))
+        };
+        let compatible = |resource: &ResourceRef| match legacy {
+            Some((previous, next)) => {
+                meshway_underlay::resource_compatible(previous, next, resource)
+            }
+            None => old.netmap_compatible(new, resource),
+        };
+        let dial_peers = new.dial_peers();
         let retired: Vec<_> = self
             .owners
             .keys()
             .filter(|key| !match key {
-                Key::Listener(key) => meshway_underlay::resource_compatible(
-                    previous,
-                    next,
-                    &ResourceRef::Listener { key: key.clone() },
-                ),
-                Key::Candidate(key, _) => meshway_underlay::resource_compatible(
-                    previous,
-                    next,
-                    &ResourceRef::Dial { key: key.clone() },
-                ),
-                Key::Peer(peer) => next
-                    .dialers
-                    .values()
-                    .any(|dial| dial.peer == *peer && !dial.endpoints.is_empty()),
+                Key::Listener(key) => compatible(&ResourceRef::Listener { key: key.clone() }),
+                Key::Candidate(key, _) => compatible(&ResourceRef::Dial { key: key.clone() }),
+                // A retained worker re-reads its peer's candidates per epoch.
+                Key::Peer(peer) => dial_peers.contains(peer),
                 Key::Traversal => true,
+                Key::Idle | Key::Facts => new.on_demand(),
             })
             .cloned()
             .collect();
-        retired
+        Ok(retired
             .into_iter()
             .filter_map(|key| {
                 let owner = self.owners.remove(&key)?;
                 owner.stop();
                 Some(owner)
             })
-            .collect()
+            .collect())
     }
 
     pub(super) async fn join_retired(&mut self, owners: Vec<Owner>) -> Result<(), Error> {

@@ -148,13 +148,65 @@ impl SocketFactory for Factory {
             })
         })
     }
+    fn connect_endpoint<'a>(
+        &'a self,
+        snapshot: &'a ExecutionSnapshot,
+        key: &'a str,
+        endpoint: &'a meshway_configuration::execution::DialEndpoint,
+    ) -> BoxFuture<'a, Result<AcceptedSocket, Error>> {
+        Box::pin(async move {
+            self.acquisitions.fetch_add(1, Ordering::SeqCst);
+            let cfg = crate::plan::Plan::new(snapshot)?;
+            if self.blocked_dialers.lock().unwrap().contains(&cfg.node) {
+                return Err(Error::Unavailable);
+            }
+            assert!(!matches!(
+                cfg.dialers[key].parameters,
+                DialParameters::NativeUdp { .. }
+            ));
+            let stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port.get())).await?;
+            Ok(AcceptedSocket {
+                local: stream.local_addr()?,
+                peer: stream.peer_addr()?,
+                stream: Box::new(stream),
+            })
+        })
+    }
+    fn datagram_endpoint<'a>(
+        &'a self,
+        snapshot: &'a ExecutionSnapshot,
+        key: &'a str,
+        endpoint: &'a meshway_configuration::execution::DialEndpoint,
+    ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
+        Box::pin(async move {
+            self.acquisitions.fetch_add(1, Ordering::SeqCst);
+            let cfg = crate::plan::Plan::new(snapshot)?;
+            if self.blocked_dialers.lock().unwrap().contains(&cfg.node) {
+                return Err(Error::Unavailable);
+            }
+            assert!(matches!(
+                cfg.dialers[key].parameters,
+                DialParameters::NativeUdp { .. }
+            ));
+            let peer = SocketAddr::new(endpoint.host.parse().unwrap(), endpoint.port.get());
+            let local = if peer.is_ipv4() {
+                "127.0.0.1:0"
+            } else {
+                "[::1]:0"
+            };
+            Ok(vec![DatagramSocket {
+                endpoint: self.endpoint(UdpSocket::bind(local).await?),
+                targets: vec![peer],
+            }])
+        })
+    }
     fn listen<'a>(
         &'a self,
         snapshot: &'a ExecutionSnapshot,
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn ListenerSocket>, Error>> {
         Box::pin(async move {
-            let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+            let cfg = crate::plan::Plan::new(snapshot)?;
             let address =
                 super::super::streaming::listener_address(cfg.listeners[key].declaration())?;
             let reserved = self.tcp.lock().unwrap().remove(&address);
@@ -172,7 +224,7 @@ impl SocketFactory for Factory {
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn Datagram>, Error>> {
         Box::pin(async move {
-            let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+            let cfg = crate::plan::Plan::new(snapshot)?;
             let Listener::NativeUdp(listener) = cfg.listeners[key].declaration() else {
                 return Err(Error::Configuration);
             };

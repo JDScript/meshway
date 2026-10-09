@@ -170,17 +170,12 @@ pub(in crate::manager::tests) async fn challenge(
         listener_key: key.into(),
         protocol: TransportProtocol::NativeUdp,
     };
-    let (initiation, intro) = Initiation::new(&fixture.identities[0], &carrier).unwrap();
+    let plan = Plan::new(fixture.identities[0].snapshot()).unwrap();
+    let (initiation, intro) = Initiation::new(&fixture.identities[0], &plan, &carrier).unwrap();
     let init = adjacency::encode(Kind::Init, &intro).unwrap();
     socket.send_to(&init, listener).await.unwrap();
     let response = control(socket, Kind::Challenge).await;
-    let transcript = initiation
-        .challenge(
-            fixture.identities[0].snapshot().configuration().unwrap(),
-            ids[1],
-            &response,
-        )
-        .unwrap();
+    let transcript = initiation.challenge(&plan, ids[1], &response).unwrap();
     let ack = adjacency::encode(
         Kind::Ack,
         &transcript

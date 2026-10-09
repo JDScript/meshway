@@ -80,11 +80,33 @@ pub trait SocketFactory: Send + Sync + 'static {
         key: &'a str,
         endpoint: usize,
     ) -> BoxFuture<'a, Result<AcceptedSocket, Error>>;
+    /// Netmap authority: dial one configured or peer-fact endpoint of the
+    /// candidate `key`. The endpoint is selection input, never authority; the
+    /// implementation still protects the socket for the candidate's resource.
+    fn connect_endpoint<'a>(
+        &'a self,
+        _snapshot: &'a ExecutionSnapshot,
+        _key: &'a str,
+        _endpoint: &'a meshway_configuration::execution::DialEndpoint,
+    ) -> BoxFuture<'a, Result<AcceptedSocket, Error>> {
+        Box::pin(async { Err(Error::Configuration) })
+    }
     fn listen<'a>(
         &'a self,
         snapshot: &'a ExecutionSnapshot,
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn ListenerSocket>, Error>>;
+
+    /// Netmap counterpart of [`Self::datagram_candidate`]; see
+    /// [`Self::connect_endpoint`].
+    fn datagram_endpoint<'a>(
+        &'a self,
+        _snapshot: &'a ExecutionSnapshot,
+        _key: &'a str,
+        _endpoint: &'a meshway_configuration::execution::DialEndpoint,
+    ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
+        Box::pin(async { Err(Error::Configuration) })
+    }
 
     fn datagram_listener<'a>(
         &'a self,

@@ -14,9 +14,9 @@ pub(super) struct Attempt {
     initiation: Option<Initiation>,
     transcript: Option<Transcript>,
     output: Vec<u8>,
-    sends: u8,
+    /// Per-output pacing; `total` bounds every output of the attempt.
+    retry: Retry,
     total: u8,
-    next_send: Instant,
     replacement: Replacement,
     completed: bool,
 }
@@ -29,8 +29,7 @@ impl Attempt {
     }
     fn output(&mut self, kind: u8, body: Vec<u8>) {
         self.output = envelope(&self.offer, kind, &body);
-        self.sends = 0;
-        self.next_send = Instant::now();
+        self.retry = Retry::due();
     }
 }
 
@@ -163,6 +162,7 @@ impl Owner {
                 }
                 let (initiation, intro) = Initiation::new_bound(
                     &self.shared.identity,
+                    &self.shared.plan,
                     &attempt.offer.offer().carrier,
                     Some(attempt.offer.offer().digest),
                 )?;
@@ -234,9 +234,8 @@ impl Owner {
                 initiation: None,
                 transcript: None,
                 output: Vec::new(),
-                sends: 0,
+                retry: Retry::due(),
                 total: 0,
-                next_send: Instant::now(),
                 replacement,
                 completed: false,
             },
@@ -270,16 +269,10 @@ impl Owner {
             let Some(active) = &attempt.active else {
                 continue;
             };
-            if attempt.output.is_empty()
-                || attempt.sends >= 8
-                || attempt.total >= 32
-                || Instant::now() < attempt.next_send
-            {
+            if attempt.output.is_empty() || attempt.total >= 32 || !attempt.retry.take(RETRY, 8) {
                 continue;
             }
-            attempt.sends += 1;
             attempt.total += 1;
-            attempt.next_send = Instant::now() + RETRY;
             let remote =
                 meshway_control::connectivity::udp_recipient(&attempt.offer.peer().address)
                     .map_err(|_| Error::Configuration)?;
@@ -364,15 +357,11 @@ impl Owner {
         if active.ensure_current().is_err() || attempt.offer.ensure_current().is_err() {
             return Ok(());
         }
-        let cfg = self
-            .shared
-            .identity
-            .snapshot()
-            .configuration()
-            .map_err(|_| Error::Authority)?;
+        let plan = self.shared.plan.clone();
+        let cfg = &*plan;
         let peer = attempt.offer.peer().candidate.socket.node_id;
         let carrier = attempt.offer.offer().carrier.clone();
-        let dialer = carrier.dialer == cfg.node_id;
+        let dialer = carrier.dialer == cfg.node;
         if kind == 0 {
             adjacency::incoming_bound(cfg, peer, &carrier, attempt.offer.offer().digest, body)?;
             return Ok(());

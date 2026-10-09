@@ -234,3 +234,13 @@ fn datagram_codec_has_exact_lengths_and_distinct_udp_phase_ids() {
     let context = encode_context(network(1), &udp, [(&control, &dp), (&control, &dp)]).unwrap();
     assert_eq!(context[48], 4);
 }
+
+#[test]
+fn claimed_dialer_is_the_context_dialer_and_only_a_lookup_key() {
+    let control = key(2, KeyAlgorithm::Ed25519);
+    let dp = key(12, KeyAlgorithm::X25519);
+    let context =
+        encode_context(network(1), &carrier(), [(&control, &dp), (&control, &dp)]).unwrap();
+    assert_eq!(claimed_dialer(&context), Some(node(2)));
+    assert_eq!(claimed_dialer(&context[..20]), None);
+}

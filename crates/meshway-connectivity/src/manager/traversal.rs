@@ -9,6 +9,7 @@ use meshway_model::{
     Sequence, UdpTraversalId,
     state::{ResourceRef, SocketNetwork},
 };
+use meshway_policy::admission::admit_adjacency;
 use meshway_protocol::{
     connectivity::SocketReference,
     state::{Freshness, VisibleReport},
@@ -72,9 +73,8 @@ struct Observers {
     endpoints: std::collections::BTreeSet<[u8; 32]>,
 }
 
-// Retained across execution/resource handoffs: churn cannot reset admission.
-// Acquisition can use a short publication overlap immediately, without an
-// unbounded poll loop: 30 starts in any half-open minute, paced at 250 ms.
+// Retained across epoch/resource handoffs: churn cannot reset admission.
+// Acquisition is bounded to 30 starts in any half-open minute, paced at 250 ms.
 const QUERY_INTERVAL: Duration = Duration::from_millis(250);
 // Mapping observations expire after at most 20 seconds. Their refresh budget is
 // independent of missing-adjacency acquisition, but coalesced metadata queries
@@ -198,7 +198,36 @@ fn needs_observation(shared: &EpochContext) -> bool {
     })
 }
 
+/// On-demand authority refreshes a socket's mapping only while it carries a
+/// healthy Native UDP channel or some interested peer has a UDP carrier.
+/// The refresh budget is unchanged; resident (publication) peers always want it.
+fn observation_wanted(shared: &EpochContext, id: &[u8; 32]) -> bool {
+    let plan = &shared.plan;
+    if !plan.on_demand() {
+        return true;
+    }
+    let carrying = shared.links.lock().is_ok_and(|links| {
+        links.values().any(|link| {
+            link.fact.socket_id == *id
+                && link.fact.carrier.protocol == TransportProtocol::NativeUdp
+                && link.scope.check().is_ok()
+        })
+    });
+    carrying
+        || plan.peers().any(|peer| {
+            shared.wanted(peer)
+                && plan.outgoing(peer).is_ok_and(|candidates| {
+                    candidates.iter().any(|(_, dial)| {
+                        dial.parameters.transport() == TransportProtocol::NativeUdp
+                    })
+                })
+        })
+}
+
 fn observation_due(shared: &EpochContext, id: &[u8; 32]) -> bool {
+    if !observation_wanted(shared, id) {
+        return false;
+    }
     let Ok(now) = shared.identity.snapshot().now_ms() else {
         return false;
     };
@@ -218,32 +247,53 @@ fn observation_due(shared: &EpochContext, id: &[u8; 32]) -> bool {
     })
 }
 
+/// Scheduling state owned by the traversal owner for its whole life. Only
+/// these budgets and cursors cross an epoch; offers, discovery contexts and
+/// observer metadata are per epoch and keep their own short deadlines.
+struct Schedule {
+    queries: QuerySchedule,
+    /// Earliest next STUN discovery round (paced independently of queries).
+    discover_at: Instant,
+    /// Fair eight-peer batch cursor for prepare.
+    after_peer: Option<NodeId>,
+    endpoints: Vec<[u8; 32]>,
+}
+impl Schedule {
+    fn new() -> Self {
+        Self {
+            queries: QuerySchedule::new(Instant::now()),
+            discover_at: Instant::now(),
+            after_peer: None,
+            endpoints: Vec::new(),
+        }
+    }
+    /// A changed socket set is due for discovery immediately.
+    fn sockets(&mut self, endpoints: &BTreeMap<[u8; 32], Endpoint>) {
+        let current: Vec<_> = endpoints.keys().copied().collect();
+        if current != self.endpoints {
+            self.discover_at = Instant::now();
+            self.endpoints = current;
+        }
+    }
+}
+
 pub(super) async fn run(mut shared: Arc<EpochContext>, gateway: Arc<dyn TraversalGateway>) {
     let mut updates = shared.epochs.subscribe();
     let mut resources = shared.resource_changes.subscribe();
-    let mut discover_at = Instant::now();
-    let mut after_peer = None;
-    let mut previous_endpoints = Vec::new();
-    let mut queries = QuerySchedule::new(Instant::now());
+    let mut schedule = Schedule::new();
     loop {
         let endpoints = match shared.traversal_endpoints.lock() {
             Ok(endpoints) => endpoints.clone(),
             Err(_) => return,
         };
-        let current_endpoints: Vec<_> = endpoints.keys().copied().collect();
-        if current_endpoints != previous_endpoints {
-            discover_at = Instant::now();
-            previous_endpoints = current_endpoints;
-        }
+        schedule.sockets(&endpoints);
         run_epoch(
             shared.clone(),
             &gateway,
             &endpoints,
             &mut updates,
             &mut resources,
-            &mut discover_at,
-            &mut after_peer,
-            &mut queries,
+            &mut schedule,
         )
         .await;
         match shared.latest(&mut updates).await {
@@ -253,17 +303,20 @@ pub(super) async fn run(mut shared: Arc<EpochContext>, gateway: Arc<dyn Traversa
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_epoch(
     shared: Arc<EpochContext>,
     gateway: &Arc<dyn TraversalGateway>,
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
-    updates: &mut tokio::sync::watch::Receiver<DataPlaneIdentity>,
+    updates: &mut tokio::sync::watch::Receiver<Epoch>,
     resources: &mut tokio::sync::watch::Receiver<()>,
-    discover_at: &mut Instant,
-    after_peer: &mut Option<NodeId>,
-    queries: &mut QuerySchedule,
+    schedule: &mut Schedule,
 ) {
+    let Schedule {
+        queries,
+        discover_at,
+        after_peer,
+        ..
+    } = schedule;
     let scope = shared.scope(None, false);
     let mut pending: BTreeMap<UdpTraversalId, Pending> = BTreeMap::new();
     let mut retired: BTreeMap<UdpTraversalId, u64> = BTreeMap::new();
@@ -396,9 +449,9 @@ async fn run_epoch(
                 }
             }
             // Query admission is not the clock for an already issued offer or
-            // discovery authority. Advance the original bounded operations in
-            // their short shared-publication window without issuing another
-            // metadata query, replacing guards, or extending any deadline.
+            // discovery authority. Advance the original bounded operations
+            // before their own deadlines without issuing another metadata
+            // query, replacing guards, or extending any deadline.
             if let Some(context) = context
                 .as_ref()
                 .filter(|context| context.ensure_current().is_ok())

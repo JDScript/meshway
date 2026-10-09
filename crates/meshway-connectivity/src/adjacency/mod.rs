@@ -1,8 +1,8 @@
 //! Signed challenge bootstrap only. This is not an application encryption layer.
+use crate::plan::Plan;
 use crate::{Carrier, Error, scope::Scope};
 use ed25519_dalek::{Signature, VerifyingKey};
 use meshway_authority::{DataPlaneIdentity, packet_proof_message};
-use meshway_configuration::execution::NodeConfiguration;
 use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId};
 use meshway_transport::raw::Stream;
 use sha2::{Digest as _, Sha256};
@@ -18,18 +18,13 @@ mod exchange;
 pub(crate) use exchange::incoming_bound;
 pub(crate) use exchange::{Initiation, Kind, Transcript, decode, encode, incoming};
 
-fn keys(cfg: &NodeConfiguration, node: NodeId) -> Result<(&BoundNodeKey, &BoundNodeKey), Error> {
-    if node == cfg.node_id {
-        Ok((&cfg.self_keys.control_key, &cfg.self_keys.dataplane_key))
-    } else {
-        let peer = cfg.peers.get(&node).ok_or(Error::Authentication)?;
-        Ok((&peer.control_key, &peer.dataplane_key))
-    }
+fn keys(cfg: &Plan, node: NodeId) -> Result<(&BoundNodeKey, &BoundNodeKey), Error> {
+    cfg.keys(node)
 }
 
-fn context(cfg: &NodeConfiguration, carrier: &Carrier) -> Result<Vec<u8>, Error> {
+fn context(cfg: &Plan, carrier: &Carrier) -> Result<Vec<u8>, Error> {
     encode_context(
-        cfg.network_id,
+        cfg.network,
         carrier,
         [keys(cfg, carrier.dialer)?, keys(cfg, carrier.listener)?],
     )
@@ -78,14 +73,9 @@ fn digest(domain: &[u8], context: &[u8], client: &[u8; 32], server: &[u8; 32]) -
     Digest::from_bytes(hash.finalize().into())
 }
 
-fn verify(
-    cfg: &NodeConfiguration,
-    peer: NodeId,
-    digest: Digest,
-    signature: &[u8],
-) -> Result<(), Error> {
+fn verify(cfg: &Plan, peer: NodeId, digest: Digest, signature: &[u8]) -> Result<(), Error> {
     let key = keys(cfg, peer)?.0;
-    verify_key(cfg.network_id, peer, key, digest, signature)
+    verify_key(cfg.network, peer, key, digest, signature)
 }
 
 fn verify_key(
@@ -104,6 +94,25 @@ fn verify_key(
             &signature,
         )
         .map_err(|_| Error::Authentication)
+}
+
+/// The dialer an initiation names (context bytes 16..32). Only a lookup key:
+/// the full context and signature are still verified for that one carrier.
+pub(crate) fn claimed_dialer(intro: &[u8]) -> Option<NodeId> {
+    let hex: String = intro
+        .get(16..32)?
+        .iter()
+        .enumerate()
+        .map(|(index, byte)| {
+            let dash = if matches!(index, 4 | 6 | 8 | 10) {
+                "-"
+            } else {
+                ""
+            };
+            format!("{dash}{byte:02x}")
+        })
+        .collect();
+    hex.parse().ok()
 }
 
 pub(crate) fn nonce() -> Result<[u8; 32], Error> {
@@ -158,11 +167,8 @@ pub(crate) async fn dial(
     carrier: &Carrier,
 ) -> Result<(Box<dyn Stream>, [u8; 32]), Error> {
     scope.check()?;
-    let cfg = identity
-        .snapshot()
-        .configuration()
-        .map_err(|_| Error::Authority)?;
-    let (initiation, intro) = Initiation::new(identity, carrier)?;
+    let cfg = &*scope.plan;
+    let (initiation, intro) = Initiation::new(identity, cfg, carrier)?;
     scope.run(write(&mut stream, 1, &intro)).await?;
     let challenge = scope.run(read(&mut stream, 2)).await?;
     let transcript = initiation.challenge(cfg, carrier.listener, &challenge)?;
@@ -180,14 +186,18 @@ pub(crate) async fn accept(
     identity: &DataPlaneIdentity,
     scope: &Scope,
     mut stream: Box<dyn Stream>,
-    carriers: &[(NodeId, Carrier)],
+    carriers: impl Fn(NodeId) -> Option<Carrier>,
 ) -> Result<(Box<dyn Stream>, NodeId, Carrier, [u8; 32]), Error> {
+    let carriers = |intro: &[u8]| -> Result<Vec<(NodeId, Carrier)>, Error> {
+        let peer = claimed_dialer(intro).ok_or(Error::Authentication)?;
+        Ok(carriers(peer)
+            .map(|carrier| (peer, carrier))
+            .into_iter()
+            .collect())
+    };
     let intro = scope.run(read(&mut stream, 1)).await?;
-    let cfg = identity
-        .snapshot()
-        .configuration()
-        .map_err(|_| Error::Authority)?;
-    let (peer, carrier, initiation) = incoming(cfg, carriers, &intro)?;
+    let cfg = &*scope.plan;
+    let (peer, carrier, initiation) = incoming(cfg, &carriers(&intro)?, &intro)?;
     let mut scope = scope.clone();
     scope.edge = Some((peer, carrier.clone()));
     scope.check()?;

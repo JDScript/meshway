@@ -29,7 +29,7 @@ async fn new_epoch_dialer_waits_for_selected_owner_handoff_before_acquiring() {
     // selected endpoint owner. This fixes the interleaving, not random Node IDs
     // or the channel choice: a revoked old scope still occupies the owner slot.
     let mut updates = a.shared.epochs.subscribe();
-    a.shared.epochs.send_replace(next.clone());
+    a.shared.epochs.send_replace(support::epoch(&next, 2));
     let shared = a.shared.latest(&mut updates).await.unwrap();
     assert!(
         a.shared.links.lock().unwrap()[&ids[1]]
@@ -37,11 +37,7 @@ async fn new_epoch_dialer_waits_for_selected_owner_handoff_before_acquiring() {
             .check()
             .is_err()
     );
-    assert!(
-        workers::plans(&next, Default::default())
-            .unwrap()
-            .contains_key(&ids[1])
-    );
+    assert!(!workers::candidates(&shared, ids[1]).unwrap().is_empty());
     factory.blocked_dialers.lock().unwrap().insert(ids[0]);
     let before = factory.acquisitions.load(Ordering::SeqCst);
     let mut acquisition = Box::pin(workers::dial(shared, factory.clone(), ids[1]));

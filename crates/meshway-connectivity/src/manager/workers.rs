@@ -4,10 +4,18 @@ use crate::ListenerSocket;
 pub(super) struct Candidate {
     key: String,
     carrier: Carrier,
-    endpoints: Vec<LinkAcquisition>,
+    endpoints: Vec<Target>,
     driver: Driver,
-    priority: u16,
     timeout: std::time::Duration,
+}
+
+/// One endpoint to dial: a publication names it by index into its own
+/// candidate; a netmap passes configured or fact endpoints explicitly.
+#[derive(Clone)]
+pub(super) struct Target {
+    pub index: Option<usize>,
+    pub endpoint: meshway_configuration::execution::DialEndpoint,
+    pub acquisition: LinkAcquisition,
 }
 
 enum Driver {
@@ -15,18 +23,17 @@ enum Driver {
     Datagram,
 }
 
-pub(super) fn plans(
-    identity: &DataPlaneIdentity,
-    limits: Limits,
-) -> Result<BTreeMap<NodeId, Vec<Candidate>>, Error> {
-    let cfg = identity
-        .snapshot()
-        .configuration()
-        .map_err(|_| Error::Authority)?;
-    let mut plans: BTreeMap<NodeId, Vec<Candidate>> = BTreeMap::new();
-    for (key, candidate) in &cfg.dialers {
+/// The peer's ordered dial candidates for this epoch, built once per
+/// acquisition sweep from the plan's carrier order (never by planning every
+/// peer), plus the peer's current fact endpoints for a netmap.
+pub(super) fn candidates(shared: &EpochContext, peer: NodeId) -> Result<Vec<Candidate>, Error> {
+    let plan = &shared.plan;
+    let facts = plan.on_demand().then(|| shared.facts.get(peer)).flatten();
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut out = Vec::new();
+    for (key, candidate) in plan.outgoing(peer)? {
         let carrier = Carrier {
-            dialer: cfg.node_id,
+            dialer: plan.node,
             listener: candidate.peer,
             listener_key: candidate.listener_key.clone(),
             protocol: candidate.parameters.transport(),
@@ -42,39 +49,55 @@ pub(super) fn plans(
                 options
                     .connect_timeout
                     .as_std()
-                    .min(limits.handshake_timeout),
+                    .min(shared.limits.handshake_timeout),
             ),
             parameters => match provider::Connector::new(parameters) {
                 Ok(connector) => (
                     Driver::Stream(Box::new(connector)),
-                    limits.handshake_timeout,
+                    shared.limits.handshake_timeout,
                 ),
                 Err(_) => continue,
             },
         };
-        if carrier.listener_key.is_empty() || carrier.listener_key.len() > 128 {
-            return Err(Error::Configuration);
+        let mut endpoints: Vec<_> = candidate
+            .endpoints
+            .iter()
+            .enumerate()
+            .map(|(index, endpoint)| Target {
+                index: (!plan.on_demand()).then_some(index),
+                endpoint: endpoint.clone(),
+                acquisition: acquisition(endpoint.source),
+            })
+            .collect();
+        if let Some(facts) = &facts {
+            let network = if carrier.protocol == TransportProtocol::NativeUdp {
+                meshway_model::state::SocketNetwork::Udp
+            } else {
+                meshway_model::state::SocketNetwork::Tcp
+            };
+            for endpoint in crate::plan::fact_endpoints(facts, &carrier.listener_key, network, now)
+            {
+                if !endpoints.iter().any(|known| known.endpoint == endpoint) {
+                    endpoints.push(Target {
+                        index: None,
+                        endpoint,
+                        acquisition: LinkAcquisition::LocalEndpoint,
+                    });
+                }
+            }
         }
-        if candidate.endpoints.is_empty() {
+        if endpoints.is_empty() {
             continue;
         }
-        plans.entry(candidate.peer).or_default().push(Candidate {
+        out.push(Candidate {
             key: key.clone(),
             carrier,
-            endpoints: candidate
-                .endpoints
-                .iter()
-                .map(|endpoint| acquisition(endpoint.source))
-                .collect(),
+            endpoints,
             driver,
-            priority: candidate.priority,
             timeout,
         });
     }
-    for candidates in plans.values_mut() {
-        candidates.sort_by(|a, b| (a.priority, &a.key).cmp(&(b.priority, &b.key)));
-    }
-    Ok(plans)
+    Ok(out)
 }
 
 pub(super) async fn dial(
@@ -84,11 +107,7 @@ pub(super) async fn dial(
 ) {
     let mut updates = shared.epochs.subscribe();
     loop {
-        let candidates = match plans(&shared.identity, shared.limits) {
-            Ok(mut plans) => Arc::new(plans.remove(&peer).unwrap_or_default()),
-            Err(_) => return,
-        };
-        dial_epoch(shared.clone(), factory.clone(), peer, candidates).await;
+        dial_epoch(shared.clone(), factory.clone(), peer).await;
         match shared.latest(&mut updates).await {
             Ok(next) => shared = next,
             Err(_) => return,
@@ -96,16 +115,46 @@ pub(super) async fn dial(
     }
 }
 
-async fn dial_epoch(
-    shared: Arc<EpochContext>,
-    factory: Arc<dyn SocketFactory>,
+/// Wait until this peer is wanted (interest or keepalive), or the epoch ends.
+async fn wanted(
+    shared: &EpochContext,
+    lifetime: &Scope,
     peer: NodeId,
-    candidates: Arc<Vec<Candidate>>,
-) {
+    updates: &mut tokio::sync::watch::Receiver<Epoch>,
+) -> Result<(), Error> {
+    let wake = shared.interests.waker(peer);
+    loop {
+        let notified = wake.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if shared.wanted(peer) {
+            return Ok(());
+        }
+        lifetime
+            .run(async {
+                if shared.epoch_changed() {
+                    return Err(Error::Authority);
+                }
+                tokio::select! { biased;
+                    _ = updates.changed() => Err(Error::Authority),
+                    _ = &mut notified => Ok(()),
+                }
+            })
+            .await?;
+    }
+}
+
+async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, peer: NodeId) {
     let lifetime = shared.scope(None, false);
     let mut updates = shared.epochs.subscribe();
     'acquisition: loop {
         if lifetime.check().is_err() || shared.epoch_changed() {
+            return;
+        }
+        if wanted(&shared, &lifetime, peer, &mut updates)
+            .await
+            .is_err()
+        {
             return;
         }
         // A revoked operation scope is not a vacant physical slot. During a
@@ -116,11 +165,17 @@ async fn dial_epoch(
             .lock()
             .is_ok_and(|links| links.contains_key(&peer));
         if selected {
-            if backoff(&shared, &lifetime, &mut updates).await.is_err() {
+            if backoff(&shared, &lifetime, peer, &mut updates)
+                .await
+                .is_err()
+            {
                 return;
             }
             continue;
         }
+        let Ok(candidates) = candidates(&shared, peer) else {
+            return;
+        };
         // Provenance is the first priority across all of this peer's carriers.
         // In particular, an unreachable local UDP address must not delay an
         // explicitly configured TCP fallback after a coordinated link fails.
@@ -129,12 +184,14 @@ async fn dial_epoch(
             LinkAcquisition::LocalEndpoint,
         ] {
             for candidate in candidates.iter() {
-                for (endpoint, acquisition) in candidate
+                for target in candidate
                     .endpoints
                     .iter()
-                    .enumerate()
-                    .filter(|(_, acquisition)| **acquisition == source)
+                    .filter(|target| target.acquisition == source)
                 {
+                    if !shared.wanted(peer) {
+                        continue 'acquisition;
+                    }
                     if shared
                         .links
                         .lock()
@@ -149,14 +206,17 @@ async fn dial_epoch(
                             peer,
                             &candidate.key,
                             &candidate.carrier,
-                            endpoint,
+                            target,
                             candidate.timeout,
                         )
                         .await;
                         if lifetime.check().is_err() {
                             return;
                         }
-                        if backoff(&shared, &lifetime, &mut updates).await.is_err() {
+                        if backoff(&shared, &lifetime, peer, &mut updates)
+                            .await
+                            .is_err()
+                        {
                             return;
                         }
                         continue;
@@ -170,9 +230,22 @@ async fn dial_epoch(
                     };
                     let attempt = async {
                         let opening = Arc::new(scope::Opening::new(scope.clone()));
-                        let socket = factory
-                            .connect(shared.identity.snapshot(), &candidate.key, endpoint)
-                            .await?;
+                        let socket = match target.index {
+                            Some(index) => {
+                                factory
+                                    .connect(shared.identity.snapshot(), &candidate.key, index)
+                                    .await?
+                            }
+                            None => {
+                                factory
+                                    .connect_endpoint(
+                                        shared.identity.snapshot(),
+                                        &candidate.key,
+                                        &target.endpoint,
+                                    )
+                                    .await?
+                            }
+                        };
                         let raw = Box::new(scope::Stream {
                             inner: socket.stream,
                             scope: shared.physical()?,
@@ -194,7 +267,7 @@ async fn dial_epoch(
                                 carrier: candidate.carrier.clone(),
                                 local: socket.local,
                                 remote: socket.peer,
-                                acquisition: acquisition.clone(),
+                                acquisition: target.acquisition.clone(),
                             },
                             opening,
                         ))
@@ -217,7 +290,10 @@ async fn dial_epoch(
                     }
                     // Every failure/rejected duplicate is paced; no immediate
                     // failed-dial loop, including single-candidate publications.
-                    if backoff(&shared, &lifetime, &mut updates).await.is_err() {
+                    if backoff(&shared, &lifetime, peer, &mut updates)
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                     if was_selected {
@@ -230,7 +306,10 @@ async fn dial_epoch(
                 }
             }
         }
-        if backoff(&shared, &lifetime, &mut updates).await.is_err() {
+        if backoff(&shared, &lifetime, peer, &mut updates)
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -249,19 +328,32 @@ pub(super) fn acquisition(
     }
 }
 
+/// Paced retry. New peer facts end the wait early (a changed candidate set
+/// may be dialable now); interest alone never shortens the pace.
 async fn backoff(
     shared: &EpochContext,
     lifetime: &Scope,
-    updates: &mut tokio::sync::watch::Receiver<DataPlaneIdentity>,
+    peer: NodeId,
+    updates: &mut tokio::sync::watch::Receiver<Epoch>,
 ) -> Result<(), Error> {
+    let facts = shared.facts.get(peer);
+    let wake = shared.interests.waker(peer);
+    let deadline = tokio::time::Instant::now() + shared.limits.retry_backoff;
     lifetime
         .run(async {
-            if shared.epoch_changed() {
-                return Err(Error::Authority);
-            }
-            tokio::select! { biased;
-                _ = updates.changed() => Err(Error::Authority),
-                _ = tokio::time::sleep(shared.limits.retry_backoff) => Ok(()),
+            loop {
+                if shared.epoch_changed() {
+                    return Err(Error::Authority);
+                }
+                tokio::select! { biased;
+                    _ = updates.changed() => return Err(Error::Authority),
+                    _ = tokio::time::sleep_until(deadline) => return Ok(()),
+                    _ = wake.notified() => {
+                        if shared.facts.get(peer) != facts {
+                            return Ok(());
+                        }
+                    },
+                }
             }
         })
         .await
@@ -309,9 +401,6 @@ pub(super) async fn listen(
                 match shared.successor(&mut updates).await {
                     Ok(next) => {
                         shared = next;
-                        if shared.listener_handoff(fact.socket_id).is_err() {
-                            break;
-                        }
                         continue;
                     }
                     Err(_) => break,
@@ -325,32 +414,13 @@ pub(super) async fn listen(
         let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
             continue;
         };
-        let cfg = shared.identity.snapshot().configuration();
-        let Ok(cfg) = cfg else {
-            continue;
-        };
-        let now = shared.identity.snapshot().now_ms();
-        let Ok(now) = now else {
-            continue;
-        };
-        let carriers: Vec<_> = cfg
-            .peers
-            .keys()
-            .filter_map(|peer| {
-                let carrier = Carrier {
-                    dialer: *peer,
-                    listener: cfg.node_id,
-                    listener_key: fact.key.clone(),
-                    protocol: fact.protocol,
-                };
-                admit_adjacency(cfg, *peer, &carrier, now)
-                    .ok()
-                    .map(|_| (*peer, carrier))
-            })
-            .collect();
-        if carriers.is_empty() {
-            continue;
-        }
+        // Only the claimed dialer's carrier is admitted (and cached per
+        // epoch); the full context and signature are verified against it.
+        let plan = shared.plan.clone();
+        let snapshot = shared.identity.snapshot().clone();
+        let key = fact.key.clone();
+        let protocol = fact.protocol;
+        let carriers = move |peer| plan.accepting(&snapshot, peer, &key, protocol);
         let shared = shared.clone();
         let acceptor = acceptor.clone();
         children.spawn(async move {
@@ -365,7 +435,7 @@ pub(super) async fn listen(
                 });
                 let stream = acceptor.accept(raw).await?;
                 let (stream, peer, carrier, id) =
-                    adjacency::accept(&shared.identity, &scope, stream, &carriers).await?;
+                    adjacency::accept(&shared.identity, &scope, stream, carriers).await?;
                 Ok((
                     stream,
                     LinkFact {
