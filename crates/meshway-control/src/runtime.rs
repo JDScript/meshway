@@ -235,6 +235,16 @@ impl Control {
         if state.capabilities != active.capabilities {
             return Err(Error::Contract);
         }
+        // A fresh host observation belongs to this precise instance/target,
+        // including failure before applied. Never relabel an old probe with the
+        // latest publication; uncertain retries above keep their original body.
+        if let Some(exit) = &state.exit_capability
+            && (exit.instance_id != instance.instance_id
+                || active.lease.target.as_ref() != Some(&exit.target)
+                || self.cached_target().map(reference).as_ref() != Some(&exit.target))
+        {
+            return Err(Error::Contract);
+        }
         if let Some(saved) = &state.configuration.saved
             && self.cached_target().map(reference).as_ref() != Some(saved)
         {

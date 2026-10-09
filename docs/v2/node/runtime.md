@@ -77,6 +77,8 @@ Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预�
 
 live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamilies` 仍为空；其含义是所报后端前置条件完成，不代替角色安装或业务连通证明。失败携带具体原因。返回值保留传入 instance／target 与本次真实 `observedAt`，X4 不需自行把 `probing` 改成 `ready`。
 
+Control 在保存执行目标和签发快照时检查本地 `exitRole.instanceId` 等于当前实例、出口开关仍启用，以及 permit 内引用的本地角色与目标角色一致。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，新观测必须绑定当前 instance／精确 target；错绑在发送 HTTP 前拒绝。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新目标。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。
+
 ### IPv4 出口角色与 NAT 投影
 
 Linux `Host::install_exit_role(ExitRolePlan)` 消费当前执行快照中相同的出口职责，返回 `ExitRole`。资源仍归该 Host 的唯一 Kernel owner；角色使用独立非持久 TUN，不暴露 FD。crate 根导出 `ExitRole`、`ExitScope`、`ExitIncarnation`、`ExitSendGuard`、`Invalidated`、`OriginalTuple`、`ExitTransport`、`ProjectionAck`、`CtConfirmation`、`ExitReplyReader` 和 `ExitReply`。

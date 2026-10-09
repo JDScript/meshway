@@ -18,6 +18,7 @@ pub enum Fault {
     Hold,
     WrongController,
     WrongInstance,
+    WrongExitRoleInstance,
     WrongDnsNetwork,
     WrongDnsSource,
     WrongDnsName,
@@ -194,6 +195,19 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                 match fault {
                     Fault::WrongController => value["controllerId"] = id,
                     Fault::WrongInstance => value["lease"]["instanceId"] = id,
+                    Fault::WrongExitRoleInstance => {
+                        let mut response: meshway_protocol::NodeConfigurationResponse =
+                            serde_json::from_value(value).unwrap();
+                        let full = response.full.as_mut().expect("initial full target");
+                        full.configuration
+                            .exit_role
+                            .as_mut()
+                            .expect("exit role")
+                            .instance_id = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+                        full.digest = meshway_configuration::digest(&full.configuration).unwrap();
+                        response.lease.target.as_mut().unwrap().digest = full.digest;
+                        value = serde_json::to_value(response).unwrap();
+                    }
                     Fault::WrongDnsNetwork => value["networkId"] = id,
                     Fault::WrongDnsSource => value["sourceNodeId"] = id,
                     Fault::WrongDnsName => value["record"]["name"] = "other.mesh.example".into(),

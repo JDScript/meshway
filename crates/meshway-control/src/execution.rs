@@ -26,6 +26,29 @@ pub(super) fn validate_target(
     Ok(())
 }
 
+/// The enclosing lease binds local exit responsibilities. A valid digest alone
+/// cannot make another instance's role executable by this Control owner.
+pub(super) fn validate_exit_binding(
+    cfg: &meshway_configuration::execution::NodeConfiguration,
+    instance: InstanceId,
+) -> Result<(), Error> {
+    if cfg
+        .exit_role
+        .as_ref()
+        .is_some_and(|role| !cfg.exit_enabled || role.instance_id != instance)
+        || cfg.permits.values().any(|permit| {
+            permit
+                .exit
+                .as_ref()
+                .and_then(|exit| exit.roles.get(&cfg.node_id))
+                .is_some_and(|role| cfg.exit_role.as_ref() != Some(role))
+        })
+    {
+        return Err(Error::Contract);
+    }
+    Ok(())
+}
+
 impl Control {
     /// Capabilities come from the host's actual loaded implementations. The
     /// control-only component itself declares no transport capability.
@@ -155,6 +178,11 @@ impl Control {
                 self.record.binding.as_ref().ok_or(Error::Lifecycle)?,
             )
             .is_err()
+                || validate_exit_binding(
+                    &target.configuration,
+                    self.current_instance()?.instance_id,
+                )
+                .is_err()
                 || Some(reference(target)) != response.lease.target
                 || self
                     .instance

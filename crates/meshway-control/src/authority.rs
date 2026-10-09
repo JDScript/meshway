@@ -1,7 +1,10 @@
 //! Control is the production issuer of execution authority. Every snapshot is
 //! bound to the current lease, the durable private target and this owner's
 //! shared validity/invalidation; saved files alone cannot mint a grant.
-use crate::{Control, Error, execution::validate_target};
+use crate::{
+    Control, Error,
+    execution::{validate_exit_binding, validate_target},
+};
 use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot, Issue, reference};
 use std::sync::Arc;
 
@@ -19,6 +22,7 @@ impl Control {
             target,
             self.record.binding.as_ref().ok_or(Error::Lifecycle)?,
         )?;
+        validate_exit_binding(&target.configuration, instance.instance_id)?;
         Ok(ExecutionSnapshot::issue(Issue {
             target: Arc::new(target.clone()),
             instance: instance.instance_id,

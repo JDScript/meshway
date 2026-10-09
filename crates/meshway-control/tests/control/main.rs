@@ -4,6 +4,7 @@ mod authority;
 mod cache;
 mod dns;
 mod events;
+mod exit;
 mod faults;
 mod key_enrollment;
 mod recovery;
