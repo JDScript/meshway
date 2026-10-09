@@ -30,7 +30,7 @@ fn unrelated_revision_keeps_digest_serial_and_envelope() {
     s.cfg
         .access
         .push(access(&[sel(4)], &[sel(3)], &["tcp:22"], false));
-    s.cfg.access[0].remark = "edited".into();
+    s.cfg.access[1].remark = "edited".into();
     let revision = Revision::new(2).unwrap();
     let second = compile_with(&s, &previous, revision);
     for id in [node(1), node(2), node(5)] {
@@ -86,10 +86,11 @@ fn selection_switch_and_key_rotation_change_only_dependent_netmaps() {
     let selection = |c: &CompiledNetmaps| {
         c.nodes[&node(1)]
             .netmap
-            .grants
-            .values()
-            .find_map(|g| g.exit.as_ref().map(|e| e.selection))
+            .egress
+            .as_ref()
             .unwrap()
+            .capture
+            .generation
     };
     // Switching away and back is a new selection version: a new selection identity.
     s.selection_versions.insert(node(1), 2);
@@ -178,12 +179,16 @@ fn digest_round_trip_and_delta_reconstruct_exact_target() {
     let second = compile_with(&s, &previous(&first), Revision::new(2).unwrap());
     let (base, target) = (&first.nodes[&node(1)], &second.nodes[&node(1)]);
     let delta = netmap_delta(base, target).unwrap();
-    assert!(!delta.grants.remove.is_empty() && !delta.grants.upsert.is_empty());
+    assert_ne!(
+        delta.configuration.access,
+        base.netmap.projection.configuration.access
+    );
+    assert!(delta.configuration.nodes.is_empty() && delta.nodes.upsert.is_empty());
     let text = serde_json::to_string(&delta).unwrap();
     let delta: NetmapDelta = serde_json::from_str(&text).unwrap();
     assert_eq!(&apply_netmap_delta(base, delta.clone()).unwrap(), target);
     let mut forged = delta.clone();
-    forged.grants.remove.clear();
+    forged.nodes.remove.push(node(9));
     assert!(apply_netmap_delta(base, forged).is_err());
     let mut stale = delta;
     stale.base.serial = stale.target.serial;
@@ -192,31 +197,29 @@ fn digest_round_trip_and_delta_reconstruct_exact_target() {
 }
 
 #[test]
-fn wire_rejects_unordered_grants_unknown_fields_and_missing_nullables() {
+fn wire_rejects_duplicate_keys_unknown_fields_and_positional_objects() {
     let mut s = base(3);
     s.cfg.access = vec![access(&["*".into()], &["*".into()], &["tcp:443"], false)];
     let compiled = &netmaps(&s).nodes[&node(1)];
-    let mut value = serde_json::to_value(compiled).unwrap();
-    let grants = value["netmap"]["grants"].as_array_mut().unwrap();
-    assert!(grants.len() >= 2);
-    assert!(
-        grants.iter().any(|g| g["services"].is_null())
-            || grants.iter().all(|g| !g["services"].is_null())
-    );
-    grants.reverse();
-    assert!(serde_json::from_value::<CompiledNetmap>(value.clone()).is_err());
-    grants_reverse_back(&mut value);
+    let text = serde_json::to_string(compiled).unwrap();
+    assert!(serde_json::from_str::<CompiledNetmap>(&text).is_ok());
+    let value = serde_json::to_value(compiled).unwrap();
     let mut extra = value.clone();
     extra["netmap"]["self"]["unknown"] = serde_json::json!(1);
     assert!(serde_json::from_value::<CompiledNetmap>(extra).is_err());
     let mut positional = value.clone();
-    positional["netmap"]["grants"][0]["target"] = serde_json::json!(["mesh", node(2).to_string()]);
+    positional["netmap"]["projection"]["subjects"] = serde_json::json!([{}, {}, {}]);
     assert!(serde_json::from_value::<CompiledNetmap>(positional).is_err());
-    assert!(serde_json::from_value::<CompiledNetmap>(value).is_ok());
-}
-
-fn grants_reverse_back(value: &mut serde_json::Value) {
-    value["netmap"]["grants"].as_array_mut().unwrap().reverse();
+    let entry =
+        serde_json::to_string(&value["netmap"]["projection"]["inventory"][node(2).to_string()])
+            .unwrap();
+    let duplicated = text.replacen(
+        "\"inventory\":{",
+        &format!("\"inventory\":{{\"{}\":{entry},", node(2)),
+        1,
+    );
+    assert_ne!(duplicated, text);
+    assert!(serde_json::from_str::<CompiledNetmap>(&duplicated).is_err());
 }
 
 #[test]

@@ -1,15 +1,17 @@
-//! Per-node netmap compilation from one configuration revision.
+//! Per-node netmap construction from one configuration revision.
 //!
-//! Grants are compiled per (source, destination) pair: the Access union, every
-//! routing segment's first match, topology carriers and exit eligibility.
-//! Dynamic facts (instances, endpoints, exit readiness, demands, observation
-//! tasks) are not inputs; no per-request compilation exists here.
+//! The Server projects the configuration for each Node and adds that Node's
+//! own resources; it materializes no pair grant or path. Nodes run the same
+//! compiler on the projection (`decide`). Dynamic facts (instances,
+//! endpoints, exit readiness, demands, observation tasks) are not inputs.
 use super::*;
 use meshway_configuration::netmap::*;
 use meshway_model::{Digest, NetmapRef, Version, netmap::MAX_NETMAP_BYTES};
 use std::collections::BTreeSet;
-mod grants;
+mod decide;
 mod local;
+mod project;
+pub use decide::{Decision, LocalCompiler, LocalDecision, Target, compile_local, transit};
 
 /// Stable inputs only. The caller loads them in the committing transaction.
 pub struct NetmapInput<'a> {
@@ -86,52 +88,22 @@ impl NetmapInput<'_> {
             node,
         )
     }
-
-    fn peer(&self, node: NodeId) -> Result<PeerConfiguration, CompileError> {
-        let (Some(settings), Some(trusted)) = (
-            self.configuration.nodes.get(&node),
-            self.inventory.get(&node),
-        ) else {
-            return Err(CompileError::InvalidInput);
-        };
-        Ok(PeerConfiguration {
-            identity: settings.identity.clone(),
-            addresses: settings.addresses.clone(),
-            control_key: trusted.control_key.clone(),
-            dataplane_key: trusted.dataplane_key.clone(),
-        })
-    }
-
-    fn observable(&self, nodes: &[NodeId]) -> bool {
-        nodes.iter().all(|node| {
-            self.inventory.get(node).is_some_and(|trusted| {
-                trusted.capabilities.get(PATH_OBSERVATION_FEATURE)
-                    == Some(&meshway_model::state::Capability::Feature { version: 1 })
-            })
-        })
-    }
-
-    pub(super) fn grant_path(&self, path: LogicalPath) -> GrantPath {
-        GrantPath {
-            observable: self.observable(&path.nodes),
-            nodes: path.nodes,
-            dial_candidates: path.dial_candidates,
-        }
-    }
 }
 
 /// Acquire capability that a path's every Node must declare to be observable.
 pub const PATH_OBSERVATION_FEATURE: &str = "feature:path-observation";
 
-/// Accumulates one Node's view while grants are distributed.
-#[derive(Default)]
-struct View {
-    grants: BTreeMap<GrantKey, Grant>,
-    /// Paths not carried by a grant: DNS service paths through this Node.
-    service_paths: Vec<GrantPath>,
+/// Whether every Node of `nodes` declares path observation in `inventory`.
+pub fn observable(inventory: &BTreeMap<NodeId, TrustedNode>, nodes: &[NodeId]) -> bool {
+    nodes.iter().all(|node| {
+        inventory.get(node).is_some_and(|trusted| {
+            trusted.capabilities.get(PATH_OBSERVATION_FEATURE)
+                == Some(&meshway_model::state::Capability::Feature { version: 1 })
+        })
+    })
 }
 
-pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapError> {
+fn validate(input: &NetmapInput<'_>) -> Result<Vec<NodeId>, NetmapError> {
     let cfg = input.configuration;
     if cfg.nodes.len() > 10_000 || input.inventory.len() > 10_000 {
         return Err(CompileError::Budget.into());
@@ -157,6 +129,23 @@ pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapE
             return Err(CompileError::InvalidInput.into());
         }
     }
+    Ok(members)
+}
+
+/// Projection of one Node, for callers that need it without the rest of its netmap.
+pub fn project(
+    input: &NetmapInput<'_>,
+    node: NodeId,
+) -> Result<ProjectedConfiguration, NetmapError> {
+    let members = validate(input)?;
+    let graph = paths::Graph::new(input.topology())?;
+    let index = project::Index::new(input, &graph, &members)?;
+    Ok(project::project(input, &index, node))
+}
+
+pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapError> {
+    let cfg = input.configuration;
+    let members = validate(&input)?;
     let dependency_digest = digest(&(
         meshway_configuration::netmap::NETMAP_COMPILER_VERSION,
         input.network,
@@ -169,34 +158,29 @@ pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapE
         input.selection_versions,
     ))?;
     let graph = paths::Graph::new(input.topology())?;
+    let index = project::Index::new(&input, &graph, &members)?;
     let mut locals = BTreeMap::new();
     for id in &members {
         locals.insert(*id, local::Local::compile(&input, *id)?);
     }
-    let mut views: BTreeMap<NodeId, View> =
-        members.iter().map(|id| (*id, View::default())).collect();
-    for grant in grants::mesh(&input, &graph, &members)?
-        .into_iter()
-        .chain(grants::exit(&input, &graph, &members, &locals)?)
-    {
-        distribute(&mut views, grant)?;
-    }
-    let services = local::dns(&input, &graph, &mut locals)?;
-    for service in services {
-        for id in &service.path.nodes {
-            views
-                .get_mut(id)
-                .ok_or(CompileError::InvalidInput)?
-                .service_paths
-                .push(service.path.clone());
-        }
-    }
+    local::dns(&input, &graph, &mut locals)?;
     let mut nodes = BTreeMap::new();
     for id in members {
-        let view = views.remove(&id).ok_or(CompileError::InvalidInput)?;
+        let projection = project::project(&input, &index, id);
+        let mut dialers = BTreeMap::new();
+        for peer in projection.configuration.nodes.keys() {
+            if *peer == id || !graph.topology_allows(id, *peer) {
+                continue;
+            }
+            for candidate in graph.carriers(id, *peer)? {
+                dialers.insert(format!("{peer}/{}", candidate.listener_key), candidate);
+            }
+        }
         let local = locals.remove(&id).ok_or(CompileError::InvalidInput)?;
-        let compiled = assemble(&input, &graph, id, view, local, dependency_digest)?;
-        nodes.insert(id, compiled);
+        nodes.insert(
+            id,
+            assemble(&input, id, projection, dialers, local, dependency_digest)?,
+        );
     }
     Ok(CompiledNetmaps {
         network_id: input.network,
@@ -207,110 +191,15 @@ pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapE
     })
 }
 
-/// Endpoints receive the full grant; relays receive only paths through them
-/// and no service set, since they never inspect business traffic.
-fn distribute(views: &mut BTreeMap<NodeId, View>, grant: Grant) -> Result<(), CompileError> {
-    let key = grant.key();
-    let terminal = match grant.target {
-        GrantTarget::Mesh { node } | GrantTarget::Exit { node, .. } => node,
-    };
-    let participants: BTreeSet<NodeId> = grant
-        .paths
-        .iter()
-        .flat_map(|path| path.nodes.iter().copied())
-        .collect();
-    for node in participants {
-        let view = views.get_mut(&node).ok_or(CompileError::InvalidInput)?;
-        let copy = if node == grant.source || node == terminal {
-            grant.clone()
-        } else {
-            Grant {
-                services: None,
-                paths: grant
-                    .paths
-                    .iter()
-                    .filter(|path| path.nodes.contains(&node))
-                    .cloned()
-                    .collect(),
-                ..grant.clone()
-            }
-        };
-        view.grants.insert(key, copy);
-    }
-    Ok(())
-}
-
 fn assemble(
     input: &NetmapInput<'_>,
-    graph: &paths::Graph,
     id: NodeId,
-    view: View,
+    projection: ProjectedConfiguration,
+    dialers: BTreeMap<String, DialCandidate>,
     local: local::Local,
     dependency_digest: Digest,
 ) -> Result<CompiledNetmap, NetmapError> {
     let settings = &input.configuration.nodes[&id];
-    let mut peers = BTreeMap::new();
-    let mut edges: BTreeMap<NodeId, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
-    let candidates = graph.candidates.borrow();
-    let local_candidates = candidates.get(&id);
-    for path in view
-        .grants
-        .values()
-        .flat_map(|grant| &grant.paths)
-        .chain(&view.service_paths)
-    {
-        for node in &path.nodes {
-            if *node != id && !peers.contains_key(node) {
-                peers.insert(*node, input.peer(*node)?);
-            }
-        }
-        for pair in path.nodes.windows(2) {
-            let peer = match (pair[0] == id, pair[1] == id) {
-                (true, _) => pair[1],
-                (_, true) => pair[0],
-                _ => continue,
-            };
-            let (dial, accept) = edges.entry(peer).or_default();
-            for key in path.dial_candidates.get(&id).into_iter().flatten() {
-                if local_candidates
-                    .and_then(|keys| keys.get(key))
-                    .is_some_and(|candidate| candidate.peer == peer)
-                {
-                    dial.insert(key.clone());
-                }
-            }
-            let prefix = format!("{id}/");
-            for key in path.dial_candidates.get(&peer).into_iter().flatten() {
-                if let Some(listener) = key.strip_prefix(&prefix) {
-                    accept.insert(listener.to_owned());
-                }
-            }
-        }
-    }
-    let mut dialers = BTreeMap::new();
-    let edges = edges
-        .into_iter()
-        .map(|(peer, (dial, accept))| {
-            let mut dial: Vec<String> = dial.into_iter().collect();
-            for key in &dial {
-                let candidate = local_candidates
-                    .and_then(|keys| keys.get(key))
-                    .ok_or(CompileError::InvalidInput)?;
-                dialers.insert(key.clone(), candidate.clone());
-            }
-            dial.sort_by_key(|key| {
-                let candidate = &dialers[key];
-                (candidate.priority, candidate.listener_key.clone())
-            });
-            Ok((
-                peer,
-                Edges {
-                    dial,
-                    accept: accept.into_iter().collect(),
-                },
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, CompileError>>()?;
     let enabled = settings.enabled;
     let mut netmap = NodeNetmap {
         network_id: input.network,
@@ -333,10 +222,8 @@ fn assemble(
             },
             exit_enabled: enabled && settings.exit_enabled,
         },
-        peers,
+        projection,
         dialers,
-        edges,
-        grants: view.grants,
         egress: enabled.then_some(local.egress),
         exit_role: local.exit_role,
         dns: local.dns,

@@ -13,6 +13,10 @@ pub(super) struct Graph<'a> {
     /// Pure functions of the fixed input, memoized across searches of one compilation.
     topology: RefCell<BTreeMap<(NodeId, NodeId), bool>>,
     carriers: RefCell<BTreeMap<(NodeId, NodeId), Vec<DialCandidate>>>,
+    /// Netmap projections carry redacted declarations: carriers are derived
+    /// from them as listener keys only, never as dial material.
+    views: Option<&'a ConfigurationView>,
+    offers: RefCell<BTreeMap<(NodeId, NodeId), Vec<String>>>,
 }
 impl<'a> Graph<'a> {
     pub fn new(input: Topology<'a>) -> Result<Self, CompileError> {
@@ -26,7 +30,18 @@ impl<'a> Graph<'a> {
             candidates: RefCell::new(BTreeMap::new()),
             topology: RefCell::new(BTreeMap::new()),
             carriers: RefCell::new(BTreeMap::new()),
+            views: None,
+            offers: RefCell::new(BTreeMap::new()),
         })
+    }
+    /// Node-side search over a netmap projection, using the same route search.
+    pub fn projected(
+        input: Topology<'a>,
+        views: &'a ConfigurationView,
+    ) -> Result<Self, CompileError> {
+        let mut graph = Self::new(input)?;
+        graph.views = Some(views);
+        Ok(graph)
     }
     /// Preview shares route search, but neither requires trusted inventory nor
     /// manufactures credentials/candidates. Its paths are never published.
@@ -70,15 +85,17 @@ impl<'a> Graph<'a> {
                     .filter(|n| *n != goal),
             );
             for b in candidates {
-                if routes.spend().is_err() {
-                    break 'search;
-                }
+                // Budget only edges the topology allows: Nodes outside the
+                // searched component (absent from a projection) cost nothing.
                 if path.contains(&b)
                     || required[1..].contains(&b)
                     || !self.available(b)
                     || !self.topology_allows(a, b)
                 {
                     continue;
+                }
+                if routes.spend().is_err() {
+                    break 'search;
                 }
                 // A physically possible edge cannot bypass its own routing
                 // requirement, even when introduced by automatic graph search.
@@ -158,7 +175,7 @@ impl<'a> Graph<'a> {
         }
         Ok(self.has_carrier(a, b)? || self.has_carrier(b, a)?)
     }
-    fn topology_allows(&self, a: NodeId, b: NodeId) -> bool {
+    pub fn topology_allows(&self, a: NodeId, b: NodeId) -> bool {
         *self
             .topology
             .borrow_mut()
@@ -166,13 +183,32 @@ impl<'a> Graph<'a> {
             .or_insert_with(|| topology_allows(self.input.configuration, self.input.subjects, a, b))
     }
     fn has_carrier(&self, a: NodeId, b: NodeId) -> Result<bool, CompileError> {
+        if self.views.is_some() {
+            return Ok(!self.listener_keys(a, b)?.is_empty());
+        }
         if let Some(cached) = self.carriers.borrow().get(&(a, b)) {
             return Ok(!cached.is_empty());
         }
         Ok(!self.carriers(a, b)?.is_empty())
     }
+    /// Listener keys of `b` that `a` may dial, in carrier order.
+    pub fn listener_keys(&self, a: NodeId, b: NodeId) -> Result<Vec<String>, CompileError> {
+        let Some(views) = self.views else {
+            return Ok(self
+                .carriers(a, b)?
+                .into_iter()
+                .map(|c| c.listener_key)
+                .collect());
+        };
+        if let Some(cached) = self.offers.borrow().get(&(a, b)) {
+            return Ok(cached.clone());
+        }
+        let found = transports::offers(&self.input, views, a, b)?;
+        self.offers.borrow_mut().insert((a, b), found.clone());
+        Ok(found)
+    }
     /// Dial candidates from `a` to `b`; errors are not memoized and abort the caller.
-    fn carriers(&self, a: NodeId, b: NodeId) -> Result<Vec<DialCandidate>, CompileError> {
+    pub fn carriers(&self, a: NodeId, b: NodeId) -> Result<Vec<DialCandidate>, CompileError> {
         if let Some(cached) = self.carriers.borrow().get(&(a, b)) {
             return Ok(cached.clone());
         }
@@ -199,6 +235,12 @@ impl<'a> Graph<'a> {
         }
         for pair in nodes.windows(2) {
             for (a, b) in [(pair[0], pair[1]), (pair[1], pair[0])] {
+                if self.views.is_some() {
+                    for listener in self.listener_keys(a, b)? {
+                        keys.entry(a).or_default().push(format!("{b}/{listener}"));
+                    }
+                    continue;
+                }
                 for c in self.carriers(a, b)? {
                     let key = format!("{b}/{}", c.listener_key);
                     keys.entry(a).or_default().push(key.clone());

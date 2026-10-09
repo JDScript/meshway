@@ -274,6 +274,23 @@ pub(super) fn generated(seed: u64) -> Scenario {
         let bidirectional = !to_external && rng.chance(40);
         s.cfg.access.push(access(&src, &dst, &ip, bidirectional));
     }
+    if rng.chance(25) {
+        // Two islands, sometimes bridged by 3-4: projections become partial.
+        s.cfg.defaults.topology = TopologyDefault::Deny;
+        let mut edges = vec![(1, 2), (2, 3), (1, 3), (4, 5)];
+        if rng.chance(50) {
+            edges.push((3, 4));
+        }
+        for (a, b) in edges {
+            s.cfg.topology.push(TopologyRule {
+                remark: String::new(),
+                action: TopologyAction::Allow,
+                a: sel(a),
+                b: sel(b),
+                transports: Input::Omitted,
+            });
+        }
+    }
     if rng.chance(50) {
         let (a, b, via) = (
             rng.below(5) as u8 + 1,

@@ -80,8 +80,9 @@ impl<'a> Routes<'a> {
         }
         let mut via = Vec::new();
         let mut matched = None;
+        // One unit per segment (spent by `segment`): pruning rules that cannot
+        // match this segment must not change the remaining budget.
         for (index, rule) in self.input.configuration.routing.mesh.iter().enumerate() {
-            self.spend()?;
             if matching::selectors(
                 self.input.configuration,
                 self.input.subjects,

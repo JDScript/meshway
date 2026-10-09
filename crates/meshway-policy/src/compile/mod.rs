@@ -228,7 +228,8 @@ pub fn compile_with_exit(
         .values()
         .filter(|d| d.expires_at_ms > input.now_ms)
     {
-        let (decision, local_egress) = evaluate_with_local(&input, &graph, demand, runtime)?;
+        let (decision, local_egress) =
+            evaluate_with_local(&input, &graph, demand, exit::Facts::Runtime(runtime))?;
         if let DemandDecision::Permitted { permit } = &decision {
             for path in &permit.paths {
                 for id in &path.nodes {
@@ -323,14 +324,20 @@ fn evaluate(
     graph: &paths::Graph,
     demand: &Demand,
 ) -> Result<DemandDecision, CompileError> {
-    evaluate_with_local(input, graph, demand, &ExitInputs::default()).map(|(decision, _)| decision)
+    evaluate_with_local(
+        input,
+        graph,
+        demand,
+        exit::Facts::Runtime(&ExitInputs::default()),
+    )
+    .map(|(decision, _)| decision)
 }
 
 fn evaluate_with_local(
     input: &CompilationInput<'_>,
     graph: &paths::Graph,
     demand: &Demand,
-    runtime: &ExitInputs,
+    facts: exit::Facts<'_>,
 ) -> Result<(DemandDecision, Option<LocalEgressPermit>), CompileError> {
     let unavailable = |reason| Ok((DemandDecision::Unavailable { reason }, None));
     let cfg = input.configuration;
@@ -391,15 +398,7 @@ fn evaluate_with_local(
         }
     }
     let demand = &normalized;
-    let capture = egress_capture_plan(
-        input,
-        demand.source,
-        runtime
-            .selection_generations
-            .get(&demand.source)
-            .copied()
-            .unwrap_or(0),
-    )?;
+    let capture = egress_capture_plan(input, demand.source, facts.selection(demand.source))?;
     if !matches!(demand.target, BusinessTarget::Mesh { .. })
         && let Some(reason) = capture.unavailable
     {
@@ -485,20 +484,36 @@ fn evaluate_with_local(
             continue;
         }
         if external {
-            let role = exit::role(input, runtime, target)?;
-            if !exit::available(input.topology(), runtime, target, input.now_ms) || role.is_none() {
-                reason = UnavailableReason::ExitUnavailable;
-                continue;
-            }
-            if let Some(role) = role {
-                roles.insert(target, role);
+            match facts {
+                exit::Facts::Runtime(runtime) => {
+                    let role = exit::role(input, runtime, target)?;
+                    if !exit::available(input.topology(), runtime, target, input.now_ms)
+                        || role.is_none()
+                    {
+                        reason = UnavailableReason::ExitUnavailable;
+                        continue;
+                    }
+                    if let Some(role) = role {
+                        roles.insert(target, role);
+                    }
+                }
+                // Readiness is a dynamic fact: only the stable capability counts.
+                exit::Facts::Stable(_) => {
+                    if !exit::capable(input.topology(), target) {
+                        reason = UnavailableReason::ExitUnavailable;
+                        continue;
+                    }
+                }
             }
         }
         // Each ordered exit owns a bounded search. An invalid route produces
         // no permission, without blocking revocation/publication for other demands.
         match graph.paths(demand.source, target, via.as_deref(), MAX_PATHS) {
             Ok(paths) => {
-                if external && !paths.is_empty() {
+                if external
+                    && !paths.is_empty()
+                    && let exit::Facts::Runtime(runtime) = facts
+                {
                     capability_expiry = capability_expiry.min(runtime.ready_until_ms[&target]);
                 }
                 candidates.extend(paths);

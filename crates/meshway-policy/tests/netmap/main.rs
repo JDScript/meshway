@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 mod equivalence;
 mod exit;
-mod grants;
+mod projection;
 mod properties;
 mod support;
 use support::*;

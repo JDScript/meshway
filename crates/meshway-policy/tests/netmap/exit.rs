@@ -1,10 +1,10 @@
-//! Regressions of the per-demand exit contract under the netmap compiler.
+//! Regressions of the per-demand exit contract under projection compilation.
 //! Readiness is a dynamic fact and never an input here.
 use super::*;
 use meshway_policy::{
     admission::{
         AdmissionError, Hop, Traffic,
-        netmap::{Destination, Leased, admit_forward, classify},
+        netmap::{Leased, admit_forward},
     },
     dns_route::{ResolverRouteError, netmap_dns_service, netmap_resolver},
 };
@@ -48,20 +48,34 @@ fn tcp443(destination: &str) -> Traffic {
     }
 }
 
-fn select(compiled: &CompiledNetmaps, destination: &str) -> Result<Destination, AdmissionError> {
-    classify(
-        &compiled.nodes[&node(1)].netmap,
+/// Decision for source 1, computed on `at`'s own projection.
+fn decide_at(compiled: &CompiledNetmaps, at: u8, destination: &str) -> LocalDecision {
+    compile_local(
+        &compiled.nodes[&node(at)].netmap,
+        node(1),
         destination.parse().unwrap(),
-        BusinessProtocol::Tcp,
-        port(443),
+        (BusinessProtocol::Tcp, port(443)),
     )
+    .unwrap()
 }
 
-fn exit_keys(compiled: &CompiledNetmaps, destination: &str) -> Vec<GrantKey> {
+fn select(compiled: &CompiledNetmaps, destination: &str) -> LocalDecision {
+    decide_at(compiled, 1, destination)
+}
+
+fn permitted(compiled: &CompiledNetmaps, destination: &str) -> Decision {
     match select(compiled, destination) {
-        Ok(Destination::Exit(keys)) => keys,
+        LocalDecision::Permitted(decision) => decision,
         other => panic!("{destination}: {other:?}"),
     }
+}
+
+fn terminals(decision: &Decision) -> Vec<NodeId> {
+    decision
+        .paths
+        .iter()
+        .map(|p| *p.nodes.last().unwrap())
+        .collect()
 }
 
 fn plan(compiled: &CompiledNetmaps) -> &EgressPlan {
@@ -115,28 +129,34 @@ fn routes_partition_is_disjoint_and_follows_rule_order() {
             }
         }
         assert_eq!(plan.capture.sink_ipv6, ["::/0"]);
-        assert!(matches!(
-            plan.route("2606:4700::1".parse().unwrap()).unwrap().action,
-            EgressAction::Exit { .. }
-        ));
     }
 }
 
 #[test]
-fn exit_grant_enforces_scope_source_and_original_path() {
+fn exit_decision_enforces_scope_source_and_original_path() {
     let mut s = setup();
     let compiled = netmaps(&s);
-    let keys = exit_keys(&compiled, "8.8.8.8");
-    assert_eq!(keys.len(), 1);
-    let grant = &compiled.nodes[&node(1)].netmap.grants[&keys[0]];
+    let decision = permitted(&compiled, "8.8.8.8");
     assert_eq!(
-        grant.exit.as_ref().unwrap().destination,
-        ExitDestinationScope::Internet
+        decision.target,
+        Target::Exit {
+            nodes: vec![node(4)],
+            via: vec![node(3)]
+        }
     );
-    assert!(grant.paths.iter().all(|p| p.nodes.first() == Some(&node(1))
-        && p.nodes.contains(&node(3))
-        && p.nodes.last() == Some(&node(4))));
-    let path = &grant.paths[0].nodes;
+    assert!(
+        decision
+            .paths
+            .iter()
+            .all(|p| p.nodes.first() == Some(&node(1))
+                && p.nodes.contains(&node(3))
+                && p.nodes.last() == Some(&node(4)))
+    );
+    let LocalDecision::Permitted(at_exit) = decide_at(&compiled, 4, "8.8.8.8") else {
+        panic!()
+    };
+    assert_eq!(at_exit, decision);
+    let path = &decision.paths[0].nodes;
     let exit = &compiled.nodes[&node(4)];
     let lease = lease(exit);
     let leased = Leased {
@@ -147,7 +167,7 @@ fn exit_grant_enforces_scope_source_and_original_path() {
     assert_eq!(
         admit_forward(
             leased,
-            &keys[0],
+            &at_exit,
             path,
             node(1),
             previous,
@@ -159,40 +179,38 @@ fn exit_grant_enforces_scope_source_and_original_path() {
     let mut forged = tcp443("8.8.8.8");
     forged.source = "100.64.0.3".parse().unwrap();
     assert_eq!(
-        admit_forward(leased, &keys[0], path, node(1), previous, &forged, 1),
+        admit_forward(leased, &at_exit, path, node(1), previous, &forged, 1),
         Err(AdmissionError::Traffic)
     );
-    // The Internet scope never admits private space, even on the same exit.
+    // A decision covers exactly its destination; another one decides anew.
     assert_eq!(
         admit_forward(
             leased,
-            &keys[0],
+            &at_exit,
             path,
             node(1),
             previous,
-            &tcp443("10.20.1.1"),
+            &tcp443("1.1.1.1"),
             1
         ),
         Err(AdmissionError::Traffic)
     );
-    let cidr = exit_keys(&compiled, "10.20.1.1");
     assert!(matches!(
-        compiled.nodes[&node(1)].netmap.grants[&cidr[0]]
-            .exit
-            .as_ref()
-            .unwrap()
-            .destination,
-        ExitDestinationScope::Cidr { .. }
+        select(&compiled, "10.20.1.1"),
+        LocalDecision::Permitted(_)
     ));
     s.cfg.access[0].dst = vec!["autogroup:internet".into()];
     assert_eq!(
         select(&netmaps(&s), "10.20.1.1"),
-        Err(AdmissionError::Permit)
+        LocalDecision::Denied(UnavailableReason::Unauthorized)
     );
     s.cfg.access[0].dst.push("10.20.0.0/16".into());
     s.cfg.nodes.get_mut(&node(4)).unwrap().exit_enabled = false;
     let disabled = netmaps(&s);
-    assert_eq!(select(&disabled, "8.8.8.8"), Err(AdmissionError::Permit));
+    assert_eq!(
+        select(&disabled, "8.8.8.8"),
+        LocalDecision::Denied(UnavailableReason::NoPath)
+    );
     assert!(disabled.nodes[&node(4)].netmap.exit_role.is_none());
 }
 
@@ -201,15 +219,21 @@ fn ipv6_and_mesh_pool_destinations_never_leave_through_an_exit() {
     let compiled = netmaps(&setup());
     assert_eq!(
         select(&compiled, "2606:4700:4700::1111"),
-        Err(AdmissionError::Traffic)
+        LocalDecision::Denied(UnavailableReason::UnsupportedFamily)
     );
-    assert_eq!(select(&compiled, "100.64.0.200"), Err(AdmissionError::Path));
-    assert_eq!(select(&compiled, "127.0.0.1"), Err(AdmissionError::Traffic));
+    assert_eq!(
+        select(&compiled, "100.64.0.200"),
+        LocalDecision::Denied(UnavailableReason::NoPath)
+    );
+    assert_eq!(
+        select(&compiled, "127.0.0.1"),
+        LocalDecision::Denied(UnavailableReason::Unauthorized)
+    );
     assert_eq!(plan(&compiled).capture.sink_ipv6, ["::/0"]);
 }
 
 #[test]
-fn missing_capability_withdraws_role_and_grant_but_keeps_capture() {
+fn missing_capability_withdraws_role_and_decision_but_keeps_capture() {
     let mut s = setup();
     let ready = netmaps(&s);
     s.inventory
@@ -219,13 +243,15 @@ fn missing_capability_withdraws_role_and_grant_but_keeps_capture() {
         .remove("feature:exit-ipv4");
     let incapable = netmaps(&s);
     assert!(incapable.nodes[&node(4)].netmap.exit_role.is_none());
-    assert!(incapable.nodes[&node(4)].netmap.grants.is_empty());
-    assert_eq!(select(&incapable, "8.8.8.8"), Err(AdmissionError::Permit));
+    assert_eq!(
+        select(&incapable, "8.8.8.8"),
+        LocalDecision::Denied(UnavailableReason::ExitUnavailable)
+    );
     assert_eq!(plan(&ready), plan(&incapable));
 }
 
 #[test]
-fn ordered_backup_exits_are_all_granted_and_unreachable_ones_omitted() {
+fn ordered_backup_exits_and_unreachable_ones() {
     let mut s = setup();
     s.cfg.nodes.get_mut(&node(2)).unwrap().exit_enabled = true;
     s.inventory.insert(node(2), trusted(2, true, true));
@@ -239,15 +265,10 @@ fn ordered_backup_exits_are_all_granted_and_unreachable_ones_omitted() {
         nodes: vec![sel(2), sel(4)],
         via: vec![sel(3)],
     };
-    let both = exit_keys(&netmaps(&s), "8.8.8.8");
-    let terminals: Vec<NodeId> = both
-        .iter()
-        .map(|k| match k.target {
-            GrantTarget::Exit { node, .. } => node,
-            GrantTarget::Mesh { .. } => unreachable!(),
-        })
-        .collect();
-    assert_eq!(terminals, [node(2), node(4)]);
+    let both = permitted(&netmaps(&s), "8.8.8.8");
+    let mut ends = terminals(&both);
+    ends.dedup();
+    assert_eq!(ends, [node(2), node(4)]);
     s.cfg.topology.push(TopologyRule {
         remark: String::new(),
         action: TopologyAction::Block,
@@ -255,9 +276,8 @@ fn ordered_backup_exits_are_all_granted_and_unreachable_ones_omitted() {
         b: "*".into(),
         transports: Input::Omitted,
     });
-    let backup = exit_keys(&netmaps(&s), "8.8.8.8");
-    assert_eq!(backup.len(), 1);
-    assert!(matches!(backup[0].target, GrantTarget::Exit { node: exit, .. } if exit == node(4)));
+    let backup = permitted(&netmaps(&s), "8.8.8.8");
+    assert!(terminals(&backup).iter().all(|t| *t == node(4)));
 }
 
 #[test]
@@ -275,8 +295,10 @@ fn capture_budget_or_unknown_domain_fails_closed_without_routes() {
     );
     assert!(plan(&limited).routes.is_empty());
     assert_eq!(plan(&limited).capture.managed_ipv4, ["0.0.0.0/0"]);
-    assert_eq!(select(&limited, "8.8.8.8"), Err(AdmissionError::Traffic));
-    assert!(limited.nodes[&node(4)].netmap.grants.is_empty());
+    assert_eq!(
+        select(&limited, "8.8.8.8"),
+        LocalDecision::Denied(UnavailableReason::RoutingLimit)
+    );
     s.cfg.routing.egress.rules.clear();
     let mut unknown = egress_rule("8.8.0.0/16", RuleAction::Direct);
     unknown.matcher.domain.push("example.com".into());
@@ -286,27 +308,29 @@ fn capture_budget_or_unknown_domain_fails_closed_without_routes() {
         plan(&conflict).capture.unavailable,
         Some(UnavailableReason::EgressConflict)
     );
-    assert_eq!(select(&conflict, "8.8.8.8"), Err(AdmissionError::Traffic));
+    assert!(matches!(
+        select(&conflict, "8.8.8.8"),
+        LocalDecision::Denied(_)
+    ));
 }
 
 #[test]
 fn selection_identity_changes_on_switch_and_survives_unrelated_revisions() {
     let mut s = setup();
     let first = netmaps(&s);
-    let selection = |c: &CompiledNetmaps| {
-        let key = exit_keys(c, "8.8.8.8")[0];
-        c.nodes[&node(1)].netmap.grants[&key]
-            .exit
-            .as_ref()
-            .unwrap()
-            .selection
-    };
+    let selection = |c: &CompiledNetmaps| permitted(c, "8.8.8.8").selection.unwrap();
     assert_eq!(selection(&first), plan(&first).capture.generation);
     let renewed = compile_with(&s, &previous(&first), Revision::new(7).unwrap());
     assert_eq!(selection(&first), selection(&renewed));
     assert_eq!(first.nodes, renewed.nodes);
     s.selection_versions.insert(node(1), 2);
-    assert_ne!(selection(&first), selection(&netmaps(&s)));
+    let switched = netmaps(&s);
+    assert_ne!(selection(&first), selection(&switched));
+    // The exit recomputes the source's selection from its own projection.
+    let LocalDecision::Permitted(at_exit) = decide_at(&switched, 4, "8.8.8.8") else {
+        panic!()
+    };
+    assert_eq!(at_exit.selection, Some(selection(&switched)));
 }
 
 #[test]
@@ -339,7 +363,6 @@ fn resolver_decisions_follow_the_egress_partition() {
         netmap_resolver(source, "absent"),
         Err(ResolverRouteError::Missing)
     );
-    // Without an exit profile the default unmanaged route applies.
     assert_eq!(
         netmap_resolver(&compiled.nodes[&node(2)].netmap, "exit"),
         Ok(ResolverAction::Unmanaged)
@@ -361,7 +384,6 @@ fn single_exit_dns_service_is_shared_by_source_and_resolver() {
         panic!();
     };
     assert_eq!(services, &[service.as_ref().clone()]);
-    assert!(compiled.nodes[&node(3)].netmap.edges.contains_key(&node(4)));
     for compiled_netmap in [source, resolver] {
         let lease = NetmapLease::new(compiled_netmap.reference(), 0, 5000).unwrap();
         let leased = Leased {

@@ -1,5 +1,5 @@
-//! Per-node content independent of grant distribution: egress partition,
-//! exit role, names, resolver decisions and the DNS service plan.
+//! Per-node content outside the projection: egress partition, exit role,
+//! names, resolver decisions and the DNS service plan.
 use super::*;
 use ipnet::IpNet;
 use meshway_configuration::execution::{DnsEgressUnavailable, ExecutionAddress, ExitNat};
@@ -31,21 +31,24 @@ fn action(route: &RouteAction) -> Result<EgressAction, CompileError> {
 
 /// The selection identity excludes the revision: an unrelated configuration
 /// change keeps it, while any selection switch or routing change replaces it.
-fn egress(
-    input: &NetmapInput<'_>,
+/// Shared by the Server and by Nodes recomputing a visible source's selection.
+pub(super) fn egress(
+    network: NetworkId,
+    cfg: &NetworkConfiguration,
+    rule_sets: &BTreeMap<String, RuleSetContent>,
     node: NodeId,
     profile: &str,
+    selection: u64,
 ) -> Result<EgressPlan, CompileError> {
-    let cfg = input.configuration;
     let seed = digest(&(
         "meshway-netmap-egress",
-        input.network,
+        network,
         node,
         profile,
-        input.selection_versions.get(&node).copied().unwrap_or(0),
+        selection,
         &cfg.routing.egress,
     ))?;
-    let (mut capture, partition) = capture::capture(cfg, input.rule_sets, profile, seed)?;
+    let (mut capture, partition) = capture::capture(cfg, rule_sets, profile, seed)?;
     let mut routes = partition
         .into_iter()
         .map(|(prefix, route)| {
@@ -65,18 +68,19 @@ fn egress(
 }
 
 pub(super) fn exit_role(
-    input: &NetmapInput<'_>,
+    network: NetworkId,
+    cfg: &NetworkConfiguration,
+    inventory: &BTreeMap<NodeId, TrustedNode>,
     node: NodeId,
 ) -> Result<Option<ExitRole>, CompileError> {
-    let capable = input.inventory.get(&node).is_some_and(|trusted| {
+    let capable = inventory.get(&node).is_some_and(|trusted| {
         trusted.capabilities.get(EXIT_IPV4_FEATURE)
             == Some(&meshway_model::state::Capability::Feature {
                 version: EXIT_IPV4_VERSION,
             })
     });
     if !capable
-        || !input
-            .configuration
+        || !cfg
             .nodes
             .get(&node)
             .is_some_and(|n| n.enabled && n.exit_enabled)
@@ -86,7 +90,7 @@ pub(super) fn exit_role(
     Ok(Some(ExitRole {
         generation: digest(&(
             "meshway-netmap-exit-role",
-            input.network,
+            network,
             node,
             ExitFamily::Ipv4,
             ExitNat::Masquerade,
@@ -172,7 +176,14 @@ impl Local {
     pub fn compile(input: &NetmapInput<'_>, node: NodeId) -> Result<Self, CompileError> {
         let cfg = input.configuration;
         let profile = input.profile(node)?;
-        let egress = egress(input, node, &profile)?;
+        let egress = egress(
+            input.network,
+            cfg,
+            input.rule_sets,
+            node,
+            &profile,
+            input.selection_versions.get(&node).copied().unwrap_or(0),
+        )?;
         let enabled = cfg.nodes[&node].enabled;
         let plan = match matching::dns_egress(cfg, &profile) {
             DnsEgress::NoExit => DnsPlan::NoExit,
@@ -181,9 +192,8 @@ impl Local {
             },
         };
         Ok(Self {
-            exit_role: exit_role(input, node)?,
+            exit_role: exit_role(input.network, cfg, input.inventory, node)?,
             dns: NetmapDns {
-                settings: cfg.dns.clone(),
                 mesh_hosts: mesh_hosts(input, node)?,
                 resolvers: resolvers(cfg, enabled, &egress),
                 profile,
@@ -288,7 +298,7 @@ fn service(
         profile: local.dns.profile.clone(),
         generation: local.egress.capture.generation,
         role,
-        path: input.grant_path(path),
+        path,
         transports: vec![DnsTransport::Udp, DnsTransport::Tcp],
         max_pending: 128,
         timeout_ms: 5_000,

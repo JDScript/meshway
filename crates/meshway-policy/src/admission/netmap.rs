@@ -1,21 +1,25 @@
 //! Local admission over an installed netmap and its lease.
 //!
-//! The caller binds the netmap to its own authenticated network and Node,
-//! verifies its digest before installation, and passes the authenticated
-//! arrival peer. `now` is used only for the lease; grants have no deadline.
-//! Replies still require the caller's own established forward state.
+//! Endpoints admit with a [`Decision`] they computed with `compile_local` on
+//! the same projection; relays admit with [`admit_transit`]. The caller binds
+//! the netmap to its own authenticated network and Node, verifies its digest
+//! before installation, and passes the authenticated arrival peer. `now` is
+//! used only for the lease. Replies require the caller's own forward state.
 use super::{
     AdmissionError, Carrier, Hop, Traffic, contains, keys_valid, valid_path, valid_traffic,
 };
-use crate::compile::MAX_PATHS;
+use crate::compile::{
+    MAX_EXIT_CANDIDATES, MAX_PATHS,
+    netmap::{Decision, LocalCompiler, Target, observable},
+};
 use meshway_configuration::{
     NodeAddresses,
-    execution::{BusinessProtocol, ExitDestinationScope, ExitNat},
-    netmap::*,
+    execution::{BusinessProtocol, ExitNat, LogicalPath},
+    netmap::NodeNetmap,
 };
 use meshway_model::{NetmapLease, NodeId, exit::ExitFamily};
 use meshway_transport_spec::{Listener, Port, TransportProtocol};
-use std::{collections::BTreeMap, net::IpAddr};
+use std::net::IpAddr;
 
 /// An installed netmap with the lease issued for exactly its content.
 #[derive(Clone, Copy)]
@@ -24,25 +28,14 @@ pub struct Leased<'a> {
     pub lease: &'a NetmapLease,
 }
 
-/// Where the source sends a new flow, decided only from its own netmap.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Destination {
-    /// A Mesh grant whose services contain the exact flow.
-    Mesh(GrantKey),
-    /// Exit grants in configured primary/backup order; readiness facts pick one.
-    Exit(Vec<GrantKey>),
-    /// Local direct execution outside the Mesh.
-    Direct,
-    /// Local unmanaged routing.
-    Unmanaged,
-}
-
 fn addresses(netmap: &NodeNetmap, node: NodeId) -> Result<&NodeAddresses, AdmissionError> {
     if node == netmap.node_id {
         Ok(&netmap.self_.addresses)
     } else {
         netmap
-            .peers
+            .projection
+            .configuration
+            .nodes
             .get(&node)
             .map(|peer| &peer.addresses)
             .ok_or(AdmissionError::Peer)
@@ -57,26 +50,8 @@ fn in_pools(netmap: &NodeNetmap, address: IpAddr) -> bool {
     })
 }
 
-fn in_routes(exit: &GrantExit, address: IpAddr) -> bool {
-    exit.routes.iter().any(|route| {
-        route
-            .parse::<ipnet::IpNet>()
-            .is_ok_and(|net| net.contains(&address))
-    })
-}
-
-fn covered(exit: &GrantExit, address: IpAddr) -> bool {
-    match &exit.destination {
-        ExitDestinationScope::Internet => crate::is_internet_address(address),
-        ExitDestinationScope::Cidr { prefix } => prefix
-            .parse::<ipnet::IpNet>()
-            .is_ok_and(|net| net.contains(&address)),
-    }
-}
-
 fn valid_self(netmap: &NodeNetmap) -> Result<(), AdmissionError> {
     if !netmap.self_.enabled
-        || netmap.peers.contains_key(&netmap.node_id)
         || !keys_valid(
             &netmap.self_.self_keys.control_key,
             &netmap.self_.self_keys.dataplane_key,
@@ -87,100 +62,7 @@ fn valid_self(netmap: &NodeNetmap) -> Result<(), AdmissionError> {
     Ok(())
 }
 
-/// Classify a new source flow by its destination service. Unassigned
-/// Mesh-pool addresses are rejected and never fall through to local egress;
-/// an exit route never degrades to direct. Packet admission of the chosen
-/// grant still checks the exact source tuple.
-pub fn classify(
-    netmap: &NodeNetmap,
-    destination: IpAddr,
-    protocol: BusinessProtocol,
-    port: Option<Port>,
-) -> Result<Destination, AdmissionError> {
-    valid_self(netmap)?;
-    let destination = destination.to_canonical();
-    if (protocol == BusinessProtocol::IcmpEcho) != port.is_none()
-        || destination.is_unspecified()
-        || destination.is_multicast()
-        || contains(&netmap.self_.addresses, destination)
-    {
-        return Err(AdmissionError::Traffic);
-    }
-    if let Some((node, _)) = netmap
-        .peers
-        .iter()
-        .find(|(_, peer)| contains(&peer.addresses, destination))
-    {
-        let key = GrantKey {
-            source: netmap.node_id,
-            target: GrantTarget::Mesh { node: *node },
-        };
-        let grant = netmap.grants.get(&key).ok_or(AdmissionError::Permit)?;
-        if !grant
-            .services
-            .as_ref()
-            .is_some_and(|services| services.contains(protocol, port))
-        {
-            return Err(AdmissionError::Traffic);
-        }
-        return Ok(Destination::Mesh(key));
-    }
-    if in_pools(netmap, destination) {
-        return Err(AdmissionError::Path);
-    }
-    let plan = netmap
-        .egress
-        .as_ref()
-        .ok_or(AdmissionError::Configuration)?;
-    if plan.capture.unavailable.is_some() {
-        return Err(AdmissionError::Traffic);
-    }
-    match &plan
-        .route(destination)
-        .ok_or(AdmissionError::Traffic)?
-        .action
-    {
-        EgressAction::Direct => Ok(Destination::Direct),
-        EgressAction::Unmanaged => Ok(Destination::Unmanaged),
-        EgressAction::Exit { nodes, .. } => {
-            if !destination.is_ipv4()
-                || netmap.self_.addresses.ipv4.is_none()
-                || !crate::is_exit_destination(destination)
-            {
-                return Err(AdmissionError::Traffic);
-            }
-            let keys: Vec<GrantKey> = nodes
-                .iter()
-                .filter_map(|exit| {
-                    netmap
-                        .exit_grants(*exit)
-                        .find(|grant| {
-                            grant.exit.as_ref().is_some_and(|e| {
-                                in_routes(e, destination) && covered(e, destination)
-                            }) && grant
-                                .services
-                                .as_ref()
-                                .is_some_and(|services| services.contains(protocol, port))
-                        })
-                        .map(Grant::key)
-                })
-                .collect();
-            if keys.is_empty() {
-                Err(AdmissionError::Permit)
-            } else {
-                Ok(Destination::Exit(keys))
-            }
-        }
-    }
-}
-
-fn admitted_path<'a>(
-    leased: Leased<'a>,
-    key: &GrantKey,
-    path: &[NodeId],
-    origin: NodeId,
-    now_ms: u64,
-) -> Result<(&'a Grant, usize), AdmissionError> {
+fn current(leased: Leased<'_>, now_ms: u64) -> Result<(), AdmissionError> {
     let netmap = leased.netmap;
     if leased.lease.netmap.serial != netmap.serial
         || leased.lease.netmap.revision != netmap.revision
@@ -190,15 +72,25 @@ fn admitted_path<'a>(
     if !leased.lease.valid_at(now_ms) {
         return Err(AdmissionError::Expired);
     }
-    valid_self(netmap)?;
-    let grant = netmap.grants.get(key).ok_or(AdmissionError::Permit)?;
-    if grant.key() != *key || key.source != origin {
-        return Err(AdmissionError::Permit);
-    }
+    valid_self(netmap)
+}
+
+/// Exact path membership, peer keys and arrival direction shared by every entry.
+fn positioned(
+    leased: Leased<'_>,
+    paths: &[LogicalPath],
+    path: &[NodeId],
+    origin: NodeId,
+    previous: Option<NodeId>,
+    reply: bool,
+    now_ms: u64,
+) -> Result<Option<NodeId>, AdmissionError> {
+    current(leased, now_ms)?;
+    let netmap = leased.netmap;
     if !valid_path(path)
         || path.first() != Some(&origin)
-        || grant.paths.len() > MAX_PATHS
-        || grant.path(path).is_none()
+        || paths.len() > MAX_PATHS * MAX_EXIT_CANDIDATES
+        || !paths.iter().any(|candidate| candidate.nodes == path)
     {
         return Err(AdmissionError::Path);
     }
@@ -207,56 +99,15 @@ fn admitted_path<'a>(
         .position(|node| *node == netmap.node_id)
         .ok_or(AdmissionError::Path)?;
     for node in path.iter().filter(|node| **node != netmap.node_id) {
-        let peer = netmap.peers.get(node).ok_or(AdmissionError::Peer)?;
+        let peer = netmap
+            .projection
+            .inventory
+            .get(node)
+            .ok_or(AdmissionError::Peer)?;
         if !keys_valid(&peer.control_key, &peer.dataplane_key) {
             return Err(AdmissionError::Configuration);
         }
     }
-    if addresses(netmap, origin)? != &grant.source_addresses {
-        return Err(AdmissionError::Traffic);
-    }
-    let terminal = path.last().ok_or(AdmissionError::Path)?;
-    match (&grant.target, &grant.exit) {
-        (GrantTarget::Mesh { node }, None) => {
-            if node != terminal {
-                return Err(AdmissionError::Path);
-            }
-        }
-        (GrantTarget::Exit { node, .. }, Some(exit)) => {
-            if node != terminal {
-                return Err(AdmissionError::Path);
-            }
-            if exit.family != ExitFamily::Ipv4 || grant.source_addresses.ipv4.is_none() {
-                return Err(AdmissionError::Traffic);
-            }
-            if *terminal == netmap.node_id {
-                if !netmap.self_.exit_enabled {
-                    return Err(AdmissionError::ExitDisabled);
-                }
-                if !netmap.exit_role.as_ref().is_some_and(|role| {
-                    role.family == exit.family && role.nat == ExitNat::Masquerade
-                }) {
-                    return Err(AdmissionError::Permit);
-                }
-            }
-        }
-        _ => return Err(AdmissionError::Permit),
-    }
-    Ok((grant, position))
-}
-
-/// Admit a no-application-data handshake along a grant's exact complete path.
-/// `reply` selects travel direction only and never grants reverse traffic.
-pub fn admit_handshake(
-    leased: Leased<'_>,
-    key: &GrantKey,
-    path: &[NodeId],
-    origin: NodeId,
-    previous: Option<NodeId>,
-    reply: bool,
-    now_ms: u64,
-) -> Result<Hop, AdmissionError> {
-    let (grant, position) = admitted_path(leased, key, path, origin, now_ms)?;
     let upstream = position.checked_sub(1).map(|index| path[index]);
     let downstream = path.get(position + 1).copied();
     let (expected, next) = if reply {
@@ -267,63 +118,122 @@ pub fn admit_handshake(
     if previous != expected {
         return Err(AdmissionError::Peer);
     }
+    Ok(next)
+}
+
+/// Admit a no-application-data handshake at the source or terminal of a
+/// decision's exact path. `reply` selects travel direction only.
+pub fn admit_handshake(
+    leased: Leased<'_>,
+    decision: &Decision,
+    path: &[NodeId],
+    origin: NodeId,
+    previous: Option<NodeId>,
+    reply: bool,
+    now_ms: u64,
+) -> Result<Hop, AdmissionError> {
+    let netmap = leased.netmap;
+    if decision.source != origin {
+        return Err(AdmissionError::Permit);
+    }
+    let next = positioned(
+        leased,
+        &decision.paths,
+        path,
+        origin,
+        previous,
+        reply,
+        now_ms,
+    )?;
+    let terminal = *path.last().ok_or(AdmissionError::Path)?;
+    if netmap.node_id != origin && netmap.node_id != terminal {
+        return Err(AdmissionError::Path);
+    }
+    let external = match &decision.target {
+        Target::Mesh { node } => {
+            if *node != terminal {
+                return Err(AdmissionError::Path);
+            }
+            false
+        }
+        Target::Exit { nodes, .. } => {
+            if !nodes.contains(&terminal) {
+                return Err(AdmissionError::Path);
+            }
+            if decision.selection.is_none() || addresses(netmap, origin)?.ipv4.is_none() {
+                return Err(AdmissionError::Traffic);
+            }
+            if terminal == netmap.node_id {
+                if !netmap.self_.exit_enabled {
+                    return Err(AdmissionError::ExitDisabled);
+                }
+                if !netmap.exit_role.as_ref().is_some_and(|role| {
+                    role.family == ExitFamily::Ipv4 && role.nat == ExitNat::Masquerade
+                }) {
+                    return Err(AdmissionError::Permit);
+                }
+            }
+            true
+        }
+    };
     Ok(match next {
         Some(next) => Hop::Forward(next),
-        None if grant.exit.is_some() && !reply => Hop::Exit,
+        None if external && !reply => Hop::Exit,
         None => Hop::Deliver,
     })
 }
 
 fn admitted_traffic(
     netmap: &NodeNetmap,
-    grant: &Grant,
+    decision: &Decision,
     traffic: &Traffic,
 ) -> Result<(), AdmissionError> {
-    let services = grant.services.as_ref().ok_or(AdmissionError::Permit)?;
-    let destination = traffic.destination;
+    let destination = traffic.destination.to_canonical();
     if !valid_traffic(traffic)
-        || !contains(&grant.source_addresses, traffic.source)
-        || !services.contains(traffic.protocol, traffic.destination_port)
+        || !contains(addresses(netmap, decision.source)?, traffic.source)
+        || !decision
+            .services
+            .contains(traffic.protocol, traffic.destination_port)
     {
         return Err(AdmissionError::Traffic);
     }
-    match (&grant.target, &grant.exit) {
-        (GrantTarget::Mesh { node }, None) => {
+    match &decision.target {
+        Target::Mesh { node } => {
             if !contains(addresses(netmap, *node)?, destination) {
                 return Err(AdmissionError::Traffic);
             }
         }
-        (GrantTarget::Exit { .. }, Some(exit)) => {
-            if contains(&netmap.self_.addresses, destination)
+        Target::Exit { .. } => {
+            if destination != decision.destination.to_canonical()
+                || contains(&netmap.self_.addresses, destination)
                 || netmap
-                    .peers
+                    .projection
+                    .configuration
+                    .nodes
                     .values()
                     .any(|peer| contains(&peer.addresses, destination))
                 || in_pools(netmap, destination)
                 || !crate::is_exit_destination(destination)
-                || !in_routes(exit, destination)
-                || !covered(exit, destination)
             {
                 return Err(AdmissionError::Traffic);
             }
         }
-        _ => return Err(AdmissionError::Permit),
     }
     Ok(())
 }
 
-/// Admit a forward packet at the source or terminal; relays never call this.
+/// Admit a forward packet at the source or terminal; relays use `admit_transit`.
 pub fn admit_forward(
     leased: Leased<'_>,
-    key: &GrantKey,
+    decision: &Decision,
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
     traffic: &Traffic,
     now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let hop = admit_handshake(leased, key, path, origin, previous, false, now_ms)?;
-    admitted_traffic(leased.netmap, &leased.netmap.grants[key], traffic)?;
+    let hop = admit_handshake(leased, decision, path, origin, previous, false, now_ms)?;
+    admitted_traffic(leased.netmap, decision, traffic)?;
     Ok(hop)
 }
 
@@ -332,7 +242,7 @@ pub fn admit_forward(
 #[allow(clippy::too_many_arguments)]
 pub fn admit_reply(
     leased: Leased<'_>,
-    key: &GrantKey,
+    decision: &Decision,
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
@@ -340,8 +250,8 @@ pub fn admit_reply(
     reply: &Traffic,
     now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let hop = admit_handshake(leased, key, path, origin, previous, true, now_ms)?;
-    admitted_traffic(leased.netmap, &leased.netmap.grants[key], forward)?;
+    let hop = admit_handshake(leased, decision, path, origin, previous, true, now_ms)?;
+    admitted_traffic(leased.netmap, decision, forward)?;
     if !valid_traffic(reply)
         || reply.protocol != forward.protocol
         || reply.source != forward.destination
@@ -354,13 +264,39 @@ pub fn admit_reply(
     Ok(hop)
 }
 
-/// Admit a diagnostic circuit: the grant's services must contain the
-/// measured service and the path must be observable. Without an observable
-/// path the request is unsupported, reported as `Path`.
+/// Admit a circuit through this relay: the projection must produce `path`
+/// for `(origin, target)` with some Access service, and this Node must be an
+/// intermediate hop. Relays never inspect business traffic.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_transit(
+    leased: Leased<'_>,
+    compiler: &LocalCompiler<'_>,
+    origin: NodeId,
+    target: &Target,
+    path: &[NodeId],
+    previous: Option<NodeId>,
+    reply: bool,
+    now_ms: u64,
+) -> Result<Hop, AdmissionError> {
+    current(leased, now_ms)?;
+    let node = leased.netmap.node_id;
+    if path.first() == Some(&node) || path.last() == Some(&node) {
+        return Err(AdmissionError::Path);
+    }
+    let paths = compiler
+        .transit(origin, target)
+        .map_err(|_| AdmissionError::Configuration)?;
+    let next = positioned(leased, &paths, path, origin, previous, reply, now_ms)?;
+    next.map(Hop::Forward).ok_or(AdmissionError::Path)
+}
+
+/// Admit a diagnostic circuit: the measured service must be in the
+/// decision and every Node on the path must declare path observation;
+/// otherwise the request is unsupported, reported as `Path`.
 #[allow(clippy::too_many_arguments)]
 pub fn admit_observation(
     leased: Leased<'_>,
-    key: &GrantKey,
+    decision: &Decision,
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
@@ -368,18 +304,14 @@ pub fn admit_observation(
     service: (BusinessProtocol, Option<Port>),
     now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let hop = admit_handshake(leased, key, path, origin, previous, reply, now_ms)?;
-    let grant = &leased.netmap.grants[key];
-    if !matches!(grant.target, GrantTarget::Mesh { .. }) {
+    let hop = admit_handshake(leased, decision, path, origin, previous, reply, now_ms)?;
+    if !matches!(decision.target, Target::Mesh { .. }) {
         return Err(AdmissionError::Permit);
     }
-    // Relays hold no service set; the endpoints check the measured service.
-    if let Some(services) = &grant.services
-        && !services.contains(service.0, service.1)
-    {
+    if !decision.services.contains(service.0, service.1) {
         return Err(AdmissionError::Traffic);
     }
-    if !grant.path(path).is_some_and(|path| path.observable) {
+    if !observable(&leased.netmap.projection.inventory, path) {
         return Err(AdmissionError::Path);
     }
     Ok(hop)
@@ -394,23 +326,28 @@ fn listener_protocol(listener: &Listener) -> (TransportProtocol, bool) {
     }
 }
 
-/// Admit an authenticated adjacency. Only `edges` authorize it; it grants no
-/// packet or flow authority, and the snapshot owner enforces the lease.
+/// Admit an authenticated adjacency with a visible Node: topology and both
+/// sides' declarations must allow this carrier. Grants no packet or flow
+/// authority; the snapshot owner enforces the lease.
 pub fn admit_adjacency(
+    compiler: &LocalCompiler<'_>,
     netmap: &NodeNetmap,
     peer: NodeId,
     carrier: &Carrier,
 ) -> Result<(), AdmissionError> {
     valid_self(netmap)?;
-    if peer == netmap.node_id || carrier.listener_key.is_empty() {
+    let local = netmap.node_id;
+    if peer == local || carrier.listener_key.is_empty() {
         return Err(AdmissionError::Peer);
     }
-    let edges = netmap.edges.get(&peer).ok_or(AdmissionError::Peer)?;
-    let local = netmap.node_id;
+    let error = |_| AdmissionError::Configuration;
     if carrier.dialer == local && carrier.listener == peer {
         let key = format!("{peer}/{}", carrier.listener_key);
         let dialer = netmap.dialers.get(&key).ok_or(AdmissionError::Peer)?;
-        if !edges.dial.contains(&key)
+        if !compiler
+            .carriers(local, peer)
+            .map_err(error)?
+            .contains(&carrier.listener_key)
             || dialer.peer != peer
             || dialer.listener_key != carrier.listener_key
             || dialer.parameters.transport() != carrier.protocol
@@ -424,7 +361,12 @@ pub fn admit_adjacency(
             .get(&carrier.listener_key)
             .ok_or(AdmissionError::Peer)?;
         let (protocol, enabled) = listener_protocol(listener.declaration());
-        if !edges.accept.contains(&carrier.listener_key) || !enabled || protocol != carrier.protocol
+        if !compiler
+            .carriers(peer, local)
+            .map_err(error)?
+            .contains(&carrier.listener_key)
+            || !enabled
+            || protocol != carrier.protocol
         {
             return Err(AdmissionError::Peer);
         }
@@ -434,34 +376,17 @@ pub fn admit_adjacency(
     Ok(())
 }
 
-/// Check an actual carrier against one grant path's hop and candidates, in
-/// addition to `admit_adjacency`. Carrier choice never bypasses a waypoint.
+/// Check an actual carrier against one selected path's hop and candidates,
+/// in addition to `admit_adjacency`. Carrier choice never bypasses a waypoint.
 pub fn admit_path_carrier(
+    compiler: &LocalCompiler<'_>,
     netmap: &NodeNetmap,
-    key: &GrantKey,
-    path: &[NodeId],
+    selected: &LogicalPath,
     peer: NodeId,
     carrier: &Carrier,
 ) -> Result<(), AdmissionError> {
-    let grant = netmap.grants.get(key).ok_or(AdmissionError::Permit)?;
-    let selected = grant.path(path).ok_or(AdmissionError::Path)?;
-    if !path_carrier(&selected.nodes, &selected.dial_candidates, carrier) {
+    if !super::path_carrier(selected, carrier) {
         return Err(AdmissionError::Path);
     }
-    admit_adjacency(netmap, peer, carrier)
-}
-
-fn path_carrier(
-    nodes: &[NodeId],
-    dial_candidates: &BTreeMap<NodeId, Vec<String>>,
-    carrier: &Carrier,
-) -> bool {
-    valid_path(nodes)
-        && nodes.windows(2).any(|edge| {
-            (edge[0] == carrier.dialer && edge[1] == carrier.listener)
-                || (edge[1] == carrier.dialer && edge[0] == carrier.listener)
-        })
-        && dial_candidates.get(&carrier.dialer).is_some_and(|keys| {
-            keys.contains(&format!("{}/{}", carrier.listener, carrier.listener_key))
-        })
+    admit_adjacency(compiler, netmap, peer, carrier)
 }

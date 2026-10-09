@@ -1,10 +1,10 @@
-//! Differential equivalence: for every (source, destination, protocol, port)
-//! the per-demand compiler with its admission and the netmap compiler with
-//! local admission reach the same decision, paths and per-hop results.
+//! Projection equivalence: for every (source, destination, protocol, port),
+//! the per-demand compiler with its admission and the shared compiler run on
+//! each Node's own projection reach the same decision, services, paths and
+//! per-hop results; relays admit exactly the paths they appear on.
 use super::*;
-use meshway_policy::admission::netmap::{self as local, Destination, Leased};
+use meshway_policy::admission::netmap::{self as local, Leased};
 use meshway_policy::admission::{self as old_admission, Traffic};
-use std::collections::BTreeSet;
 use std::net::IpAddr;
 
 const DESTINATIONS: &[&str] = &[
@@ -30,9 +30,11 @@ const SERVICES: &[(BusinessProtocol, Option<u16>)] = &[
 #[derive(Default, Debug)]
 pub(super) struct Coverage {
     pub scenarios: usize,
+    pub node_projections: usize,
     pub queries: usize,
     pub mesh_permitted: usize,
     pub relayed: usize,
+    pub transit_checks: usize,
     pub exit_permitted: usize,
     pub exit_backup: usize,
     pub direct: usize,
@@ -41,6 +43,7 @@ pub(super) struct Coverage {
     pub bidirectional_reverse: usize,
     pub disabled: usize,
     pub unregistered: usize,
+    pub partial_projections: usize,
 }
 
 fn request(i: usize) -> RequestId {
@@ -50,6 +53,7 @@ fn request(i: usize) -> RequestId {
 struct Query {
     id: RequestId,
     source: NodeId,
+    service: (BusinessProtocol, Option<Port>),
     traffic: Traffic,
 }
 
@@ -85,8 +89,11 @@ fn old_compile(s: &Scenario, demands: &BTreeMap<RequestId, Demand>) -> CompiledP
 
 type PathShape = (Vec<NodeId>, BTreeMap<NodeId, Vec<String>>);
 
-fn shape(paths: impl IntoIterator<Item = PathShape>) -> Vec<PathShape> {
-    paths.into_iter().collect()
+fn shape(paths: &[LogicalPath]) -> Vec<PathShape> {
+    paths
+        .iter()
+        .map(|p| (p.nodes.clone(), p.dial_candidates.clone()))
+        .collect()
 }
 
 fn same_hop(
@@ -100,28 +107,35 @@ fn same_hop(
     }
 }
 
-/// Per-hop admission of every allowed path, both directions, at every node.
-fn compare_hops(
-    old: &CompiledPublication,
-    new: &CompiledNetmaps,
-    leases: &BTreeMap<NodeId, NetmapLease>,
-    query: &Query,
-    keys: &[GrantKey],
-    permit: &PathPermit,
-    coverage: &mut Coverage,
-) {
-    for path in &permit.paths {
-        let nodes = &path.nodes;
-        let terminal = *nodes.last().unwrap();
-        let key = keys
-            .iter()
-            .find(|key| match key.target {
-                GrantTarget::Mesh { node } | GrantTarget::Exit { node, .. } => node == terminal,
-            })
-            .expect("grant for path terminal");
-        if nodes.len() > 2 {
-            coverage.relayed += 1;
+struct World<'a> {
+    old: &'a CompiledPublication,
+    new: &'a CompiledNetmaps,
+    leases: &'a BTreeMap<NodeId, NetmapLease>,
+    compilers: &'a BTreeMap<NodeId, LocalCompiler<'a>>,
+}
+
+impl World<'_> {
+    fn leased(&self, id: NodeId) -> Leased<'_> {
+        Leased {
+            netmap: &self.new.nodes[&id].netmap,
+            lease: &self.leases[&id],
         }
+    }
+
+    /// Endpoint decision recomputed on `id`'s own projection.
+    fn decision(&self, id: NodeId, query: &Query) -> LocalDecision {
+        self.compilers[&id]
+            .decide(
+                query.source,
+                query.traffic.destination,
+                query.service.0,
+                query.service.1,
+            )
+            .unwrap()
+    }
+
+    /// Per-hop admission of every allowed path, both directions, at every node.
+    fn compare_hops(&self, query: &Query, source: &Decision, coverage: &mut Coverage) {
         let reply = Traffic {
             source: query.traffic.destination,
             destination: query.traffic.source,
@@ -129,124 +143,170 @@ fn compare_hops(
             source_port: query.traffic.destination_port,
             destination_port: query.traffic.source_port,
         };
-        for (i, id) in nodes.iter().enumerate() {
-            let cfg = &old.nodes[id].configuration;
-            let netmap = &new.nodes[id];
-            let leased = Leased {
-                netmap: &netmap.netmap,
-                lease: &leases[id],
-            };
-            let previous = i.checked_sub(1).map(|p| nodes[p]);
-            let next = nodes.get(i + 1).copied();
-            let relay = i > 0 && i + 1 < nodes.len();
-            let grant = &netmap.netmap.grants[key];
-            assert_eq!(grant.services.is_none(), relay, "relay service visibility");
-            assert!(grant.paths.iter().any(|p| &p.nodes == nodes));
-            if relay {
-                assert!(grant.paths.iter().all(|p| p.nodes.contains(id)));
+        for path in &source.paths {
+            let nodes = &path.nodes;
+            if nodes.len() > 2 {
+                coverage.relayed += 1;
             }
-            let (old_forward, new_forward) = if relay {
-                (
-                    old_admission::admit_handshake(
-                        cfg,
-                        query.id,
-                        nodes,
-                        query.source,
-                        previous,
-                        false,
-                        1001,
-                    ),
-                    local::admit_handshake(leased, key, nodes, query.source, previous, false, 1001),
-                )
+            for (i, id) in nodes.iter().enumerate() {
+                let cfg = &self.old.nodes[id].configuration;
+                let leased = self.leased(*id);
+                let previous = i.checked_sub(1).map(|p| nodes[p]);
+                let next = nodes.get(i + 1).copied();
+                let relay = i > 0 && i + 1 < nodes.len();
+                let (old_forward, new_forward, old_reply, new_reply) = if relay {
+                    coverage.transit_checks += 1;
+                    let compiler = &self.compilers[id];
+                    (
+                        old_admission::admit_handshake(
+                            cfg,
+                            query.id,
+                            nodes,
+                            query.source,
+                            previous,
+                            false,
+                            1001,
+                        ),
+                        local::admit_transit(
+                            leased,
+                            compiler,
+                            query.source,
+                            &source.target,
+                            nodes,
+                            previous,
+                            false,
+                            1001,
+                        ),
+                        old_admission::admit_handshake(
+                            cfg,
+                            query.id,
+                            nodes,
+                            query.source,
+                            next,
+                            true,
+                            1001,
+                        ),
+                        local::admit_transit(
+                            leased,
+                            compiler,
+                            query.source,
+                            &source.target,
+                            nodes,
+                            next,
+                            true,
+                            1001,
+                        ),
+                    )
+                } else {
+                    let LocalDecision::Permitted(own) = self.decision(*id, query) else {
+                        panic!("endpoint {id} does not permit {:?}", query.traffic);
+                    };
+                    assert_eq!(own, *source, "endpoint {id} decides differently");
+                    (
+                        old_admission::admit_forward(
+                            cfg,
+                            query.id,
+                            nodes,
+                            query.source,
+                            previous,
+                            &query.traffic,
+                            1001,
+                        ),
+                        local::admit_forward(
+                            leased,
+                            &own,
+                            nodes,
+                            query.source,
+                            previous,
+                            &query.traffic,
+                            1001,
+                        ),
+                        old_admission::admit_reply(
+                            cfg,
+                            query.id,
+                            nodes,
+                            query.source,
+                            next,
+                            &query.traffic,
+                            &reply,
+                            1001,
+                        ),
+                        local::admit_reply(
+                            leased,
+                            &own,
+                            nodes,
+                            query.source,
+                            next,
+                            &query.traffic,
+                            &reply,
+                            1001,
+                        ),
+                    )
+                };
+                assert!(
+                    same_hop(old_forward, new_forward) && new_forward.is_ok(),
+                    "forward at {i} of {nodes:?}: {old_forward:?} vs {new_forward:?}"
+                );
+                assert!(
+                    same_hop(old_reply, new_reply),
+                    "reply at {i} of {nodes:?}: {old_reply:?} vs {new_reply:?}"
+                );
+                let expired = NetmapLease::new(self.leases[id].netmap, 0, 1001).unwrap();
+                let stale = Leased {
+                    netmap: leased.netmap,
+                    lease: &expired,
+                };
+                if relay {
+                    assert!(
+                        local::admit_transit(
+                            stale,
+                            &self.compilers[id],
+                            query.source,
+                            &source.target,
+                            nodes,
+                            previous,
+                            false,
+                            1001
+                        )
+                        .is_err()
+                    );
+                } else {
+                    assert!(
+                        local::admit_handshake(
+                            stale,
+                            source,
+                            nodes,
+                            query.source,
+                            previous,
+                            false,
+                            1001
+                        )
+                        .is_err()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every relay of the source's paths computes exactly those paths; no
+    /// other Node computes a path through itself.
+    fn compare_transit(&self, source: &Decision) {
+        let interior = |paths: &[LogicalPath], id: &NodeId| {
+            paths
+                .iter()
+                .any(|p| p.nodes[1..p.nodes.len() - 1].contains(id))
+        };
+        for (id, compiler) in self.compilers {
+            let paths = compiler.transit(source.source, &source.target).unwrap();
+            if interior(&source.paths, id) {
+                assert_eq!(shape(&paths), shape(&source.paths), "relay {id}");
             } else {
-                (
-                    old_admission::admit_forward(
-                        cfg,
-                        query.id,
-                        nodes,
-                        query.source,
-                        previous,
-                        &query.traffic,
-                        1001,
-                    ),
-                    local::admit_forward(
-                        leased,
-                        key,
-                        nodes,
-                        query.source,
-                        previous,
-                        &query.traffic,
-                        1001,
-                    ),
-                )
-            };
-            assert!(
-                same_hop(old_forward, new_forward),
-                "forward at {i} of {nodes:?}: {old_forward:?} vs {new_forward:?}"
-            );
-            assert!(new_forward.is_ok(), "{new_forward:?}");
-            let (old_reply, new_reply) = if relay {
-                (
-                    old_admission::admit_handshake(
-                        cfg,
-                        query.id,
-                        nodes,
-                        query.source,
-                        next,
-                        true,
-                        1001,
-                    ),
-                    local::admit_handshake(leased, key, nodes, query.source, next, true, 1001),
-                )
-            } else {
-                (
-                    old_admission::admit_reply(
-                        cfg,
-                        query.id,
-                        nodes,
-                        query.source,
-                        next,
-                        &query.traffic,
-                        &reply,
-                        1001,
-                    ),
-                    local::admit_reply(
-                        leased,
-                        key,
-                        nodes,
-                        query.source,
-                        next,
-                        &query.traffic,
-                        &reply,
-                        1001,
-                    ),
-                )
-            };
-            assert!(
-                same_hop(old_reply, new_reply),
-                "reply at {i} of {nodes:?}: {old_reply:?} vs {new_reply:?}"
-            );
-            // Expired lease and a wrong previous hop are rejected locally.
-            let expired = NetmapLease::new(leases[id].netmap, 0, 1001).unwrap();
-            assert!(
-                local::admit_handshake(
-                    Leased {
-                        netmap: &netmap.netmap,
-                        lease: &expired
-                    },
-                    key,
-                    nodes,
-                    query.source,
-                    previous,
-                    false,
-                    1001
-                )
-                .is_err()
-            );
-            assert!(
-                local::admit_handshake(leased, key, nodes, query.source, Some(*id), false, 1001)
-                    .is_err()
-            );
+                assert!(
+                    !interior(&paths, id),
+                    "{id} would relay {:?}",
+                    source.target
+                );
+            }
         }
     }
 }
@@ -260,6 +320,12 @@ pub(super) fn check(seed: u64, coverage: &mut Coverage) {
     let leases: BTreeMap<NodeId, NetmapLease> =
         new.nodes.iter().map(|(id, n)| (*id, lease(n))).collect();
     coverage.scenarios += 1;
+    coverage.node_projections += new.nodes.len();
+    coverage.partial_projections += new
+        .nodes
+        .values()
+        .filter(|n| n.netmap.projection.configuration.nodes.len() < new.nodes.len())
+        .count();
     coverage.disabled += s.cfg.nodes.values().filter(|n| !n.enabled).count();
     coverage.unregistered += s
         .cfg
@@ -283,17 +349,6 @@ pub(super) fn check(seed: u64, coverage: &mut Coverage) {
             for (protocol, port_number) in SERVICES {
                 let id = request(queries.len() + 1);
                 let destination_port = port_number.and_then(port);
-                let traffic = Traffic {
-                    source: if destination.is_ipv4() {
-                        IpAddr::V4(source_address)
-                    } else {
-                        "fd00::1".parse().unwrap()
-                    },
-                    destination: *destination,
-                    protocol: *protocol,
-                    source_port: port_number.and(port(40_000)),
-                    destination_port,
-                };
                 demands.insert(
                     id,
                     Demand {
@@ -311,14 +366,21 @@ pub(super) fn check(seed: u64, coverage: &mut Coverage) {
                 queries.push(Query {
                     id,
                     source: *source,
-                    traffic,
+                    service: (*protocol, destination_port),
+                    traffic: Traffic {
+                        source: IpAddr::V4(source_address),
+                        destination: *destination,
+                        protocol: *protocol,
+                        source_port: port_number.and(port(40_000)),
+                        destination_port,
+                    },
                 });
             }
         }
     }
     let ids: Vec<RequestId> = demands.keys().copied().collect();
-    let mut decisions = BTreeMap::new();
     let mut olds = Vec::new();
+    let mut decisions = BTreeMap::new();
     for chunk in ids.chunks(MAX_DEMANDS) {
         let batch: BTreeMap<_, _> = chunk.iter().map(|id| (*id, demands[id].clone())).collect();
         let old = old_compile(&s, &batch);
@@ -334,195 +396,108 @@ pub(super) fn check(seed: u64, coverage: &mut Coverage) {
         }
         olds.push(old);
     }
-    let mut classified_keys: BTreeMap<RequestId, Vec<GrantKey>> = BTreeMap::new();
+    let permitted: BTreeMap<RequestId, bool> = decisions
+        .iter()
+        .map(|(id, (_, d))| (*id, matches!(d, DemandDecision::Permitted { .. })))
+        .collect();
+    let compilers: BTreeMap<NodeId, LocalCompiler<'_>> = new
+        .nodes
+        .iter()
+        .map(|(id, n)| (*id, LocalCompiler::new(&n.netmap)))
+        .collect();
     for query in &queries {
         coverage.queries += 1;
         let (batch, decision) = &decisions[&query.id];
-        let source = &new.nodes[&query.source].netmap;
-        let classified = local::classify(
-            source,
-            query.traffic.destination,
-            query.traffic.protocol,
-            query.traffic.destination_port,
-        );
-        if let Ok(Destination::Mesh(key)) = &classified {
-            classified_keys.insert(query.id, vec![*key]);
-        } else if let Ok(Destination::Exit(keys)) = &classified {
-            classified_keys.insert(query.id, keys.clone());
-        }
+        let world = World {
+            old: &olds[*batch],
+            new: &new,
+            leases: &leases,
+            compilers: &compilers,
+        };
+        let decided = world.decision(query.source, query);
         let context = || {
             format!(
-                "seed {seed} {} -> {:?}: {decision:?} vs {classified:?}",
-                query.source, query.traffic
+                "seed {seed} {:?}: {decision:?} vs {decided:?}",
+                query.traffic
             )
         };
-        match (decision, &classified) {
-            (DemandDecision::Permitted { permit }, Ok(Destination::Mesh(key))) => {
-                coverage.mesh_permitted += 1;
-                let grant = &source.grants[key];
-                assert_eq!(
-                    shape(
-                        permit
-                            .paths
-                            .iter()
-                            .map(|p| (p.nodes.clone(), p.dial_candidates.clone()))
-                    ),
-                    shape(
-                        grant
-                            .paths
-                            .iter()
-                            .map(|p| (p.nodes.clone(), p.dial_candidates.clone()))
-                    ),
-                    "{}",
-                    context()
-                );
-                let GrantTarget::Mesh { node } = key.target else {
-                    unreachable!()
-                };
-                let reverse = GrantKey {
-                    source: node,
-                    target: GrantTarget::Mesh { node: query.source },
-                };
-                if s.cfg.access.iter().any(|r| r.bidirectional)
-                    && new.nodes[&node]
-                        .netmap
-                        .grants
-                        .get(&reverse)
-                        .is_some_and(|g| g.services.is_some())
-                {
-                    coverage.bidirectional_reverse += 1;
+        match (decision, &decided) {
+            (DemandDecision::Permitted { permit }, LocalDecision::Permitted(own)) => {
+                assert_eq!(shape(&permit.paths), shape(&own.paths), "{}", context());
+                assert!(own.services.contains(query.service.0, query.service.1));
+                // The service set equals the per-demand answers for this destination.
+                for other in queries.iter().filter(|q| {
+                    q.source == query.source && q.traffic.destination == query.traffic.destination
+                }) {
+                    assert_eq!(
+                        own.services.contains(other.service.0, other.service.1),
+                        permitted[&other.id],
+                        "{}",
+                        context()
+                    );
                 }
-                compare_hops(
-                    &olds[*batch],
-                    &new,
-                    &leases,
-                    query,
-                    std::slice::from_ref(key),
-                    permit,
-                    coverage,
-                );
-            }
-            (DemandDecision::Permitted { permit }, Ok(Destination::Exit(keys))) => {
-                coverage.exit_permitted += 1;
-                if keys.len() > 1 {
-                    coverage.exit_backup += 1;
+                match &own.target {
+                    Target::Mesh { node } => {
+                        coverage.mesh_permitted += 1;
+                        if s.cfg.access.iter().any(|r| r.bidirectional)
+                            && !crate_mesh_forward(&s, query.source, *node)
+                        {
+                            coverage.bidirectional_reverse += 1;
+                        }
+                    }
+                    Target::Exit { nodes, .. } => {
+                        coverage.exit_permitted += 1;
+                        if nodes.len() > 1 {
+                            coverage.exit_backup += 1;
+                        }
+                        assert!(own.selection.is_some());
+                    }
                 }
-                let paths: Vec<_> = keys
-                    .iter()
-                    .flat_map(|key| &source.grants[key].paths)
-                    .map(|p| (p.nodes.clone(), p.dial_candidates.clone()))
-                    .collect();
-                assert_eq!(
-                    shape(
-                        permit
-                            .paths
-                            .iter()
-                            .map(|p| (p.nodes.clone(), p.dial_candidates.clone()))
-                    ),
-                    paths,
-                    "{}",
-                    context()
-                );
-                let selection = &source.grants[&keys[0]].exit.as_ref().unwrap().selection;
-                assert!(
-                    keys.iter()
-                        .all(|k| &source.grants[k].exit.as_ref().unwrap().selection == selection)
-                );
-                compare_hops(&olds[*batch], &new, &leases, query, keys, permit, coverage);
+                world.compare_hops(query, own, coverage);
+                world.compare_transit(own);
             }
-            (DemandDecision::Direct, Ok(Destination::Direct)) => coverage.direct += 1,
-            (DemandDecision::Unmanaged, Ok(Destination::Unmanaged)) => coverage.unmanaged += 1,
-            (DemandDecision::Unavailable { .. }, Err(_)) => coverage.denied += 1,
+            (DemandDecision::Direct, LocalDecision::Direct) => coverage.direct += 1,
+            (DemandDecision::Unmanaged, LocalDecision::Unmanaged) => coverage.unmanaged += 1,
+            (DemandDecision::Unavailable { .. }, LocalDecision::Denied(_)) => {
+                coverage.denied += 1;
+            }
             _ => panic!("decision mismatch: {}", context()),
         }
     }
-    // The terminal admits exactly the flows the source classifies to the grant,
-    // independent of which other destination brought the grant into being.
-    for query in &queries {
-        let source = &new.nodes[&query.source].netmap;
-        for (key, grant) in source
-            .grants
-            .iter()
-            .filter(|(k, _)| k.source == query.source)
-        {
-            let path = &grant.paths[0].nodes;
-            let terminal = *path.last().unwrap();
-            let leased = Leased {
-                netmap: &new.nodes[&terminal].netmap,
-                lease: &leases[&terminal],
-            };
-            let admitted = local::admit_forward(
-                leased,
-                key,
-                path,
-                query.source,
-                Some(path[path.len() - 2]),
-                &query.traffic,
-                1001,
-            )
-            .is_ok();
-            // Several Access scopes of one exit may cover the same flow; the
-            // source picks the first, and the terminal accepts any of them.
-            let exit_node = |k: &GrantKey| match k.target {
-                GrantTarget::Exit { node, .. } => Some(node),
-                GrantTarget::Mesh { .. } => None,
-            };
-            let expected = classified_keys.get(&query.id).is_some_and(|keys| {
-                keys.contains(key)
-                    || (exit_node(key).is_some()
-                        && keys.iter().any(|k| exit_node(k) == exit_node(key))
-                        && scope_covers(grant, &query.traffic))
+    // A Mesh pair without any permitted service has no relay anywhere.
+    for source in new.nodes.keys() {
+        for (target, settings) in &s.cfg.nodes {
+            let address = IpAddr::V4(settings.addresses.ipv4.unwrap());
+            let any = queries.iter().any(|q| {
+                q.source == *source && q.traffic.destination == address && permitted[&q.id]
             });
-            assert_eq!(
-                admitted, expected,
-                "seed {seed} terminal {key:?} {:?}",
-                query.traffic
-            );
-        }
-    }
-    // Relay copies carry no services; endpoint copies carry the full grant.
-    for (id, compiled) in &new.nodes {
-        for grant in compiled.netmap.grants.values() {
-            let terminal = match grant.target {
-                GrantTarget::Mesh { node } | GrantTarget::Exit { node, .. } => node,
-            };
-            assert_eq!(
-                grant.services.is_some(),
-                *id == grant.source || *id == terminal
-            );
-            let endpoint = &new.nodes[&grant.source].netmap.grants[&grant.key()];
-            let own: BTreeSet<_> = grant.paths.iter().map(|p| &p.nodes).collect();
-            assert!(
-                own.iter()
-                    .all(|p| endpoint.paths.iter().any(|e| &&e.nodes == p))
-            );
+            if any || source == target {
+                continue;
+            }
+            for compiler in compilers.values() {
+                assert!(
+                    compiler
+                        .transit(*source, &Target::Mesh { node: *target })
+                        .unwrap()
+                        .is_empty(),
+                    "seed {seed}: transit for unauthorized {source} -> {target}"
+                );
+            }
         }
     }
 }
 
-fn scope_covers(grant: &Grant, traffic: &Traffic) -> bool {
-    let exit = grant.exit.as_ref().unwrap();
-    let inside = |prefix: &str| {
-        prefix
-            .parse::<ipnet::IpNet>()
-            .is_ok_and(|net| net.contains(&traffic.destination))
-    };
-    exit.routes.iter().any(|route| inside(route))
-        && match &exit.destination {
-            ExitDestinationScope::Internet => {
-                meshway_policy::is_internet_address(traffic.destination)
-            }
-            ExitDestinationScope::Cidr { prefix } => inside(prefix),
-        }
-        && grant
-            .services
-            .as_ref()
-            .unwrap()
-            .contains(traffic.protocol, traffic.destination_port)
+/// Whether a one-way rule alone grants the pair (else only a reverse rule does).
+fn crate_mesh_forward(s: &Scenario, source: NodeId, target: NodeId) -> bool {
+    s.cfg.access.iter().any(|r| {
+        !r.bidirectional
+            && r.src.iter().any(|x| s.subjects.matches(&s.cfg, x, source))
+            && r.dst.iter().any(|x| s.subjects.matches(&s.cfg, x, target))
+    })
 }
 
 #[test]
-fn netmap_admission_equals_per_demand_compilation_for_generated_configurations() {
+fn projection_compilation_equals_per_demand_compilation_for_generated_configurations() {
     let mut coverage = Coverage::default();
     for seed in 0..64 {
         check(seed, &mut coverage);
@@ -532,6 +507,7 @@ fn netmap_admission_equals_per_demand_compilation_for_generated_configurations()
     for (name, value) in [
         ("mesh", coverage.mesh_permitted),
         ("relayed", coverage.relayed),
+        ("transit", coverage.transit_checks),
         ("exit", coverage.exit_permitted),
         ("exit backup", coverage.exit_backup),
         ("direct", coverage.direct),
@@ -540,6 +516,7 @@ fn netmap_admission_equals_per_demand_compilation_for_generated_configurations()
         ("bidirectional", coverage.bidirectional_reverse),
         ("disabled", coverage.disabled),
         ("unregistered", coverage.unregistered),
+        ("partial projection", coverage.partial_projections),
     ] {
         assert!(value > 0, "generated configurations never covered {name}");
     }

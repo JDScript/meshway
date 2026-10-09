@@ -144,7 +144,14 @@ pub fn netmap_resolver(
     netmap: &meshway_configuration::netmap::NodeNetmap,
     server_key: &str,
 ) -> Result<meshway_configuration::netmap::ResolverAction, ResolverRouteError> {
-    if !netmap.self_.enabled || !netmap.dns.settings.servers.contains_key(server_key) {
+    if !netmap.self_.enabled
+        || !netmap
+            .projection
+            .configuration
+            .dns
+            .servers
+            .contains_key(server_key)
+    {
         return Err(ResolverRouteError::Missing);
     }
     netmap
@@ -186,9 +193,14 @@ pub fn netmap_dns_service(
                     .is_some_and(|plan| plan.capture.generation == service.generation)
                 && netmap.dns.profile == service.profile
                 && netmap.self_.addresses == service.source_addresses
-                && netmap.peers.get(&exit).is_some_and(|peer| {
-                    peer.addresses.ipv4.map(std::net::IpAddr::V4) == Some(service.address.0)
-                })
+                && netmap
+                    .projection
+                    .configuration
+                    .nodes
+                    .get(&exit)
+                    .is_some_and(|peer| {
+                        peer.addresses.ipv4.map(std::net::IpAddr::V4) == Some(service.address.0)
+                    })
         }
         DnsPlan::ServeExitResolver { services } => {
             netmap.node_id == exit
@@ -196,7 +208,9 @@ pub fn netmap_dns_service(
                 && netmap.exit_role.as_ref() == Some(&service.role)
                 && netmap.self_.addresses.ipv4.map(std::net::IpAddr::V4) == Some(service.address.0)
                 && netmap
-                    .peers
+                    .projection
+                    .configuration
+                    .nodes
                     .get(&source)
                     .is_some_and(|peer| peer.addresses == service.source_addresses)
                 && services.contains(service)

@@ -13,6 +13,36 @@ pub struct ExitInputs {
     pub selection_generations: BTreeMap<NodeId, u64>,
 }
 
+/// Exit inputs of one evaluation: per-instance runtime facts for publication
+/// compilation, or only stable selection versions for netmap compilation.
+#[derive(Clone, Copy)]
+pub(super) enum Facts<'a> {
+    Runtime(&'a ExitInputs),
+    Stable(&'a BTreeMap<NodeId, u64>),
+}
+
+impl Facts<'_> {
+    pub fn selection(self, node: NodeId) -> u64 {
+        match self {
+            Self::Runtime(runtime) => runtime.selection_generations.get(&node),
+            Self::Stable(versions) => versions.get(&node),
+        }
+        .copied()
+        .unwrap_or(0)
+    }
+}
+
+pub(super) fn capable(topology: Topology<'_>, node: NodeId) -> bool {
+    topology.inventory.get(&node).is_some_and(|trusted| {
+        trusted
+            .capabilities
+            .get(meshway_model::exit::EXIT_IPV4_FEATURE)
+            == Some(&meshway_model::state::Capability::Feature {
+                version: meshway_model::exit::EXIT_IPV4_VERSION,
+            })
+    })
+}
+
 pub(super) fn available(
     topology: Topology<'_>,
     runtime: &ExitInputs,
