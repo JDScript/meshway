@@ -236,8 +236,16 @@ function ResetForm({
           id="reset-password"
           label={m.entry_new_password()}
           placeholder={
-            rules ? passwordRulesText(rules) : m.placeholder_password_rules()
+            rules
+              ? passwordRulesText(rules)
+              : options.isError
+                ? m.password_rules_failed()
+                : m.placeholder_password_rules()
           }
+          // The rules failed to read: asking again when the field is used.
+          onFocus={() => {
+            if (options.isError) void options.refetch()
+          }}
           name="password"
           type="password"
           autoComplete="new-password"

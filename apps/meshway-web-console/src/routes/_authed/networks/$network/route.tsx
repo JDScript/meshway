@@ -13,6 +13,8 @@ import {
 import { rememberNetwork } from "@/lib/remembered-network"
 import { m } from "@/paraglide/messages.js"
 
+import { TopologyCanvas } from "./-map/topology-canvas"
+import { NetworkSceneProvider } from "./-shell/network-scene"
 import { NetworkShell } from "./-shell/network-shell"
 
 /** What the loader's not-found carries: the network itself is missing (not a page under it). */
@@ -56,12 +58,13 @@ function NetworkLayout() {
   if (isNotFound(network.error)) return <NetworkNotFound />
   // The page's surfaces first: the chrome sits above them.
   return (
-    <>
+    <NetworkSceneProvider networkId={networkId}>
+      <TopologyCanvas networkId={networkId} />
       <Outlet />
       <NetworkShell
         networkId={networkId}
         network={network.data?.network ?? null}
       />
-    </>
+    </NetworkSceneProvider>
   )
 }

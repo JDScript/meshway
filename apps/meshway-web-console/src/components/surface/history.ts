@@ -6,16 +6,20 @@ import {
 } from "@tanstack/react-router"
 import { useMemo } from "react"
 
+import { PAGES, type CanvasPage } from "./pages"
+
 declare module "@tanstack/react-router" {
   interface HistoryState {
     /** On an entry pushed to open a workspace or a page sheet: closing it goes back. */
     opened?: true
     /**
-     * On phones, from the moment a page sheet opens over the overview: the
-     * history index of that overview entry. However many pages and
+     * On phones, from the moment a page sheet opens over a canvas: the
+     * history index of that overview/topology entry. However many pages and
      * workspaces follow, leaving the page returns there in one step.
      */
     pageBase?: number
+    /** Which base canvas a phone's page sheet was opened from. */
+    pageBasePage?: CanvasPage
   }
 }
 
@@ -27,7 +31,7 @@ declare module "@tanstack/react-router" {
  * - changes inside what is open (a tab, a search, a filter) replace;
  * - closing an `opened` entry goes back, anything else is replaced by the
  *   level below;
- * - on phones, a page opened from the launcher remembers the overview it
+ * - on phones, a page opened from the launcher remembers the canvas it
  *   left (`pageBase`): moving to another page replaces, and leaving the
  *   pages goes straight back to that overview.
  *
@@ -45,17 +49,43 @@ export function useSurfaceHistory(networkId: string) {
   const index = useLocation({
     select: (location) => location.state.__TSR_index,
   })
+  const pageBasePage = useLocation({
+    select: (location) => location.state.pageBasePage,
+  })
 
   return useMemo(() => {
-    const toPage = (fromOverview: boolean) =>
-      fromOverview
-        ? { replace: false, state: { opened: true as const, pageBase: index } }
-        : { replace: true, state: { opened: true as const, pageBase } }
+    const toPage = (fromCanvas: CanvasPage | null) =>
+      fromCanvas
+        ? {
+            replace: false,
+            state: {
+              opened: true as const,
+              pageBase: index,
+              pageBasePage: fromCanvas,
+            },
+          }
+        : {
+            replace: true,
+            state: { opened: true as const, pageBase, pageBasePage },
+          }
+    const toCanvas = (target: CanvasPage = pageBasePage ?? "overview") => {
+      const base = pageBasePage ?? "overview"
+      if (target === base && pageBase !== undefined && pageBase < index)
+        router.history.go(pageBase - index)
+      else if (target === base && opened) router.history.back()
+      else
+        void navigate({
+          to: PAGES[target].route,
+          params: { network: networkId },
+          search: {},
+          replace: true,
+        })
+    }
     return {
       /** Options for opening something: push from nothing, replace when switching. */
       open: (alreadyOpen: boolean) => ({
         replace: alreadyOpen,
-        state: { opened: true as const, pageBase },
+        state: { opened: true as const, pageBase, pageBasePage },
       }),
       /** Options for a change inside what is open. */
       keep: {
@@ -63,27 +93,20 @@ export function useSurfaceHistory(networkId: string) {
         state: (previous: HistoryState) => ({
           opened: previous.opened,
           pageBase: previous.pageBase,
+          pageBasePage: previous.pageBasePage,
         }),
       },
-      /** Options for the launcher's move to another page: from the overview it pushes and remembers it; between pages it replaces. */
+      /** From either canvas the launcher pushes and remembers it; between sheets it replaces. */
       toPage,
       /** Closes what is open: back where it was opened from, or else `fallback` (which should replace). */
       close(fallback: () => void) {
         if (opened) router.history.back()
         else fallback()
       },
-      /** Leaves the pages for the overview: back to the overview they were opened from, wherever that is. */
-      leavePage() {
-        if (pageBase !== undefined && pageBase < index)
-          router.history.go(pageBase - index)
-        else if (opened) router.history.back()
-        else
-          void navigate({
-            to: "/networks/$network/overview",
-            params: { network: networkId },
-            replace: true,
-          })
-      },
+      /** Dismissing a sheet returns to its base canvas. */
+      leavePage: () => toCanvas(),
+      /** An explicit navigation item selects that canvas, even from another base. */
+      toCanvas,
     }
-  }, [router, navigate, opened, pageBase, index, networkId])
+  }, [router, navigate, opened, pageBase, pageBasePage, index, networkId])
 }

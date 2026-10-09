@@ -183,5 +183,6 @@
   "location_source_interface": "网卡地址",
   "geo_pending": "正在查询位置",
   "geo_failed": "位置查询失败",
-  "geo_off": "本浏览器不查询位置"
+  "geo_off": "本浏览器不查询位置",
+  "password_rules_failed": "无法读取密码规则，点这里重试"
 }

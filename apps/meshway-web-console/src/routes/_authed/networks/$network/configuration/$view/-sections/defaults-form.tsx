@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 
+import { failureText } from "@/api/failure"
 import { transportCatalogQuery } from "@/api/queries/nodes"
 import { Section } from "@/components/chrome/section"
 import { DialerSetForm } from "@/components/configuration/dialer-set-form"
@@ -70,6 +71,11 @@ export function DefaultsForm({
           id="defaults-dialers"
           value={value.dialers}
           offered={offered}
+          offeredFailure={
+            catalog.isError && !catalog.data
+              ? (failureText(catalog.error) ?? m.nodes_catalog_failed())
+              : null
+          }
           editable={editable}
           onChange={(dialers) => onChange({ ...value, dialers })}
         />

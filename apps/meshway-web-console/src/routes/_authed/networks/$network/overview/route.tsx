@@ -1,103 +1,27 @@
-import { createFileRoute } from "@tanstack/react-router"
-import type { CSSProperties } from "react"
+import { createFileRoute, redirect } from "@tanstack/react-router"
+import { z } from "zod"
 
-import {
-  EDGE,
-  MOBILE_EDGE,
-  MOBILE_SHEET_BOTTOM,
-  PANEL_TOP,
-} from "@/components/surface/layout"
-import { Surface } from "@/components/surface/surface"
-import { useIsMobile } from "@/hooks/use-media-query"
-import { useBooted } from "@/state/boot"
-import { usePointedNodes } from "@/state/globe"
-import { chooseHistoryLayer } from "@/state/history-layer"
-import { useLive } from "@/state/live"
+import { MapPanel } from "../-map/map-panel"
+import { zMapSelection } from "../-map/selection"
 
-import { useNetworkScene } from "../-shell/network-scene"
-import { useNodeNavigation } from "../nodes/-navigation"
-import { GroupCard, NodeCard } from "./-node-card"
-import { StatusCard } from "./-status-card"
-
-/** The globe on its own, with what it cannot show in a corner. */
 export const Route = createFileRoute("/_authed/networks/$network/overview")({
   staticData: { page: "overview" },
+  validateSearch: zMapSelection.extend({
+    view: z.literal("topology").optional().catch(undefined),
+  }),
+  beforeLoad: ({ params, search }) => {
+    if (search.view === "topology")
+      throw redirect({
+        to: "/networks/$network/topology",
+        params,
+        search: { node: search.node },
+        replace: true,
+      })
+  },
   component: OverviewPage,
 })
 
-/**
- * The overview: in a corner over the globe, what the globe cannot show
- * (counts, unlocated nodes, links with an unlocated end, the optional
- * history layer), and the node the pointer is on. The globe itself shows
- * the network on every page (`useGlobeNetwork`).
- */
 function OverviewPage() {
-  const { network: networkId } = Route.useParams()
-  const mobile = useIsMobile()
-  const shown = useBooted()
-  const live = useLive(networkId)
-  const scene = useNetworkScene(networkId)
-  const { state, nodes, located, nameOf } = scene
-  const navigation = useNodeNavigation(networkId)
-
-  const pointed = usePointedNodes()
-  const pointedNodes = nodes.filter(
-    (node) => pointed.includes(node.id) && located.has(node.id)
-  )
-
-  const place: CSSProperties = mobile
-    ? {
-        left: MOBILE_EDGE,
-        right: MOBILE_EDGE,
-        bottom: MOBILE_SHEET_BOTTOM,
-        maxHeight: "55dvh",
-      }
-    : {
-        right: EDGE,
-        bottom: EDGE,
-        width: 340,
-        maxHeight: `calc(100dvh - ${PANEL_TOP + EDGE}px)`,
-      }
-
-  return (
-    <div
-      className="pointer-events-none absolute flex flex-col justify-end gap-3"
-      style={place}
-    >
-      {pointedNodes.length > 0 && shown && !mobile ? (
-        <div className="glass pointer-events-auto shrink-0 rounded-surface">
-          {pointedNodes.length === 1 && pointedNodes[0] ? (
-            <NodeCard node={pointedNodes[0]} />
-          ) : (
-            <GroupCard nodes={pointedNodes} links={state.data?.links ?? []} />
-          )}
-        </div>
-      ) : null}
-      <Surface
-        shown={shown}
-        from={mobile ? "bottom" : "right"}
-        className="glass pointer-events-auto flex min-h-0 flex-col overflow-hidden rounded-surface"
-      >
-        <StatusCard
-          state={state.data}
-          stateError={state.isError ? state.error : null}
-          nodes={nodes}
-          located={located}
-          live={live}
-          nameOf={nameOf}
-          onOpenNode={(nodeId) => navigation.openNode(nodeId)}
-          mobile={mobile}
-          history={{
-            window: scene.window,
-            onChoose: (choice) => chooseHistoryLayer(networkId, choice),
-            history: scene.history,
-            links: scene.historyLinks,
-            located,
-            currentKeys: scene.currentKeys,
-            nameOf,
-          }}
-        />
-      </Surface>
-    </div>
-  )
+  const { network } = Route.useParams()
+  return <MapPanel networkId={network} page="overview" />
 }

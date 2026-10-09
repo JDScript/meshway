@@ -19,7 +19,7 @@ import { sameRuleSets, writtenRuleSet, type RuleSetMap } from "./rule-sets"
 // part, holding that part's final value (`replaceAccess` with every rule,
 // not one per click). Editing a part again replaces its operation; a value
 // equal to the base drops it. Values are compared the way the controller
-// reads them: access sets, group members and an edge's transports are sets;
+// reads them: access and group members are sets; an edge's transports are ordered;
 // omitted remarks and directions are their defaults. Omitted transports
 // (any) and none (`[]`) are two values.
 
@@ -114,7 +114,7 @@ const sameTopologyRule = (a: TopologyRule, b: TopologyRule) =>
   a.a === b.a &&
   a.b === b.b &&
   (a.transports && b.transports
-    ? sameSet(a.transports, b.transports)
+    ? sameList(a.transports, b.transports)
     : a.transports === b.transports)
 
 const sameRules =

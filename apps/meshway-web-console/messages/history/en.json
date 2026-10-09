@@ -16,7 +16,7 @@
   "history_coverage_retention": "{node}: records before {time} are past retention",
   "history_coverage_capacity": "{node}: records before {time} were cleared for capacity",
   "history_coverage_gap": "{node}: {count} records dropped {range}",
-  "history_tab": "Latency",
+  "history_tab": "History",
   "history_direction": "Direction",
   "history_direction_out": "Sent by this node",
   "history_direction_in": "Sent to this node",
@@ -32,12 +32,13 @@
   "history_unanswered": "Unanswered",
   "history_counts": "{success} ok · {timeout} timed out · {failed} failed",
   "history_instances": "{count} instances",
-  "history_none_out": "The server holds no probes sent by this node in this window.",
-  "history_none_in": "The server holds no probes sent to this node in this window.",
+  "history_none_out": "Nothing measured from it in this window",
+  "history_none_in": "Nothing measured to it in this window",
   "history_no_success": "No successful reply",
   "history_bucket": "One bucket per {value}",
   "history_legend_mean": "Mean time of successful probes",
   "history_legend_unanswered": "Timed out or failed",
   "history_legend_unmeasured": "Blank: nothing recorded",
-  "history_chart": "Probe times to {peer}"
+  "history_chart": "Probe times to {peer}",
+  "history_none_hint": "Start a measurement above; its results are recorded here."
 }

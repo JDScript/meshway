@@ -33,6 +33,8 @@ const MOBILE_BAR_SPACE = MOBILE_EDGE + BAR_HEIGHT
 export const MOBILE_SHEET_BOTTOM = MOBILE_BAR_SPACE + MOBILE_EDGE
 /** Share of the viewport height the bottom sheets take on small screens. */
 export const MOBILE_PAGE_HEIGHT = 0.52
+/** The map pages' panel on small screens: shorter, so the topology above it has room. */
+export const MOBILE_MAP_SHEET = "40dvh"
 
 /** A bottom sheet leaving through the screen's edge travels this much further, so its shadow goes too. */
 export const SHEET_EXIT_OVERSHOOT = 2

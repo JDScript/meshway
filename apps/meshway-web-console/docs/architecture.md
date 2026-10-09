@@ -29,7 +29,8 @@ TanStack Router file routes: the folder tree is the URL tree.
 - What only one route uses sits in its folder, in files and folders whose
   names start with `-` (the router ignores them): `nodes/-node-list.tsx`,
   `nodes/$node/-transport/`. What a subtree shares sits at the subtree's
-  root: the network layout's chrome in `networks/$network/-shell/`.
+  root: the network layout's chrome in `networks/$network/-shell/`, and the
+  globe/topology pages' selection, map panel and topology canvas in `-map/`.
 - Another page's typed moves may be used across pages
   (`nodes/-navigation.ts` opens a node from the overview); nothing else
   private to a route is imported from outside it.
@@ -44,7 +45,7 @@ routes/
   _authed/index.tsx          the remembered or first network, or creating one
   _authed/networks/$network/
     route.tsx                the network: its event stream, the shell (-shell/), the globe's scene
-    overview/  nodes/  members/  configuration/  settings/  account/
+    overview/  topology/  nodes/  members/  configuration/  settings/  account/
 ```
 
 ### Shared code, by kind
@@ -55,7 +56,7 @@ routes/
 | `api/queries/` | Query options and keys per resource. Every reader and the live stream use the same keys. |
 | `api/live/` | The network's SSE stream: a pure reducer (`reducer.ts`) and the runtime that applies its effects to the query cache (`stream.ts`), telling the debug mode which reads each event touched, and the controls the debug panel uses. |
 | `state/` | Client stores (below). |
-| `lib/` | Pure modules: the configuration model (`lib/configuration/`: draft, typed operations, JSONC, schema checks, form problems), nodes (`lib/nodes/status.ts`: a node's one status and its tone), observation, history series, addresses (`ip.ts`), labels for values the controller sends (`state-labels.ts`, `activity.ts`, `roles.ts`, `live-labels.ts`), the debug mode's clock offset and differences (`lib/debug/`). Message tables may live here; React does not. |
+| `lib/` | Pure modules: the configuration model (`lib/configuration/`: draft, typed operations, JSONC, schema checks, form problems), nodes (`lib/nodes/status.ts`: a node's one status and its tone), the network map (`network-map.ts`, `network-routes.ts`; what the topology draws and where: `topology-diagram.ts`, `topology-layout.ts`), observation, history series, addresses (`ip.ts`), labels for values the controller sends (`state-labels.ts`, `activity.ts`, `roles.ts`, `live-labels.ts`), the debug mode's clock offset and differences (`lib/debug/`). Message tables may live here; React does not. |
 | `components/ui/` | shadcn originals, lightly adjusted. |
 | `components/chrome/` | Shared presentational pieces (`decisions.md`, Shared components). |
 | `components/surface/` | The floating surfaces of a network's pages: `PageFrame`, `Surface`, `GlassDrawer`, the commit bar, the geometry (`layout.ts`), the history rules (`history.ts`) and the page list (`pages.ts`). |
@@ -70,9 +71,13 @@ routes/
   and the toasts sit outside the router, so navigating never re-creates them.
 - The network's route (`$network/route.tsx`) opens the network's event
   stream, draws the shell (network card, dock, toolbar), frames the globe
-  and puts the network on it (`-shell/network-scene.ts`: scene, focused
-  node, a click on a node opens it), and holds the configuration's review
-  dialogs. Its `<Outlet />` is the page.
+  and puts the network on it, and holds the configuration's review dialogs.
+  `-shell/network-scene.tsx` reads the network once for all its pages
+  (`NetworkSceneProvider`: nodes, declared edges with runtime state, the
+  planned paths from a selected node, the globe's scene). Its `<Outlet />`
+  is the page. The topology canvas (`-map/topology-canvas.tsx`) is mounted
+  before the outlet so its nodes can leave from and return to the globe's
+  markers; the map pages draw the map panel (`-map/map-panel.tsx`).
 - Each page's route renders the page: its panel and its workspace through
   `PageFrame`. A workspace belongs to a child route (`nodes/$node`,
   `members/$member`, `configuration/$view`, `settings/$section`,
@@ -107,7 +112,7 @@ ends or changes; window listeners are started once by `main.tsx`.
 | `live` | Each network's stream connection (connecting, live, paused, stopped); liveness (reads poll while not live) is derived from it. |
 | `boot` | The first-load sequence. |
 | `globe` | What the globe shows; a click's handler is runtime, not state. |
-| `history-layer` | The overview's chosen history window, per network. |
+| `history-layer` | The globe/topology history window, per network. |
 | `link-secrets` | The join or reset link's secret, taken from the fragment. |
 | `preferences` | Theme and language; `applyPreferences` keeps them on the document. |
 | `debug` | Whether the debug mode is on (localStorage) and this tab shows its panel (sessionStorage); the panel's tab and height. |

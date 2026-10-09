@@ -25,8 +25,10 @@ import {
 } from "@/components/configuration/form-kit"
 import { DIALER_PROTOCOLS } from "@/lib/configuration/dialer-model"
 import { pointerOf } from "@/lib/configuration/jsonc"
+import { moved } from "@/lib/configuration/routing"
 import { m } from "@/paraglide/messages.js"
 
+import { MoveButtons, moveKeys } from "./ordered"
 import { Hint } from "./route-kit"
 
 const actionLabel: Record<TopologyAction, () => string> = {
@@ -140,7 +142,6 @@ function RuleTransports({
         {m.configuration_topology_transports_block()}
       </p>
     )
-  if (!editable && transports === undefined) return null
   return (
     <div
       role="group"
@@ -168,41 +169,86 @@ function RuleTransports({
         />
       ) : null}
       {transports !== undefined ? (
-        <span
+        <ol
           className={cn(
-            "inline-flex flex-wrap items-center gap-1 rounded-full",
+            "inline-flex flex-wrap items-center gap-1.5 rounded-full",
             invalid && "ring-1 ring-destructive/60"
           )}
         >
-          {DIALER_PROTOCOLS.map((protocol) => {
-            const on = transports.includes(protocol)
-            if (!editable)
-              return on ? (
-                <span
-                  key={protocol}
-                  className={cn(PILL, "border-divider bg-fill-raised/60")}
+          {transports.map((protocol, index) => (
+            <li
+              key={protocol}
+              className="flex items-center gap-0.5 rounded-full border border-border bg-fill-selected"
+              onKeyDown={
+                editable
+                  ? moveKeys(index, transports.length, (delta) =>
+                      onChange(moved(transports, index, delta))
+                    )
+                  : undefined
+              }
+            >
+              {editable ? (
+                <button
+                  type="button"
+                  aria-pressed
+                  className="inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-meta font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => onChange(toggled(transports, protocol, false))}
                 >
+                  <span className="text-muted-foreground tabular-nums">
+                    {index + 1}
+                  </span>
+                  {protocolLabel[protocol]()}
+                </button>
+              ) : (
+                <span className="inline-flex h-6 items-center gap-1.5 px-2.5 text-meta">
+                  <span className="text-muted-foreground tabular-nums">
+                    {index + 1}
+                  </span>
                   {protocolLabel[protocol]()}
                 </span>
-              ) : null
-            return (
-              <button
-                key={protocol}
-                type="button"
-                aria-pressed={on}
-                onClick={() => onChange(toggled(transports, protocol, !on))}
-                className={cn(
-                  PILL,
-                  "cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  on
-                    ? "border-border bg-fill-selected text-foreground"
-                    : "border-dashed border-divider text-muted-foreground hover:bg-fill-hover hover:text-foreground"
-                )}
-              >
-                {protocolLabel[protocol]()}
-              </button>
-            )
-          })}
+              )}
+              {editable ? (
+                <span className="flex pr-0.5">
+                  <MoveButtons
+                    index={index}
+                    count={transports.length}
+                    label={protocolLabel[protocol]()}
+                    onMove={(delta) =>
+                      onChange(moved(transports, index, delta))
+                    }
+                  />
+                </span>
+              ) : null}
+            </li>
+          ))}
+          {editable
+            ? DIALER_PROTOCOLS.filter(
+                (protocol) => !transports.includes(protocol)
+              ).map((protocol) => (
+                <li key={protocol}>
+                  <button
+                    type="button"
+                    aria-pressed={false}
+                    onClick={() =>
+                      onChange(toggled(transports, protocol, true))
+                    }
+                    className={cn(
+                      PILL,
+                      "border-dashed border-divider text-muted-foreground outline-none hover:bg-fill-hover focus-visible:ring-2 focus-visible:ring-ring"
+                    )}
+                  >
+                    {protocolLabel[protocol]()}
+                  </button>
+                </li>
+              ))
+            : null}
+        </ol>
+      ) : null}
+      {transports === undefined ? (
+        <span className="text-meta text-muted-foreground">
+          {DIALER_PROTOCOLS.map((protocol) => protocolLabel[protocol]()).join(
+            " → "
+          )}
         </span>
       ) : null}
       {transports !== undefined && transports.length === 0 ? (

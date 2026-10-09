@@ -373,7 +373,7 @@ class LocalServices:
     def build(self):
         if shutil.disk_usage(self.root).free < 50 * 1024**3:
             raise DevError("Server build requires at least 50 GiB free space")
-        env = dict(os.environ, CARGO_BUILD_JOBS="2", CARGO_INCREMENTAL="0", CARGO_TARGET_DIR=str(self.root / "target"))
+        env = dict(os.environ, CARGO_INCREMENTAL="0", CARGO_TARGET_DIR=str(self.root / "target"))
         print("server: building locked service and dataset binaries…", flush=True)
         run(["cargo", "build", "--locked", "-p", "meshway-server", "--bin", "meshway-server", "--bin", "ip-datasets"], cwd=self.root, timeout=None, env=env)
 

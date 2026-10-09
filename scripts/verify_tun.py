@@ -9,7 +9,7 @@ import shutil
 import subprocess
 
 from node_lab import ROOT, base_image, check_elf, docker_target, run, sha256
-from validation_support import build_lock, fixture_options, report_directory, save_artifact, import_artifact, bind_access_options
+from validation_support import build_lock, cargo_target, fixture_options, report_directory, save_artifact, import_artifact, bind_access_options
 
 
 def fingerprint():
@@ -40,8 +40,7 @@ def main():
     report = report_directory("tun", args.report_dir)
     identity = report.name
     before = fingerprint()
-    env = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / "target/node-kernel-tests"),
-               CARGO_INCREMENTAL="0")
+    env = dict(os.environ, CARGO_TARGET_DIR=str(cargo_target()), CARGO_INCREMENTAL="0")
     binary = report / "linux-tun-tests"
     if args.artifacts:
         import_artifact(args.artifacts, binary, before, target, platform, machine)

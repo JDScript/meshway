@@ -22,6 +22,7 @@ import { membersQuery } from "@/api/queries/members"
 import { enrollmentKeysQuery } from "@/api/queries/nodes"
 import { BusyLabel } from "@/components/chrome/busy-label"
 import { ConfirmDialog } from "@/components/chrome/glass-dialog"
+import { ListPlaceholders } from "@/components/chrome/list"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLoadMore } from "@/hooks/use-load-more"
@@ -125,7 +126,9 @@ export function EnrollmentKeys({
         {failureText(keys.error) ?? m.nodes_enrollment_failed()}
       </EmptyLine>
     ) : (
-      <Skeleton className="h-12 w-full rounded-tile" />
+      <ul className="flex flex-col gap-0.5">
+        <ListPlaceholders rows={3} />
+      </ul>
     )
   else if (rows.length === 0)
     body = <EmptyLine>{m.nodes_enrollment_none()}</EmptyLine>
@@ -212,6 +215,9 @@ export function EnrollmentKeys({
                       {m.nodes_enrollment_node({ name })}
                       <ArrowUpRightIcon className="size-3.5" />
                     </button>
+                  ) : nodes === undefined ? (
+                    // The inventory is not read: whether the node is still there is not known.
+                    <Skeleton className="h-3 w-28 rounded-full" />
                   ) : (
                     <span className="text-meta break-all text-muted-foreground">
                       {m.nodes_enrollment_node_gone({ id: node })}

@@ -13,8 +13,32 @@ import type {
   StateProblem,
 } from "@meshway/control-client"
 
+import type { ConnectionStatus } from "@/lib/nodes/connections"
 import type { NodeStatus } from "@/lib/nodes/status"
 import { m } from "@/paraglide/messages.js"
+
+export const connectionStatusLabel: Record<ConnectionStatus, () => string> = {
+  connected: () => linkPhaseLabel.authenticated(),
+  connecting: () => linkPhaseLabel.preparing(),
+  failed: () => linkPhaseLabel.failed(),
+  unknown: () => statusLabel.unknown(),
+}
+
+/** Known carrier names use the same wording as configuration; future providers keep their name. */
+export function transportText(transport: string): string {
+  switch (transport) {
+    case "native_udp":
+      return m.configuration_dialer_native_udp()
+    case "native_tcp":
+      return m.configuration_dialer_native_tcp()
+    case "vless":
+      return m.configuration_dialer_vless()
+    case "trojan":
+      return m.configuration_dialer_trojan()
+    default:
+      return transport
+  }
+}
 
 // The words for runtime State, one per value the controller sends, the
 // same on every page that shows it.
@@ -97,7 +121,7 @@ export function endpointSourceText(origin: EndpointSource): string {
 }
 
 /** An endpoint's source without its details (a coordinated attempt names only the kind). */
-const endpointKindLabel: Record<EndpointKind, () => string> = {
+export const endpointKindLabel: Record<EndpointKind, () => string> = {
   configured: () => m.state_endpoint_configured(),
   interface: () => m.state_endpoint_kind_interface(),
   stun: () => m.state_endpoint_kind_stun(),

@@ -11,6 +11,7 @@ import { useSurfaceHistory } from "@/components/surface/history"
 import { DOCK_WIDTH } from "@/components/surface/layout"
 import {
   DRAFT_PAGE,
+  isCanvasPage,
   PAGES,
   type DockItem,
   type PageId,
@@ -194,15 +195,15 @@ export function DockLauncher({
             page={item.page}
             aria-current={item.page === page ? "page" : undefined}
             // Pages open as sheets over the overview: the first one remembers it, the next ones replace.
-            {...(item.page === "overview" || item.page === page
+            {...(isCanvasPage(item.page) || item.page === page
               ? {}
-              : history.toPage(page === "overview"))}
+              : history.toPage(isCanvasPage(page) ? page : null))}
             onClick={(event) => {
               setOpen(false)
               // The overview from a page is leaving the pages, as a swipe would.
-              if (item.page === "overview" && page !== "overview") {
+              if (isCanvasPage(item.page) && !isCanvasPage(page)) {
                 event.preventDefault()
-                history.leavePage()
+                history.toCanvas(item.page)
               }
             }}
             className={cn(

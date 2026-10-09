@@ -29,7 +29,7 @@ its generated client only, and only what the controller delivers:
 - Pages now: `/login`, `/register`; `/` opens the remembered network (kept
   per account) or the first listed, else offers creating the first; a
   network's overview (the globe with the State's located nodes and links,
-  the status corner and the history layer), nodes, members (for `actions.manageMembers`: the members and
+  the map panel and the history layer), its topology, nodes, members (for `actions.manageMembers`: the members and
   the join links, a member's workspace), settings `network` (the name,
   editable when `actions.rename`; the ID, creation date and role; leaving)
   and `activity` (for `manageMembers`), and the account (email and ID,
@@ -72,10 +72,12 @@ its generated client only, and only what the controller delivers:
   topology (with `defaults.topology`), traffic routing, rule sets, groups,
   tag owners, DNS, address pools and the defaults (access, topology,
   dialers); "nodes" lists each node's settings and opens its workspace,
-  where they are edited. A topology allow rule may limit the transports
-  of its edge: any (omitted, protocols added later included) or only the
-  ones chosen of UDP, TCP, VLESS and Trojan, none chosen being `[]` (the
-  two ends cannot connect directly); the first matching allow decides and
+  where they are edited. A topology allow rule sets its edge's permitted
+  transports and preference order: platform order (omitted, UDP → TCP →
+  VLESS → Trojan) or the chosen ordered list, none chosen being `[]` (the
+  two ends cannot connect directly). Chosen protocols are numbered in their
+  written order and move with arrows or Alt+↑/↓; order-only edits remain in
+  the draft. The first matching allow decides and
   later ones are not merged in. A block rule has none to set: making a
   rule a block drops them, and ones the source gives a block rule are said
   to have no effect. One
@@ -143,40 +145,41 @@ its generated client only, and only what the controller delivers:
   (not in the State). An online node shows no time: a report every few
   seconds is not news. An offline one says 最后在线 … (its last report,
   else its last sign-in), by this browser's clock, ticking every second.
-  A node's workspace (`/nodes/<id>?tab=overview|settings|transport|latency|path|diagnostics|manage`),
-  its status in the header:
-  - overview, what matters first: health (status, the configuration as one
-    fact — up to date, applying r…, r… failed, still on r… against the
-    latest, none applied —, its links connected of all with a way to the
-    transport tab, the problems it reports, listed in red); the node (owner
-    or tags, OS and architecture, Agent version, ID, reported hostname,
-    routing profile, joined); its addresses (IPv4, IPv6, where geojs places
-    the address the server rests its location on or why that is not known,
-    the provider: the AS of that address, or of the one address seen; with
-    more than one address, each with its place and AS).
-  - diagnostics, what the status rests on: the report's times (received,
+  A node's workspace (`/nodes/<id>?tab=…`) has four primary tabs:
+  Overview, Connections, Diagnostics and Settings. The URL's `tab` selects
+  a specific view within them; node status stays in the header.
+  - overview: the saved configuration's DNS name (while readable) and
+    MagicDNS setting, Mesh IPv4/IPv6, connected neighbor count, every
+    observed public IP with its place and AS, compact configuration progress
+    and reported problems. Matching revision alone is not enough to say
+    current: the desired execution must match the reported applied reference,
+    and State must be current. Other reports say what was last applied.
+  - connections (`tab=transport`): one row per directly adjacent peer, with
+    current reported transport and connection state. Multiple channel IDs
+    between the same pair do not add rows or connected peers. Expansion
+    preserves each channel's phase, evidence, acquisition, business dependencies
+    and start time, with the action to open the peer.
+  - runtime details (`tab=diagnostics`, under Diagnostics), what the status rests on: the report's times (received,
     recorded by the node, valid until, last sign-in), instance and report
     number; the inventory's `desiredExecution` (the configuration the
     server assigns: revision, publication, digest), never itself saved or
     applied, said against the report's saved and applied (applied, only
     saved, another one, no report); saved / applied / in progress against
     the current revision; what the location rests on (address, source,
-    observed, valid until) and where geojs places it.
-  - settings: hostname, remark, enabled, exit, tags (a User identity given
+    observed, valid until) and where geojs places it; reported end-to-end paths,
+    when present, retain each reporter's evidence.
+  - general settings (`tab=settings`): hostname, remark, enabled, exit, tags (a User identity given
     tags becomes a Tag identity; the last tag cannot be taken), Mesh
-    addresses within the pools (empty: no address of that family), and the
-    dialers: inherit the defaults (shown), a set of its own, or none (`{}`).
-  - transport: each configured listener with what the report says of it
+    addresses within the pools (empty: no address of that family).
+  - connection settings (`tab=connection-settings`, under Settings): dialers
+    (inherit the defaults, a set of its own, or none; no priority field) and configured listeners
+    together. A listener's protocol, bind, reported phase and problem are
+    compact; expansion shows its configuration and what the report says of it
     (phase, problem, loaded certificate, sockets and their endpoint
     candidates by origin, observed and expiry, expired ones marked, and the
     local addresses the node reported for it: none when it did not sample,
     "no usable local address" when it sampled none), other sockets,
-    listeners reported but not configured, the node's links (peer,
-    evidence, transport, how this node acquired the channel by its own
-    report — dialed a published endpoint or an address the peer reported,
-    accepted from the peer, UDP hole punching — else who dialed, business
-    use, since, phase)
-    and paths. A listener is edited inline and enters the draft only when
+    listeners reported but not configured. A listener is edited inline and enters the draft only when
     valid; it restates the view's other fields; secrets are write-only (the
     UUID and a provided certificate are kept unless written; recreating
     generates new ones). WebSocket response headers are shown by name and
@@ -184,7 +187,7 @@ its generated client only, and only what the controller delivers:
     under the switch), and a VLESS listener moved to TCP drops its
     WebSocket block (`websocket: null`). Trojan listeners are edited in the
     source.
-  - path (`evaluateConfiguration`; owners and admins, `readConfiguration`):
+  - route check (`tab=path`, under Diagnostics; `evaluateConfiguration`; owners and admins, `readConfiguration`):
     from this node to a destination typed as a node's hostname (offered as
     they are typed), an IP address or a domain, or a public destination no
     rule matches; no protocol or port. The controller plans it over the
@@ -202,7 +205,10 @@ its generated client only, and only what the controller delivers:
     A result says the revision it is for, and that the configuration or the
     draft changed since. Nothing is kept: the draft's source is sent, never
     stored or cached.
-  - manage: the keys with their creation times, each revoked (with
+  - device information (`tab=device`, under Settings): identity, OS and
+    architecture, Agent version, Node ID, reported hostname, routing profile
+    and registration time, as a compact fact list.
+  - keys and deletion (`tab=manage`, under Settings): the keys with their creation times, each revoked (with
     `expectedGeneration`) where `canRevokeControlKey` /
     `canRevokeDataplaneKey`; a `version_conflict` reads the nodes again
     and keeps the confirmation over the key read; and permanent deletion
@@ -329,28 +335,26 @@ its generated client only, and only what the controller delivers:
   content is never treated as empty. Renaming a set or a profile renames
   its references.
 - Overview (`getNetworkState`, `listNodes` for names,
-  `queryObservationHistory`): a node is on the globe only where geojs
-  places the address the server rests its location on (`derived.location`);
-  pointing at one shows the place, the address and its source (STUN or
-  interface), observation and expiry, and that geojs.io looked it up. Every
-  other node is listed under 待定位 with the reason: the server's
+  `queryObservationHistory`): the globe places nodes where geojs places
+  the address the server rests their location on (`derived.location`).
+  Hover is a name/status hint; clicking selects the node in the map panel
+  (below). The panel's node list gives every other node the reason it is
+  not placed: the server's
   `locationAbsent`, or that the lookup is off, under way or failed (an
-  answer without coordinates names its region). Current links (`StateView.links`)
-  are drawn only between located ends, styled by evidence, then phase
-  (matched, one end, conflicting, expired, preparing, failed, closed), and
-  never animated: nothing travels along a line, and `inUse` is a listed
-  fact. Links with an unlocated end are counted and listed, not drawn. Links
-  between the same nodes take successive arcs. The corner counts nodes by
-  status and links by phase and evidence, with the State's `asOf` and
-  whether the stream keeps it live. A node opens its workspace from the
-  globe or the list. Nodes whose dots would overlap at the current zoom
+  answer without coordinates names its region). With readable configuration,
+  base edges come from its declarations; `StateView.links` annotates those
+  pairs as connected, connecting, failed or unknown. Without full configuration
+  access only visible runtime connections are drawn. The globe draws the
+  current connections, and with a node selected the hops of its planned
+  paths; its edges require located ends and are never animated. Links with an
+  unlocated end are listed, not drawn. Links between the same nodes share one
+  edge. Nodes whose dots would overlap at the current zoom
   (the same IP or city, or neighbouring cities from afar) are one marker at
   the first one's place, nothing moved: its dot counts them in the tone of
   the one most in need of a look, its name is the selected or first node's
-  and "等 N 个", and pressing it lists them, each opening its node; pointing
-  at it lists them in the corner with their place, address and the links
-  between them, which the globe cannot draw (links between the very same
-  place are not drawn). Zooming in splits a group once its dots are apart.
+  and "等 N 个". Clicking it lists its nodes in the map panel; choosing one
+  selects it with a way back to the group. Links between the very same
+  place are not drawn. Zooming in splits a group once its dots are apart.
   A name that would cover another marker shows only where it is pointed
   at, focused, open or selected, the selected node's first; more than 120
   markers show names that way only.
@@ -358,12 +362,13 @@ its generated client only, and only what the controller delivers:
   the controller's longest) is fixed when chosen, and refreshing reads a new
   one, because cursors are bound to the window and lapse after 15 minutes.
   `recentLinks` (kinds `link_opened`, `link_closed`), both ends' records of
-  a link merged, the latest deciding opened or closed; drawn faint, apart
-  from current links, and never for a link that is current. The first 5
+  a link merged, the latest deciding opened or closed; historical pairs are
+  drawn faint, apart from current adjacency, and never over a pair already
+  represented by current State. The detailed history retains channel records. The first 5
   pages (200 each) are read on their own, then on request. Coverage is
   shown as the controller states it: pruning that reaches into the window,
   and each collection gap with its own interval and drop count.
-- Node latency (`?tab=latency`): `buckets` of `probe_completed`, sent by the
+- Measurements (`?tab=latency`, under Diagnostics): `buckets` of `probe_completed`, sent by the
   node (`sourceNodeId`) or to it (`peerNodeId`), in the same windows (1 min,
   5 min, 15 min, 1 h buckets). One series per source, probe kind, path, link
   and transport; the controller's per-instance and per-publication buckets
@@ -496,8 +501,8 @@ its generated client only, and only what the controller delivers:
 ## Overview globe motion
 
 Nothing on the globe animates to suggest activity: links and nodes are
-static, styled by their state (`lib/network-map.ts`, the evidence before
-the phase). Only the globe turns, slowly, while nothing on it is focused
+static, styled by their connection state (`lib/nodes/connections.ts` and
+`lib/network-map.ts`). Only the globe turns, slowly, while nothing on it is focused
 and motion is allowed; it stops on interaction or on focusing a placed
 node, and eases back in after a pause. `prefers-reduced-motion` stops it;
 states stay distinguishable by stroke and colour.
@@ -519,6 +524,165 @@ states stay distinguishable by stroke and colour.
   or filter on a glass panel's wrapper stops its blur, so surfaces animate on
   the glass element itself.
 
+## Overview and node information hierarchy
+
+- Configuration topology is drawn directly from the existing non-secret
+  `ConfigurationView` (`configurationQuery`, also written by SSE), using its
+  nodes, identities, groups, topology and defaults. `lib/configuration/topology-view.ts`
+  owns this non-executable display projection. Any matching block wins; otherwise the first
+  matching allow supplies the ordered transports; otherwise the default applies. With no
+  rules, allow means the complete permitted graph, deny means no permitted
+  edges. State annotates these edges with runtime state and never determines
+  whether the configured edge exists. This declaration view does not resolve
+  private stable membership bindings, authorize traffic or compile executable
+  paths; those remain Server/Policy responsibilities. No additional endpoint
+  or path-evaluation call is needed for drawing it. `[]` remains an explicit
+  absence of permitted carriers, distinct from an unrestricted edge.
+  Configuration reads follow `readConfiguration`; a member without that
+  permission gets the existing visible-State diagram labelled Live connections.
+  Configuration nodes remain present before any runtime report arrives.
+- A runtime connection means direct Node adjacency: if A reaches B through R,
+  A's connection page lists R and the runtime overlay shows A—R—B. A separately
+  declared A—B edge can remain on the topology base. The runtime list does not list
+  B as directly connected. Online is the node's reported runtime/control state,
+  not a statement that every allowed adjacency already exists.
+- `lib/nodes/connections.ts` owns the shared projection used by the node list,
+  compact card, counts, globe and topology. Each pair has one row/edge. A
+  current authenticated channel (`matched` or `oneSided`) makes it connected;
+  single-sided visibility is not itself degraded connectivity. A current
+  preparing/failed channel says connecting/failed when no connected channel
+  exists. Only expired/conflicting evidence means unknown, not a current
+  connection or proof of disconnection. Closed-only pairs leave the current
+  view. A valid replacement takes precedence over its stale predecessor.
+  Counts labelled connected count peers/pairs in that state, not channel IDs
+  or report records. The neighbor list can also show known pending/unknown
+  peers, with their states explicit; absent node reports do not become zero.
+- Overview (`/overview`) is the globe; topology (`/topology`) is a separate
+  primary navigation page alongside overview and nodes. Each keeps its own
+  selected node/group in the URL. The diagram separates every node,
+  including nodes without a location or a live connection. Configuration and
+  runtime counts are labelled separately. A different State configuration
+  revision does not annotate the new declaration as current. Node positions stay stable
+  across status updates. Original channel evidence remains available in details;
+  history remains an explicitly selected layer.
+- The topology is the globe's nodes rearranged, not a second picture.
+  Opened from another page, the globe stops turning and its markers lift,
+  glowing; then the globe shrinks, dim, into the middle of the canvas while
+  each node flies from its marker to its card, from the globe's centre out
+  (nodes not seen on the globe appear in place), and the cards open out of
+  the dots; the lines come in once the cards are there. Leaving, the cards
+  close into dots that fly back onto their markers as the globe returns.
+  Opened at its address, the globe's first reveal lands straight in its
+  place behind (it is never interrupted) and the cards fade in where they
+  are. Reduced motion switches at once. The canvas
+  (`-map/topology-canvas.tsx`) is mounted by the network layout so it can
+  play both ways; React renders where the cards end, and the flight writes
+  positions frame by frame. Previous `/overview?view=topology` links
+  redirect to the topology page with their node selection.
+- Nothing selected, the topology is the whole network: a card per node (its
+  state dot and name), laid out over the declared edges by a force layout
+  started from where each node is on Earth and turned to match it, so west
+  stays left of east; nodes without a place sit by their links. Cards never
+  overlap and no line runs under a card it does not end at. Selecting a
+  node lays out its paths: the node on the left, every other node in the
+  column after the node it is reached through (a tidy tree, so lines
+  between columns do not cross), and only the planned main paths' hops,
+  each with an arrow the way traffic goes (`evaluateConfiguration` per
+  destination over the current revision, at most four at once, kept per
+  revision; owners and admins). The cards wait for every plan, so they move
+  once. Nodes without a plan take a last column, dimmed; plans refused by
+  access are dotted. A member sees the node's current links one hop out.
+  Choosing an edge selects that link. Both layouts depend only on which
+  nodes and edges there are and the paths (`lib/topology-layout.ts`).
+- Both views zoom and pan: a two-finger scroll pans, a pinch or a mouse
+  wheel's notch zooms, and buttons zoom in, out and fit. Cards grow and
+  shrink with the zoom but stay readable while there is room; an edge's
+  caption shows only where it fits between its cards. With at most 16 edges
+  every edge has its caption and flow; otherwise only what is pointed at or
+  selected.
+- Edges are dashed until connected and solid in the link's colour while
+  connected, with the carrier in use as a caption (or the configured
+  restriction, "仅 …", when not connected); an edge on the default order has
+  no caption. A link carrying traffic (`inUse`, not a byte count) glows;
+  moving dots run only along directions `StateView.paths` reports, never
+  guessed from the links. Reduced motion keeps the glow still and draws no
+  dots.
+- One map panel (`-map/map-panel.tsx`) on the right of both map pages, three
+  levels, each going back to the one above (Escape too): the network — its
+  links or its nodes (the globe lists nodes first, the topology links), one
+  line of online nodes, connections and how current the State is, and the
+  history window in a small menu; a node — status, address, the way into its
+  workspace, and its path to every other node, each hop chosen to open that
+  link; a link — what the nodes report of each channel (carrier, state,
+  dialed by, since, traffic), the last hour of direct probes each way, what
+  each end can dial the other with by the configuration (topology carriers ∩
+  dialers ∩ listeners; the server still checks stream, TLS and runtime
+  support), and the rule it rests on with its carrier order. A globe cluster
+  first lists its nodes. On phones the panel is a bottom sheet and the
+  topology sits above it.
+- Node workspaces have five tabs on one level, at the top: 概览 / Overview,
+  连接 / Connections, 诊断 / Diagnostics, 设置 / Settings, 设备与密钥 /
+  Device & keys. Earlier `?tab=` values open the tab that now holds their
+  content.
+  - Overview: four tiles summing up connections, latency, configuration and
+    place (each opens its tab), then Mesh DNS and IP addresses, network
+    location and actionable reported problems. The header alone carries
+    node status. Configuration progress is a compact fact, not a second
+    health dashboard.
+  - Connections: the direct neighbours (who, over what, since when, how
+    fast), then how other nodes reach it (its listeners and the addresses
+    they are reachable at). How each side acquired a channel, sockets and
+    candidates are revealed on expansion.
+  - Diagnostics has separate entries for actual measurements (live and
+    history), route checks against configuration/draft, and runtime details.
+    Reported running paths are here too, never inferred by chaining links.
+    A route check remains planning; a diagnostic reply proves the authorised
+    Node round trip, not an application's TCP/UDP port health.
+  - Settings is what the configuration says of the node: general settings,
+    tags, Mesh addresses and connection configuration. Dialers and
+    listeners are together under connection configuration, described as
+    active connection and accepting connections. Protocol
+    selection/inheritance and listener protocol/port come first; listener
+    bind overrides, TLS/WS and material editing are expanded when needed.
+    There is one owner for each editor and the existing network
+    configuration draft.
+  - Device & keys: what the device reports of itself, its keys, and
+    deleting the node.
+- Public addresses stay visible even when there is only one. Repeated
+  place/network metadata may be grouped while retaining every address;
+  differing places or AS networks must remain distinguishable. An AS
+  organisation identifies the address's network, not the device's hosting
+  vendor. Mesh DNS presentation depends on caller-visible canonical naming
+  data and the MagicDNS setting; see `v2-api-needs.md`.
+- Compact surfaces omit lookup attribution, observation/expiry timestamps,
+  socket IDs/generations, certificate hashes and subscription/lease mechanics.
+  Relevant evidence belongs in runtime details; the location lookup service
+  remains named with its account setting. Empty diagnostic sections and
+  repeated status/identity cards do not occupy the overview.
+- A matching revision alone must not say the current execution target is
+  applied. Summaries use State evidence and the complete desired/saved/applied
+  references already used by diagnostics, preserving unknown values.
+- The diagram uses small device symbols and status dots, on a quiet grid
+  without a surrounding panel. Configuration-only edges are dashed; actual
+  connection state and optional recorded history annotate only declared pairs.
+  The source rule/default and transport restriction are available on the edge.
+  Visible transport badges use the actual reported protocol when connected;
+  otherwise they show the configured order with arrows, or Default order.
+  The platform's full order is available in the edge description.
+  Historical and in-progress protocols retain their qualifier. Small diagrams
+  show badges along the curves with collision avoidance; dense diagrams reveal
+  them for hovered, focused or selected-node edges. Full descriptions remain
+  available on the edge's wider pointer/keyboard target.
+  Names stay legible on small screens, where nodes occupy separate rows.
+  Dense drawings have an explicitly labelled 80-node window, retaining the
+  selected node; this bounds pair expansion without claiming a partial drawing
+  is the whole network.
+- Overview and device facts use `FactList` / `FactRow`: one 64px row, 16px
+  horizontal inset and a shared label column. The header's status, address
+  and identity share a text size, 20px line height and baseline; only the
+  status dot is centred independently. Connection settings share the same
+  content width as general settings.
+
 ## Pages
 
 Only what the controller can do has an entry: no switch, field or page
@@ -527,8 +691,9 @@ controller supports today; the rest of each row is the target design.
 
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
-| Overview `/overview` | the globe with located nodes and current links; the status corner (counts, 待定位, current links, the history layer) and the node the pointer is on | none: the globe is its index | none (a node opens its workspace on the nodes page) | |
-| Nodes `/nodes?q=` | each node's status; a node's health, facts and addresses, settings, listeners with their runtime, links and paths, latency, what its status rests on, keys and deletion; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=overview\|settings\|transport\|latency\|path\|diagnostics\|manage`, `/nodes/add` | revoke, enrolment key |
+| Overview `/overview` | globe and optional history | the map panel: network, node or cluster, link | an explicit action opens node details | |
+| Topology `/topology` | the globe's nodes as cards: the whole network over the declared edges with runtime state, or the paths from a selected node | the map panel: network, node, link | an explicit action opens node details | |
+| Nodes `/nodes?q=` | overview, connections, diagnostics and settings; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=…`, `/nodes/add` | revoke, enrolment key |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
 | Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity | leave |
@@ -563,7 +728,7 @@ out. A revision the network does not have is said in the history.
 
 | Level | What | Rule |
 | --- | --- | --- |
-| Canvas | the globe | always |
+| Canvas | the globe; on the topology page its nodes as cards, the globe small and dim behind | always |
 | Chrome | network card, toolbar, dock | always |
 | Page panel | a page's index | one at a time |
 | Workspace | one entity or one editor in full | one at a time; the deepest level |
@@ -597,11 +762,11 @@ surface kind has one slot, so nothing stacks:
 | Chrome | always | network card top left (switcher, counts, link bar), search, preferences and account top right, the dock; on phones a bottom bar on every page (the launcher, then the card without its link bar) and preferences top right |
 | Dock | left, under the network card | icon rail on wide screens; on phones a round launcher at the bottom left, under the thumb, that unfolds the pages upwards |
 | Page panel | left, beside the dock | one page's index: a list or its sections |
-| Status corner | the overview only, bottom right; on phones above the bottom bar | counts, 待定位, current links, the history layer; the node the pointer is on above it |
+| Map panel | the overview and the topology, right; on phones a bottom sheet above the bottom bar | the network (links, nodes, the history window), a node (its paths), a link (state, latency, capability, rule) |
 | Workspace | right of the page panel, covering the globe | one entity or one editor in full; the globe dims and keeps its place |
 
-- Nodes without a location are not drawn on the globe; the status corner
-  lists them under 待定位, and links to them are counted and listed.
+- Nodes without a location are not drawn on the globe; the map panel's node
+  list says why, and links to them are listed.
 - `components/surface/layout.ts` is the single source of geometry. The globe
   centres (and shrinks if needed) in the space the surfaces leave free, and the
   same numbers are published as CSS variables for class-placed surfaces.
@@ -709,7 +874,7 @@ they need `motion`.
   before it, as on a lit sphere; nothing is painted along it.
 - The engine chunk is lazy-loaded (~145 kB gzip, almost all three.js).
   Where it cannot run (no WebGL, or its chunk did not load) the first load
-  goes on without a globe, and the overview's corner says the globe cannot
+  goes on without a globe, and the overview's map panel says the globe cannot
   be drawn.
 
 ## First load

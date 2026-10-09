@@ -32,10 +32,16 @@ def report_directory(kind, supplied=None):
     return report
 
 
+def cargo_target():
+    """Cargo target shared by the three Linux fixtures; remote runs share one across worktrees."""
+    return Path(os.environ.get("MESHWAY_VALIDATION_TARGET") or ROOT / "target/node-kernel-tests")
+
+
 @contextlib.contextmanager
 def build_lock():
-    # All three fixtures share this Cargo target, even from standalone entrypoints.
-    path = ROOT / "target/node-kernel-tests/build.lock"
+    # Lives with the target it guards, so every worktree that builds into it and
+    # copies frozen outputs out of it is serialized, even standalone entrypoints.
+    path = cargo_target() / "build.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as lock:
         os.set_inheritable(lock.fileno(), False)

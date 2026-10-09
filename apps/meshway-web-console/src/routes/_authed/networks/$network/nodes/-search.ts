@@ -12,18 +12,31 @@ export const zNodesSearch = z.object({
 
 export const NODE_TABS = [
   "overview",
-  "settings",
-  "transport",
-  "latency",
-  "path",
+  "connections",
   "diagnostics",
-  "manage",
+  "settings",
+  "device",
 ] as const
 export type NodeTab = (typeof NODE_TABS)[number]
 
+/** Tabs of earlier layouts, kept so their links still open the same content. */
+const EARLIER: Record<string, NodeTab> = {
+  transport: "connections",
+  latency: "diagnostics",
+  path: "diagnostics",
+  "connection-settings": "settings",
+  manage: "device",
+}
+
 export const zNodeSearch = z.object({
   tab: z
-    .enum(["settings", "transport", "latency", "path", "diagnostics", "manage"])
+    .preprocess(
+      (value) =>
+        typeof value === "string" && Object.hasOwn(EARLIER, value)
+          ? EARLIER[value]
+          : value,
+      z.enum(["connections", "diagnostics", "settings", "device"])
+    )
     .optional()
     .catch(undefined),
 })

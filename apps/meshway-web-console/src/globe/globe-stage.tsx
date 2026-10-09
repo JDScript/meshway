@@ -9,7 +9,13 @@ import {
   markRevealed,
   useBootPhase,
 } from "@/state/boot"
-import { pointAtOnGlobe, selectFromGlobe, useGlobe } from "@/state/globe"
+import {
+  pointAtOnGlobe,
+  provideGlobeView,
+  provideMarkerPoints,
+  selectFromGlobe,
+  useGlobe,
+} from "@/state/globe"
 import { togglePlanet } from "@/state/preferences"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
@@ -22,14 +28,15 @@ const TAPS = 5
 /** A click on the globe (not a node): deselects; five quick ones swap the little planet look. */
 function makeGlobeClick() {
   let taps: number[] = []
-  return (nodeId: string | null) => {
-    selectFromGlobe(nodeId)
-    if (nodeId !== null) return
+  return (nodeId: string | null, group?: readonly string[]) => {
+    const handled = selectFromGlobe(nodeId, group)
+    if (nodeId !== null) return handled
     const now = performance.now()
     taps = [...taps.filter((at) => now - at < TAPS_MS * TAPS), now]
-    if (taps.length < TAPS) return
+    if (taps.length < TAPS) return handled
     taps = []
     toast(togglePlanet() ? m.planet_on() : m.planet_off(), { id: "planet" })
+    return handled
   }
 }
 
@@ -100,6 +107,16 @@ export function GlobeStage() {
     engine.update({ ...state, colors, motion, boot })
   }, [engine, state, colors, motion, boot])
 
+  useEffect(() => {
+    if (!engine) return
+    const points = provideMarkerPoints(() => engine.markerPoints())
+    const view = provideGlobeView(() => engine.view())
+    return () => {
+      points()
+      view()
+    }
+  }, [engine])
+
   // Ready once the renderer has drawn the loader's pose at least once, so
   // the hand-off never uncovers an empty canvas.
   useEffect(() => {
@@ -119,6 +136,9 @@ export function GlobeStage() {
         aria-label={m.globe_region()}
         data-boot={boot}
         data-receded={state.recede}
+        data-backdrop={state.backdrop ?? undefined}
+        aria-hidden={state.backdrop !== null}
+        inert={state.backdrop !== null}
         className="globe-stage fixed inset-0"
       />
     </>

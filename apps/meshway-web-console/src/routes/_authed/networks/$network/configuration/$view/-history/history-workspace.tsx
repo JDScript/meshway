@@ -8,6 +8,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { ArrowLeftIcon, RotateCcwIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 
+import { failureText } from "@/api/failure"
 import { sessionQuery } from "@/api/queries/auth"
 import {
   comparisonQuery,
@@ -203,7 +204,13 @@ export function HistoryWorkspace({
             draftBase={null}
             facts={
               revisions.data
-                ? [m.configuration_history_count({ count: items.length })]
+                ? [
+                    revisions.hasNextPage
+                      ? m.configuration_history_count_more({
+                          count: items.length,
+                        })
+                      : m.configuration_history_count({ count: items.length }),
+                  ]
                 : []
             }
           />
@@ -347,6 +354,10 @@ function RevisionDetail({
       {showConfiguration ? (
         view.data ? (
           <JsonBlock value={view.data.configuration} className="max-h-96" />
+        ) : view.isError ? (
+          <EmptyLine>
+            {failureText(view.error) ?? m.configuration_change_unread()}
+          </EmptyLine>
         ) : (
           <Skeleton className="h-40 w-full rounded-tile" />
         )
@@ -396,7 +407,14 @@ function RevisionDetail({
               : m.configuration_history_compare_failed()}
           </EmptyLine>
         ) : !comparison.data ? (
-          <Skeleton className="h-12 w-full rounded-tile" />
+          <div className="flex flex-col gap-4">
+            <div className="grid gap-2 sm:grid-cols-3">
+              {[0, 1, 2].map((index) => (
+                <Skeleton key={index} className="h-[4.25rem] rounded-tile" />
+              ))}
+            </div>
+            <Skeleton className="h-24 w-full rounded-tile" />
+          </div>
         ) : (
           <div className="flex flex-col gap-4">
             <div className="grid gap-2 sm:grid-cols-3">
@@ -420,6 +438,18 @@ function RevisionDetail({
                 labels={{
                   before: m.revision({ revision: other }),
                   after: m.revision({ revision }),
+                }}
+                failures={{
+                  before:
+                    otherView.data === undefined && otherView.isError
+                      ? (failureText(otherView.error) ??
+                        m.configuration_change_unread())
+                      : null,
+                  after:
+                    view.data === undefined && view.isError
+                      ? (failureText(view.error) ??
+                        m.configuration_change_unread())
+                      : null,
                 }}
               />
             )}

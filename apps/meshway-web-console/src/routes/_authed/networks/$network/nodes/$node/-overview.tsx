@@ -1,329 +1,363 @@
-import type { NodeInventoryView, StateView } from "@meshway/control-client"
-import { Button } from "@meshway/ui/button"
+import type {
+  NetworkSummary,
+  NodeInventoryView,
+  StateView,
+} from "@meshway/control-client"
 import type { UseQueryResult } from "@tanstack/react-query"
-import { ArrowUpRightIcon } from "lucide-react"
+import { CircleAlertIcon, CircleCheckIcon } from "lucide-react"
 
 import { failureText } from "@/api/failure"
 import { useAddressGeo } from "@/api/queries/ip-geo"
 import { CopyButton } from "@/components/chrome/copy-button"
-import { Section } from "@/components/chrome/section"
-import { Tile } from "@/components/chrome/tile"
+import { EmptyLine } from "@/components/chrome/section"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
-import { agoTime, dateTime } from "@/lib/format"
-import {
-  asnText,
-  geoText,
-  NO_ADDRESSES,
-  nodeAddresses,
-  type GeoOf,
-  type NodeAddresses,
-} from "@/lib/geo"
+import { agoTime } from "@/lib/format"
+import { asnText, geoText, NO_ADDRESSES, nodeAddresses } from "@/lib/geo"
+import { millis } from "@/lib/history/format"
+import { nodeConnections } from "@/lib/nodes/connections"
 import {
   configurationSync,
-  nodeLinks,
-  reportOf,
+  desiredAgainst,
+  fullReport,
   stateOf,
-  type ConfigurationSync,
 } from "@/lib/nodes/state-model"
-import { lastSeen, nodeStatus } from "@/lib/nodes/status"
 import { locationAbsentLabel, problemText } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
-import { LiveStatus } from "./-live-status"
-
-const GRID = "grid grid-cols-2 gap-2 xl:grid-cols-4"
-const WIDE = "col-span-2"
-const muted = (text: string) => (
-  <span className="font-normal text-muted-foreground">{text}</span>
-)
-
-function syncText(sync: ConfigurationSync) {
-  switch (sync.kind) {
-    case "current":
-      return (
-        <>
-          {m.nodes_sync_current()}
-          {muted(` · ${m.revision({ revision: sync.revision })}`)}
-        </>
-      )
-    case "applied":
-      return m.revision({ revision: sync.revision })
-    case "applying":
-      return m.nodes_sync_applying({ revision: sync.revision })
-    case "failed":
-      return m.nodes_sync_failed({ revision: sync.revision })
-    case "behind":
-      return m.nodes_sync_behind({
-        applied: sync.applied,
-        current: sync.current,
-      })
-    case "none":
-      return m.nodes_sync_none()
-    case "unknown":
-      return muted("—")
-  }
-}
-
-const syncTone = (sync: ConfigurationSync) =>
-  sync.kind === "failed"
-    ? "destructive"
-    : sync.kind === "applying" || sync.kind === "behind" || sync.kind === "none"
-      ? "warning"
-      : undefined
+import type { NodeTab } from "../-search"
+import { useNodeConfiguration } from "./-draft"
+import { Card, LoadingRow, Row, Rows, SummaryTile } from "./-kit"
+import { useNeighborLatency } from "./-latency/neighbor-latency"
 
 /**
- * What matters about a node first: how it is (its status, whether it runs
- * the latest configuration, its links, its problems), who it is (owner or
- * tags, system, agent, ID) and where it is (its addresses and location).
- * The report's own times and references are on the diagnostics tab.
+ * The node at a glance: four tiles that sum up its connections, latency,
+ * configuration and place (each opening its tab), how to reach it, where
+ * it is on the internet, and anything it reports needing attention.
  */
 export function NodeOverview({
   node,
   state,
   currentRevision,
-  onTransport,
+  onTab,
+  networkId,
+  network,
+  nameOf,
 }: {
   node: NodeInventoryView
   state: UseQueryResult<StateView>
-  /** The configuration's current revision, when known. */
   currentRevision: number | undefined
-  onTransport: () => void
+  onTab: (tab: NodeTab) => void
+  networkId: string
+  network: NetworkSummary | null
+  nameOf: (id: string) => string
 }) {
   const now = useNow(1_000)
-  const read = state.data !== undefined
   const view = stateOf(state.data, node.id)
-  const report = reportOf(view)
-  const full = report.view === "full" ? report.report : null
-  const sync = configurationSync(full?.configuration ?? null, currentRevision)
-  const links = nodeLinks(state.data, node.id)
-  const connected = links.filter(
-    (link) => link.phase === "authenticated"
-  ).length
-  const problems = full?.problems ?? []
+  const report = fullReport(view)
+  const online = view?.freshness === "current"
+  const stateLoading = state.data === undefined && !state.isError
+  const stateFailed = state.data === undefined && state.isError
+  const stateFailure = failureText(state.error) ?? m.nodes_state_failed()
+  const sync = configurationSync(report?.configuration ?? null, currentRevision)
+  const targetApplied =
+    desiredAgainst(node.desiredExecution, report?.configuration ?? null) ===
+    "applied"
+  const connections = nodeConnections(state.data?.links ?? [], node.id)
+  const connected = connections.filter(
+    (connection) => connection.status === "connected"
+  )
+  const latency = useNeighborLatency(networkId, node.id)
+  const fastest = [...latency.byPeer].flatMap(([peer, value]) =>
+    value.meanUs === null ? [] : [{ peer, meanUs: value.meanUs }]
+  )
+  fastest.sort((a, b) => a.meanUs - b.meanUs)
+  const best = fastest[0]
+
   const addresses = view ? nodeAddresses(view.derived) : null
   const geoOf = useAddressGeo(addresses?.scopes ?? NO_ADDRESSES)
+  const ips = [...(addresses?.scopes ?? NO_ADDRESSES)]
+    .filter(([, scope]) => scope === "public")
+    .map(([ip]) => ip)
+    .sort()
+  const placeGeo = addresses?.location
+    ? geoOf(addresses.location.address)
+    : null
+
+  const configuration = useNodeConfiguration(networkId, node.id, network).state
+  const config =
+    configuration.kind === "manager" ? configuration.view.configuration : null
+  const configuredName = config?.nodes[node.id]?.hostname
+  const dnsName =
+    configuredName && config ? `${configuredName}.${config.dns.domain}` : null
+
+  const syncTile = (() => {
+    switch (sync.kind) {
+      case "current":
+        return node.desiredExecution !== null && !targetApplied
+          ? {
+              value: m.nodes_tile_config_syncing(),
+              detail: m.nodes_sync_pending(),
+              tone: "attention" as const,
+            }
+          : {
+              value: m.nodes_tile_config_applied(),
+              detail: m.nodes_tile_config_latest({ revision: sync.revision }),
+              tone: "online" as const,
+            }
+      case "applied":
+        return {
+          value: m.nodes_tile_config_applied(),
+          detail: m.nodes_tile_config_reported({ revision: sync.revision }),
+          tone: undefined,
+        }
+      case "applying":
+        return {
+          value: m.nodes_tile_config_in_progress(),
+          detail: m.nodes_tile_config_revision({ revision: sync.revision }),
+          tone: "attention" as const,
+        }
+      case "failed":
+        return {
+          value: m.nodes_tile_config_failed(),
+          detail: m.nodes_sync_failed({ revision: sync.revision }),
+          tone: "offline" as const,
+        }
+      case "behind":
+        return {
+          value: m.nodes_tile_config_behind(),
+          detail: m.nodes_sync_behind({
+            applied: sync.applied,
+            current: sync.current,
+          }),
+          tone: "attention" as const,
+        }
+      case "none":
+        return {
+          value: m.nodes_tile_config_none(),
+          detail: m.nodes_sync_none(),
+          tone: "attention" as const,
+        }
+      case "unknown":
+        return {
+          value: "—",
+          detail: m.nodes_tile_unreported(),
+          tone: "muted" as const,
+        }
+    }
+  })()
 
   return (
-    <div className="flex flex-col gap-8">
-      <Section title={m.nodes_overview_status()}>
-        <div className={GRID}>
-          <Tile label={m.nodes_status()}>
-            {read ? (
-              <LiveStatus
-                status={nodeStatus(node, view)}
-                seen={lastSeen(view)}
-              />
-            ) : state.isError ? (
-              muted(failureText(state.error) ?? m.nodes_state_failed())
-            ) : (
-              muted("—")
-            )}
-          </Tile>
-          <Tile label={m.nodes_configuration()} tone={syncTone(sync)}>
-            {syncText(sync)}
-          </Tile>
-          <Tile
-            label={m.nodes_links()}
-            action={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={m.nodes_open_transport()}
-                onClick={onTransport}
+    <div className="@container flex flex-col gap-7">
+      {state.isError && state.data !== undefined ? (
+        <EmptyLine>{m.nodes_state_stale({ reason: stateFailure })}</EmptyLine>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-3 @3xl:grid-cols-4">
+        <SummaryTile
+          label={m.nodes_tile_connections()}
+          loading={stateLoading}
+          value={
+            online
+              ? connections.length > connected.length
+                ? `${connected.length} / ${connections.length}`
+                : String(connected.length)
+              : "—"
+          }
+          tone={online ? undefined : "muted"}
+          detail={
+            stateFailed
+              ? stateFailure
+              : !view
+                ? m.nodes_tile_unreported()
+                : !online
+                  ? m.nodes_tile_connections_offline()
+                  : connected.length
+                    ? connected
+                        .slice(0, 2)
+                        .map((connection) => nameOf(connection.peerId))
+                        .join("、") +
+                      (connected.length > 2
+                        ? m.nodes_tile_more({ count: connected.length - 2 })
+                        : "")
+                    : m.nodes_tile_connections_none()
+          }
+          onClick={() => onTab("connections")}
+        />
+        <SummaryTile
+          label={m.nodes_tile_latency()}
+          loading={latency.loading}
+          value={best ? millis(best.meanUs) : "—"}
+          tone={best ? undefined : "muted"}
+          detail={
+            best
+              ? m.nodes_tile_latency_to({ peer: nameOf(best.peer) })
+              : latency.failed
+                ? m.nodes_tile_latency_failed()
+                : m.nodes_tile_latency_none()
+          }
+          onClick={() => onTab("diagnostics")}
+        />
+        <SummaryTile
+          label={m.nodes_configuration()}
+          loading={stateLoading}
+          value={syncTile.value}
+          tone={syncTile.tone}
+          detail={stateFailed ? stateFailure : syncTile.detail}
+          onClick={() => onTab("diagnostics")}
+        />
+        <SummaryTile
+          label={m.nodes_tile_place()}
+          loading={stateLoading || placeGeo?.kind === "pending"}
+          value={
+            placeGeo?.kind === "found"
+              ? (placeGeo.geo.city ?? placeGeo.geo.region ?? geoText(placeGeo))
+              : "—"
+          }
+          tone={placeGeo?.kind === "found" ? undefined : "muted"}
+          detail={
+            stateFailed
+              ? stateFailure
+              : placeGeo?.kind === "found"
+                ? asnText(placeGeo)
+                : placeGeo
+                  ? geoText(placeGeo)
+                  : addresses?.locationAbsent
+                    ? locationAbsentLabel[addresses.locationAbsent]()
+                    : m.nodes_location_none()
+          }
+        />
+      </div>
+
+      <Card title={m.nodes_mesh_access()}>
+        <Rows>
+          {configuration.kind === "loading" &&
+          network?.actions.readConfiguration ? (
+            <LoadingRow label={m.nodes_dns_name()} />
+          ) : dnsName ? (
+            <Row
+              label={m.nodes_dns_name()}
+              mono
+              detail={
+                config?.dns.magicDNS === false
+                  ? m.nodes_dns_disabled()
+                  : undefined
+              }
+              action={<CopyButton value={dnsName} label={m.nodes_dns_name()} />}
+            >
+              <span title={dnsName}>{dnsName}</span>
+            </Row>
+          ) : null}
+          {(["ipv4", "ipv6"] as const).map((family) => {
+            const value = node.addresses[family]
+            return (
+              <Row
+                key={family}
+                label={family === "ipv4" ? "IPv4" : "IPv6"}
+                mono={value !== null}
+                tone={value === null ? "muted" : undefined}
+                action={
+                  value ? (
+                    <CopyButton
+                      value={value}
+                      label={family === "ipv4" ? "IPv4" : "IPv6"}
+                    />
+                  ) : null
+                }
               >
-                <ArrowUpRightIcon />
-              </Button>
-            }
-          >
-            {!read
-              ? muted("—")
-              : links.length === 0
-                ? muted(m.nodes_links_none())
-                : m.nodes_links_summary({ connected, total: links.length })}
-          </Tile>
-          <Tile
-            label={m.nodes_problems()}
-            tone={problems.length ? "destructive" : undefined}
-          >
-            {!full
-              ? muted("—")
-              : problems.length
-                ? m.nodes_problems_count({ count: problems.length })
-                : m.nodes_problems_none()}
-          </Tile>
-        </div>
-        {problems.length ? (
-          <ul className="flex flex-col gap-1">
-            {problems.map((problem, index) => (
-              <li
+                {value ?? m.nodes_address_none()}
+              </Row>
+            )
+          })}
+        </Rows>
+      </Card>
+
+      <Card title={m.nodes_network_location()}>
+        <Rows>
+          {stateLoading ? (
+            <LoadingRow label={m.nodes_public_address()} />
+          ) : ips.length ? (
+            ips.map((ip) => {
+              const geo = geoOf(ip)
+              return (
+                <Row
+                  key={ip}
+                  label={m.nodes_public_address()}
+                  mono
+                  detail={
+                    geo
+                      ? [
+                          geoText(geo),
+                          geo.kind === "found" ? asnText(geo) : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : undefined
+                  }
+                  action={
+                    <CopyButton value={ip} label={m.nodes_public_address()} />
+                  }
+                >
+                  {ip}
+                </Row>
+              )
+            })
+          ) : (
+            <Row label={m.nodes_public_address()} tone="muted">
+              {stateFailed
+                ? stateFailure
+                : !view
+                  ? m.nodes_tile_unreported()
+                  : addresses?.locationAbsent
+                    ? locationAbsentLabel[addresses.locationAbsent]()
+                    : m.nodes_location_none()}
+            </Row>
+          )}
+        </Rows>
+      </Card>
+
+      <Card
+        title={m.nodes_attention()}
+        aside={
+          report && report.problems.length ? report.problems.length : undefined
+        }
+      >
+        {report && report.problems.length > 0 ? (
+          <Rows>
+            {report.problems.map((problem, index) => (
+              <div
                 key={index}
-                className="flex min-h-12 items-center justify-between gap-3 rounded-tile bg-fill-subtle px-3.5 py-2 text-row"
+                className="flex min-h-11 items-center gap-3 px-4 py-2.5"
               >
-                <span className="min-w-0 text-destructive">
+                <CircleAlertIcon className="size-4 shrink-0 text-destructive" />
+                <span className="min-w-0 flex-1 text-row">
                   {problemText(problem)}
                 </span>
                 <span className="shrink-0 text-meta text-muted-foreground">
                   {agoTime(problem.observedAt, now)}
                 </span>
-              </li>
+              </div>
             ))}
-          </ul>
-        ) : null}
-      </Section>
-
-      <Section title={m.nodes_facts()}>
-        <div className={GRID}>
-          <div className={WIDE}>
-            <Tile
-              label={
-                node.identity.type === "tag"
-                  ? m.nodes_identity_tags()
-                  : m.nodes_identity_user()
-              }
-            >
-              {node.identity.type === "tag" ? (
-                <span className="font-mono font-normal">
-                  {node.identity.tags.join(", ")}
-                </span>
-              ) : (
-                node.identity.user
-              )}
-            </Tile>
-          </div>
-          <Tile label={m.nodes_system_os()}>
-            {full ? `${full.system.os} · ${full.system.arch}` : muted("—")}
-          </Tile>
-          <Tile label={m.nodes_system_agent()}>
-            {full ? (
-              <span className="font-mono font-normal">
-                {full.system.agentVersion}
-              </span>
+          </Rows>
+        ) : (
+          <div className="flex min-h-11 items-center gap-3 rounded-tile bg-fill-subtle px-4 py-2.5 text-row">
+            {stateLoading ? (
+              <Skeleton className="h-3 w-44 rounded-full" />
+            ) : stateFailed ? (
+              <span className="text-muted-foreground">{stateFailure}</span>
+            ) : report ? (
+              <>
+                <CircleCheckIcon className="size-4 shrink-0 text-success" />
+                {m.nodes_attention_none()}
+              </>
             ) : (
-              muted("—")
-            )}
-          </Tile>
-          <div className={WIDE}>
-            <Tile
-              label={m.nodes_id()}
-              action={<CopyButton value={node.id} label={m.nodes_id()} />}
-            >
-              <span className="font-mono font-normal">{node.id}</span>
-            </Tile>
-          </div>
-          <Tile label={m.nodes_system_hostname()}>
-            {full ? (
-              <span className="font-mono font-normal">
-                {full.system.hostname}
+              <span className="text-muted-foreground">
+                {m.nodes_attention_unreported()}
               </span>
-            ) : (
-              muted("—")
             )}
-          </Tile>
-          <Tile label={m.nodes_system_selection()}>
-            {!full
-              ? muted("—")
-              : (full.selection.appliedProfile ??
-                muted(m.nodes_system_selection_none()))}
-          </Tile>
-          <div className={WIDE}>
-            <Tile label={m.nodes_registered()}>
-              {dateTime(node.registeredAt) ?? "—"}
-              {muted(` · ${agoTime(node.registeredAt, now) ?? ""}`)}
-            </Tile>
           </div>
-        </div>
-      </Section>
-
-      <Section title={m.nodes_addresses()}>
-        <div className={GRID}>
-          <div className={WIDE}>
-            <Address label="IPv4" value={node.addresses.ipv4} />
-          </div>
-          <div className={WIDE}>
-            <Address label="IPv6" value={node.addresses.ipv6} />
-          </div>
-          <div className={WIDE}>
-            <Tile label={m.nodes_location()}>
-              {addresses ? (
-                <Place addresses={addresses} geoOf={geoOf} />
-              ) : (
-                muted("—")
-              )}
-            </Tile>
-          </div>
-          <div className={WIDE}>
-            <Tile label={m.nodes_location_asn()}>
-              {addresses ? (
-                <Provider addresses={addresses} geoOf={geoOf} />
-              ) : (
-                muted("—")
-              )}
-            </Tile>
-          </div>
-        </div>
-        {addresses && addresses.scopes.size > 1 ? (
-          // More than one address: each with where it is and its network.
-          <ul className="flex flex-col gap-1">
-            {[...addresses.scopes.keys()].sort().map((ip) => {
-              const geo = geoOf(ip)
-              return geo ? (
-                <li
-                  key={ip}
-                  className="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,1fr)] items-baseline gap-x-3 rounded-tile bg-fill-subtle px-3.5 py-2 text-meta"
-                >
-                  <span className="truncate font-mono">{ip}</span>
-                  <span className="truncate">{geoText(geo)}</span>
-                  <span className="truncate text-muted-foreground">
-                    {asnText(geo)}
-                  </span>
-                </li>
-              ) : null
-            })}
-          </ul>
-        ) : null}
-      </Section>
+        )}
+      </Card>
     </div>
-  )
-}
-
-type Whereabouts = { addresses: NodeAddresses; geoOf: GeoOf }
-
-/** Where geojs places the address the location rests on, or why that is not known. */
-function Place({ addresses, geoOf }: Whereabouts) {
-  if (!addresses.location)
-    return muted(
-      addresses.locationAbsent
-        ? locationAbsentLabel[addresses.locationAbsent]()
-        : m.nodes_location_none()
-    )
-  const geo = geoOf(addresses.location.address)
-  if (!geo) return muted("—")
-  return geo.kind === "found" ? geoText(geo) : muted(geoText(geo))
-}
-
-/** The network of the address the location rests on, or of the one address seen. */
-function Provider({ addresses, geoOf }: Whereabouts) {
-  const seen = [...addresses.scopes.keys()]
-  const address =
-    addresses.location?.address ?? (seen.length === 1 ? seen[0] : undefined)
-  const geo = address === undefined ? null : geoOf(address)
-  if (!geo) return muted("—")
-  return geo.kind === "found" && geo.geo.asn
-    ? asnText(geo)
-    : muted(asnText(geo))
-}
-
-function Address({ label, value }: { label: string; value: string | null }) {
-  return (
-    <Tile
-      label={label}
-      action={value ? <CopyButton value={value} label={label} /> : undefined}
-    >
-      {value ? (
-        <span className="font-mono font-normal">{value}</span>
-      ) : (
-        muted(m.nodes_address_none())
-      )}
-    </Tile>
   )
 }

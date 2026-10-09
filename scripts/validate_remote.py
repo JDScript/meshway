@@ -16,14 +16,17 @@ from validation_progress import display as progress_display
 
 DEFAULT_HOST = "zj2631@ai4ce-planck.dyn.poly.edu"
 
-# Runs as a session leader. A dedicated worktree keeps ordinary checkouts in the
-# shared clone from replacing live sources. The lock covers our worktree's life.
+# Runs as a session leader. Each run owns a fresh detached worktree, so concurrent
+# runs never replace each other's sources; only git operations on the shared clone
+# are serialized. Builds share one Cargo target guarded by the fixtures' build lock.
 WORKER = r'''
-import fcntl, json, os, pathlib, subprocess, sys, time, traceback
+import contextlib, fcntl, json, os, pathlib, subprocess, sys, time, traceback
 p = json.loads(sys.argv[1])
 root = pathlib.Path(p["path"])
-job = root / ".meshway/validation/jobs" / p["run"]
-matrix = root / ".meshway/validation/matrix" / p["run"]
+validation = root / ".meshway/validation"
+job = validation / "jobs" / p["run"]
+matrix = validation / "matrix" / p["run"]
+workspace = root / ".worktree" / ("validation-" + p["run"])
 os.umask(0o077)
 (job / "pid").write_text(str(os.getpid()) + "\n")
 result = {"run": p["run"], "revision": p["revision"], "exitCode": 1, "status": "running"}
@@ -31,60 +34,69 @@ def save():
     temporary = job / "result.tmp"
     temporary.write_text(json.dumps(result, indent=2) + "\n")
     temporary.replace(job / "result.json")
+def call(command, cwd=root):
+    return subprocess.check_output(command, cwd=cwd, text=True, stderr=subprocess.STDOUT).strip()
+@contextlib.contextmanager
+def git_lock():
+    # Short: fetch / worktree add / worktree remove only, never the matrix itself.
+    with (validation / "git.lock").open("a") as lock:
+        os.set_inheritable(lock.fileno(), False)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 save()
+created = False
 try:
-    with (root / ".meshway/validation/remote.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        def call(command):
-            return subprocess.check_output(command, cwd=root, text=True).strip()
-        result["uptime"] = call(["uptime"])
-        print(result["uptime"], flush=True)
-        if call(["git", "status", "--porcelain"]):
-            raise RuntimeError("remote worktree must be clean")
+    result["uptime"] = call(["uptime"])
+    print(result["uptime"], flush=True)
+    with git_lock():
         call(["git", "fetch", "origin"])
-        workspace = root / ".worktree/validation-matrix"
-        ownership = root / ".meshway/validation/workspace.json"
-        expected = {"owner": "meshway-validate-remote", "workspace": str(workspace)}
-        if not workspace.exists():
-            workspace.parent.mkdir(parents=True, exist_ok=True)
-            call(["git", "worktree", "add", "--detach", str(workspace), p["revision"]])
-            ownership.write_text(json.dumps(expected) + "\n")
-        elif not ownership.exists() or json.loads(ownership.read_text()) != expected:
-            raise RuntimeError("dedicated validation worktree has no matching ownership record")
-        if call(["git", "-C", str(workspace), "status", "--porcelain"]):
-            raise RuntimeError("dedicated validation worktree must be clean")
-        call(["git", "-C", str(workspace), "checkout", "--detach", p["revision"]])
-        result["workspace"] = str(workspace)
-        save()
-        env = dict(os.environ, CARGO_INCREMENTAL="0", MISE_TRUSTED_CONFIG_PATHS=str(workspace),
-                   MESHWAY_VALIDATION_ROOT=str(root / ".meshway/validation"))
-        temporary = root / ".meshway/validation/tmp"
-        temporary.mkdir(exist_ok=True)
-        env["TMPDIR"] = str(temporary)
-        env["PATH"] = str(pathlib.Path.home() / ".local/bin") + ":" + env["PATH"]
-        result["exitCode"] = subprocess.call(["mise", "run", "validate:matrix", "--run", p["run"], *p["arguments"]],
-                                             cwd=workspace, env=env, pass_fds=(lock.fileno(),))
-        data = json.loads((matrix / "matrix.json").read_text())
-        # Independently query Docker after the matrix ends, including nested packet runtime.
-        remaining = {"containers": [], "networks": []}
-        for row in data["rows"]:
-            kind = "runtime" if "/" in row["row"] else row["row"]
-            report = matrix / row["report"]
-            identities = [(kind, row["reportId"])]
-            daemon = report.parent / "daemon"
-            if daemon.exists():
-                identities.extend(("runtime", child.name) for child in daemon.iterdir() if child.is_dir())
-            for kind, identity in identities:
-                label = "label=io.meshway." + kind + "-fixture=" + identity
-                for key, command in (("containers", ["docker", "ps", "-aq"]), ("networks", ["docker", "network", "ls", "-q"])):
-                    remaining[key].extend(call([*command, "--filter", label]).split())
-        result["remainingResources"] = remaining
-        if data.get("status") != "complete" or not data.get("passed") or any(remaining.values()):
-            result["exitCode"] = 1
+        workspace.parent.mkdir(parents=True, exist_ok=True)
+        call(["git", "worktree", "add", "--detach", str(workspace), p["revision"]])
+        created = True
+    result["workspace"] = str(workspace)
+    save()
+    if call(["git", "status", "--porcelain"], cwd=workspace):
+        raise RuntimeError("validation worktree must be clean")
+    temporary = validation / "tmp" / p["run"]
+    temporary.mkdir(parents=True)
+    env = dict(os.environ, CARGO_INCREMENTAL="0", MISE_TRUSTED_CONFIG_PATHS=str(workspace),
+               MESHWAY_VALIDATION_ROOT=str(validation), MESHWAY_VALIDATION_TARGET=str(validation / "target"),
+               TMPDIR=str(temporary))
+    env["PATH"] = str(pathlib.Path.home() / ".local/bin") + ":" + env["PATH"]
+    result["exitCode"] = subprocess.call(["mise", "run", "validate:matrix", "--run", p["run"], *p["arguments"]],
+                                         cwd=workspace, env=env)
+    data = json.loads((matrix / "matrix.json").read_text())
+    # Independently query Docker after the matrix ends, including nested packet runtime.
+    remaining = {"containers": [], "networks": []}
+    for row in data["rows"]:
+        kind = "runtime" if "/" in row["row"] else row["row"]
+        report = matrix / row["report"]
+        identities = [(kind, row["reportId"])]
+        daemon = report.parent / "daemon"
+        if daemon.exists():
+            identities.extend(("runtime", child.name) for child in daemon.iterdir() if child.is_dir())
+        for kind, identity in identities:
+            label = "label=io.meshway." + kind + "-fixture=" + identity
+            for key, command in (("containers", ["docker", "ps", "-aq"]), ("networks", ["docker", "network", "ls", "-q"])):
+                remaining[key].extend(call([*command, "--filter", label]).split())
+    result["remainingResources"] = remaining
+    if data.get("status") != "complete" or not data.get("passed") or any(remaining.values()):
+        result["exitCode"] = 1
 except BaseException as error:
     result["error"] = str(error)
     traceback.print_exc()
 finally:
+    # Evidence lives under .meshway/validation; the worktree only held sources.
+    if created:
+        try:
+            with git_lock():
+                call(["git", "worktree", "remove", "--force", str(workspace)])
+            result["workspaceRemoved"] = True
+        except BaseException as error:
+            result["workspaceRemoved"] = False
+            result["cleanupError"] = str(error)
+            result["exitCode"] = 1
+            traceback.print_exc()
     result["status"] = "complete"
     matrix.mkdir(parents=True, exist_ok=True)
     (matrix / "remote.json").write_text(json.dumps(result, indent=2) + "\n")

@@ -1,6 +1,5 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
-  "observation_title": "Live observation",
   "observation_reading": "Reading the node",
   "observation_not_allowed": "You cannot have this node observe: members start observations only from their own User-identity devices",
   "observation_target": "Target node",
@@ -19,7 +18,7 @@
   "observation_mode_auto": "Automatic",
   "observation_mode_explicit": "Explicit",
   "observation_path": "Explicit path",
-  "observation_measures": "Measures probe round trips and the probe no-reply rate; the server provides no traffic counts",
+  "observation_measures": "Node round trip · Probe no-reply rate",
   "observation_start": "Start observing",
   "observation_denied": "The server does not allow this observation: the source, target, service or path is outside what is currently permitted",
   "observation_conflict": "The server refused: the source node has no running instance or usable execution configuration",

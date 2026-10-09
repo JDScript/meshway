@@ -18,7 +18,7 @@ import uuid
 
 from node_lab import ROOT, check_elf, docker_target, lab_dir, run, selected_image, sha256, verify_image
 from verification_sources import fingerprint as source_fingerprint
-from validation_support import build_lock, report_directory, bind_access_options, export_evidence, mount_namespace_options, link_artifact
+from validation_support import build_lock, cargo_target, report_directory, bind_access_options, export_evidence, mount_namespace_options, link_artifact
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
@@ -78,11 +78,10 @@ def build(directory, target, platform, machine, source):
     exit_sources = exit_fixture_sources()
     if shutil.disk_usage(ROOT).free < 50 * 1024 ** 3:
         raise RuntimeError("Linux host build needs at least 50 GiB free.")
-    env = dict(os.environ, CARGO_INCREMENTAL="0",
-               CARGO_TARGET_DIR=str(ROOT / "target/node-kernel-tests"))
+    env = dict(os.environ, CARGO_INCREMENTAL="0", CARGO_TARGET_DIR=str(cargo_target()))
     run("rustup", "target", "add", target, env=env)
     command = ["cargo", "zigbuild", "--target", target, "--locked",
-                "--jobs", "2", "--all-features", "-p", "meshway-daemon", "-p", "meshway-cli",
+                "--all-features", "-p", "meshway-daemon", "-p", "meshway-cli",
                 "-p", "meshway-runtime-fixture", "-p", "meshway-underlay", "-p", "meshway-dns", "--all-targets", "--message-format=json"]
     try:
         output = run(*command, capture=True, env=env)

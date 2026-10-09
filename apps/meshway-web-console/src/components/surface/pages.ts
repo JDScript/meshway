@@ -6,6 +6,7 @@ import {
   ServerIcon,
   Settings2Icon,
   UsersIcon,
+  WaypointsIcon,
   type LucideIcon,
 } from "lucide-react"
 import { useCallback } from "react"
@@ -18,6 +19,7 @@ import { m } from "@/paraglide/messages.js"
 
 export const PAGES = {
   overview: { route: "/networks/$network/overview", panel: false },
+  topology: { route: "/networks/$network/topology", panel: false },
   nodes: { route: "/networks/$network/nodes", panel: true },
   members: { route: "/networks/$network/members", panel: true },
   configuration: { route: "/networks/$network/configuration", panel: true },
@@ -32,6 +34,9 @@ export const PAGES = {
 export const DRAFT_PAGE: PageId = "configuration"
 
 export type PageId = keyof typeof PAGES
+export type CanvasPage = "overview" | "topology"
+export const isCanvasPage = (page: PageId): page is CanvasPage =>
+  page === "overview" || page === "topology"
 
 export type DockItem = {
   page: PageId
@@ -44,6 +49,7 @@ export type DockItem = {
 /** The dock, in order. Pages reached elsewhere (the account, from its menu) are not in it. */
 const DOCK: readonly DockItem[] = [
   { page: "overview", icon: GlobeIcon, label: () => m.nav_overview() },
+  { page: "topology", icon: WaypointsIcon, label: () => m.overview_topology() },
   { page: "nodes", icon: ServerIcon, label: () => m.nodes_title() },
   {
     page: "members",

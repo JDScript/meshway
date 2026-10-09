@@ -16,7 +16,7 @@ import {
   UsersIcon,
   type LucideIcon,
 } from "lucide-react"
-import { useMemo, type ReactNode } from "react"
+import { useEffect, useMemo, type ReactNode } from "react"
 
 import { membersQuery } from "@/api/queries/members"
 import { FieldInput } from "@/components/chrome/form"
@@ -67,21 +67,27 @@ export function useNames(
     ...membersQuery(networkId),
     enabled: readMembers,
   })
+  // Whether a user is a member is said only from the whole list: read every page.
+  const { hasNextPage, isFetchingNextPage, isError, fetchNextPage } = members
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage && !isError) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, isError, fetchNextPage])
+  const pages = members.data?.pages
+  const complete = pages !== undefined && !hasNextPage
   return useMemo(() => {
     const nodes = new Map<string, string>()
     for (const [id, node] of Object.entries(view?.nodes ?? {}))
       nodes.set(id, node.hostname)
     return {
       nodes,
-      users: members.data
-        ? members.data.pages.flatMap((page) =>
-            page.items.map((member) => member.email)
-          )
-        : null,
+      users:
+        complete && pages
+          ? pages.flatMap((page) => page.items.map((member) => member.email))
+          : null,
       groups: Object.keys(groups),
       tags: Object.keys(tags),
     }
-  }, [view, members.data, groups, tags])
+  }, [view, complete, pages, groups, tags])
 }
 
 const ICON: Record<SelectorKind, LucideIcon> = {

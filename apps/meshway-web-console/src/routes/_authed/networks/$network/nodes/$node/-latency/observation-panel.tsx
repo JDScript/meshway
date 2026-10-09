@@ -4,6 +4,7 @@ import {
 } from "@meshway/control-client"
 import { Button } from "@meshway/ui/button"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { LockIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 
 import { authed, client } from "@/api/client"
@@ -14,6 +15,7 @@ import { nodesQuery } from "@/api/queries/nodes"
 import { observationListQuery } from "@/api/queries/observation"
 import { networkStateQuery } from "@/api/queries/state"
 import { EmptyLine, Section } from "@/components/chrome/section"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { relativeTime } from "@/lib/format"
 import { canObserveFrom, pathChoices } from "@/lib/observation/choices"
@@ -91,8 +93,8 @@ export function ObservationPanel({
   )
 
   return (
-    <div className="flex flex-col gap-6 border-b border-divider pb-6">
-      <Section title={m.observation_title()}>
+    <div className="flex flex-col gap-4">
+      <div className="rounded-tile border border-divider p-4">
         {held ? (
           <LiveObservation
             key={held}
@@ -101,8 +103,25 @@ export function ObservationPanel({
             nameOf={nameOf}
             onClose={() => setHeld(null)}
           />
-        ) : nodes.data === undefined || network.data === undefined ? (
-          <EmptyLine>{m.observation_reading()}</EmptyLine>
+        ) : (nodes.data === undefined && !nodes.isError) ||
+          network.data === undefined ? (
+          <div
+            className="flex flex-col gap-3"
+            aria-label={m.observation_reading()}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Skeleton className="h-[3.75rem] rounded-tile" />
+              <Skeleton className="h-[3.75rem] rounded-tile" />
+            </div>
+            <Skeleton className="h-7 w-64 rounded-full" />
+            <div className="flex justify-end">
+              <Skeleton className="h-8 w-24 rounded-full" />
+            </div>
+          </div>
+        ) : nodes.data === undefined ? (
+          <p className="text-row text-muted-foreground">
+            {failureText(nodes.error) ?? m.nodes_failed()}
+          </p>
         ) : allowed ? (
           <StartForm
             networkId={networkId}
@@ -113,9 +132,12 @@ export function ObservationPanel({
             onStarted={setHeld}
           />
         ) : (
-          <EmptyLine>{m.observation_not_allowed()}</EmptyLine>
+          <div className="flex items-center gap-3 text-row text-muted-foreground">
+            <LockIcon className="size-4 shrink-0" />
+            {m.observation_not_allowed()}
+          </div>
         )}
-      </Section>
+      </div>
 
       {others.length || list.isError ? (
         <Section title={m.observation_list()} count={others.length}>

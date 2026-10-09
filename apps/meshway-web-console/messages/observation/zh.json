@@ -1,6 +1,5 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
-  "observation_title": "实时观察",
   "observation_reading": "正在读取节点",
   "observation_not_allowed": "你不能让此节点执行观察：成员只能从自己的 User 身份设备发起",
   "observation_target": "目标节点",
@@ -19,7 +18,7 @@
   "observation_mode_auto": "自动",
   "observation_mode_explicit": "指定",
   "observation_path": "指定路径",
-  "observation_measures": "测量探测往返耗时与探测未回应率；服务端不提供流量计数",
+  "observation_measures": "节点往返耗时 · 探测未回应率",
   "observation_start": "开始观察",
   "observation_denied": "服务端不允许这项观察：源节点、目标、服务或路径不在当前许可内",
   "observation_conflict": "服务端拒绝：源节点当前没有在线实例或可用的执行配置",

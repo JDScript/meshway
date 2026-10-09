@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { CircleAlertIcon } from "lucide-react"
 
+import { failureText } from "@/api/failure"
 import { configurationQuery, revisionQuery } from "@/api/queries/configuration"
 import { GlassDialog } from "@/components/chrome/glass-dialog"
 import { EmptyLine, Section } from "@/components/chrome/section"
@@ -449,6 +450,13 @@ function ReviewDialog({
               changes={preview.changes}
               before={base.data?.configuration}
               after={preview.preview}
+              failures={{
+                before:
+                  base.data === undefined && base.isError
+                    ? (failureText(base.error) ??
+                      m.configuration_change_unread())
+                    : null,
+              }}
             />
           ) : null}
         </>

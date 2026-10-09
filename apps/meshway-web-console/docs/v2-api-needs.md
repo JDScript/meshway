@@ -12,7 +12,7 @@
 | --- | --- |
 | D1 | 已有账户通过一次性、有期限、绑定网络和角色的加入链接加入网络，由已登录用户接受。不提供按邮箱直接添加，不恢复邀请注册，链接也不绕过注册关闭的开关。签发和兑换时都检查当前权限。 |
 | D2 | 账户恢复不靠邮件：运维在 Controller 主机上用 CLI 生成重置链接，console 只提供兑换页 `/reset-password`。网络 Owner 不能重置他人的全局账户密码。 |
-| D3 | 概览上，当前真实的 links 与历史淡线分开画。历史层默认关闭，时间窗口由用户选择，数据只来自真实的历史事件；不展开组网规则允许的 N² 连接，也不为画线额外探测。 |
+| D3 | 网络概览直接从已有 ConfigurationView 的 topology、defaults、nodes.identity 和 groups 展开配置声明的邻接图，State 只叠加实际连接状态。没有当前通道、节点离线或尚未上报不删除配置边。图是配置可视化，不承担稳定身份授权或执行编译。没有完整配置读取权限时只展示授权可见的运行连接。历史层默认关闭，不为画线额外探测。 |
 | D4 | 删除节点是永久的：提交时吊销凭据并移除 `nodes[id]`，没有回收站，也没有"仅从配置移除"。JSONC 或 ops 删去已有节点同样是删除。重新接入就是一个新节点。业务上的停用用 `enabled=false`，可以回滚。 |
 | D5 | 每个用户、每个网络一份草稿，跨页面保留，只有一个应用入口。应用前必须展示有效修改数量和前后对照，并把永久删除、改址、身份和材料变化单独列出。严格 CAS，不按"pointer 没变"自动合并。草稿里要么是 JSONC 整份文本，要么是强类型 ops，两者不互相转换。 |
 | D6 | 路径检测是节点详情里的"路径"标签：来源是当前节点，输入一个目的地，不填协议和端口；有草稿时并排检测当前版本和草稿，结果不同就标出。判定全部来自服务端，结果是规划，不是实测；console 不自行计算规则。保存检测用例和节点×节点矩阵以后再定。 |
@@ -51,13 +51,13 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `1bb3d137`）
+## 接入状态（契约 `f54a7f69`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
 - 账户、会话和账户活动（邮箱修改显示原邮箱）；
 - 网络、成员（改角色前确认要撤销的加入链接）、加入链接（签发人、使用者）和网络活动；
-- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同；组网的允许规则可以限制承载 `transports`：不限即省略，指定为 UDP／TCP／VLESS／Trojan 中的几种，一个不选是 `[]`，阻断规则不设置）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同；组网允许规则的 `transports` 是有序允许列表，前项优先，可用箭头或 Alt+↑/↓ 调整；省略使用平台顺序 UDP → TCP → VLESS → Trojan，`[]` 没有允许承载，阻断规则不设置）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；顺序变化会保留为草稿修改，dialer 不再有 priority；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
 - 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值；`edge_transport_unavailable` 说明哪条 Mesh 路由要经过哪两端之间的边，挂在 `/topology/<i>/transports` 的承载上），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
 - 地点与 ASN：console 不再读服务端的 GeoIP 结果（`derived.location.data`、`datasetId`、`ipInfo` 的查询结果），只用 `derived.location` 的地址和 `derived.ipInfo` 的键（`notApplicable` 视为非公网，不发出），向 geojs.io 查询。在服务端按下面"请后端调整"改完之前，`derived.location` 只在服务端自己的 GeoIP 有结果时才出现，没有数据集的部署里节点仍然没有位置。8420 的节点通过 STUN 上报了公网映射，地球上已经有节点；三个节点共用宿主出口，同一地址的节点合成一组，没有 STUN 观测的列在「待定位」。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
@@ -136,10 +136,15 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 绑定大规则集（8483 条）后 validate 很慢的问题，在 `70f5e95f` 改为线性覆盖计算。
 - 托管证书改 `serverName` 时重新生成证书；provided 材料仍按省略继承。
 - 规则集检查记录：来源与绑定内容都不变就跨版本延续，包括还没有成功内容的集合。console 报过的 `not_ready`／`checkedAt: null` 后端没有复现，再遇到时补充步骤。
-- 承载选择顺序移到组网规则：console 需要让 `topology[].transports` 编辑器保留并编辑顺序（第一项优先），未指定时平台顺序为 `native_udp → native_tcp → vless → trojan`；dialer 的 priority UI 已移除。validate 可能返回 `invalid_transport` 的 `repeated_transport` 原因，指向 `/topology/<i>/transports/<j>`。
 
 ### 请后端调整
 
+- **相邻连接状态与报告可见性**：已按源码核对 `state/mod.rs`，Server 在 full／peer 裁剪后聚合 links，只读取 `VisibleReport::Full`。对端完整报告不可见时，即使服务端持有双端数据，成员视图也只能得到 `oneSided`；该值不能作为连接降级或“没有连接”的产品条件。真实成员持有 Node 的双视图对照尚未复核。
+  - Console 已统一为每对节点一条相邻关系，当前有效的 authenticated 单侧／双侧报告均显示已连接；原始 evidence 留在展开详情，过期／冲突保留未知，关闭记录不充当现有连接。
+  - 请确认并提供稳定的产品级相邻连接状态语义，使调用者有权查看的同一关系，不因诊断报告的裁剪而改变连接结论；诊断来源仍按权限保留。这里不要求读取不可见的完整报告，也不把底层通道当成业务端口可达证明。
+- **节点详情的 Mesh DNS 名称**：新版概览需要可复制的规范化 FQDN，并能区分 MagicDNS 已启用／已关闭。当前名称规则是配置 hostname 加 `dns.domain`；Owner／Admin 能读完整配置，普通成员的 `NetworkSummary`、`NodeInventoryView`、`NodeSettingsView` 均没有 DNS 后缀和 MagicDNS 开关。
+  - 请在调用者有权读取的节点／网络视图提供最小的命名信息（规范化名称与开关，或足以无歧义展示它们的投影），GET 与对应 SSE 一致；节点改名、网络后缀变化和开关变化应随同版配置更新。
+  - 这是配置名称，不是系统 resolver 已安装或其他节点已有访问权限的证明；控制台不调用 Node 凭据专用的 `queryNodeDns` 来补齐，也不向普通成员读取完整配置。
 - **State 不再返回 GeoIP／ASN**（产品决定：地点由 console 查 geojs.io，服务端的 GeoIP 只给 `routing.egress.auto` 用）。
   - `derived.location` 只描述依据的地址：`{ address, endpointSource, observedAt, expiresAt, sourceSocketId, sourceGeneration }`，去掉 `data` 和 `datasetId`。只要有合格的实测地址就给出，不依赖数据集。
   - 多个合格地址时，选择不能再依赖它们的地区是否一致：请定一个确定的选择规则，或者在不止一个时返回 `ambiguousObservation`。
@@ -149,14 +154,17 @@ console 已接入 `/api/v1` 下全部 Console 操作：
   - console 的读取集中在 `src/lib/geo.ts` 的 `nodeAddresses`，改完后只需调整这一处和缺失原因的文案。
 - **`edge_transport_unavailable` 一次只报一条**：同一条组网规则让几条 Mesh 路由都走不通时，validate 只返回其中一条路由和一条边（8420 上 3 条必经路由都经过 `transports: []` 的边，只报了 `/routing/mesh/1` 的 lax–nyc）。改完一条再检查才看到下一条；如果是有意合并，请在 problems.md 里写明。
 - **阻断规则带 `transports`**：服务端照收，但阻断总是阻断整条边，这个字段不起作用。建议 validate 给一条 warning 或直接拒绝；console 现在只在规则下注明"阻断规则的承载设置不起作用"，把规则改成阻断时去掉它。
+- **业务流量期间 `StateView.paths` 为空**：8420 r5 上从 lax 在 TUN 内持续 ping nyc 的 Mesh 地址（90／90 及 60／60 成功），同期 lax–nyc 的 link 为 `authenticated`／`matched`／`inUse: true`，但 `paths: []`。拓扑的流动方向只取 `paths` 的节点顺序，不从 links 推断，所以现在只能显示"承载业务"的无方向效果。请确认节点是否应上报业务 PathState，或说明 `inUse` 在 `paths` 为空时的含义。
+- **按目的地逐个规划**：拓扑选中节点后，对每个其他节点各调一次 `evaluateConfiguration`（console 最多同时 4 个，按 revision 缓存）。节点多时请求数随节点数线性增长；如果服务端能一次返回"从一个来源到所有节点"的主路径，请给批量形式；没有也能用，只是大网络较慢。
 
 ### 需要真实 Node 复核
 
 三节点 Docker 环境接在 8420 上。
 
 1. 节点应用配置后重新 acquire instance，原版本中是否仍被标为 `superseded`：未复核。
-2. 节点发起 demand 时：已看到。`meshway ping` 期间（8420，`1bb3d137`），发布随需求更新，相关节点在 `current` 和 `config_mismatch` 之间来回，links 变成 `expired`，大约 30 秒内随新报告恢复。console 按事实显示，节点列表和地球会跟着闪。请后端确认这是预期；如果"已收到新发布、正在应用"不应算配置不一致，State 能否把这段过渡和真正的不一致分开。
+2. 执行发布切换期间的状态：在 8420 的 `meshway ping` 和 Console 主动观察中见到节点在 `current`／`config_mismatch` 之间变化，links 变为 `expired`，随后随新报告恢复。短观察有成功 RTT 样本，之后任务又进入 preparing；这不能证明状态变未知期间仍在连续传包，也不能把旧上报过期直接当作物理通道已断开。诊断使用独立发布，这些记录不用于归因普通业务 demand。请后端确认并分开执行同步过渡、连接存续与当前可用性；当前相邻连接 UI 对过期证据显示未知。稳定已连接状态跨观察续租的展示仍未完成真实验收。
 3. 主动观察的创建、续租、取消是否重新生成整网执行发布；有观察时 Agent 请求（tasks、renew、receipts）的耗时：未复核。
+4. 2026-10-09 meshway-sha 自身报告 `Blocked`、`Last problem: Contract`、数据面 `Failed`，State 中为 `expired`；lax／nyc 同期 `current`。console 如实显示为离线，原因待后端或 lab 维护方确认。
 
 ### 后端排期中
 

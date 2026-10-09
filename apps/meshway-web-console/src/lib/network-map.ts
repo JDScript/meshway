@@ -1,14 +1,17 @@
 import type {
   AggregatedLink,
-  LinkEvidence,
-  LinkPhase,
   LocationAbsentReason,
   NodeInventoryView,
+  NodeSettingsView,
   RecentLink,
   StateView,
 } from "@meshway/control-client"
 
 import type { LinkLook, Scene, SceneLink, SceneNode } from "@/globe/scene"
+import type {
+  DeclaredEdge,
+  DeclaredTopology,
+} from "@/lib/configuration/topology-view"
 import {
   nodeAddresses,
   type AddressGeo,
@@ -16,6 +19,12 @@ import {
   type GeoOf,
   type LocationAddress,
 } from "@/lib/geo"
+import {
+  groupNodePairs,
+  neighborConnections,
+  type ConnectionStatus,
+  type NeighborConnection,
+} from "@/lib/nodes/connections"
 import { nodeStatus, type NodeStatus } from "@/lib/nodes/status"
 
 // The overview's reading of the network's State: which nodes are located,
@@ -52,20 +61,6 @@ export type MapNode = {
   lastAuthenticatedAt: string | null
 }
 
-export const PHASE_ORDER: readonly LinkPhase[] = [
-  "authenticated",
-  "preparing",
-  "failed",
-  "closed",
-]
-
-export const EVIDENCE_ORDER: readonly LinkEvidence[] = [
-  "matched",
-  "oneSided",
-  "conflicting",
-  "expired",
-]
-
 /** The addresses the nodes' locations rest on (all public): what the globe looks up. */
 export function locationAddresses(state: StateView): Map<string, AddressScope> {
   return new Map(
@@ -98,29 +93,45 @@ function unlocatedOf(
 }
 
 /**
- * Every node in the State, named by its configured hostname; a node the
+ * Configuration nodes when readable, otherwise the visible inventory/State,
+ * named by the configuration's hostname; a node the
  * account cannot list (a peer of its own device) takes its status from its
  * report alone. `geoOf` says where the addresses of `locationAddresses` are.
  */
 export function mapNodes(
-  state: StateView,
+  state: StateView | undefined,
   inventory: ReadonlyMap<string, NodeInventoryView>,
-  geoOf: GeoOf
+  geoOf: GeoOf,
+  configured?: Readonly<Record<string, NodeSettingsView>>
 ): MapNode[] {
-  return Object.entries(state.nodes)
-    .map(([id, view]): MapNode => {
-      const { location, locationAbsent } = nodeAddresses(view.derived)
+  const ids = configured
+    ? Object.keys(configured)
+    : [...new Set([...Object.keys(state?.nodes ?? {}), ...inventory.keys()])]
+  return ids
+    .map((id): MapNode => {
+      const view =
+        state && Object.hasOwn(state.nodes, id) ? state.nodes[id] : undefined
+      const { location, locationAbsent } = view
+        ? nodeAddresses(view.derived)
+        : { location: null, locationAbsent: null }
       const geo = location ? geoOf(location.address) : null
       const listed = inventory.get(id) ?? null
       return {
         id,
-        name: listed?.hostname ?? view.hostname,
-        status: nodeStatus(listed, view),
+        name:
+          configured?.[id]?.hostname ??
+          listed?.hostname ??
+          view?.hostname ??
+          id.slice(0, 8),
+        status:
+          configured?.[id]?.enabled === false
+            ? "disabled"
+            : nodeStatus(listed, view),
         location,
         geo,
         unlocated: unlocatedOf(location, locationAbsent, geo),
-        receivedAt: view.receivedAt ?? null,
-        lastAuthenticatedAt: view.lastAuthenticatedAt ?? null,
+        receivedAt: view?.receivedAt ?? null,
+        lastAuthenticatedAt: view?.lastAuthenticatedAt ?? null,
       }
     })
     .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
@@ -142,26 +153,24 @@ function sceneNode(node: MapNode): SceneNode {
   }
 }
 
-/** How a current link looks: evidence problems first, then the reported phase. */
-export function linkLook(link: AggregatedLink): LinkLook {
-  if (link.evidence === "expired") return "expired"
-  if (link.evidence === "conflicting") return "conflicting"
-  switch (link.phase) {
-    case "authenticated":
-      return link.evidence === "matched" ? "matched" : "one_sided"
-    case "preparing":
+/** Product adjacency styling; report provenance stays in channel details. */
+export function connectionLook(connection: NeighborConnection): LinkLook {
+  switch (connection.status) {
+    case "connected":
+      return "matched"
+    case "connecting":
       return "preparing"
     case "failed":
       return "failed"
-    case "closed":
-      return "closed"
+    case "unknown":
+      return "expired"
   }
 }
 
 export const linkKey = (link: { a: string; b: string; linkId: string }) =>
   `${link.a}|${link.b}|${link.linkId}`
 
-/** Links with both ends located are drawn; the others are only counted and listed. */
+/** Edges with both ends located can also be drawn on the globe. */
 const drawnBetween = <T extends { a: string; b: string }>(
   links: readonly T[],
   located: ReadonlySet<string>
@@ -231,49 +240,124 @@ export function mergeRecentLinks(items: readonly RecentLink[]): HistoryLink[] {
 }
 
 /**
- * The globe's scene: located nodes, current links between them, and (when
- * the history layer is on) history links between them that are not current.
- * Links between the same two nodes take successive lanes.
+ * The globe's scene: located nodes and the given edges between them (one
+ * per pair, the same model as the topology and the lists).
  */
 export function overviewScene(
   nodes: readonly MapNode[],
-  links: readonly AggregatedLink[],
-  history: readonly HistoryLink[] | null
+  edges: readonly Pick<MapConnection, "key" | "a" | "b" | "look">[]
 ): Scene {
   const scene = nodes.map(sceneNode)
   const located = new Set(
     scene.filter((node) => node.placement).map((node) => node.id)
   )
-  const current = drawnBetween(links, located)
-  const currentKeys = new Set(links.map(linkKey))
-  const past = history
-    ? drawnBetween(
-        history.filter((link) => !currentKeys.has(linkKey(link))),
-        located
-      )
-    : []
-  const lanes = new Map<string, number>()
-  const lane = (a: string, b: string) => {
-    const pair = `${a}|${b}`
-    const next = lanes.get(pair) ?? 0
-    lanes.set(pair, next + 1)
-    return next
-  }
-  const sceneLinks: SceneLink[] = [
-    ...[...current]
-      .sort((x, y) => x.linkId.localeCompare(y.linkId))
-      .map((link) => ({
-        key: linkKey(link),
-        nodeIds: [link.a, link.b] satisfies [string, string],
-        look: linkLook(link),
-        lane: lane(link.a, link.b),
-      })),
-    ...past.map((link) => ({
-      key: `history|${linkKey(link)}`,
-      nodeIds: [link.a, link.b] satisfies [string, string],
-      look: "history" as const,
-      lane: lane(link.a, link.b),
-    })),
-  ]
+  const sceneLinks: SceneLink[] = drawnBetween(edges, located).map((link) => ({
+    key: link.key,
+    nodeIds: [link.a, link.b] satisfies [string, string],
+    look: link.look,
+    lane: 0,
+  }))
   return { nodes: scene, links: sceneLinks }
+}
+
+export type MapConnection = {
+  /** The pair (`a|b`); a history-only pair is `history|a|b`. */
+  key: string
+  a: string
+  b: string
+  look: LinkLook
+  status: ConnectionStatus | "history" | "allowed" | "unavailable"
+  /** Carriers in use now, else the ones last seen in the history window. */
+  transports: string[]
+  /** A current authenticated channel carries business paths (not a byte count). */
+  inUse: boolean
+  /** The pair's current channel records, for details. */
+  channels: readonly AggregatedLink[]
+  declaration?: DeclaredEdge
+}
+
+const inUseOf = (connection: NeighborConnection | undefined) =>
+  connection?.status === "connected" &&
+  connection.channels.some(
+    (channel) =>
+      channel.phase === "authenticated" &&
+      (channel.evidence === "matched" || channel.evidence === "oneSided") &&
+      channel.inUse === true
+  )
+
+/** Shared graph projection: one current edge per adjacent pair, optional historical pairs apart. */
+export function mapConnections(
+  links: readonly AggregatedLink[],
+  history: readonly HistoryLink[] | null,
+  declared?: DeclaredTopology
+): MapConnection[] {
+  const current = neighborConnections(links)
+  if (declared) {
+    const byPair = new Map(
+      current.map((connection) => [connection.key, connection])
+    )
+    const past = new Map(
+      groupNodePairs(history ?? []).map((pair) => [pair.key, pair])
+    )
+    return declared.edges.map((edge) => {
+      const connection = byPair.get(edge.key)
+      const unavailable = edge.transports?.length === 0
+      const historical = !connection ? past.get(edge.key) : undefined
+      return {
+        key: edge.key,
+        a: edge.a,
+        b: edge.b,
+        declaration: edge,
+        inUse: !unavailable && inUseOf(connection),
+        channels: connection?.channels ?? [],
+        status: unavailable
+          ? "unavailable"
+          : (connection?.status ?? (historical ? "history" : "allowed")),
+        look: unavailable
+          ? "closed"
+          : connection
+            ? connectionLook(connection)
+            : historical
+              ? "history"
+              : "allowed",
+        transports: unavailable
+          ? []
+          : (connection?.transports ??
+            (historical
+              ? [
+                  ...new Set(
+                    historical.channels.map((channel) => channel.transport)
+                  ),
+                ]
+              : [])),
+      }
+    })
+  }
+  const present = new Set(current.map((connection) => connection.key))
+  return [
+    ...current.map((connection) => ({
+      key: connection.key,
+      a: connection.a,
+      b: connection.b,
+      status: connection.status,
+      transports: connection.transports,
+      look: connectionLook(connection),
+      inUse: inUseOf(connection),
+      channels: connection.channels,
+    })),
+    ...groupNodePairs(history ?? [])
+      .filter((pair) => !present.has(pair.key))
+      .map((pair) => ({
+        key: `history|${pair.key}`,
+        a: pair.a,
+        b: pair.b,
+        status: "history" as const,
+        look: "history" as const,
+        inUse: false,
+        channels: [],
+        transports: [
+          ...new Set(pair.channels.map((channel) => channel.transport)),
+        ].sort(),
+      })),
+  ]
 }

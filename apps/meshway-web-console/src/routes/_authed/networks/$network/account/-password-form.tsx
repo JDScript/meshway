@@ -141,8 +141,16 @@ export function PasswordForm({ email }: { email: string | null }) {
           id="account-new-password"
           label={m.account_password_new()}
           placeholder={
-            rules ? passwordRulesText(rules) : m.placeholder_password_rules()
+            rules
+              ? passwordRulesText(rules)
+              : options.isError
+                ? m.password_rules_failed()
+                : m.placeholder_password_rules()
           }
+          // The rules failed to read: asking again when the field is used.
+          onFocus={() => {
+            if (options.isError) void options.refetch()
+          }}
           name={FIELD_NAME.next}
           type="password"
           autoComplete="new-password"

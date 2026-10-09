@@ -3,6 +3,7 @@ import { cn } from "@meshway/ui/cn"
 
 import { FieldOption, FieldSelect } from "@/components/chrome/field-select"
 import { FieldInput } from "@/components/chrome/form"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import {
   DEFAULT_CONNECT_TIMEOUT,
@@ -41,6 +42,7 @@ export function DialerSetForm({
   id,
   value,
   offered,
+  offeredFailure = null,
   editable,
   onChange,
 }: {
@@ -49,6 +51,8 @@ export function DialerSetForm({
   value: DialerSetUpdate
   /** The protocols the transport catalog offers; null while unread. */
   offered: readonly DialerProtocol[] | null
+  /** Why the catalog will not be read (then no protocol can be added). */
+  offeredFailure?: string | null
   editable: boolean
   onChange: (value: DialerSetUpdate) => void
 }) {
@@ -183,6 +187,18 @@ export function DialerSetForm({
           </div>
         )
       })}
+      {editable && offered === null && offeredFailure === null
+        ? DIALER_PROTOCOLS.filter((protocol) => !present.has(protocol)).map(
+            (protocol) => (
+              <Skeleton key={protocol} className="h-12 w-full rounded-tile" />
+            )
+          )
+        : null}
+      {editable && offered === null && offeredFailure !== null ? (
+        <p className="flex h-12 items-center rounded-tile border border-dashed border-divider px-3.5 text-meta text-muted-foreground">
+          {offeredFailure}
+        </p>
+      ) : null}
       {editable
         ? absent.map((protocol) => (
             <div

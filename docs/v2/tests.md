@@ -75,7 +75,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | `test:runtime:linux --traversal exit` | exit/off（explicit-only） | 短模式诊断／全长验收 | 真实 Controller／A／R／E、隔离公网分类目标与私有 LAN；能力／安装、NAT tuple、完整路径、长流／仅接收、撤回／到期／journal／精确清理；内部 ACK／截止边界单独调用正式组件测试 |
 | `test:runtime:linux` | vless/off、trojan/off | 各 ~8 分钟 | 同一 daemon 共同场景；A/B 只经所选 TCP/TLS 承载拨入 R，SecureNode 包流与原路径回复；独立 TLS 材料与精确叶证书验证 |
 
-11 行由 `validate:matrix` 统一定义；原九行矩阵 planck 并行 4 约 14.5 分钟；`--short` 把流缩到约 30 秒只作诊断。当前每行状态见[验收范围](/v2/node/validation)。
+11 行由 `validate:matrix` 统一定义；planck（32 核）默认并发 11 行同时执行，全量约 13.5 分钟（其中构建约 4 分钟，最长行约 9.5 分钟），此前并行 4 约 28 分钟；`--short` 把流缩到约 30 秒只作诊断。当前每行状态见[验收范围](/v2/node/validation)。
 
 ## Fixture 与工具
 

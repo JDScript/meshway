@@ -38,6 +38,7 @@ export type SceneNode = {
  * - `history`: seen in the chosen history window, not current.
  */
 export type LinkLook =
+  | "allowed"
   | "matched"
   | "one_sided"
   | "conflicting"
@@ -283,6 +284,8 @@ type LineStyle = {
 /** A steady line for every link; its colour and pattern tell the evidence apart. */
 export function lineStyle(look: LinkLook): LineStyle {
   switch (look) {
+    case "allowed":
+      return { dashed: true, dash: 2, gap: 2, opacity: 0.5 }
     case "matched":
       return { dashed: false, dash: 0, gap: 0, opacity: 0.8 }
     case "one_sided":
