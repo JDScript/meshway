@@ -459,6 +459,8 @@ S 类简化不在本表；N1 使 S1–S6（Server）、S1–S5（Node）、S1–
 | 出口就绪 | **纯动态事实，不编译**：netmap 的出口 grant 是管理员配置的有序主备；哪个出口 ready 走 State 事实线，源端本地选 | 推翻 10-08"出口能力仍按需编译"；X1 的 `ExitInputs` 退出编译输入，`ExitCapability` 保留为事实 |
 | 邻接按需 | **按需建、空闲 120 s 关**；topology 边可标 `keepalive: true` 常驻（必经中继、出口） | topology.md 更新；cold 首包多一次建邻接，lab 门槛 cold ≤ 300 ms |
 | 规模上限 | **不设协议级拒绝上限**，参照 Tailscale：首次完整 netmap，之后差量（peer 增删、轻字段 patch）＋按 netmap peers／edges 的可见性裁剪；仅保留 8 MiB 单份安全上界防异常 | 分发通道增加 `netmap.delta`；超 8 MiB 视为缺陷而非容量规划 |
+| Node↔Server 同步传输 | **单一长轮询端点 `POST /agent-api/v1/sync`**，取代 Node SSE：请求携带节点持有的 `netmap: NetmapRef` 与 `state: cursor`，Server 挂起至有更新或 ≤60 s 超时，响应 `{ lease, netmap: full | delta | none, peerFacts: delta | none }`；节点收到即发下一个请求。无事件流、无独立 cursor 重放，节点手里的 serial／cursor 即是游标；hold 超时回 `none` 即内建兜底，不再另设定时刷新。与 Tailscale MapRequest long-poll 同形。Console 的用户 SSE 保留 | N1b 不把 `netmap.changed`／`netmap.delta`／`state.delta` 并入 `StreamEvent`，改做 `sync`；N1d 删除 Control `events.rs` 的 Node 侧 Interest 投影；`NetmapQueryRequest`／`Response` 并入 `SyncRequest`／`SyncResponse` |
+| netmap 的形状 | **配置的投影，不是编译结果**：`ProjectedConfiguration` 是 `NetworkConfiguration` 的单调子集（可见 peers、涉及本节点的 Access／topology／routing 规则、双方 listeners／dialers、egress capture、exitRole、dns）；节点用同一 `meshway-policy` 在投影上**懒编译**本对 (source, target)，按 (serial, source, target) 缓存，禁止预展开全部节点对；中继用 `admit_transit`。Server 为 Console 做路径检查时在全量配置上用同一 crate | 删除 N1a 首版的 `grants`／`GrantPath` 物化；中继 hub O(N²) 问题随之消失；每份 netmap O(可达 peer＋涉及规则) |
 
 ## 限制
 
