@@ -39,7 +39,7 @@ use meshway_model::{NodeId, ObservationId, RequestId};
 pub use meshway_policy::admission::Carrier;
 use meshway_policy::admission::circuit_permit;
 pub use meshway_policy::compile::netmap::Target;
-pub use netmap::{AdjacencyInterest, Flushed, Outbound, Update};
+pub use netmap::{AdjacencyInterest, Flushed, Outbound, Update, diagnostic_paths};
 use replay::{ReplayWindow, SendNonce};
 use sha2::{Digest as _, Sha256};
 use std::{

@@ -1,5 +1,10 @@
 //! Bounded source scheduling over the host's existing SecureNode. This owner
 //! has no sockets, HTTP client, flow table, keys, or background tasks.
+//!
+//! On a netmap snapshot a task is bound locally: its paths are the source's
+//! own `icmpEcho` decision on the installed netmap, as for a first packet,
+//! with no Server round trip. A permitted pair without a path every Node can
+//! observe reports `Unsupported`; a denied pair does not bind.
 #![forbid(unsafe_code)]
 
 mod measurement;
@@ -10,7 +15,9 @@ use chrono::{DateTime, Utc};
 use measurement::Measurement;
 use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::{Carrier, CircuitAuthorization};
-use meshway_dataplane::secure::{CircuitRole, CircuitState, PendingFrame, SecureNode};
+use meshway_dataplane::secure::{
+    CircuitGrant, CircuitRole, CircuitState, PendingFrame, SecureNode, Target,
+};
 use meshway_model::observations::{MetricKind, ProbeChannel};
 use meshway_model::{Digest, EventId, NodeId, ObservationId, Sequence};
 use meshway_protocol::observations::*;
@@ -82,6 +89,25 @@ struct Task {
     connecting: bool,
     setup_failed: bool,
     preparation_stage: Option<&'static str>,
+    /// Bound on a netmap snapshot rather than a legacy diagnostic permit.
+    netmap: bool,
+    /// False when the decision permits the pair but no path is observable.
+    supported: bool,
+}
+
+impl Task {
+    fn grant(&self) -> CircuitGrant {
+        if self.netmap {
+            CircuitGrant::Netmap {
+                purpose: meshway_dataplane::Purpose::Diagnostic,
+                target: Target::Mesh {
+                    node: self.task.target_node_id,
+                },
+            }
+        } else {
+            CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(self.task.id))
+        }
+    }
 }
 
 fn preparation_stage(task: &mut Task, stage: &'static str) {
@@ -122,7 +148,7 @@ impl Owner {
         }
         let mut plans = Vec::with_capacity(tasks.len());
         for (index, task) in tasks.iter().enumerate() {
-            let path = binding(&snapshot, task)?;
+            let (path, supported) = bind(&snapshot, task)?;
             if tasks[..index].iter().any(|old| old.id == task.id) {
                 return Err(Error::Binding);
             }
@@ -142,12 +168,12 @@ impl Owner {
                     old.segment
                 });
             }
-            plans.push((task, path, segment));
+            plans.push((task, path, segment, supported));
         }
         snapshot.ensure_current().map_err(|_| Error::Binding)?;
         self.tasks
             .retain(|id, _| tasks.iter().any(|task| task.id == *id));
-        for (task, path, segment) in plans {
+        for (task, path, segment, supported) in plans {
             let now = Instant::now();
             if let Some(old) = self.tasks.get_mut(&task.id)
                 && old.snapshot.same_execution(&snapshot)
@@ -158,6 +184,7 @@ impl Owner {
                 && old.task.metrics == task.metrics
                 && old.task.interval_ms == task.interval_ms
                 && old.segment == segment
+                && old.supported == supported
             {
                 old.task = task.clone();
                 // Do not renew an in-flight measurement or its publication.
@@ -204,6 +231,8 @@ impl Owner {
                     connecting: true,
                     setup_failed: false,
                     preparation_stage: None,
+                    netmap: snapshot.is_netmap(),
+                    supported,
                 },
             );
         }
@@ -326,11 +355,12 @@ impl Owner {
                 task.setup_wake = Some(task.next);
                 continue;
             }
-            let unsupported = !task
-                .task
-                .metrics
-                .iter()
-                .any(|m| matches!(m, MetricKind::Rtt | MetricKind::ProbeLoss));
+            let unsupported = !task.supported
+                || !task
+                    .task
+                    .metrics
+                    .iter()
+                    .any(|m| matches!(m, MetricKind::Rtt | MetricKind::ProbeLoss));
             if unsupported {
                 task.output = Some(output(
                     task,
@@ -350,12 +380,13 @@ impl Owner {
                 continue;
             };
             if task.circuit.is_none() {
-                // SecureNode alone decides which crypto survived its handoff.
+                // SecureNode alone decides which crypto survived its update.
                 // This lookup reuses its authority; it never migrates a sample.
+                let grant = task.grant();
                 task.circuit = ready
                     .iter()
                     .find(|circuit| {
-                        circuit.authorization == CircuitAuthorization::Diagnostic(*id)
+                        circuit.grant == grant
                             && circuit.path == task.path
                             && circuit.role == CircuitRole::Origin
                     })
@@ -445,11 +476,7 @@ impl Owner {
                     preparation_stage(task, "path_handshake");
                     task.connecting = true;
                     task.circuit = None;
-                    match secure.start_authorized(
-                        CircuitAuthorization::Diagnostic(*id),
-                        task.path.clone(),
-                        carrier,
-                    ) {
+                    match secure.start_grant(task.grant(), task.path.clone(), carrier) {
                         Ok(frame) => {
                             task.sending = true;
                             task.circuit = Some(frame.circuit());
@@ -582,7 +609,13 @@ fn output(task: &Task, result: ObservationUpdate) -> Output {
         snapshot: task.snapshot.clone(),
         result: ObservationResult {
             instance_id: task.task.instance_id,
-            configuration: task.snapshot.reference(),
+            // A netmap snapshot has no publication reference; the result
+            // stays bound to the task's own reported binding.
+            configuration: if task.netmap {
+                task.task.configuration.clone()
+            } else {
+                task.snapshot.reference()
+            },
             result,
         },
         invalidated: task.publication_invalidated.clone(),
@@ -590,23 +623,32 @@ fn output(task: &Task, result: ObservationUpdate) -> Output {
 }
 
 fn current(task: &Task) -> bool {
-    !task.publication_invalidated.is_cancelled() && binding(&task.snapshot, &task.task).is_ok()
+    if task.publication_invalidated.is_cancelled() {
+        return false;
+    }
+    if task.netmap {
+        // New content invalidates this snapshot; the host binds again.
+        return task.snapshot.now_ms().is_ok_and(|now| {
+            i64::try_from(now).is_ok_and(|now| task.task.expires_at.timestamp_millis() > now)
+        });
+    }
+    binding(&task.snapshot, &task.task).is_ok()
 }
 
-fn binding(snapshot: &ExecutionSnapshot, task: &ObservationTask) -> Result<Vec<NodeId>, Error> {
-    let cfg = snapshot.configuration().map_err(|_| Error::Binding)?;
-    let now = snapshot.now_ms().map_err(|_| Error::Binding)?;
-    let permit = cfg.diagnostics.get(&task.id).ok_or(Error::Binding)?;
-    if task.configuration != snapshot.reference()
-        || task.instance_id != snapshot.instance().instance_id
-        || task.source_node_id != cfg.node_id
-        || permit.observation_id != task.id
-        || permit.source != task.source_node_id
-        || permit.instance_id != task.instance_id
-        || permit.target != task.target_node_id
-        || permit.service != task.service
-        || permit.expires_at_ms <= now
-        || task.expires_at.timestamp_millis() <= i64::try_from(now).map_err(|_| Error::Binding)?
+fn bind(
+    snapshot: &ExecutionSnapshot,
+    task: &ObservationTask,
+) -> Result<(Vec<NodeId>, bool), Error> {
+    if snapshot.is_netmap() {
+        netmap_binding(snapshot, task)
+    } else {
+        binding(snapshot, task).map(|path| (path, true))
+    }
+}
+
+/// Task fields independent of the authority kind.
+fn valid_task(task: &ObservationTask, now: u64) -> Result<(), Error> {
+    if task.expires_at.timestamp_millis() <= i64::try_from(now).map_err(|_| Error::Binding)?
         || !matches!(
             task.phase,
             ObservationPhase::Preparing | ObservationPhase::Running
@@ -626,6 +668,68 @@ fn binding(snapshot: &ExecutionSnapshot, task: &ObservationTask) -> Result<Vec<N
         || (task.phase == ObservationPhase::Running && task.path.is_none())
         || (task.phase == ObservationPhase::Preparing && task.path.is_some())
         || task.path_segment.is_some_and(|segment| segment.get() == 0)
+    {
+        return Err(Error::Binding);
+    }
+    Ok(())
+}
+
+/// Bind on the source's own netmap decision: no permit, no publication.
+fn netmap_binding(
+    snapshot: &ExecutionSnapshot,
+    task: &ObservationTask,
+) -> Result<(Vec<NodeId>, bool), Error> {
+    use meshway_configuration::execution::ObservationServiceScope;
+    let netmap = snapshot.netmap().map_err(|_| Error::Binding)?;
+    let now = snapshot.now_ms().map_err(|_| Error::Binding)?;
+    valid_task(task, now)?;
+    if task.source_node_id != netmap.netmap.node_id
+        || task.target_node_id == task.source_node_id
+        || snapshot
+            .instance_binding()
+            .is_some_and(|instance| instance.instance_id != task.instance_id)
+    {
+        return Err(Error::Binding);
+    }
+    // Probe circuits are admitted for icmpEcho; other scopes are unsupported.
+    if task.service != ObservationServiceScope::IcmpEcho {
+        return Ok((Vec::new(), false));
+    }
+    let explicit = match &task.selection {
+        ObservationPath::Auto => None,
+        ObservationPath::Explicit { path } => Some(path.as_slice()),
+    };
+    let paths = match meshway_dataplane::secure::diagnostic_paths(
+        snapshot,
+        task.target_node_id,
+        explicit,
+    ) {
+        Ok(paths) => paths,
+        Err(meshway_dataplane::secure::Error::Unsupported) => return Ok((Vec::new(), false)),
+        Err(_) => return Err(Error::Binding),
+    };
+    if task.path.as_ref().is_some_and(|path| !paths.contains(path)) {
+        return Err(Error::Binding);
+    }
+    let path = paths.into_iter().next().ok_or(Error::Binding)?;
+    snapshot.ensure_current().map_err(|_| Error::Binding)?;
+    Ok((path, true))
+}
+
+fn binding(snapshot: &ExecutionSnapshot, task: &ObservationTask) -> Result<Vec<NodeId>, Error> {
+    let cfg = snapshot.configuration().map_err(|_| Error::Binding)?;
+    let now = snapshot.now_ms().map_err(|_| Error::Binding)?;
+    let permit = cfg.diagnostics.get(&task.id).ok_or(Error::Binding)?;
+    if task.configuration != snapshot.reference()
+        || task.instance_id != snapshot.instance().instance_id
+        || task.source_node_id != cfg.node_id
+        || permit.observation_id != task.id
+        || permit.source != task.source_node_id
+        || permit.instance_id != task.instance_id
+        || permit.target != task.target_node_id
+        || permit.service != task.service
+        || permit.expires_at_ms <= now
+        || valid_task(task, now).is_err()
         || task
             .path
             .as_ref()

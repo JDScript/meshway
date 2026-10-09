@@ -32,12 +32,16 @@ impl Measurement {
         let started_at = DateTime::from_timestamp_millis(ms)
             .ok_or(Error::Binding)?
             .max(task.last_end.unwrap_or(DateTime::<Utc>::MIN_UTC));
-        let permit_expiry = task
-            .snapshot
-            .configuration()
-            .map_err(|_| Error::Binding)?
-            .diagnostics[&task.task.id]
-            .expires_at_ms;
+        // A netmap task is bounded by its own deadline and the lease alone.
+        let permit_expiry = if task.netmap {
+            u64::MAX
+        } else {
+            task.snapshot
+                .configuration()
+                .map_err(|_| Error::Binding)?
+                .diagnostics[&task.task.id]
+                .expires_at_ms
+        };
         let expiry = u64::try_from(task.task.expires_at.timestamp_millis())
             .map_err(|_| Error::Binding)?
             .min(permit_expiry);
