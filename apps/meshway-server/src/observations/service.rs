@@ -408,17 +408,21 @@ impl<P: ObservationProvider> ObservationService<P> {
                     let subscription = task
                         .subscription_id
                         .ok_or(Error::Internal("observation subscription missing"))?;
-                    if operation == ObservationOperation::Cancel {
-                        runtime.observations.cancel(
-                            session,
-                            scope.network_id,
-                            task.id,
-                            subscription,
-                            now,
-                        )?;
-                        continue;
-                    }
-                    if !super::active(task.phase) && operation == ObservationOperation::Read {
+                    let renew = match operation {
+                        ObservationOperation::Read => false,
+                        ObservationOperation::Renew => true,
+                        ObservationOperation::Cancel => {
+                            runtime.observations.cancel(
+                                session,
+                                scope.network_id,
+                                task.id,
+                                subscription,
+                                now,
+                            )?;
+                            continue;
+                        }
+                    };
+                    if !super::active(task.phase) && !renew {
                         items.push(task);
                         continue;
                     }
@@ -432,27 +436,14 @@ impl<P: ObservationProvider> ObservationService<P> {
                         interval_ms: task.interval_ms,
                     };
                     let admission = provider.observation(&tx, &identity, &request, now)?;
-                    let task = match operation {
-                        ObservationOperation::Read => {
-                            runtime
-                                .observations
-                                .get(&admission, task.id, subscription, now)?
-                        }
-                        ObservationOperation::Renew => {
-                            runtime
-                                .observations
-                                .renew(&admission, task.id, subscription, now)?
-                        }
-                        ObservationOperation::Cancel => {
-                            runtime.observations.cancel(
-                                session,
-                                scope.network_id,
-                                task.id,
-                                subscription,
-                                now,
-                            )?;
-                            continue;
-                        }
+                    let task = if renew {
+                        runtime
+                            .observations
+                            .renew(&admission, task.id, subscription, now)?
+                    } else {
+                        runtime
+                            .observations
+                            .get(&admission, task.id, subscription, now)?
                     };
                     items.push(task);
                 }
@@ -691,7 +682,13 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let admission = provider.report(&tx, &authorization, now)?;
                 let mut runtime =
                     RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
-                reauthorize(&*provider, &tx, &mut runtime, &admission, None, now);
+                reauthorize_all(
+                    &*provider,
+                    &tx,
+                    &mut runtime,
+                    now,
+                    Some(admission.network_id),
+                );
                 provider.synchronize(&tx, &runtime.observations.leases(), now)?;
                 tx.commit()?;
                 runtime.committed();
@@ -716,7 +713,13 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let admission = provider.report(&tx, &authorization, now)?;
                 let mut runtime =
                     RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
-                reauthorize(&*provider, &tx, &mut runtime, &admission, Some(id), now);
+                reauthorize_all(
+                    &*provider,
+                    &tx,
+                    &mut runtime,
+                    now,
+                    Some(admission.network_id),
+                );
                 let result_digest = crate::resources::content_digest(
                     &serde_json::to_vec(&result)
                         .map_err(|_| Error::encode("observation result"))?,
@@ -794,17 +797,6 @@ pub enum ObservationOperation {
     Read,
     Renew,
     Cancel,
-}
-
-fn reauthorize<P: ObservationProvider>(
-    provider: &P,
-    tx: &Transaction<'_>,
-    runtime: &mut crate::state::service::Runtime,
-    admission: &crate::state::ReportAdmission,
-    _selected: Option<ObservationId>,
-    now: DateTime<Utc>,
-) {
-    reauthorize_all(provider, tx, runtime, now, Some(admission.network_id));
 }
 
 fn reauthorize_all<P: ObservationProvider>(
