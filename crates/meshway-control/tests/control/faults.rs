@@ -25,6 +25,8 @@ pub enum Fault {
     MissingDnsRecord,
     ShortSession,
     ShortInstance,
+    /// The enrollment response pins the fixture's netmap signing key.
+    ServerKey,
     UntypedConflict,
     WrongStateScopeStatus,
     StateScopeChanged,
@@ -225,6 +227,10 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
                             .into();
                         value["executionExpiresAt"] = serde_json::Value::Null;
+                    }
+                    Fault::ServerKey => {
+                        value["serverSigningKey"] =
+                            serde_json::to_value(super::netmap::support::server_key().1).unwrap();
                     }
                     Fault::Lost | Fault::Hold => unreachable!("delivery fault handled above"),
                     Fault::RejectBefore => unreachable!("rejected before forwarding"),

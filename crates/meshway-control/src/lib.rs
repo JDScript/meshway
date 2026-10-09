@@ -20,7 +20,7 @@ mod identity;
 mod netmap;
 pub use netmap::{
     FactsRejected, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
-    SyncReply, SyncTransport, lease_message, sync_loop,
+    SyncReply, SyncTransport, sync_loop,
 };
 mod observations;
 mod rotation;
@@ -92,6 +92,10 @@ pub enum Error {
     Cryptography,
     #[error("Server response does not match the requested binding or contract")]
     Contract,
+    #[error("netmap signature does not verify with the pinned Server key")]
+    SignatureInvalid,
+    #[error("netmap was signed by a different Server key than the pinned one")]
+    ServerKeyMismatch,
     #[error("invalid DNS query name")]
     InvalidDnsName,
     #[error("the current session or instance has expired")]

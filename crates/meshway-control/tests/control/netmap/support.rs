@@ -1,14 +1,17 @@
 //! Real one-Node netmaps for an enrolled identity and a scripted sync transport.
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use ed25519_dalek::{Signer, SigningKey};
 use meshway_configuration::{
     AddressPools, Input, NodeAddresses, NodeIdentity, NodeSettings, SubjectContext,
     execution::TrustedNode, netmap::CompiledNetmap,
 };
 use meshway_control::{FactsRejected, PeerFactsSink, SyncFuture, SyncTransport};
 use meshway_control_client::ClientError;
-use meshway_model::{NetmapLease, NetmapRef, Revision};
+use meshway_model::{KeyAlgorithm, NetmapLease, NetmapRef, NodePublicKey, Revision, Version};
 use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
 use meshway_protocol::{
-    EnrollmentResponse, ErrorResponse, PeerFactsDelta, SyncNetmap, SyncRequest, SyncResponse,
+    EnrollmentResponse, ErrorResponse, NetmapSignature, NetmapSigner, PeerFactsDelta,
+    ServerSigningKey, SyncNetmap, SyncRequest, SyncResponse, netmap_lease_transcript,
 };
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -74,27 +77,90 @@ pub fn compiled(
     .unwrap()
 }
 
+/// The fixture Server's netmap signing key, pinned through `Fault::ServerKey`.
+pub fn server_key() -> (SigningKey, ServerSigningKey) {
+    let secret = SigningKey::from_bytes(&[42; 32]);
+    let public = ServerSigningKey {
+        key_id: "00000000-0000-4009-8000-000000000001".parse().unwrap(),
+        key_generation: Version::MIN,
+        public_key: NodePublicKey {
+            algorithm: KeyAlgorithm::Ed25519,
+            bytes: secret.verifying_key().to_bytes().into(),
+        },
+    };
+    (secret, public)
+}
+
+/// What the Server signs for `binding`'s Node.
+pub fn sign_with(
+    secret: &SigningKey,
+    key: &ServerSigningKey,
+    binding: &EnrollmentResponse,
+    lease: &NetmapLease,
+) -> NetmapSignature {
+    let message = netmap_lease_transcript(
+        binding.network_id,
+        binding.node_id,
+        lease,
+        NetmapSigner::Server,
+        key.key_id,
+        key.key_generation,
+    );
+    NetmapSignature {
+        key_id: key.key_id,
+        key_generation: key.key_generation,
+        signature: URL_SAFE_NO_PAD.encode(secret.sign(&message).to_bytes()),
+    }
+}
+
+pub fn sign(binding: &EnrollmentResponse, lease: &NetmapLease) -> NetmapSignature {
+    let (secret, key) = server_key();
+    sign_with(&secret, &key, binding, lease)
+}
+
 pub fn lease(netmap: NetmapRef, validity_ms: u64) -> NetmapLease {
     let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
     NetmapLease::new(netmap, now, now + validity_ms).unwrap()
 }
 
-pub fn full(netmap: &CompiledNetmap, validity_ms: u64) -> SyncResponse {
+/// A signed response for `binding` with this lease and netmap part.
+pub fn signed(
+    binding: &EnrollmentResponse,
+    lease: NetmapLease,
+    netmap: SyncNetmap,
+) -> SyncResponse {
     SyncResponse {
-        lease: lease(netmap.reference(), validity_ms),
-        netmap: SyncNetmap::Full {
-            netmap: Box::new(netmap.clone()),
-        },
+        signature: sign(binding, &lease),
+        lease,
+        netmap,
         peer_facts: None,
     }
 }
 
-pub fn unchanged(netmap: &CompiledNetmap, validity_ms: u64) -> SyncResponse {
-    SyncResponse {
-        lease: lease(netmap.reference(), validity_ms),
-        netmap: SyncNetmap::Unchanged,
-        peer_facts: None,
-    }
+pub fn full(
+    binding: &EnrollmentResponse,
+    netmap: &CompiledNetmap,
+    validity_ms: u64,
+) -> SyncResponse {
+    signed(
+        binding,
+        lease(netmap.reference(), validity_ms),
+        SyncNetmap::Full {
+            netmap: Box::new(netmap.clone()),
+        },
+    )
+}
+
+pub fn unchanged(
+    binding: &EnrollmentResponse,
+    netmap: &CompiledNetmap,
+    validity_ms: u64,
+) -> SyncResponse {
+    signed(
+        binding,
+        lease(netmap.reference(), validity_ms),
+        SyncNetmap::Unchanged,
+    )
 }
 
 type Reply = Result<SyncResponse, ClientError<ErrorResponse>>;
