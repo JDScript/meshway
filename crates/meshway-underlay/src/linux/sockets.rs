@@ -26,7 +26,7 @@ use super::{
     dns::Resolver,
     protection::{ProtectionScope, Shared, io_error},
 };
-use crate::{Error, Options, Result};
+use crate::{Error, Options, Result, target::View};
 
 #[derive(Clone)]
 pub struct SocketFactory {
@@ -149,9 +149,9 @@ impl SocketFactory {
                 key: key.to_owned(),
             },
         )?;
-        let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
-        let candidate = cfg.dialers.get(key).ok_or(Error::Target)?;
-        if candidate.peer == cfg.node_id || !cfg.peers.contains_key(&candidate.peer) {
+        let view = View::of(snapshot).ok_or(Error::Expired)?;
+        let candidate = view.dialers().get(key).ok_or(Error::Target)?;
+        if view.peer(candidate.peer).is_none() {
             return Err(Error::Target);
         }
         let DialParameters::NativeUdp { options } = &candidate.parameters else {
@@ -189,13 +189,7 @@ impl SocketFactory {
         resource: &meshway_model::state::ResourceRef,
     ) -> Result<()> {
         self.shared.data(snapshot)?;
-        if reference.node_id
-            != snapshot
-                .configuration()
-                .map_err(|_| Error::Expired)?
-                .node_id
-            || reference.instance != snapshot.instance()
-            || reference.configuration != snapshot.reference()
+        if !super::traversal::references(snapshot, reference)?
             || &reference.resource != resource
             || reference.socket_id.len() != 64
             || !reference.socket_id.bytes().all(|b| b.is_ascii_hexdigit())
@@ -217,10 +211,10 @@ impl SocketFactory {
                 .for_resource(meshway_model::state::ResourceRef::Dial {
                     key: key.to_owned(),
                 });
-        let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
-        let candidate = cfg.dialers.get(key).ok_or(Error::Target)?.clone();
+        let view = View::of(snapshot).ok_or(Error::Expired)?;
+        let candidate = view.dialers().get(key).ok_or(Error::Target)?.clone();
         validate_dial(&candidate.parameters)?;
-        if candidate.peer == cfg.node_id || !cfg.peers.contains_key(&candidate.peer) {
+        if view.peer(candidate.peer).is_none() {
             return Err(Error::Target);
         }
         let endpoint = candidate
@@ -230,7 +224,7 @@ impl SocketFactory {
             .endpoint();
         Ok(CandidateHandle {
             scope,
-            local: cfg.node_id,
+            local: view.node_id(),
             candidate,
             endpoint,
         })
@@ -243,12 +237,12 @@ impl SocketFactory {
                 .for_resource(meshway_model::state::ResourceRef::Listener {
                     key: key.to_owned(),
                 });
-        let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
-        let declaration = cfg.listeners.get(key).ok_or(Error::Target)?.clone();
+        let view = View::of(snapshot).ok_or(Error::Expired)?;
+        let declaration = view.listeners().get(key).ok_or(Error::Target)?.clone();
         validate_listener(declaration.declaration())?;
         Ok(ListenerHandle {
             scope,
-            local: cfg.node_id,
+            local: view.node_id(),
             key: key.to_owned(),
             declaration,
         })

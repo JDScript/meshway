@@ -134,7 +134,7 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
     };
     println!("X3C_EGRESS_NFT={}", ledger.program.create());
     let commands =
-        super::super::exit::command::Commands::recorded(super::super::exit::child::Fence {
+        super::super::tool::command::Commands::recorded(super::super::tool::child::Fence {
             directory: store.directory.clone(),
             installation: ledger.program.installation.clone(),
         });

@@ -138,7 +138,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Ledger> {
                 base_installation: old.base_installation,
                 network: old.network,
                 node: old.node,
-                plan: old.plan,
+                plan: (&old.plan).into(),
                 program,
                 tun_name: old.tun_name,
                 mtu: old.mtu,

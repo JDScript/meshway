@@ -83,7 +83,15 @@ impl Host {
         &mut self,
         plan: meshway_configuration::execution::ExitRolePlan,
     ) -> Result<ExitRole> {
-        self.kernel.install_exit_role(plan).await
+        self.kernel.install_exit_role((&plan).into()).await
+    }
+    /// Prepare the installed netmap's exit role. It is bound to the content,
+    /// not to an instance: re-acquiring an instance keeps it.
+    pub async fn install_netmap_exit_role(
+        &mut self,
+        role: &meshway_configuration::netmap::ExitRole,
+    ) -> Result<ExitRole> {
+        self.kernel.install_exit_role(role.into()).await
     }
     pub fn exit_role(&self) -> Option<ExitRole> {
         self.kernel
@@ -199,25 +207,15 @@ impl Host {
         if self.kernel.shared.check().is_err() {
             return None;
         }
-        let active = self.kernel.shared.execution.read().ok()?;
-        let (snapshot, token) = active.as_ref()?;
-        if snapshot.ensure_current().is_err() || token.is_cancelled() {
-            return None;
-        }
+        let snapshot = self.kernel.shared.installed().ok()??;
+        snapshot.ensure_current().ok()?;
         self.kernel.tun.as_ref()
     }
 
     /// Select this around the actor's TUN/packet loop in addition to the execution
     /// snapshot's invalidation. A foreign kernel mutation stops positive I/O.
     pub async fn invalidated(&self) {
-        let snapshot = self
-            .kernel
-            .shared
-            .execution
-            .read()
-            .ok()
-            .and_then(|active| active.as_ref().map(|(snapshot, _)| snapshot.clone()));
-        match snapshot {
+        match self.kernel.shared.installed().ok().flatten() {
             Some(snapshot) => {
                 if let Ok(scope) = self.kernel.shared.data(&snapshot) {
                     scope.invalidated().await;
@@ -229,8 +227,14 @@ impl Host {
 
     /// Install capture under fresh execution authority. Success does not claim
     /// carrier establishment, business DNS installation, or an applied receipt.
-    /// A verified direct publication continuation with unchanged capture keeps
-    /// the owned TUN and replaces the data-socket epoch. Calling suspend first
+    ///
+    /// The same netmap content (lease renewal, new instance binding) only
+    /// replaces the installed snapshot: no socket, TUN or kernel object is
+    /// touched and every guard keeps running with the raised deadline. A
+    /// Control-validated continuation (a larger serial, or a legacy direct
+    /// successor) keeps the owned TUN when the capture pools are unchanged,
+    /// keeps every descriptor and exit role whose exact purpose is unchanged
+    /// and re-stages only a changed capture plan. Calling suspend first
     /// deliberately relinquishes that interface and prevents this handoff.
     pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<()> {
         self.kernel.install(snapshot).await

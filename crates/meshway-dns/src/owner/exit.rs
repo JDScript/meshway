@@ -1,16 +1,20 @@
 use super::*;
 use crate::MeshResolverRoute;
-use meshway_configuration::{DnsTransport, execution::DnsEgress};
+use meshway_configuration::DnsTransport;
 
 impl Owner {
     pub(super) fn begin_exit(&mut self, query: Query, request_deadline: Instant) -> Begin {
-        let Ok(cfg) = self.snapshot.configuration() else {
+        let Some(plan) = Plan::of(&self.snapshot) else {
             return Begin::Unavailable(Unavailable::Inactive);
         };
-        let DnsEgress::ViaExit { service, .. } = &cfg.dns.egress else {
+        let Plan::ViaExit {
+            max_pending,
+            timeout_ms,
+        } = plan
+        else {
             return Begin::Unavailable(Unavailable::MissingExitPlan);
         };
-        if self.state.pending.len() >= usize::from(service.max_pending) {
+        if self.state.pending.len() >= usize::from(max_pending) {
             return Begin::Unavailable(Unavailable::Capacity);
         }
         let deadline = request_deadline.min(self.snapshot.expires_at()).min(
@@ -19,7 +23,7 @@ impl Owner {
                     .state
                     .limits
                     .query_timeout
-                    .min(Duration::from_millis(u64::from(service.timeout_ms))),
+                    .min(Duration::from_millis(u64::from(timeout_ms))),
         );
         let routes = (|| {
             Ok::<_, crate::RouteError>((

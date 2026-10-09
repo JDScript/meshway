@@ -1,11 +1,11 @@
 //! Kernel-side exit resources. These projections never issue business authority.
+use super::tool::{child, command};
 mod api;
 mod backend;
-pub(super) mod child;
-pub(super) mod command;
 mod conntrack;
 mod firewall;
 mod guard;
+mod host;
 mod incarnation;
 mod io;
 mod legacy;

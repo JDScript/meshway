@@ -1,7 +1,7 @@
 //! Target authorization paired with one protected descriptor. No socket alias or
 //! arbitrary recipient-adder escapes this module.
 use super::{ProtectedDatagram, dns::Resolver, protection::ProtectionScope};
-use crate::{Error, Result};
+use crate::{Error, Result, target::View};
 use meshway_control::connectivity::{
     AttemptScope, DiscoveryContext, SocketReference, udp_recipient,
 };
@@ -105,15 +105,7 @@ impl DatagramAuthorization {
             .snapshot
             .ensure_current()
             .map_err(|_| Error::Expired)?;
-        if self.registry.closed.is_cancelled()
-            || binding.reference.instance != snapshot.instance()
-            || binding.reference.configuration != snapshot.reference()
-            || binding.reference.node_id
-                != snapshot
-                    .configuration()
-                    .map_err(|_| Error::Expired)?
-                    .node_id
-        {
+        if self.registry.closed.is_cancelled() || !references(snapshot, &binding.reference)? {
             return Err(Error::Expired);
         }
         self.scope.shared.data(snapshot)?;
@@ -229,17 +221,14 @@ impl DatagramAuthorization {
             return Err(Error::Expired);
         }
         let mut binding = self.binding.lock().map_err(|_| Error::Worker)?;
-        let previous = snapshot
-            .continuation_from(&binding.snapshot)
-            .map_err(|_| Error::Expired)?;
-        let next = snapshot.configuration().map_err(|_| Error::Expired)?;
-        if !crate::resource_compatible(previous, next, &binding.reference.resource)
+        let (previous, next) = continued(snapshot, &binding.snapshot)?;
+        if !crate::resource::compatible(previous, next, &binding.reference.resource)
             || reference.node_id != binding.reference.node_id
             || reference.instance != binding.reference.instance
             || reference.socket_id != binding.reference.socket_id
             || reference.socket_generation != binding.reference.socket_generation
             || reference.resource != binding.reference.resource
-            || reference.configuration != snapshot.reference()
+            || !references(snapshot, reference)?
         {
             return Err(Error::Target);
         }
@@ -247,18 +236,14 @@ impl DatagramAuthorization {
         if selected.len() > 64
             || selected.iter().any(|(address, scope)| {
                 channels.get(address).is_none_or(|channel| {
-                    previous.peers.get(&channel.peer) != next.peers.get(&channel.peer)
-                        || snapshot
-                            .admit_adjacency(channel.peer, &channel.carrier)
-                            .is_err()
+                    previous.peer(channel.peer) != next.peer(channel.peer)
+                        || admit_adjacency(snapshot, channel.peer, &channel.carrier).is_err()
                 }) || !scope.is_current()
             })
         {
             return Err(Error::Target);
         }
-        snapshot
-            .continuation_from(&binding.snapshot)
-            .map_err(|_| Error::Expired)?;
+        continued(snapshot, &binding.snapshot)?;
         channels.retain(|address, _| selected.iter().any(|(selected, _)| selected == address));
         for (address, scope) in selected {
             channels.get_mut(address).ok_or(Error::Target)?.lifetime = scope.clone();
@@ -271,5 +256,68 @@ impl DatagramAuthorization {
         binding.reference = reference.clone();
         binding.snapshot = snapshot.clone();
         Ok(())
+    }
+}
+
+/// The reference names this snapshot's Node, instance and target. A netmap
+/// reference carries the content's revision and digest in its legacy
+/// `ConfigurationRef` until the wire names a `NetmapRef`.
+pub(super) fn references(
+    snapshot: &meshway_authority::ExecutionSnapshot,
+    reference: &SocketReference,
+) -> Result<bool> {
+    if snapshot.is_netmap() {
+        let netmap = snapshot.netmap().map_err(|_| Error::Expired)?;
+        return Ok(reference.node_id == netmap.netmap.node_id
+            && snapshot.instance_binding().as_ref() == Some(&reference.instance)
+            && reference.configuration.revision == netmap.netmap.revision
+            && reference.configuration.digest == netmap.digest);
+    }
+    let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
+    Ok(reference.node_id == cfg.node_id
+        && reference.instance == snapshot.instance()
+        && reference.configuration == snapshot.reference())
+}
+
+/// Current permission for a retained physical adjacency under either target.
+fn admit_adjacency(
+    snapshot: &meshway_authority::ExecutionSnapshot,
+    peer: meshway_model::NodeId,
+    carrier: &meshway_configuration::execution::Carrier,
+) -> Result<()> {
+    if !snapshot.is_netmap() {
+        return snapshot
+            .admit_adjacency(peer, carrier)
+            .map(|_| ())
+            .map_err(|_| Error::Expired);
+    }
+    let reading = snapshot.netmap_reading().map_err(|_| Error::Expired)?;
+    let netmap = &reading.netmap.netmap;
+    let compiler = meshway_policy::compile::netmap::LocalCompiler::new(netmap);
+    meshway_policy::admission::netmap::admit_adjacency(&compiler, netmap, peer, carrier)
+        .map_err(|_| Error::Expired)
+}
+
+/// Control's continuation from the descriptor's previous target to `next`,
+/// as views of both contents. Comparison data only.
+fn continued<'a>(
+    next: &'a meshway_authority::ExecutionSnapshot,
+    previous: &'a meshway_authority::ExecutionSnapshot,
+) -> Result<(View<'a>, View<'a>)> {
+    if next.is_netmap() {
+        let new = next.netmap().map_err(|_| Error::Expired)?;
+        if next.same_netmap(previous) {
+            return Ok((View::Netmap(&new.netmap), View::Netmap(&new.netmap)));
+        }
+        let old = next
+            .netmap_continuation_from(previous)
+            .map_err(|_| Error::Expired)?;
+        Ok((View::Netmap(&old.netmap), View::Netmap(&new.netmap)))
+    } else {
+        let old = next
+            .continuation_from(previous)
+            .map_err(|_| Error::Expired)?;
+        let new = next.configuration().map_err(|_| Error::Expired)?;
+        Ok((View::Legacy(old), View::Legacy(new)))
     }
 }

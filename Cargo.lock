@@ -2039,6 +2039,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "hickory-proto",
+ "ipnet",
  "meshway-authority",
  "meshway-configuration",
  "meshway-control",
@@ -2424,6 +2425,7 @@ dependencies = [
 name = "meshway-underlay"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "futures-util",
  "getrandom 0.3.4",
  "hickory-net",
@@ -2433,9 +2435,13 @@ dependencies = [
  "meshway-authority",
  "meshway-configuration",
  "meshway-control",
+ "meshway-control-client",
  "meshway-dns",
  "meshway-model",
+ "meshway-policy",
  "meshway-private-storage",
+ "meshway-protocol",
+ "meshway-server",
  "meshway-tls",
  "meshway-transport",
  "meshway-transport-spec",

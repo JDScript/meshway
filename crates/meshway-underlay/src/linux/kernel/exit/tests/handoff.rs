@@ -77,7 +77,12 @@ pub(super) async fn exercise(
                 host.kernel.exit.is_some(),
                 "failed cleanup must keep its owner"
             );
-            assert!(host.install_exit_role(role.plan.clone()).await.is_err());
+            assert!(
+                host.kernel
+                    .install_exit_role(role.plan.clone())
+                    .await
+                    .is_err()
+            );
         }
         assert_eq!(
             objects::present(&mut commands, &ledger.program)
@@ -93,7 +98,11 @@ pub(super) async fn exercise(
             .probe_exit(previous.instance().instance_id, previous.reference())
             .await;
         assert_eq!(capability.status, meshway_model::exit::ExitStatus::Ready);
-        let next = host.install_exit_role(role.plan.clone()).await.unwrap();
+        let next = host
+            .kernel
+            .install_exit_role(role.plan.clone())
+            .await
+            .unwrap();
         assert!(next.is_active());
         next.retire().await.unwrap();
         return;

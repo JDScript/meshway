@@ -5,6 +5,8 @@ pub(crate) mod exit;
 mod journal;
 mod monitor;
 mod plan;
+mod rpdb;
+mod tool;
 
 use futures_util::{TryStream, TryStreamExt};
 use meshway_authority::ExecutionSnapshot;
@@ -32,12 +34,11 @@ use super::{
     sockets::{listener_enabled, validate_dial, validate_listener},
     tasks::Tasks,
 };
-use crate::{Error, Options, Result};
+use crate::{Error, Options, Result, target::View};
 use journal::{Journal, Pending, RouteRecord, RuleRecord, Store, TunRecord};
-use monitor::{Event, Expected};
+use monitor::Expected;
 use plan::{
-    RouteSpec, RuleKind, RuleSpec, decode_route, decode_rule, encode_route, encode_rule, priority,
-    route_table, rule_table,
+    RouteSpec, RuleKind, RuleSpec, encode_route, encode_rule, priority, route_table, rule_table,
 };
 
 pub(super) struct Kernel {
@@ -303,14 +304,19 @@ impl Kernel {
 
     pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<()> {
         self.ready().await?;
-        let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
+        // Same netmap content: a lease renewal or a new instance binding. Every
+        // guard already sees the raised deadline; nothing is reinstalled.
+        if self.renew(&snapshot)? {
+            return Ok(());
+        }
+        let view = View::of(&snapshot).ok_or(Error::Expired)?;
         if self.exit.as_ref().is_some_and(|owner| {
-            cfg.exit_role.as_ref() != Some(&owner.role.plan) || !cfg.exit_enabled
+            view.exit_role().as_ref() != Some(&owner.role.plan) || !view.exit_enabled()
         }) && let Some(mut owner) = self.exit.take()
         {
             owner.shutdown().await?;
         }
-        let binding = (cfg.network_id, cfg.node_id);
+        let binding = (view.network_id(), view.node_id());
         if self
             .journal
             .binding
@@ -318,29 +324,42 @@ impl Kernel {
         {
             return Err(Error::Target);
         }
-        if cfg.egress_capture.default_capture
-            || !cfg.egress_capture.managed_ipv4.is_empty()
-            || !cfg.egress_capture.sink_ipv6.is_empty()
-            || cfg.egress_capture.unavailable.is_some()
-            || self.egress.is_some()
-        {
-            self.prepare_egress(cfg.egress_capture.clone()).await?;
+        match view.egress_capture() {
+            Some(plan)
+                if plan.default_capture
+                    || !plan.managed_ipv4.is_empty()
+                    || !plan.sink_ipv6.is_empty()
+                    || plan.unavailable.is_some()
+                    || self.egress.is_some() =>
+            {
+                self.prepare_egress(plan.clone()).await?;
+            }
+            // A disabled netmap Node owns no capture; keep it negative.
+            None => {
+                if let Some(owner) = &self.egress {
+                    owner.capture.pause().await?;
+                }
+            }
+            Some(_) => {}
         }
-        if (cfg.exit_enabled && cfg.exit_role.is_none()) || cfg.egress_capture.unavailable.is_some()
+        if (matches!(view, View::Legacy(_)) && view.exit_enabled() && view.exit_role().is_none())
+            || view
+                .egress_capture()
+                .is_some_and(|plan| plan.unavailable.is_some())
         {
             return Err(Error::Target);
         }
-        for candidate in cfg.dialers.values() {
+        for candidate in view.dialers().values() {
             validate_dial(&candidate.parameters)?;
         }
-        for listener in cfg.listeners.values() {
+        for listener in view.listeners().values() {
             if listener_enabled(listener.declaration()) {
                 validate_listener(listener.declaration())?;
             }
         }
         let pools = plan::pools(
-            &cfg.mesh_address_pools,
-            &cfg.addresses,
+            view.mesh_address_pools(),
+            view.addresses(),
             self.options.max_pools,
         )?;
         if self.journal.anchor.as_ref().is_some_and(|anchor| {
@@ -350,7 +369,7 @@ impl Kernel {
         }) {
             return Err(Error::Conflict);
         }
-        let addresses = cfg.addresses.clone();
+        let addresses = view.addresses().clone();
         self.verify_capture(&pools).await?;
         if self.retain_tun(&snapshot, &pools, &addresses).await? {
             self.resume_egress().await?;
@@ -389,9 +408,28 @@ impl Kernel {
         self.resume_egress().await
     }
 
-    /// A Control-issued direct publication successor may retain the host IP
-    /// interface even though Control already invalidated the predecessor's I/O.
-    /// The local socket cancellation token is not the Control lineage proof.
+    /// Replace the installed snapshot by one of the same netmap content and
+    /// rebind every descriptor to it. No kernel object is touched.
+    fn renew(&self, snapshot: &ExecutionSnapshot) -> Result<bool> {
+        if !snapshot.is_netmap() || self.tun.is_none() {
+            return Ok(false);
+        }
+        let mut active = self.shared.execution.write().map_err(|_| Error::Worker)?;
+        let Some((installed, token)) = active.as_mut() else {
+            return Ok(false);
+        };
+        if token.is_cancelled() || !installed.same_netmap(snapshot) {
+            return Ok(false);
+        }
+        snapshot.ensure_current().map_err(|_| Error::Expired)?;
+        self.shared.resources.handoff(snapshot)?;
+        *installed = snapshot.clone();
+        Ok(true)
+    }
+
+    /// A Control-issued continuation may retain the host IP interface even
+    /// though Control already invalidated the predecessor's I/O. The local
+    /// socket cancellation token is not the Control lineage proof.
     async fn retain_tun(
         &self,
         snapshot: &ExecutionSnapshot,
@@ -411,12 +449,12 @@ impl Kernel {
         let Some(previous) = previous else {
             return Ok(false);
         };
-        let Ok(configuration) = snapshot.continuation_from(&previous) else {
+        let Some(old) = continuation(snapshot, &previous) else {
             return Ok(false);
         };
         let old_pools = plan::pools(
-            &configuration.mesh_address_pools,
-            &configuration.addresses,
+            old.mesh_address_pools(),
+            old.addresses(),
             self.options.max_pools,
         )?;
         if !same_pools(&old_pools, pools) {
@@ -432,12 +470,12 @@ impl Kernel {
         let Some((installed, token)) = active.as_mut() else {
             return Err(Error::Expired);
         };
-        if !installed.same_execution(&previous) {
+        if !super::protection::same_target(installed, &previous) {
             return Err(Error::Expired);
         }
-        // Netlink reads await: recheck both original deadlines and the direct
-        // owner handoff immediately before publishing the new execution guard.
-        if snapshot.continuation_from(installed).is_err() {
+        // Netlink reads await: recheck both original deadlines and the
+        // continuation immediately before publishing the new execution guard.
+        if continuation(snapshot, installed).is_none() {
             return Ok(false);
         }
         if !token.is_cancelled() {
@@ -740,21 +778,10 @@ impl Kernel {
                 record: record.clone(),
             });
             self.store.persist(&self.journal).await?;
-            self.expect(false, true, record.observed.clone())?;
-            execute(
-                self.handle
-                    .route()
-                    .del(decode_route(&record.observed)?)
-                    .execute(),
-            )
-            .await?;
             let routes = get_routes(&self.handle, self.options.max_kernel_objects).await?;
-            if routes
-                .into_iter()
-                .any(|route| encode_route(route) == record.observed)
-            {
-                return Err(Error::Conflict);
-            }
+            self.objects()
+                .remove_route(&record.observed, &routes)
+                .await?;
             self.journal.routes.pop();
             self.journal.pending = None;
             self.store.persist(&self.journal).await?;
@@ -796,21 +823,9 @@ impl Kernel {
                 record: record.clone(),
             });
             self.store.persist(&self.journal).await?;
-            self.expect(true, true, record.observed.clone())?;
-            execute(
-                self.handle
-                    .rule()
-                    .del(decode_rule(&record.observed)?)
-                    .execute(),
-            )
-            .await?;
-            let rules = get_rules(&self.handle, self.options.max_kernel_objects).await?;
-            if rules.into_iter().any(|rule| {
-                rule.header.family == record.spec.message().header.family
-                    && priority(&rule) == record.spec.priority
-            }) {
-                return Err(Error::Conflict);
-            }
+            let objects = self.objects();
+            let observed = objects.owned_rule(&record.observed, None).await?;
+            objects.remove_rule(&record.observed, observed).await?;
             self.journal
                 .rules
                 .retain(|existing| existing.spec != record.spec);
@@ -833,8 +848,12 @@ impl Kernel {
     pub async fn settle(&mut self) -> Result<()> {
         self.store.settle().await
     }
+    /// Activate the staged capture plan. An already active, unchanged plan is
+    /// a resource left as is across a continuation.
     async fn resume_egress(&self) -> Result<()> {
-        if let Some(owner) = &self.egress {
+        if let Some(owner) = &self.egress
+            && !owner.capture.is_active()
+        {
             owner.capture.switch(owner.capture.plan()).await?;
         }
         Ok(())
@@ -856,21 +875,7 @@ impl Kernel {
         self.store.persist(&self.journal).await?;
         let message = spec.message();
         let expected = encode_rule(message.clone());
-        self.expect(true, false, expected.clone())?;
-        let mut request = self.handle.rule().add();
-        *request.message_mut() = message;
-        execute(request.execute()).await?;
-        let rules = get_rules(&self.handle, self.options.max_kernel_objects).await?;
-        let matches: Vec<_> = rules
-            .into_iter()
-            .filter(|rule| {
-                rule.header.family == spec.message().header.family
-                    && priority(rule) == spec.priority
-            })
-            .collect();
-        if matches.len() != 1 || encode_rule(matches[0].clone()) != expected {
-            return Err(Error::Conflict);
-        }
+        self.objects().add_rule(message).await?;
         self.journal.rules.push(RuleRecord {
             spec,
             observed: expected,
@@ -886,17 +891,7 @@ impl Kernel {
         self.store.persist(&self.journal).await?;
         let message = spec.message()?;
         let expected = encode_route(message.clone());
-        self.expect(false, false, expected.clone())?;
-        execute(self.handle.route().add(message).execute()).await?;
-        let routes = get_routes(&self.handle, self.options.max_kernel_objects).await?;
-        if routes
-            .into_iter()
-            .filter(|route| encode_route(route.clone()) == expected)
-            .count()
-            != 1
-        {
-            return Err(Error::Conflict);
-        }
+        self.objects().add_route(message).await?;
         self.journal.routes.push(RouteRecord {
             spec,
             observed: expected,
@@ -905,12 +900,13 @@ impl Kernel {
         self.store.persist(&self.journal).await
     }
 
-    fn expect(&self, rule: bool, deleted: bool, bytes: Vec<u8>) -> Result<()> {
-        self.expected.lock().map_err(|_| Error::Worker)?.add(Event {
-            rule,
-            deleted,
-            bytes,
-        })
+    fn objects(&self) -> rpdb::Objects<'_> {
+        rpdb::Objects {
+            handle: &self.handle,
+            expected: &self.expected,
+            limit: self.options.max_kernel_objects,
+            monitored: true,
+        }
     }
 
     async fn quiesce(&self) -> Result<()> {
@@ -968,6 +964,18 @@ fn verify_rules(journal: &Journal, rules: &[RuleMessage]) -> Result<()> {
             && !journal.rules.iter().any(|record| record.observed == encode_rule(rule.clone())) { return Err(Error::Conflict); }
     }
     Ok(())
+}
+
+/// Control's continuation from the installed `previous` target to `next`, as
+/// a view of the previous content. Comparison data only.
+fn continuation<'a>(next: &ExecutionSnapshot, previous: &'a ExecutionSnapshot) -> Option<View<'a>> {
+    if next.is_netmap() {
+        next.netmap_continuation_from(previous)
+            .ok()
+            .map(|old| View::Netmap(&old.netmap))
+    } else {
+        next.continuation_from(previous).ok().map(View::Legacy)
+    }
 }
 
 fn same_pools(left: &[ipnet::IpNet], right: &[ipnet::IpNet]) -> bool {

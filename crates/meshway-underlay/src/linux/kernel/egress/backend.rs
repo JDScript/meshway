@@ -1,10 +1,8 @@
 use super::super::{
-    exit::{
-        command::{Commands, Tool},
-        objects::{self, Receipt},
-    },
-    monitor::{Event, Expected},
-    plan::{PROTOCOL, decode_route, decode_rule, encode_route, encode_rule, priority, route_table},
+    exit::objects::{self, Receipt},
+    monitor::Expected,
+    plan::{PROTOCOL, encode_route, encode_rule, priority, route_table},
+    tool::command::{Commands, Tool},
 };
 use super::{
     plan::{self, Ranges},
@@ -90,24 +88,17 @@ impl Backend {
         Ok(())
     }
     async fn present(&mut self) -> Result<bool> {
-        let output = self
-            .commands
-            .run(
-                Tool::Nft,
-                vec!["-j".into(), "list".into(), "tables".into()],
-                Vec::new(),
-            )
+        use super::super::tool::nft::{TablesError, tables};
+        let listed = tables(&mut self.commands)
             .await
-            .map_err(|_| Error::Netlink)?;
-        if !output.success {
-            return Err(Error::Netlink);
-        }
-        let receipt = objects::decode(&output.stdout)?;
-        Ok(receipt.objects.values().any(|table| {
-            table.get("name").and_then(serde_json::Value::as_str)
-                == Some(self.ledger.program.table().as_str())
-                && table.get("family").and_then(serde_json::Value::as_str) == Some("inet")
-        }))
+            .map_err(|error| match error {
+                TablesError::Unavailable => Error::Netlink,
+                TablesError::Malformed => Error::Journal,
+            })?;
+        let name = self.ledger.program.table();
+        Ok(listed
+            .iter()
+            .any(|(family, table)| family == "inet" && *table == name))
     }
     async fn dump(&mut self) -> Result<Receipt> {
         self.commands.settle().await.map_err(|_| Error::Netlink)?;
@@ -355,27 +346,13 @@ impl Backend {
         self.ledger.rules.push(bytes.clone());
         self.store.persist(&self.ledger).await?;
         if self.monitored {
-            let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
-            expected.egress_rules.push(bytes.clone());
-            expected.add(Event {
-                rule: true,
-                deleted: false,
-                bytes: bytes.clone(),
-            })?;
+            self.expected
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .egress_rules
+                .push(bytes);
         }
-        let mut operation = self.handle.rule().add();
-        *operation.message_mut() = rule;
-        super::super::execute(operation.execute()).await?;
-        if super::super::get_rules(&self.handle, self.limit)
-            .await?
-            .iter()
-            .filter(|rule| encode_rule((*rule).clone()) == bytes)
-            .count()
-            != 1
-        {
-            return Err(Error::Conflict);
-        }
-        Ok(())
+        self.objects().add_rule(rule).await
     }
     async fn route(&mut self, device: &Device) -> Result<()> {
         let route = RouteMessageBuilder::<Ipv4Addr>::new()
@@ -395,29 +372,9 @@ impl Backend {
         {
             return Err(Error::Conflict);
         }
-        self.ledger.routes.push(bytes.clone());
+        self.ledger.routes.push(bytes);
         self.store.persist(&self.ledger).await?;
-        if self.monitored {
-            self.expected
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .add(Event {
-                    rule: false,
-                    deleted: false,
-                    bytes: bytes.clone(),
-                })?;
-        }
-        super::super::execute(self.handle.route().add(route).execute()).await?;
-        if super::super::get_routes(&self.handle, self.limit)
-            .await?
-            .iter()
-            .filter(|route| encode_route((*route).clone()) == bytes)
-            .count()
-            != 1
-        {
-            return Err(Error::Conflict);
-        }
-        Ok(())
+        self.objects().add_route(route).await
     }
     pub async fn remove_routes(&mut self) -> Result<()> {
         let actual = super::super::get_routes(&self.handle, self.limit).await?;
@@ -428,30 +385,7 @@ impl Backend {
             return Err(Error::Conflict);
         }
         for bytes in self.ledger.routes.clone() {
-            if actual
-                .iter()
-                .any(|route| encode_route(route.clone()) == bytes)
-            {
-                if self.monitored {
-                    self.expected
-                        .lock()
-                        .map_err(|_| Error::Worker)?
-                        .add(Event {
-                            rule: false,
-                            deleted: true,
-                            bytes: bytes.clone(),
-                        })?;
-                }
-                super::super::execute(self.handle.route().del(decode_route(&bytes)?).execute())
-                    .await?;
-            }
-            if super::super::get_routes(&self.handle, self.limit)
-                .await?
-                .iter()
-                .any(|route| encode_route(route.clone()) == bytes)
-            {
-                return Err(Error::Conflict);
-            }
+            self.objects().remove_route(&bytes, &actual).await?;
             self.ledger.routes.retain(|route| *route != bytes);
             self.store.persist(&self.ledger).await?;
         }
@@ -459,45 +393,9 @@ impl Backend {
     }
     pub async fn remove_rules(&mut self) -> Result<()> {
         for bytes in self.ledger.rules.clone().into_iter().rev() {
-            let wanted = decode_rule(&bytes)?;
-            let actual = super::super::get_rules(&self.handle, self.limit).await?;
-            let matching: Vec<_> = actual
-                .iter()
-                .filter(|rule| {
-                    rule.header.family == wanted.header.family
-                        && priority(rule) == priority(&wanted)
-                })
-                .collect();
-            if matching.len() > 1
-                || matching
-                    .first()
-                    .is_some_and(|rule| encode_rule((*rule).clone()) != bytes)
-            {
-                return Err(Error::Conflict);
-            }
-            if !matching.is_empty() {
-                if self.monitored {
-                    self.expected
-                        .lock()
-                        .map_err(|_| Error::Worker)?
-                        .add(Event {
-                            rule: true,
-                            deleted: true,
-                            bytes: bytes.clone(),
-                        })?;
-                }
-                super::super::execute(self.handle.rule().del(wanted.clone()).execute()).await?;
-            }
-            if super::super::get_rules(&self.handle, self.limit)
-                .await?
-                .iter()
-                .any(|rule| {
-                    rule.header.family == wanted.header.family
-                        && priority(rule) == priority(&wanted)
-                })
-            {
-                return Err(Error::Conflict);
-            }
+            let objects = self.objects();
+            let observed = objects.owned_rule(&bytes, None).await?;
+            objects.remove_rule(&bytes, observed).await?;
             self.ledger.rules.retain(|rule| *rule != bytes);
             self.expected
                 .lock()
@@ -507,6 +405,14 @@ impl Backend {
             self.store.persist(&self.ledger).await?;
         }
         Ok(())
+    }
+    fn objects(&self) -> super::super::rpdb::Objects<'_> {
+        super::super::rpdb::Objects {
+            handle: &self.handle,
+            expected: &self.expected,
+            limit: self.limit,
+            monitored: self.monitored,
+        }
     }
 }
 fn canonical(values: Vec<serde_json::Value>) -> Vec<String> {

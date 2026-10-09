@@ -1,5 +1,6 @@
 //! A temporary real Server/Control owns every execution grant. Only the
 //! endpoint exchange is scripted; no host DNS or kernel installation is used.
+mod netmap;
 mod support;
 use super::*;
 use crate::{SystemResolverSnapshot, decode_query};

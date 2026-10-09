@@ -4,6 +4,7 @@ use crate::{
 };
 use bytes::{Bytes, BytesMut};
 use hickory_proto::op::ResponseCode;
+use meshway_configuration::DnsTransport;
 use std::{
     future::poll_fn,
     io,
@@ -91,6 +92,40 @@ impl Service {
         shutdown: CancellationToken,
     ) -> io::Result<()> {
         validate_binding(udp.local_addr()?, tcp.local_addr()?)?;
+        self.serve(udp, tcp, shutdown, Ingress::Loopback).await
+    }
+
+    /// Serve Mesh sources on this Node's own Mesh resolver address (port 53),
+    /// for a resolver Node's served plan. Every query is handed to
+    /// `Dispatcher::dispatch_from` with its peer; the dispatcher alone decides
+    /// whether that source may be served.
+    pub async fn run_mesh(
+        self,
+        udp: UdpSocket,
+        tcp: TcpListener,
+        shutdown: CancellationToken,
+    ) -> io::Result<()> {
+        let local = udp.local_addr()?;
+        if local.ip().is_loopback()
+            || local.ip().is_unspecified()
+            || local.port() != 53
+            || tcp.local_addr()? != local
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Mesh DNS requires matching UDP/TCP bindings on one Mesh address, port 53",
+            ));
+        }
+        self.serve(udp, tcp, shutdown, Ingress::Mesh(local)).await
+    }
+
+    async fn serve(
+        self,
+        udp: UdpSocket,
+        tcp: TcpListener,
+        shutdown: CancellationToken,
+        ingress: Ingress,
+    ) -> io::Result<()> {
         let udp = Arc::new(udp);
         let queries = Arc::new(Semaphore::new(self.limits.max_queries));
         let connections = Arc::new(Semaphore::new(self.limits.max_tcp_connections));
@@ -108,7 +143,7 @@ impl Service {
                 },
                 accepted = tcp.accept() => {
                     let (stream, peer) = match accepted { Ok(value) => value, Err(error) => break Err(error) };
-                    if !peer.ip().is_loopback() { continue; }
+                    if !ingress.accepts(peer) { continue; }
                     let Ok(connection) = connections.clone().try_acquire_owned() else { continue; };
                     let dispatcher = self.dispatcher.clone();
                     let queries = queries.clone();
@@ -116,12 +151,12 @@ impl Service {
                     let limits = self.limits;
                     tasks.spawn(async move {
                         let _connection = connection;
-                        let _ = serve_tcp(stream, dispatcher, queries, limits, stop).await;
+                        let _ = serve_tcp(stream, peer, ingress, dispatcher, queries, limits, stop).await;
                     });
                 },
                 received = udp.recv_from(&mut buffer) => {
                     let (length, peer) = match received { Ok(value) => value, Err(error) => break Err(error) };
-                    if !peer.ip().is_loopback() { continue; }
+                    if !ingress.accepts(peer) { continue; }
                     let Ok(permit) = queries.clone().try_acquire_owned() else { continue; };
                     let Ok(query) = decode_query(&buffer[..length]) else { continue; };
                     let dispatcher = self.dispatcher.clone();
@@ -131,7 +166,7 @@ impl Service {
                     let deadline = Instant::now() + limits.query_timeout;
                     tasks.spawn(async move {
                         let _permit = permit;
-                        let reply = dispatch(dispatcher.as_ref(), query, deadline, stop.clone()).await;
+                        let reply = dispatch(dispatcher.as_ref(), (ingress, peer, DnsTransport::Udp), query, deadline, stop.clone()).await;
                         let _ = send_udp(&udp, peer, reply, limits.udp_payload_limit).await;
                     });
                 },
@@ -204,8 +239,26 @@ impl Reply {
     }
 }
 
+/// Where queries come from: loopback clients of this Node, or Mesh sources of
+/// a served resolver plan arriving at `local`.
+#[derive(Clone, Copy)]
+enum Ingress {
+    Loopback,
+    Mesh(SocketAddr),
+}
+
+impl Ingress {
+    fn accepts(self, peer: SocketAddr) -> bool {
+        match self {
+            Self::Loopback => peer.ip().is_loopback(),
+            Self::Mesh(_) => !peer.ip().is_loopback(),
+        }
+    }
+}
+
 async fn dispatch(
     dispatcher: &dyn Dispatcher,
+    (ingress, peer, transport): (Ingress, SocketAddr, DnsTransport),
     query: Query,
     deadline: Instant,
     stop: CancellationToken,
@@ -217,7 +270,10 @@ async fn dispatch(
     let answer = tokio::select! { biased;
         _ = stop.cancelled() => None,
         _ = tokio::time::sleep_until(work_deadline.into()) => None,
-        result = dispatcher.dispatch(query.clone(), work_deadline) => result.ok().filter(|a| a.answers(&query) && a.ensure_current().is_ok()),
+        result = async { match ingress {
+            Ingress::Loopback => dispatcher.dispatch(query.clone(), work_deadline).await,
+            Ingress::Mesh(local) => dispatcher.dispatch_from(peer, local, transport, query.clone(), work_deadline).await,
+        } } => result.ok().filter(|a| a.answers(&query) && a.ensure_current().is_ok()),
     };
     Reply {
         query,
@@ -252,6 +308,8 @@ async fn send_udp(
 
 async fn serve_tcp(
     mut stream: TcpStream,
+    peer: SocketAddr,
+    ingress: Ingress,
     dispatcher: Arc<dyn Dispatcher>,
     queries: Arc<Semaphore>,
     limits: ServiceLimits,
@@ -276,7 +334,14 @@ async fn serve_tcp(
                 permit.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS capacity timeout"))?
                     .map_err(io::Error::other)?,
         };
-        let reply = dispatch(dispatcher.as_ref(), query, deadline, stop.clone()).await;
+        let reply = dispatch(
+            dispatcher.as_ref(),
+            (ingress, peer, DnsTransport::Tcp),
+            query,
+            deadline,
+            stop.clone(),
+        )
+        .await;
         let payload = reply.encode(ResponseTransport::Tcp, limits.udp_payload_limit)?;
         let mut framed = BytesMut::new();
         codec

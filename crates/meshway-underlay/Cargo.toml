@@ -10,6 +10,7 @@ meshway-authority = { path = "../meshway-authority" }
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-control = { path = "../meshway-control" }
 meshway-dns = { path = "../meshway-dns" }
+meshway-policy = { path = "../meshway-policy" }
 meshway-model = { path = "../meshway-model" }
 meshway-private-storage = { path = "../meshway-private-storage" }
 meshway-transport = { path = "../meshway-transport" }
@@ -37,6 +38,10 @@ hickory-net = { version = "0.26.3", default-features = false, features = ["tokio
 rtnetlink = { version = "=0.23.0", default-features = false, features = ["tokio_socket"] }
 
 [dev-dependencies]
+axum.workspace = true
+meshway-control-client = { path = "../meshway-control-client" }
+meshway-protocol = { path = "../meshway-protocol" }
+meshway-server = { path = "../../apps/meshway-server" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 

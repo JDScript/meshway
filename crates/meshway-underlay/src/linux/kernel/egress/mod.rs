@@ -25,7 +25,7 @@ pub(super) async fn recover(
     let Some(ledger) = prior.filter(|ledger| !ledger.removed) else {
         return Ok(());
     };
-    let commands = super::exit::command::Commands::recorded(super::exit::child::Fence {
+    let commands = super::tool::command::Commands::recorded(super::tool::child::Fence {
         directory: store.directory.clone(),
         installation: ledger.program.installation.clone(),
     });

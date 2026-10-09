@@ -1,7 +1,6 @@
 //! Private exit resource journal, under the Host's existing directory lock.
 use super::{objects::Receipt, program::Program, tuple::OriginalTuple};
 use crate::{Error, Result};
-use meshway_configuration::execution::ExitRolePlan;
 use meshway_model::{NetworkId, NodeId};
 use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
@@ -31,7 +30,8 @@ pub(super) struct Ledger {
     pub base_installation: String,
     pub network: NetworkId,
     pub node: NodeId,
-    pub plan: ExitRolePlan,
+    /// Role identity; a legacy instance id is accepted and kept when present.
+    pub plan: crate::target::RoleIdentity,
     pub program: Program,
     pub tun_name: String,
     pub mtu: usize,

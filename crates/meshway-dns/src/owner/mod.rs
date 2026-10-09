@@ -35,6 +35,44 @@ pub struct Limits {
     pub query_timeout: Duration,
 }
 
+/// Ordinary DNS selection of either target kind, read from one snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Plan {
+    NoExit,
+    ViaExit { max_pending: u16, timeout_ms: u32 },
+    ServeExitResolver,
+    Unavailable,
+}
+
+impl Plan {
+    pub(crate) fn of(snapshot: &ExecutionSnapshot) -> Option<Self> {
+        use meshway_configuration::{execution::DnsEgress, netmap::DnsPlan};
+        if snapshot.is_netmap() {
+            let netmap = snapshot.netmap().ok()?;
+            Some(match &netmap.netmap.dns.egress {
+                DnsPlan::NoExit => Self::NoExit,
+                DnsPlan::ViaExit { service } => Self::ViaExit {
+                    max_pending: service.max_pending,
+                    timeout_ms: service.timeout_ms,
+                },
+                DnsPlan::ServeExitResolver { .. } => Self::ServeExitResolver,
+                DnsPlan::Unavailable { .. } => Self::Unavailable,
+            })
+        } else {
+            let cfg = snapshot.configuration().ok()?;
+            Some(match &cfg.dns.egress {
+                DnsEgress::NoExit => Self::NoExit,
+                DnsEgress::ViaExit { service, .. } => Self::ViaExit {
+                    max_pending: service.max_pending,
+                    timeout_ms: service.timeout_ms,
+                },
+                DnsEgress::ServeExitResolver { .. } => Self::ServeExitResolver,
+                DnsEgress::Unavailable { .. } => Self::Unavailable,
+            })
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum OwnerError {
     #[error("DNS limits require nonzero capacity and a representable nonzero timeout")]
@@ -165,7 +203,7 @@ pub enum Begin {
 pub struct Answer {
     snapshot: Box<ExecutionSnapshot>,
     ready: Box<ReadyAnswer>,
-    scope_fence: Option<crate::dispatcher::ScopeFence>,
+    scope_fence: Option<Box<crate::dispatcher::ScopeFence>>,
 }
 
 impl fmt::Debug for Answer {
@@ -199,8 +237,13 @@ impl Owner {
         {
             return Err(OwnerError::Limits);
         }
-        let configuration = snapshot.configuration().map_err(|_| OwnerError::Inactive)?;
-        let state = State::new(configuration, limits)?;
+        let state = if snapshot.is_netmap() {
+            let netmap = snapshot.netmap().map_err(|_| OwnerError::Inactive)?;
+            State::from_netmap(&netmap.netmap, limits)?
+        } else {
+            let configuration = snapshot.configuration().map_err(|_| OwnerError::Inactive)?;
+            State::new(configuration, limits)?
+        };
         snapshot
             .ensure_current()
             .map_err(|_| OwnerError::Inactive)?;
@@ -228,19 +271,14 @@ impl Owner {
         resolver_demands: &BTreeMap<String, RequestId>,
         request_deadline: Instant,
     ) -> Begin {
-        use meshway_configuration::execution::DnsEgress;
         self.reap();
         if Instant::now() >= request_deadline {
             return Begin::Unavailable(Unavailable::Expired);
         }
-        let configuration = match self.snapshot.configuration() {
-            Ok(configuration) => configuration,
-            Err(_) => return Begin::Unavailable(Unavailable::Inactive),
+        let Some(plan) = Plan::of(&self.snapshot) else {
+            return Begin::Unavailable(Unavailable::Inactive);
         };
-        let no_exit = matches!(
-            configuration.dns.egress,
-            DnsEgress::NoExit | DnsEgress::ServeExitResolver { .. }
-        );
+        let no_exit = matches!(plan, Plan::NoExit | Plan::ServeExitResolver);
         let exit = if no_exit {
             ExitSelection::NoExit
         } else {
@@ -266,7 +304,7 @@ impl Owner {
             }
             return begin;
         };
-        if matches!(configuration.dns.egress, DnsEgress::Unavailable { .. }) {
+        if plan == Plan::Unavailable {
             return Begin::Unavailable(Unavailable::MissingExitPlan);
         }
         let now = Instant::now();
@@ -281,11 +319,13 @@ impl Owner {
         let Some(candidate) = candidates.first() else {
             return Begin::Unavailable(Unavailable::MissingResolverPlan);
         };
-        let Some(id) = resolver_demands.get(candidate.key) else {
+        // A netmap decides each resolver itself; a publication needs its demand.
+        let id = resolver_demands.get(candidate.key).copied();
+        if id.is_none() && !self.snapshot.is_netmap() {
             return Begin::Unavailable(Unavailable::MissingResolverPlan);
-        };
+        }
         let mut route =
-            match LocalResolverRoute::new(self.snapshot.clone(), candidate.key, *id, deadline) {
+            match LocalResolverRoute::new(self.snapshot.clone(), candidate.key, id, deadline) {
                 Ok(route) => route,
                 Err(crate::RouteError::Expired) => return Begin::Unavailable(Unavailable::Expired),
                 Err(crate::RouteError::Binding) => {
@@ -320,16 +360,18 @@ impl Owner {
         deadline: Instant,
     ) -> Begin {
         self.reap();
-        let Ok(cfg) = self.snapshot.configuration() else {
+        let Some(plan) = Plan::of(&self.snapshot) else {
             return Begin::Unavailable(Unavailable::Inactive);
         };
-        if !matches!(
-            cfg.dns.egress,
-            meshway_configuration::execution::DnsEgress::NoExit
-        ) || !matches!(
-            self.state.published.select(&query, ExitSelection::NoExit),
-            Selection::Unmanaged
-        ) {
+        // A resolver Node resolves for itself as a no-exit Node does.
+        let no_exit =
+            plan == Plan::NoExit || (self.snapshot.is_netmap() && plan == Plan::ServeExitResolver);
+        if !no_exit
+            || !matches!(
+                self.state.published.select(&query, ExitSelection::NoExit),
+                Selection::Unmanaged
+            )
+        {
             return Begin::Unavailable(Unavailable::MissingResolverPlan);
         }
         let deadline = deadline
@@ -433,6 +475,11 @@ impl Owner {
             self.state.stop();
         }
         self.state.reap(Instant::now());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn generation(&self) -> Arc<()> {
+        self.state.generation.clone()
     }
 
     #[cfg(test)]
@@ -598,6 +645,37 @@ impl State {
         })
     }
 
+    fn from_netmap(
+        netmap: &meshway_configuration::netmap::NodeNetmap,
+        limits: Limits,
+    ) -> Result<Self, ConfigurationError> {
+        let settings = &netmap.projection.configuration.dns;
+        Ok(Self {
+            binding: Binding {
+                network: netmap.network_id,
+                source: netmap.node_id,
+                revision: netmap.revision,
+                self_name: node_dns_name(&netmap.self_.hostname, &settings.domain)
+                    .map_err(|_| ConfigurationError::Name)?,
+                self_addresses: netmap.self_.addresses.clone(),
+                peers: netmap
+                    .projection
+                    .configuration
+                    .nodes
+                    .iter()
+                    .filter(|(id, _)| **id != netmap.node_id)
+                    .map(|(id, peer)| (*id, peer.addresses.clone()))
+                    .collect(),
+            },
+            published: PublishedDns::from_netmap(netmap)?,
+            limits,
+            generation: Arc::new(()),
+            cancelled: CancellationToken::new(),
+            sequence: 0,
+            pending: BTreeMap::new(),
+        })
+    }
+
     fn begin(
         &mut self,
         query: Query,
@@ -635,6 +713,20 @@ impl State {
                     RecordType::A | RecordType::AAAA
                 ) {
                     return Outcome::Unavailable(Unavailable::UnsupportedRecordType);
+                }
+                // A netmap's MagicDNS hosts are the complete visible set: an
+                // unknown name is answered locally exactly as discovery would
+                // answer a forbidden one (REFUSED, no SOA, no AA).
+                if self.published.complete() {
+                    let mut message = query.response();
+                    message.metadata.response_code = ResponseCode::Refused;
+                    return Outcome::Answer(Box::new(ReadyAnswer {
+                        query,
+                        message,
+                        cancelled: self.cancelled.child_token(),
+                        deadline,
+                        route: None,
+                    }));
                 }
                 let Some(name) = discovery_name(&query) else {
                     return Outcome::Unavailable(Unavailable::InvalidDiscoveryName);
