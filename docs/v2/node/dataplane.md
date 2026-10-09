@@ -131,7 +131,7 @@ Circuit 保留一次稳定分配；稳态 send／commit 通过拆分字段借用
 
 每个 epoch／circuit／方向使用独立的 owner 接纳序号和有序完成队列，只释放连续完成前缀；crypto 失败同样占据自己的序号并释放该位置，不提交 replay。队列持有原 epoch 标识直至全部结果释放，失败结果也不能与新 epoch 混合。就绪队列按轮转次序释放，慢 circuit 不阻塞其他 circuit。
 
-流式工作池总计 32 个全生命周期 credit，覆盖已准入、排队、计算、已完成未释放以及 TX／TUN 待完成输出；完成通知或前缀取出不归还 credit，宿主在最终 I/O 完成或明确失败／取消后归还。准入前同时检查包数、实际存储 capacity（含 headroom／tailroom）及 jumbo 数量，不以有效 payload 长度替代占用。完成队列能容纳整个窗口，worker 不因 owner 暂停轮询而阻塞；描述符微批与完成槽复用预分配存储。业务准备每轮另有 200 µs 时间预算。`run`／`run_prepared` 保留为同步批次调用方的便利入口；daemon 与 L3／L4 驱动使用流式入口。取消不重新绑定在途输出，pool 销毁关闭队列并 join 所有线程。
+流式工作池总计 32 个全生命周期 credit，覆盖已准入、排队、计算、已完成未释放以及 TX／TUN 待完成输出；完成通知或前缀取出不归还 credit，宿主在最终 I/O 完成或明确失败／取消后归还。准入前同时检查包数、实际存储 capacity（含 headroom／tailroom）及 jumbo 数量，不以有效 payload 长度替代占用。完成队列能容纳整个窗口，worker 不因 owner 暂停轮询而阻塞；描述符微批与完成槽复用预分配存储。业务准备每轮另有 200 µs 时间预算。daemon 与 L3／L4 驱动统一使用流式入口。取消不重新绑定在途输出，pool 销毁关闭队列并 join 所有线程。
 
 输出使用 `carrier::SendPending` 与 `TunPending` 两个独立 FIFO 驱动，和输入、crypto completion 一起按就绪状态轮询；不为每包 spawn 任务，不等待凑批。每个方向至多一个正在执行的批次。发送 future 在入队前冻结实际 channel；一次 owner `select!` 等待被取消时，队列继续保有原 future、guard 与 credit。TUN 使用同一个 `Delivery` 实现记录每次成功 syscall 的前缀，取消等待后只继续未写后缀。停止／换代显式取消旧 pending，并计入丢弃计数；不把旧输出迁到新权限。
 

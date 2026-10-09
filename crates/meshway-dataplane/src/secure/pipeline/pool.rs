@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
     thread::JoinHandle,
 };
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{Notify, mpsc};
 
 pub enum Job {
     Send(SendJob),
@@ -71,13 +71,7 @@ impl Job {
     }
 }
 
-struct Batch {
-    jobs: Vec<(usize, Job)>,
-    complete: oneshot::Sender<Vec<(usize, Result<Output, Error>)>>,
-}
-
 enum Work {
-    Batch(Batch),
     Stream(Group),
 }
 type Group = Vec<(Key, u64, Job, Credit)>;
@@ -172,14 +166,6 @@ impl Pool {
                 .spawn(move || {
                     while let Some(work) = receive.blocking_recv() {
                         match work {
-                            Work::Batch(work) => {
-                                let results = work
-                                    .jobs
-                                    .into_iter()
-                                    .map(|(index, job)| (index, job.run()))
-                                    .collect();
-                                let _ = work.complete.send(results);
-                            }
                             Work::Stream(mut jobs) => {
                                 for (circuit, sequence, job, mut credit) in jobs.drain(..) {
                                     if let Some(trace) = &mut credit.trace {
@@ -360,60 +346,6 @@ impl Pool {
             }
         }
         super::timing::batch("pipeline.release.batch", outputs.len());
-        outputs
-    }
-
-    /// No wait to fill a batch. Queue pressure retains already-admitted jobs
-    /// until the selected worker accepts them; it never drops an admitted suffix.
-    pub async fn run(&mut self, jobs: &mut VecDeque<Job>) -> Vec<Result<Output, Error>> {
-        self.run_prepared(jobs, Ok).await
-    }
-
-    /// Prepare small ready groups on the owner while earlier groups compute.
-    /// The closure never leaves this calling task; only its opaque Job crosses
-    /// the worker boundary. This overlaps owner admission even with one worker.
-    pub async fn run_prepared<T>(
-        &mut self,
-        inputs: &mut VecDeque<T>,
-        mut prepare: impl FnMut(T) -> Result<Job, Error>,
-    ) -> Vec<Result<Output, Error>> {
-        let count = inputs.len().min(32);
-        if self.senders.is_empty() {
-            return inputs
-                .drain(..count)
-                .map(|input| prepare(input).and_then(Job::run))
-                .collect();
-        }
-        let mut receivers = Vec::new();
-        let mut outputs: Vec<_> = (0..count).map(|_| Err(Error::State)).collect();
-        let quantum = count.div_ceil(self.senders.len()).clamp(1, 8);
-        for start in (0..count).step_by(quantum) {
-            let end = (start + quantum).min(count);
-            let mut jobs = Vec::with_capacity(end - start);
-            for (index, output) in outputs.iter_mut().enumerate().take(end).skip(start) {
-                match prepare(inputs.pop_front().expect("bounded input prefix")) {
-                    Ok(job) => jobs.push((index, job)),
-                    Err(error) => *output = Err(error),
-                }
-            }
-            if jobs.is_empty() {
-                continue;
-            }
-            let sender = &self.senders[self.next];
-            self.next = (self.next + 1) % self.senders.len();
-            let (complete, receive) = oneshot::channel();
-            // One notification per ready worker group, never per packet. A
-            // cancelled prior run can occupy at most one queued group/worker.
-            let _ = sender.send(Work::Batch(Batch { jobs, complete })).await;
-            receivers.push(receive);
-        }
-        for receive in receivers {
-            if let Ok(results) = receive.await {
-                for (index, result) in results {
-                    outputs[index] = result;
-                }
-            }
-        }
         outputs
     }
 }
