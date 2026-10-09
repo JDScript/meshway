@@ -11,6 +11,8 @@ async fn next(stream: &mut meshway_control::NodeEvents) -> meshway_control::Even
 
 #[tokio::test]
 async fn real_watch_ignores_unchanged_projection_and_refreshes_configuration_change() {
+    // C: cross the 20 s HTTP request budget while real 10 s SSE heartbeats
+    // keep the stream open; a shorter interval cannot detect the regression.
     let server = Server::start().await;
     let owner = server.owner().await;
     let mut control = refresh::control(&server, &owner, &server.origin, "events").await;
