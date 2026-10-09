@@ -1,14 +1,14 @@
-//! Per-node netmap: the complete stable authorization a Node enforces locally.
-//!
-//! A netmap is compiled from one configuration revision and trusted inventory.
-//! Dynamic facts (endpoints, STUN, exit readiness, instances, observation
-//! tasks) never enter it. Authority additionally requires a current
-//! `NetmapLease` bound to the exact `NetmapRef`.
+//! Per-node netmap: a projection of one configuration revision plus the Node's
+//! own resources. The Node runs the shared `meshway-policy` compiler on the
+//! projection for each pair it terminates or relays; no per-pair grant or path
+//! is materialized by the Server. Dynamic facts (endpoints, STUN, exit
+//! readiness, instances, observation tasks) never enter it. Authority
+//! additionally requires a current `NetmapLease` bound to the exact `NetmapRef`.
 use crate::{
-    AddressPools, DnsConfiguration, DnsTransport, NodeAddresses, NodeIdentity, SerializationError,
+    AddressPools, DnsTransport, NodeAddresses, NodeIdentity, SerializationError,
     execution::{
-        DialCandidate, DnsEgressUnavailable, EgressCapturePlan, ExecutionAddress,
-        ExitDestinationScope, ExitNat, PeerConfiguration, ReplyPolicy, TrustedNode,
+        DialCandidate, DnsEgressUnavailable, EgressCapturePlan, ExecutionAddress, ExitNat,
+        LogicalPath, TrustedNode,
     },
     object::{object, tagged},
 };
@@ -16,132 +16,14 @@ use meshway_model::{Digest, NetmapRef, NetworkId, NodeId, Revision, Version, exi
 use meshway_transport_spec::PreparedListener;
 use std::collections::BTreeMap;
 mod delta;
-mod grants;
+mod projection;
 mod services;
 pub use delta::*;
+pub use projection::*;
 pub use services::*;
 
 /// Contract family of every netmap produced by this compiler generation.
 pub const NETMAP_COMPILER_VERSION: &str = "meshway-netmap-1";
-
-/// Compiler-assigned identity of one exit destination scope and its waypoints.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-    utoipa::ToSchema,
-)]
-#[serde(transparent)]
-#[schema(value_type = String)]
-pub struct ExitScopeId(
-    /// Digest of the Access destination scope and ordered via list.
-    pub Digest,
-);
-
-impl ExitScopeId {
-    pub const MIN: Self = Self(Digest::from_bytes([0; 32]));
-    pub const MAX: Self = Self(Digest::from_bytes([0xff; 32]));
-}
-
-tagged! {
-#[derive(PartialOrd, Ord, Copy)]
-/// Business destination of a grant.
-pub enum GrantTarget {
-    /// A Mesh Node's configured addresses.
-    Mesh {
-        /// Terminal Node.
-        node: NodeId
-    },
-    /// External destinations forwarded by one exit Node within one scope.
-    Exit {
-        /// Exit Node terminating every path.
-        node: NodeId,
-        /// Destination scope and waypoint identity.
-        scope: ExitScopeId
-    },
-} }
-
-object! {
-#[derive(PartialOrd, Ord, Copy)]
-/// Unique identity of a grant within one network: original source and destination.
-pub struct GrantKey {
-    /// Original authenticated business source.
-    pub source: NodeId,
-    /// Mesh terminal or exit scope.
-    pub target: GrantTarget,
-} }
-
-object! {
-/// One complete ordered path, including every required intermediate Node.
-pub struct GrantPath {
-    /// Source, intermediate Nodes and terminal.
-    pub nodes: Vec<NodeId>,
-    /// Candidate keys grouped by actual dial initiator, independent of business direction.
-    pub dial_candidates: BTreeMap<NodeId, Vec<String>>,
-    /// Every Node on the path declares `feature:path-observation` version 1.
-    pub observable: bool,
-} }
-
-object! {
-/// External destination constraints of an exit grant.
-pub struct GrantExit {
-    /// Access destination scope; a packet must also fall inside it.
-    pub destination: ExitDestinationScope,
-    /// Disjoint source routes that select this exit with this grant's waypoints.
-    pub routes: Vec<String>,
-    /// Inner address family; initially IPv4 only.
-    pub family: ExitFamily,
-    /// Source egress selection identity; any profile switch changes it.
-    pub selection: Digest,
-} }
-
-object! {
-/// Stable business authority between one source and one destination.
-pub struct Grant {
-    /// Original authenticated business source.
-    pub source: NodeId,
-    /// Source Mesh addresses checked by packet admission.
-    pub source_addresses: NodeAddresses,
-    /// Mesh terminal or exit scope; equals the map key target.
-    pub target: GrantTarget,
-    /// Allowed inner services at the source and terminal; null at relays, which never inspect traffic.
-    pub services: Option<ServiceSet> [required = true],
-    /// External constraints; null for Mesh grants.
-    pub exit: Option<GrantExit> [required = true],
-    /// At most four complete paths per exit Node; relay copies keep only paths through the relay.
-    pub paths: Vec<GrantPath>,
-    /// Replies follow the established forward flow's exact reverse path.
-    pub replies: ReplyPolicy,
-} }
-
-impl Grant {
-    pub fn key(&self) -> GrantKey {
-        GrantKey {
-            source: self.source,
-            target: self.target,
-        }
-    }
-
-    pub fn path(&self, nodes: &[NodeId]) -> Option<&GrantPath> {
-        self.paths.iter().find(|path| path.nodes == nodes)
-    }
-}
-
-object! {
-/// Carriers allowed between this Node and one adjacent Node.
-pub struct Edges {
-    /// Local dial candidate keys toward the peer, ordered by carrier preference.
-    pub dial: Vec<String>,
-    /// Local listener keys the peer may dial.
-    pub accept: Vec<String>,
-} }
 
 tagged! {
 /// Source-local action for one managed destination prefix.
@@ -206,7 +88,7 @@ pub struct DnsService {
     /// Exit role required at the resolver.
     pub role: ExitRole,
     /// One complete ordered path, reversed for replies.
-    pub path: GrantPath,
+    pub path: LogicalPath,
     /// Independently authorized transports.
     pub transports: Vec<DnsTransport>,
     /// Maximum simultaneous queries from this source.
@@ -254,10 +136,8 @@ pub enum ResolverAction {
 }
 
 object! {
-/// DNS settings, names and resolver decisions for one Node.
+/// Names and resolver decisions for one Node; settings are in the projection.
 pub struct NetmapDns {
-    /// DNS configuration of the compiled revision.
-    pub settings: DnsConfiguration,
     /// Every name this Node may discover: itself and Nodes it has Access to.
     pub mesh_hosts: BTreeMap<String, NodeAddresses>,
     /// Decision for each configured resolver key.
@@ -307,15 +187,10 @@ pub struct NodeNetmap {
     /// Own configured identity and resources.
     #[serde(rename = "self")]
     pub self_: NetmapSelf,
-    /// Identities and keys of every Node on this Node's grant paths.
-    pub peers: BTreeMap<NodeId, PeerConfiguration>,
-    /// Dial candidates with configured endpoints only.
+    /// Configuration subset the shared compiler runs on.
+    pub projection: ProjectedConfiguration,
+    /// Dial candidates with configured endpoints and client material, from this Node to each topology-adjacent visible Node.
     pub dialers: BTreeMap<String, DialCandidate>,
-    /// Adjacent Nodes and allowed carriers; the only adjacency authority.
-    pub edges: BTreeMap<NodeId, Edges>,
-    /// Grants whose paths contain this Node, ordered by key.
-    #[serde(with = "grants")]
-    pub grants: BTreeMap<GrantKey, Grant> [value_type = Vec<Grant>],
     /// Source egress plan; null while disabled.
     pub egress: Option<EgressPlan> [required = true],
     /// Exit role; null unless enabled, exit-enabled and capable.
@@ -344,10 +219,8 @@ impl NodeNetmap {
             node_id: NodeId,
             compiler_version: &'a str,
             self_: &'a NetmapSelf,
-            peers: &'a BTreeMap<NodeId, PeerConfiguration>,
+            projection: &'a ProjectedConfiguration,
             dialers: &'a BTreeMap<String, DialCandidate>,
-            edges: &'a BTreeMap<NodeId, Edges>,
-            grants: Vec<&'a Grant>,
             egress: &'a Option<EgressPlan>,
             exit_role: &'a Option<ExitRole>,
             dns: &'a NetmapDns,
@@ -358,10 +231,8 @@ impl NodeNetmap {
             node_id: self.node_id,
             compiler_version: &self.compiler_version,
             self_: &self.self_,
-            peers: &self.peers,
+            projection: &self.projection,
             dialers: &self.dialers,
-            edges: &self.edges,
-            grants: self.grants.values().collect(),
             egress: &self.egress,
             exit_role: &self.exit_role,
             dns: &self.dns,
@@ -384,21 +255,6 @@ impl NodeNetmap {
         serde_json::to_writer(&mut counter, self).map_err(|_| SerializationError)?;
         Ok(counter.0)
     }
-
-    pub fn grant(&self, key: &GrantKey) -> Option<&Grant> {
-        self.grants.get(key)
-    }
-
-    /// Exit grants of this source toward one exit Node, in scope order.
-    pub fn exit_grants(&self, exit: NodeId) -> impl Iterator<Item = &Grant> {
-        let key = |scope| GrantKey {
-            source: self.node_id,
-            target: GrantTarget::Exit { node: exit, scope },
-        };
-        self.grants
-            .range(key(ExitScopeId::MIN)..=key(ExitScopeId::MAX))
-            .map(|(_, grant)| grant)
-    }
 }
 
 impl EgressPlan {
@@ -418,11 +274,6 @@ impl CompiledNetmap {
     pub fn verify(&self) -> Result<(), SerializationError> {
         if self.netmap.content_digest()? != self.digest
             || self.netmap.compiler_version != NETMAP_COMPILER_VERSION
-            || self
-                .netmap
-                .grants
-                .iter()
-                .any(|(key, grant)| *key != grant.key())
         {
             return Err(SerializationError);
         }

@@ -22,19 +22,19 @@ macro_rules! keyed_delta {
         } }
     };
 }
-keyed_delta!(NetmapPeerDelta, NodeId, PeerConfiguration, "peers");
+keyed_delta!(
+    NetmapNodeDelta,
+    NodeId,
+    crate::NodeSettingsView,
+    "visible Node declarations"
+);
+keyed_delta!(
+    NetmapInventoryDelta,
+    NodeId,
+    TrustedNode,
+    "visible Node inventory"
+);
 keyed_delta!(NetmapDialerDelta, String, DialCandidate, "dial candidates");
-keyed_delta!(NetmapEdgeDelta, NodeId, Edges, "adjacent edges");
-
-object! {
-/// Removed and replaced grants between two netmaps.
-pub struct NetmapGrantDelta {
-    /// Base grant keys to remove; never also upserted.
-    pub remove: Vec<GrantKey>,
-    /// Complete grants to insert or replace, in increasing key order.
-    #[serde(with = "grants")]
-    pub upsert: BTreeMap<GrantKey, Grant> [value_type = Vec<Grant>],
-} }
 
 object! {
 /// Changes from an exact base netmap to an exact target netmap of the same Node.
@@ -52,14 +52,22 @@ pub struct NetmapDelta {
     /// Complete replacement of the target's own resources.
     #[serde(rename = "self")]
     pub self_: NetmapSelf,
-    /// Peer changes.
-    pub peers: NetmapPeerDelta,
+    /// Complete replacement projected configuration except `nodes`, which is always empty here.
+    pub configuration: crate::ConfigurationView,
+    /// Visible Node declaration changes.
+    pub nodes: NetmapNodeDelta,
+    /// Complete replacement user bindings.
+    pub subjects: crate::SubjectContext,
+    /// Visible inventory changes.
+    pub inventory: NetmapInventoryDelta,
+    /// Complete replacement rule-set contents.
+    pub rule_sets: BTreeMap<String, crate::execution::RuleSetContent>,
+    /// Complete replacement profile selections.
+    pub selected_profiles: BTreeMap<NodeId, String>,
+    /// Complete replacement selection versions.
+    pub selection_versions: BTreeMap<NodeId, u64>,
     /// Dial candidate changes.
     pub dialers: NetmapDialerDelta,
-    /// Edge changes.
-    pub edges: NetmapEdgeDelta,
-    /// Grant changes.
-    pub grants: NetmapGrantDelta,
     /// Complete replacement egress plan.
     pub egress: Option<EgressPlan> [required = true],
     /// Complete replacement exit role.
@@ -109,10 +117,15 @@ pub fn netmap_delta(
     if b.node_id != t.node_id || b.network_id != t.network_id || t.serial <= b.serial {
         return Err(NetmapDeltaError::InvalidInput);
     }
-    let (peers_remove, peers_upsert) = difference(&b.peers, &t.peers);
+    let (nodes_remove, nodes_upsert) = difference(
+        &b.projection.configuration.nodes,
+        &t.projection.configuration.nodes,
+    );
+    let (inventory_remove, inventory_upsert) =
+        difference(&b.projection.inventory, &t.projection.inventory);
     let (dialers_remove, dialers_upsert) = difference(&b.dialers, &t.dialers);
-    let (edges_remove, edges_upsert) = difference(&b.edges, &t.edges);
-    let (grants_remove, grants_upsert) = difference(&b.grants, &t.grants);
+    let mut configuration = t.projection.configuration.clone();
+    configuration.nodes.clear();
     Ok(NetmapDelta {
         network_id: t.network_id,
         node_id: t.node_id,
@@ -120,21 +133,22 @@ pub fn netmap_delta(
         target: target.reference(),
         dependency_digest: t.dependency_digest,
         self_: t.self_.clone(),
-        peers: NetmapPeerDelta {
-            remove: peers_remove,
-            upsert: peers_upsert,
+        configuration,
+        nodes: NetmapNodeDelta {
+            remove: nodes_remove,
+            upsert: nodes_upsert,
         },
+        subjects: t.projection.subjects.clone(),
+        inventory: NetmapInventoryDelta {
+            remove: inventory_remove,
+            upsert: inventory_upsert,
+        },
+        rule_sets: t.projection.rule_sets.clone(),
+        selected_profiles: t.projection.selected_profiles.clone(),
+        selection_versions: t.projection.selection_versions.clone(),
         dialers: NetmapDialerDelta {
             remove: dialers_remove,
             upsert: dialers_upsert,
-        },
-        edges: NetmapEdgeDelta {
-            remove: edges_remove,
-            upsert: edges_upsert,
-        },
-        grants: NetmapGrantDelta {
-            remove: grants_remove,
-            upsert: grants_upsert,
         },
         egress: t.egress.clone(),
         exit_role: t.exit_role.clone(),
@@ -156,6 +170,9 @@ pub fn apply_netmap_delta(
     {
         return Err(NetmapDeltaError::InvalidInput);
     }
+    if !delta.configuration.nodes.is_empty() {
+        return Err(NetmapDeltaError::InvalidInput);
+    }
     let mut t = b.clone();
     t.revision = delta.target.revision;
     t.serial = delta.target.serial;
@@ -164,10 +181,24 @@ pub fn apply_netmap_delta(
     t.egress = delta.egress;
     t.exit_role = delta.exit_role;
     t.dns = delta.dns;
-    apply(&mut t.peers, delta.peers.remove, delta.peers.upsert)?;
+    let nodes = std::mem::take(&mut t.projection.configuration.nodes);
+    t.projection.configuration = delta.configuration;
+    t.projection.configuration.nodes = nodes;
+    t.projection.subjects = delta.subjects;
+    t.projection.rule_sets = delta.rule_sets;
+    t.projection.selected_profiles = delta.selected_profiles;
+    t.projection.selection_versions = delta.selection_versions;
+    apply(
+        &mut t.projection.configuration.nodes,
+        delta.nodes.remove,
+        delta.nodes.upsert,
+    )?;
+    apply(
+        &mut t.projection.inventory,
+        delta.inventory.remove,
+        delta.inventory.upsert,
+    )?;
     apply(&mut t.dialers, delta.dialers.remove, delta.dialers.upsert)?;
-    apply(&mut t.edges, delta.edges.remove, delta.edges.upsert)?;
-    apply(&mut t.grants, delta.grants.remove, delta.grants.upsert)?;
     let compiled = CompiledNetmap {
         digest: t.content_digest()?,
         netmap: t,
