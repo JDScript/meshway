@@ -226,5 +226,5 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_it
     let _ = control.shutdown().await;
     host.shutdown(false).await.unwrap();
     server.close().await;
-    println!("N1G_NETMAP_EXIT=renewal-noop,serial-retained,access-retired,lease-end-cleanup");
+    println!("N1G_NETMAP_EXIT=renewal-noop,serial-retained,access-denied,lease-end-cleanup");
 }
