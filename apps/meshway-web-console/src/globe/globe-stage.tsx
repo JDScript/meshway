@@ -11,6 +11,7 @@ import {
 } from "@/state/boot"
 import {
   pointAtOnGlobe,
+  provideGlobeView,
   provideMarkerPoints,
   selectFromGlobe,
   useGlobe,
@@ -108,7 +109,12 @@ export function GlobeStage() {
 
   useEffect(() => {
     if (!engine) return
-    return provideMarkerPoints(() => engine.markerPoints())
+    const points = provideMarkerPoints(() => engine.markerPoints())
+    const view = provideGlobeView(() => engine.view())
+    return () => {
+      points()
+      view()
+    }
   }, [engine])
 
   // Ready once the renderer has drawn the loader's pose at least once, so
@@ -130,9 +136,9 @@ export function GlobeStage() {
         aria-label={m.globe_region()}
         data-boot={boot}
         data-receded={state.recede}
-        data-backdrop={state.backdrop}
-        aria-hidden={state.backdrop}
-        inert={state.backdrop}
+        data-backdrop={state.backdrop ?? undefined}
+        aria-hidden={state.backdrop !== null}
+        inert={state.backdrop !== null}
         className="globe-stage fixed inset-0"
       />
     </>

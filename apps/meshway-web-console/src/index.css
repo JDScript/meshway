@@ -842,23 +842,59 @@
   .globe-stage[data-receded="true"] {
     opacity: 0.4;
   }
-  .globe-stage[data-backdrop="true"] {
-    opacity: 0.3;
-    scale: 0.96;
+  .globe-stage[data-backdrop="dim"] {
+    opacity: 0.32;
   }
   .globe-stage[data-markers="hidden"] .globe-node {
     opacity: 0;
     pointer-events: none;
     transition-duration: 160ms;
+    /* Not even while they would come in. */
+    animation: none;
   }
 
-  /* The topology: nodes are the globe's markers, larger, on rings. */
-  .topology-canvas {
-    transition: opacity 320ms ease;
+  /* About to leave the globe for the topology: the markers lift, glowing. */
+  .globe-stage[data-markers="lifted"] .globe-node__dot {
+    transform: scale(1.9);
+    box-shadow:
+      0 0 0 1.5px var(--background),
+      0 0 22px 6px color-mix(in oklab, var(--node-color) 70%, transparent);
   }
-  .topology-canvas[data-phase="arrived"] {
+  .globe-stage[data-markers="lifted"] .globe-node__label {
+    opacity: 0;
+    transition: opacity 200ms ease;
+  }
+
+  /* The topology: cards for the network, or for a node's paths. The globe's
+   * dots fly out to them and back. */
+  .topology-canvas {
+    /* Cards follow the zoom; set on the element while it changes. */
+    --card-scale: 1;
+    transition: opacity 320ms ease;
+    cursor: grab;
+  }
+  .topology-canvas:active {
+    cursor: grabbing;
+  }
+  .topology-canvas[data-phase="preparing"]
+    :is(.map-node, .map-chip, .map-edges) {
+    opacity: 0;
+    transition: none;
+  }
+  .topology-canvas:is([data-phase="hidden"], [data-phase="arrived"]) {
     opacity: 0;
   }
+  /* Opened at its address: everything comes in where it is. */
+  .topology-canvas[data-entry="fade"][data-phase="shown"] {
+    animation: map-appear 420ms var(--ease-settle) backwards;
+  }
+  @keyframes map-appear {
+    from {
+      opacity: 0;
+      scale: 0.985;
+    }
+  }
+
   .map-node {
     --node-color: var(--status-inactive);
     position: absolute;
@@ -870,6 +906,7 @@
     border: 0;
     background: none;
     outline: none;
+    cursor: pointer;
     transition: opacity 320ms ease;
   }
   .map-node[data-tone="online"] {
@@ -882,102 +919,99 @@
     --node-color: var(--status-offline);
   }
   .map-node[data-dim="true"] {
-    opacity: 0.4;
+    opacity: 0.45;
   }
-  /* Without a globe marker to come from or go back to, a node fades in place. */
-  .topology-canvas[data-phase="entering"] .map-node[data-marker="false"] {
-    animation: map-node-appear 480ms var(--ease-settle) backwards;
-  }
-  .topology-canvas[data-phase="leaving"] .map-node[data-marker="false"] {
-    opacity: 0;
-  }
-  @keyframes map-node-appear {
-    from {
-      opacity: 0;
-    }
-  }
-  .map-node__hit {
-    position: absolute;
-    left: -18px;
-    top: -18px;
-    width: 36px;
-    height: 36px;
-    border-radius: 9999px;
-  }
-  .map-node:focus-visible .map-node__hit {
-    outline: 2px solid var(--ring);
-    outline-offset: -6px;
-  }
+  /* In flight: a glowing dot, as it lifted off the globe. */
   .map-node__dot {
     position: absolute;
-    left: -6px;
-    top: -6px;
-    width: 12px;
-    height: 12px;
+    left: -5px;
+    top: -5px;
+    width: 10px;
+    height: 10px;
     border-radius: 9999px;
     background: var(--node-color);
     box-shadow:
-      0 0 0 2px var(--background),
-      0 0 16px 3px color-mix(in oklab, var(--node-color) 50%, transparent);
+      0 0 0 1.5px var(--background),
+      0 0 22px 6px color-mix(in oklab, var(--node-color) 65%, transparent);
+    transform: scale(1.6);
+    opacity: 0;
     transition:
-      transform 420ms var(--ease-settle),
-      box-shadow 300ms ease;
+      opacity 220ms ease,
+      transform 300ms var(--ease-settle);
   }
-  .map-node:not([data-tone="online"]) .map-node__dot {
-    box-shadow: 0 0 0 2px var(--background);
-  }
-  /* Coming out of (and going back into) a globe marker, the dot is its size. */
   .topology-canvas:is([data-phase="entering"], [data-phase="leaving"])
     .map-node__dot {
-    transform: scale(0.67);
+    opacity: 1;
   }
-  .map-node:hover .map-node__dot {
-    transform: scale(1.2);
-  }
-  .map-node[data-selected="true"] .map-node__dot {
-    transform: scale(1.25);
-    box-shadow:
-      0 0 0 2px var(--background),
-      0 0 0 4px var(--node-color),
-      0 0 24px 5px color-mix(in oklab, var(--node-color) 55%, transparent);
-  }
-  /* Under its dot on the diagram; beside it, as on the globe, on the way in and out. */
-  .map-node__label {
+  /* At rest: a card, sized with the zoom; it opens out of the dot. */
+  .map-node__card {
     position: absolute;
     left: 0;
-    top: 13px;
-    translate: -50% 0;
-    padding: 0 8px;
-    border-radius: 9999px;
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 22px;
-    white-space: nowrap;
-    color: var(--muted-foreground);
-    background: color-mix(in oklab, var(--background) 60%, transparent);
-    -webkit-backdrop-filter: blur(10px);
-    backdrop-filter: blur(10px);
-    transition:
-      color 300ms ease,
-      background 300ms ease,
-      opacity 200ms ease,
-      left 420ms var(--ease-settle),
-      top 420ms var(--ease-settle),
-      translate 420ms var(--ease-settle);
-  }
-  .topology-canvas:is([data-phase="entering"], [data-phase="leaving"])
-    .map-node__label {
-    left: 13px;
-    top: -11px;
-    translate: 0 0;
-  }
-  .map-node[data-named="false"] .map-node__label {
+    top: 0;
+    display: flex;
+    width: 164px;
+    height: 46px;
+    align-items: center;
+    gap: 10px;
+    padding: 0 13px;
+    border-radius: 14px;
+    translate: -50% -50%;
+    scale: calc(var(--card-scale) * 0.3);
     opacity: 0;
+    pointer-events: none;
+    background: color-mix(in oklab, var(--background) 86%, transparent);
+    box-shadow:
+      0 0 0 1px var(--divider),
+      0 10px 28px -14px rgb(0 0 0 / 0.45);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    transition:
+      opacity 240ms ease,
+      scale 380ms var(--ease-settle),
+      width 380ms var(--ease-settle),
+      height 380ms var(--ease-settle),
+      box-shadow 200ms ease;
   }
-  .map-node:is(:hover, :focus-visible, [data-selected="true"])
-    .map-node__label {
-    color: var(--foreground);
-    background: color-mix(in oklab, var(--background) 85%, transparent);
+  .topology-canvas[data-phase="shown"] .map-node__card {
+    opacity: 1;
+    scale: var(--card-scale);
+    pointer-events: auto;
+  }
+  /* Zoom and pan move the cards at once; only a new layout glides. */
+  .topology-canvas[data-phase="shown"][data-moving="false"] .map-node__card {
+    transition:
+      opacity 240ms ease,
+      box-shadow 200ms ease;
+  }
+  /* The whole network: one line, the name; the dot is its state. */
+  .topology-canvas[data-mode="graph"] .map-node__card {
+    width: 136px;
+    height: 32px;
+    gap: 8px;
+    padding: 0 11px;
+    border-radius: 10px;
+  }
+  .map-node__card-dot {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    background: var(--node-color);
+    box-shadow: 0 0 10px 1px
+      color-mix(in oklab, var(--node-color) 55%, transparent);
+  }
+  .map-node:hover .map-node__card {
+    box-shadow:
+      0 0 0 1px var(--border),
+      0 12px 30px -14px rgb(0 0 0 / 0.5);
+  }
+  .map-node:focus-visible .map-node__card {
+    box-shadow: 0 0 0 2px var(--ring);
+  }
+  .map-node[data-selected="true"] .map-node__card {
+    box-shadow:
+      0 0 0 2px var(--node-color),
+      0 12px 30px -14px rgb(0 0 0 / 0.5);
   }
 
   /* Edges: their colour is their state (`color`), dashed until connected. */
@@ -1017,6 +1051,13 @@
     stroke-width: 2;
     stroke-dasharray: none;
     opacity: 0.9;
+  }
+  /* The whole network: lighter lines, many at once. */
+  .topology-canvas[data-mode="graph"]
+    .map-edge:is([data-look="matched"], [data-look="one_sided"])
+    .map-edge__line {
+    stroke-width: 1.5;
+    opacity: 0.7;
   }
   .map-edge[data-directed="true"] .map-edge__line {
     stroke-width: 1.75;
@@ -1073,7 +1114,6 @@
     left: 0;
     top: 0;
     translate: -50% -50%;
-    max-width: 160px;
     overflow: hidden;
     padding: 0 8px;
     border-radius: 9999px;
@@ -1134,7 +1174,7 @@
     .surface,
     .surface[data-shown="false"],
     .globe-stage,
-    .globe-stage[data-backdrop="true"] {
+    .globe-stage[data-backdrop] {
       transition: none;
       scale: 1;
       translate: 0 0;

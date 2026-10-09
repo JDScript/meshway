@@ -53,5 +53,11 @@
   "map_link_rule": "Rule",
   "map_link_rule_default": "Allowed by default",
   "map_link_not_declared": "The configuration does not allow these two to connect directly",
-  "map_link_edit": "Edit topology rules"
+  "map_link_edit": "Edit topology rules",
+  "map_planning": "Planning paths",
+  "map_zoom_in": "Zoom in",
+  "map_zoom_out": "Zoom out",
+  "map_fit": "Fit",
+  "map_paths_from": "Paths from {name}",
+  "map_paths_close": "Back to the whole network"
 }

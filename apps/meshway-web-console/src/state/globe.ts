@@ -42,6 +42,19 @@ export type GlobeAlert = {
   bottom: number
 }
 
+export type Backdrop = null | "dim"
+
+/** Where the topology puts the globe; it keeps its view and stops turning. */
+export type GlobeDisc = { x: number; y: number; radius: number }
+
+export const sameDisc = (a: GlobeDisc | null, b: GlobeDisc | null) =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.radius === b.radius)
+
 export type GlobeState = {
   framing: Framing
   scene: Scene
@@ -54,13 +67,17 @@ export type GlobeState = {
   /** A workspace covers the globe: it dims and stays where it is. */
   recede: boolean
   alert: GlobeAlert | null
-  /** The topology is drawn over the globe: it stays behind, dim and out of reach. */
-  backdrop: boolean
+  /** The topology is drawn over the globe, which stays behind it, dim and out of reach. */
+  backdrop: Backdrop
+  /** Where the topology puts the globe (CSS px, viewport); null: its own place. */
+  disc: GlobeDisc | null
   /**
    * The topology's nodes have taken over from the markers (they leave from
    * and return to them): markers and links are not drawn meanwhile.
    */
   markersHidden: boolean
+  /** The markers lift off the surface, about to leave it for the topology. */
+  markersLifted: boolean
 }
 
 const globeStore = createStore<GlobeState>(() => ({
@@ -72,8 +89,10 @@ const globeStore = createStore<GlobeState>(() => ({
   insets: NO_INSETS,
   recede: false,
   alert: null,
-  backdrop: false,
+  backdrop: null,
+  disc: null,
   markersHidden: false,
+  markersLifted: false,
 }))
 
 /** What the globe shows, for its stage. */
@@ -101,10 +120,46 @@ export function showWelcomeGlobe() {
     hoveredNodeId: null,
     insets: NO_INSETS,
     recede: false,
-    backdrop: false,
+    backdrop: null,
+    disc: null,
     markersHidden: false,
+    markersLifted: false,
   })
 }
+
+export function liftGlobeMarkers(lifted: boolean) {
+  if (globeStore.getState().markersLifted !== lifted)
+    globeStore.setState({ markersLifted: lifted })
+}
+
+/** The topology places the globe and dims it (or hands it back with nulls). */
+export function setGlobeBackdrop(backdrop: Backdrop, disc: GlobeDisc | null) {
+  const current = globeStore.getState()
+  if (current.backdrop === backdrop && sameDisc(current.disc, disc)) return
+  globeStore.setState({ backdrop, disc })
+}
+
+/** The globe's view now: its centre and radius on the screen (CSS px, viewport) and the point it faces. */
+export type GlobeView = {
+  x: number
+  y: number
+  radius: number
+  lat: number
+  lng: number
+  altitude: number
+  viewportHeight: number
+}
+
+let globeViewOf: () => GlobeView | null = () => null
+
+export function provideGlobeView(provider: () => GlobeView | null) {
+  globeViewOf = provider
+  return () => {
+    if (globeViewOf === provider) globeViewOf = () => null
+  }
+}
+
+export const globeView = () => globeViewOf()
 
 /** The topology takes the markers over, or hands them back. */
 export function hideGlobeMarkers(hidden: boolean) {

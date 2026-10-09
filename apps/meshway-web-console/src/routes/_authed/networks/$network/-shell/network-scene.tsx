@@ -254,6 +254,8 @@ function useSceneModel(networkId: string) {
     nodesLoading: canRead
       ? waitingForConfiguration
       : (inventory.data === undefined && !inventory.isError) || stateLoading,
+    /** Some planned path from the selected node is still being asked. */
+    routesPending: routes?.some((route) => route.status === "pending") ?? false,
     stateBehind,
     inventory: inventory.data?.items,
     canRead,
@@ -321,12 +323,16 @@ export function useGlobeNetwork(networkId: string) {
       scene: handedOver ? { ...scene, links: [] } : scene,
       // Behind the topology the globe holds still; the diagram has the focus.
       selectedNodeId: topology ? null : route.focus,
-      backdrop: topology,
     })
   }, [scene, handedOver, route.focus, route.page])
   useEffect(
     () => () =>
-      setGlobe({ scene: EMPTY_SCENE, selectedNodeId: null, backdrop: false }),
+      setGlobe({
+        scene: EMPTY_SCENE,
+        selectedNodeId: null,
+        backdrop: null,
+        disc: null,
+      }),
     []
   )
 

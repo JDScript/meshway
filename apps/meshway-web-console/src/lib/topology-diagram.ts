@@ -2,24 +2,17 @@ import type { LinkLook } from "@/globe/scene"
 import type { MapConnection, MapNode } from "@/lib/network-map"
 import { routeEdges, routeTree, type NodeRoute } from "@/lib/network-routes"
 import type { NodeStatus } from "@/lib/nodes/status"
-import {
-  focusLayout,
-  overviewLayout,
-  type Box,
-  type Point,
-  type RouteTree,
-} from "@/lib/topology-layout"
+import type { RouteTree } from "@/lib/topology-layout"
 
-// What the topology draws: every node at its place, and either the
-// declared edges with what the nodes report (nothing selected), or the
-// planned paths from the selected node, each hop pointing the way traffic
-// goes. A selected link is drawn in either view.
+// What the topology draws: every node, and either the declared edges with
+// what the nodes report (nothing selected), or the planned paths from the
+// selected node, each hop pointing the way traffic goes, with the tree
+// they make for laying it out. A selected link is drawn in either view.
 
 export type DiagramNode = {
   id: string
   name: string
   status: NodeStatus
-  point: Point
   selected: boolean
   /** Off the paths of the selected node (or not reached by any). */
   dim: boolean
@@ -44,10 +37,11 @@ export type DiagramEdge = {
 export type Diagram = {
   nodes: DiagramNode[]
   edges: DiagramEdge[]
-  focused: boolean
+  /** Set when a node is selected: where the others sit from it. */
+  tree: RouteTree | null
 }
 
-/** Nodes in the order of their longitude (so the ring reads like the globe), unplaced ones after by name. */
+/** Nodes in the order of their longitude (west to east, as on the globe), unplaced ones after by name. */
 export function placeOrder(nodes: readonly MapNode[]): MapNode[] {
   const longitude = (node: MapNode) =>
     node.geo?.kind === "found" ? (node.geo.geo.position?.lng ?? null) : null
@@ -100,7 +94,6 @@ export function topologyDiagram({
   flows,
   selected,
   link,
-  box,
 }: {
   nodes: readonly MapNode[]
   /** Declared edges with their runtime state; without a declaration, what the nodes report. */
@@ -110,7 +103,6 @@ export function topologyDiagram({
   flows: ReadonlyMap<string, ReadonlySet<string>>
   selected: string | null
   link: readonly [string, string] | null
-  box: Box
 }): Diagram {
   const ordered = placeOrder(nodes)
   const ids = ordered.map((node) => node.id)
@@ -168,29 +160,16 @@ export function topologyDiagram({
     if (edge) drawn.push(base(edge))
   }
 
-  const points =
-    source !== null && tree
-      ? focusLayout(source, ids, tree, box)
-      : overviewLayout(ids, box)
   const onPaths = new Set(drawn.flatMap((edge) => [edge.a, edge.b]))
   return {
-    focused: source !== null,
-    nodes: ordered.flatMap((node) => {
-      const point = points.get(node.id)
-      return point
-        ? [
-            {
-              id: node.id,
-              name: node.name,
-              status: node.status,
-              point,
-              selected: node.id === source,
-              dim:
-                source !== null && node.id !== source && !onPaths.has(node.id),
-            },
-          ]
-        : []
-    }),
+    tree,
+    nodes: ordered.map((node) => ({
+      id: node.id,
+      name: node.name,
+      status: node.status,
+      selected: node.id === source,
+      dim: source !== null && node.id !== source && !onPaths.has(node.id),
+    })),
     edges: drawn,
   }
 }

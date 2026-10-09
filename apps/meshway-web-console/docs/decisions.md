@@ -565,26 +565,41 @@ states stay distinguishable by stroke and colour.
   revision does not annotate the new declaration as current. Node positions stay stable
   across status updates. Original channel evidence remains available in details;
   history remains an explicitly selected layer.
-- The topology is the globe's nodes rearranged, not a second picture: opening
-  it, each node leaves its globe marker and glides to its place on the
-  diagram (a marker point it can leave from; nodes without one appear in
-  place), names move from beside the dot to under it, edges fade in once the
-  nodes arrive, and the globe stays behind, dim, still and out of reach.
-  Leaving reverses it into the markers. Reduced motion switches at once. The
-  canvas (`-map/topology-canvas.tsx`) is mounted by the network layout so it
-  can play both ways; React renders where nodes end, and the glide writes
-  positions frame by frame. Previous `/overview?view=topology` links redirect
-  to the topology page with their node selection.
-- Nothing selected, the diagram draws the declared edges on rings, ordered by
-  longitude so it reads roughly like the globe; a few nodes stay close
-  together. Selecting a node lays the diagram out from it: the node in the
-  middle, every other node on the ring of its hop count near the node it is
-  reached through, and only the planned main paths' hops, each with an arrow
-  the way traffic goes (`evaluateConfiguration` per destination over the
-  current revision, at most four at once, kept per revision; owners and
-  admins). Nodes without a plan sit on the outer ring, dimmed; plans refused
-  by access are dotted. A member sees the node's current links one hop out.
-  Choosing an edge selects that link.
+- The topology is the globe's nodes rearranged, not a second picture.
+  Opened from another page, the globe stops turning and its markers lift,
+  glowing; then the globe shrinks, dim, into the middle of the canvas while
+  each node flies from its marker to its card, from the globe's centre out
+  (nodes not seen on the globe appear in place), and the cards open out of
+  the dots; the lines come in once the cards are there. Leaving, the cards
+  close into dots that fly back onto their markers as the globe returns.
+  Opened at its address, the globe's first reveal lands straight in its
+  place behind (it is never interrupted) and the cards fade in where they
+  are. Reduced motion switches at once. The canvas
+  (`-map/topology-canvas.tsx`) is mounted by the network layout so it can
+  play both ways; React renders where the cards end, and the flight writes
+  positions frame by frame. Previous `/overview?view=topology` links
+  redirect to the topology page with their node selection.
+- Nothing selected, the topology is the whole network: a card per node (its
+  state dot and name), laid out over the declared edges by a force layout
+  started from where each node is on Earth and turned to match it, so west
+  stays left of east; nodes without a place sit by their links. Cards never
+  overlap and no line runs under a card it does not end at. Selecting a
+  node lays out its paths: the node on the left, every other node in the
+  column after the node it is reached through (a tidy tree, so lines
+  between columns do not cross), and only the planned main paths' hops,
+  each with an arrow the way traffic goes (`evaluateConfiguration` per
+  destination over the current revision, at most four at once, kept per
+  revision; owners and admins). The cards wait for every plan, so they move
+  once. Nodes without a plan take a last column, dimmed; plans refused by
+  access are dotted. A member sees the node's current links one hop out.
+  Choosing an edge selects that link. Both layouts depend only on which
+  nodes and edges there are and the paths (`lib/topology-layout.ts`).
+- Both views zoom and pan: a two-finger scroll pans, a pinch or a mouse
+  wheel's notch zooms, and buttons zoom in, out and fit. Cards grow and
+  shrink with the zoom but stay readable while there is room; an edge's
+  caption shows only where it fits between its cards. With at most 16 edges
+  every edge has its caption and flow; otherwise only what is pointed at or
+  selected.
 - Edges are dashed until connected and solid in the link's colour while
   connected, with the carrier in use as a caption (or the configured
   restriction, "仅 …", when not connected); an edge on the default order has
@@ -677,7 +692,7 @@ controller supports today; the rest of each row is the target design.
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
 | Overview `/overview` | globe and optional history | the map panel: network, node or cluster, link | an explicit action opens node details | |
-| Topology `/topology` | the globe's nodes as the declared topology with runtime state, or the paths from a selected node | the map panel: network, node, link | an explicit action opens node details | |
+| Topology `/topology` | the globe's nodes as cards: the whole network over the declared edges with runtime state, or the paths from a selected node | the map panel: network, node, link | an explicit action opens node details | |
 | Nodes `/nodes?q=` | overview, connections, diagnostics and settings; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=…`, `/nodes/add` | revoke, enrolment key |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
@@ -713,7 +728,7 @@ out. A revision the network does not have is said in the history.
 
 | Level | What | Rule |
 | --- | --- | --- |
-| Canvas | the globe; on the topology page its nodes as the diagram, the globe behind | always |
+| Canvas | the globe; on the topology page its nodes as cards, the globe small and dim behind | always |
 | Chrome | network card, toolbar, dock | always |
 | Page panel | a page's index | one at a time |
 | Workspace | one entity or one editor in full | one at a time; the deepest level |

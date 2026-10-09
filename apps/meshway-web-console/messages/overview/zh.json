@@ -53,5 +53,11 @@
   "map_link_rule": "规则",
   "map_link_rule_default": "默认允许",
   "map_link_not_declared": "当前配置不允许这两端直接连接",
-  "map_link_edit": "编辑组网规则"
+  "map_link_edit": "编辑组网规则",
+  "map_planning": "正在规划路径",
+  "map_zoom_in": "放大",
+  "map_zoom_out": "缩小",
+  "map_fit": "适应画面",
+  "map_paths_from": "从 {name} 出发的路径",
+  "map_paths_close": "回到整网"
 }

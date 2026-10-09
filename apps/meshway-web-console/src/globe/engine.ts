@@ -23,7 +23,13 @@ import { mostUrgentTone, statusTone } from "@/lib/nodes/status"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 import type { BootPhase } from "@/state/boot"
-import { sameInsets, type GlobeState, type MarkerPoint } from "@/state/globe"
+import {
+  sameDisc,
+  sameInsets,
+  type GlobeState,
+  type GlobeView,
+  type MarkerPoint,
+} from "@/state/globe"
 import { THEME_SHIFT_MS } from "@/state/theme-shift"
 
 import { cityLights } from "./city-lights"
@@ -93,6 +99,8 @@ export type GlobeEngine = {
   resize(width: number, height: number): void
   /** Where each placed node's marker is on the screen now. */
   markerPoints(): Map<string, MarkerPoint>
+  /** Where the globe is on the screen now, and the point it faces. */
+  view(): GlobeView | null
   destroy(): void
 }
 
@@ -126,6 +134,8 @@ const RESUME_ROTATION_MS = 8_000
 /** Spring rates (1/s): the reveal is unhurried, following panels is brisk. */
 const REVEAL_RATE = 3.4
 const LAYOUT_RATE = 6
+/** The globe moving into (and out of) the topology's place for it. */
+const DISC_RATE = 7
 const FOCUS_RATE = 4
 /** The loader cross-fades into the globe, both in the same pose, before anything moves. */
 const REVEAL_HOLD_MS = 200
@@ -986,6 +996,11 @@ export function createGlobeEngine(
       return altitudeForRadius(free * ALERT_FIT, Math.max(height, 1))
     }
     if (input.framing === "welcome") return WELCOME.altitude
+    if (input.disc)
+      return altitudeForRadius(
+        Math.max(input.disc.radius, 8),
+        Math.max(height, 1)
+      )
     const { top, right, bottom, left } = input.insets
     const free = Math.max(
       Math.min(width - left - right, height - top - bottom),
@@ -1008,6 +1023,7 @@ export function createGlobeEngine(
       return width >= 900
         ? [Math.min(width * 0.14, 260), 0]
         : [0, height * 0.18]
+    if (input.disc) return [input.disc.x - width / 2, input.disc.y - height / 2]
     const { top, right, bottom, left } = input.insets
     return [(left - right) / 2, (top - bottom) / 2]
   }
@@ -1759,18 +1775,40 @@ export function createGlobeEngine(
         focus.lng !== previousFocus.lng)
     ) {
       retarget(input, FOCUS_RATE, true)
+    } else if (!sameDisc(previous.disc, input.disc)) {
+      // The topology places the globe (it keeps its view).
+      retarget(input, DISC_RATE, false)
     } else if (!sameInsets(previous.insets, input.insets)) {
       retarget(input, LAYOUT_RATE, false)
     }
 
     rotationTarget =
-      input.boot === "ready" && input.motion && !focus ? ROTATION_SPEED : 0
+      input.boot === "ready" && input.motion && !focus && !input.disc
+        ? ROTATION_SPEED
+        : 0
     container.dataset.framing = input.framing
-    container.dataset.markers = input.markersHidden ? "hidden" : "shown"
+    container.dataset.markers = input.markersHidden
+      ? "hidden"
+      : input.markersLifted
+        ? "lifted"
+        : "shown"
   }
 
   return {
     update,
+    view() {
+      if (!last || width === 0 || height === 0) return null
+      const pov = stage.pointOfView()
+      return {
+        x: width / 2 + springs.x.x,
+        y: height / 2 + springs.y.x,
+        radius: radiusForAltitude(pov.altitude, height),
+        lat: pov.lat,
+        lng: pov.lng,
+        altitude: pov.altitude,
+        viewportHeight: height,
+      }
+    },
     markerPoints() {
       // A marker is a zero-size box at its node's point.
       const points = new Map<string, MarkerPoint>()

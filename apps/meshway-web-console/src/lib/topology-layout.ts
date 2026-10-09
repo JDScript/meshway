@@ -1,163 +1,408 @@
-// Where the topology draws its nodes, in the canvas's own pixels. Positions
-// depend only on the order of the ids (callers sort them by place, so the
-// diagram reads roughly like the globe), the box, and in the focused view
-// the tree of planned paths: never on report times or transient state, so
-// nothing jumps when a status changes.
+import type { MapNode } from "@/lib/network-map"
+
+// Where the topology puts its node cards: the whole network as a graph
+// laid out by its links (started from, and turned to match, where each
+// node is on Earth, so west stays left of east), or, from a chosen node,
+// as columns along its paths. Both are in their own coordinates at full
+// size; the canvas's view (zoom and pan) maps them to its pixels. They
+// depend only on which nodes and links there are, and the paths: never on
+// report times or transient state, so nothing jumps when a status changes.
 
 export type Point = { x: number; y: number }
 export type Box = { width: number; height: number }
 
-/** Room either side of a dot for the name under it, and below the lowest. */
-const SIDE_ROOM = 72
-const BOTTOM_ROOM = 44
-/** The least distance along a ring between two dots. */
-const SPACING = 104
+/** A node in the whole network: one line, its name. */
+export const GRAPH_CARD = { w: 136, h: 32 }
+/** A node on a chosen node's paths: its name and its state. */
+export const PATH_CARD = { w: 164, h: 46 }
 
-type Frame = { cx: number; cy: number; rx: number; ry: number }
+const position = (node: MapNode) =>
+  node.geo?.kind === "found" ? node.geo.geo.position : null
 
-function frameOf(box: Box): Frame {
-  // A narrow box (a phone) keeps less room around the rings.
-  const side = Math.min(SIDE_ROOM, box.width * 0.16)
-  const left = side
-  const right = Math.max(left + 1, box.width - side)
-  const top = 24
-  const bottom = Math.max(top + 1, box.height - BOTTOM_ROOM)
+export type Bounds = {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+export function bounds(points: Iterable<Point>, margin = 0): Bounds {
+  let left = Infinity
+  let top = Infinity
+  let right = -Infinity
+  let bottom = -Infinity
+  for (const p of points) {
+    left = Math.min(left, p.x)
+    top = Math.min(top, p.y)
+    right = Math.max(right, p.x)
+    bottom = Math.max(bottom, p.y)
+  }
+  if (left === Infinity) return { left: 0, top: 0, right: 1, bottom: 1 }
   return {
-    cx: (left + right) / 2,
-    cy: (top + bottom) / 2,
-    rx: (right - left) / 2,
-    ry: (bottom - top) / 2,
+    left: left - margin,
+    top: top - margin,
+    right: right + margin,
+    bottom: bottom + margin,
   }
 }
 
-const at = (frame: Frame, scale: number, angle: number): Point => ({
-  x: frame.cx + Math.cos(angle) * frame.rx * scale,
-  y: frame.cy + Math.sin(angle) * frame.ry * scale,
-})
+/** Kept clear around a card: from other cards, and from lines not its own. */
+const CLEAR = { card: 18, line: 10 }
+/** The closest two cards side by side can be, centre to centre (the canvas sizes cards by it too). */
+export const GRAPH_PITCH = GRAPH_CARD.w + CLEAR.card
 
-const meanRadius = (frame: Frame) =>
-  Math.sqrt((frame.rx ** 2 + frame.ry ** 2) / 2)
-
-/** How many dots a ring of `scale` holds at `SPACING`. */
-function capacity(frame: Frame, scale: number) {
-  const perimeter = 2 * Math.PI * meanRadius(frame) * scale
-  return Math.max(3, Math.floor(perimeter / SPACING))
-}
-
-/** A few nodes stay close together: the ring only grows as they need room. */
-const ARC_PER_NODE = 210
-const SMALLEST_RING = 170
-function fitted(frame: Frame, nodes: number) {
-  const wanted = Math.max(SMALLEST_RING, (nodes * ARC_PER_NODE) / (2 * Math.PI))
-  return Math.min(1, wanted / meanRadius(frame))
-}
-
-const TOP = -Math.PI / 2
-
-/** Every node on rings, the outer ring first; one node in the middle, two side by side. */
-export function overviewLayout(
-  ids: readonly string[],
-  box: Box
-): Map<string, Point> {
-  const frame = frameOf(box)
-  const result = new Map<string, Point>()
-  if (ids.length === 1 && ids[0] !== undefined)
-    result.set(ids[0], { x: frame.cx, y: frame.cy })
-  else if (ids.length === 2)
-    ids.forEach((id, index) =>
-      result.set(id, at(frame, fitted(frame, 2), index === 0 ? Math.PI : 0))
-    )
-  else if (ids.length <= capacity(frame, 1)) {
-    const scale = fitted(frame, ids.length)
-    ids.forEach((id, index) =>
-      result.set(id, at(frame, scale, TOP + (index * 2 * Math.PI) / ids.length))
-    )
-  } else {
-    let rest = [...ids]
-    for (const scale of [1, 0.64, 0.32]) {
-      if (rest.length === 0) break
-      const ring = scale === 0.32 ? rest : rest.slice(0, capacity(frame, scale))
-      rest = rest.slice(ring.length)
-      ring.forEach((id, index) =>
-        result.set(
-          id,
-          at(frame, scale, TOP + (index * 2 * Math.PI) / ring.length)
-        )
-      )
+/**
+ * Moves cards apart until none overlap and no line runs under a card that
+ * is not one of its ends (in place, as far as a few passes go).
+ */
+function untangle(
+  xs: Float64Array,
+  ys: Float64Array,
+  links: readonly (readonly [number, number])[]
+) {
+  const n = xs.length
+  const w = GRAPH_CARD.w + CLEAR.card
+  const h = GRAPH_CARD.h + CLEAR.card
+  const hw = GRAPH_CARD.w / 2 + CLEAR.line
+  const hh = GRAPH_CARD.h / 2 + CLEAR.line
+  for (let pass = 0; pass < 160; pass++) {
+    let moved = false
+    for (let i = 0; i < n; i++)
+      for (let j = i + 1; j < n; j++) {
+        const dx = (xs[j] ?? 0) - (xs[i] ?? 0)
+        const dy = (ys[j] ?? 0) - (ys[i] ?? 0)
+        const ox = w - Math.abs(dx)
+        const oy = h - Math.abs(dy)
+        if (ox <= 0 || oy <= 0) continue
+        moved = true
+        // Out the cheaper way, half each.
+        if (oy * w < ox * h) {
+          const dir = dy > 0 || (dy === 0 && j % 2 === 0) ? 1 : -1
+          ys[i] = (ys[i] ?? 0) - (dir * oy) / 2
+          ys[j] = (ys[j] ?? 0) + (dir * oy) / 2
+        } else {
+          const dir = dx > 0 || (dx === 0 && j % 2 === 0) ? 1 : -1
+          xs[i] = (xs[i] ?? 0) - (dir * ox) / 2
+          xs[j] = (xs[j] ?? 0) + (dir * ox) / 2
+        }
+      }
+    for (const [a, b] of links) {
+      const ax = xs[a] ?? 0
+      const ay = ys[a] ?? 0
+      const lx = (xs[b] ?? 0) - ax
+      const ly = (ys[b] ?? 0) - ay
+      const length = Math.hypot(lx, ly)
+      if (length < 1) continue
+      const ux = lx / length
+      const uy = ly / length
+      for (let c = 0; c < n; c++) {
+        if (c === a || c === b) continue
+        const cx = (xs[c] ?? 0) - ax
+        const cy = (ys[c] ?? 0) - ay
+        const along = cx * ux + cy * uy
+        // The card's reach along the line and across it.
+        const reach = hw * Math.abs(ux) + hh * Math.abs(uy)
+        if (along < -reach || along > length + reach) continue
+        const across = cx * -uy + cy * ux
+        const room = hw * Math.abs(uy) + hh * Math.abs(ux)
+        if (Math.abs(across) >= room) continue
+        // Only where the line is between its ends, not past them.
+        if (along < 0 || along > length) continue
+        moved = true
+        const side = across >= 0 ? 1 : -1
+        const push = room - Math.abs(across)
+        // The card moves off the line; the line gives a little too.
+        xs[c] = (xs[c] ?? 0) + -uy * side * push * 0.75
+        ys[c] = (ys[c] ?? 0) + ux * side * push * 0.75
+        const back = push * 0.125
+        xs[a] = (xs[a] ?? 0) - -uy * side * back
+        ys[a] = (ys[a] ?? 0) - ux * side * back
+        xs[b] = (xs[b] ?? 0) - -uy * side * back
+        ys[b] = (ys[b] ?? 0) - ux * side * back
+      }
     }
+    if (!moved) break
   }
-  return result
 }
 
+/** Card centres apart along a link (before the layout is flattened). */
+const LINK = 120
+/** Cards are wider than tall: the layout is flattened by this much. */
+const FLATTEN = 1
+
+/**
+ * The best turn (and mirror, if that fits better) of `points` about their
+ * middle to match `towards`, both over the same indices; applied in place.
+ */
+function align(xs: Float64Array, ys: Float64Array, towards: (Point | null)[]) {
+  const at = towards.flatMap((p, i) => (p ? [i] : []))
+  if (at.length < 2) return
+  const mean = (values: number[]) =>
+    values.reduce((sum, v) => sum + v, 0) / values.length
+  const cx = mean(at.map((i) => xs[i] ?? 0))
+  const cy = mean(at.map((i) => ys[i] ?? 0))
+  const tx = mean(at.map((i) => towards[i]?.x ?? 0))
+  const ty = mean(at.map((i) => towards[i]?.y ?? 0))
+  const fit = (mirror: number) => {
+    let dot = 0
+    let cross = 0
+    for (const i of at) {
+      const x = (xs[i] ?? 0) - cx
+      const y = ((ys[i] ?? 0) - cy) * mirror
+      const u = (towards[i]?.x ?? 0) - tx
+      const v = (towards[i]?.y ?? 0) - ty
+      dot += x * u + y * v
+      cross += x * v - y * u
+    }
+    return { angle: Math.atan2(cross, dot), score: Math.hypot(dot, cross) }
+  }
+  const plain = fit(1)
+  const mirrored = fit(-1)
+  const mirror = mirrored.score > plain.score ? -1 : 1
+  const { angle } = mirror === 1 ? plain : mirrored
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  for (let i = 0; i < xs.length; i++) {
+    const x = (xs[i] ?? 0) - cx
+    const y = ((ys[i] ?? 0) - cy) * mirror
+    xs[i] = x * cos - y * sin
+    ys[i] = x * sin + y * cos
+  }
+}
+
+/**
+ * The whole network: a force layout of the cards over the links (springs
+ * along links, every two cards pushed apart, all held to the middle),
+ * started from where each node is on Earth and turned at the end to match
+ * it as well as it can, so west stays left of east; flattened for wide
+ * cards, then cards moved apart until none overlap. Always the same for
+ * the same nodes and links.
+ */
+export function graphLayout(
+  nodes: readonly MapNode[],
+  pairs: readonly { a: string; b: string }[]
+): Map<string, Point> {
+  const ids = nodes.map((node) => node.id).sort()
+  const n = ids.length
+  if (n === 0) return new Map()
+  const index = new Map(ids.map((id, i) => [id, i]))
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  // In one order, whatever order they come in: the same layout every time.
+  const seen = new Set<number>()
+  const links = pairs
+    .flatMap(({ a, b }): [number, number][] => {
+      const i = index.get(a)
+      const j = index.get(b)
+      if (i === undefined || j === undefined || i === j) return []
+      return [i < j ? [i, j] : [j, i]]
+    })
+    .sort((x, y) => x[0] - y[0] || x[1] - y[1])
+    .filter(([i, j]) => !seen.has(i * n + j) && seen.add(i * n + j))
+  // Earth, flattened to about the size the layout takes.
+  const radius = LINK * Math.sqrt(n) * 0.55
+  const earth = ids.map((id): Point | null => {
+    const node = byId.get(id)
+    const at = node ? position(node) : null
+    return at
+      ? { x: (at.lng / 180) * radius, y: (-at.lat / 90) * radius * 0.6 }
+      : null
+  })
+  const neighbours = ids.map(() => [] as number[])
+  for (const [i, j] of links) {
+    neighbours[i]?.push(j)
+    neighbours[j]?.push(i)
+  }
+  const xs = new Float64Array(n)
+  const ys = new Float64Array(n)
+  ids.forEach((_, i) => {
+    const home = earth[i]
+    // Unplaced: beside its placed neighbours, or below the middle.
+    const near = (neighbours[i] ?? []).flatMap((j) => earth[j] ?? [])
+    const base =
+      home ??
+      (near.length
+        ? {
+            x: near.reduce((sum, p) => sum + p.x, 0) / near.length,
+            y: near.reduce((sum, p) => sum + p.y, 0) / near.length,
+          }
+        : { x: 0, y: radius * 0.5 })
+    // Nodes in one place start a little apart.
+    const angle = i * 2.399963
+    const spread = home ? LINK * 0.15 : LINK * 0.6
+    xs[i] = base.x + Math.cos(angle) * spread
+    ys[i] = base.y + Math.sin(angle) * spread
+  })
+
+  const fx = new Float64Array(n)
+  const fy = new Float64Array(n)
+  // Fewer rounds for large networks; every round compares every two.
+  const rounds = Math.max(80, Math.min(400, Math.round(6e6 / (n * n))))
+  let heat = LINK * 0.6
+  for (let round = 0; round < rounds; round++) {
+    fx.fill(0)
+    fy.fill(0)
+    for (let i = 0; i < n; i++)
+      for (let j = i + 1; j < n; j++) {
+        const dx = (xs[i] ?? 0) - (xs[j] ?? 0) || 0.01 * (j - i)
+        const dy = (ys[i] ?? 0) - (ys[j] ?? 0) || 0.01
+        const d2 = Math.max(1, dx * dx + dy * dy)
+        const push = (LINK * LINK) / d2
+        fx[i] = (fx[i] ?? 0) + dx * push
+        fy[i] = (fy[i] ?? 0) + dy * push
+        fx[j] = (fx[j] ?? 0) - dx * push
+        fy[j] = (fy[j] ?? 0) - dy * push
+      }
+    for (const [i, j] of links) {
+      const dx = (xs[i] ?? 0) - (xs[j] ?? 0)
+      const dy = (ys[i] ?? 0) - (ys[j] ?? 0)
+      // A node on one link only sits close to it.
+      const leaf =
+        Math.min(neighbours[i]?.length ?? 0, neighbours[j]?.length ?? 0) <= 1
+      const pull = Math.hypot(dx, dy) / (leaf ? LINK * 0.7 : LINK)
+      fx[i] = (fx[i] ?? 0) - dx * pull
+      fy[i] = (fy[i] ?? 0) - dy * pull
+      fx[j] = (fx[j] ?? 0) + dx * pull
+      fy[j] = (fy[j] ?? 0) + dy * pull
+    }
+    for (let i = 0; i < n; i++) {
+      const x = xs[i] ?? 0
+      const y = ys[i] ?? 0
+      const gx = (fx[i] ?? 0) - x * 0.35
+      const gy = (fy[i] ?? 0) - y * 0.35
+      const d = Math.max(1e-6, Math.hypot(gx, gy))
+      const step = Math.min(d, heat)
+      xs[i] = x + (gx / d) * step
+      ys[i] = y + (gy / d) * step
+    }
+    heat = Math.max(1, heat * 0.985)
+  }
+  align(xs, ys, earth)
+  for (let i = 0; i < n; i++) ys[i] = (ys[i] ?? 0) * FLATTEN
+  untangle(xs, ys, links)
+  return new Map(ids.map((id, i) => [id, { x: xs[i] ?? 0, y: ys[i] ?? 0 }]))
+}
+
+/** Card centres one above another in a column (the canvas sizes cards by it too). */
+export const PATH_ROW = PATH_CARD.h + 16
+/** Between the parts reached through different nodes. */
+const BRANCH_GAP = 18
+const COLUMN = PATH_CARD.w + 150
+
+/** Each node's hop count from the source, and the node it is reached through. */
 export type RouteTree = {
   depth: ReadonlyMap<string, number>
   parent: ReadonlyMap<string, string>
 }
 
-/**
- * The source in the middle; each node on the ring of its hop count, near
- * the node it is reached through; nodes without a planned path on the
- * outermost ring.
- */
-export function focusLayout(
-  source: string,
-  ids: readonly string[],
-  tree: RouteTree,
-  box: Box
-): Map<string, Point> {
-  const frame = frameOf(box)
-  const result = new Map<string, Point>([
-    [source, { x: frame.cx, y: frame.cy }],
-  ])
-  const others = ids.filter((id) => id !== source)
-  const reached = others.filter((id) => tree.depth.has(id))
-  const unreached = others.filter((id) => !tree.depth.has(id))
-  const deepest = Math.max(0, ...reached.map((id) => tree.depth.get(id) ?? 0))
-  const rings = deepest + (unreached.length > 0 ? 1 : 0)
-  if (rings === 0) return result
-  const outer = Math.max(
-    fitted(frame, others.length),
-    Math.min(1, rings * 0.34)
-  )
-  const scaleOf = (ring: number) => outer * (0.2 + (0.8 * ring) / rings)
+type Contour = Map<number, { lo: number; hi: number }>
 
-  // Each placed node owns a sector; its children share it.
-  const sectors = new Map<string, { from: number; span: number }>([
-    [source, { from: TOP, span: 2 * Math.PI }],
-  ])
-  for (let ring = 1; ring <= deepest; ring++) {
-    const onRing = reached.filter((id) => tree.depth.get(id) === ring)
-    const byParent = new Map<string, string[]>()
-    for (const id of onRing) {
-      const parent = tree.parent.get(id)
-      const key = parent !== undefined && sectors.has(parent) ? parent : source
-      byParent.set(key, [...(byParent.get(key) ?? []), id])
-    }
-    for (const [parent, children] of byParent) {
-      const sector = sectors.get(parent) ?? { from: TOP, span: 2 * Math.PI }
-      const step = sector.span / children.length
-      children.forEach((id, index) => {
-        // Around the source one or two nodes sit beside it (their names
-        // read to the right), more start at the top; a parent's children
-        // share its sector.
-        const angle =
-          parent === source
-            ? (children.length <= 2 ? 0 : TOP) + index * step
-            : sector.from + (index + 0.5) * step
-        result.set(id, at(frame, scaleOf(ring), angle))
-        sectors.set(id, { from: angle - step / 2, span: step })
-      })
-    }
+/**
+ * From a chosen node, as a tree its paths fan out along: each node in the
+ * column after the node it is reached through, its own next hops to its
+ * right and centred on it, so lines never cross; the parts reached through
+ * different nodes are packed as close as their columns allow (a contour,
+ * as in a tidy tree). A node whose way in is not on the tree hangs from
+ * the source; nodes with no path take a last column. `order` is the order
+ * within a column.
+ */
+export function pathLayout(
+  source: string,
+  order: readonly string[],
+  tree: RouteTree
+): Map<string, Point> {
+  const rank = new Map(order.map((id, index) => [id, index]))
+  const byRank = (x: string, y: string) =>
+    (rank.get(x) ?? 0) - (rank.get(y) ?? 0)
+  const below = new Map<string, string[]>()
+  for (const [id, parent] of tree.parent)
+    if (id !== source && tree.depth.has(id))
+      below.set(parent, [...(below.get(parent) ?? []), id])
+  const column = new Map<string, number>([[source, 0]])
+  const children = new Map<string, string[]>()
+  const hang = (parent: string, id: string) => {
+    column.set(id, (column.get(parent) ?? 0) + 1)
+    children.set(parent, [...(children.get(parent) ?? []), id])
+    for (const kid of [...(below.get(id) ?? [])].sort(byRank))
+      if (!column.has(kid)) hang(id, kid)
   }
-  unreached.forEach((id, index) =>
-    result.set(
-      id,
-      at(
-        frame,
-        scaleOf(rings),
-        TOP + ((index + 0.5) * 2 * Math.PI) / unreached.length
-      )
+  for (const kid of [...(below.get(source) ?? [])].sort(byRank))
+    if (!column.has(kid)) hang(source, kid)
+  // Reached through a node with no path of its own (or round in a loop).
+  const astray = [...tree.depth.keys()]
+    .filter((id) => id !== source && !column.has(id))
+    .sort(
+      (x, y) =>
+        (tree.depth.get(x) ?? 0) - (tree.depth.get(y) ?? 0) || byRank(x, y)
     )
-  )
-  return result
+  for (const id of astray) if (!column.has(id)) hang(source, id)
+
+  /** Where each node below `id` sits relative to it, and the extent at each depth below. */
+  const subtree = (
+    id: string
+  ): { ys: Map<string, number>; contour: Contour } => {
+    const kids = children.get(id) ?? []
+    // End nodes first, then the parts that go on: the next column of a
+    // part that goes on can then rise beside them.
+    const ordered = [
+      ...kids.filter((kid) => (children.get(kid) ?? []).length === 0),
+      ...kids.filter((kid) => (children.get(kid) ?? []).length > 0),
+    ]
+    const placed = new Map<string, number>()
+    const contour: Contour = new Map()
+    const heads: number[] = []
+    ordered.forEach((kid, index) => {
+      const inner = subtree(kid)
+      const part: Contour = new Map([[1, { lo: 0, hi: 0 }]])
+      for (const [at, extent] of inner.contour) part.set(at + 1, extent)
+      const branch = (children.get(kid) ?? []).length > 0
+      const before = ordered[index - 1]
+      const gap =
+        PATH_ROW +
+        (branch || (before && (children.get(before) ?? []).length > 0)
+          ? BRANCH_GAP
+          : 0)
+      let offset = 0
+      if (index > 0) {
+        offset = -Infinity
+        for (const [at, extent] of part) {
+          const above = contour.get(at)
+          if (above) offset = Math.max(offset, above.hi + gap - extent.lo)
+        }
+        if (offset === -Infinity) offset = 0
+      }
+      placed.set(kid, offset)
+      for (const [node, y] of inner.ys) placed.set(node, y + offset)
+      for (const [at, extent] of part) {
+        const was = contour.get(at)
+        contour.set(at, {
+          lo: Math.min(was?.lo ?? Infinity, extent.lo + offset),
+          hi: Math.max(was?.hi ?? -Infinity, extent.hi + offset),
+        })
+      }
+      heads.push(offset)
+    })
+    const centre = heads.length
+      ? ((heads[0] ?? 0) + (heads.at(-1) ?? 0)) / 2
+      : 0
+    const ys = new Map<string, number>()
+    for (const [node, y] of placed) ys.set(node, y - centre)
+    const shifted: Contour = new Map([[0, { lo: 0, hi: 0 }]])
+    for (const [at, extent] of contour)
+      shifted.set(at, { lo: extent.lo - centre, hi: extent.hi - centre })
+    return { ys, contour: shifted }
+  }
+
+  const placed = subtree(source)
+  const points = new Map<string, Point>([[source, { x: 0, y: 0 }]])
+  for (const [id, y] of placed.ys)
+    points.set(id, { x: (column.get(id) ?? 0) * COLUMN, y })
+  const unreached = order.filter((id) => !points.has(id))
+  if (unreached.length) {
+    const right = Math.max(...[...points.values()].map((p) => p.x))
+    const height = (unreached.length - 1) * PATH_ROW
+    unreached.forEach((id, index) =>
+      points.set(id, { x: right + COLUMN, y: index * PATH_ROW - height / 2 })
+    )
+  }
+  return points
 }
