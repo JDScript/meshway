@@ -23,6 +23,7 @@ class MatrixTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
         os.environ.pop("MESHWAY_VALIDATION_ROOT", None)
+        os.environ.pop("MESHWAY_VALIDATION_TARGET", None)
 
     def test_failure_summary_keeps_private_error_details_out_of_stdout(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -113,6 +114,24 @@ class MatrixTests(unittest.TestCase):
                 self.assertEqual(lookup.call_args.args[0], platform)
                 self.assertEqual(verify.call_args.args[0]["imageId"], "sha256:existing")
                 self.assertEqual(json.loads(images["runtime"].read_text())["platform"], platform)
+
+    def test_default_parallel_is_half_the_cpus_bounded_by_selected_rows(self):
+        with patch.object(matrix.os, "sched_getaffinity", return_value=set(range(32)), create=True):
+            self.assertEqual(matrix.parse_args([]).parallel, 11)
+            self.assertEqual(matrix.parse_args(["--rows", "tun", "packet"]).parallel, 2)
+            self.assertEqual(matrix.parse_args(["--parallel", "3"]).parallel, 3)
+        with patch.object(matrix.os, "sched_getaffinity", return_value={0}, create=True):
+            self.assertEqual(matrix.parse_args([]).parallel, 1)
+        with patch.object(matrix.os, "sched_getaffinity", return_value=set(range(12)), create=True):
+            self.assertEqual(matrix.parse_args([]).parallel, 6)
+
+    def test_build_lock_lives_in_the_overridable_shared_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.assertEqual(support.cargo_target(), support.ROOT / "target/node-kernel-tests")
+            os.environ["MESHWAY_VALIDATION_TARGET"] = temporary
+            self.assertEqual(support.cargo_target(), Path(temporary))
+            with support.build_lock():
+                self.assertTrue((Path(temporary) / "build.lock").exists())
 
     def test_rows_are_eleven_and_filter_keeps_order_without_duplicates(self):
         self.assertEqual(len(matrix.DEFAULT_ROWS), 11)

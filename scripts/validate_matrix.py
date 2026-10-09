@@ -46,15 +46,17 @@ def positive(value):
     return number
 
 
-def default_parallel():
-    return max(1, (len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1) // 8)
+def default_parallel(rows):
+    # Per-container CPU limits are caps, not reservations; fixed waits dominate a row.
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+    return min(len(rows), max(1, cpus // 2))
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rows", nargs="+", choices=ROWS, default=list(DEFAULT_ROWS))
     parser.add_argument("--list", action="store_true")
-    parser.add_argument("--parallel", type=positive, default=default_parallel())
+    parser.add_argument("--parallel", type=positive, help="concurrent rows; default min(rows, CPUs // 2)")
     parser.add_argument("--short", action="store_true")
     parser.add_argument("--run", default=None, help="unique run ID, also used by remote attach")
     parser.add_argument("--runtime-image-manifest", type=Path)
@@ -64,6 +66,8 @@ def parse_args(argv=None):
     if args.run and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}", args.run):
         parser.error("invalid run ID")
     args.rows = list(dict.fromkeys(args.rows))
+    if args.parallel is None:
+        args.parallel = default_parallel(args.rows)
     return args
 
 
