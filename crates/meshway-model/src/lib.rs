@@ -9,6 +9,7 @@ mod digest;
 pub mod exit;
 mod ids;
 mod membership;
+pub mod netmap;
 mod node;
 pub use node::*;
 pub mod networks;
@@ -28,5 +29,6 @@ pub use ids::{
     UserId,
 };
 pub use membership::MembershipRole;
+pub use netmap::{NetmapLease, NetmapRef};
 pub use numbers::{Count, InvalidNumber, MAX_SAFE_INTEGER, Revision, Sequence, Version};
 pub use socket_address::{InvalidSocketAddress, SocketAddress};
