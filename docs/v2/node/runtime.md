@@ -58,7 +58,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | --- | --- |
 | Linux Mesh-only | TUN capture、Native TCP／Native UDP 静态端点认证邻接、协调 UDP 穿透、双栈 UDP／TCP 多跳包流、持续续租和失效清理；验收状态见[验收范围](/v2/node/validation) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
-| Exit／本机 egress | Linux Underlay 提供 live probe、IPv4 出口角色／精确 NAT 投影、源端默认 capture／IPv6 sink 与切换 API。携带外部 permit 的中继可安装 Mesh 资源，缺少出口角色时不能取得本机出口 writer。正常 Node 的自动装配、DNS 和完整 applied／包流仍待跨组件验收 |
+| Exit／本机 egress | daemon 按当前执行目标探测并安装 IPv4 出口角色、精确 NAT 投影和源端 capture／IPv6 sink；回包由同一 SecureNode 按原完整路径返回。角色、capture、承载及必需的负向 DNS 资源共同进入本机 applied 边界。出口 resolver 适配仍不可用，单独报告；完整多进程验收范围见[验收范围](/v2/node/validation) |
 | 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切网尚未实现 |
@@ -76,6 +76,8 @@ Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预�
 已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 conntrack 读取；排除经 owner 回读确认的自有表后，无法证明兼容的宿主阻断规则／旧 iptables 表返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
 
 live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamilies` 仍为空；其含义是所报后端前置条件完成，不代替角色安装或业务连通证明。失败携带具体原因。返回值保留传入 instance／target 与本次真实 `observedAt`，X4 不需自行把 `probing` 改成 `ready`。
+
+daemon 首次取得执行目标及每次向网络 worker 发布执行刷新时，若 `exitEnabled` 或 `exitRole` 存在，即调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。探测失败也可上报 State；只有角色及其他必需组件实际完成当前目标安装后，才填充 `installedFamilies` 和 applied。
 
 Control 在保存执行目标和签发快照时检查本地 `exitRole.instanceId` 等于当前实例、出口开关仍启用，以及 permit 内引用的本地角色与目标角色一致。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，新观测必须绑定当前 instance／精确 target；错绑在发送 HTTP 前拒绝。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新目标。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。
 
@@ -111,6 +113,16 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 撤回 ACK 证明后续穿越资格门的包被拒绝；此前已通过最终过滤、排入 TUN／网卡的包无法追回。源端默认 capture、IPv6 sink、切换、出口 DNS 与正常 daemon 的整体验收状态以[验收范围](/v2/node/validation)为准。
 
+### daemon 出口装配与 applied
+
+出口驱动 FIFO 最多持有 128 个操作／原始包包装；先排入 SecureNode 的 Install／Renew，再排入依赖该 ACK 的包。驱动使用完整 256-bit incarnation、原 tuple、原单调／UTC 截止和同一 Control clock；先完成 Host 投影，再完成 dataplane ACK，等待 `projection_ready`，将每包 `exit_scope` 保留至最终 TUN write poll。首包后的 CT 确认失败调用 `fail_exit_projection`，只关闭对应 flow；回程 reader 输入 `exit_reply`，依赖续期的回复等待 ACK 后才进入既有 carrier 发送路径。
+
+驱动只记录已安装投影及 CT 是否确认，不持第二份业务流表。角色消失、出口关闭、实例替换或执行停止时，先取消原输出、调用 `retire_exits`，再排空退役事件；FIFO barrier 等待已交出的 ACK 释放命令预算，继续取出此前尚不能物化的 Retire。精确 CT 清理结果传给 RetirementAck，最后退役角色并等待驱动退出。原始已过期或已撤回的排队包不会换绑到续期后的投影。
+
+客户端先通过 `install_egress_capture` 准备旧／新范围的负向边界，再安装当前快照并 `switch`；任一必需组件失败时 suspend 保留负向边界，显式 down 由同一 Host 精确清理。中继可安装外部 permit，但没有本地 role 就没有出口 writer。
+
+`DnsEgress::ViaExit`／`ServeExitResolver` 的专用 DNS-purpose 适配尚未接通。daemon 不发布这些查询的执行 Scope；配置需要系统 DNS 时，已有 DNS owner 保持负向安装。状态中的 `exit.dnsUnavailable=dnsUnavailable` 与 IPv4 后端能力／角色安装分别显示，缺少 resolver 适配不否定业务 IP 出口；必需的负向 DNS 系统资源安装或健康检查失败仍阻断整体 applied。`exit/off` 使用明确关闭的系统 DNS 设置，不能据其结果宣称出口 DNS 可用。
+
 ### 源端 egress capture 与切换
 
 `Host::install_egress_capture(EgressCapturePlan) -> Result<EgressCapture>` 复用当前客户端 TUN。它可以先于执行安装建立负向边界；尚无相同有效执行目标时返回非 active handle，不据此报告 applied。`Host::install` 在所需 capture 的负向边界准备后安装 TUN，并仅在当前快照与计划精确一致时激活正向捕获。中继的外部 permit 不要求本机 `exit_role`，也不授予本机 NAT writer。
@@ -141,6 +153,7 @@ IPC v5 的公开运行状态：
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
 | `eventStream` | 必填，`connected`（HTTP 已接纳）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastEventAt` | 必填可空，本进程最近一次有效事件的接收时间；未收到为 null，保活／读取 status 不改写它 |
+| `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows` 和独立的 `dnsUnavailable`。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
 
 `phase` 的全部 9 个值：
 
@@ -202,7 +215,7 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway status` | 区分进程、控制联系、saved／applied 和实际通道状态 |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，当前版本为 4，使用 JSON 与长度前缀，单条消息上限 64 KiB。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey` 的 `expectedRevision` 由 CLI 读取后提交，换钥不会绕过本机 CAS。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，当前版本为 5，使用 JSON 与长度前缀，单条消息上限 64 KiB。`exit` 为新增可省略字段，保留版本 5；CLI 和 daemon 仍同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey` 的 `expectedRevision` 由 CLI 读取后提交，换钥不会绕过本机 CAS。
 
 推荐的无交互接入与换钥用法：
 

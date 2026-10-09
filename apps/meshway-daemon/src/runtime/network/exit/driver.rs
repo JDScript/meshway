@@ -31,10 +31,14 @@ pub(super) async fn run(
                     if let Some(resource) = resources.remove(&flow) {
                         resource.revoked.cancel();
                     }
-                    let removed = role
-                        .retire_flow(ExitIncarnation::new(flow.bytes()))
-                        .await
-                        .is_ok();
+                    let removed = match role.retire_flow(ExitIncarnation::new(flow.bytes())).await {
+                        Ok(()) => true,
+                        // The Host may already have retired the whole role on
+                        // lease loss. Its verified all-flow cleanup also proves
+                        // this exact projection absent; an error never does.
+                        Err(_) if !role.is_active() => role.retire().await.is_ok(),
+                        Err(_) => false,
+                    };
                     ack.complete(removed);
                     failed |= !removed;
                 }
@@ -157,9 +161,19 @@ pub(super) async fn run(
         if failed {
             stop.cancel();
         }
-        health.send_replace(Health {
-            flows: resources.len() as u32,
+        let next = Health {
+            flows: resources
+                .values()
+                .filter(|resource| !resource.revoked.is_cancelled())
+                .count() as u32,
             failed,
+        };
+        health.send_if_modified(|current| {
+            if *current == next {
+                return false;
+            }
+            *current = next;
+            true
         });
     }
     stop.cancel();

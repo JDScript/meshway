@@ -22,7 +22,7 @@ enum Work {
     Barrier(tokio::sync::oneshot::Sender<()>),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct Health {
     pub flows: u32,
     pub failed: bool,
@@ -31,6 +31,7 @@ pub(super) struct Health {
 pub(super) struct Runtime {
     pub plan: meshway_configuration::execution::ExitRolePlan,
     pub reader: ExitReplyReader,
+    role: ExitRole,
     sender: mpsc::Sender<Work>,
     failures: mpsc::Receiver<meshway_dataplane::exit::FlowIncarnation>,
     pub health: watch::Receiver<Health>,
@@ -49,10 +50,17 @@ impl Runtime {
         let (failed, failures) = mpsc::channel(CAPACITY);
         let (status, health) = watch::channel(Health::default());
         let stop = CancellationToken::new();
-        let task = tokio::spawn(driver::run(role, received, failed, status, stop.clone()));
+        let task = tokio::spawn(driver::run(
+            role.clone(),
+            received,
+            failed,
+            status,
+            stop.clone(),
+        ));
         Ok(Self {
             plan,
             reader,
+            role,
             sender,
             failures,
             health,
@@ -143,5 +151,34 @@ impl Runtime {
             .await
             .map_err(|_| Problem::Worker)?;
         done.await.map_err(|_| Problem::Worker)
+    }
+
+    pub async fn synchronize(&mut self, secure: &mut SecureNode) -> Result<(), Problem> {
+        loop {
+            while let Ok(flow) = self.failures.try_recv() {
+                secure.fail_exit_projection(&flow);
+            }
+            while let Some(event) = secure.next_exit_projection() {
+                self.sender
+                    .send(Work::Projection(Box::new(event)))
+                    .await
+                    .map_err(|_| Problem::Worker)?;
+            }
+            self.barrier().await?;
+            while let Ok(flow) = self.failures.try_recv() {
+                secure.fail_exit_projection(&flow);
+            }
+            let Some(event) = secure.next_exit_projection() else {
+                break;
+            };
+            self.sender
+                .send(Work::Projection(Box::new(event)))
+                .await
+                .map_err(|_| Problem::Worker)?;
+        }
+        if !self.role.is_active() || self.health.borrow().failed {
+            return Err(Problem::Underlay);
+        }
+        Ok(())
     }
 }

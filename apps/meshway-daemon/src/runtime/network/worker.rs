@@ -78,8 +78,8 @@ pub(super) async fn run(
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     diagnostics.stop().await;
                     let _ = dns.shutdown(&mut host, true).await;
-                    close(&mut installed).await;
-                    return host.shutdown(true).await.map_err(|_| Problem::Underlay);
+                    let closing = close(&mut installed).await;
+                    return closing.and(host.shutdown(true).await.map_err(|_| Problem::Underlay));
                 }
             }
         }
@@ -251,12 +251,12 @@ pub(super) async fn run(
                     .shutdown(&mut host, keep_sink)
                     .await
                     .map_err(|_| Problem::Dns);
-                close(&mut installed).await;
+                let closing = close(&mut installed).await;
                 let host_result = host
                     .shutdown(keep_sink)
                     .await
                     .map_err(|_| Problem::Underlay);
-                return dns_result.and(host_result);
+                return dns_result.and(closing).and(host_result);
             }
             Work::Command(None) => {
                 diagnostics.stop().await;
@@ -264,15 +264,17 @@ pub(super) async fn run(
                     .shutdown(&mut host, true)
                     .await
                     .map_err(|_| Problem::Dns);
-                close(&mut installed).await;
-                return dns_result.and(host.shutdown(true).await.map_err(|_| Problem::Underlay));
+                let closing = close(&mut installed).await;
+                return dns_result
+                    .and(closing)
+                    .and(host.shutdown(true).await.map_err(|_| Problem::Underlay));
             }
             Work::Command(Some(Command::Stop { down, reply })) => {
                 diagnostics.stop().await;
                 dns.suspend();
                 preparing = None;
                 dns_plans.send_replace(None);
-                close(&mut installed).await;
+                let closing = close(&mut installed).await;
                 installed = None;
                 pause_until = None;
                 last_success = None;
@@ -289,7 +291,7 @@ pub(super) async fn run(
                     host.suspend().await
                 }
                 .map_err(|_| Problem::Underlay);
-                let result = dns_result.and(host_result);
+                let result = dns_result.and(closing).and(host_result);
                 let mut report = Report::stopped();
                 if result.is_err() {
                     report.plane = DataPlane::Failed;
@@ -369,7 +371,7 @@ pub(super) async fn run(
                 let Ok(next_generation) = next_generation else {
                     diagnostics.stop().await;
                     let _ = dns.shutdown(&mut host, true).await;
-                    close(&mut installed).await;
+                    let _ = close(&mut installed).await;
                     let _ = host.shutdown(true).await;
                     return Err(Problem::Worker);
                 };
@@ -393,8 +395,9 @@ pub(super) async fn run(
                 if result == Ok(false) {
                     reports.send_replace(report);
                     preparing = Some((target, prepare_deadline));
-                    close(&mut installed).await;
-                    let _ = host.suspend().await;
+                    let closing = close(&mut installed).await;
+                    let suspended = host.suspend().await.map_err(|_| Problem::Underlay);
+                    closing.and(suspended)?;
                     continue;
                 }
                 preparing = None;
@@ -444,8 +447,9 @@ pub(super) async fn run(
                             target_current = target.identity.as_ref().is_some_and(|identity| identity.snapshot().ensure_current().is_ok()),
                             "Node installation did not complete");
                         dns.suspend();
-                        close(&mut installed).await;
-                        if host.suspend().await.is_err() {
+                        let closing = close(&mut installed).await;
+                        let suspended = host.suspend().await;
+                        if closing.is_err() || suspended.is_err() {
                             report.problem = Some(Problem::Underlay);
                         } else {
                             report.problem = Some(problem);
@@ -495,19 +499,25 @@ pub(super) async fn run(
                         }
                     }
                 } else {
-                    close(&mut installed).await;
+                    let _ = close(&mut installed).await;
                 }
                 packets.clear_incoming();
                 // A cancelled predecessor is never usable authority. Retain
                 // only its device/capture while all packet pumps are stopped,
                 // bounded by its original UTC and monotonic expiration.
+                let exit_failed = installed.as_ref().is_some_and(|state| state.cleanup_failed);
                 let cleanup = if pause_until.is_some() {
                     Ok(())
                 } else {
                     installed = None;
                     packets = Packets::default();
                     host.suspend().await
-                };
+                }
+                .and(if exit_failed {
+                    Err(meshway_underlay::Error::Worker)
+                } else {
+                    Ok(())
+                });
                 let mut report = reports.borrow().clone();
                 report.plane = if cleanup.is_ok() {
                     DataPlane::Suspended
@@ -651,7 +661,7 @@ async fn receive_packets(
     .collect()
 }
 
-async fn close(installed: &mut Option<Installed>) {
+async fn close(installed: &mut Option<Installed>) -> Result<(), Problem> {
     if let Some(state) = installed {
         state.live = false;
         if let Some(exit) = state.exit.take() {
@@ -666,7 +676,11 @@ async fn close(installed: &mut Option<Installed>) {
         }
         // Retain the unique secure owner until a direct successor can be offered.
         // Never maintain() against an invalidated predecessor before reconcile.
+        if state.cleanup_failed {
+            return Err(Problem::Underlay);
+        }
     }
+    Ok(())
 }
 
 fn same_ticket(
@@ -775,14 +789,14 @@ async fn install(
     let Some(identity) = &target.identity else {
         dns.suspend();
         dns_plans.send_replace(None);
-        close(installed).await;
+        let closing = close(installed).await;
         *installed = None;
         *packets = Packets::default();
-        return host
-            .suspend()
-            .await
+        let suspended = host.suspend().await.map_err(|_| Problem::Underlay);
+        return closing
+            .and(suspended)
             .map(|_| true)
-            .map_err(|_| (Problem::Underlay, ApplyFailure::Underlay));
+            .map_err(|p| (p, ApplyFailure::Underlay));
     };
     let cfg = identity
         .snapshot()
@@ -794,6 +808,24 @@ async fn install(
         meshway_configuration::execution::DnsEgress::NoExit
     );
     report.exit_dns_unavailable = exit_dns;
+    let exit_handoff = installed.as_ref().is_some_and(|s| s.exit.is_some());
+    if exit_handoff {
+        if let Some(state) = installed.as_mut()
+            && state
+                .exit
+                .as_ref()
+                .is_some_and(|exit| cfg.exit_role.as_ref() != Some(&exit.plan))
+            && let Some(old) = state.exit.take()
+        {
+            old.stop(&mut state.secure)
+                .await
+                .map_err(|p| (p, ApplyFailure::Underlay))?;
+        }
+        // Publish the checked successor to Host before a potentially slow live
+        // probe/DNS preparation. Its role actor must not keep observing the
+        // cancelled predecessor throughout those unrelated waits.
+        install_host(host, identity.snapshot().clone()).await?;
+    }
     let capture_needed = cfg.egress_capture.default_capture
         || !cfg.egress_capture.managed_ipv4.is_empty()
         || !cfg.egress_capture.sink_ipv6.is_empty()
@@ -858,7 +890,9 @@ async fn install(
             state.live = false;
         }
     } else {
-        close(installed).await;
+        close(installed)
+            .await
+            .map_err(|p| (p, ApplyFailure::Underlay))?;
     }
     let retained =
         installed
@@ -884,33 +918,18 @@ async fn install(
         return Err((Problem::Apply, ApplyFailure::Dataplane));
     }
     if !retained {
-        close(installed).await;
+        close(installed)
+            .await
+            .map_err(|p| (p, ApplyFailure::Underlay))?;
         if installed.as_ref().is_some_and(|s| s.cleanup_failed) {
             return Err((Problem::Underlay, ApplyFailure::Underlay));
         }
         *installed = None;
         *packets = Packets::default();
     }
-    if let Some(state) = installed.as_mut()
-        && state
-            .exit
-            .as_ref()
-            .is_some_and(|exit| cfg.exit_role.as_ref() != Some(&exit.plan))
-        && let Some(old) = state.exit.take()
-    {
-        old.stop(&mut state.secure)
-            .await
-            .map_err(|p| (p, ApplyFailure::Underlay))?;
+    if !exit_handoff {
+        install_host(host, identity.snapshot().clone()).await?;
     }
-    host.install(identity.snapshot().clone())
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "Node capture installation failed");
-            match error {
-                meshway_underlay::Error::Tun(_) => (Problem::Tun, ApplyFailure::Tun),
-                _ => (Problem::Underlay, ApplyFailure::Underlay),
-            }
-        })?;
     if host.tun().is_none() {
         return Err((Problem::Tun, ApplyFailure::Tun));
     }
@@ -1059,8 +1078,26 @@ async fn install(
                 super::exit::Runtime::start(role, plan).map_err(|p| (p, ApplyFailure::Underlay))?,
             );
         }
+        if let Some(exit) = &mut state.exit {
+            exit.synchronize(&mut state.secure)
+                .await
+                .map_err(|p| (p, ApplyFailure::Underlay))?;
+        }
     }
     Ok(true)
+}
+
+async fn install_host(
+    host: &mut Host,
+    snapshot: meshway_authority::ExecutionSnapshot,
+) -> Result<(), (Problem, ApplyFailure)> {
+    host.install(snapshot).await.map_err(|error| {
+        tracing::warn!(%error, "Node capture installation failed");
+        match error {
+            meshway_underlay::Error::Tun(_) => (Problem::Tun, ApplyFailure::Tun),
+            _ => (Problem::Underlay, ApplyFailure::Underlay),
+        }
+    })
 }
 
 #[cfg(test)]

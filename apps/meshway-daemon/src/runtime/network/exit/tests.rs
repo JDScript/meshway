@@ -319,6 +319,33 @@ async fn daemon_exit_role_applied_probe_failure_and_instance_replacement() {
                 .installed_families,
             vec![meshway_model::exit::ExitFamily::Ipv4]
         );
+        // Publish the actual prerequisite observation independently of the
+        // installation receipt, then offer the resulting DNS service target.
+        let mut capability = report.borrow().exit_capability.clone().unwrap();
+        capability.installed_families.clear();
+        f.capability(capability).await;
+        f.refresh().await;
+        let reference = f.controls[2].status().cached.unwrap();
+        let external_dns = !matches!(
+            f.controls[2]
+                .execution_snapshot()
+                .unwrap()
+                .configuration()
+                .unwrap()
+                .dns
+                .egress,
+            meshway_configuration::execution::DnsEgress::NoExit
+        );
+        handle.publish(&mut f.controls[2]).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            report.wait_for(|r| r.applied().as_ref() == Some(&reference)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(report.borrow().exit_dns_unavailable, external_dns);
+        handle.finish(&mut f.controls[2]).await.unwrap();
         let old = f.controls[2].execution_snapshot().unwrap();
         f.controls[2].stop().await.unwrap();
         handle.stop(false).await.unwrap();

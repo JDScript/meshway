@@ -186,7 +186,12 @@ impl Fixture {
                 self.token.expose(),
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|error| match error {
+                meshway_control_client::ClientError::Http { status, problem } => {
+                    panic!("fixture configuration {status}: {problem:?}")
+                }
+                error => panic!("fixture configuration: {error:?}"),
+            });
     }
     pub async fn refresh(&mut self) {
         for control in &mut self.controls {

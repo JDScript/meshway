@@ -406,8 +406,25 @@ impl Packets {
             let Some(frame) = self.exit_replies.pop_front() else {
                 break;
             };
-            if frame.projection_ready().await.is_err() || manager.send(frame).await.is_err() {
-                self.drop_packet("exit_reply_send");
+            // The same worker must keep draining projection intents when the
+            // driver FIFO was full. Never await its ACK while monopolizing that
+            // worker; keep the original frame and poll it on the next turn.
+            let ready = {
+                use std::future::Future;
+                let mut ready = std::pin::pin!(frame.projection_ready());
+                std::future::poll_fn(|cx| std::task::Poll::Ready(ready.as_mut().poll(cx))).await
+            };
+            match ready {
+                std::task::Poll::Pending => {
+                    self.exit_replies.push_front(frame);
+                    break;
+                }
+                std::task::Poll::Ready(Ok(())) => {
+                    if manager.send(frame).await.is_err() {
+                        self.drop_packet("exit_reply_send");
+                    }
+                }
+                std::task::Poll::Ready(Err(_)) => self.drop_packet("exit_reply_expired"),
             }
         }
         self.complete_crypto(secure, manager, snapshot, pool, exit.as_deref_mut());
