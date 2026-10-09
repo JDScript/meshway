@@ -5,38 +5,28 @@ use super::{
 #[cfg(test)]
 use crate::{Packet, PacketBuffer};
 mod noise;
+use crate::authority::View;
 use ed25519_dalek::{Signature, VerifyingKey};
 use meshway_authority::{DataPlaneIdentity, packet_proof_message};
-use meshway_configuration::execution::{LogicalPath, NodeConfiguration};
-use meshway_model::{BoundNodeKey, Digest, KeyAlgorithm, NodeId};
-use meshway_policy::admission::{Carrier, admit_circuit_carrier, circuit_permit, path_carrier};
+use meshway_configuration::execution::LogicalPath;
+use meshway_model::{BoundNodeKey, Digest, NodeId};
+use meshway_policy::admission::{Carrier, path_carrier};
 pub(super) use noise::Transport;
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 const NOISE: &str = "Noise_IK_25519_ChaChaPoly_SHA256";
-const PROLOGUE: &[u8] = b"meshway/circuit/noise-prologue/candidate-v4\0";
-const PROOF: &[u8] = b"meshway/circuit/hop-proof/candidate-v4\0";
+const PROLOGUE: &[u8] = b"meshway/circuit/noise-prologue/candidate-v6\0";
+const PROOF: &[u8] = b"meshway/circuit/hop-proof/candidate-v6\0";
 
-pub(super) fn keys(
-    cfg: &NodeConfiguration,
+pub(super) fn keys<'a>(
+    view: &View<'a>,
     node: NodeId,
-) -> Result<(&BoundNodeKey, &BoundNodeKey), Error> {
-    let keys = if node == cfg.node_id {
-        (&cfg.self_keys.control_key, &cfg.self_keys.dataplane_key)
-    } else {
-        let peer = cfg.peers.get(&node).ok_or(Error::Context)?;
-        (&peer.control_key, &peer.dataplane_key)
-    };
-    if keys.0.public_key.algorithm != KeyAlgorithm::Ed25519
-        || keys.1.public_key.algorithm != KeyAlgorithm::X25519
-    {
-        return Err(Error::Context);
-    }
-    Ok(keys)
+) -> Result<(&'a BoundNodeKey, &'a BoundNodeKey), Error> {
+    view.keys(node).ok_or(Error::Context)
 }
 
-pub(super) fn prologue(cfg: &NodeConfiguration, context: &Context) -> Result<Vec<u8>, Error> {
+pub(super) fn prologue(cfg: &View<'_>, context: &Context) -> Result<Vec<u8>, Error> {
     let mut out = PROLOGUE.to_vec();
     out.extend_from_slice(codec::MAGIC);
     context.encode(&mut out)?;
@@ -44,7 +34,7 @@ pub(super) fn prologue(cfg: &NodeConfiguration, context: &Context) -> Result<Vec
     Ok(out)
 }
 
-fn encode_keys(cfg: &NodeConfiguration, path: &[NodeId], out: &mut Vec<u8>) -> Result<(), Error> {
+fn encode_keys(cfg: &View<'_>, path: &[NodeId], out: &mut Vec<u8>) -> Result<(), Error> {
     for node in path {
         codec::id(out, node.as_uuid());
         let (control, dataplane) = keys(cfg, *node)?;
@@ -59,18 +49,18 @@ fn encode_keys(cfg: &NodeConfiguration, path: &[NodeId], out: &mut Vec<u8>) -> R
 
 /// Relays cannot inspect the Noise prologue. Its key-set digest is also in the
 /// signed header, so every node checks identical current Control/DP bindings.
-pub(super) fn key_digest(cfg: &NodeConfiguration, path: &[NodeId]) -> Result<Digest, Error> {
+pub(super) fn key_digest(cfg: &View<'_>, path: &[NodeId]) -> Result<Digest, Error> {
     if !(2..=codec::MAX_PATH).contains(&path.len()) {
         return Err(Error::Context);
     }
-    let mut bytes = b"meshway/circuit/key-set/candidate-v4\0".to_vec();
+    let mut bytes = b"meshway/circuit/key-set/candidate-v6\0".to_vec();
     encode_keys(cfg, path, &mut bytes)?;
     Ok(Digest::from_bytes(Sha256::digest(bytes).into()))
 }
 
 pub(super) fn build(
     identity: &DataPlaneIdentity,
-    cfg: &NodeConfiguration,
+    cfg: &View<'_>,
     context: &Context,
     initiator: bool,
 ) -> Result<snow::HandshakeState, Error> {
@@ -200,7 +190,7 @@ fn extend(hash: &mut Sha256, proof: &Proof) -> Result<(), Error> {
 
 pub(super) fn append(
     identity: &DataPlaneIdentity,
-    cfg: &NodeConfiguration,
+    cfg: &View<'_>,
     frame: &mut Frame,
     carrier: Carrier,
     ephemeral: [u8; 32],
@@ -211,7 +201,7 @@ pub(super) fn append(
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("crypto.append");
     let _profile = PROFILE.enter();
-    let key = &cfg.self_keys.control_key;
+    let key = &cfg.self_keys().control_key;
     let mut hash = transcript(frame)?;
     for proof in &frame.proofs {
         extend(&mut hash, proof)?;
@@ -242,38 +232,26 @@ fn ordered_node(context: &Context, reply: bool, position: usize) -> NodeId {
     }]
 }
 
-/// Verify the whole chain, including the producer. Peer identity is derived
-/// solely from current keys, complete path position and the actual carrier.
+/// Verify the whole chain, including the producer, against the exact path
+/// this owner admitted for the circuit. Peer identity is derived solely from
+/// current keys, complete path position and the actual carrier. The caller
+/// still checks the incoming carrier against its own adjacency admission.
 pub(super) fn verify(
-    cfg: &NodeConfiguration,
+    cfg: &View<'_>,
     frame: &Frame,
     incoming: &Carrier,
+    selected: &LogicalPath,
 ) -> Result<NodeId, Error> {
     if !frame.kind.handshake() {
         return Err(Error::Proof);
     }
     let context = &frame.context;
-    if context.network != cfg.network_id {
+    if context.network != cfg.network() {
         return Err(Error::Context);
     }
-    let permit = circuit_permit(cfg, context.authorization).map_err(|_| Error::Context)?;
-    let selected = permit
-        .paths
-        .iter()
-        .find(|path| path.nodes == context.path)
-        .ok_or(Error::Context)?;
-    let previous = verify_chain(frame, incoming, cfg.node_id, selected, |node| {
+    verify_chain(frame, incoming, cfg.node(), selected, |node| {
         keys(cfg, node).map(|keys| keys.0)
-    })?;
-    admit_circuit_carrier(
-        cfg,
-        context.authorization,
-        &context.path,
-        previous,
-        incoming,
-    )
-    .map_err(|_| Error::Policy)?;
-    Ok(previous)
+    })
 }
 
 fn verify_chain<'a>(

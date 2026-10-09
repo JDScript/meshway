@@ -1,115 +1,155 @@
 //! One entry reading for policy/flow preparation; a fresh fence at commit.
-use crate::{Engine, Error, Ingress, PacketFacts, PendingRoute, flow::FlowTime, secure::Guard};
-use meshway_authority::Reading;
+use crate::{
+    Engine, Error, PacketFacts, PendingRoute,
+    authority::{Auth, Cap, Lifetime, View},
+    flow::{Entry, FlowGrant, FlowTime, Policy},
+    netmap::Outcome,
+    secure::Guard,
+};
+use meshway_policy::{
+    admission::{AdmissionError, Traffic},
+    compile::netmap::Target,
+};
+use std::sync::Arc;
 
-impl From<&Reading<'_>> for FlowTime {
-    fn from(reading: &Reading<'_>) -> Self {
+impl From<&View<'_>> for FlowTime {
+    fn from(reading: &View<'_>) -> Self {
         Self {
             instant: reading.instant,
             now_ms: reading.now_ms,
-            guard_expires_at: reading.expires_at,
-            guard_expires_at_ms: reading.expires_at_ms,
+            // A legacy target's deadlines are immutable and become part of
+            // every flow cap. A netmap lease is checked at use and renews.
+            guard: reading.legacy().map(|_| Cap {
+                at: reading.expires_at,
+                ms: reading.expires_at_ms,
+            }),
         }
     }
 }
 
 impl Engine {
     /// The secure adapter authenticates the complete facts/path/producer first.
-    /// The Reading is borrowed only by this synchronous call, never retained in
+    /// The View is borrowed only by this synchronous call, never retained in
     /// the flow table or returned PendingRoute. The latter owns its live guard.
     pub(crate) fn admit_facts(
         &mut self,
-        ingress: Ingress,
+        entry: &Entry<'_>,
         facts: PacketFacts,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<PendingRoute, Error> {
-        self.admit_inner(ingress, facts, reading, None)
+        self.admit_inner(entry, facts, reading, None)
     }
 
     pub(crate) fn admit_circuit_facts(
         &mut self,
-        ingress: Ingress,
+        entry: &Entry<'_>,
         facts: PacketFacts,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
         circuit: [u8; 32],
         guard: &Guard,
     ) -> Result<PendingRoute, Error> {
-        self.admit_inner(ingress, facts, reading, Some((circuit, guard)))
+        self.admit_inner(entry, facts, reading, Some((circuit, guard)))
     }
 
     fn admit_inner(
         &mut self,
-        ingress: Ingress,
+        entry: &Entry<'_>,
         facts: PacketFacts,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
         circuit: Option<([u8; 32], &Guard)>,
     ) -> Result<PendingRoute, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("flow.admit");
         let _profile = PROFILE.enter();
-        if reading
-            .configuration
-            .permits
-            .get(&ingress.demand())
-            .is_some_and(|permit| permit.exit.is_some())
-            && (facts.traffic.source.is_ipv6() || facts.traffic.destination.is_ipv6())
-        {
+        let exit = match (&entry.grant, reading.auth) {
+            (FlowGrant::Legacy(demand), Auth::Legacy(cfg)) => cfg
+                .permits
+                .get(demand)
+                .is_some_and(|permit| permit.exit.is_some()),
+            (FlowGrant::Netmap(target), Auth::Netmap { .. }) => {
+                matches!(target, Target::Exit { .. })
+            }
+            _ => return Err(Error::Ingress),
+        };
+        if exit && (facts.traffic.source.is_ipv6() || facts.traffic.destination.is_ipv6()) {
             self.exit_counters.ipv6_rejected = self.exit_counters.ipv6_rejected.saturating_add(1);
             return Err(Error::Flow);
         }
-        let mut prepared = self.flows.prepare(
-            reading.configuration,
-            &ingress,
-            &facts,
-            FlowTime::from(reading),
-        )?;
+        let node = reading.node();
+        let origin = entry.origin;
+        let decisions = &mut self.decisions;
+        let mut decide =
+            |traffic: &Traffic| -> Result<Arc<meshway_policy::compile::netmap::Decision>, Error> {
+                let netmap = reading.netmap().ok_or(Error::Ingress)?;
+                match decisions.decide(
+                    netmap,
+                    origin,
+                    traffic.destination,
+                    (traffic.protocol, traffic.destination_port),
+                )? {
+                    Outcome::Permitted(decision) => Ok(decision),
+                    Outcome::Denied(_) => Err(Error::Admission(AdmissionError::Traffic)),
+                    Outcome::Direct | Outcome::Unmanaged => Err(Error::Flow),
+                }
+            };
+        let policy = match reading.auth {
+            Auth::Legacy(cfg) => Policy::Legacy(cfg),
+            Auth::Netmap { .. } => Policy::Netmap {
+                leased: reading.leased().ok_or(Error::Ingress)?,
+                decide: &mut decide,
+            },
+        };
+        let mut prepared =
+            self.flows
+                .prepare(policy, node, entry, &facts, FlowTime::from(reading))?;
         if let Some((circuit, _)) = circuit {
             prepared.bind_circuit(circuit)?;
         }
         if prepared.is_exit() {
             let (_, guard) = circuit.ok_or(Error::Ingress)?;
             if prepared.hop_is_exit()
-                && reading
-                    .configuration
-                    .exit_role
-                    .as_ref()
-                    .is_none_or(|role| role.instance_id != self.snapshot.instance().instance_id)
+                && let Some(cfg) = reading.legacy()
+                && cfg.exit_role.as_ref().is_none_or(|role| {
+                    Some(role.instance_id)
+                        != self
+                            .snapshot
+                            .instance_binding()
+                            .map(|instance| instance.instance_id)
+                })
             {
                 return Err(Error::ExecutionScope);
             }
             self.flows
-                .prepare_projection(&mut prepared, guard, reading)?;
+                .prepare_projection(&mut prepared, guard, reading.now())?;
         }
         tracing::trace!(target: "meshway_dataplane::flow::authority_boundary", operation = "commit",
             "Validating flow admission authority");
-        // reading() performs the same complete dynamic guard as ensure_current;
-        // its fresh time additionally fences the shorter flow/circuit deadlines.
-        // This is a commit fence, not another policy/admission time source.
+        // A fresh View performs the same complete dynamic guard as
+        // ensure_current; its time additionally fences the shorter
+        // flow/circuit bounds. This is a commit fence, not a policy time source.
         let snapshot = circuit.map_or(&self.snapshot, |(_, guard)| guard.snapshot());
-        let current = snapshot.reading()?;
+        let current = View::of(snapshot)?;
         if let Some((_, guard)) = circuit {
             guard.check_at(&current).map_err(|_| Error::Expired)?;
         }
-        if current.now_ms >= prepared.permit_expires_at_ms
-            || current.instant >= prepared.expires_at
+        if !prepared.cap.live_at(current.instant, current.now_ms)
             || !prepared.exit_live_at(current.instant, current.now_ms)
         {
             return Err(Error::Expired);
         }
-        let expires_at = prepared.expires_at;
-        let permit_expires_at_ms = prepared.permit_expires_at_ms;
+        let cap = prepared.cap;
         let (flow_cancellation, projection) = prepared.exit_guards();
         let exit_incarnation = prepared.exit_incarnation();
         let checked = self.flows.commit(prepared);
+        let mut life = Lifetime::new(Some(cap), Default::default());
+        life.flow = flow_cancellation;
         Ok(PendingRoute {
             snapshot: snapshot.clone(),
-            expires_at,
-            permit_expires_at_ms,
+            life,
+            constrained: false,
             checked,
             facts,
-            cancellation: None,
             section: circuit.and_then(|(_, guard)| guard.section.clone()),
-            flow_cancellation,
             projection,
             exit_incarnation,
         })

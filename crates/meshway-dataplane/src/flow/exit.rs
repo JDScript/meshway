@@ -18,7 +18,6 @@ pub(super) struct ExitState {
     terminal: bool,
     pub cancellation: CancellationToken,
     pub gate: Option<Arc<Gate>>,
-    successor: Option<ProjectionScope>,
     renew: bool,
 }
 
@@ -61,7 +60,6 @@ impl ExitState {
             terminal,
             cancellation: CancellationToken::new(),
             gate: None,
-            successor: None,
             renew: false,
         })
     }
@@ -112,67 +110,66 @@ impl FlowTable {
         )?))
     }
 
+    /// Activity renewal of an exit terminal's kernel projection. A gate of
+    /// replaced content (its scope is no longer current) is renewed with the
+    /// current guard on the next admitted packet; no successor is precomputed.
     pub fn prepare_projection(
         &self,
         prepared: &mut Prepared,
         guard: &Guard,
-        reading: &meshway_authority::Reading<'_>,
+        now: (Instant, u64),
     ) -> Result<(), Error> {
         let Some(exit) = &mut prepared.flow.exit else {
             return Ok(());
         };
-        if !exit.live(reading.instant, reading.now_ms) {
+        if !exit.live(now.0, now.1) {
             return Err(Error::Expired);
         }
         if !exit.terminal {
             return Ok(());
         }
         let renew_after = self.limits.idle_timeout / 2;
+        // Compare effective bounds: a netmap flow has no UTC cap of its own,
+        // its installed scope follows the snapshot's current lease.
+        let bound = guard.expiry().min(prepared.cap);
         let renew = exit.gate.as_ref().is_none_or(|gate| {
             gate.scope.ensure_current().is_err()
                 || (gate.ready().is_ok()
-                    && (prepared.permit_expires_at_ms.min(guard.expires_at_ms)
-                        > gate.scope.deadline_ms()
+                    && (bound.ms > gate.scope.deadline_ms()
                         || (prepared
-                            .expires_at
+                            .cap
+                            .at
                             .saturating_duration_since(gate.scope.deadline())
                             >= renew_after / 2
-                            && gate
-                                .scope
-                                .deadline()
-                                .saturating_duration_since(reading.instant)
+                            && gate.scope.deadline().saturating_duration_since(now.0)
                                 <= renew_after)))
         });
         if renew {
-            // Reconciliation can shorten retained flow bounds before a lazy
-            // kernel renewal is materialized. Fence against that actual flow,
-            // not merely the older (potentially longer) installed projection.
+            // Fence against the actual retained flow bound, not merely the
+            // older (potentially longer) installed projection.
             let previous_deadline = prepared.previous_deadline;
             exit.renew = exit.gate.is_some();
-            let scope = ProjectionScope::new(guard.for_projection(
-                prepared.expires_at,
-                prepared.permit_expires_at_ms,
-                exit.cancellation.clone(),
-            ));
+            let scope =
+                ProjectionScope::new(guard.for_projection(prepared.cap, exit.cancellation.clone()));
             exit.gate = Some(Gate::new(
                 scope,
                 exit.cancellation.clone(),
                 self.pending_projections.clone(),
                 self.exit_limits,
-                reading.instant,
+                now.0,
                 previous_deadline,
             )?);
-            exit.successor = None;
         }
         // A packet can refresh idle only within an installed or pending-ACK
         // projection. Never retain protocol state beyond a gate which could
         // expire before the next activity and then revive its conntrack tuple.
         if let Some(gate) = &exit.gate {
-            prepared.expires_at = prepared.expires_at.min(gate.scope.deadline());
-            prepared.permit_expires_at_ms =
-                prepared.permit_expires_at_ms.min(gate.scope.deadline_ms());
-            prepared.flow.expires_at = prepared.expires_at;
-            prepared.flow.permit_expires_at_ms = prepared.permit_expires_at_ms;
+            let cap = Cap {
+                at: gate.scope.deadline(),
+                ms: gate.scope.deadline_ms(),
+            };
+            prepared.cap = prepared.cap.min(cap);
+            prepared.flow.cap = prepared.cap;
         }
         Ok(())
     }
@@ -221,61 +218,6 @@ impl FlowTable {
         });
     }
 
-    /// Commit reconciliation side effects only after the caller's final fence.
-    pub fn replace(&mut self, mut next: Self) {
-        let retained: std::collections::BTreeSet<_> = next
-            .entries
-            .values()
-            .filter_map(|flow| flow.exit.as_ref().map(|exit| exit.incarnation))
-            .collect();
-        let retired: Vec<_> = self
-            .entries
-            .iter()
-            .filter(|(_, flow)| {
-                flow.exit
-                    .as_ref()
-                    .is_some_and(|exit| !retained.contains(&exit.incarnation))
-            })
-            .map(|(key, flow)| (key.clone(), flow.clone()))
-            .collect();
-        for (key, flow) in retired {
-            self.retire_exit(&key, &flow);
-        }
-        next.tombstones = std::mem::take(&mut self.tombstones);
-        next.retired_circuits_pending = self.retired_circuits_pending;
-        next.pending_projections = self.pending_projections.clone();
-        *self = next;
-    }
-
-    pub fn project_successor(
-        &mut self,
-        snapshot: &meshway_authority::ExecutionSnapshot,
-        reading: &meshway_authority::Reading<'_>,
-    ) {
-        for flow in self.entries.values_mut() {
-            let Some(exit) = &mut flow.exit else {
-                continue;
-            };
-            let Some(gate) = &exit.gate else {
-                continue;
-            };
-            let scope = ProjectionScope::new(
-                gate.scope.0.successor_projection(
-                    snapshot.clone(),
-                    flow.expires_at.min(reading.expires_at),
-                    flow.permit_expires_at_ms
-                        .min(flow.guard_expires_at_ms)
-                        .min(reading.expires_at_ms),
-                ),
-            );
-            // Keep the renewal intent on the flow itself. Materialize at most
-            // max_pending commands as the host drains/ACKs them; a large live
-            // table does not need a second unbounded command queue.
-            exit.successor = Some(scope);
-            exit.renew = true;
-        }
-    }
-
     pub fn next_exit_projection(&mut self) -> Option<ExitProjection> {
         // Retire always drains before new positive operations and is available
         // even when the execution snapshot has expired.
@@ -315,23 +257,6 @@ impl FlowTable {
             let Some(state) = &mut flow.exit else {
                 continue;
             };
-            if let Some(scope) = &state.successor {
-                let Ok(gate) = Gate::new(
-                    scope.clone(),
-                    state.cancellation.clone(),
-                    self.pending_projections.clone(),
-                    self.exit_limits,
-                    Instant::now(),
-                    Some((
-                        flow.expires_at,
-                        flow.permit_expires_at_ms.min(flow.guard_expires_at_ms),
-                    )),
-                ) else {
-                    continue;
-                };
-                state.gate = Some(gate);
-                state.successor = None;
-            }
             let Some(gate) = &state.gate else {
                 continue;
             };

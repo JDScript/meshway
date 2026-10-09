@@ -1,9 +1,11 @@
 use super::*;
 
-fn observation(value: usize) -> ObservationId {
-    format!("00000000-0000-4000-8000-{value:012}")
-        .parse()
-        .unwrap()
+fn observation(value: usize) -> RateKey {
+    RateKey::Observation(
+        format!("00000000-0000-4000-8000-{value:012}")
+            .parse()
+            .unwrap(),
+    )
 }
 
 #[test]

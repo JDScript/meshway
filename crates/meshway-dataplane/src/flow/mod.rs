@@ -1,17 +1,26 @@
 //! One bounded owner of forward facts. Preparation is read-only apart from
 //! expired-entry collection; commit happens only after final guard validation.
+//!
+//! A flow is keyed by its stable grant, local role, complete original path and
+//! tuple. The installed content is not part of the key: a content update
+//! checks each flow in place against the new content and either keeps it with
+//! all protocol state, or retires it alone. No table is cloned or relabeled.
 mod exit;
 mod index;
 mod tcp;
 
-use crate::{Direction, Error, Ingress, Limits, LocalFlow, PacketFacts, Route, Transport};
+use crate::{Direction, Error, LocalFlow, PacketFacts, Route, Transport, authority::Cap};
 use meshway_configuration::execution::{BusinessProtocol, NodeConfiguration};
-use meshway_model::{NetworkId, NodeId, PublicationId, RequestId};
-use meshway_policy::admission::{Hop, Traffic, admit_forward, admit_reply};
+use meshway_model::{Digest, NodeId, RequestId};
+use meshway_policy::{
+    admission::{Hop, Traffic, admit_forward, admit_reply, netmap::Leased},
+    compile::netmap::{Decision, Target},
+};
 use meshway_transport_spec::Port;
 use std::{
     collections::BTreeMap,
     net::IpAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tcp::TcpState;
@@ -59,6 +68,15 @@ impl Tuple {
     }
 }
 
+/// The stable grant a flow was admitted under. It never names installed content.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FlowGrant {
+    /// The flow's (origin, target) pair on the installed netmap; origin is `path[0]`.
+    Netmap(Target),
+    /// Legacy per-demand grant; removed with the daemon switch.
+    Legacy(RequestId),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Role {
     Origin,
@@ -68,9 +86,7 @@ enum Role {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Key {
-    network: NetworkId,
-    publication: PublicationId,
-    demand: RequestId,
+    grant: FlowGrant,
     node: NodeId,
     role: Role,
     path: Vec<NodeId>,
@@ -100,11 +116,13 @@ impl ProtocolState {
 struct Flow {
     forward: Traffic,
     state: ProtocolState,
-    expires_at: Instant,
-    permit_expires_at_ms: u64,
-    guard_expires_at_ms: u64,
+    /// Idle bound and, for legacy targets, the permit and guard expiry at the
+    /// last admission. Netmap flows are additionally bounded by the live lease.
+    cap: Cap,
     circuit: Option<[u8; 32]>,
     exit: Option<exit::ExitState>,
+    /// Source egress selection of an exit flow; a change ends the flow.
+    selection: Option<Digest>,
     /// Exit TCP completion drains its final guarded output within the already
     /// installed deadline. It accepts no further packets and never renews.
     closing: bool,
@@ -112,24 +130,50 @@ struct Flow {
 
 impl Flow {
     fn live_at(&self, now: Instant, now_ms: u64) -> bool {
-        now < self.expires_at
+        self.cap.live_at(now, now_ms)
             && self.exit.as_ref().is_none_or(|exit| exit.live(now, now_ms))
-            && now_ms < self.permit_expires_at_ms
-            && now_ms < self.guard_expires_at_ms
     }
 }
 
 pub(super) struct LocalMatch {
     pub route: LocalFlow,
-    pub expires_at: Instant,
-    pub expires_at_ms: u64,
+    pub cap: Cap,
 }
 
+/// One entry reading. `guard` is the legacy snapshot expiry; netmap readings
+/// carry none since the lease is checked at every use and renews in place.
 pub(super) struct FlowTime {
     pub instant: Instant,
     pub now_ms: u64,
-    pub guard_expires_at: Instant,
-    pub guard_expires_at_ms: u64,
+    pub guard: Option<Cap>,
+}
+
+impl FlowTime {
+    fn idle(&self, idle: Duration) -> Result<Cap, Error> {
+        let at = self.instant.checked_add(idle).ok_or(Error::Limits)?;
+        let cap = Cap { at, ms: u64::MAX };
+        Ok(self.guard.map_or(cap, |guard| cap.min(guard)))
+    }
+}
+
+/// Authenticated ingress facts for one packet; never decoded from plaintext.
+pub(crate) struct Entry<'a> {
+    pub grant: FlowGrant,
+    pub path: &'a [NodeId],
+    pub origin: NodeId,
+    pub previous: Option<NodeId>,
+    pub sender: NodeId,
+}
+
+/// The policy view a packet is admitted under.
+pub(crate) enum Policy<'a, 'd> {
+    Legacy(&'a NodeConfiguration),
+    /// `decide` returns the Permitted decision of the forward traffic's
+    /// (origin, destination, service) on the same content, or an error.
+    Netmap {
+        leased: Leased<'a>,
+        decide: &'d mut dyn FnMut(&Traffic) -> Result<Arc<Decision>, Error>,
+    },
 }
 
 pub(super) struct Prepared {
@@ -138,9 +182,8 @@ pub(super) struct Prepared {
     remove: bool,
     hop: Hop,
     direction: Direction,
-    pub expires_at: Instant,
-    pub permit_expires_at_ms: u64,
-    previous_deadline: Option<(Instant, u64)>,
+    pub cap: Cap,
+    previous_deadline: Option<Cap>,
 }
 
 impl Prepared {
@@ -162,8 +205,22 @@ impl Prepared {
     }
 }
 
+/// Read-only facts of one retained flow for an in-place content update.
+pub(crate) struct Retained<'a> {
+    pub grant: &'a FlowGrant,
+    pub path: &'a [NodeId],
+    pub forward: &'a Traffic,
+    pub selection: Option<Digest>,
+}
+
+pub(crate) enum Keep {
+    Retire,
+    /// Keep all protocol state; optionally shorten (never extend) its cap.
+    Retain(Option<Cap>),
+}
+
 pub(super) struct FlowTable {
-    limits: Limits,
+    limits: crate::Limits,
     entries: BTreeMap<Key, Flow>,
     index: index::Index,
     exit_limits: crate::exit::Limits,
@@ -180,7 +237,7 @@ pub(super) struct CommittedRoute {
 }
 
 impl FlowTable {
-    pub fn new(limits: Limits) -> Self {
+    pub fn new(limits: crate::Limits) -> Self {
         Self {
             limits,
             entries: BTreeMap::new(),
@@ -197,9 +254,11 @@ impl FlowTable {
     }
     pub fn clear(&mut self) {
         if !self.entries.is_empty() && crate::diagnostics::event() {
-            tracing::debug!(operation = "clear", count = self.entries.len(),
-                publication = ?self.entries.keys().next().map(|key| key.publication),
-                "Dataplane flow table cleared");
+            tracing::debug!(
+                operation = "clear",
+                count = self.entries.len(),
+                "Dataplane flow table cleared"
+            );
         }
         for flow in self.entries.values() {
             if let Some(exit) = &flow.exit {
@@ -218,18 +277,13 @@ impl FlowTable {
         while let Some(key) = self.index.expired(now, now_ms).cloned() {
             let flow = self.remove(&key).expect("indexed flow");
             if crate::diagnostics::event() {
-                let cause = if now >= flow.expires_at {
+                let cause = if now >= flow.cap.at {
                     "monotonic_or_idle"
-                } else if now_ms >= flow.permit_expires_at_ms {
-                    "permit_deadline"
                 } else {
-                    "guard_deadline"
+                    "deadline"
                 };
-                tracing::debug!(operation = "expire", cause, demand = %key.demand,
-                    publication = %key.publication, now_ms,
-                    permit_expires_at_ms = flow.permit_expires_at_ms,
-                    guard_expires_at_ms = flow.guard_expires_at_ms,
-                    "Dataplane flow removed");
+                tracing::debug!(operation = "expire", cause, grant = ?key.grant, now_ms,
+                    expires_at_ms = flow.cap.ms, "Dataplane flow removed");
             }
         }
     }
@@ -256,9 +310,11 @@ impl FlowTable {
     /// Exact tuple lookup in the established table; never refresh or advance it.
     /// Relay traffic and the remote direction of endpoint traffic cannot be
     /// borrowed to originate a local packet. Ambiguous metadata fails closed.
+    /// `legacy` adds the per-demand permit check of a legacy target.
     pub fn local_flow(
         &self,
-        config: &NodeConfiguration,
+        node: NodeId,
+        legacy: Option<&NodeConfiguration>,
         facts: &PacketFacts,
         time: FlowTime,
     ) -> Result<Option<LocalMatch>, Error> {
@@ -271,40 +327,40 @@ impl FlowTable {
         let mut found = None;
         for key in self.index.matching(&tuple) {
             let flow = &self.entries[key];
-            if key.network != config.network_id
-                || key.node != config.node_id
-                || key.publication != config.publication
+            if key.node != node
                 || (key.tuple != tuple && key.tuple != reverse)
                 || !flow.live_at(time.instant, time.now_ms)
             {
                 continue;
             }
-            let Some(permit) = config.permits.get(&key.demand) else {
-                continue;
-            };
-            if time.now_ms >= permit.expires_at_ms {
-                continue;
+            let mut cap = flow.cap;
+            match (&key.grant, legacy) {
+                (FlowGrant::Legacy(demand), Some(cfg)) => {
+                    let Some(permit) = cfg.permits.get(demand) else {
+                        continue;
+                    };
+                    if time.now_ms >= permit.expires_at_ms {
+                        continue;
+                    }
+                    cap.ms = cap.ms.min(permit.expires_at_ms);
+                }
+                (FlowGrant::Netmap(_), None) => {}
+                _ => continue,
             }
             let local = match key.role {
-                Role::Origin => key.tuple == tuple && key.path.first() == Some(&config.node_id),
-                Role::Terminal => key.tuple == reverse && key.path.last() == Some(&config.node_id),
+                Role::Origin => key.tuple == tuple && key.path.first() == Some(&node),
+                Role::Terminal => key.tuple == reverse && key.path.last() == Some(&node),
                 Role::Relay => false,
             };
             if !local || found.is_some() {
                 return Err(Error::Flow);
             }
+            if let Some(guard) = time.guard {
+                cap = cap.min(guard);
+            }
             found = Some(LocalMatch {
-                route: LocalFlow {
-                    demand: key.demand,
-                    path: key.path.clone(),
-                    circuit: flow.circuit,
-                },
-                expires_at: flow.expires_at.min(time.guard_expires_at),
-                expires_at_ms: flow
-                    .permit_expires_at_ms
-                    .min(flow.guard_expires_at_ms)
-                    .min(permit.expires_at_ms)
-                    .min(time.guard_expires_at_ms),
+                route: LocalFlow::new(key.grant.clone(), key.path.clone(), flow.circuit),
+                cap,
             });
         }
         if found.is_none() {
@@ -313,100 +369,76 @@ impl FlowTable {
         Ok(found)
     }
 
-    /// Prepare a bounded replacement index without mutating protocol/idle state.
-    /// All old keys belong to one publication, so relabeling is injective; reject
-    /// defensively if that invariant is ever broken.
-    pub fn reconciled(
-        &self,
-        old: &NodeConfiguration,
-        new: &NodeConfiguration,
-        time: FlowTime,
-    ) -> Result<Self, Error> {
-        let mut next = Self::new(self.limits);
-        next.exit_limits = self.exit_limits;
-        next.pending_projections = self.pending_projections.clone();
+    /// In-place content update. Each live flow is judged once by `keep`; a
+    /// retired flow is removed alone (exit flows publish their Retire). No
+    /// protocol state, idle time or key changes; a cap may only shrink.
+    /// Unacknowledged exit projections and closing exit flows never cross.
+    pub fn retain(&mut self, time: &FlowTime, mut keep: impl FnMut(&Retained<'_>) -> Keep) {
+        let mut retire = Vec::new();
+        let mut shorten = Vec::new();
         for (key, flow) in &self.entries {
-            if !flow.live_at(time.instant, time.now_ms)
-                || flow.closing
-                || flow
-                    .exit
-                    .as_ref()
-                    .and_then(|exit| exit.gate.as_ref())
-                    .is_some_and(|gate| !gate.acknowledged())
-                || time.now_ms >= flow.permit_expires_at_ms
-                || time.now_ms >= flow.guard_expires_at_ms
-                || key.publication != old.publication
-                || !authorization_unchanged(old, new, key.demand, &key.path, time.now_ms)?
-            {
-                if crate::diagnostics::event() {
-                    let cause = if time.instant >= flow.expires_at {
-                        "monotonic_or_idle"
-                    } else if time.now_ms >= flow.permit_expires_at_ms {
-                        "permit_deadline"
-                    } else if time.now_ms >= flow.guard_expires_at_ms {
-                        "guard_deadline"
-                    } else if key.publication != old.publication {
-                        "publication"
-                    } else {
-                        "authorization_changed"
-                    };
-                    tracing::debug!(operation = "reconcile", cause, demand = %key.demand,
-                        old_publication = %old.publication, new_publication = %new.publication,
-                        now_ms = time.now_ms, permit_expires_at_ms = flow.permit_expires_at_ms,
-                        guard_expires_at_ms = flow.guard_expires_at_ms,
-                        "Dataplane flow excluded from reconciliation");
-                }
+            let pending = flow
+                .exit
+                .as_ref()
+                .and_then(|exit| exit.gate.as_ref())
+                .is_some_and(|gate| !gate.acknowledged());
+            if !flow.live_at(time.instant, time.now_ms) || flow.closing || pending {
+                retire.push((key.clone(), "deadline_or_projection"));
                 continue;
             }
-            let mut key = key.clone();
-            key.publication = new.publication;
-            let mut flow = flow.clone();
-            flow.permit_expires_at_ms = flow
-                .permit_expires_at_ms
-                .min(new.permits[&key.demand].expires_at_ms);
-            flow.guard_expires_at_ms = flow.guard_expires_at_ms.min(time.guard_expires_at_ms);
-            flow.expires_at = flow.expires_at.min(time.guard_expires_at).min(
-                time.instant
-                    .checked_add(Duration::from_millis(
-                        flow.permit_expires_at_ms.saturating_sub(time.now_ms),
-                    ))
-                    .ok_or(Error::Limits)?,
-            );
-            if next.insert(key, flow).is_some() {
-                return Err(Error::ExecutionScope);
+            match keep(&Retained {
+                grant: &key.grant,
+                path: &key.path,
+                forward: &flow.forward,
+                selection: flow.selection,
+            }) {
+                Keep::Retire => retire.push((key.clone(), "authorization_changed")),
+                Keep::Retain(Some(cap)) if cap.min(flow.cap) != flow.cap => {
+                    shorten.push((key.clone(), cap));
+                }
+                Keep::Retain(_) => {}
             }
         }
-        Ok(next)
+        for (key, cause) in retire {
+            if crate::diagnostics::event() {
+                tracing::debug!(operation = "update", cause, grant = ?key.grant,
+                    "Dataplane flow retired by content update");
+            }
+            self.remove(&key);
+        }
+        for (key, cap) in shorten {
+            let mut flow = self.entries[&key].clone();
+            flow.cap = flow.cap.min(cap);
+            self.insert(key, flow);
+        }
     }
 
     pub fn prepare(
         &mut self,
-        config: &NodeConfiguration,
-        ingress: &Ingress,
+        policy: Policy<'_, '_>,
+        node: NodeId,
+        entry: &Entry<'_>,
         facts: &PacketFacts,
         time: FlowTime,
     ) -> Result<Prepared, Error> {
         facts.validate()?;
         self.expire(time.instant, time.now_ms);
-        let path = ingress.path();
+        let path = entry.path;
         // Match the compiler's bound before retaining any caller-owned path.
         if path.is_empty() || path.len() > meshway_policy::compile::MAX_HOPS {
             return Err(Error::Ingress);
         }
         let position = path
             .iter()
-            .position(|node| *node == config.node_id)
+            .position(|other| *other == node)
             .ok_or(Error::Ingress)?;
-        let origin = ingress.origin().ok_or(Error::Ingress)?;
         let tuple = Tuple::facts(facts);
         if tuple == tuple.reversed() {
             return Err(Error::Flow);
         }
         let mut key = Key {
-            network: config.network_id,
-            publication: config.publication,
-            demand: ingress.demand(),
-            node: config.node_id,
+            grant: entry.grant.clone(),
+            node,
             role: if position == 0 {
                 Role::Origin
             } else if position + 1 == path.len() {
@@ -421,15 +453,13 @@ impl FlowTable {
             tuple: key.tuple.reversed(),
             ..key.clone()
         };
-        // A second permit or candidate is not permission to move a live session
-        // or duplicate its protocol state. Bind both demand and original path
+        // A second grant or candidate is not permission to move a live session
+        // or duplicate its protocol state. Bind both grant and original path
         // across the node's entire live tuple/role scope.
         if self.index.matching(&key.tuple).any(|other| {
-            other.network == key.network
-                && other.publication == key.publication
-                && other.node == key.node
+            other.node == key.node
                 && other.role == key.role
-                && (other.demand != key.demand || other.path != key.path)
+                && (other.grant != key.grant || other.path != key.path)
                 && (other.tuple == key.tuple || other.tuple == reverse_key.tuple)
         }) {
             return Err(Error::Flow);
@@ -451,8 +481,8 @@ impl FlowTable {
                 && let Some(gate) = &exit.gate
             {
                 // A pre-ACK kernel packet cannot create or advance reply state.
-                // An invalidated snapshot may be legally handed off; in that
-                // case a fresh projection is required before output instead.
+                // A gate of replaced content requires a fresh projection before
+                // output instead.
                 if gate.scope.ensure_current().is_ok() {
                     gate.ready()?;
                 }
@@ -464,42 +494,78 @@ impl FlowTable {
         }
         .copied()
         .ok_or(Error::Ingress)?;
-        if ingress.sender(config.node_id) != expected_sender {
+        if entry.sender != expected_sender {
             return Err(Error::Sender);
         }
-        let hop = {
+        let forward = existing.map_or(facts.traffic, |flow| flow.forward);
+        let (hop, permit_expires_at_ms, is_exit, selection) = {
             static PROFILE: meshway_logging::profile::Metric =
                 meshway_logging::profile::Metric::new("policy.packet");
             let _profile = PROFILE.enter();
-            match direction {
-                Direction::Forward => admit_forward(
-                    config,
-                    ingress.demand(),
-                    path,
-                    origin,
-                    ingress.previous(),
-                    &facts.traffic,
-                    time.now_ms,
-                )?,
-                Direction::Reply => admit_reply(
-                    config,
-                    ingress.demand(),
-                    path,
-                    origin,
-                    ingress.previous(),
-                    &existing.ok_or(Error::Flow)?.forward,
-                    &facts.traffic,
-                    time.now_ms,
-                )?,
+            match (policy, &entry.grant) {
+                (Policy::Legacy(cfg), FlowGrant::Legacy(demand)) => {
+                    let hop = match direction {
+                        Direction::Forward => admit_forward(
+                            cfg,
+                            *demand,
+                            path,
+                            entry.origin,
+                            entry.previous,
+                            &facts.traffic,
+                            time.now_ms,
+                        )?,
+                        Direction::Reply => admit_reply(
+                            cfg,
+                            *demand,
+                            path,
+                            entry.origin,
+                            entry.previous,
+                            &forward,
+                            &facts.traffic,
+                            time.now_ms,
+                        )?,
+                    };
+                    // Policy owns grant validity. Looking up its expiry here only
+                    // bounds retention and delayed output.
+                    let permit = cfg.permits.get(demand).ok_or(Error::Ingress)?;
+                    (hop, permit.expires_at_ms, permit.exit.is_some(), None)
+                }
+                (Policy::Netmap { leased, decide }, FlowGrant::Netmap(target)) => {
+                    let decision = decide(&forward)?;
+                    if decision.target != *target || decision.source != entry.origin {
+                        return Err(Error::Flow);
+                    }
+                    use meshway_policy::admission::netmap;
+                    let hop = match direction {
+                        Direction::Forward => netmap::admit_forward(
+                            leased,
+                            &decision,
+                            path,
+                            entry.origin,
+                            entry.previous,
+                            &facts.traffic,
+                            time.now_ms,
+                        )?,
+                        Direction::Reply => netmap::admit_reply(
+                            leased,
+                            &decision,
+                            path,
+                            entry.origin,
+                            entry.previous,
+                            &forward,
+                            &facts.traffic,
+                            time.now_ms,
+                        )?,
+                    };
+                    let is_exit = matches!(target, Target::Exit { .. });
+                    if existing.is_some_and(|flow| flow.selection != decision.selection) {
+                        return Err(Error::Flow);
+                    }
+                    (hop, u64::MAX, is_exit, decision.selection)
+                }
+                _ => return Err(Error::Ingress),
             }
         };
-        // Policy owns grant validity. Looking up its expiry here only bounds
-        // retention and delayed output; it is not an alternate admission path.
-        let permit_expires_at_ms = config
-            .permits
-            .get(&ingress.demand())
-            .ok_or(Error::Ingress)?
-            .expires_at_ms;
         let mut state = match existing {
             Some(flow) => flow.state.clone(),
             None => {
@@ -525,33 +591,22 @@ impl FlowTable {
         } else {
             false
         };
-        let is_exit = config
-            .permits
-            .get(&ingress.demand())
-            .is_some_and(|permit| permit.exit.is_some());
         let closing = remove && is_exit;
-        let mut expires_at = time
-            .instant
-            .checked_add(self.limits.idle_timeout.min(Duration::from_millis(
-                permit_expires_at_ms.saturating_sub(time.now_ms),
-            )))
-            .ok_or(Error::Limits)?
-            .min(time.guard_expires_at);
-        let permit_expires_at_ms = if closing {
-            let previous = existing.ok_or(Error::Flow)?;
-            expires_at = expires_at.min(previous.expires_at);
-            permit_expires_at_ms.min(previous.permit_expires_at_ms)
-        } else {
-            permit_expires_at_ms
-        };
+        let idle = self.limits.idle_timeout.min(Duration::from_millis(
+            permit_expires_at_ms.saturating_sub(time.now_ms),
+        ));
+        let mut cap = time.idle(idle)?;
+        cap.ms = cap.ms.min(permit_expires_at_ms);
+        if closing {
+            cap = cap.min(existing.ok_or(Error::Flow)?.cap);
+        }
         let flow = Flow {
-            forward: existing.map_or(facts.traffic, |flow| flow.forward),
+            forward,
             state,
-            expires_at,
-            permit_expires_at_ms,
-            guard_expires_at_ms: time.guard_expires_at_ms,
+            cap,
             circuit: existing.and_then(|flow| flow.circuit),
             exit: self.exit_state(&key, existing, is_exit)?,
+            selection,
             closing,
         };
         Ok(Prepared {
@@ -560,20 +615,18 @@ impl FlowTable {
             remove: remove && !closing,
             hop,
             direction,
-            expires_at,
-            permit_expires_at_ms,
-            previous_deadline: existing.map(|flow| {
-                (
-                    flow.expires_at,
-                    flow.permit_expires_at_ms.min(flow.guard_expires_at_ms),
-                )
-            }),
+            cap,
+            previous_deadline: existing.map(|flow| flow.cap),
         })
     }
 
     pub fn commit(&mut self, prepared: Prepared) -> CommittedRoute {
         let route = Route {
-            demand: prepared.key.demand,
+            demand: match &prepared.key.grant {
+                FlowGrant::Legacy(demand) => *demand,
+                FlowGrant::Netmap(_) => crate::netmap_demand(),
+            },
+            grant: prepared.key.grant.clone(),
             origin: prepared.key.path[0],
             original_path: prepared.key.path.clone(),
             direction: prepared.direction,
@@ -590,7 +643,7 @@ impl FlowTable {
     }
 }
 
-/// Shared retention predicate, not packet admission. Policy still checks each
+/// Legacy retention predicate, not packet admission. Policy still checks each
 /// current packet/handshake. Compare complete permit authorization and every
 /// selected-path identity, address, key and locally published carrier binding.
 pub(super) fn authorization_unchanged(

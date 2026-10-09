@@ -79,7 +79,7 @@ impl Stage {
     pub fn retry_at(&self) -> Result<Option<Instant>, Error> {
         self.ensure_current()?;
         Ok((self.output.is_some() && self.budget.outputs < MAX_OUTPUTS)
-            .then_some(self.budget.next.min(self.guard.expires_at)))
+            .then_some(self.budget.next.min(self.guard.expires_at())))
     }
 
     pub fn retry(&mut self) -> Result<Option<PendingFrame>, Error> {

@@ -1,4 +1,5 @@
-use super::{Carrier, Error, PendingFrame, SecureNode};
+use super::{Carrier, Error, PendingFrame, SecureNode, View};
+use crate::FlowGrant;
 use crate::exit::{Counters, ExitProjection, ExitReplyIngress, FlowIncarnation, Limits};
 use meshway_authority::DataPlaneIdentity;
 use meshway_model::NodeId;
@@ -32,7 +33,7 @@ impl SecureNode {
         if !self.engine.flows.has_exit_work() {
             return;
         }
-        if let Ok(reading) = self.identity.snapshot().reading() {
+        if let Ok(reading) = View::of(self.identity.snapshot()) {
             self.engine.flows.expire(reading.instant, reading.now_ms);
         } else {
             if self.identity.snapshot().retention_deadline().is_err() {
@@ -48,8 +49,10 @@ impl SecureNode {
             if self.engine.flows.has_exit_circuit(id) {
                 continue;
             }
-            if let Some(circuit) = self.circuits.get_mut(&id) {
+            if let Some(mut circuit) = self.circuits.remove(&id) {
                 circuit.retire_for("exit", "flow_retired");
+                let now_ms = meshway_authority::now().unwrap_or(u64::MAX);
+                self.bury(id, &circuit, now_ms);
             }
         }
     }
@@ -96,14 +99,18 @@ impl SecureNode {
                 Err(error) => return Err(error),
             };
             let snapshot = self.identity.snapshot();
-            let reading = snapshot.reading().map_err(|_| Error::Authority)?;
-            if route.path.last() != Some(&reading.configuration.node_id)
-                || !reading
-                    .configuration
+            let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
+            let exit = match (&route.grant, reading.legacy()) {
+                (FlowGrant::Legacy(demand), Some(cfg)) => cfg
                     .permits
-                    .get(&route.demand)
-                    .is_some_and(|permit| permit.exit.is_some())
-            {
+                    .get(demand)
+                    .is_some_and(|permit| permit.exit.is_some()),
+                (FlowGrant::Netmap(target), None) => {
+                    matches!(target, super::Target::Exit { .. })
+                }
+                _ => false,
+            };
+            if route.path.last() != Some(&reading.node()) || !exit {
                 return Err(Error::Flow);
             }
             let id = route.circuit.ok_or(Error::Flow)?;

@@ -2,8 +2,8 @@
 //! Jobs are opaque and move-only. Workers never query authority; every result
 //! retains its original guard and is checked by the owner or final I/O adapter.
 use super::{
-    AuthenticatedPeer, Carrier, CircuitAuthorization, Direction, Error, Guard, Hop, Ingress,
-    Packet, PacketBuffer, PendingFrame, Received, SecureNode, State,
+    Carrier, Direction, Entry, Error, Guard, Hop, Packet, PacketBuffer, PendingFrame, Received,
+    SecureNode, State, View, authorization,
     codec::{self, Frame, Kind},
     crypto,
     session::MacKey,
@@ -26,6 +26,15 @@ pub struct SendJob {
     pub(super) next: NodeId,
     pub(super) carrier: Carrier,
     pub(super) guard: Guard,
+}
+
+impl std::fmt::Debug for SendJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SendJob")
+            .field("next", &self.next)
+            .field("length", &self.frame.body.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl SendJob {
@@ -127,7 +136,7 @@ impl SecureNode {
         bytes: PacketBuffer,
     ) -> Result<SendJob, Error> {
         let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         self.prepare_send_at(
             circuit,
             Packet::parse(bytes).map_err(|_| Error::Packet)?,
@@ -145,7 +154,7 @@ impl SecureNode {
             meshway_logging::profile::Metric::new("secure.prepare_receive");
         let _profile = PROFILE.enter();
         let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         self.maintain_circuits(&reading, false)?;
         let id = codec::session_id(&bytes)?.ok_or(Error::Wire)?;
         let circuit = self.circuits.get_mut(&id).ok_or(Error::State)?;
@@ -158,10 +167,17 @@ impl SecureNode {
             return Err(Error::Wire);
         }
         circuit.receive[usize::from(frame.reply)].check(frame.sequence)?;
-        let (previous, mac) =
-            circuit
-                .session
-                .prepare_verify(reading.configuration, &frame, incoming)?;
+        let selected =
+            authorization::selected(&reading, &circuit.context, circuit.selected.as_deref())?;
+        let (previous, mac) = circuit.session.prepare_verify(selected, &frame, incoming)?;
+        authorization::incoming(
+            &mut self.engine.decisions,
+            &reading,
+            &circuit.context,
+            selected,
+            previous,
+            incoming,
+        )?;
         let mut guard = circuit.guard(&snapshot, false);
         guard.section = Some(self.output_epoch.clone());
         let target = match &circuit.state {
@@ -170,7 +186,7 @@ impl SecureNode {
                 let path = &circuit.context.path;
                 let position = path
                     .iter()
-                    .position(|node| *node == reading.configuration.node_id)
+                    .position(|node| *node == reading.node())
                     .ok_or(Error::Context)?;
                 let next = if frame.reply {
                     position.checked_sub(1)
@@ -181,14 +197,13 @@ impl SecureNode {
                 .copied()
                 .ok_or(Error::Context)?;
                 let carrier = self.carriers.get(&next).ok_or(Error::Unsupported)?.clone();
-                meshway_policy::admission::admit_circuit_carrier(
-                    reading.configuration,
-                    circuit.context.authorization,
-                    path,
+                authorization::outgoing(
+                    &reading,
+                    &circuit.context,
+                    Some(selected),
                     next,
                     &carrier,
-                )
-                .map_err(|_| Error::Policy)?;
+                )?;
                 let mac = circuit.session.prepare_append(&frame, &carrier)?;
                 ReceiveTarget::Relay { next, carrier, mac }
             }
@@ -212,9 +227,11 @@ impl SecureNode {
             meshway_logging::profile::Metric::new("secure.commit_receive");
         let _profile = PROFILE.enter();
         let snapshot = opened.guard.snapshot.clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         opened.guard.check_at(&reading)?;
-        if !snapshot.same_execution(self.identity.snapshot()) {
+        if !snapshot.same_execution(self.identity.snapshot())
+            && !snapshot.same_netmap(self.identity.snapshot())
+        {
             return Err(Error::Authority);
         }
         let id = opened.circuit;
@@ -247,41 +264,27 @@ impl SecureNode {
                 if !matches!(circuit.state, State::Endpoint(_)) {
                     return Err(Error::State);
                 }
-                let CircuitAuthorization::Business(demand) = circuit.context.authorization else {
-                    return Err(Error::Policy);
-                };
-                Self::check_outgoing_carrier(
-                    &self.carriers,
-                    &circuit.context,
-                    opened.reply,
-                    &reading,
-                )?;
+                let grant = circuit.context.grant.flow().ok_or(Error::Policy)?;
+                Self::check_outgoing_carrier(&self.carriers, circuit, opened.reply, &reading)?;
                 let path = &circuit.context.path;
-                let ingress = Ingress::Peer {
-                    demand,
-                    path: path.clone(),
-                    identity: AuthenticatedPeer {
-                        origin: path[0],
-                        sender: if opened.reply {
-                            *path.last().ok_or(Error::Context)?
-                        } else {
-                            path[0]
-                        },
-                        previous: opened.previous,
+                let entry = Entry {
+                    grant,
+                    path,
+                    origin: path[0],
+                    sender: if opened.reply {
+                        *path.last().ok_or(Error::Context)?
+                    } else {
+                        path[0]
                     },
+                    previous: Some(opened.previous),
                 };
                 let packet = Packet::parse(opened.bytes).map_err(|_| Error::Packet)?;
                 let mut route = self
                     .engine
-                    .admit_circuit_facts(ingress, packet.facts(), &reading, id, &opened.guard)
+                    .admit_circuit_facts(&entry, packet.facts(), &reading, id, &opened.guard)
                     .map_err(|error| circuit.engine_rejected("receive_endpoint", error))?;
                 route
-                    .constrain(
-                        &reading,
-                        opened.guard.expires_at,
-                        opened.guard.expires_at_ms,
-                        opened.guard.cancellation.clone(),
-                    )
+                    .constrain(&reading, &opened.guard.life)
                     .map_err(|_| Error::Authority)?;
                 if (route.route().direction == Direction::Reply) != opened.reply {
                     return Err(Error::Context);

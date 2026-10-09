@@ -5,7 +5,7 @@ use meshway_dataplane::secure::{CircuitState, Error, Limits, Received, SecureNod
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 
-// Adversarial v5 wire fixture, not another codec or admission path.
+// Adversarial v6 wire fixture, not another codec or admission path.
 // Change the Noise tag in a real one-proof Init and have its real origin sign
 // that changed transcript. Merely corrupting bytes would only test bad proofs.
 fn resign(
@@ -14,13 +14,13 @@ fn resign(
     listener_key: &str,
     mutate: impl FnOnce(&mut [u8], usize),
 ) -> Vec<u8> {
-    assert_eq!(&bytes[..8], b"MWCIR\0\0\x05");
+    assert_eq!(&bytes[..8], b"MWCIR\0\0\x06");
     let signature = bytes.len() - 64;
     let proof = signature - (16 + 8 + 16 + 16 + 1 + 1 + listener_key.len() + 32);
     assert_eq!(bytes[proof - 1], 1);
     mutate(&mut bytes, proof - 1);
     let mut transcript = Sha256::new();
-    transcript.update(b"meshway/circuit/hop-proof/candidate-v4\0");
+    transcript.update(b"meshway/circuit/hop-proof/candidate-v6\0");
     transcript.update(&bytes[..proof - 1]);
     transcript.update([0u8]);
     transcript.update(&bytes[proof..signature]);
@@ -34,7 +34,8 @@ fn resign(
 }
 
 #[tokio::test]
-async fn authenticated_responder_failure_retains_tombstone_across_replay_renewal_and_capacity() {
+async fn authenticated_responder_failure_keeps_dead_cid_across_replay_and_renewal_outside_capacity()
+{
     let mut fixture = SecureMesh::start().await;
     fixture.b = SecureNode::new(
         fixture
@@ -85,15 +86,14 @@ async fn authenticated_responder_failure_retains_tombstone_across_replay_renewal
         fixture.b.receive(&fixture.rb.carrier, bytes.clone()),
         Err(Error::Crypto)
     ));
-    assert_eq!(fixture.b.retained_circuits(), 1);
+    // Only a compact dead-CID record remains, outside circuit capacity.
+    assert_eq!(fixture.b.retained_circuits(), 0);
+    assert_eq!(fixture.b.dead_circuits(), 1);
     assert_eq!(fixture.b.retained_flows(), 0);
-    assert_eq!(
-        fixture.b.circuit_info(cid).unwrap().unwrap().state,
-        CircuitState::Closed
-    );
+    assert!(fixture.b.circuit_info(cid).unwrap().is_none());
     assert!(matches!(
         fixture.b.receive(&fixture.rb.carrier, bytes.clone()),
-        Err(Error::State)
+        Err(Error::Replay)
     ));
 
     let before = fixture.mesh.b.control.execution_snapshot().unwrap();
@@ -115,13 +115,10 @@ async fn authenticated_responder_failure_retains_tombstone_across_replay_renewal
     assert!(before.ensure_current().is_err());
     assert!(matches!(
         fixture.b.receive(&fixture.rb.carrier, bytes),
-        Err(Error::State)
+        Err(Error::Replay)
     ));
-    assert_eq!(
-        fixture.b.circuit_info(cid).unwrap().unwrap().state,
-        CircuitState::Closed
-    );
-    assert_eq!(fixture.b.retained_circuits(), 1);
+    assert!(fixture.b.circuit_info(cid).unwrap().is_none());
+    assert_eq!(fixture.b.dead_circuits(), 1);
     assert_eq!(fixture.b.retained_flows(), 0);
 
     let init = fixture
@@ -135,11 +132,12 @@ async fn authenticated_responder_failure_retains_tombstone_across_replay_renewal
     else {
         panic!("new valid initiation");
     };
+    // The dead record does not occupy the single circuit slot.
     assert!(matches!(
         fixture
             .b
             .receive(&fixture.rb.carrier, forward.release(|bytes| bytes).unwrap()),
-        Err(Error::Capacity)
+        Ok(Received::Established { .. })
     ));
     fixture.close().await;
 }

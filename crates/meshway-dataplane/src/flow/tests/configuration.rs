@@ -1,5 +1,5 @@
 use super::super::*;
-use crate::{Action, AuthenticatedPeer, Packet};
+use crate::{Action, AuthenticatedPeer, Ingress, Limits, Packet};
 use meshway_configuration::execution::*;
 use meshway_configuration::*;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
@@ -218,6 +218,17 @@ impl Scene {
         }
     }
 
+    pub fn time(&self) -> FlowTime {
+        FlowTime {
+            instant: self.instant,
+            now_ms: self.now_ms,
+            guard: Some(Cap {
+                at: self.guard_expires_at,
+                ms: self.guard_expires_at_ms,
+            }),
+        }
+    }
+
     pub fn advance(&mut self, duration: Duration) {
         self.instant += duration;
         self.now_ms += duration.as_millis() as u64;
@@ -268,17 +279,14 @@ impl Scene {
         ingress: Ingress,
         facts: PacketFacts,
     ) -> Result<CommittedRoute, Error> {
+        let time = self.time();
         let table = self.tables.get_mut(&node(local)).unwrap();
         let prepared = table.prepare(
-            &self.configs[&node(local)],
-            &ingress,
+            Policy::Legacy(&self.configs[&node(local)]),
+            node(local),
+            &ingress.entry(node(local))?,
             &facts,
-            FlowTime {
-                instant: self.instant,
-                now_ms: self.now_ms,
-                guard_expires_at: self.guard_expires_at,
-                guard_expires_at_ms: self.guard_expires_at_ms,
-            },
+            time,
         )?;
         Ok(table.commit(prepared))
     }

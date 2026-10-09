@@ -8,9 +8,9 @@ use super::{
 };
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
-use meshway_configuration::execution::{LogicalPath, NodeConfiguration};
+use meshway_configuration::execution::LogicalPath;
 use meshway_model::NodeId;
-use meshway_policy::admission::{Carrier, admit_circuit_carrier, circuit_permit, path_carrier};
+use meshway_policy::admission::{Carrier, path_carrier};
 use sha2::{Digest as _, Sha256};
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
@@ -147,39 +147,26 @@ impl Session {
         self.pending = None; // StaticSecret zeroizes the retained ephemeral.
     }
 
+    /// Authenticate the adjacent hop on the owner's admitted path. The caller
+    /// checks the incoming carrier against its current adjacency admission.
     pub fn verify(
         &self,
-        cfg: &NodeConfiguration,
+        selected: &LogicalPath,
         frame: &Frame,
         incoming: &Carrier,
     ) -> Result<NodeId, Error> {
-        let (previous, key) = self.prepare_verify(cfg, frame, incoming)?;
+        let (previous, key) = self.prepare_verify(selected, frame, incoming)?;
         key.verify(frame)?;
         Ok(previous)
     }
 
     pub fn prepare_verify(
         &self,
-        cfg: &NodeConfiguration,
+        selected: &LogicalPath,
         frame: &Frame,
         incoming: &Carrier,
     ) -> Result<(NodeId, MacKey), Error> {
-        let selected = circuit_permit(cfg, frame.context.authorization)
-            .map_err(|_| Error::Context)?
-            .paths
-            .iter()
-            .find(|path| path.nodes == frame.context.path)
-            .ok_or(Error::Context)?;
-        let (previous, key) = self.prepare_chain(frame, incoming, selected)?;
-        admit_circuit_carrier(
-            cfg,
-            frame.context.authorization,
-            &frame.context.path,
-            previous,
-            incoming,
-        )
-        .map_err(|_| Error::Policy)?;
-        Ok((previous, key))
+        self.prepare_chain(frame, incoming, selected)
     }
 
     fn prepare_chain(

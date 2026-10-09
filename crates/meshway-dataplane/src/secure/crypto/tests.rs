@@ -1,7 +1,7 @@
 use super::*;
 use crate::{fixtures, secure::codec::Kind};
 use ed25519_dalek::{Signer, SigningKey};
-use meshway_model::{KeyId, NetworkId, NodePublicKey, Version};
+use meshway_model::{KeyAlgorithm, KeyId, NetworkId, NodePublicKey, Version};
 use meshway_transport_spec::TransportProtocol;
 use std::collections::BTreeMap;
 
@@ -211,13 +211,16 @@ impl ProofFixture {
         let frame = Frame {
             context: std::sync::Arc::new(Context {
                 network: NetworkId::new(node(10).into_uuid()).unwrap(),
-                authorization: meshway_configuration::execution::CircuitAuthorization::Business(
-                    "00000000-0000-4000-8000-000000000011".parse().unwrap(),
+                grant: crate::secure::CircuitGrant::Legacy(
+                    meshway_configuration::execution::CircuitAuthorization::Business(
+                        "00000000-0000-4000-8000-000000000011".parse().unwrap(),
+                    ),
                 ),
                 path: selected.nodes.clone(),
                 circuit: [1; 32],
-                permit: Digest::from_bytes([2; 32]),
+                authorization: Digest::from_bytes([2; 32]),
                 keys: Digest::from_bytes([3; 32]),
+                initiated_at_ms: 0,
             }),
             kind: if reply { Kind::Response } else { Kind::Init },
             reply,
@@ -299,7 +302,7 @@ fn ordered_chain_rejects_missing_reordered_tampered_and_wrong_context_proofs() {
         std::sync::Arc::make_mut(&mut f.frame.context).circuit[0] ^= 1;
         assert!(f.verify().is_err());
         f.sign();
-        std::sync::Arc::make_mut(&mut f.frame.context).permit = Digest::from_bytes([9; 32]);
+        std::sync::Arc::make_mut(&mut f.frame.context).authorization = Digest::from_bytes([9; 32]);
         assert!(f.verify().is_err());
         f.sign();
         std::sync::Arc::make_mut(&mut f.frame.context).keys = Digest::from_bytes([19; 32]);

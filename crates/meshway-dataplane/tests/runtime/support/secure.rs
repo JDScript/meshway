@@ -56,7 +56,7 @@ impl End {
         );
         frame.payload.into_vec()
     }
-    async fn close(&mut self) {
+    pub async fn close(&mut self) {
         tokio::time::timeout(IO_WAIT, self.sender.shutdown())
             .await
             .unwrap()
@@ -70,7 +70,7 @@ pub struct Link {
     pub carrier: Carrier,
 }
 impl Link {
-    async fn connect(listener: TcpListener, carrier: Carrier) -> Self {
+    pub async fn connect(listener: TcpListener, carrier: Carrier) -> Self {
         let address = listener.local_addr().unwrap();
         let (dial, listen) = tokio::time::timeout(IO_WAIT, async {
             tokio::join!(TcpStream::connect(address), listener.accept())

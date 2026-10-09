@@ -192,9 +192,10 @@ async fn explicit_renewal_extends_live_circuit_but_never_reopens_a_closed_circui
     reply(&mut fixture, circuit);
     forward(&mut fixture, circuit);
     for node in [&fixture.a, &fixture.r, &fixture.b] {
-        assert_eq!(
-            node.circuit_info(closed).unwrap().unwrap().state,
-            CircuitState::Closed
+        assert!(
+            node.circuit_info(closed)
+                .unwrap()
+                .is_none_or(|info| info.state == CircuitState::Closed)
         );
     }
     fixture.close().await;
@@ -223,9 +224,12 @@ async fn observed_revocation_then_regrant_cannot_be_skipped_by_a_late_reconciler
         .reconcile(identity(&mut fixture.mesh.r).await)
         .unwrap();
     assert_eq!(fixture.r.retained_flows(), 0);
-    assert_eq!(
-        fixture.r.circuit_info(circuit).unwrap().unwrap().state,
-        CircuitState::Closed
+    assert!(
+        fixture
+            .r
+            .circuit_info(circuit)
+            .unwrap()
+            .is_none_or(|info| info.state == CircuitState::Closed)
     );
     let a = fixture.mesh.a.id;
     let b = fixture.mesh.b.id;
@@ -249,9 +253,12 @@ async fn observed_revocation_then_regrant_cannot_be_skipped_by_a_late_reconciler
         .reconcile(identity(&mut fixture.mesh.r).await)
         .unwrap();
     assert_eq!(fixture.r.retained_flows(), 0);
-    assert_eq!(
-        fixture.r.circuit_info(circuit).unwrap().unwrap().state,
-        CircuitState::Closed
+    assert!(
+        fixture
+            .r
+            .circuit_info(circuit)
+            .unwrap()
+            .is_none_or(|info| info.state == CircuitState::Closed)
     );
     fixture.close().await;
 }
@@ -367,9 +374,12 @@ async fn an_expired_permit_cannot_be_revived_while_the_node_execution_lease_rema
             .contains_key(&fixture.mesh.demand)
     );
     fixture.a.reconcile(fresh).unwrap();
-    assert_eq!(
-        fixture.a.circuit_info(circuit).unwrap().unwrap().state,
-        CircuitState::Closed
+    assert!(
+        fixture
+            .a
+            .circuit_info(circuit)
+            .unwrap()
+            .is_none_or(|info| info.state == CircuitState::Closed)
     );
     assert!(
         fixture

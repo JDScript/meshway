@@ -27,7 +27,7 @@ fn renewed_guard_cannot_revive_a_flow_expired_by_the_old_guard_wall_clock() {
 }
 
 use super::*;
-use crate::{Action, AuthenticatedPeer, Packet, fixtures::*};
+use crate::{Action, AuthenticatedPeer, Ingress, Packet, fixtures::*};
 use configuration::{Scene, node, request};
 use std::time::Duration;
 
@@ -397,7 +397,8 @@ fn capacity_rejection_is_transactional_and_idle_expiry_does_not_renew_permits() 
         .values()
         .next()
         .unwrap()
-        .expires_at;
+        .cap
+        .at;
     scene.advance(Duration::from_millis(900));
     assert!(matches!(
         scene.process(1, None, 1, &[1, 2, 3], udp(1, 3, 50001, 443)),
@@ -409,7 +410,8 @@ fn capacity_rejection_is_transactional_and_idle_expiry_does_not_renew_permits() 
             .values()
             .next()
             .unwrap()
-            .expires_at,
+            .cap
+            .at,
         before
     );
     scene.advance(Duration::from_millis(100));
@@ -442,7 +444,7 @@ fn snapshot_bound_retention_and_explicit_revocation_remove_flow_qualification() 
     forward(&mut scene, udp(1, 3, 50000, 443));
     for table in scene.tables.values() {
         assert_eq!(
-            table.entries.values().next().unwrap().expires_at,
+            table.entries.values().next().unwrap().cap.at,
             scene.guard_expires_at
         );
     }
@@ -464,7 +466,7 @@ fn snapshot_bound_retention_and_explicit_revocation_remove_flow_qualification() 
 }
 
 #[test]
-fn live_session_cannot_select_another_permitted_path_or_publication() {
+fn live_session_cannot_select_another_permitted_path() {
     let mut scene = Scene::new(BusinessProtocol::Udp, false, false);
     let paths = &scene.configs[&node(1)].permits[&request()].paths;
     assert!(
@@ -480,13 +482,6 @@ fn live_session_cannot_select_another_permitted_path_or_publication() {
         scene.process(1, None, 1, &[1, 3], udp(1, 3, 50000, 443)),
         Err(Error::Flow)
     ));
-    scene.configs.get_mut(&node(1)).unwrap().publication =
-        "00000000-0000-4004-8000-000000000099".parse().unwrap();
-    assert!(
-        scene
-            .process(1, Some(2), 3, &[1, 2, 3], udp(3, 1, 443, 50000))
-            .is_err()
-    );
     assert_eq!(scene.tables[&node(1)].len(), 1);
 }
 
@@ -514,7 +509,7 @@ fn renewed_guard_preserves_old_flow_deadlines_until_valid_packet_admission() {
         scene.tables[&node(1)]
             .entries
             .values()
-            .all(|flow| flow.expires_at == old_deadline)
+            .all(|flow| flow.cap.at == old_deadline)
     );
     // A malformed association cannot turn the new guard into refreshed state.
     assert!(
@@ -526,7 +521,7 @@ fn renewed_guard_preserves_old_flow_deadlines_until_valid_packet_admission() {
         scene.tables[&node(1)]
             .entries
             .values()
-            .all(|flow| flow.expires_at == old_deadline)
+            .all(|flow| flow.cap.at == old_deadline)
     );
     scene
         .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50000, 443))
@@ -555,7 +550,8 @@ fn renewed_guard_preserves_old_flow_deadlines_until_valid_packet_admission() {
             .values()
             .next()
             .unwrap()
-            .expires_at,
+            .cap
+            .at,
         scene.guard_expires_at
     );
 }
@@ -575,7 +571,8 @@ fn renewed_guard_and_valid_packets_cannot_extend_the_original_permit() {
             .values()
             .next()
             .unwrap()
-            .expires_at,
+            .cap
+            .at,
         permit_deadline
     );
     scene.advance(Duration::from_millis(500));
@@ -594,7 +591,8 @@ fn renewed_guard_and_valid_packets_cannot_extend_the_original_permit() {
             .values()
             .next()
             .unwrap()
-            .expires_at,
+            .cap
+            .at,
         permit_deadline
     );
     scene.advance(Duration::from_millis(500));

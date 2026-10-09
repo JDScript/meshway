@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod admission;
+mod authority;
 mod buffer;
 mod diagnostics;
 mod engine;
@@ -19,19 +20,20 @@ pub mod exit;
 #[cfg(test)]
 mod fixtures;
 mod flow;
+mod netmap;
 mod packet;
 
+use authority::{Lifetime, View};
 pub use buffer::{BufferError, DEFAULT_HEADROOM, DEFAULT_TAILROOM, PacketBuffer, PacketPool};
+pub use flow::FlowGrant;
 use flow::{CommittedRoute, FlowTable};
-use meshway_authority::{ExecutionSnapshot, Reading};
+use meshway_authority::ExecutionSnapshot;
 use meshway_model::{NodeId, RequestId};
 use meshway_policy::admission::AdmissionError;
 pub use meshway_policy::admission::Hop;
+pub use netmap::Purpose;
 pub use packet::{Packet, PacketError, PacketFacts, PacketInput, TcpSegment, Transport};
-use std::{
-    fmt,
-    time::{Duration, Instant},
-};
+use std::{fmt, time::Duration};
 
 /// Hard memory bounds; flow expiry never exceeds the immutable permit or the
 /// current control guard. The idle duration is a state retention limit, not an
@@ -94,32 +96,40 @@ pub enum Ingress {
 }
 
 impl Ingress {
-    fn demand(&self) -> RequestId {
-        match self {
-            Self::Local { demand, .. } | Self::Peer { demand, .. } => *demand,
-        }
+    fn entry(&self, local: NodeId) -> Result<flow::Entry<'_>, Error> {
+        Ok(match self {
+            Self::Local { demand, path } => flow::Entry {
+                grant: FlowGrant::Legacy(*demand),
+                path,
+                origin: *path.first().ok_or(Error::Ingress)?,
+                previous: None,
+                sender: local,
+            },
+            Self::Peer {
+                demand,
+                path,
+                identity,
+            } => flow::Entry {
+                grant: FlowGrant::Legacy(*demand),
+                path,
+                origin: identity.origin,
+                previous: Some(identity.previous),
+                sender: identity.sender,
+            },
+        })
     }
-    fn path(&self) -> &[NodeId] {
-        match self {
-            Self::Local { path, .. } | Self::Peer { path, .. } => path,
-        }
-    }
-    fn origin(&self) -> Option<NodeId> {
-        match self {
-            Self::Local { path, .. } => path.first().copied(),
-            Self::Peer { identity, .. } => Some(identity.origin),
-        }
-    }
-    fn previous(&self) -> Option<NodeId> {
-        match self {
-            Self::Local { .. } => None,
-            Self::Peer { identity, .. } => Some(identity.previous),
-        }
-    }
-    fn sender(&self, local: NodeId) -> NodeId {
-        match self {
-            Self::Local { .. } => local,
-            Self::Peer { identity, .. } => identity.sender,
+}
+
+impl LocalFlow {
+    pub(crate) fn new(grant: FlowGrant, path: Vec<NodeId>, circuit: Option<[u8; 32]>) -> Self {
+        Self {
+            demand: match &grant {
+                FlowGrant::Legacy(demand) => *demand,
+                FlowGrant::Netmap(_) => netmap_demand(),
+            },
+            grant,
+            path,
+            circuit,
         }
     }
 }
@@ -130,10 +140,23 @@ pub enum Direction {
     Reply,
 }
 
+/// Placeholder of the legacy `demand` fields for netmap flows; meaningless
+/// there (read `grant`). Removed with the daemon switch.
+pub fn netmap_demand() -> RequestId {
+    static ID: std::sync::OnceLock<RequestId> = std::sync::OnceLock::new();
+    *ID.get_or_init(|| {
+        "00000000-0000-4000-8000-00000000ffee"
+            .parse()
+            .expect("valid placeholder")
+    })
+}
+
 /// Output context derived from the admitted flow, never reverse-recompiled.
 #[derive(Debug)]
 pub struct Route {
+    /// Legacy view of `grant`; [`netmap_demand`] for netmap flows.
     pub demand: RequestId,
+    pub grant: FlowGrant,
     pub origin: NodeId,
     pub original_path: Vec<NodeId>,
     pub direction: Direction,
@@ -143,7 +166,9 @@ pub struct Route {
 /// A sender must still perform normal current admission on the selected circuit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalFlow {
+    /// Legacy view of `grant`; [`netmap_demand`] for netmap flows.
     pub demand: RequestId,
+    pub grant: FlowGrant,
     pub path: Vec<NodeId>,
     /// Cipher context of the last admitted forward packet, when this flow is
     /// owned by SecureNode. Plaintext Engine consumers have no cipher context.
@@ -206,13 +231,12 @@ pub struct PendingAction {
 /// admission. It contains no plaintext and cannot release an unchecked packet.
 pub(crate) struct PendingRoute {
     snapshot: ExecutionSnapshot,
-    expires_at: Instant,
-    permit_expires_at_ms: u64,
+    /// Flow cap and cancellation; the circuit's is added by `constrain`.
+    life: Lifetime,
+    constrained: bool,
     checked: CommittedRoute,
     facts: PacketFacts,
-    cancellation: Option<tokio_util::sync::CancellationToken>,
     section: Option<std::sync::Arc<()>>,
-    flow_cancellation: Option<tokio_util::sync::CancellationToken>,
     projection: Option<std::sync::Arc<exit::Gate>>,
     exit_incarnation: Option<exit::FlowIncarnation>,
 }
@@ -220,7 +244,7 @@ pub(crate) struct PendingRoute {
 impl fmt::Debug for PendingRoute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PendingRoute")
-            .field("expires_at", &self.expires_at)
+            .field("cap", &self.life.cap)
             .field("checked", &self.checked)
             .finish_non_exhaustive()
     }
@@ -229,7 +253,7 @@ impl fmt::Debug for PendingRoute {
 impl fmt::Debug for PendingAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PendingAction")
-            .field("expires_at", &self.pending.expires_at)
+            .field("cap", &self.pending.life.cap)
             .field("route", &self.pending.checked)
             .field("packet", &self.packet)
             .finish_non_exhaustive()
@@ -330,62 +354,36 @@ impl PendingRoute {
         &self.snapshot
     }
 
-    pub(crate) fn expires_at(&self) -> Instant {
-        self.expires_at
-    }
-
-    pub(crate) fn permit_expires_at_ms(&self) -> u64 {
-        self.permit_expires_at_ms
-    }
-
     pub(crate) fn ensure_current(&self) -> Result<(), Error> {
-        if self
-            .cancellation
-            .as_ref()
-            .is_some_and(|token| token.is_cancelled())
-        {
-            return Err(Error::Expired);
-        }
-        self.check_at(&self.snapshot.reading()?)
+        self.check_at(&View::of(&self.snapshot)?)
     }
 
     pub(crate) fn attach(self, packet: Packet) -> Result<PendingAction, Error> {
         self.facts.check_packet(&packet)?;
-        self.check_at(&self.snapshot.reading()?)?;
+        self.check_at(&View::of(&self.snapshot)?)?;
         Ok(PendingAction {
             pending: self,
             packet,
         })
     }
 
+    /// Bind the receiving circuit's own bound and cancellation, once.
     pub(crate) fn constrain(
         &mut self,
-        reading: &Reading<'_>,
-        expires_at: Instant,
-        expires_at_ms: u64,
-        cancellation: tokio_util::sync::CancellationToken,
+        reading: &View<'_>,
+        circuit: &Lifetime,
     ) -> Result<(), Error> {
-        if self.cancellation.is_some() {
+        if self.constrained {
             return Err(Error::ExecutionScope);
         }
-        self.expires_at = self.expires_at.min(expires_at);
-        self.permit_expires_at_ms = self.permit_expires_at_ms.min(expires_at_ms);
-        self.cancellation = Some(cancellation);
+        self.constrained = true;
+        self.life.restrict(circuit.cap);
+        self.life.cancellation = circuit.cancellation.clone();
         self.check_at(reading)
     }
 
-    pub(crate) fn check_at(&self, reading: &Reading<'_>) -> Result<(), Error> {
-        if self
-            .flow_cancellation
-            .as_ref()
-            .is_some_and(|token| token.is_cancelled())
-            || self
-                .cancellation
-                .as_ref()
-                .is_some_and(|token| token.is_cancelled())
-            || reading.instant >= self.expires_at
-            || reading.now_ms >= self.permit_expires_at_ms
-        {
+    pub(crate) fn check_at(&self, reading: &View<'_>) -> Result<(), Error> {
+        if !self.life.live_at(reading.instant, reading.now_ms) {
             return Err(Error::Expired);
         }
         Ok(())
@@ -395,22 +393,7 @@ impl PendingRoute {
         if self.ensure_current().is_err() {
             return;
         }
-        tokio::select! { biased;
-            _ = self.snapshot.invalidated_at(self.permit_expires_at_ms) => {},
-            _ = tokio::time::sleep_until(self.expires_at.into()) => {},
-            _ = async {
-                match &self.flow_cancellation {
-                    Some(token) => token.cancelled().await,
-                    None => std::future::pending().await,
-                }
-            } => {},
-            _ = async {
-                match &self.cancellation {
-                    Some(token) => token.cancelled().await,
-                    None => std::future::pending().await,
-                }
-            } => {},
-        }
+        self.life.ended(&self.snapshot).await;
     }
 }
 
@@ -420,6 +403,7 @@ pub struct Engine {
     snapshot: ExecutionSnapshot,
     flows: FlowTable,
     exit_counters: exit::Counters,
+    decisions: netmap::Decisions,
 }
 
 impl fmt::Debug for Engine {

@@ -19,6 +19,7 @@ mod crypto;
 mod diagnostics;
 mod exit;
 mod maintenance;
+mod netmap;
 pub mod pipeline;
 mod probe;
 mod recovery;
@@ -26,15 +27,19 @@ mod replay;
 mod session;
 
 use crate::{
-    AuthenticatedPeer, Direction, Engine, Hop, Ingress, Packet, PacketBuffer, PendingAction,
-    PendingRoute,
+    Direction, Engine, Hop, Packet, PacketBuffer, PendingAction, PendingRoute,
+    authority::{Cap, Lifetime, View},
+    flow::{Entry, FlowGrant},
 };
 use codec::{Context, Frame, Kind};
-use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot, Reading};
+use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot};
 pub use meshway_configuration::execution::CircuitAuthorization;
-use meshway_model::{NodeId, RequestId};
+use meshway_configuration::execution::LogicalPath;
+use meshway_model::{NodeId, ObservationId, RequestId};
 pub use meshway_policy::admission::Carrier;
-use meshway_policy::admission::{admit_circuit_carrier, admit_circuit_handshake, circuit_permit};
+use meshway_policy::admission::circuit_permit;
+pub use meshway_policy::compile::netmap::Target;
+pub use netmap::{AdjacencyInterest, Flushed, Outbound, Update, diagnostic_paths};
 use replay::{ReplayWindow, SendNonce};
 use sha2::{Digest as _, Sha256};
 use std::{
@@ -91,6 +96,69 @@ pub enum Error {
     Flow,
 }
 
+/// Allowed difference between an origin's INIT time and a receiver's clock.
+const INIT_SKEW: Duration = Duration::from_secs(2);
+
+/// The stable grant a circuit is admitted under; never installed content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CircuitGrant {
+    /// (origin = `path[0]`, target, purpose) on the installed netmap.
+    Netmap {
+        purpose: crate::Purpose,
+        target: Target,
+    },
+    /// Legacy per-demand or per-observation grant; removed with the daemon switch.
+    Legacy(CircuitAuthorization),
+}
+
+impl CircuitGrant {
+    fn diagnostic(&self) -> bool {
+        matches!(
+            self,
+            Self::Legacy(CircuitAuthorization::Diagnostic(_))
+                | Self::Netmap {
+                    purpose: crate::Purpose::Diagnostic,
+                    ..
+                }
+        )
+    }
+
+    /// The legacy field value: the grant itself, or a fixed placeholder for
+    /// netmap circuits (meaningless there; read `grant`).
+    pub fn legacy(&self) -> CircuitAuthorization {
+        match self {
+            Self::Legacy(authorization) => *authorization,
+            Self::Netmap {
+                purpose: crate::Purpose::Business,
+                ..
+            } => CircuitAuthorization::Business(crate::netmap_demand()),
+            Self::Netmap { .. } => CircuitAuthorization::Diagnostic(netmap_observation()),
+        }
+    }
+
+    fn flow(&self) -> Option<FlowGrant> {
+        match self {
+            Self::Legacy(CircuitAuthorization::Business(demand)) => {
+                Some(FlowGrant::Legacy(*demand))
+            }
+            Self::Netmap {
+                purpose: crate::Purpose::Business,
+                target,
+            } => Some(FlowGrant::Netmap(target.clone())),
+            _ => None,
+        }
+    }
+}
+
+fn netmap_observation() -> ObservationId {
+    static ID: std::sync::OnceLock<ObservationId> = std::sync::OnceLock::new();
+    *ID.get_or_init(|| {
+        "00000000-0000-4000-8000-00000000ffed"
+            .parse()
+            .expect("valid placeholder")
+    })
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub max_circuits: usize,
@@ -110,53 +178,30 @@ impl Default for Limits {
 #[derive(Clone)]
 pub(crate) struct Guard {
     snapshot: ExecutionSnapshot,
-    pub(crate) expires_at: Instant,
-    pub(crate) expires_at_ms: u64,
-    cancellation: CancellationToken,
-    flow_cancellation: Option<CancellationToken>,
+    pub(crate) life: Lifetime,
     projection: Option<Arc<crate::exit::Gate>>,
     /// Minted only by this SecureNode for outputs sharing an exact snapshot.
     /// It permits one fresh reading per batch, never across an await or syscall.
     pub(crate) section: Option<Arc<()>>,
 }
 impl Guard {
-    pub(crate) fn successor_projection(
-        &self,
-        snapshot: ExecutionSnapshot,
-        expires_at: Instant,
-        expires_at_ms: u64,
-    ) -> Self {
+    pub(crate) fn for_projection(&self, cap: Cap, cancellation: CancellationToken) -> Self {
         let mut guard = self.clone();
-        guard.snapshot = snapshot;
-        guard.expires_at = expires_at;
-        guard.expires_at_ms = expires_at_ms;
-        guard.projection = None;
-        guard.section = None;
-        guard
-    }
-    pub(crate) fn for_projection(
-        &self,
-        expires_at: Instant,
-        expires_at_ms: u64,
-        cancellation: CancellationToken,
-    ) -> Self {
-        let mut guard = self.clone();
-        guard.expires_at = guard.expires_at.min(expires_at);
-        guard.expires_at_ms = guard.expires_at_ms.min(expires_at_ms);
-        guard.flow_cancellation = Some(cancellation);
+        guard.life.restrict(Some(cap));
+        guard.life.flow = Some(cancellation);
         guard.projection = None;
         guard
     }
     pub(crate) fn from_route(route: &PendingRoute) -> Self {
         Self {
             snapshot: route.snapshot.clone(),
-            expires_at: route.expires_at,
-            expires_at_ms: route.permit_expires_at_ms,
-            cancellation: route.cancellation.clone().unwrap_or_default(),
+            life: route.life.clone(),
             section: route.section.clone(),
-            flow_cancellation: route.flow_cancellation.clone(),
             projection: route.projection.clone(),
         }
+    }
+    pub(crate) fn expiry(&self) -> Cap {
+        self.life.expiry(&self.snapshot)
     }
 
     pub(crate) fn check_batch(guards: &[Self]) -> Result<(), Error> {
@@ -169,7 +214,7 @@ impl Guard {
                     .is_some_and(|other| Arc::ptr_eq(section, other))
             })
         {
-            let reading = first.snapshot.reading().map_err(|_| Error::Authority)?;
+            let reading = View::of(&first.snapshot).map_err(|_| Error::Authority)?;
             for guard in guards {
                 guard.check_at(&reading)?;
                 if let Some(gate) = &guard.projection {
@@ -178,7 +223,7 @@ impl Guard {
             }
             return Ok(());
         }
-        let mut readings: Vec<(usize, Reading<'_>)> = Vec::new();
+        let mut readings: Vec<(usize, View<'_>)> = Vec::new();
         for (index, guard) in guards.iter().enumerate() {
             if let Some(gate) = &guard.projection {
                 gate.ready().map_err(|_| Error::Expired)?;
@@ -193,7 +238,7 @@ impl Guard {
             if let Some((_, reading)) = shared {
                 guard.check_at(reading)?;
             } else {
-                let reading = guard.snapshot.reading().map_err(|_| Error::Authority)?;
+                let reading = View::of(&guard.snapshot).map_err(|_| Error::Authority)?;
                 guard.check_at(&reading)?;
                 readings.push((index, reading));
             }
@@ -205,15 +250,8 @@ impl Guard {
     }
     // Only for a synchronous section using this owner's entry/final reading.
     // Original queued/recovery scopes must use their own dynamic guard instead.
-    pub(crate) fn check_at(&self, reading: &Reading<'_>) -> Result<(), Error> {
-        if self
-            .flow_cancellation
-            .as_ref()
-            .is_some_and(|token| token.is_cancelled())
-            || self.cancellation.is_cancelled()
-            || reading.instant >= self.expires_at
-            || reading.now_ms >= self.expires_at_ms
-        {
+    pub(crate) fn check_at(&self, reading: &View<'_>) -> Result<(), Error> {
+        if !self.life.live_at(reading.instant, reading.now_ms) {
             return Err(Error::Expired);
         }
         Ok(())
@@ -222,7 +260,7 @@ impl Guard {
     // A complete fresh snapshot check immediately before a synchronous commit
     // or output. This never replaces the original release/poll guard below.
     fn finish(&self) -> Result<(), Error> {
-        let current = self.snapshot.reading().map_err(|_| Error::Authority)?;
+        let current = View::of(&self.snapshot).map_err(|_| Error::Authority)?;
         self.check_at(&current)
     }
 
@@ -231,10 +269,10 @@ impl Guard {
     }
 
     pub(crate) fn ensure_before(&self, deadline_ms: u64) -> Result<(), Error> {
-        if self.cancellation.is_cancelled() {
+        if self.life.cancellation.is_cancelled() {
             return Err(Error::Expired);
         }
-        let reading = self.snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(&self.snapshot).map_err(|_| Error::Authority)?;
         self.check_at(&reading)?;
         if reading.now_ms >= deadline_ms {
             return Err(Error::Expired);
@@ -248,24 +286,14 @@ impl Guard {
         if self.ensure_current().is_err() {
             return;
         }
-        tokio::select! { biased;
-            _ = self.cancellation.cancelled() => {},
-            _ = async {
-                match &self.flow_cancellation {
-                    Some(token) => token.cancelled().await,
-                    None => std::future::pending().await,
-                }
-            } => {},
-            _ = self.snapshot.invalidated_at(self.expires_at_ms) => {},
-            _ = tokio::time::sleep_until(self.expires_at.into()) => {},
-        }
+        self.life.ended(&self.snapshot).await;
     }
     pub(crate) fn expires_at(&self) -> Instant {
-        self.expires_at
+        self.expiry().at
     }
     /// An I/O-local child: cancelling one write must not close its circuit.
     pub(crate) fn cancellation(&self) -> CancellationToken {
-        self.cancellation.child_token()
+        self.life.cancellation.child_token()
     }
 }
 
@@ -359,7 +387,9 @@ pub enum Received {
 /// selected owner must still call `receive` with the actual incoming carrier.
 #[derive(Clone, Debug)]
 pub struct UntrustedIncomingHint {
+    /// Legacy view of `grant`; see [`CircuitGrant::legacy`].
     pub authorization: CircuitAuthorization,
+    pub grant: CircuitGrant,
     pub path: Vec<NodeId>,
 }
 
@@ -381,7 +411,9 @@ pub enum CircuitState {
 #[derive(Clone, Debug)]
 pub struct CircuitInfo {
     pub id: [u8; 32],
+    /// Legacy view of `grant`; see [`CircuitGrant::legacy`].
     pub authorization: CircuitAuthorization,
+    pub grant: CircuitGrant,
     pub path: Vec<NodeId>,
     pub role: CircuitRole,
     pub state: CircuitState,
@@ -405,11 +437,13 @@ impl State {
 struct Circuit {
     context: Arc<Context>,
     state: State,
-    expires_at: Instant,
-    expires_at_ms: u64,
-    handshake_at: Instant,
-    handshake_at_ms: u64,
+    /// Own bound: the legacy permit and execution expiry. Netmap circuits
+    /// have none; their lease is checked at every use and renews in place.
+    cap: Option<Cap>,
+    handshake: Cap,
     permit_expires_at_ms: u64,
+    /// Netmap: the exact path this owner admitted, with its dial candidates.
+    selected: Option<Arc<LogicalPath>>,
     send: [SendNonce; 2],
     receive: [ReplayWindow; 2],
     cancellation: CancellationToken,
@@ -420,7 +454,7 @@ impl Drop for Circuit {
     fn drop(&mut self) {
         if !matches!(self.state, State::Closed) && diagnostics::event() {
             tracing::debug!(operation = "drop", cid = ?self.context.circuit,
-                authorization = ?self.context.authorization, established = self.state.established(),
+                grant = ?self.context.grant, established = self.state.established(),
                 "Dataplane circuit dropped");
         }
         self.cancellation.cancel();
@@ -430,31 +464,42 @@ impl Circuit {
     fn new(
         context: Arc<Context>,
         state: State,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
         timeout: Duration,
         cancellation: CancellationToken,
+        selected: Option<Arc<LogicalPath>>,
     ) -> Result<Self, Error> {
-        let cfg = reading.configuration;
-        let permit = circuit_permit(cfg, context.authorization).map_err(|_| Error::Context)?;
-        let now_ms = reading.now_ms;
-        let permit_at = reading
-            .instant
-            .checked_add(Duration::from_millis(
-                permit.expires_at_ms.saturating_sub(now_ms),
-            ))
-            .ok_or(Error::Limits)?;
-        let handshake_at = reading.instant.checked_add(timeout).ok_or(Error::Limits)?;
-        let handshake_at_ms = now_ms
-            .checked_add(u64::try_from(timeout.as_millis()).map_err(|_| Error::Limits)?)
-            .ok_or(Error::Limits)?;
+        let (cap, permit_expires_at_ms) = match reading.legacy() {
+            Some(cfg) => {
+                let CircuitGrant::Legacy(authorization) = context.grant else {
+                    return Err(Error::Context);
+                };
+                let permit = circuit_permit(cfg, authorization).map_err(|_| Error::Context)?;
+                let permit = Cap::until_ms(reading.instant, reading.now_ms, permit.expires_at_ms)
+                    .ok_or(Error::Limits)?;
+                let execution = Cap {
+                    at: reading.expires_at,
+                    ms: reading.expires_at_ms,
+                };
+                (Some(permit.min(execution)), permit.ms)
+            }
+            None => (None, u64::MAX),
+        };
+        let mut handshake =
+            Cap::after(reading.instant, reading.now_ms, timeout).ok_or(Error::Limits)?;
+        // The INIT window also bounds a responder's handshake state.
+        let window = context.initiated_at_ms.saturating_add(
+            u64::try_from((timeout + INIT_SKEW).as_millis()).map_err(|_| Error::Limits)?,
+        );
+        handshake = handshake
+            .min(Cap::until_ms(reading.instant, reading.now_ms, window).ok_or(Error::Limits)?);
         Ok(Self {
             context,
             state,
-            expires_at: reading.expires_at.min(permit_at),
-            expires_at_ms: reading.expires_at_ms.min(permit.expires_at_ms),
-            handshake_at,
-            handshake_at_ms,
-            permit_expires_at_ms: permit.expires_at_ms,
+            cap,
+            handshake,
+            permit_expires_at_ms,
+            selected,
             send: Default::default(),
             receive: Default::default(),
             cancellation,
@@ -463,46 +508,44 @@ impl Circuit {
         })
     }
     fn guard(&self, snapshot: &ExecutionSnapshot, handshake: bool) -> Guard {
+        let mut life = Lifetime::new(self.cap, self.cancellation.clone());
+        if handshake {
+            life.restrict(Some(self.handshake));
+        }
         Guard {
             snapshot: snapshot.clone(),
             section: None,
-            cancellation: self.cancellation.clone(),
-            flow_cancellation: None,
+            life,
             projection: None,
-            expires_at: if handshake {
-                self.expires_at.min(self.handshake_at)
-            } else {
-                self.expires_at
-            },
-            expires_at_ms: if handshake {
-                self.expires_at_ms.min(self.handshake_at_ms)
-            } else {
-                self.expires_at_ms
-            },
         }
     }
     fn ensure_current(&self, snapshot: &ExecutionSnapshot) -> Result<(), Error> {
-        let current = snapshot.reading().map_err(|_| Error::Authority)?;
+        let current = View::of(snapshot).map_err(|_| Error::Authority)?;
         self.check_at(&current)
     }
 
-    fn check_at(&self, reading: &Reading<'_>) -> Result<(), Error> {
+    fn check_at(&self, reading: &View<'_>) -> Result<(), Error> {
         if matches!(self.state, State::Closed) {
             return Err(Error::State);
         }
+        let now = (reading.instant, reading.now_ms);
         if self.cancellation.is_cancelled()
-            || reading.instant >= self.expires_at
-            || reading.now_ms >= self.expires_at_ms
-            || (!self.state.established()
-                && (reading.instant >= self.handshake_at || reading.now_ms >= self.handshake_at_ms))
+            || self.cap.is_some_and(|cap| !cap.live_at(now.0, now.1))
+            || (!self.state.established() && !self.handshake.live_at(now.0, now.1))
         {
             return Err(Error::Expired);
         }
         Ok(())
     }
 
+    /// Bound of this circuit for scheduling, before the snapshot's own end.
+    fn next_deadline(&self) -> Option<Cap> {
+        let handshake = (!self.state.established()).then_some(self.handshake);
+        crate::authority::restrict(self.cap, handshake)
+    }
+
     /// Lost snapshot authority stops this operation, but is not a cryptographic
-    /// close. Only Control's checked successor can make retained state usable.
+    /// close. Only a Control-checked update can make retained state usable.
     /// Terminal state, cancellation and observed circuit expiry remain terminal.
     fn validate_operation(
         &mut self,
@@ -544,11 +587,10 @@ impl Circuit {
     fn retire_for(&mut self, operation: &'static str, cause: &'static str) {
         if !matches!(self.state, State::Closed) && diagnostics::event() {
             tracing::debug!(operation, cause, cid = ?self.context.circuit,
-                authorization = ?self.context.authorization, established = self.state.established(),
+                grant = ?self.context.grant, established = self.state.established(),
                 cancelled = self.cancellation.is_cancelled(),
-                expires_at_ms = self.expires_at_ms,
-                remaining_ms = self.expires_at.saturating_duration_since(Instant::now()).as_millis() as u64,
-                handshake_expires_at_ms = self.handshake_at_ms,
+                expires_at_ms = self.cap.map(|cap| cap.ms),
+                handshake_expires_at_ms = self.handshake.ms,
                 permit_expires_at_ms = self.permit_expires_at_ms,
                 "Dataplane circuit retired");
         }
@@ -565,7 +607,7 @@ impl Circuit {
                 _ => None,
             };
             tracing::debug!(operation, cause = diagnostics::engine_error(&error), ?admission,
-                cid = ?self.context.circuit, authorization = ?self.context.authorization,
+                cid = ?self.context.circuit, grant = ?self.context.grant,
                 "Dataplane engine admission rejected");
         }
         Error::Packet
@@ -603,9 +645,9 @@ impl Circuit {
 }
 
 /// One execution identity, one shared flow table, and a bounded circuit table.
-/// Failed/closed circuits retain bounded tombstones for this owner's lifetime.
-/// These count towards capacity; future permit extensions cannot make an old
-/// handshake new again. Replacing the owner establishes a new replay domain.
+/// Closed circuits leave only a compact dead-CID record until their INIT
+/// window has passed; any later replay of that INIT is rejected as stale.
+/// Dead records do not count towards `max_circuits`.
 pub struct SecureNode {
     identity: DataPlaneIdentity,
     engine: Engine,
@@ -614,10 +656,13 @@ pub struct SecureNode {
     // Stable allocation for the owner state: remove/restore coordinates borrows
     // without moving replay windows, recovery state and session metadata per packet.
     circuits: BTreeMap<[u8; 32], Box<Circuit>>,
+    /// Closed CID → UTC milliseconds until which its INIT is still acceptable.
+    dead: BTreeMap<[u8; 32], u64>,
     probes: probe::Probes,
     maintenance: maintenance::Maintenance,
     cancellation: CancellationToken,
     output_epoch: Arc<()>,
+    first: netmap::FirstPackets,
 }
 
 #[derive(Clone, Copy)]
@@ -635,6 +680,7 @@ impl fmt::Debug for SecureNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SecureNode")
             .field("retained_circuits", &self.circuits.len())
+            .field("dead_circuits", &self.dead.len())
             .finish_non_exhaustive()
     }
 }
@@ -648,42 +694,43 @@ impl SecureNode {
         let snapshot = self.identity.snapshot();
         let session = codec::session_id(bytes)?;
         let context = if let Some(id) = session {
-            let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+            let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
             let circuit = self.circuits.get(&id).ok_or(Error::State)?;
             circuit.check_at(&reading)?;
-            &circuit.context
+            circuit.context.clone()
         } else {
             // A full handshake hint is only an untrusted bounded decode, even
             // when this owner's grant has ended. receive still requires entry
             // authority before authenticating or accepting anything from it.
-            &Frame::decode(bytes, None)?.context
+            Frame::decode(bytes, None)?.context
         };
         if session.is_some() {
             snapshot.ensure_current().map_err(|_| Error::Authority)?;
         }
         Ok(UntrustedIncomingHint {
-            authorization: context.authorization,
+            authorization: context.grant.legacy(),
+            grant: context.grant.clone(),
             path: context.path.clone(),
         })
     }
 
     /// Replace host-observed authenticated carrier availability without changing
     /// circuit IDs, replay windows, flows or their complete logical paths.
-    /// Every later output still checks this carrier against its specific permit.
+    /// Every carrier must be an admitted adjacency of the current target; every
+    /// later output still checks it against its circuit's exact path.
     pub fn set_carriers(&mut self, carriers: BTreeMap<NodeId, Carrier>) -> Result<(), Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("secure.set_carriers");
         let _profile = PROFILE.enter();
-        let snapshot = self.identity.snapshot();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
-        let cfg = reading.configuration;
-        let now = reading.now_ms;
+        let snapshot = self.identity.snapshot().clone();
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         for (peer, carrier) in &carriers {
             if carrier.listener_key.is_empty() || carrier.listener_key.len() > 255 {
                 return Err(Error::Unsupported);
             }
-            meshway_policy::admission::admit_adjacency(cfg, *peer, carrier, now)
-                .map_err(|_| Error::Policy)?;
+            if !authorization::adjacency(&mut self.engine.decisions, &reading, *peer, carrier) {
+                return Err(Error::Policy);
+            }
         }
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
         self.carriers = carriers;
@@ -695,10 +742,7 @@ impl SecureNode {
         limits: Limits,
         carriers: BTreeMap<NodeId, Carrier>,
     ) -> Result<Self, Error> {
-        identity
-            .snapshot()
-            .reading()
-            .map_err(|_| Error::Authority)?;
+        View::of(identity.snapshot()).map_err(|_| Error::Authority)?;
         if limits.max_circuits == 0
             || limits.max_circuits > 65_536
             || limits.handshake_timeout < Duration::from_millis(1)
@@ -719,93 +763,109 @@ impl SecureNode {
                     _ => Error::Authority,
                 }
             })?;
-        Ok(Self {
+        let mut node = Self {
             identity,
             engine,
             limits,
-            carriers,
+            carriers: BTreeMap::new(),
             circuits: BTreeMap::new(),
+            dead: BTreeMap::new(),
             probes: Default::default(),
             maintenance: Default::default(),
             cancellation: CancellationToken::new(),
             output_epoch: Arc::new(()),
-        })
+            first: Default::default(),
+        };
+        if node.identity.snapshot().is_netmap() {
+            node.set_carriers(carriers)?;
+        } else {
+            // Legacy construction accepted carriers before any permit used them.
+            node.carriers = carriers;
+        }
+        Ok(node)
     }
 
+    /// Legacy: open a business circuit of a demand on its next-hop carrier.
     pub fn start(&mut self, demand: RequestId, path: Vec<NodeId>) -> Result<PendingFrame, Error> {
-        let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
         let carrier = self
             .carriers
             .get(path.get(1).ok_or(Error::Context)?)
             .ok_or(Error::Unsupported)?
             .clone();
-        self.start_authorized_at(
-            CircuitAuthorization::Business(demand),
+        self.start_grant(
+            CircuitGrant::Legacy(CircuitAuthorization::Business(demand)),
             path,
             &carrier,
-            &reading,
         )
     }
 
+    /// Legacy: open a circuit of an exact business or diagnostic grant.
     pub fn start_authorized(
         &mut self,
         authorization: CircuitAuthorization,
         path: Vec<NodeId>,
         carrier: &Carrier,
     ) -> Result<PendingFrame, Error> {
-        let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
-        self.start_authorized_at(authorization, path, carrier, &reading)
+        self.start_grant(CircuitGrant::Legacy(authorization), path, carrier)
     }
 
-    fn start_authorized_at(
+    /// Open a circuit of a grant on the installed target. A netmap grant
+    /// names (purpose, target); `path` must be one of the pair's paths.
+    pub fn start_grant(
         &mut self,
-        authorization: CircuitAuthorization,
+        grant: CircuitGrant,
         path: Vec<NodeId>,
         carrier: &Carrier,
-        reading: &Reading<'_>,
+    ) -> Result<PendingFrame, Error> {
+        let snapshot = self.identity.snapshot().clone();
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        self.start_at(grant, path, carrier, &reading)
+    }
+
+    fn start_at(
+        &mut self,
+        grant: CircuitGrant,
+        path: Vec<NodeId>,
+        carrier: &Carrier,
+        reading: &View<'_>,
     ) -> Result<PendingFrame, Error> {
         self.maintain_circuits(reading, false)?;
         self.engine
             .maintain_at(reading)
             .map_err(|_| Error::Authority)?;
         self.capacity()?;
-        let snapshot = self.identity.snapshot();
-        let cfg = reading.configuration;
-        if path.first() != Some(&cfg.node_id) {
+        let snapshot = self.identity.snapshot().clone();
+        if path.first() != Some(&reading.node()) {
             return Err(Error::Context);
         }
-        authorization::source_instance(snapshot, cfg, authorization)?;
         if self.carriers.get(path.get(1).ok_or(Error::Context)?) != Some(carrier) {
             return Err(Error::Context);
         }
-        let hop = admit_circuit_handshake(
-            cfg,
-            authorization,
+        let admitted = authorization::admit(
+            &mut self.engine.decisions,
+            &snapshot,
+            reading,
+            &grant,
             &path,
-            cfg.node_id,
             None,
             false,
-            reading.now_ms,
-        )
-        .map_err(|_| Error::Policy)?;
+        )?;
         let mut seed = Zeroizing::new([0u8; 32]);
         getrandom::fill(&mut seed[..]).map_err(|_| Error::Crypto)?;
         let circuit_id = *seed;
-        if self.circuits.contains_key(&circuit_id) {
+        if self.circuits.contains_key(&circuit_id) || self.dead.contains_key(&circuit_id) {
             return Err(Error::State);
         }
-        let permit = authorization::digest(cfg, authorization)?;
         let context = Arc::new(Context {
-            network: cfg.network_id,
-            authorization,
-            keys: crypto::key_digest(cfg, &path)?,
+            network: reading.network(),
+            grant,
+            keys: crypto::key_digest(reading, &path)?,
             path,
             circuit: circuit_id,
-            permit,
+            authorization: admitted.authorization,
+            initiated_at_ms: reading.now_ms,
         });
-        let mut noise = crypto::build(&self.identity, cfg, &context, true)?;
+        let mut noise = crypto::build(&self.identity, reading, &context, true)?;
         let body = crypto::write_handshake(&mut noise, 96)?;
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
         let mut circuit = Circuit::new(
@@ -814,6 +874,7 @@ impl SecureNode {
             reading,
             self.limits.handshake_timeout,
             self.cancellation.child_token(),
+            admitted.selected,
         )?;
         let frame = Frame {
             context,
@@ -827,7 +888,7 @@ impl SecureNode {
             auth: Default::default(),
         };
         circuit.session.remember_init(&frame)?;
-        let pending = self.output(&circuit, frame, hop, None, reading)?;
+        let pending = self.output(&circuit, frame, admitted.hop, None, reading)?;
         circuit.recovery.init = Some(recovery::Stage::new(
             Sha256::digest(&pending.bytes).into(),
             pending.guard.clone(),
@@ -844,7 +905,7 @@ impl SecureNode {
     /// the host must still respect the circuit's original handshake deadline.
     pub fn handshake_retry_at(&self, id: [u8; 32]) -> Result<Option<Instant>, Error> {
         let snapshot = self.identity.snapshot();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
         let circuit = self.circuits.get(&id).ok_or(Error::State)?;
         circuit.check_at(&reading)?;
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
@@ -862,7 +923,7 @@ impl SecureNode {
     /// bypasses pacing/budget; old outputs remain invalid after scope handoff.
     pub fn retry_handshake(&mut self, id: [u8; 32]) -> Result<Option<PendingFrame>, Error> {
         let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         self.maintain_circuits(&reading, false)?;
         let mut circuit = self.circuits.remove(&id).ok_or(Error::State)?;
         let result = (|| {
@@ -875,13 +936,40 @@ impl SecureNode {
             };
             let output = stage.retry()?;
             if let Some(output) = &output {
-                self.check_retry_carrier(output, &circuit.context, &reading)?;
+                Self::check_retry_carrier(
+                    &self.carriers,
+                    output,
+                    &circuit.context,
+                    circuit.selected.as_deref(),
+                    &reading,
+                )?;
             }
             Ok(output)
         })();
         let result = circuit.finish_operation(self.identity.snapshot(), "retry_handshake", result);
-        self.circuits.insert(id, circuit);
+        self.restore(id, circuit, &reading);
         result
+    }
+
+    /// Return an operated circuit to the live table, or keep only its compact
+    /// dead-CID record once closed.
+    fn restore(&mut self, id: [u8; 32], circuit: Box<Circuit>, reading: &View<'_>) {
+        if matches!(circuit.state, State::Closed) {
+            self.bury(id, &circuit, reading.now_ms);
+        } else {
+            self.circuits.insert(id, circuit);
+        }
+    }
+
+    fn bury(&mut self, id: [u8; 32], circuit: &Circuit, now_ms: u64) {
+        let until = circuit.context.initiated_at_ms.saturating_add(
+            u64::try_from((self.limits.handshake_timeout + 2 * INIT_SKEW).as_millis())
+                .unwrap_or(u64::MAX),
+        );
+        if until > now_ms {
+            self.dead.insert(id, until);
+        }
+        self.maintenance.changed();
     }
 
     pub fn receive(
@@ -905,7 +993,7 @@ impl SecureNode {
             meshway_logging::profile::Metric::new("secure.receive");
         let _profile = PROFILE.enter();
         let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         self.maintain_circuits(&reading, false)?;
         let id = codec::session_id(bytes.as_ref())?;
         let retained = id
@@ -913,14 +1001,15 @@ impl SecureNode {
             .and_then(|id| self.circuits.get(id))
             .map(|circuit| &circuit.context);
         let frame = Frame::decode_owned(bytes.into(), retained)?;
-        let cfg = reading.configuration;
-        let previous = if frame.kind.handshake() {
-            crypto::verify(cfg, &frame, incoming)
+        let id = frame.context.circuit;
+        if self.dead.contains_key(&id) {
+            return Err(Error::Replay);
+        }
+        let verified = if frame.kind.handshake() {
+            self.verify_handshake(&frame, incoming, &reading)
+                .map(|(previous, admitted)| (previous, Some(admitted)))
         } else {
-            let circuit = self
-                .circuits
-                .get_mut(&frame.context.circuit)
-                .ok_or(Error::State)?;
+            let circuit = self.circuits.get_mut(&id).ok_or(Error::State)?;
             if let Err(error) = circuit.check_at(&reading) {
                 circuit.retire_for("receive", "deadline_or_cancel");
                 return Err(error);
@@ -929,16 +1018,27 @@ impl SecureNode {
                 return Err(Error::Context);
             }
             circuit.receive[usize::from(frame.reply)].check(frame.sequence)?;
-            circuit.session.verify(cfg, &frame, incoming)
+            let selected =
+                authorization::selected(&reading, &circuit.context, circuit.selected.as_deref())?;
+            let previous = circuit.session.verify(selected, &frame, incoming)?;
+            authorization::incoming(
+                &mut self.engine.decisions,
+                &reading,
+                &circuit.context,
+                selected,
+                previous,
+                incoming,
+            )
+            .map(|()| (previous, None))
         }
         .inspect_err(|error| {
             if diagnostics::event() {
                 tracing::debug!(operation = "verify", ?error,
-                    cid = ?frame.context.circuit, authorization = ?frame.context.authorization,
+                    cid = ?frame.context.circuit, grant = ?frame.context.grant,
                     metadata_authenticated = false, "Dataplane secure admission rejected");
             }
         })?;
-        let id = frame.context.circuit;
+        let (previous, admitted) = verified;
         if let Some(mut circuit) = self.circuits.remove(&id) {
             // Always restore retained state on rejection. A consumed nonce or
             // handshake must never roll back as a side effect of an output error.
@@ -948,47 +1048,114 @@ impl SecureNode {
                 && diagnostics::event()
             {
                 tracing::debug!(operation = "receive", ?error, cid = ?id,
-                    authorization = ?circuit.context.authorization,
-                    publication = %self.identity.snapshot().reference().execution_publication,
-                    "Dataplane secure admission rejected");
+                    grant = ?circuit.context.grant, "Dataplane secure admission rejected");
             }
-            self.circuits.insert(id, circuit);
+            self.restore(id, circuit, &reading);
             result
         } else {
             if frame.kind != Kind::Init {
                 if diagnostics::event() {
                     tracing::debug!(operation = "receive", cause = "unknown_circuit", error = ?Error::State,
-                        cid = ?id, authorization = ?frame.context.authorization,
+                        cid = ?id, grant = ?frame.context.grant,
                         "Dataplane secure admission rejected");
                 }
                 return Err(Error::State);
             }
-            self.receive_init(frame, previous, &reading)
+            self.receive_init(frame, previous, admitted.ok_or(Error::State)?, &reading)
         }
+    }
+
+    /// Authenticate a handshake frame's proof chain on the path this owner
+    /// admits for its grant, and the incoming carrier.
+    fn verify_handshake(
+        &mut self,
+        frame: &Frame,
+        incoming: &Carrier,
+        reading: &View<'_>,
+    ) -> Result<(NodeId, authorization::Admitted), Error> {
+        let snapshot = self.identity.snapshot().clone();
+        // Path admission precedes signature work; the arrival direction is
+        // checked after the chain names the authenticated previous hop.
+        let selected = match &frame.context.grant {
+            CircuitGrant::Legacy(_) => None,
+            CircuitGrant::Netmap { target, .. } => {
+                let netmap = reading.netmap().ok_or(Error::Context)?;
+                let origin = frame.context.path[0];
+                let paths = self
+                    .engine
+                    .decisions
+                    .transit(netmap, origin, target)
+                    .map_err(|_| Error::Policy)?;
+                Some(Arc::new(
+                    paths
+                        .iter()
+                        .find(|path| path.nodes == frame.context.path)
+                        .ok_or(Error::Policy)?
+                        .clone(),
+                ))
+            }
+        };
+        let path = authorization::selected(reading, &frame.context, selected.as_deref())?;
+        let previous = crypto::verify(reading, frame, incoming, path)?;
+        authorization::incoming(
+            &mut self.engine.decisions,
+            reading,
+            &frame.context,
+            path,
+            previous,
+            incoming,
+        )?;
+        let admitted = authorization::admit(
+            &mut self.engine.decisions,
+            &snapshot,
+            reading,
+            &frame.context.grant,
+            &frame.context.path,
+            Some(previous),
+            frame.reply,
+        )?;
+        Ok((previous, admitted))
     }
 
     fn receive_init(
         &mut self,
         frame: Frame,
-        previous: NodeId,
-        reading: &Reading<'_>,
+        _previous: NodeId,
+        admitted: authorization::Admitted,
+        reading: &View<'_>,
     ) -> Result<Received, Error> {
         self.capacity()?;
-        let snapshot = self.identity.snapshot();
-        let cfg = reading.configuration;
-        let permit = authorization::digest(cfg, frame.context.authorization)?;
-        if permit != frame.context.permit
-            || crypto::key_digest(cfg, &frame.context.path)? != frame.context.keys
+        let snapshot = self.identity.snapshot().clone();
+        let window = u64::try_from((self.limits.handshake_timeout + INIT_SKEW).as_millis())
+            .map_err(|_| Error::Limits)?;
+        let skew = u64::try_from(INIT_SKEW.as_millis()).map_err(|_| Error::Limits)?;
+        if frame.context.initiated_at_ms.saturating_add(window) <= reading.now_ms
+            || frame.context.initiated_at_ms > reading.now_ms.saturating_add(skew)
+        {
+            return Err(Error::Expired);
+        }
+        if admitted.authorization != frame.context.authorization
+            || crypto::key_digest(reading, &frame.context.path)? != frame.context.keys
         {
             return Err(Error::Context);
         }
-        let hop = self.handshake_hop(&frame, Some(previous), reading)?;
+        let hop = admitted.hop;
+        if let Hop::Forward(next) = hop
+            && !self.carriers.contains_key(&next)
+        {
+            // A relay without a carrier to the next hop consumes nothing: it
+            // asks for that adjacency, and the origin's paced retry of the
+            // same INIT is admitted afresh once it exists.
+            self.first.interest(next);
+            return Err(Error::Unsupported);
+        }
         let mut circuit = Circuit::new(
             frame.context.clone(),
             State::RelayAwaiting,
             reading,
             self.limits.handshake_timeout,
             self.cancellation.child_token(),
+            admitted.selected,
         )?;
         let id = circuit.context.circuit;
         let fingerprint = Sha256::digest(frame.encode()?).into();
@@ -999,9 +1166,13 @@ impl SecureNode {
                     Received::Forward(self.output(&circuit, frame, hop, None, reading)?)
                 }
                 Hop::Deliver | Hop::Exit => {
-                    let expected = crypto::keys(cfg, frame.context.path[0])?.1.public_key.bytes;
+                    let expected = crypto::keys(reading, frame.context.path[0])?
+                        .1
+                        .public_key
+                        .bytes;
                     let completed = (|| {
-                        let mut noise = crypto::build(&self.identity, cfg, &frame.context, false)?;
+                        let mut noise =
+                            crypto::build(&self.identity, reading, &frame.context, false)?;
                         crypto::read_handshake(&mut noise, &frame.body, 96, expected.as_bytes())?;
                         let body = crypto::write_handshake(&mut noise, 48)?;
                         let noise = crypto::Transport::finish(noise)?;
@@ -1030,8 +1201,8 @@ impl SecureNode {
                         exchange: Some(circuit.session.exchange()?),
                         auth: Default::default(),
                     };
-                    let keys = circuit.session.derive(&response, cfg.node_id)?;
-                    circuit.ensure_current(snapshot)?;
+                    let keys = circuit.session.derive(&response, reading.node())?;
+                    circuit.ensure_current(&snapshot)?;
                     circuit.session.establish(keys);
                     let hop = self.handshake_hop(&response, None, reading)?;
                     circuit.state = State::Endpoint(Arc::new(noise));
@@ -1052,10 +1223,10 @@ impl SecureNode {
             };
             circuit.recovery.init = Some(recovery::Stage::new(
                 fingerprint,
-                circuit.guard(snapshot, true),
+                circuit.guard(&snapshot, true),
                 Some(output),
             )?);
-            circuit.guard(snapshot, true).finish()?;
+            circuit.guard(&snapshot, true).finish()?;
             Ok(result)
         })();
         if result.is_err() {
@@ -1064,7 +1235,7 @@ impl SecureNode {
             // the same CID. Keep the responder failure tombstone.
             circuit.retire_for("handshake", "initial_output_failed");
         }
-        self.circuits.insert(id, Box::new(circuit));
+        self.restore(id, Box::new(circuit), reading);
         self.maintenance.changed();
         result
     }
@@ -1074,30 +1245,26 @@ impl SecureNode {
         circuit: &mut Circuit,
         frame: Frame,
         previous: NodeId,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<Received, Error> {
-        let snapshot = self.identity.snapshot();
+        let snapshot = self.identity.snapshot().clone();
         circuit.check_at(reading)?;
         if circuit.context != frame.context {
             return Err(Error::Context);
         }
         match frame.kind {
-            Kind::Init => {
-                self.handshake_hop(&frame, Some(previous), reading)?;
-                self.repeat_handshake(circuit, &frame, reading)
-            }
+            Kind::Init => self.repeat_handshake(circuit, &frame, reading),
             Kind::Response => {
                 let hop = self.handshake_hop(&frame, Some(previous), reading)?;
                 let fingerprint = Sha256::digest(frame.encode()?).into();
                 match &circuit.state {
                     State::RelayAwaiting => {
-                        let cfg = reading.configuration;
-                        let keys = circuit.session.derive(&frame, cfg.node_id)?;
+                        let keys = circuit.session.derive(&frame, reading.node())?;
                         let output = self.output(circuit, frame, hop, None, reading)?;
-                        circuit.guard(snapshot, true).finish()?;
+                        circuit.guard(&snapshot, true).finish()?;
                         circuit.recovery.response = Some(recovery::Stage::new(
                             fingerprint,
-                            circuit.guard(snapshot, true),
+                            circuit.guard(&snapshot, true),
                             Some(&output),
                         )?);
                         circuit.state = State::RelayEstablished;
@@ -1110,14 +1277,15 @@ impl SecureNode {
                         }
                         // Noise handshake reads mutate their state even when
                         // failing. Retire this circuit on any such failure.
-                        let cfg = reading.configuration;
-                        let keys = circuit.session.derive(&frame, cfg.node_id)?;
-                        let expected =
-                            crypto::keys(cfg, *circuit.context.path.last().ok_or(Error::Context)?)?
-                                .1
-                                .public_key
-                                .bytes;
-                        let guard = circuit.guard(snapshot, true);
+                        let keys = circuit.session.derive(&frame, reading.node())?;
+                        let expected = crypto::keys(
+                            reading,
+                            *circuit.context.path.last().ok_or(Error::Context)?,
+                        )?
+                        .1
+                        .public_key
+                        .bytes;
+                        let guard = circuit.guard(&snapshot, true);
                         guard.finish()?;
                         circuit.complete_handshake(|mut noise| {
                             crypto::read_handshake(
@@ -1160,7 +1328,7 @@ impl SecureNode {
         &self,
         circuit: &mut Circuit,
         frame: &Frame,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<Received, Error> {
         let stage = match frame.kind {
             Kind::Init => &mut circuit.recovery.init,
@@ -1174,7 +1342,13 @@ impl SecureNode {
         }
         stage.ensure_current()?;
         if let Some(output) = stage.output() {
-            self.check_retry_carrier(output, &circuit.context, reading)?;
+            Self::check_retry_carrier(
+                &self.carriers,
+                output,
+                &circuit.context,
+                circuit.selected.as_deref(),
+                reading,
+            )?;
             let output = stage.retry()?.ok_or(Error::Replay)?;
             if matches!(circuit.state, State::Endpoint(_)) {
                 Ok(Received::Established {
@@ -1193,23 +1367,18 @@ impl SecureNode {
     }
 
     fn check_retry_carrier(
-        &self,
+        carriers: &BTreeMap<NodeId, Carrier>,
         output: &PendingFrame,
         context: &Context,
-        reading: &Reading<'_>,
+        selected: Option<&LogicalPath>,
+        reading: &View<'_>,
     ) -> Result<(), Error> {
         output.ensure_current()?;
-        if self.carriers.get(&output.next) != Some(&output.carrier) {
+        if carriers.get(&output.next) != Some(&output.carrier) {
             return Err(Error::Context);
         }
-        admit_circuit_carrier(
-            reading.configuration,
-            context.authorization,
-            &context.path,
-            output.next,
-            &output.carrier,
-        )
-        .map_err(|_| Error::Policy)
+        let selected = authorization::selected(reading, context, selected).ok();
+        authorization::outgoing(reading, context, selected, output.next, &output.carrier)
     }
 
     pub fn send(&mut self, id: [u8; 32], packet: Packet) -> Result<PendingFrame, Error> {
@@ -1229,7 +1398,7 @@ impl SecureNode {
             meshway_logging::profile::Metric::new("secure.send");
         let _profile = PROFILE.enter();
         let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
         self.prepare_send_at(id, packet, &reading)
     }
 
@@ -1237,7 +1406,7 @@ impl SecureNode {
         &mut self,
         id: [u8; 32],
         packet: Packet,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<pipeline::SendJob, Error> {
         self.maintain_circuits(reading, false)?;
         let circuit = self.circuits.get_mut(&id).ok_or(Error::State)?;
@@ -1257,9 +1426,7 @@ impl SecureNode {
             && diagnostics::event()
         {
             tracing::debug!(operation = "send", ?error, cid = ?id,
-                authorization = ?circuit.context.authorization,
-                publication = %self.identity.snapshot().reference().execution_publication,
-                "Dataplane secure admission rejected");
+                grant = ?circuit.context.grant, "Dataplane secure admission rejected");
         }
         result
     }
@@ -1269,11 +1436,9 @@ impl SecureNode {
         engine: &mut Engine,
         circuit: &mut Circuit,
         packet: Packet,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<pipeline::SendJob, Error> {
-        let CircuitAuthorization::Business(demand) = circuit.context.authorization else {
-            return Err(Error::Policy);
-        };
+        let grant = circuit.context.grant.flow().ok_or(Error::Policy)?;
         circuit.check_at(reading)?;
         let State::Endpoint(noise) = &circuit.state else {
             return Err(Error::State);
@@ -1282,16 +1447,20 @@ impl SecureNode {
             return Err(Error::Unsupported);
         }
         let facts = packet.facts();
-        let local = reading.configuration.node_id;
+        let local = reading.node();
         let reply = local != circuit.context.path[0];
-        Self::check_outgoing_carrier(owner.carriers, &circuit.context, reply, reading)?;
-        let ingress = Ingress::Local {
-            demand,
-            path: circuit.context.path.clone(),
+        Self::check_outgoing_carrier(owner.carriers, circuit, reply, reading)?;
+        let path = &circuit.context.path;
+        let entry = Entry {
+            grant,
+            path,
+            origin: path[0],
+            previous: None,
+            sender: local,
         };
         let route = engine
             .admit_circuit_facts(
-                ingress,
+                &entry,
                 facts,
                 reading,
                 circuit.context.circuit,
@@ -1331,42 +1500,37 @@ impl SecureNode {
     }
 
     fn handshake_hop(
-        &self,
+        &mut self,
         frame: &Frame,
         previous: Option<NodeId>,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<Hop, Error> {
-        let snapshot = self.identity.snapshot();
-        authorization::source_instance(
-            snapshot,
-            reading.configuration,
-            frame.context.authorization,
-        )?;
-        admit_circuit_handshake(
-            reading.configuration,
-            frame.context.authorization,
+        let snapshot = self.identity.snapshot().clone();
+        authorization::admit(
+            &mut self.engine.decisions,
+            &snapshot,
+            reading,
+            &frame.context.grant,
             &frame.context.path,
-            frame.context.path[0],
             previous,
             frame.reply,
-            reading.now_ms,
         )
-        .map_err(|_| Error::Policy)
+        .map(|admitted| admitted.hop)
     }
 
     // Check scheduling failures before stateful flow admission. This derives
     // only adjacency; policy remains the sole carrier authorization owner.
     fn check_outgoing_carrier(
         carriers: &BTreeMap<NodeId, Carrier>,
-        context: &Context,
+        circuit: &Circuit,
         reply: bool,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<(), Error> {
-        let cfg = reading.configuration;
+        let context = &circuit.context;
         let position = context
             .path
             .iter()
-            .position(|node| *node == cfg.node_id)
+            .position(|node| *node == reading.node())
             .ok_or(Error::Context)?;
         let next = if reply {
             position.checked_sub(1).and_then(|i| context.path.get(i))
@@ -1375,8 +1539,9 @@ impl SecureNode {
         };
         if let Some(next) = next {
             let carrier = carriers.get(next).ok_or(Error::Unsupported)?;
-            admit_circuit_carrier(cfg, context.authorization, &context.path, *next, carrier)
-                .map_err(|_| Error::Policy)?;
+            let selected =
+                authorization::selected(reading, context, circuit.selected.as_deref()).ok();
+            authorization::outgoing(reading, context, selected, *next, carrier)?;
         }
         Ok(())
     }
@@ -1387,7 +1552,7 @@ impl SecureNode {
         mut frame: Frame,
         hop: Hop,
         route: Option<&PendingRoute>,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<PendingFrame, Error> {
         let (next, carrier, guard) = Self::output_scope(
             OutputOwner {
@@ -1404,7 +1569,7 @@ impl SecureNode {
         if frame.kind.handshake() {
             crypto::append(
                 &self.identity,
-                reading.configuration,
+                reading,
                 &mut frame,
                 carrier.clone(),
                 circuit.session.public(),
@@ -1429,31 +1594,28 @@ impl SecureNode {
         frame: &Frame,
         hop: Hop,
         route: Option<&PendingRoute>,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<(NodeId, Carrier, Guard), Error> {
         let Hop::Forward(next) = hop else {
             return Err(Error::State);
         };
         let snapshot = owner.identity.snapshot();
         let carrier = owner.carriers.get(&next).ok_or(Error::Unsupported)?.clone();
-        admit_circuit_carrier(
-            reading.configuration,
-            frame.context.authorization,
-            &frame.context.path,
-            next,
-            &carrier,
-        )
-        .map_err(|_| Error::Policy)?;
+        let selected =
+            authorization::selected(reading, &frame.context, circuit.selected.as_deref()).ok();
+        authorization::outgoing(reading, &frame.context, selected, next, &carrier)?;
         let mut guard = circuit.guard(snapshot, matches!(frame.kind, Kind::Init | Kind::Response));
         if let Some(probe) = frame.probe {
-            guard.expires_at_ms = guard.expires_at_ms.min(probe.expires_at_ms);
+            guard.life.restrict(Some(Cap {
+                at: guard.life.cap.map_or(reading.expires_at, |cap| cap.at),
+                ms: probe.expires_at_ms,
+            }));
         }
         if let Some(route) = route {
             route.check_at(reading).map_err(|_| Error::Authority)?;
             guard.snapshot = route.snapshot().clone();
-            guard.expires_at = guard.expires_at.min(route.expires_at());
-            guard.expires_at_ms = guard.expires_at_ms.min(route.permit_expires_at_ms());
-            guard.flow_cancellation = route.flow_cancellation.clone();
+            guard.life.restrict(route.life.cap);
+            guard.life.flow = route.life.flow.clone();
             guard.projection = route.projection.clone();
         }
         guard.check_at(reading)?;
@@ -1462,115 +1624,30 @@ impl SecureNode {
     }
 
     fn capacity(&self) -> Result<(), Error> {
-        if self.circuits.len() >= self.limits.max_circuits {
+        if self.circuits.len() >= self.limits.max_circuits
+            || self.dead.len() >= self.limits.max_circuits.saturating_mul(4)
+        {
             Err(Error::Capacity)
         } else {
             Ok(())
         }
     }
 
-    /// Carry live compatible circuits through an owner-authenticated direct
-    /// publication replacement. Noise state, nonce/replay windows and the one
-    /// flow table are retained. Old issued outputs never receive the new guard.
-    /// Expired/closed states remain closed, including when a permit is extended.
+    /// Legacy name of [`Self::update`].
     pub fn reconcile(&mut self, identity: DataPlaneIdentity) -> Result<(), Error> {
-        let snapshot = identity.snapshot();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
-        let old = snapshot
-            .continuation_from(self.identity.snapshot())
-            .map_err(|_| Error::Authority)?;
-        let new = reading.configuration;
-        let now_ms = reading.now_ms;
-        let now = reading.instant;
-        let flows = self
-            .engine
-            .reconciled_flows(snapshot, &reading)
-            .map_err(|_| Error::Authority)?;
-        let mut plan = Vec::with_capacity(self.circuits.len());
-        for (id, circuit) in &self.circuits {
-            let compatible = authorization::unchanged(
-                old,
-                new,
-                circuit.context.authorization,
-                &circuit.context.path,
-                now_ms,
-            )
-            .map_err(|_| Error::Context)?;
-            let live = compatible
-                && !matches!(circuit.state, State::Closed)
-                && !circuit.cancellation.is_cancelled()
-                && now < circuit.expires_at
-                && now_ms < circuit.expires_at_ms
-                && (circuit.state.established()
-                    || (now < circuit.handshake_at && now_ms < circuit.handshake_at_ms));
-            let expiry = circuit_permit(new, circuit.context.authorization)
-                .ok()
-                .map(|permit| permit.expires_at_ms);
-            let cause = if !compatible {
-                "authorization_changed"
-            } else if matches!(circuit.state, State::Closed) {
-                "already_closed"
-            } else if now >= circuit.expires_at {
-                "monotonic_deadline"
-            } else if now_ms >= circuit.expires_at_ms {
-                "utc_deadline"
-            } else if !live && circuit.cancellation.is_cancelled() {
-                "cancelled"
-            } else {
-                "handshake_deadline"
-            };
-            plan.push((*id, live, expiry, cause));
-        }
-        let current = snapshot.reading().map_err(|_| Error::Authority)?;
-        snapshot
-            .continuation_from(self.identity.snapshot())
-            .map_err(|_| Error::Authority)?;
-        for (id, live, expiry, cause) in plan {
-            let circuit = self.circuits.get_mut(&id).expect("planned circuit");
-            circuit.recovery.maintain();
-            if let Some(expiry) = expiry {
-                circuit.permit_expires_at_ms = circuit.permit_expires_at_ms.max(expiry);
-            }
-            if live
-                // A large reconciliation may cross an old circuit deadline
-                // while committing earlier entries. Never renew such a circuit.
-                // New deadline calculations still use only the entry Reading.
-                && Instant::now() < circuit.expires_at
-                && current.now_ms < circuit.expires_at_ms
-                && (circuit.state.established()
-                    || (Instant::now() < circuit.handshake_at
-                        && current.now_ms < circuit.handshake_at_ms))
-            {
-                let permit_at = reading
-                    .instant
-                    .checked_add(Duration::from_millis(
-                        expiry.expect("live permit").saturating_sub(reading.now_ms),
-                    ))
-                    .unwrap_or(reading.expires_at);
-                circuit.expires_at = reading.expires_at.min(permit_at);
-                circuit.expires_at_ms = reading.expires_at_ms.min(expiry.expect("live permit"));
-            } else {
-                let cause = if !live {
-                    cause
-                } else {
-                    "deadline_during_reconcile"
-                };
-                circuit.retire_for("reconcile", cause);
-            }
-        }
-        self.probes.reconcile(&self.circuits, snapshot, &current);
-        self.engine.flows.replace(flows);
-        self.engine.snapshot = snapshot.clone();
-        self.identity = identity;
-        self.output_epoch = Arc::new(());
-        self.maintenance.changed();
-        Ok(())
+        self.update(identity).map(|_| ())
     }
 
-    /// Host-driven cleanup; expired states become bounded replay tombstones.
+    /// Host-driven cleanup; closed states leave compact dead-CID records.
     pub fn maintain(&mut self) -> Result<(), Error> {
         let snapshot = self.identity.snapshot().clone();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = match View::of(&snapshot) {
+            Ok(reading) => reading,
+            Err(_) => {
+                self.terminate_if_expired();
+                return Err(Error::Authority);
+            }
+        };
         self.maintain_circuits(&reading, true)?;
         self.engine
             .maintain_at(&reading)
@@ -1578,36 +1655,41 @@ impl SecureNode {
     }
 
     /// Cancel queued wire/plaintext outputs, retire circuit keys and retain the
-    /// ID replay tombstone. Other circuits and Control's grant are unaffected.
+    /// ID replay record. Other circuits and Control's grant are unaffected.
     pub fn close(&mut self, id: [u8; 32]) {
         self.engine.flows.retire_exit_circuit(id);
-        if let Some(circuit) = self.circuits.get_mut(&id) {
+        if let Some(mut circuit) = self.circuits.remove(&id) {
             circuit.retire();
+            let now_ms = meshway_authority::now().unwrap_or(u64::MAX);
+            self.bury(id, &circuit, now_ms);
         }
     }
 
     /// Reading metadata never refreshes a deadline or manufactures a sample.
     pub fn circuit_info(&self, id: [u8; 32]) -> Result<Option<CircuitInfo>, Error> {
         let snapshot = self.identity.snapshot();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
         let info = self.circuit_info_at(id, &reading);
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
         Ok(info)
     }
 
-    fn circuit_info_at(&self, id: [u8; 32], reading: &Reading<'_>) -> Option<CircuitInfo> {
-        let cfg = reading.configuration;
+    fn circuit_info_at(&self, id: [u8; 32], reading: &View<'_>) -> Option<CircuitInfo> {
         let snapshot = self.identity.snapshot();
         let circuit = self.circuits.get(&id)?;
         let live = circuit.check_at(reading).is_ok();
-        let guard = circuit.guard(snapshot, !circuit.state.established());
+        let expiry = circuit
+            .guard(snapshot, !circuit.state.established())
+            .expiry();
+        let local = reading.node();
         Some(CircuitInfo {
             id,
-            authorization: circuit.context.authorization,
+            authorization: circuit.context.grant.legacy(),
+            grant: circuit.context.grant.clone(),
             path: circuit.context.path.clone(),
-            role: if circuit.context.path.first() == Some(&cfg.node_id) {
+            role: if circuit.context.path.first() == Some(&local) {
                 CircuitRole::Origin
-            } else if circuit.context.path.last() == Some(&cfg.node_id) {
+            } else if circuit.context.path.last() == Some(&local) {
                 CircuitRole::Terminal
             } else {
                 CircuitRole::Relay
@@ -1619,14 +1701,14 @@ impl SecureNode {
             } else {
                 CircuitState::Handshaking
             },
-            expires_at: guard.expires_at,
-            expires_at_ms: guard.expires_at_ms,
+            expires_at: expiry.at,
+            expires_at_ms: expiry.ms,
         })
     }
 
     pub fn ready_circuits(&self) -> Result<Vec<CircuitInfo>, Error> {
         let snapshot = self.identity.snapshot();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
+        let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
         let mut ready = Vec::new();
         for id in self.circuits.keys() {
             if let Some(info) = self.circuit_info_at(*id, &reading)
@@ -1639,14 +1721,28 @@ impl SecureNode {
         Ok(ready)
     }
 
+    /// Legacy: select a local output of a demand; see [`Self::local_grant_circuit`].
+    pub fn local_circuit(
+        &self,
+        demand: RequestId,
+        path: &[NodeId],
+        packet: &Packet,
+    ) -> Result<Option<CircuitInfo>, Error> {
+        self.local_grant_circuit(
+            &CircuitGrant::Legacy(CircuitAuthorization::Business(demand)),
+            path,
+            packet,
+        )
+    }
+
     /// Select a local output from the unique flow owner's authenticated cipher
     /// binding. A terminal must never guess among locally completed handshakes:
     /// the origin may not have received one of their responses. Only an origin
     /// can acquire another cipher for its unchanged route after the old one ends.
     /// Reading this does not advance any flow, nonce or deadline; send rechecks.
-    pub fn local_circuit(
+    pub fn local_grant_circuit(
         &self,
-        demand: RequestId,
+        grant: &CircuitGrant,
         path: &[NodeId],
         packet: &Packet,
     ) -> Result<Option<CircuitInfo>, Error> {
@@ -1654,31 +1750,30 @@ impl SecureNode {
             meshway_logging::profile::Metric::new("secure.local_circuit");
         let _profile = PROFILE.enter();
         let snapshot = self.identity.snapshot();
-        let reading = snapshot.reading().map_err(|_| Error::Authority)?;
-        let result = self.local_circuit_at(demand, path, packet, &reading);
+        let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
+        let result = self.local_circuit_at(grant, path, packet, &reading);
         snapshot.ensure_current().map_err(|_| Error::Authority)?;
         result
     }
 
     fn local_circuit_at(
         &self,
-        demand: RequestId,
+        grant: &CircuitGrant,
         path: &[NodeId],
         packet: &Packet,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<Option<CircuitInfo>, Error> {
-        let cfg = reading.configuration;
-        let origin = path.first() == Some(&cfg.node_id);
+        let origin = path.first() == Some(&reading.node());
+        let flow_grant = grant.flow().ok_or(Error::Policy)?;
         if let Some(flow) = self.local_flow_at(packet, reading)? {
-            if flow.demand != demand || flow.path != path {
+            if flow.grant != flow_grant || flow.path != path {
                 return Err(Error::Flow);
             }
             if let Some(id) = flow.circuit
                 && let Some(info) = self.circuit_info_at(id, reading)
                 && info.state != CircuitState::Closed
             {
-                if info.authorization != CircuitAuthorization::Business(demand) || info.path != path
-                {
+                if info.grant != *grant || info.path != path {
                     return Err(Error::Context);
                 }
                 return Ok((info.state == CircuitState::Established).then_some(info));
@@ -1687,43 +1782,53 @@ impl SecureNode {
         if !origin {
             return Ok(None);
         }
+        Ok(self.established(grant, path, reading))
+    }
+
+    /// An established origin circuit of exactly this grant and path.
+    fn established(
+        &self,
+        grant: &CircuitGrant,
+        path: &[NodeId],
+        reading: &View<'_>,
+    ) -> Option<CircuitInfo> {
         // Filter immutable bindings before checking liveness or allocating
         // metadata. Unrelated circuits cannot supply this origin's output.
         for (id, circuit) in &self.circuits {
-            if circuit.context.authorization == CircuitAuthorization::Business(demand)
+            if circuit.context.grant == *grant
                 && circuit.context.path == path
                 && circuit.state.established()
                 && let Some(info) = self.circuit_info_at(*id, reading)
                 && info.state == CircuitState::Established
             {
-                return Ok(Some(info));
+                return Some(info);
             }
         }
-        Ok(None)
+        None
     }
     pub fn retained_circuits(&self) -> usize {
         self.circuits.len()
+    }
+    /// Compact closed-CID records still inside their INIT window.
+    pub fn dead_circuits(&self) -> usize {
+        self.dead.len()
     }
     pub fn retained_flows(&self) -> usize {
         self.engine.retained_flows()
     }
 
-    /// Read original demand/path metadata from the one Engine flow table. This
+    /// Read original grant/path metadata from the one Engine flow table. This
     /// neither selects nor opens a circuit and never grants packet authority.
     /// An existing route remains existing even if its carrier/circuit is down.
     pub fn local_flow(&self, packet: &Packet) -> Result<Option<crate::LocalFlow>, Error> {
-        let reading = self
-            .identity
-            .snapshot()
-            .reading()
-            .map_err(|_| Error::Authority)?;
+        let reading = View::of(self.identity.snapshot()).map_err(|_| Error::Authority)?;
         self.local_flow_at(packet, &reading)
     }
 
     fn local_flow_at(
         &self,
         packet: &Packet,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
     ) -> Result<Option<crate::LocalFlow>, Error> {
         self.engine
             .local_flow_at(packet, reading)
@@ -1734,12 +1839,34 @@ impl SecureNode {
                 _ => Error::Packet,
             })
     }
+
+    /// Wait for the snapshot to end, then terminate every circuit and flow.
     pub async fn invalidated(&mut self) {
         self.identity.snapshot().invalidated().await;
-        for circuit in self.circuits.values_mut() {
-            circuit.retire_for("invalidated_wait", "guard_woke");
+        self.terminate("invalidated_wait");
+    }
+
+    /// Retire every circuit (cancelling all their queued outputs), clear every
+    /// flow and publish Retire for every exit projection.
+    fn terminate(&mut self, cause: &'static str) {
+        let now_ms = meshway_authority::now().unwrap_or(u64::MAX);
+        for (id, mut circuit) in std::mem::take(&mut self.circuits) {
+            circuit.retire_for(cause, "terminated");
+            self.bury(id, &circuit, now_ms);
         }
+        self.first.clear();
         self.engine.flows.clear();
+    }
+
+    /// An ended netmap lease terminates everything; an invalidated snapshot
+    /// may still be followed by a Control-checked update.
+    fn terminate_if_expired(&mut self) {
+        let snapshot = self.identity.snapshot();
+        if snapshot.is_netmap()
+            && meshway_authority::now().is_ok_and(|now| now >= snapshot.expires_at_ms())
+        {
+            self.terminate("lease_expired");
+        }
     }
 }
 

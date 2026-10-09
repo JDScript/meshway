@@ -86,5 +86,5 @@ priority = 100
 test-group = 'server-fixtures'
 
 [[profile.default.overrides]]
-filter = 'package(meshway-server) | package(meshway-control) | package(meshway-control-client) | package(meshway-daemon) | package(meshway-connectivity) | package(meshway-diagnostics)'
+filter = 'package(meshway-server) | package(meshway-control) | package(meshway-control-client) | package(meshway-daemon) | package(meshway-connectivity) | package(meshway-diagnostics) | (package(meshway-dataplane) & binary(runtime))'
 test-group = 'server-fixtures'

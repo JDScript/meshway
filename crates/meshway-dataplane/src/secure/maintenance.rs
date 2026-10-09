@@ -1,6 +1,5 @@
 //! Deadline-driven collection; scheduling never authorizes a target circuit.
-use super::{Error, SecureNode, State};
-use meshway_authority::Reading;
+use super::{Error, SecureNode, State, View};
 use std::time::{Duration, Instant};
 
 // A bounded fallback also collects original-scope probe/recovery caches and
@@ -17,19 +16,19 @@ impl Maintenance {
         self.next = None;
     }
 
-    fn due(&self, reading: &Reading<'_>) -> bool {
+    fn due(&self, reading: &View<'_>) -> bool {
         self.next
             .is_none_or(|(instant, millis)| reading.instant >= instant || reading.now_ms >= millis)
     }
 }
 
 impl SecureNode {
-    // Admission collects expired flows using its own entry Reading. Target
+    // Admission collects expired flows using its own entry View. Target
     // circuit checks are independent of this schedule, including on skipped
-    // sweeps. Closed entries are permanent bounded replay tombstones.
+    // sweeps. Closed circuits leave dead-CID records until their INIT window ends.
     pub(super) fn maintain_circuits(
         &mut self,
-        reading: &Reading<'_>,
+        reading: &View<'_>,
         force: bool,
     ) -> Result<(), Error> {
         self.collect_exit_flows();
@@ -46,21 +45,30 @@ impl SecureNode {
             .ensure_current()
             .map_err(|_| Error::Authority)?;
         self.probes.maintain(reading);
+        self.first.maintain(reading.instant);
+        self.dead.retain(|_, until| reading.now_ms < *until);
         let mut instant = reading.instant + INTERVAL;
         let mut millis = reading.now_ms.saturating_add(INTERVAL.as_millis() as u64);
-        for circuit in self.circuits.values_mut() {
+        let mut closed = Vec::new();
+        for (id, circuit) in &mut self.circuits {
             circuit.recovery.maintain();
             if circuit.check_at(reading).is_err() {
                 circuit.retire_for("maintain", "deadline_or_cancel");
             }
-            if !matches!(circuit.state, State::Closed) {
-                instant = instant.min(circuit.expires_at);
-                millis = millis.min(circuit.expires_at_ms);
-                if !circuit.state.established() {
-                    instant = instant.min(circuit.handshake_at);
-                    millis = millis.min(circuit.handshake_at_ms);
-                }
+            if matches!(circuit.state, State::Closed) {
+                closed.push(*id);
+            } else if let Some(cap) = circuit.next_deadline() {
+                instant = instant.min(cap.at);
+                millis = millis.min(cap.ms);
             }
+        }
+        for id in closed {
+            if let Some(circuit) = self.circuits.remove(&id) {
+                self.bury(id, &circuit, reading.now_ms);
+            }
+        }
+        if let Some(until) = self.dead.values().min() {
+            millis = millis.min(*until);
         }
         self.maintenance.next = Some((instant, millis));
         Ok(())
