@@ -98,9 +98,19 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
 }
 
 fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result<Child> {
+    spawn_named_daemon(cli, role.name(), controller)
+}
+
+pub(super) fn spawn_named_daemon(
+    cli: &Cli,
+    name: &str,
+    controller: std::net::Ipv4Addr,
+) -> Result<Child> {
     let mut daemon_command = Command::new(cli.binaries.join("meshwayd"));
     let filter = "info,meshway_underlay=debug,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug,meshway_daemon::runtime::network::circuit_packet=debug";
-    if cli.dns_backend.enabled() {
+    if cli.traversal == crate::TraversalMode::Exit {
+        daemon_command.args(["--dns-backend", "resolved", "--dns-bind", "127.0.0.1:5354"]);
+    } else if cli.dns_backend.enabled() {
         daemon_command.args([
             "--dns-backend",
             cli.dns_backend.name(),
@@ -119,7 +129,7 @@ fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result
             "--network-mode",
             "tun",
             "--hostname",
-            role.name(),
+            name,
             "--bootstrap-host",
         ])
         .arg(format!(
@@ -794,7 +804,7 @@ async fn running(cli: &Cli, revision: Revision) -> Result<Status> {
     .await
 }
 
-async fn wait_ipc(cli: &Cli, daemon: &mut Child) -> Result<()> {
+pub(super) async fn wait_ipc(cli: &Cli, daemon: &mut Child) -> Result<()> {
     tokio::time::timeout(crate::remaining(STARTUP)?, async {
         while !tokio::fs::try_exists(cli.state.join("node/control.sock")).await? {
             if daemon.try_wait()?.is_some() {
@@ -807,7 +817,7 @@ async fn wait_ipc(cli: &Cli, daemon: &mut Child) -> Result<()> {
     .await?
 }
 
-async fn wait_status(cli: &Cli, predicate: impl Fn(&Status) -> bool) -> Result<Status> {
+pub(super) async fn wait_status(cli: &Cli, predicate: impl Fn(&Status) -> bool) -> Result<Status> {
     wait_status_for(cli, STARTUP, predicate).await
 }
 
@@ -916,7 +926,7 @@ async fn save_dns_journals(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-async fn terminate(child: &mut Child) -> Result<()> {
+pub(super) async fn terminate(child: &mut Child) -> Result<()> {
     if child.try_wait()?.is_some() {
         child.wait().await?;
         return Err("daemon exited before fixture shutdown".into());

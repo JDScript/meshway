@@ -31,7 +31,7 @@ ROWS = {
     "nat/resolved": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "resolved")),
     "exit/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit", "--dns-backend", "off")),
 }
-PENDING_ROWS = {"exit/off": "pending-x2-x5: 产品未接线前该行预期失败 (unsupported)"}
+PENDING_ROWS = {"exit/off": "explicit-only: awaiting two complete acceptance passes"}
 DEFAULT_ROWS = tuple(name for name in ROWS if name not in PENDING_ROWS)
 
 
@@ -216,7 +216,7 @@ def execute_row(name, directory, artifacts, images, args):
         result["passed"] = result["exitCode"] == 0 and metadata.get("passed") is True
         if name in PENDING_ROWS:
             result["status"] = metadata.get("status", "incomplete")
-            result["passed"] = False
+            result["passed"] = result["passed"] and result["status"] == "passed"
     except Exception as error:
         result["error"] = str(error)
     try:

@@ -146,7 +146,7 @@ impl CarrierMode {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Exit fixture infrastructure only; product stages remain unsupported.
+    /// Isolated exit Server, real daemon, or external application service.
     ExitActor {
         #[arg(long, value_enum)]
         role: exit::Role,

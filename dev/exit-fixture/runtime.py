@@ -1,12 +1,13 @@
-"""Owned exit/off infrastructure; never installs product routes, NAT or permits."""
+"""Real exit/off process acceptance; product routes and NAT belong to meshwayd."""
 import ipaddress
 import json
+import shutil
 import subprocess
 import time
 import uuid
 
 from node_lab import ROOT, run, sha256
-from validation_support import bind_access_options, export_evidence
+from validation_support import bind_access_options, export_evidence, mount_namespace_options
 from verification_sources import fingerprint
 
 
@@ -33,7 +34,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 "scope": "diagnostic-short" if short else "acceptance",
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
-                "productStatus": "pending-x2-x5", "cleanup": {}, "processes": {}}
+                "productStatus": "running", "cleanup": {}, "processes": {},
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 9)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -74,7 +76,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             link: command("e", "/usr/sbin/conntrack", "-L", "-f", "ipv4", "-d", addresses[link][link],
                           "-o", "extended", required=False) for link in ("external", "lan")}
         write(report / (stage + ".json"), data)
-        if data["e"]["nftCounters"]["exitCode"] or data["e"]["forwarding"]["stdout"].strip() != "1":
+        if data["e"]["nftCounters"]["exitCode"]:
             raise RuntimeError("E nft/forwarding precondition unavailable")
         # Preserve an empty table as observed emptiness, not a fabricated NAT tuple.
         if any(item["exitCode"] != 0 for item in data["e"]["conntrack"].values()):
@@ -101,11 +103,24 @@ def execute(report, artifacts, runtime_os, platform, short, load):
 
     save()
     try:
+        (report / "exit-support").mkdir()
+        shutil.copyfile(ROOT / "dev/dns-fixture/namespace.sh", report / "exit-support/namespace.sh")
+        write(report / "exit-support/os-packages.tsv", runtime_os)
+        preparation = ["docker", "run", "--rm", "--pull", "never", "--label", label,
+                       "--network", "none", "--read-only", "--cap-drop", "ALL", *bind_access_options(),
+                       "--security-opt", "no-new-privileges", "--entrypoint", "", "--tmpfs", "/state:mode=700",
+                       "--mount", f"type=bind,source={report / 'bin'},target=/fixtures,readonly",
+                       "--mount", f"type=bind,source={report / 'public'},target=/public",
+                       "--mount", f"type=bind,source={report / 'controller'},target=/controller",
+                       image, "/fixtures/meshway-runtime-fixture", "prepare"]
+        run(*preparation, capture=True)
+        manifest["preparationCommand"] = preparation
         for role in ROLES:
             (report / role).mkdir(exist_ok=True)
         for link, roles in LINKS.items():
-            # TEST-NET-2 is a simulation target, NEVER an Internet-classification pass.
-            options = ["--subnet", f"198.51.100.{(uuid.uuid4().int % 32) * 8}/29"] if link == "external" else []
+            # Public classification, isolated by an internal bridge with only E
+            # and the service attached. Never route this address onto the host WAN.
+            options = ["--subnet", f"11.77.{uuid.uuid4().int % 256}.0/29"] if link == "external" else []
             identifier = run("docker", "network", "create", "--internal", "--label", label, *options,
                              f"meshway-runtime-{identity.lower()}-exit-{link}", capture=True).strip()
             networks[link] = identifier
@@ -122,25 +137,38 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             addresses[link] = {role: str(subnet.network_address + 2 + index) for index, role in enumerate(roles)}
             manifest["resources"].setdefault("networkInspections", {})[link] = inspection
         manifest["addresses"] = addresses
-        manifest["externalClassification"] = "TEST-NET-2 reserved simulation; not Internet authorization evidence"
+        manifest["externalClassification"] = "11.77/16: public-classified isolated address; permit scope must be Internet"
+        lan_subnet = manifest["resources"]["networkInspections"]["lan"]["IPAM"]["Config"][0]["Subnet"]
+        write(report / "public/exit-topology.json", {"addresses": addresses, "lanCidr": lan_subnet})
         save()
         for role in ROLES:
             links = [link for link, roles in LINKS.items() if role in roles]
             first = links[0]
             creation = ["docker", "create", "--pull", "never", "--name", f"meshway-runtime-{identity.lower()}-{role}",
                         "--label", label, "--platform", platform, "--read-only", "--cap-drop", "ALL",
-                        "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "256m", "--pids-limit", "64",
+                        "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m", "--pids-limit", "128",
                         "--tmpfs", "/state:rw,nosuid,nodev,mode=700", "--entrypoint", "",
                         "--network", networks[first], "--ip", addresses[first][role],
-                        "--sysctl", "net.ipv4.ip_forward=" + ("1" if role == "e" else "0"),
-                        "--env", "MESHWAY_EXIT_FIXTURE_OWNED=1", *bind_access_options()]
+                        "--sysctl", "net.ipv4.ip_forward=0",
+                        "--sysctl", "net.ipv4.conf.all.rp_filter=0", "--sysctl", "net.ipv4.conf.default.rp_filter=0",
+                        "--env", "TMPDIR=/state", "--env", "MESHWAY_EXIT_FIXTURE_OWNED=1", *bind_access_options()]
             if role in ("a", "r", "e"):
                 creation += ["--cap-add", "NET_ADMIN", "--device", "/dev/net/tun:/dev/net/tun"]
-            if role in ("r", "e"):
-                creation += ["--cap-add", "NET_RAW", "--cap-add", "SETUID", "--cap-add", "SETGID"]
-            for source, target, readonly in (("bin", "/fixtures", True), (role, "/evidence", False), ("signals", "/signals", True)):
+                creation += mount_namespace_options()
+                creation += ["--tmpfs", "/run:rw,nosuid,nodev,mode=755", "--env", "MESHWAY_DNS_FIXTURE_OWNED=1",
+                             "--env", "MESHWAY_DNS_BACKEND=resolved", "--env", "MESHWAY_DNS_UPSTREAM=" + addresses["c" + role]["controller"],
+                             "--env", "DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"]
+                for capability in ("SYS_ADMIN", "CHOWN", "NET_BIND_SERVICE", "NET_RAW", "SETUID", "SETGID", "SETPCAP", "DAC_OVERRIDE", "SYS_PTRACE", "FOWNER", "KILL"):
+                    creation += ["--cap-add", capability]
+                creation += ["--mount", f"type=bind,source={report / 'exit-support'},target=/dns-fixture,readonly",
+                             "--mount", f"type=bind,source={report / 'exit-support/os-packages.tsv'},target=/usr/share/meshway-dns-packages.tsv,readonly"]
+            mounts = [("bin", "/fixtures", True), (role, "/evidence", False), ("signals", "/signals", False), ("public", "/public", True)]
+            if role == "controller": mounts.append(("controller", "/controller", True))
+            for source, target, readonly in mounts:
                 creation += ["--mount", f"type=bind,source={report / source},target={target}" + (",readonly" if readonly else "")]
-            creation += [image, "/fixtures/meshway-runtime-fixture", "--log-format", "json", "--transport", "native-udp", "--traversal", "exit",
+            creation += [image]
+            if role in ("a", "r", "e"): creation += ["/bin/sh", "/dns-fixture/namespace.sh"]
+            creation += ["/fixtures/meshway-runtime-fixture", *(["--short"] if short else []), "--log-format", "json", "--transport", "native-udp", "--traversal", "exit",
                          "exit-actor", "--role", role]
             containers[role] = run(*creation, capture=True).strip()
             manifest["resources"].setdefault("commands", {})[role] = creation
@@ -181,28 +209,65 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                     raise RuntimeError("exit packet capture readiness failed")
                 time.sleep(0.1)
         snapshot("baseline")
-        probes = {}
-        for link in ("external", "lan"):
-            target = addresses[link][link]
-            request = ("curl", "--noproxy", "*", "--fail", "--silent", "--show-error", "--connect-timeout", "1", "--max-time", "2", f"http://{target}:8080/")
-            probes[link] = {role: command(role, *request, required=False) for role in ("e", "a", "r", "controller")}
-            write(report / "infrastructure-probes.json", probes)
-            if probes[link]["e"]["exitCode"] or any(probes[link][role]["exitCode"] == 0 for role in ("a", "r", "controller")):
-                raise RuntimeError("external/LAN reachability is not E-only")
-            # An exact, fixture-owned unreachable route blocks E's egress
-            # without closing the interface's packet socket during capture.
-            # Use add/del (never replace) so an unexpected existing route fails.
-            probes[link]["block"] = command("e", "ip", "route", "add", "unreachable", target + "/32")
-            try:
-                probes[link]["eBlocked"] = command("e", *request, required=False)
-            finally:
-                probes[link]["restore"] = command("e", "ip", "route", "del", "unreachable", target + "/32")
-            probes[link]["eRestored"] = command("e", *request, required=False)
-            write(report / "infrastructure-probes.json", probes)
-            if probes[link]["eBlocked"]["exitCode"] == 0 or probes[link]["eRestored"]["exitCode"]:
-                raise RuntimeError("E-only infrastructure block/restore control failed")
-        write(report / "infrastructure-probes.json", probes)
-        snapshot("after-probes")
+        (report / "signals/exit-start").touch()
+
+        def wait_for(predicate, description, timeout=90):
+            deadline = time.monotonic() + timeout
+            while not predicate():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("exit stage timed out: " + description)
+                for actor in ROLES:
+                    if not owned("container", containers[actor])["State"]["Running"]:
+                        raise RuntimeError("exit actor stopped during " + description + ": " + actor)
+                time.sleep(.25)
+
+        def status(role):
+            result = command(role, "/fixtures/meshway", "--socket", "/state/node/control.sock", "--json", "status", required=False)
+            if result["exitCode"]: return {}
+            value = json.loads(result["stdout"])
+            write(report / role / "observed-status.json", value)
+            return value
+
+        wait_for(lambda: (report / "signals/exit-configured.json").exists(), "configuration")
+        manifest["status"] = "prerequisite"
+        save()
+        def unavailable():
+            value = status("e")
+            capability = (value.get("exit") or {}).get("capability") or {}
+            return (capability.get("status") == {"status": "unavailable", "reason": "ipForwardDisabled"}
+                    and capability.get("installedFamilies") == [] and (value.get("exit") or {}).get("installedRole") is None)
+        wait_for(unavailable, "ip_forward=0 fact")
+        snapshot("ip-forward-disabled")
+        write(report / "e/ip-forward-disabled-status.json", status("e"))
+        manifest["stages"]["2"] = {"status": "passed", "evidence": ["ip-forward-disabled.json", "e/ip-forward-disabled-status.json"]}
+        command("e", "sysctl", "-w", "net.ipv4.ip_forward=1")
+        (report / "signals/exit-restart-e").touch()
+        wait_for(lambda: (report / "signals/exit-restarted-e").exists(), "same-namespace daemon restart")
+        manifest["status"] = "role-installation"
+        save()
+        def installed():
+            value = status("e")
+            capability = (value.get("exit") or {}).get("capability") or {}
+            return (capability.get("status") == {"status": "ready"}
+                    and capability.get("instanceId") == (value.get("instance") or {}).get("instanceId")
+                    and capability.get("installedFamilies") == ["ipv4"]
+                    and bool((value.get("exit") or {}).get("installedRole"))
+                    and value.get("applied") is not None and value["applied"] == value.get("saved"))
+        wait_for(installed, "role installed/applied")
+        snapshot("installed")
+        write(report / "e/installed-status.json", status("e"))
+        manifest["stages"]["1"] = {"status": "passed", "evidence": ["e/installed-status.json"]}
+        manifest["stages"]["3"] = {"status": "passed", "evidence": ["installed.json"]}
+        wait_for(lambda: all((s := status(role)).get("applied") is not None and s["applied"] == s.get("saved") for role in ("a", "r")), "A/R applied")
+        snapshot("capture-before-admission")
+        manifest["stages"]["4"] = {"status": "observed", "evidence": ["capture-before-admission.json"]}
+        manifest["status"] = "traffic"
+        save()
+        (report / "signals/exit-traffic").touch()
+        wait_for(lambda: command("a", "test", "-f", "/evidence/original-tuples.json", required=False)["exitCode"] == 0, "first NAT UDP/TCP", 100)
+        snapshot("first-flow")
+        wait_for(lambda: (report / "signals/exit-traffic-done").exists(), "persistent TCP/UDP", 360)
+        snapshot("after-traffic")
         stop_captures()
         manifest["packetTuples"] = {}
         for role in ("r", "e"):
@@ -210,13 +275,14 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             for interface in sorted(set(interfaces[role].values()) - {"lo"}):
                 record = command(role, "/usr/bin/tcpdump", "-nn", "-tt", "-r", f"/evidence/{interface}.pcap")
                 write(report / role / (interface + "-tuples.json"), record)
-                manifest["packetTuples"][role][interface] = {"status": "infrastructure-only", "natProof": None}
+                manifest["packetTuples"][role][interface] = {"status": "collected", "natProof": None}
         manifest["infrastructure"] = "collected"
-        manifest["businessBlockControl"] = "pending-x2-x5"
-        manifest["status"] = "unsupported"
+        manifest["status"] = "incomplete"
+        raise RuntimeError("remaining lifecycle assertions have not run")
     except BaseException as error:
         failure = error
-        manifest["status"] = "infrastructure-failed"
+        manifest["failedAt"] = manifest["status"]
+        manifest["status"] = "failed"
         manifest["failure"] = str(error)
     finally:
         errors = []
@@ -232,8 +298,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 state = owned("container", identifier)["State"]
                 manifest["processes"][role] = state
                 (report / (role + ".log")).write_text(run("docker", "logs", identifier, capture=True))
-                if state["Running"] or state["OOMKilled"] or state["ExitCode"] != 1:
-                    errors.append("actor did not finish with unsupported: " + role)
+                if state["Running"] or state["OOMKilled"] or state["ExitCode"] != 0:
+                    errors.append("actor did not finish successfully: " + role)
             except Exception as error:
                 errors.append(str(error))
             try:
@@ -260,12 +326,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 log.close()
         try:
             export_evidence(report, image, platform, "runtime", identity)
-            if manifest["status"] == "unsupported":
-                for role in ROLES:
-                    manifest.setdefault("actors", {})[role] = json.loads((report / role / "exit-stages.json").read_text())
-                    if "unsupported: exit product stages pending-x2-x5" not in (report / role / "error.txt").read_text():
-                        errors.append("missing unsupported actor result: " + role)
-                manifest["evidenceSha256"] = {str(path.relative_to(report)): sha256(path) for path in report.rglob("*.pcap")}
+            manifest["evidenceSha256"] = {str(path.relative_to(report)): sha256(path) for path in report.rglob("*.pcap")}
         except Exception as error:
             errors.append(str(error))
         if fingerprint(ROOT) != artifacts["sourceDigest"]:
@@ -275,10 +336,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             errors.append("exit fixture sources changed during run")
         if errors:
             manifest["cleanupErrors"] = errors
-            manifest["status"] = "infrastructure-failed"
+            manifest["status"] = "failed"
         manifest["runtimeElapsedSeconds"] = time.monotonic() - started
         save()
         print(report, flush=True)
     if failure:
         raise failure
-    raise RuntimeError(manifest["status"] + ": exit product stages pending-x2-x5; inspect private report")
+    if not manifest["passed"]:
+        raise RuntimeError(manifest["status"] + ": inspect private exit report")

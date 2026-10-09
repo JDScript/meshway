@@ -24,6 +24,7 @@ use meshway_transport_spec::{
 use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 use tokio::{net::TcpListener, sync::watch, task::JoinSet};
 
+mod exit;
 mod interface_change;
 mod streaming;
 
@@ -116,7 +117,14 @@ async fn run_server(cli: &Cli) -> Result<()> {
         result.and(cleanup)
     });
     tracing::info!(phase = "controller-listening", "real Server HTTPS ready");
-    let result = tokio::time::timeout(DEADLINE, coordinate(cli, &audit, &availability)).await;
+    let result = tokio::time::timeout(DEADLINE, async {
+        if cli.traversal == crate::TraversalMode::Exit {
+            exit::coordinate(cli, &availability).await
+        } else {
+            coordinate(cli, &audit, &availability).await
+        }
+    })
+    .await;
     let audit_result = audit.save(cli).await;
     let request_result = requests.save(cli).await;
     // Always shut down the actual listener, SSE streams, and database owner,
@@ -133,6 +141,9 @@ async fn run_server(cli: &Cli) -> Result<()> {
     audit_result?;
     request_result?;
     result??;
+    if cli.traversal == crate::TraversalMode::Exit {
+        return Ok(());
+    }
     let signals = Signals::new(&cli.signals);
     signals.write("offline", &Signal::Ready).await?;
     tracing::info!(

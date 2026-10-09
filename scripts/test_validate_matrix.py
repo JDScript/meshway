@@ -192,7 +192,7 @@ class MatrixTests(unittest.TestCase):
             self.assertFalse(result["passed"])
             self.assertEqual(result["remainingResources"]["containers"], ["owned"])
 
-    def test_pending_exit_cannot_become_an_acceptance_pass(self):
+    def test_unsupported_exit_cannot_become_an_acceptance_pass(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             args = matrix.parse_args(["--rows", "exit/off"])
@@ -208,7 +208,7 @@ class MatrixTests(unittest.TestCase):
                                             {"runtime": Path("/image")}, args)
             self.assertFalse(result["passed"])
             self.assertEqual(result["status"], "unsupported")
-            self.assertIn("pending-x2-x5", result["expectation"])
+            self.assertIn("explicit-only", result["expectation"])
 
     def test_exit_dns_and_fallback_are_rejected_before_docker(self):
         for options in (("--dns-backend", "resolved"), ("--traversal-fallback",)):
