@@ -146,7 +146,7 @@ fn selection_versions(
     network: NetworkId,
     cfg: &NetworkConfiguration,
     bindings: &crate::configuration::ConfigurationBindings,
-) -> Result<BTreeMap<NodeId, u64>, Error> {
+) -> Result<BTreeMap<NodeId, Version>, Error> {
     let mut statement = tx.prepare(
         "SELECT node_id,identity_digest,version FROM routing_selections WHERE network_id=?1",
     )?;
@@ -161,7 +161,10 @@ fn selection_versions(
             let version: i64 = row.get(2)?;
             versions.insert(
                 node,
-                u64::try_from(version).map_err(|_| Error::decode("routing_selections.version"))?,
+                u64::try_from(version)
+                    .ok()
+                    .and_then(|version| Version::new(version).ok())
+                    .ok_or(Error::decode("routing_selections.version"))?,
             );
         }
     }

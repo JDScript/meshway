@@ -41,7 +41,7 @@ pub(super) struct Scenario {
     pub cfg: NetworkConfiguration,
     pub subjects: SubjectContext,
     pub inventory: BTreeMap<NodeId, TrustedNode>,
-    pub selection_versions: BTreeMap<NodeId, u64>,
+    pub selection_versions: BTreeMap<NodeId, meshway_model::Version>,
 }
 
 pub(super) const ALICE: &str = "alice@example.test";

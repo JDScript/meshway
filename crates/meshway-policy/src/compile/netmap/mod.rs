@@ -23,7 +23,7 @@ pub struct NetmapInput<'a> {
     pub rule_sets: &'a BTreeMap<String, RuleSetContent>,
     pub selected_profiles: &'a BTreeMap<NodeId, String>,
     /// Persisted selection versions; every profile switch increments one.
-    pub selection_versions: &'a BTreeMap<NodeId, u64>,
+    pub selection_versions: &'a BTreeMap<NodeId, meshway_model::Version>,
     /// Current stored netmap of each Node, used to retain serials of unchanged content.
     pub previous: &'a BTreeMap<NodeId, PreviousNetmap>,
 }

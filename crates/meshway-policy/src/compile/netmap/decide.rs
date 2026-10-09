@@ -164,8 +164,7 @@ impl<'a> LocalCompiler<'a> {
             projection
                 .selection_versions
                 .get(&source)
-                .copied()
-                .unwrap_or(0),
+                .map_or(0, |version| version.get()),
         )
     }
 

@@ -93,7 +93,8 @@ fn selection_switch_and_key_rotation_change_only_dependent_netmaps() {
             .generation
     };
     // Switching away and back is a new selection version: a new selection identity.
-    s.selection_versions.insert(node(1), 2);
+    s.selection_versions
+        .insert(node(1), meshway_model::Version::new(2).unwrap());
     let switched = netmaps(&s);
     assert_ne!(selection(&first), selection(&switched));
     for id in [node(2), node(3), node(5)] {
