@@ -23,7 +23,7 @@ import { mostUrgentTone, statusTone } from "@/lib/nodes/status"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 import type { BootPhase } from "@/state/boot"
-import { sameInsets, type GlobeState } from "@/state/globe"
+import { sameInsets, type GlobeState, type MarkerPoint } from "@/state/globe"
 import { THEME_SHIFT_MS } from "@/state/theme-shift"
 
 import { cityLights } from "./city-lights"
@@ -91,6 +91,8 @@ export type EngineInput = GlobeState & {
 export type GlobeEngine = {
   update(input: EngineInput): void
   resize(width: number, height: number): void
+  /** Where each placed node's marker is on the screen now. */
+  markerPoints(): Map<string, MarkerPoint>
   destroy(): void
 }
 
@@ -1764,10 +1766,22 @@ export function createGlobeEngine(
     rotationTarget =
       input.boot === "ready" && input.motion && !focus ? ROTATION_SPEED : 0
     container.dataset.framing = input.framing
+    container.dataset.markers = input.markersHidden ? "hidden" : "shown"
   }
 
   return {
     update,
+    markerPoints() {
+      // A marker is a zero-size box at its node's point.
+      const points = new Map<string, MarkerPoint>()
+      for (const datum of markers.values()) {
+        const { left, top } = datum.element.getBoundingClientRect()
+        const facing = datum.element.dataset.behind !== "true"
+        for (const id of datum.members)
+          points.set(id, { x: left, y: top, facing })
+      }
+      return points
+    },
     resize(nextWidth, nextHeight) {
       width = nextWidth
       height = nextHeight

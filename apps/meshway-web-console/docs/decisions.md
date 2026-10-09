@@ -29,7 +29,7 @@ its generated client only, and only what the controller delivers:
 - Pages now: `/login`, `/register`; `/` opens the remembered network (kept
   per account) or the first listed, else offers creating the first; a
   network's overview (the globe with the State's located nodes and links,
-  the status corner and the history layer), nodes, members (for `actions.manageMembers`: the members and
+  the map panel and the history layer), its topology, nodes, members (for `actions.manageMembers`: the members and
   the join links, a member's workspace), settings `network` (the name,
   editable when `actions.rename`; the ID, creation date and role; leaving)
   and `activity` (for `manageMembers`), and the account (email and ID,
@@ -337,24 +337,23 @@ its generated client only, and only what the controller delivers:
 - Overview (`getNetworkState`, `listNodes` for names,
   `queryObservationHistory`): the globe places nodes where geojs places
   the address the server rests their location on (`derived.location`).
-  Hover is a name/status hint; clicking selects a persistent compact card
-  with Mesh addresses, place/network summary and an action to open details. Every
-  other node is listed under 待定位 with the reason: the server's
+  Hover is a name/status hint; clicking selects the node in the map panel
+  (below). The panel's node list gives every other node the reason it is
+  not placed: the server's
   `locationAbsent`, or that the lookup is off, under way or failed (an
   answer without coordinates names its region). With readable configuration,
   base edges come from its declarations; `StateView.links` annotates those
   pairs as connected, connecting, failed or unknown. Without full configuration
-  access only visible runtime connections are drawn. Globe edges require located ends and are
-  never animated: nothing travels along a line, and `inUse` is a listed
-  fact. Links with an unlocated end are counted and listed, not drawn. Links
-  between the same nodes share one edge. The corner counts nodes by
-  status and adjacent pairs by connection state, with the State's `asOf` and
-  whether the stream keeps it live. Nodes whose dots would overlap at the current zoom
+  access only visible runtime connections are drawn. The globe draws the
+  current connections, and with a node selected the hops of its planned
+  paths; its edges require located ends and are never animated. Links with an
+  unlocated end are listed, not drawn. Links between the same nodes share one
+  edge. Nodes whose dots would overlap at the current zoom
   (the same IP or city, or neighbouring cities from afar) are one marker at
   the first one's place, nothing moved: its dot counts them in the tone of
   the one most in need of a look, its name is the selected or first node's
-  and "等 N 个". Clicking it lists its nodes in the compact card; choosing one
-  shows its summary with a way back to the group. Links between the very same
+  and "等 N 个". Clicking it lists its nodes in the map panel; choosing one
+  selects it with a way back to the group. Links between the very same
   place are not drawn. Zooming in splits a group once its dots are apart.
   A name that would cover another marker shows only where it is pointed
   at, focused, open or selected, the selected node's first; more than 120
@@ -566,21 +565,46 @@ states stay distinguishable by stroke and colour.
   revision does not annotate the new declaration as current. Node positions stay stable
   across status updates. Original channel evidence remains available in details;
   history remains an explicitly selected layer.
-- Topology uses the existing dock's entry and selection animation. Both network
-  canvases stay mounted and share a reversible 560ms
-  fade/scale transition, preserving the globe camera and diagram zoom/scroll.
-  The outgoing canvas becomes inert immediately and hidden after the fade;
-  reduced motion switches immediately. There is no overview view switch or
-  persisted view preference. Previous `/overview?view=topology` links redirect
-  to the topology page with their node selection. On phones, dismissing a page
-  opened from topology returns to topology; explicit overview navigation still
-  opens the globe.
-- Clicking a node selects a persistent compact card on the right, with its
-  name, status, useful addresses, place/network summary and an explicit
-  action to open its workspace. Hover is only a brief name/status hint.
-  Clicking a globe cluster first lists its nodes in that card; choosing one
-  shows its summary there. Both views share selection and the compact card;
-  on phones it is a bottom sheet.
+- The topology is the globe's nodes rearranged, not a second picture: opening
+  it, each node leaves its globe marker and glides to its place on the
+  diagram (a marker point it can leave from; nodes without one appear in
+  place), names move from beside the dot to under it, edges fade in once the
+  nodes arrive, and the globe stays behind, dim, still and out of reach.
+  Leaving reverses it into the markers. Reduced motion switches at once. The
+  canvas (`-map/topology-canvas.tsx`) is mounted by the network layout so it
+  can play both ways; React renders where nodes end, and the glide writes
+  positions frame by frame. Previous `/overview?view=topology` links redirect
+  to the topology page with their node selection.
+- Nothing selected, the diagram draws the declared edges on rings, ordered by
+  longitude so it reads roughly like the globe; a few nodes stay close
+  together. Selecting a node lays the diagram out from it: the node in the
+  middle, every other node on the ring of its hop count near the node it is
+  reached through, and only the planned main paths' hops, each with an arrow
+  the way traffic goes (`evaluateConfiguration` per destination over the
+  current revision, at most four at once, kept per revision; owners and
+  admins). Nodes without a plan sit on the outer ring, dimmed; plans refused
+  by access are dotted. A member sees the node's current links one hop out.
+  Choosing an edge selects that link.
+- Edges are dashed until connected and solid in the link's colour while
+  connected, with the carrier in use as a caption (or the configured
+  restriction, "仅 …", when not connected); an edge on the default order has
+  no caption. A link carrying traffic (`inUse`, not a byte count) glows;
+  moving dots run only along directions `StateView.paths` reports, never
+  guessed from the links. Reduced motion keeps the glow still and draws no
+  dots.
+- One map panel (`-map/map-panel.tsx`) on the right of both map pages, three
+  levels, each going back to the one above (Escape too): the network — its
+  links or its nodes (the globe lists nodes first, the topology links), one
+  line of online nodes, connections and how current the State is, and the
+  history window in a small menu; a node — status, address, the way into its
+  workspace, and its path to every other node, each hop chosen to open that
+  link; a link — what the nodes report of each channel (carrier, state,
+  dialed by, since, traffic), the last hour of direct probes each way, what
+  each end can dial the other with by the configuration (topology carriers ∩
+  dialers ∩ listeners; the server still checks stream, TLS and runtime
+  support), and the rule it rests on with its carrier order. A globe cluster
+  first lists its nodes. On phones the panel is a bottom sheet and the
+  topology sits above it.
 - Node workspaces have four primary tabs: 概览 / Overview, 连接 / Connections,
   诊断 / Diagnostics, 设置 / Settings.
   - Overview prioritises Mesh DNS and IP addresses, network location,
@@ -645,8 +669,8 @@ controller supports today; the rest of each row is the target design.
 
 | Page | Now | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- | --- |
-| Overview `/overview` | globe, status corner and optional history | selected node / cluster | an explicit action opens node details | |
-| Topology `/topology` | configuration topology with runtime overlay and transport badges | selected node | an explicit action opens node details | |
+| Overview `/overview` | globe and optional history | the map panel: network, node or cluster, link | an explicit action opens node details | |
+| Topology `/topology` | the globe's nodes as the declared topology with runtime state, or the paths from a selected node | the map panel: network, node, link | an explicit action opens node details | |
 | Nodes `/nodes?q=` | overview, connections, diagnostics and settings; adding one with an enrolment key | nodes (search, status) | `/nodes/<id>?tab=…`, `/nodes/add` | revoke, enrolment key |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
@@ -682,7 +706,7 @@ out. A revision the network does not have is said in the history.
 
 | Level | What | Rule |
 | --- | --- | --- |
-| Canvas | the globe | always |
+| Canvas | the globe; on the topology page its nodes as the diagram, the globe behind | always |
 | Chrome | network card, toolbar, dock | always |
 | Page panel | a page's index | one at a time |
 | Workspace | one entity or one editor in full | one at a time; the deepest level |
@@ -716,11 +740,11 @@ surface kind has one slot, so nothing stacks:
 | Chrome | always | network card top left (switcher, counts, link bar), search, preferences and account top right, the dock; on phones a bottom bar on every page (the launcher, then the card without its link bar) and preferences top right |
 | Dock | left, under the network card | icon rail on wide screens; on phones a round launcher at the bottom left, under the thumb, that unfolds the pages upwards |
 | Page panel | left, beside the dock | one page's index: a list or its sections |
-| Status corner | the overview only, bottom right; on phones above the bottom bar | counts, 待定位, current links, the history layer; the selected node or cluster has a compact card above it |
+| Map panel | the overview and the topology, right; on phones a bottom sheet above the bottom bar | the network (links, nodes, the history window), a node (its paths), a link (state, latency, capability, rule) |
 | Workspace | right of the page panel, covering the globe | one entity or one editor in full; the globe dims and keeps its place |
 
-- Nodes without a location are not drawn on the globe; the status corner
-  lists them under 待定位, and links to them are counted and listed.
+- Nodes without a location are not drawn on the globe; the map panel's node
+  list says why, and links to them are listed.
 - `components/surface/layout.ts` is the single source of geometry. The globe
   centres (and shrinks if needed) in the space the surfaces leave free, and the
   same numbers are published as CSS variables for class-placed surfaces.
@@ -828,7 +852,7 @@ they need `motion`.
   before it, as on a lit sphere; nothing is painted along it.
 - The engine chunk is lazy-loaded (~145 kB gzip, almost all three.js).
   Where it cannot run (no WebGL, or its chunk did not load) the first load
-  goes on without a globe, and the overview's corner says the globe cannot
+  goes on without a globe, and the overview's map panel says the globe cannot
   be drawn.
 
 ## First load

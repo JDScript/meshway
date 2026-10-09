@@ -1,8 +1,8 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
 import { z } from "zod"
 
-import { MapPanels } from "../-map/panels"
-import { useMapSelection, zMapSelection } from "../-map/selection"
+import { MapPanel } from "../-map/map-panel"
+import { zMapSelection } from "../-map/selection"
 
 export const Route = createFileRoute("/_authed/networks/$network/overview")({
   staticData: { page: "overview" },
@@ -14,7 +14,7 @@ export const Route = createFileRoute("/_authed/networks/$network/overview")({
       throw redirect({
         to: "/networks/$network/topology",
         params,
-        search: { node: search.node, group: search.group },
+        search: { node: search.node },
         replace: true,
       })
   },
@@ -23,6 +23,5 @@ export const Route = createFileRoute("/_authed/networks/$network/overview")({
 
 function OverviewPage() {
   const { network } = Route.useParams()
-  const selection = useMapSelection(network, "overview")
-  return <MapPanels networkId={network} page="overview" selection={selection} />
+  return <MapPanel networkId={network} page="overview" />
 }

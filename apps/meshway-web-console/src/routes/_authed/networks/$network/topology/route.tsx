@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router"
 
-import { MapPanels } from "../-map/panels"
-import { useMapSelection, zMapSelection } from "../-map/selection"
+import { MapPanel } from "../-map/map-panel"
+import { zMapSelection } from "../-map/selection"
 
+/** The topology, drawn over the globe by the network's layout (`-map/topology-canvas.tsx`); this page holds its panel. */
 export const Route = createFileRoute("/_authed/networks/$network/topology")({
   staticData: { page: "topology" },
   validateSearch: zMapSelection,
@@ -11,6 +12,5 @@ export const Route = createFileRoute("/_authed/networks/$network/topology")({
 
 function TopologyPage() {
   const { network } = Route.useParams()
-  const selection = useMapSelection(network, "topology")
-  return <MapPanels networkId={network} page="topology" selection={selection} />
+  return <MapPanel networkId={network} page="topology" />
 }

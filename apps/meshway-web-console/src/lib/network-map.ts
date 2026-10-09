@@ -240,24 +240,18 @@ export function mergeRecentLinks(items: readonly RecentLink[]): HistoryLink[] {
 }
 
 /**
- * The globe's scene: located nodes, current links between them, and (when
- * the history layer is on) history links between them that are not current.
- * Each adjacent pair has one edge, using the same model as the topology/list.
+ * The globe's scene: located nodes and the given edges between them (one
+ * per pair, the same model as the topology and the lists).
  */
 export function overviewScene(
   nodes: readonly MapNode[],
-  links: readonly AggregatedLink[],
-  history: readonly HistoryLink[] | null,
-  declared?: DeclaredTopology
+  edges: readonly Pick<MapConnection, "key" | "a" | "b" | "look">[]
 ): Scene {
   const scene = nodes.map(sceneNode)
   const located = new Set(
     scene.filter((node) => node.placement).map((node) => node.id)
   )
-  const sceneLinks: SceneLink[] = drawnBetween(
-    mapConnections(links, history, declared),
-    located
-  ).map((link) => ({
+  const sceneLinks: SceneLink[] = drawnBetween(edges, located).map((link) => ({
     key: link.key,
     nodeIds: [link.a, link.b] satisfies [string, string],
     look: link.look,
@@ -267,14 +261,29 @@ export function overviewScene(
 }
 
 export type MapConnection = {
+  /** The pair (`a|b`); a history-only pair is `history|a|b`. */
   key: string
   a: string
   b: string
   look: LinkLook
   status: ConnectionStatus | "history" | "allowed" | "unavailable"
+  /** Carriers in use now, else the ones last seen in the history window. */
   transports: string[]
+  /** A current authenticated channel carries business paths (not a byte count). */
+  inUse: boolean
+  /** The pair's current channel records, for details. */
+  channels: readonly AggregatedLink[]
   declaration?: DeclaredEdge
 }
+
+const inUseOf = (connection: NeighborConnection | undefined) =>
+  connection?.status === "connected" &&
+  connection.channels.some(
+    (channel) =>
+      channel.phase === "authenticated" &&
+      (channel.evidence === "matched" || channel.evidence === "oneSided") &&
+      channel.inUse === true
+  )
 
 /** Shared graph projection: one current edge per adjacent pair, optional historical pairs apart. */
 export function mapConnections(
@@ -299,6 +308,8 @@ export function mapConnections(
         a: edge.a,
         b: edge.b,
         declaration: edge,
+        inUse: !unavailable && inUseOf(connection),
+        channels: connection?.channels ?? [],
         status: unavailable
           ? "unavailable"
           : (connection?.status ?? (historical ? "history" : "allowed")),
@@ -331,6 +342,8 @@ export function mapConnections(
       status: connection.status,
       transports: connection.transports,
       look: connectionLook(connection),
+      inUse: inUseOf(connection),
+      channels: connection.channels,
     })),
     ...groupNodePairs(history ?? [])
       .filter((pair) => !present.has(pair.key))
@@ -340,6 +353,8 @@ export function mapConnections(
         b: pair.b,
         status: "history" as const,
         look: "history" as const,
+        inUse: false,
+        channels: [],
         transports: [
           ...new Set(pair.channels.map((channel) => channel.transport)),
         ].sort(),

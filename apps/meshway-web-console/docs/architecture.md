@@ -30,7 +30,7 @@ TanStack Router file routes: the folder tree is the URL tree.
   names start with `-` (the router ignores them): `nodes/-node-list.tsx`,
   `nodes/$node/-transport/`. What a subtree shares sits at the subtree's
   root: the network layout's chrome in `networks/$network/-shell/`, and the
-  globe/topology canvases' shared selection, panels and diagram in `-map/`.
+  globe/topology pages' selection, map panel and topology canvas in `-map/`.
 - Another page's typed moves may be used across pages
   (`nodes/-navigation.ts` opens a node from the overview); nothing else
   private to a route is imported from outside it.
@@ -71,11 +71,13 @@ routes/
   and the toasts sit outside the router, so navigating never re-creates them.
 - The network's route (`$network/route.tsx`) opens the network's event
   stream, draws the shell (network card, dock, toolbar), frames the globe
-  and puts the network on it (`-shell/network-scene.ts`: scene, focused
-  node, a click on a node opens it), and holds the configuration's review
-   dialogs. Its `<Outlet />` is the page. The persistent topology canvas is
-   mounted before the outlet (`-map/topology-canvas.tsx`) so it can leave behind
-   incoming page surfaces; the topology route owns selection and panels.
+  and puts the network on it, and holds the configuration's review dialogs.
+  `-shell/network-scene.tsx` reads the network once for all its pages
+  (`NetworkSceneProvider`: nodes, declared edges with runtime state, the
+  planned paths from a selected node, the globe's scene). Its `<Outlet />`
+  is the page. The topology canvas (`-map/topology-canvas.tsx`) is mounted
+  before the outlet so its nodes can leave from and return to the globe's
+  markers; the map pages draw the map panel (`-map/map-panel.tsx`).
 - Each page's route renders the page: its panel and its workspace through
   `PageFrame`. A workspace belongs to a child route (`nodes/$node`,
   `members/$member`, `configuration/$view`, `settings/$section`,

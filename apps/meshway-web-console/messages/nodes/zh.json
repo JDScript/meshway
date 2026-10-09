@@ -17,7 +17,6 @@
   "nodes_dns_name": "DNS 名称",
   "nodes_dns_disabled": "MagicDNS 已关闭",
   "nodes_connected_peers": "已连接对端",
-  "nodes_connections_unknown": "连接状态未知",
   "nodes_network_location": "网络位置",
   "nodes_public_address": "公网地址",
   "nodes_sync_pending": "当前执行尚未同步",

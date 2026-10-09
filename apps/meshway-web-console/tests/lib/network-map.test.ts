@@ -193,7 +193,7 @@ test("a node is located where geojs places the server's address; the others say 
     byId.get("ffffffff-0000-4000-8000-000000000006"),
     "lookupPending"
   )
-  const scene = overviewScene(nodes, [], null)
+  const scene = overviewScene(nodes, [])
   assert.deepEqual(scene.nodes.find((node) => node.id === A)?.placement, {
     lat: 35.7,
     lng: 139.7,
@@ -236,7 +236,10 @@ test("a link is drawn only between two located nodes", () => {
     new Map(),
     PLACES
   )
-  const scene = overviewScene(nodes, [link(A, B, "1"), link(A, C, "2")], null)
+  const scene = overviewScene(
+    nodes,
+    mapConnections([link(A, B, "1"), link(A, C, "2")], null)
+  )
   assert.deepEqual(
     scene.links.map((l) => l.nodeIds),
     [[A, B]]
@@ -259,7 +262,7 @@ test("the maps show one adjacency for a visible current channel and its old pred
     PLACES
   )
   assert.deepEqual(
-    overviewScene(nodes, links, null).links.map((edge) => [
+    overviewScene(nodes, mapConnections(links, null)).links.map((edge) => [
       edge.nodeIds,
       edge.look,
     ]),
@@ -350,12 +353,15 @@ test("the scene draws at most one edge per pair, with history only for pairs abs
       closed: true,
     },
   ])
-  const scene = overviewScene(nodes, [link(A, B, "1")], history)
+  const scene = overviewScene(nodes, mapConnections([link(A, B, "1")], history))
   assert.deepEqual(
     scene.links.map((l) => [l.look, l.lane]),
     [["matched", 0]]
   )
-  assert.equal(overviewScene(nodes, [link(A, B, "1")], null).links.length, 1)
+  assert.equal(
+    overviewScene(nodes, mapConnections([link(A, B, "1")], null)).links.length,
+    1
+  )
   assert.equal(mapConnections([link(A, B, "1")], history).length, 2)
   assert.equal(scene.nodes.find((n) => n.id === C)?.placement, null)
 })

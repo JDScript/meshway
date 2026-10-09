@@ -9,7 +9,12 @@ import {
   markRevealed,
   useBootPhase,
 } from "@/state/boot"
-import { pointAtOnGlobe, selectFromGlobe, useGlobe } from "@/state/globe"
+import {
+  pointAtOnGlobe,
+  provideMarkerPoints,
+  selectFromGlobe,
+  useGlobe,
+} from "@/state/globe"
 import { togglePlanet } from "@/state/preferences"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
@@ -101,6 +106,11 @@ export function GlobeStage() {
     engine.update({ ...state, colors, motion, boot })
   }, [engine, state, colors, motion, boot])
 
+  useEffect(() => {
+    if (!engine) return
+    return provideMarkerPoints(() => engine.markerPoints())
+  }, [engine])
+
   // Ready once the renderer has drawn the loader's pose at least once, so
   // the hand-off never uncovers an empty canvas.
   useEffect(() => {
@@ -120,9 +130,9 @@ export function GlobeStage() {
         aria-label={m.globe_region()}
         data-boot={boot}
         data-receded={state.recede}
-        data-view-hidden={state.hidden}
-        aria-hidden={state.hidden}
-        inert={state.hidden}
+        data-backdrop={state.backdrop}
+        aria-hidden={state.backdrop}
+        inert={state.backdrop}
         className="globe-stage fixed inset-0"
       />
     </>

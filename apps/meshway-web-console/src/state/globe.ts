@@ -54,7 +54,13 @@ export type GlobeState = {
   /** A workspace covers the globe: it dims and stays where it is. */
   recede: boolean
   alert: GlobeAlert | null
-  hidden: boolean
+  /** The topology is drawn over the globe: it stays behind, dim and out of reach. */
+  backdrop: boolean
+  /**
+   * The topology's nodes have taken over from the markers (they leave from
+   * and return to them): markers and links are not drawn meanwhile.
+   */
+  markersHidden: boolean
 }
 
 const globeStore = createStore<GlobeState>(() => ({
@@ -66,7 +72,8 @@ const globeStore = createStore<GlobeState>(() => ({
   insets: NO_INSETS,
   recede: false,
   alert: null,
-  hidden: false,
+  backdrop: false,
+  markersHidden: false,
 }))
 
 /** What the globe shows, for its stage. */
@@ -94,9 +101,37 @@ export function showWelcomeGlobe() {
     hoveredNodeId: null,
     insets: NO_INSETS,
     recede: false,
-    hidden: false,
+    backdrop: false,
+    markersHidden: false,
   })
 }
+
+/** The topology takes the markers over, or hands them back. */
+export function hideGlobeMarkers(hidden: boolean) {
+  if (globeStore.getState().markersHidden !== hidden)
+    globeStore.setState({ markersHidden: hidden })
+}
+
+export const useGlobeMarkersHidden = (): boolean =>
+  useStore(globeStore, (globe) => globe.markersHidden)
+
+/** Where a node's marker is on the screen (CSS px, viewport), and whether it faces the viewer. */
+export type MarkerPoint = { x: number; y: number; facing: boolean }
+
+let markerPoints: () => ReadonlyMap<string, MarkerPoint> = () => new Map()
+
+/** The globe tells where its markers are now; the topology starts from (and returns to) them. Returns the cleanup. */
+export function provideMarkerPoints(
+  provider: () => ReadonlyMap<string, MarkerPoint>
+): () => void {
+  markerPoints = provider
+  return () => {
+    if (markerPoints === provider) markerPoints = () => new Map()
+  }
+}
+
+/** Every placed node's marker point; empty without a globe. Nodes of a group share its point. */
+export const globeMarkerPoints = () => markerPoints()
 
 /** Lists point at a node on the globe (or stop pointing). The shell writes everything else. */
 export function highlightOnGlobe(nodeId: string | null) {

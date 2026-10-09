@@ -17,7 +17,6 @@
   "nodes_dns_name": "DNS name",
   "nodes_dns_disabled": "MagicDNS is off",
   "nodes_connected_peers": "Connected peers",
-  "nodes_connections_unknown": "Connection status unknown",
   "nodes_network_location": "Network location",
   "nodes_public_address": "Public address",
   "nodes_sync_pending": "Awaiting the current execution",

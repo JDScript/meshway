@@ -13,7 +13,6 @@ import type {
   StateProblem,
 } from "@meshway/control-client"
 
-import type { MapConnection } from "@/lib/network-map"
 import type { ConnectionStatus } from "@/lib/nodes/connections"
 import type { NodeStatus } from "@/lib/nodes/status"
 import { m } from "@/paraglide/messages.js"
@@ -23,41 +22,6 @@ export const connectionStatusLabel: Record<ConnectionStatus, () => string> = {
   connecting: () => linkPhaseLabel.preparing(),
   failed: () => linkPhaseLabel.failed(),
   unknown: () => statusLabel.unknown(),
-}
-
-export function mapConnectionText(connection: MapConnection): string {
-  switch (connection.status) {
-    case "allowed":
-      return m.overview_allowed()
-    case "unavailable":
-      return m.overview_no_transports()
-    case "history":
-      return m.overview_history()
-    default:
-      return connectionStatusLabel[connection.status]()
-  }
-}
-
-/** A link badge states the source of its protocol: observed, historical, or configured. */
-export function mapTransportText(connection: MapConnection): string {
-  const actual = connection.transports.map(transportText).join(" / ")
-  if (connection.status === "connected" && actual) return actual
-  if (connection.status === "history" && actual)
-    return `${m.overview_history()} · ${actual}`
-  if (
-    (connection.status === "connecting" || connection.status === "failed") &&
-    actual
-  )
-    return `${actual} · ${connectionStatusLabel[connection.status]()}`
-  if (connection.declaration) {
-    const allowed = connection.declaration.transports
-    if (allowed === null) return m.overview_any_transport()
-    if (allowed.length === 0) return m.overview_no_transports()
-    return m.overview_transport_allowed({
-      value: allowed.map(transportText).join(" → "),
-    })
-  }
-  return mapConnectionText(connection)
 }
 
 /** Known carrier names use the same wording as configuration; future providers keep their name. */

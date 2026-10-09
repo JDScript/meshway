@@ -154,6 +154,8 @@ console 已接入 `/api/v1` 下全部 Console 操作：
   - console 的读取集中在 `src/lib/geo.ts` 的 `nodeAddresses`，改完后只需调整这一处和缺失原因的文案。
 - **`edge_transport_unavailable` 一次只报一条**：同一条组网规则让几条 Mesh 路由都走不通时，validate 只返回其中一条路由和一条边（8420 上 3 条必经路由都经过 `transports: []` 的边，只报了 `/routing/mesh/1` 的 lax–nyc）。改完一条再检查才看到下一条；如果是有意合并，请在 problems.md 里写明。
 - **阻断规则带 `transports`**：服务端照收，但阻断总是阻断整条边，这个字段不起作用。建议 validate 给一条 warning 或直接拒绝；console 现在只在规则下注明"阻断规则的承载设置不起作用"，把规则改成阻断时去掉它。
+- **业务流量期间 `StateView.paths` 为空**：8420 r5 上从 lax 在 TUN 内持续 ping nyc 的 Mesh 地址（90／90 及 60／60 成功），同期 lax–nyc 的 link 为 `authenticated`／`matched`／`inUse: true`，但 `paths: []`。拓扑的流动方向只取 `paths` 的节点顺序，不从 links 推断，所以现在只能显示"承载业务"的无方向效果。请确认节点是否应上报业务 PathState，或说明 `inUse` 在 `paths` 为空时的含义。
+- **按目的地逐个规划**：拓扑选中节点后，对每个其他节点各调一次 `evaluateConfiguration`（console 最多同时 4 个，按 revision 缓存）。节点多时请求数随节点数线性增长；如果服务端能一次返回"从一个来源到所有节点"的主路径，请给批量形式；没有也能用，只是大网络较慢。
 
 ### 需要真实 Node 复核
 
@@ -162,6 +164,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 1. 节点应用配置后重新 acquire instance，原版本中是否仍被标为 `superseded`：未复核。
 2. 执行发布切换期间的状态：在 8420 的 `meshway ping` 和 Console 主动观察中见到节点在 `current`／`config_mismatch` 之间变化，links 变为 `expired`，随后随新报告恢复。短观察有成功 RTT 样本，之后任务又进入 preparing；这不能证明状态变未知期间仍在连续传包，也不能把旧上报过期直接当作物理通道已断开。诊断使用独立发布，这些记录不用于归因普通业务 demand。请后端确认并分开执行同步过渡、连接存续与当前可用性；当前相邻连接 UI 对过期证据显示未知。稳定已连接状态跨观察续租的展示仍未完成真实验收。
 3. 主动观察的创建、续租、取消是否重新生成整网执行发布；有观察时 Agent 请求（tasks、renew、receipts）的耗时：未复核。
+4. 2026-10-09 meshway-sha 自身报告 `Blocked`、`Last problem: Contract`、数据面 `Failed`，State 中为 `expired`；lax／nyc 同期 `current`。console 如实显示为离线，原因待后端或 lab 维护方确认。
 
 ### 后端排期中
 

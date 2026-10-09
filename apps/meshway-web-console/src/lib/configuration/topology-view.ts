@@ -5,6 +5,8 @@ import type {
   TransportProtocol,
 } from "@meshway/control-client"
 
+import { DIALER_PROTOCOLS } from "./dialer-model"
+
 /** Bounded drawing window; a partial window is explicitly labelled in the view. */
 export const TOPOLOGY_NODE_LIMIT = 80
 
@@ -129,4 +131,66 @@ export function configurationTopology(
     totalNodes: all.length,
     edges,
   }
+}
+
+export type DialDirection = {
+  from: string
+  to: string
+  /** What `from` may dial `to` with, in the edge's carrier order. */
+  transports: TransportProtocol[]
+  /** When none: the first of the edge, the dialer and the listener that leaves nothing. */
+  missing: "edge" | "dialer" | "listener" | null
+}
+
+/**
+ * Both dial directions of a declared edge as the configuration states them
+ * (topology.md, carrier intersection): the edge's carriers, the dialer's
+ * enabled dialers (or the defaults when it states none) and the listener's
+ * enabled listeners. Stream, TLS, runtime capability and materials are the
+ * server's to check; this never says a carrier works.
+ */
+export function edgeDirections(
+  config: Pick<ConfigurationView, "nodes" | "defaults">,
+  edge: Pick<DeclaredEdge, "a" | "b" | "transports">
+): [DialDirection, DialDirection] {
+  const order = edge.transports ?? DIALER_PROTOCOLS
+  const dials = (id: string) => {
+    const node = Object.hasOwn(config.nodes, id) ? config.nodes[id] : undefined
+    const set = node?.dialers ?? config.defaults.dialers
+    return new Set(
+      DIALER_PROTOCOLS.filter((protocol) => {
+        const entry = set[protocol]
+        return entry != null && entry.enabled !== false
+      })
+    )
+  }
+  const listens = (id: string) => {
+    const node = Object.hasOwn(config.nodes, id) ? config.nodes[id] : undefined
+    return new Set(
+      Object.values(node?.listeners ?? {})
+        .filter((listener) => listener.enabled)
+        .map((listener) => listener.protocol)
+    )
+  }
+  const direction = (from: string, to: string): DialDirection => {
+    const dialer = dials(from)
+    const listener = listens(to)
+    const transports = order.filter(
+      (protocol) => dialer.has(protocol) && listener.has(protocol)
+    )
+    return {
+      from,
+      to,
+      transports,
+      missing:
+        transports.length > 0
+          ? null
+          : order.length === 0
+            ? "edge"
+            : !order.some((protocol) => dialer.has(protocol))
+              ? "dialer"
+              : "listener",
+    }
+  }
+  return [direction(edge.a, edge.b), direction(edge.b, edge.a)]
 }

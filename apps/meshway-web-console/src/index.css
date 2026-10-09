@@ -831,41 +831,317 @@
     }
   }
 
-  /* The two network canvases share one reversible transition. They stay
-   * mounted, so camera, diagram zoom and scroll survive a view change. */
-  .globe-stage,
-  .topology-canvas {
-    --canvas-transition-duration: 560ms;
+  /* Under a workspace the globe dims; under the topology it stays behind,
+   * dimmer and a little smaller, while its markers have become the
+   * diagram's nodes (they leave from and return to them). */
+  .globe-stage {
     transition:
-      opacity var(--canvas-transition-duration) var(--ease-settle),
-      scale var(--canvas-transition-duration) var(--ease-settle),
-      translate var(--canvas-transition-duration) var(--ease-settle),
-      visibility 0s;
+      opacity 640ms var(--ease-settle),
+      scale 640ms var(--ease-settle);
   }
   .globe-stage[data-receded="true"] {
     opacity: 0.4;
   }
-  .globe-stage[data-view-hidden="true"],
-  .topology-canvas[data-shown="false"] {
-    opacity: 0;
-    visibility: hidden;
-    scale: 0.985;
-    transition-delay: 0s, 0s, 0s, var(--canvas-transition-duration);
+  .globe-stage[data-backdrop="true"] {
+    opacity: 0.3;
+    scale: 0.96;
   }
-  .topology-canvas[data-shown="false"] {
-    translate: 0 10px;
+  .globe-stage[data-markers="hidden"] .globe-node {
+    opacity: 0;
+    pointer-events: none;
+    transition-duration: 160ms;
+  }
+
+  /* The topology: nodes are the globe's markers, larger, on rings. */
+  .topology-canvas {
+    transition: opacity 320ms ease;
+  }
+  .topology-canvas[data-phase="arrived"] {
+    opacity: 0;
+  }
+  .map-node {
+    --node-color: var(--status-inactive);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    outline: none;
+    transition: opacity 320ms ease;
+  }
+  .map-node[data-tone="online"] {
+    --node-color: var(--status-online);
+  }
+  .map-node[data-tone="attention"] {
+    --node-color: var(--status-attention);
+  }
+  .map-node[data-tone="offline"] {
+    --node-color: var(--status-offline);
+  }
+  .map-node[data-dim="true"] {
+    opacity: 0.4;
+  }
+  /* Without a globe marker to come from or go back to, a node fades in place. */
+  .topology-canvas[data-phase="entering"] .map-node[data-marker="false"] {
+    animation: map-node-appear 480ms var(--ease-settle) backwards;
+  }
+  .topology-canvas[data-phase="leaving"] .map-node[data-marker="false"] {
+    opacity: 0;
+  }
+  @keyframes map-node-appear {
+    from {
+      opacity: 0;
+    }
+  }
+  .map-node__hit {
+    position: absolute;
+    left: -18px;
+    top: -18px;
+    width: 36px;
+    height: 36px;
+    border-radius: 9999px;
+  }
+  .map-node:focus-visible .map-node__hit {
+    outline: 2px solid var(--ring);
+    outline-offset: -6px;
+  }
+  .map-node__dot {
+    position: absolute;
+    left: -6px;
+    top: -6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    background: var(--node-color);
+    box-shadow:
+      0 0 0 2px var(--background),
+      0 0 16px 3px color-mix(in oklab, var(--node-color) 50%, transparent);
+    transition:
+      transform 420ms var(--ease-settle),
+      box-shadow 300ms ease;
+  }
+  .map-node:not([data-tone="online"]) .map-node__dot {
+    box-shadow: 0 0 0 2px var(--background);
+  }
+  /* Coming out of (and going back into) a globe marker, the dot is its size. */
+  .topology-canvas:is([data-phase="entering"], [data-phase="leaving"])
+    .map-node__dot {
+    transform: scale(0.67);
+  }
+  .map-node:hover .map-node__dot {
+    transform: scale(1.2);
+  }
+  .map-node[data-selected="true"] .map-node__dot {
+    transform: scale(1.25);
+    box-shadow:
+      0 0 0 2px var(--background),
+      0 0 0 4px var(--node-color),
+      0 0 24px 5px color-mix(in oklab, var(--node-color) 55%, transparent);
+  }
+  /* Under its dot on the diagram; beside it, as on the globe, on the way in and out. */
+  .map-node__label {
+    position: absolute;
+    left: 0;
+    top: 13px;
+    translate: -50% 0;
+    padding: 0 8px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 22px;
+    white-space: nowrap;
+    color: var(--muted-foreground);
+    background: color-mix(in oklab, var(--background) 60%, transparent);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    transition:
+      color 300ms ease,
+      background 300ms ease,
+      opacity 200ms ease,
+      left 420ms var(--ease-settle),
+      top 420ms var(--ease-settle),
+      translate 420ms var(--ease-settle);
+  }
+  .topology-canvas:is([data-phase="entering"], [data-phase="leaving"])
+    .map-node__label {
+    left: 13px;
+    top: -11px;
+    translate: 0 0;
+  }
+  .map-node[data-named="false"] .map-node__label {
+    opacity: 0;
+  }
+  .map-node:is(:hover, :focus-visible, [data-selected="true"])
+    .map-node__label {
+    color: var(--foreground);
+    background: color-mix(in oklab, var(--background) 85%, transparent);
+  }
+
+  /* Edges: their colour is their state (`color`), dashed until connected. */
+  .map-edges {
+    transition: opacity 320ms ease;
+  }
+  .topology-canvas:is(
+      [data-phase="entering"],
+      [data-phase="leaving"],
+      [data-phase="arrived"]
+    )
+    .map-edges,
+  .topology-canvas:is(
+      [data-phase="entering"],
+      [data-phase="leaving"],
+      [data-phase="arrived"]
+    )
+    .map-chip {
+    opacity: 0;
+    transition-duration: 160ms;
+  }
+  .map-edge {
+    transition: opacity 240ms ease;
+  }
+  .map-edge[data-lit="false"] {
+    opacity: 0.25;
+  }
+  .map-edge__line {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.25;
+    stroke-dasharray: 4 5;
+    stroke-linecap: round;
+    opacity: 0.75;
+  }
+  .map-edge:is([data-look="matched"], [data-look="one_sided"]) .map-edge__line {
+    stroke-width: 2;
+    stroke-dasharray: none;
+    opacity: 0.9;
+  }
+  .map-edge[data-directed="true"] .map-edge__line {
+    stroke-width: 1.75;
+    opacity: 0.95;
+  }
+  .map-edge[data-look="history"] .map-edge__line {
+    opacity: 0.35;
+  }
+  .map-edge[data-unauthorized="true"] .map-edge__line {
+    stroke-dasharray: 1 5;
+  }
+  .map-edge__glow {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 7;
+    stroke-linecap: round;
+    opacity: 0.12;
+    animation: map-in-use 2.4s ease-in-out infinite;
+  }
+  @keyframes map-in-use {
+    50% {
+      opacity: 0.28;
+    }
+  }
+  .map-edge__hit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 16;
+    pointer-events: stroke;
+    cursor: pointer;
+    outline: none;
+  }
+  .map-edge:has(.map-edge__hit:is(:hover, :focus-visible)) .map-edge__line,
+  .map-edge:has(.map-edge__hit[aria-pressed="true"]) .map-edge__line {
+    stroke-width: 3;
+    opacity: 1;
+  }
+  .map-edge__arrow {
+    fill: currentColor;
+  }
+  .map-edge__flow {
+    fill: currentColor;
+    filter: drop-shadow(0 0 3px currentColor);
+  }
+  .map-edge__deco {
+    transition: opacity 200ms ease;
+  }
+  .topology-canvas[data-moving="true"] .map-edge__deco {
+    opacity: 0;
+    transition-duration: 80ms;
+  }
+  .map-chip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    translate: -50% -50%;
+    max-width: 160px;
+    overflow: hidden;
+    padding: 0 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    color: var(--muted-foreground);
+    background: color-mix(in oklab, var(--background) 82%, transparent);
+    box-shadow: 0 0 0 1px var(--divider);
+  }
+  .map-chip[data-lit="true"] {
+    color: var(--foreground);
+    box-shadow: 0 0 0 1px var(--ring);
+  }
+
+  /* A link's colour in a list, dashed like its line until connected. */
+  .link-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 0;
+    flex-shrink: 0;
+    border-top: 2px dashed currentColor;
+    opacity: 0.85;
+  }
+  .link-swatch:is([data-look="matched"], [data-look="one_sided"]) {
+    border-top-style: solid;
+  }
+  .map-hop {
+    display: inline-flex;
+    height: 24px;
+    max-width: 100%;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    border-radius: 9999px;
+    font-size: 12px;
+    color: var(--muted-foreground);
+    background: var(--fill-subtle);
+    outline: none;
+    transition:
+      background 150ms ease,
+      color 150ms ease;
+  }
+  .map-hop:hover,
+  .map-hop:focus-visible,
+  .map-hop[aria-pressed="true"] {
+    color: var(--foreground);
+    background: var(--fill-hover);
+  }
+  .map-hop:focus-visible {
+    box-shadow: 0 0 0 2px var(--ring);
   }
 
   @media (prefers-reduced-motion: reduce) {
     .surface,
     .surface[data-shown="false"],
     .globe-stage,
-    .globe-stage[data-view-hidden="true"],
-    .topology-canvas,
-    .topology-canvas[data-shown="false"] {
+    .globe-stage[data-backdrop="true"] {
       transition: none;
       scale: 1;
       translate: 0 0;
+    }
+    .map-edge__glow {
+      animation: none;
+      opacity: 0.18;
     }
     .launcher-item,
     .swap-in {

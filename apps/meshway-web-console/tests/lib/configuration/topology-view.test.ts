@@ -128,7 +128,7 @@ test("configuration edges and nodes survive absent runtime reports and missing l
     nodes.map((value) => value.name),
     ["a", "b", "c"]
   )
-  assert.equal(overviewScene(nodes, [], null, declared).nodes.length, 3)
+  assert.equal(overviewScene(nodes, edges).nodes.length, 3)
 })
 
 test("runtime channels annotate declared edges and cannot reintroduce a blocked edge", () => {
