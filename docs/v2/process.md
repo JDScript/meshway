@@ -7,7 +7,7 @@
 | 层 | 内容 | 入口 | 典型耗时 |
 | --- | --- | --- | --- |
 | T1 静态与单测 | fmt／严格 Clippy、workspace 测试、生成契约 drift、SDK 消费者、Console 类型／领域测试／构建、脚本测试、文档检查 | `mise run check` | planck 约 5 分钟；M3 约 15 分钟 |
-| T2 隔离整组 | 真实 TUN、受保护包流、daemon／CLI 整组（9 个承载／DNS／NAT 行） | `mise run validate:matrix`；远程 `mise run validate:remote` | 原七个 runtime 行矩阵并行约 12 分钟；短模式单行约 3 分钟 |
+| T2 隔离整组 | 真实 TUN、受保护包流、daemon／CLI 整组（11 个 TUN／packet／承载／DNS／NAT 行） | `mise run validate:matrix`；远程 `mise run validate:remote` | 11 行在 planck 默认全部并发约 13.5 分钟；短模式单行约 3 分钟 |
 | T3 性能 | L0 circuit、原语、L1 transport、L2–L4 dataplane、常驻 lab L5 | `mise run perf:*`，lab 见[三节点环境](/v2/node/docker-lab) | L0 2 分钟；L3／L4 固定口径约 10 分钟 |
 
 T2 的短模式（`--short`，持续流约 30 秒）只用于诊断与包内门槛，不构成验收；验收状态只由全长运行更新。T3 只在空闲的测量机上运行，宿主有其他构建或测量负载时的样本不作结论。
