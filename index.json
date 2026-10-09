@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T04:00:47.718637+00:00",
+  "updatedAt": "2026-10-09T04:14:18.924378+00:00",
   "runs": [
     {
       "id": 37880473352,
@@ -169,24 +169,124 @@
       "commit": "7799b955182eabbb71861fb4e4e2be3ff7b5f50c",
       "message": "fix(dataplane): fail exact exit projection incarnation",
       "createdAt": "2026-10-09T03:42:08Z",
-      "updatedAt": "2026-10-09T03:42:10Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-09T04:11:37Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/37880473332",
       "jobs": [
         {
           "id": 113658771140,
           "name": "matrix",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-09T03:42:10Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-09T04:11:36Z",
+          "seconds": 1766.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/37880473332/job/113658771140"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 11595322204,
+          "name": "validate-matrix-37880473332",
+          "bytes": 420401,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/37880473332/artifacts/11595322204",
+          "jobId": 113658771140,
+          "runner": "planck",
+          "seconds": 1766.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261009T034218Z-98e93f54",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261009T034530Z-30a8981e",
+                  "seconds": 0.574,
+                  "load": "3.25/2.12/2.26"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261009T034530Z-ef9b1cdf",
+                  "seconds": 499.56,
+                  "load": "3.25/2.12/2.26"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261009T034530Z-eae58ea2",
+                  "seconds": 540.735,
+                  "load": "3.25/2.12/2.26"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261009T034530Z-be120018",
+                  "seconds": 501.185,
+                  "load": "3.25/2.12/2.26"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": true,
+                  "reportId": "20261009T034531Z-30642f72",
+                  "seconds": 514.254,
+                  "load": "3.25/2.12/2.26"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261009T035350Z-1de983de",
+                  "seconds": 497.391,
+                  "load": "2.90/2.75/2.62"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261009T035351Z-37b70837",
+                  "seconds": 512.525,
+                  "load": "2.90/2.75/2.62"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261009T035405Z-af66627b",
+                  "seconds": 525.238,
+                  "load": "4.11/3.02/2.71"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261009T035431Z-2761da24",
+                  "seconds": 530.689,
+                  "load": "5.18/3.37/2.83"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": true,
+                  "reportId": "20261009T040207Z-cc5422f1",
+                  "seconds": 565.224,
+                  "load": "2.29/2.94/2.91"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": false,
+                  "reportId": "20261009T040224Z-eac1c5ab",
+                  "seconds": 189.498,
+                  "load": "3.12/3.09/2.96"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
     },
     {
       "id": 37880473303,
@@ -197,8 +297,8 @@
       "commit": "7799b955182eabbb71861fb4e4e2be3ff7b5f50c",
       "message": "fix(dataplane): fail exact exit projection incarnation",
       "createdAt": "2026-10-09T03:42:08Z",
-      "updatedAt": "2026-10-09T03:42:08Z",
-      "status": "queued",
+      "updatedAt": "2026-10-09T04:11:38Z",
+      "status": "in_progress",
       "conclusion": null,
       "url": "https://github.com/JDScript/meshway/actions/runs/37880473303",
       "jobs": [
@@ -216,10 +316,10 @@
         {
           "id": 113658771428,
           "name": "perf",
-          "runner": null,
-          "status": "queued",
+          "runner": "planck",
+          "status": "in_progress",
           "conclusion": null,
-          "startedAt": "2026-10-09T03:42:09Z",
+          "startedAt": "2026-10-09T04:11:37Z",
           "completedAt": null,
           "seconds": null,
           "url": "https://github.com/JDScript/meshway/actions/runs/37880473303/job/113658771428"
