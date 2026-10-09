@@ -17,9 +17,14 @@ struct Visit {
 pub(super) async fn run(cli: &Cli) -> Result<()> {
     let tcp = TcpListener::bind("0.0.0.0:8080").await?;
     let udp = UdpSocket::bind("0.0.0.0:8080").await?;
+    let subscription = UdpSocket::bind("0.0.0.0:8081").await?;
+    let mut subscriber = None;
+    let mut sent = 0_u64;
+    let mut tick = tokio::time::interval(Duration::from_millis(250));
     let mut tasks = JoinSet::new();
     let mut visits = Vec::new();
     let mut buffer = [0; 65536];
+    let mut subscription_buffer = [0; 64];
     let result = async {
         loop {
             if tokio::fs::try_exists(cli.signals.join("exit-stop")).await? { break; }
@@ -41,6 +46,21 @@ pub(super) async fn run(cli: &Cli) -> Result<()> {
                     let (count, peer) = packet?;
                     visits.push(Visit { protocol: "udp", peer, local: udp.local_addr()?, bytes: count });
                     udp.send_to(&buffer[..count], peer).await?;
+                }
+                packet = subscription.recv_from(&mut subscription_buffer) => {
+                    let (count, peer) = packet?;
+                    if &subscription_buffer[..count] != b"exit-subscribe" { return Err("invalid fixture subscription".into()); }
+                    subscriber = Some((peer, std::time::Instant::now()));
+                    visits.push(Visit { protocol: "udp-subscription", peer, local: subscription.local_addr()?, bytes: count });
+                }
+                _ = tick.tick(), if subscriber.is_some() => {
+                    if let Some((peer, started)) = subscriber {
+                        if started.elapsed() < Duration::from_secs(150) {
+                            subscription.send_to(&sent.to_be_bytes(), peer).await?;
+                            sent += 1;
+                            write(&cli.evidence.join("subscription-sent.json"), &sent).await?;
+                        } else { subscriber = None; }
+                    }
                 }
                 Some(done) = tasks.join_next(), if !tasks.is_empty() => { done??; }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {}

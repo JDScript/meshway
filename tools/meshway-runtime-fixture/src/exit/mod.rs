@@ -107,9 +107,13 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
         )
         .await?;
         let mut restarted = false;
+        let mut crashed = false;
         let mut traffic_done = false;
         loop {
             if tokio::fs::try_exists(cli.signals.join("exit-stop")).await? {
+                break;
+            }
+            if tokio::fs::try_exists(cli.signals.join("exit-down")).await? {
                 break;
             }
             if role == Role::E
@@ -129,6 +133,18 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
                 traffic::run(cli, &topology).await?;
                 traffic_done = true;
                 ready(cli, "exit-traffic-done").await?;
+            }
+            if role == Role::E
+                && !crashed
+                && tokio::fs::try_exists(cli.signals.join("exit-crash-e")).await?
+            {
+                actor::kill_join(&mut daemon).await?;
+                ready(cli, "exit-crashed-e").await?;
+                wait(cli, "exit-restart-after-crash").await?;
+                daemon = actor::spawn_named_daemon(cli, role.name(), topology.controller(role))?;
+                actor::wait_ipc(cli, &mut daemon).await?;
+                crashed = true;
+                ready(cli, "exit-crash-restarted-e").await?;
             }
             let status = actor::command(cli, "status").await?;
             write(&cli.evidence.join("status.json"), &status).await?;
@@ -150,5 +166,13 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     let stopped = actor::terminate(&mut daemon).await;
     result?;
     write(&cli.evidence.join("down-status.json"), &down?).await?;
-    stopped
+    stopped?;
+    ready(cli, &format!("exit-down-{}", role.name())).await?;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !tokio::fs::try_exists(cli.signals.join("exit-stop")).await? {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok::<(), crate::Error>(())
+    })
+    .await?
 }

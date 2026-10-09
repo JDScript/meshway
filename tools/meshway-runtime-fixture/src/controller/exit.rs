@@ -3,6 +3,39 @@ use super::*;
 use crate::exit::{Role as ExitRole, Topology, read, ready, wait, write};
 use meshway_configuration::{ProfileAssignment, RouteAction, RoutingProfile};
 
+pub(super) async fn observe_acquisition(
+    axum::extract::State(evidence): axum::extract::State<std::path::PathBuf>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if request.uri().path() != "/agent-api/v1/instances" {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, 64 * 1024).await else {
+        return axum::http::StatusCode::BAD_REQUEST.into_response();
+    };
+    let Ok(acquire) = serde_json::from_slice::<meshway_protocol::AcquireInstanceRequest>(&bytes)
+    else {
+        return axum::http::StatusCode::BAD_REQUEST.into_response();
+    };
+    let response = next
+        .run(axum::extract::Request::from_parts(parts, bytes.into()))
+        .await;
+    if response.status().is_success()
+        && write(
+            &evidence.join(format!("acquire-{}.json", acquire.instance_id)),
+            &acquire,
+        )
+        .await
+        .is_err()
+    {
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    response
+}
+
 pub(super) async fn coordinate(
     cli: &Cli,
     availability: &crate::recovery::Availability,
@@ -192,7 +225,9 @@ pub(super) async fn coordinate(
     .await?;
     write(&cli.signals.join("exit-configured.json"), &revision).await?;
     let mut outage = false;
+    let mut reopened = false;
     let mut withdrawn = false;
+    let mut restored = false;
     loop {
         if tokio::fs::try_exists(cli.signals.join("exit-stop")).await? {
             break;
@@ -231,6 +266,26 @@ pub(super) async fn coordinate(
             let revision = apply(&client, network, token, current.revision, &input).await?;
             write(&cli.signals.join("exit-withdrawn.json"), &revision).await?;
             withdrawn = true;
+        }
+        if outage && !reopened && tokio::fs::try_exists(cli.signals.join("exit-http-open")).await? {
+            write(
+                &cli.signals.join("exit-http-opened.json"),
+                &availability.open()?,
+            )
+            .await?;
+            reopened = true;
+        }
+        if withdrawn && !restored && tokio::fs::try_exists(cli.signals.join("exit-restore")).await?
+        {
+            let current = source(&client, network, token).await?;
+            input
+                .nodes
+                .get_mut(&nodes["e"])
+                .ok_or("missing E")?
+                .exit_enabled = true;
+            let revision = apply(&client, network, token, current.revision, &input).await?;
+            write(&cli.signals.join("exit-restored.json"), &revision).await?;
+            restored = true;
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }

@@ -54,6 +54,12 @@ async fn run_server(cli: &Cli) -> Result<()> {
     let availability = crate::recovery::Availability::new();
     let requests = crate::control_requests::Audit::new();
     let mut router = meshway_server::http::router(&app);
+    if cli.traversal == crate::TraversalMode::Exit {
+        router = router.layer(axum::middleware::from_fn_with_state(
+            cli.evidence.clone(),
+            exit::observe_acquisition,
+        ));
+    }
     if cli.traversal == crate::TraversalMode::Nat {
         router = router.layer(axum::middleware::from_fn_with_state(
             audit.clone(),

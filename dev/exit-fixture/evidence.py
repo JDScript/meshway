@@ -1,0 +1,50 @@
+"""Readback assertions. Observations are evidence, never execution authority."""
+import json
+import re
+
+
+def conntrack_flows(text):
+    flows = []
+    for line in text.splitlines():
+        if not line.strip(): continue
+        fields = re.findall(r"\b(src|dst|sport|dport)=([^\s]+)", line)
+        if len(fields) != 8 or [key for key, _ in fields] != ["src", "dst", "sport", "dport"] * 2:
+            continue  # ICMP/control entries are not TCP/UDP tuple evidence.
+        mark = re.search(r"\bmark=(\d+)", line)
+        flows.append({"protocol": line.split()[0], "original": dict(fields[:4]), "reply": dict(fields[4:]),
+                      "mark": int(mark.group(1)) if mark else None})
+    return flows
+
+
+def nat_tuple(text, protocol, local, remote, exit_address):
+    source, sport = local.rsplit(":", 1)
+    destination, dport = remote.rsplit(":", 1)
+    found = [flow for flow in conntrack_flows(text) if flow["protocol"] == protocol and flow["original"] ==
+             {"src": source, "dst": destination, "sport": sport, "dport": dport}]
+    if len(found) != 1:
+        raise RuntimeError("missing or ambiguous original conntrack tuple")
+    flow = found[0]
+    if (flow["reply"]["src"] != destination or flow["reply"]["dst"] != exit_address
+            or flow["reply"]["sport"] != dport or not flow["mark"]):
+        raise RuntimeError("conntrack does not prove owned masquerade/reverse tuple")
+    return flow
+
+
+def no_owned_exit(snapshot):
+    record = snapshot["e"]["nftCounters"]
+    if record["exitCode"]:
+        raise RuntimeError("nft readback failed")
+    nft = json.loads(record["stdout"])
+    if any(item.get("table", {}).get("name", "").startswith("meshway_exit") for item in nft["nftables"]):
+        raise RuntimeError("owned exit table survived retirement")
+    for record in snapshot["e"]["conntrack"].values():
+        if record["exitCode"] or any(flow["mark"] for flow in conntrack_flows(record["stdout"])):
+            raise RuntimeError("owned conntrack survived retirement")
+
+
+def all_stages_passed(manifest):
+    return (set(manifest["stages"]) == {str(i) for i in range(1, 9)}
+            and all(stage.get("status") == "passed" for stage in manifest["stages"].values())
+            and bool(manifest.get("processes"))
+            and all(state["ExitCode"] == 0 and not state["Running"] and not state["OOMKilled"] for state in manifest["processes"].values())
+            and not manifest.get("cleanupErrors"))
